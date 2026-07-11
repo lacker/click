@@ -261,21 +261,36 @@ The more general idea is valid composition of resource facts:
 valid(compose(own(memory(range1)), own(memory(range2))))
 ```
 
-For owned memory facts, that valid composition has a useful observable
-consequence:
+Click exposes that general idea as:
 
-```text
-disjoint(range1, range2)
+```click
+separate(resource1, resource2)
 ```
 
-Other resource families may expose different observable facts from valid
-composition, or none at all. Composite resources may expose declared `fact`
-clauses and facts derived from their immediate contained resource facts.
+`separate(r1, r2)` means the owned versions of `r1` and `r2` can coexist in the
+resource algebra. For owned memory facts, that valid composition has a useful
+memory-specific consequence:
 
-Click does not yet have a general user-visible predicate like
-`separate(element1, element2)`. Keep `disjoint(...)` as the concrete range
-fact, and treat it as one output of the broader resource-fact validity and
-observable-facts machinery.
+```click
+separate(memory(range1), memory(range2)) => disjoint(range1, range2)
+```
+
+Click also exposes resource inclusion/decomposition as:
+
+```click
+contains(parent, child)
+```
+
+`contains(parent, child)` means owning `parent` can provide `child` plus some
+remaining resource. This is algebraic containment, not necessarily physical
+field containment. For example, a future arena resource could contain a smaller
+amount of arena space even when that space is interchangeable.
+
+Composite resources project direct `contains(parent, child)` facts for owned
+contained resources and direct `separate(child1, child2)` facts for owned
+sibling resources. Deeper facts come from deterministic theorem steps:
+`contains` is transitive, `separate` projects through contained children, and
+memory `separate` implies memory `disjoint(...)`.
 
 ## Memory Resource Rules
 

@@ -259,6 +259,10 @@ sequence:
   composite before a view-only helper call, then unfolds before a later owned
   mutation. The callee's `views` composite requirement projects its immediate
   contained views at entry.
+- `mdtests/composite_resource_observe_nested_separate_contains.md`: explicit
+  chained observation exposes `contains(...)` and `separate(...)` facts for a
+  nested composite resource, then derives the memory-specific `disjoint(...)`
+  consequence.
 - `mdtests/composite_resource_owned_buffer_nested_hidden_disjoint_gap.md`:
   expected-fail coverage for nested hidden footprints that do not yet summarize
   `disjoint(...)` facts across composite-resource boundaries.

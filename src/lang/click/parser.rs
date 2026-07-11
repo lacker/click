@@ -927,6 +927,37 @@ impl Parser {
         }
     }
 
+    fn parse_resource_subject_pair(
+        &mut self,
+        relation: &str,
+    ) -> Result<(ResourceSubject, ResourceSubject), ClickError> {
+        self.expect_ident_spelling(relation)?;
+        self.expect(Token::LParen)?;
+        let left = self.parse_resource_subject()?;
+        self.expect(Token::Comma)?;
+        let right = self.parse_resource_subject()?;
+        self.expect(Token::RParen)?;
+        Ok((left, right))
+    }
+
+    fn parse_resource_subject(&mut self) -> Result<ResourceSubject, ClickError> {
+        if self.peek_ident() == Some("memory") && self.peek_next() == Some(&Token::LParen) {
+            self.position += 1;
+            self.expect(Token::LParen)?;
+            let segment = self.parse_current_contract_segment()?;
+            self.expect(Token::RParen)?;
+            return Ok(ResourceSubject::Memory(segment));
+        }
+
+        let (name, arguments) = self.parse_call_arguments("resource subject name")?;
+        Ok(ResourceSubject::Declared {
+            kind: ResourceKind::Token,
+            name,
+            arguments,
+            parameter_types: Vec::new(),
+        })
+    }
+
     fn parse_resource_target(
         &mut self,
         access: ResourceAccessMode,
@@ -1326,6 +1357,16 @@ impl Parser {
         if self.peek_ident() == Some("disjoint") && self.peek_next() == Some(&Token::LParen) {
             let (left, right) = self.parse_disjoint_segments()?;
             return Ok(ClickProposition::Disjoint { left, right });
+        }
+
+        if self.peek_ident() == Some("separate") && self.peek_next() == Some(&Token::LParen) {
+            let (left, right) = self.parse_resource_subject_pair("separate")?;
+            return Ok(ClickProposition::Separate { left, right });
+        }
+
+        if self.peek_ident() == Some("contains") && self.peek_next() == Some(&Token::LParen) {
+            let (parent, child) = self.parse_resource_subject_pair("contains")?;
+            return Ok(ClickProposition::Contains { parent, child });
         }
 
         if self.peek_ident() == Some("loadable") && self.peek_next() == Some(&Token::LParen) {

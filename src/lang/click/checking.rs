@@ -995,6 +995,52 @@ pub(super) fn lower_predicate_body_proposition_with_environment(
                 right_end: right.end,
             })
         }
+        ClickProposition::Separate { left, right } => {
+            let left = evaluate_predicate_resource_subject(
+                values,
+                array_refs,
+                memory,
+                assumptions,
+                left,
+                predicate_environment,
+                click_function_environment,
+                active_functions,
+            )?;
+            let right = evaluate_predicate_resource_subject(
+                values,
+                array_refs,
+                memory,
+                assumptions,
+                right,
+                predicate_environment,
+                click_function_environment,
+                active_functions,
+            )?;
+            Ok(Proposition::CResourceSeparate { left, right })
+        }
+        ClickProposition::Contains { parent, child } => {
+            let parent = evaluate_predicate_resource_subject(
+                values,
+                array_refs,
+                memory,
+                assumptions,
+                parent,
+                predicate_environment,
+                click_function_environment,
+                active_functions,
+            )?;
+            let child = evaluate_predicate_resource_subject(
+                values,
+                array_refs,
+                memory,
+                assumptions,
+                child,
+                predicate_environment,
+                click_function_environment,
+                active_functions,
+            )?;
+            Ok(Proposition::CResourceContains { parent, child })
+        }
         ClickProposition::Loadable { segment } => {
             let segment = evaluate_predicate_contract_segment(
                 values,
@@ -1430,6 +1476,81 @@ fn evaluate_predicate_contract_segment(
         start,
         end,
     })
+}
+
+fn evaluate_predicate_resource_subject(
+    values: &BTreeMap<String, CValue>,
+    array_refs: &ClickArrayRefs,
+    memory: &CMemory,
+    assumptions: &Assumptions,
+    resource: &ResourceSubject,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    active_functions: &mut BTreeSet<String>,
+) -> Result<CResource, String> {
+    match resource {
+        ResourceSubject::Memory(segment) => {
+            let segment = evaluate_predicate_contract_segment(
+                values,
+                array_refs,
+                memory,
+                assumptions,
+                segment,
+                predicate_environment,
+                click_function_environment,
+                active_functions,
+            )?;
+            Ok(CResource::Memory(CMemoryRange::new(
+                segment.base,
+                segment.start,
+                segment.end,
+            )))
+        }
+        ResourceSubject::Declared {
+            kind,
+            name,
+            arguments,
+            parameter_types,
+        } => {
+            if arguments.len() != parameter_types.len() {
+                return Err(format!(
+                    "resource `{name}` has malformed argument type metadata"
+                ));
+            }
+            let mut values_out = Vec::new();
+            for (index, (argument, parameter_type)) in
+                arguments.iter().zip(parameter_types).enumerate()
+            {
+                let value = evaluate_predicate_contract_expression(
+                    values,
+                    array_refs,
+                    memory,
+                    assumptions,
+                    argument,
+                    predicate_environment,
+                    click_function_environment,
+                    active_functions,
+                )?;
+                if !c_value_matches_click_type(&value, *parameter_type) {
+                    return Err(format!(
+                        "resource `{name}` argument {index} evaluated to {value:?}, which does not match {:?}",
+                        parameter_type
+                    ));
+                }
+                values_out.push(value);
+            }
+            Ok(match kind {
+                ResourceKind::Composite => CResource::Composite {
+                    name: name.clone(),
+                    arguments: values_out,
+                },
+                ResourceKind::Token => CResource::Token {
+                    name: name.clone(),
+                    arguments: values_out,
+                },
+            })
+        }
+    }
 }
 
 pub(super) fn evaluate_predicate_contract_expression(
@@ -2032,6 +2153,8 @@ pub(super) fn simp_proposition(
         | Proposition::CMemoryLoadable { .. }
         | Proposition::CMemoryCanStore { .. }
         | Proposition::CMemoryDisjoint { .. }
+        | Proposition::CResourceSeparate { .. }
+        | Proposition::CResourceContains { .. }
         | Proposition::CMemoryMutatesOnly { .. }
         | Proposition::CMemoryEffectSummary { .. }
         | Proposition::CWhileInvariantRule { .. } => {
@@ -3060,6 +3183,60 @@ pub(super) fn lower_outcome_proposition_with_environment(
                 right_end: right.end,
             })
         }
+        ClickProposition::Separate { left, right } => {
+            let left = evaluate_resource_subject_with_environment(
+                values,
+                array_refs,
+                pre_state,
+                post_state,
+                result,
+                assumptions,
+                left,
+                predicate_environment,
+                click_function_environment,
+                active_functions,
+            )?;
+            let right = evaluate_resource_subject_with_environment(
+                values,
+                array_refs,
+                pre_state,
+                post_state,
+                result,
+                assumptions,
+                right,
+                predicate_environment,
+                click_function_environment,
+                active_functions,
+            )?;
+            Ok(Proposition::CResourceSeparate { left, right })
+        }
+        ClickProposition::Contains { parent, child } => {
+            let parent = evaluate_resource_subject_with_environment(
+                values,
+                array_refs,
+                pre_state,
+                post_state,
+                result,
+                assumptions,
+                parent,
+                predicate_environment,
+                click_function_environment,
+                active_functions,
+            )?;
+            let child = evaluate_resource_subject_with_environment(
+                values,
+                array_refs,
+                pre_state,
+                post_state,
+                result,
+                assumptions,
+                child,
+                predicate_environment,
+                click_function_environment,
+                active_functions,
+            )?;
+            Ok(Proposition::CResourceContains { parent, child })
+        }
         ClickProposition::Loadable { segment } => {
             let segment = evaluate_contract_segment_with_environment(
                 values,
@@ -3559,6 +3736,87 @@ fn evaluate_contract_segment_with_environment(
         start,
         end,
     })
+}
+
+fn evaluate_resource_subject_with_environment(
+    parameter_values: &BTreeMap<String, CValue>,
+    array_refs: &ClickArrayRefs,
+    pre_state: &CState,
+    post_state: &CState,
+    result: Option<&CValue>,
+    assumptions: &Assumptions,
+    resource: &ResourceSubject,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    active_functions: &mut BTreeSet<String>,
+) -> Result<CResource, String> {
+    match resource {
+        ResourceSubject::Memory(segment) => {
+            let segment = evaluate_contract_segment_with_environment(
+                parameter_values,
+                array_refs,
+                pre_state,
+                post_state,
+                result,
+                assumptions,
+                segment,
+                predicate_environment,
+                click_function_environment,
+                active_functions,
+            )?;
+            Ok(CResource::Memory(CMemoryRange::new(
+                segment.base,
+                segment.start,
+                segment.end,
+            )))
+        }
+        ResourceSubject::Declared {
+            kind,
+            name,
+            arguments,
+            parameter_types,
+        } => {
+            if arguments.len() != parameter_types.len() {
+                return Err(format!(
+                    "resource `{name}` has malformed argument type metadata"
+                ));
+            }
+            let mut values = Vec::new();
+            for (index, (argument, parameter_type)) in
+                arguments.iter().zip(parameter_types).enumerate()
+            {
+                let value = evaluate_contract_expression_with_environment(
+                    parameter_values,
+                    array_refs,
+                    pre_state,
+                    post_state,
+                    result,
+                    assumptions,
+                    argument,
+                    predicate_environment,
+                    click_function_environment,
+                    active_functions,
+                )?;
+                if !c_value_matches_click_type(&value, *parameter_type) {
+                    return Err(format!(
+                        "resource `{name}` argument {index} evaluated to {value:?}, which does not match {:?}",
+                        parameter_type
+                    ));
+                }
+                values.push(value);
+            }
+            Ok(match kind {
+                ResourceKind::Composite => CResource::Composite {
+                    name: name.clone(),
+                    arguments: values,
+                },
+                ResourceKind::Token => CResource::Token {
+                    name: name.clone(),
+                    arguments: values,
+                },
+            })
+        }
+    }
 }
 
 pub(super) fn evaluate_contract_expression_with_environment(

@@ -62,6 +62,11 @@ pub(super) fn expand_declared_resource_clauses(
         .map(|definition| expand_declared_resource_definition(definition, &resource_definitions))
         .collect::<Result<Vec<_>, _>>()?;
 
+    for predicate in &mut file.predicate_definitions {
+        predicate.body =
+            expand_declared_resource_proposition(predicate.body.clone(), &resource_definitions)?;
+    }
+
     for function in &mut file.function_blocks {
         function.requires = function
             .requires
@@ -128,7 +133,11 @@ fn expand_declared_composite_resource_body(
             .into_iter()
             .map(|resource| expand_declared_resource_clause(resource, resource_definitions))
             .collect::<Result<Vec<_>, _>>()?,
-        facts: composite_body.facts,
+        facts: composite_body
+            .facts
+            .into_iter()
+            .map(|fact| expand_declared_resource_proposition(fact, resource_definitions))
+            .collect::<Result<Vec<_>, _>>()?,
     })
 }
 
@@ -159,6 +168,9 @@ fn expand_declared_resource_requirement(
         Requirement::Resource(resource) => Ok(Requirement::Resource(
             expand_declared_resource_clause(resource, resource_definitions)?,
         )),
+        Requirement::Proposition(proposition) => Ok(Requirement::Proposition(
+            expand_declared_resource_proposition(proposition, resource_definitions)?,
+        )),
         _ => Ok(requirement),
     }
 }
@@ -180,7 +192,9 @@ fn expand_declared_resource_ensure_clause(
                 parameter_types: info.parameter_types,
             })
         }
-        Ensure::Proposition(proposition) => Ensure::Proposition(proposition),
+        Ensure::Proposition(proposition) => Ensure::Proposition(
+            expand_declared_resource_proposition(proposition, resource_definitions)?,
+        ),
         Ensure::Resource(resource) => Ensure::Resource(expand_declared_resource_clause(
             resource,
             resource_definitions,
@@ -214,6 +228,12 @@ fn expand_declared_resource_structural_item(
     mut item: StructuralItem,
     resource_definitions: &BTreeMap<String, DeclaredResourceInfo>,
 ) -> Result<StructuralItem, ClickError> {
+    item.claim = match item.claim {
+        StructuralItemClaim::Proposition(proposition) => StructuralItemClaim::Proposition(
+            expand_declared_resource_proposition(proposition, resource_definitions)?,
+        ),
+        StructuralItemClaim::Effect(effect) => StructuralItemClaim::Effect(effect),
+    };
     item.proof = expand_declared_resource_proof(item.proof, resource_definitions)?;
     Ok(item)
 }
@@ -273,6 +293,123 @@ fn expand_declared_resource_clause(
             })
         }
         resource => Ok(resource),
+    }
+}
+
+fn expand_declared_resource_subject(
+    resource: ResourceSubject,
+    resource_definitions: &BTreeMap<String, DeclaredResourceInfo>,
+) -> Result<ResourceSubject, ClickError> {
+    match resource {
+        ResourceSubject::Declared {
+            kind: _,
+            name,
+            arguments,
+            parameter_types,
+        } if parameter_types.is_empty() => {
+            let info = declared_resource_info(&name, arguments.len(), resource_definitions)?;
+            Ok(ResourceSubject::Declared {
+                kind: info.kind,
+                name,
+                arguments,
+                parameter_types: info.parameter_types,
+            })
+        }
+        resource => Ok(resource),
+    }
+}
+
+fn expand_declared_resource_proposition(
+    proposition: ClickProposition,
+    resource_definitions: &BTreeMap<String, DeclaredResourceInfo>,
+) -> Result<ClickProposition, ClickError> {
+    match proposition {
+        ClickProposition::Separate { left, right } => Ok(ClickProposition::Separate {
+            left: expand_declared_resource_subject(left, resource_definitions)?,
+            right: expand_declared_resource_subject(right, resource_definitions)?,
+        }),
+        ClickProposition::Contains { parent, child } => Ok(ClickProposition::Contains {
+            parent: expand_declared_resource_subject(parent, resource_definitions)?,
+            child: expand_declared_resource_subject(child, resource_definitions)?,
+        }),
+        ClickProposition::And(left, right) => Ok(ClickProposition::And(
+            Box::new(expand_declared_resource_proposition(
+                *left,
+                resource_definitions,
+            )?),
+            Box::new(expand_declared_resource_proposition(
+                *right,
+                resource_definitions,
+            )?),
+        )),
+        ClickProposition::Or(left, right) => Ok(ClickProposition::Or(
+            Box::new(expand_declared_resource_proposition(
+                *left,
+                resource_definitions,
+            )?),
+            Box::new(expand_declared_resource_proposition(
+                *right,
+                resource_definitions,
+            )?),
+        )),
+        ClickProposition::Implies(left, right) => Ok(ClickProposition::Implies(
+            Box::new(expand_declared_resource_proposition(
+                *left,
+                resource_definitions,
+            )?),
+            Box::new(expand_declared_resource_proposition(
+                *right,
+                resource_definitions,
+            )?),
+        )),
+        ClickProposition::Not(body) => Ok(ClickProposition::Not(Box::new(
+            expand_declared_resource_proposition(*body, resource_definitions)?,
+        ))),
+        ClickProposition::ForAll { c_type, name, body } => Ok(ClickProposition::ForAll {
+            c_type,
+            name,
+            body: Box::new(expand_declared_resource_proposition(
+                *body,
+                resource_definitions,
+            )?),
+        }),
+        ClickProposition::Exists { c_type, name, body } => Ok(ClickProposition::Exists {
+            c_type,
+            name,
+            body: Box::new(expand_declared_resource_proposition(
+                *body,
+                resource_definitions,
+            )?),
+        }),
+        ClickProposition::RangeAll {
+            start,
+            end,
+            item,
+            body,
+        } => Ok(ClickProposition::RangeAll {
+            start,
+            end,
+            item,
+            body: Box::new(expand_declared_resource_proposition(
+                *body,
+                resource_definitions,
+            )?),
+        }),
+        ClickProposition::RangeAny {
+            start,
+            end,
+            item,
+            body,
+        } => Ok(ClickProposition::RangeAny {
+            start,
+            end,
+            item,
+            body: Box::new(expand_declared_resource_proposition(
+                *body,
+                resource_definitions,
+            )?),
+        }),
+        proposition => Ok(proposition),
     }
 }
 
@@ -882,7 +1019,9 @@ fn collect_resource_fact_scalar_assumptions_from_proposition(
             }
             Ok(())
         }
-        ClickProposition::Disjoint { .. } => Ok(()),
+        ClickProposition::Disjoint { .. }
+        | ClickProposition::Separate { .. }
+        | ClickProposition::Contains { .. } => Ok(()),
         ClickProposition::And(left, right) => {
             collect_resource_fact_scalar_assumptions_from_proposition(
                 left,
@@ -993,6 +1132,46 @@ fn collect_resource_fact_reads_from_proposition(
             )?;
             collect_resource_fact_reads_from_contract_segment(
                 right,
+                predicate_definitions,
+                click_function_definitions,
+                visited_predicates,
+                visited_functions,
+                reads,
+                resource_name,
+            )
+        }
+        ClickProposition::Separate { left, right } => {
+            collect_resource_fact_reads_from_resource_subject(
+                left,
+                predicate_definitions,
+                click_function_definitions,
+                visited_predicates,
+                visited_functions,
+                reads,
+                resource_name,
+            )?;
+            collect_resource_fact_reads_from_resource_subject(
+                right,
+                predicate_definitions,
+                click_function_definitions,
+                visited_predicates,
+                visited_functions,
+                reads,
+                resource_name,
+            )
+        }
+        ClickProposition::Contains { parent, child } => {
+            collect_resource_fact_reads_from_resource_subject(
+                parent,
+                predicate_definitions,
+                click_function_definitions,
+                visited_predicates,
+                visited_functions,
+                reads,
+                resource_name,
+            )?;
+            collect_resource_fact_reads_from_resource_subject(
+                child,
                 predicate_definitions,
                 click_function_definitions,
                 visited_predicates,
@@ -1143,6 +1322,42 @@ fn collect_resource_fact_reads_from_contract_segment(
         )?;
     }
     Ok(())
+}
+
+fn collect_resource_fact_reads_from_resource_subject(
+    resource: &ResourceSubject,
+    predicate_definitions: &BTreeMap<&str, &PredicateDefinition>,
+    click_function_definitions: &BTreeMap<&str, &ClickFunctionDefinition>,
+    visited_predicates: &mut Vec<String>,
+    visited_functions: &mut Vec<String>,
+    reads: &mut Vec<ResourceFactRead>,
+    resource_name: &str,
+) -> Result<(), ClickError> {
+    match resource {
+        ResourceSubject::Memory(segment) => collect_resource_fact_reads_from_contract_segment(
+            segment,
+            predicate_definitions,
+            click_function_definitions,
+            visited_predicates,
+            visited_functions,
+            reads,
+            resource_name,
+        ),
+        ResourceSubject::Declared { arguments, .. } => {
+            for argument in arguments {
+                collect_resource_fact_reads_from_contract_expression(
+                    argument,
+                    predicate_definitions,
+                    click_function_definitions,
+                    visited_predicates,
+                    visited_functions,
+                    reads,
+                    resource_name,
+                )?;
+            }
+            Ok(())
+        }
+    }
 }
 
 fn collect_resource_fact_reads_from_contract_expression(
@@ -1770,6 +1985,19 @@ fn validate_proposition_expression_types(
             validate_contract_segment_expression_types(left, variables, click_functions, context)?;
             validate_contract_segment_expression_types(right, variables, click_functions, context)
         }
+        ClickProposition::Separate { left, right } => {
+            validate_resource_subject_expression_types(left, variables, click_functions, context)?;
+            validate_resource_subject_expression_types(right, variables, click_functions, context)
+        }
+        ClickProposition::Contains { parent, child } => {
+            validate_resource_subject_expression_types(
+                parent,
+                variables,
+                click_functions,
+                context,
+            )?;
+            validate_resource_subject_expression_types(child, variables, click_functions, context)
+        }
         ClickProposition::Loadable { segment } => {
             validate_contract_segment_expression_types(segment, variables, click_functions, context)
         }
@@ -1798,6 +2026,40 @@ fn validate_proposition_expression_types(
             for argument in arguments {
                 let _ =
                     infer_contract_expression_type(argument, variables, click_functions, context)?;
+            }
+            Ok(())
+        }
+    }
+}
+
+fn validate_resource_subject_expression_types(
+    resource: &ResourceSubject,
+    variables: &BTreeMap<String, C0Type>,
+    click_functions: &BTreeMap<String, ClickFunctionType>,
+    context: &str,
+) -> Result<(), ClickError> {
+    match resource {
+        ResourceSubject::Memory(segment) => {
+            validate_contract_segment_expression_types(segment, variables, click_functions, context)
+        }
+        ResourceSubject::Declared {
+            name,
+            arguments,
+            parameter_types,
+            ..
+        } => {
+            for (index, argument) in arguments.iter().enumerate() {
+                let actual =
+                    infer_contract_expression_type(argument, variables, click_functions, context)?;
+                if let (Some(actual), Some(expected)) = (actual, parameter_types.get(index)) {
+                    if !click_types_compatible(actual, *expected) {
+                        return Err(ClickError::new(format!(
+                            "resource `{name}` argument {index} expects {}, got {} in {context}",
+                            describe_c0_type(*expected),
+                            describe_c0_type(actual)
+                        )));
+                    }
+                }
             }
             Ok(())
         }
@@ -2315,6 +2577,14 @@ fn validate_predicate_calls_in_proposition(
             validate_contract_segment_calls(left, click_functions, context)?;
             validate_contract_segment_calls(right, click_functions, context)
         }
+        ClickProposition::Separate { left, right } => {
+            validate_resource_subject_calls(left, click_functions, context)?;
+            validate_resource_subject_calls(right, click_functions, context)
+        }
+        ClickProposition::Contains { parent, child } => {
+            validate_resource_subject_calls(parent, click_functions, context)?;
+            validate_resource_subject_calls(child, click_functions, context)
+        }
         ClickProposition::Loadable { segment } => {
             validate_contract_segment_calls(segment, click_functions, context)
         }
@@ -2474,6 +2744,24 @@ fn validate_contract_expression_calls(
     }
 }
 
+fn validate_resource_subject_calls(
+    resource: &ResourceSubject,
+    click_functions: &BTreeMap<String, usize>,
+    context: &str,
+) -> Result<(), ClickError> {
+    match resource {
+        ResourceSubject::Memory(segment) => {
+            validate_contract_segment_calls(segment, click_functions, context)
+        }
+        ResourceSubject::Declared { arguments, .. } => {
+            for argument in arguments {
+                validate_contract_expression_calls(argument, click_functions, context)?;
+            }
+            Ok(())
+        }
+    }
+}
+
 fn validate_if_condition_proposition(
     proposition: &ClickProposition,
     click_functions: &BTreeMap<String, usize>,
@@ -2487,6 +2775,14 @@ fn validate_if_condition_proposition(
         ClickProposition::Disjoint { left, right } => {
             validate_contract_segment_calls(left, click_functions, context)?;
             validate_contract_segment_calls(right, click_functions, context)
+        }
+        ClickProposition::Separate { left, right } => {
+            validate_resource_subject_calls(left, click_functions, context)?;
+            validate_resource_subject_calls(right, click_functions, context)
+        }
+        ClickProposition::Contains { parent, child } => {
+            validate_resource_subject_calls(parent, click_functions, context)?;
+            validate_resource_subject_calls(child, click_functions, context)
         }
         ClickProposition::Loadable { segment } => {
             validate_contract_segment_calls(segment, click_functions, context)
@@ -2573,6 +2869,15 @@ fn contract_segment_contains_old_expression(segment: &ContractSegment) -> bool {
         })
 }
 
+fn resource_subject_contains_old_expression(resource: &ResourceSubject) -> bool {
+    match resource {
+        ResourceSubject::Memory(segment) => contract_segment_contains_old_expression(segment),
+        ResourceSubject::Declared { arguments, .. } => {
+            arguments.iter().any(contains_old_expression)
+        }
+    }
+}
+
 fn proposition_contains_old_expression(proposition: &ClickProposition) -> bool {
     match proposition {
         ClickProposition::Comparison { left, right, .. } => {
@@ -2581,6 +2886,14 @@ fn proposition_contains_old_expression(proposition: &ClickProposition) -> bool {
         ClickProposition::Disjoint { left, right } => {
             contract_segment_contains_old_expression(left)
                 || contract_segment_contains_old_expression(right)
+        }
+        ClickProposition::Separate { left, right } => {
+            resource_subject_contains_old_expression(left)
+                || resource_subject_contains_old_expression(right)
+        }
+        ClickProposition::Contains { parent, child } => {
+            resource_subject_contains_old_expression(parent)
+                || resource_subject_contains_old_expression(child)
         }
         ClickProposition::Loadable { segment } => contract_segment_contains_old_expression(segment),
         ClickProposition::And(left, right)
@@ -2663,6 +2976,13 @@ fn contract_segment_contains_at_expression(segment: &ContractSegment) -> bool {
         })
 }
 
+fn resource_subject_contains_at_expression(resource: &ResourceSubject) -> bool {
+    match resource {
+        ResourceSubject::Memory(segment) => contract_segment_contains_at_expression(segment),
+        ResourceSubject::Declared { arguments, .. } => arguments.iter().any(contains_at_expression),
+    }
+}
+
 fn proposition_contains_at_expression(proposition: &ClickProposition) -> bool {
     match proposition {
         ClickProposition::Comparison { left, right, .. } => {
@@ -2671,6 +2991,14 @@ fn proposition_contains_at_expression(proposition: &ClickProposition) -> bool {
         ClickProposition::Disjoint { left, right } => {
             contract_segment_contains_at_expression(left)
                 || contract_segment_contains_at_expression(right)
+        }
+        ClickProposition::Separate { left, right } => {
+            resource_subject_contains_at_expression(left)
+                || resource_subject_contains_at_expression(right)
+        }
+        ClickProposition::Contains { parent, child } => {
+            resource_subject_contains_at_expression(parent)
+                || resource_subject_contains_at_expression(child)
         }
         ClickProposition::Loadable { segment } => contract_segment_contains_at_expression(segment),
         ClickProposition::And(left, right)
@@ -2764,6 +3092,20 @@ fn collect_click_function_calls_in_segment(
     }
 }
 
+fn collect_click_function_calls_in_resource_subject(
+    resource: &ResourceSubject,
+    calls: &mut BTreeSet<String>,
+) {
+    match resource {
+        ResourceSubject::Memory(segment) => collect_click_function_calls_in_segment(segment, calls),
+        ResourceSubject::Declared { arguments, .. } => {
+            for argument in arguments {
+                collect_click_function_calls(argument, calls);
+            }
+        }
+    }
+}
+
 fn collect_click_function_calls_in_proposition(
     proposition: &ClickProposition,
     calls: &mut BTreeSet<String>,
@@ -2776,6 +3118,14 @@ fn collect_click_function_calls_in_proposition(
         ClickProposition::Disjoint { left, right } => {
             collect_click_function_calls_in_segment(left, calls);
             collect_click_function_calls_in_segment(right, calls);
+        }
+        ClickProposition::Separate { left, right } => {
+            collect_click_function_calls_in_resource_subject(left, calls);
+            collect_click_function_calls_in_resource_subject(right, calls);
+        }
+        ClickProposition::Contains { parent, child } => {
+            collect_click_function_calls_in_resource_subject(parent, calls);
+            collect_click_function_calls_in_resource_subject(child, calls);
         }
         ClickProposition::Loadable { segment } => {
             collect_click_function_calls_in_segment(segment, calls);

@@ -189,8 +189,9 @@ resource uncalled(flag: int32*) {
 
 Holding the folded abstract token exposes its immediate pure facts and viewed
 resource facts, but not its owned contained permissions. Hidden contained
-`write(...)` resource facts also expose derived pure facts such as
-`disjoint(...)` for their ranges. In an explicit proof script,
+owned resources also expose direct `contains(...)` and `separate(...)` pure
+facts, and memory-specific `disjoint(...)` facts can be derived from
+`separate(memory(...), memory(...))`. In an explicit proof script,
 `observe(uncalled(flag));` non-destructively records this projection while
 keeping owned permissions hidden. `unfold(uncalled(flag));` consumes the
 abstract token resource fact and exposes its contained resource facts for

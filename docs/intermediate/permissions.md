@@ -395,10 +395,12 @@ Implemented today:
   `observe(resource)` proof steps that explicitly record fact-view projection
   without exposing contained permissions,
 - `write(...)` implying read authority,
-- visible `write(...)` resources imply `disjoint(...)` facts for their ranges,
-  and provably overlapping visible writes are rejected,
-- hidden contained `write(...)` resources in folded composite resources imply
-  `disjoint(...)` facts without exposing the hidden permissions,
+- visible owned resources imply `separate(...)` facts, with
+  `separate(memory(...), memory(...))` implying `disjoint(...)`; provably
+  overlapping visible writes are rejected,
+- composite resources project direct `contains(parent, child)` facts for owned
+  contained resources and direct `separate(child1, child2)` facts for owned
+  sibling resources without exposing the hidden permissions,
 - copyable read transfer,
 - linear write transfer through function summaries,
 - covered subrange splitting and adjacent range rejoining.

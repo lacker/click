@@ -590,6 +590,14 @@ pub enum Proposition {
         right_start: Bitvector32Term,
         right_end: Bitvector32Term,
     },
+    CResourceSeparate {
+        left: CResource,
+        right: CResource,
+    },
+    CResourceContains {
+        parent: CResource,
+        child: CResource,
+    },
     CMemoryMutatesOnly {
         before: CMemory,
         after: CMemory,
@@ -1936,7 +1944,7 @@ impl ResourceContext {
         if let Some(error) = self.validity_error(assumptions) {
             return Err(error);
         }
-        Ok(self.owned_memory_disjoint_facts())
+        Ok(self.owned_resource_separate_facts())
     }
 
     pub fn has_multiple_owned_memory_resources(&self) -> bool {
@@ -1968,23 +1976,19 @@ impl ResourceContext {
         None
     }
 
-    fn owned_memory_disjoint_facts(&self) -> Vec<Proposition> {
+    fn owned_resource_separate_facts(&self) -> Vec<Proposition> {
         let owned = self
             .facts
             .iter()
-            .filter_map(CResourceFact::memory_own_range)
+            .filter_map(CResourceFact::owned_resource)
             .collect::<Vec<_>>();
         let mut propositions = Vec::new();
         for i in 0..owned.len() {
             for right in &owned[i + 1..] {
                 let left = owned[i];
-                propositions.push(Proposition::CMemoryDisjoint {
-                    left_base: left.base.clone(),
-                    left_start: left.start.clone(),
-                    left_end: left.end.clone(),
-                    right_base: right.base.clone(),
-                    right_start: right.start.clone(),
-                    right_end: right.end.clone(),
+                propositions.push(Proposition::CResourceSeparate {
+                    left: (*left).clone(),
+                    right: (**right).clone(),
                 });
             }
         }
@@ -2421,6 +2425,13 @@ impl CResourceFact {
             }
             Self::Own(CResource::Composite { .. } | CResource::Token { .. })
             | Self::View(CResource::Composite { .. } | CResource::Token { .. }) => None,
+        }
+    }
+
+    pub fn owned_resource(&self) -> Option<&CResource> {
+        match self {
+            Self::Own(resource) => Some(resource),
+            Self::View(_) => None,
         }
     }
 

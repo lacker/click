@@ -23,6 +23,9 @@ in `docs/`; do not treat this file as a design doc.
 - `observe(resource)` is one-step and non-consuming. It exposes immediate pure
   facts and viewed immediate contained resource facts, not owned contained
   permissions.
+- `separate(resource1, resource2)` and `contains(parent, child)` are Click pure
+  facts. Composite observation/folded projection emits direct relation facts,
+  and the kernel uses them to derive memory-specific `disjoint(...)`.
 - `loadable(segment)` is now a Click proposition that lowers to the kernel
   loadability fact (`CMemoryLoadable`). Use it in composite `fact` clauses
   when a resource should expose memory loadability without exposing extra
@@ -52,6 +55,7 @@ in `docs/`; do not treat this file as a design doc.
   - `mdtests/composite_resource_execute_until_direct_mutate.md`
   - `mdtests/composite_resource_execute_step_direct_mutate.md`
   - `mdtests/composite_resource_view_then_mutate.md`
+  - `mdtests/composite_resource_observe_nested_separate_contains.md`
   - `mdtests/composite_resource_owned_buffer_nested_hidden_disjoint_gap.md`
 - The latest verification pass recorded here:
   - `cargo fmt`
@@ -65,17 +69,23 @@ in `docs/`; do not treat this file as a design doc.
 
 1. **General separation facts**
 
-   `disjoint(range1, range2)` is memory-specific, but it is really one
-   observable pure fact produced by valid composition of resource facts. We do
-   not yet have a general user-visible or internal abstraction for
-   "separateness" beyond `ResourceContext::observable_facts(...)`.
+   Click now has pure resource-algebra facts `separate(resource1, resource2)`
+   and `contains(parent, child)`. Composite resources project direct
+   `contains(parent, child)` facts for owned contained resources and direct
+   `separate(child1, child2)` facts for owned sibling resources. The kernel
+   proves `contains` transitively, projects `separate` through contained
+   children, and derives memory `disjoint(...)` from
+   `separate(memory(...), memory(...))`.
 
 2. **Hidden footprint projection**
 
    Folded composite resources currently expose one-step pure facts/resource
-   facts and direct hidden-write-derived `disjoint(...)` pure facts. The open
-   design question is how far this should go for nested composite resources or
-   cross-resource hidden footprints.
+   facts plus direct `contains`/`separate` relation facts. A chain of explicit
+   `observe(...)` steps can now dig into nested composite resources and use
+   those theorem rules; see
+   `mdtests/composite_resource_observe_nested_separate_contains.md`. The open
+   design question is how much of that should be summarized or automated for
+   nested composite resources.
 
 3. **Allocation/provenance**
 
@@ -107,9 +117,9 @@ in `docs/`; do not treat this file as a design doc.
 ## Useful Next Tasks
 
 - Decide whether nested hidden footprints should be summarized recursively,
-  via explicit resource-family footprint views, or left as explicit
-  `fact disjoint(...)` obligations. The expected-fail mdtest above is the
-  pressure test.
+  via explicit resource-family footprint views, left as explicit observation
+  chains, or handled by bounded automation. The expected-fail mdtest above and
+  the passing `observe_nested_separate_contains` test are the pressure tests.
 - Keep pressure-testing composite resources with realistic examples before
   adding scoped unfold/fold syntax or automation.
 - Extend `execute_step()` beyond the current straight-line statement slice when

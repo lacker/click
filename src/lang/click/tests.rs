@@ -274,6 +274,51 @@ fn parses_loadable_segment_proposition() {
 }
 
 #[test]
+fn parses_resource_relation_propositions() {
+    let source = r#"
+            resource backing(p: int32*, n: int32) {
+                contains write(p[0..n]);
+            }
+
+            predicate separated_backing(int32* p, int32* q, int32 n) {
+                separate(memory(p[0..n]), backing(q, n))
+            }
+
+            verifying "read.c";
+
+            int32 read(int32* p, int32* q, int32 n) {
+                requires contains(backing(p, n), memory(p[0..n]));
+                requires separated_backing(p, q, n);
+                ensures result == 0 by auto;
+            }
+        "#;
+    let file = parse(source).expect("resource relation propositions should parse");
+    let function = &file.function_blocks()[0];
+
+    assert!(matches!(
+        file.predicate_definitions()[0].body(),
+        ClickProposition::Separate { .. }
+    ));
+    assert!(matches!(
+        function.requires()[0],
+        Requirement::Proposition(ClickProposition::Contains { .. })
+    ));
+    let Requirement::Proposition(ClickProposition::Contains { parent, .. }) =
+        &function.requires()[0]
+    else {
+        panic!("expected contains proposition");
+    };
+    assert!(matches!(
+        parent,
+        ResourceSubject::Declared {
+            kind: ResourceKind::Composite,
+            parameter_types,
+            ..
+        } if parameter_types == &[C0Type::Int32Pointer, C0Type::Int32]
+    ));
+}
+
+#[test]
 fn parses_disjoint_requirement() {
     let source = r#"
             verifying "copy.c";

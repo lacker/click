@@ -35,6 +35,16 @@ pub(super) fn describe_pure_fact(
             describe_pointer(base, parameters, arguments),
             describe_bitvector_with_context(bytes, parameters, arguments)
         ),
+        Proposition::CResourceSeparate { left, right } => format!(
+            "separate({}, {})",
+            describe_c_resource(left, parameters, arguments),
+            describe_c_resource(right, parameters, arguments)
+        ),
+        Proposition::CResourceContains { parent, child } => format!(
+            "contains({}, {})",
+            describe_c_resource(parent, parameters, arguments),
+            describe_c_resource(child, parameters, arguments)
+        ),
         _ => format!("{fact:?}"),
     }
 }
@@ -312,6 +322,47 @@ pub(super) fn describe_resource_fact(
         CResourceFact::Own(CResource::Memory(_)) | CResourceFact::View(CResource::Memory(_)) => {
             unreachable!("memory resources handled above")
         }
+    }
+}
+
+fn describe_c_resource(
+    resource: &CResource,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+) -> String {
+    match resource {
+        CResource::Memory(range) => {
+            format!(
+                "memory({})",
+                describe_memory_range(range, parameters, arguments)
+            )
+        }
+        CResource::Composite {
+            name,
+            arguments: resource_arguments,
+        }
+        | CResource::Token {
+            name,
+            arguments: resource_arguments,
+        } => format_declared_resource(name, resource_arguments, parameters, arguments),
+    }
+}
+
+fn describe_resource_subject(resource: &ResourceSubject) -> String {
+    match resource {
+        ResourceSubject::Memory(segment) => {
+            format!("memory({})", describe_contract_segment(segment))
+        }
+        ResourceSubject::Declared {
+            name, arguments, ..
+        } => format!(
+            "{name}({})",
+            arguments
+                .iter()
+                .map(describe_contract_expression)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
     }
 }
 
@@ -708,6 +759,16 @@ pub(super) fn describe_click_proposition(proposition: &ClickProposition) -> Stri
             "disjoint({}, {})",
             describe_contract_segment(left),
             describe_contract_segment(right)
+        ),
+        ClickProposition::Separate { left, right } => format!(
+            "separate({}, {})",
+            describe_resource_subject(left),
+            describe_resource_subject(right)
+        ),
+        ClickProposition::Contains { parent, child } => format!(
+            "contains({}, {})",
+            describe_resource_subject(parent),
+            describe_resource_subject(child)
         ),
         ClickProposition::Loadable { segment } => {
             format!("loadable({})", describe_contract_segment(segment))

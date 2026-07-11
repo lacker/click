@@ -1553,6 +1553,21 @@ impl Assumptions {
                         right_start,
                         right_end,
                     )
+                    || self.proves_memory_disjoint_from_resource_separate(
+                        left_base,
+                        left_start,
+                        left_end,
+                        right_base,
+                        right_start,
+                        right_end,
+                    )
+            }
+            Proposition::CResourceSeparate { left, right } => {
+                self.prop_facts.contains(proposition) || self.proves_resource_separate(left, right)
+            }
+            Proposition::CResourceContains { parent, child } => {
+                self.prop_facts.contains(proposition)
+                    || self.proves_resource_contains(parent, child)
             }
             _ => self.prop_facts.contains(proposition),
         };
@@ -2305,7 +2320,18 @@ impl Assumptions {
                 && self.pointer_in_range(right, right_base, right_start, right_end)
                 || self.pointer_in_range(right, left_base, left_start, left_end)
                     && self.pointer_in_range(left, right_base, right_start, right_end)
-        })
+        }) || self.proves_resource_separate(
+            &CResource::Memory(CMemoryRange::new(
+                left.clone(),
+                Bitvector32Term::Constant(0),
+                Bitvector32Term::Constant(1),
+            )),
+            &CResource::Memory(CMemoryRange::new(
+                right.clone(),
+                Bitvector32Term::Constant(0),
+                Bitvector32Term::Constant(1),
+            )),
+        )
     }
 
     pub(super) fn pointer_in_range(
@@ -2338,6 +2364,120 @@ impl Assumptions {
         let right = CMemoryRange::new(right_base.clone(), right_start.clone(), right_end.clone());
         self.range_covered_by_disjoint_fact_ranges(&left, &right)
             || self.range_covered_by_disjoint_fact_ranges(&right, &left)
+    }
+
+    pub(super) fn proves_memory_disjoint_from_resource_separate(
+        &self,
+        left_base: &Pointer,
+        left_start: &Bitvector32Term,
+        left_end: &Bitvector32Term,
+        right_base: &Pointer,
+        right_start: &Bitvector32Term,
+        right_end: &Bitvector32Term,
+    ) -> bool {
+        let left = CMemoryRange::new(left_base.clone(), left_start.clone(), left_end.clone());
+        let right = CMemoryRange::new(right_base.clone(), right_start.clone(), right_end.clone());
+        self.proves_resource_separate(
+            &CResource::Memory(left.clone()),
+            &CResource::Memory(right.clone()),
+        ) || self.range_covered_by_resource_separate_ranges(&left, &right)
+            || self.range_covered_by_resource_separate_ranges(&right, &left)
+    }
+
+    pub(super) fn proves_resource_contains(&self, parent: &CResource, child: &CResource) -> bool {
+        if self.resource_contains_builtin(parent, child) {
+            return true;
+        }
+
+        let mut seen = BTreeSet::new();
+        let mut stack = vec![parent.clone()];
+        while let Some(current) = stack.pop() {
+            if !seen.insert(current.clone()) {
+                continue;
+            }
+            if self.resource_contains_builtin(&current, child) {
+                return true;
+            }
+            for proposition in &self.prop_facts {
+                let Proposition::CResourceContains {
+                    parent: fact_parent,
+                    child: fact_child,
+                } = proposition
+                else {
+                    continue;
+                };
+                if self.resource_contains_builtin(&current, fact_parent) {
+                    stack.push(fact_child.clone());
+                }
+            }
+        }
+        false
+    }
+
+    pub(super) fn proves_resource_separate(&self, left: &CResource, right: &CResource) -> bool {
+        self.prop_facts.iter().any(|proposition| {
+            let Proposition::CResourceSeparate {
+                left: fact_left,
+                right: fact_right,
+            } = proposition
+            else {
+                return false;
+            };
+            self.proves_resource_contains(fact_left, left)
+                && self.proves_resource_contains(fact_right, right)
+                || self.proves_resource_contains(fact_left, right)
+                    && self.proves_resource_contains(fact_right, left)
+        })
+    }
+
+    fn resource_contains_builtin(&self, parent: &CResource, child: &CResource) -> bool {
+        if parent == child {
+            return true;
+        }
+        let (CResource::Memory(parent), CResource::Memory(child)) = (parent, child) else {
+            return false;
+        };
+        self.range_covered_by_fact_range(child, parent.base(), parent.start(), parent.end())
+    }
+
+    fn range_covered_by_resource_separate_ranges(
+        &self,
+        target: &CMemoryRange,
+        other: &CMemoryRange,
+    ) -> bool {
+        let mut intervals = Vec::new();
+        for proposition in &self.prop_facts {
+            let Proposition::CResourceSeparate { left, right } = proposition else {
+                continue;
+            };
+
+            if self.proves_resource_contains(right, &CResource::Memory(other.clone())) {
+                if let CResource::Memory(left) = left {
+                    if let Some(interval) = self.fact_range_interval_on_target(
+                        target,
+                        left.base(),
+                        left.start(),
+                        left.end(),
+                    ) {
+                        intervals.push(interval);
+                    }
+                }
+            }
+
+            if self.proves_resource_contains(left, &CResource::Memory(other.clone())) {
+                if let CResource::Memory(right) = right {
+                    if let Some(interval) = self.fact_range_interval_on_target(
+                        target,
+                        right.base(),
+                        right.start(),
+                        right.end(),
+                    ) {
+                        intervals.push(interval);
+                    }
+                }
+            }
+        }
+        range_intervals_cover_target(target, intervals)
     }
 
     fn range_covered_by_disjoint_fact_ranges(

@@ -203,6 +203,12 @@ impl AnnotationLowerer<'_> {
             ClickProposition::Disjoint { .. } => {
                 Err("`disjoint(...)` is not supported in spec-state clauses".to_string())
             }
+            ClickProposition::Separate { .. } => {
+                Err("`separate(...)` is not supported in spec-state clauses".to_string())
+            }
+            ClickProposition::Contains { .. } => {
+                Err("`contains(...)` is not supported in spec-state clauses".to_string())
+            }
             ClickProposition::Loadable { .. } => {
                 Err("`loadable(...)` is not supported in spec-state clauses".to_string())
             }
@@ -1140,6 +1146,14 @@ pub(super) fn unfold_click_predicates_in_proposition_with_active(
             left: left.clone(),
             right: right.clone(),
         }),
+        ClickProposition::Separate { left, right } => Ok(ClickProposition::Separate {
+            left: left.clone(),
+            right: right.clone(),
+        }),
+        ClickProposition::Contains { parent, child } => Ok(ClickProposition::Contains {
+            parent: parent.clone(),
+            child: child.clone(),
+        }),
         ClickProposition::Loadable { segment } => Ok(ClickProposition::Loadable {
             segment: segment.clone(),
         }),
@@ -1294,6 +1308,14 @@ pub(super) fn substitute_click_proposition(
             left: substitute_contract_segment(left, substitutions)?,
             right: substitute_contract_segment(right, substitutions)?,
         }),
+        ClickProposition::Separate { left, right } => Ok(ClickProposition::Separate {
+            left: substitute_resource_subject(left, substitutions)?,
+            right: substitute_resource_subject(right, substitutions)?,
+        }),
+        ClickProposition::Contains { parent, child } => Ok(ClickProposition::Contains {
+            parent: substitute_resource_subject(parent, substitutions)?,
+            child: substitute_resource_subject(child, substitutions)?,
+        }),
         ClickProposition::Loadable { segment } => Ok(ClickProposition::Loadable {
             segment: substitute_contract_segment(segment, substitutions)?,
         }),
@@ -1384,6 +1406,31 @@ fn substitute_contract_segment(
     })
 }
 
+fn substitute_resource_subject(
+    resource: &ResourceSubject,
+    substitutions: &BTreeMap<String, ContractExpression>,
+) -> Result<ResourceSubject, String> {
+    match resource {
+        ResourceSubject::Memory(segment) => Ok(ResourceSubject::Memory(
+            substitute_contract_segment(segment, substitutions)?,
+        )),
+        ResourceSubject::Declared {
+            kind,
+            name,
+            arguments,
+            parameter_types,
+        } => Ok(ResourceSubject::Declared {
+            kind: *kind,
+            name: name.clone(),
+            arguments: arguments
+                .iter()
+                .map(|argument| substitute_contract_expression(argument, substitutions))
+                .collect::<Result<Vec<_>, _>>()?,
+            parameter_types: parameter_types.clone(),
+        }),
+    }
+}
+
 pub(super) fn apply_contract_lets_to_requirement(
     requirement: Requirement,
     bindings: &[ContractLetBinding],
@@ -1456,6 +1503,31 @@ pub(super) fn apply_contract_lets_to_resource_clause(
             parameter_types,
         } => Ok(ResourceClause::Declared {
             access,
+            kind,
+            name,
+            arguments: arguments
+                .into_iter()
+                .map(|argument| apply_contract_lets_to_expression(argument, bindings))
+                .collect::<Result<Vec<_>, _>>()?,
+            parameter_types,
+        }),
+    }
+}
+
+fn apply_contract_lets_to_resource_subject(
+    resource: ResourceSubject,
+    bindings: &[ContractLetBinding],
+) -> Result<ResourceSubject, String> {
+    match resource {
+        ResourceSubject::Memory(segment) => Ok(ResourceSubject::Memory(
+            apply_contract_lets_to_segment(segment, bindings)?,
+        )),
+        ResourceSubject::Declared {
+            kind,
+            name,
+            arguments,
+            parameter_types,
+        } => Ok(ResourceSubject::Declared {
             kind,
             name,
             arguments: arguments
@@ -1681,6 +1753,14 @@ pub(super) fn apply_contract_let_expressions_to_proposition(
         ClickProposition::Disjoint { left, right } => Ok(ClickProposition::Disjoint {
             left: apply_contract_lets_to_segment(left, bindings)?,
             right: apply_contract_lets_to_segment(right, bindings)?,
+        }),
+        ClickProposition::Separate { left, right } => Ok(ClickProposition::Separate {
+            left: apply_contract_lets_to_resource_subject(left, bindings)?,
+            right: apply_contract_lets_to_resource_subject(right, bindings)?,
+        }),
+        ClickProposition::Contains { parent, child } => Ok(ClickProposition::Contains {
+            parent: apply_contract_lets_to_resource_subject(parent, bindings)?,
+            child: apply_contract_lets_to_resource_subject(child, bindings)?,
         }),
         ClickProposition::Loadable { segment } => Ok(ClickProposition::Loadable {
             segment: apply_contract_lets_to_segment(segment, bindings)?,
@@ -1942,6 +2022,14 @@ pub(super) fn collect_click_proposition_referenced_names(
         ClickProposition::Disjoint { left, right } => {
             names.extend(contract_segment_referenced_names(left));
             names.extend(contract_segment_referenced_names(right));
+        }
+        ClickProposition::Separate { left, right } => {
+            collect_resource_subject_referenced_names(left, names);
+            collect_resource_subject_referenced_names(right, names);
+        }
+        ClickProposition::Contains { parent, child } => {
+            collect_resource_subject_referenced_names(parent, names);
+            collect_resource_subject_referenced_names(child, names);
         }
         ClickProposition::Loadable { segment } => {
             names.extend(contract_segment_referenced_names(segment));
@@ -2434,6 +2522,8 @@ pub(super) fn click_proposition_to_c_expression(
         | ClickProposition::RangeAll { .. }
         | ClickProposition::RangeAny { .. }
         | ClickProposition::Disjoint { .. }
+        | ClickProposition::Separate { .. }
+        | ClickProposition::Contains { .. }
         | ClickProposition::Loadable { .. }
         | ClickProposition::PredicateCall { .. } => None,
     }
@@ -2583,6 +2673,22 @@ pub(super) fn contract_segment_referenced_names(segment: &ContractSegment) -> BT
     collect_c_expression_referenced_names(&segment.start, &mut names);
     collect_c_expression_referenced_names(&segment.end, &mut names);
     names
+}
+
+fn collect_resource_subject_referenced_names(
+    resource: &ResourceSubject,
+    names: &mut BTreeSet<String>,
+) {
+    match resource {
+        ResourceSubject::Memory(segment) => {
+            names.extend(contract_segment_referenced_names(segment))
+        }
+        ResourceSubject::Declared { arguments, .. } => {
+            for argument in arguments {
+                collect_contract_expression_referenced_names(argument, names);
+            }
+        }
+    }
 }
 
 pub(super) fn collect_c_expression_referenced_names(
@@ -3563,6 +3669,16 @@ impl KernelPropositionLowerer {
                     right_end: right.end,
                 })
             }
+            ClickProposition::Separate { left, right } => {
+                let left = self.lower_requirement_resource_subject(left)?;
+                let right = self.lower_requirement_resource_subject(right)?;
+                Ok(Proposition::CResourceSeparate { left, right })
+            }
+            ClickProposition::Contains { parent, child } => {
+                let parent = self.lower_requirement_resource_subject(parent)?;
+                let child = self.lower_requirement_resource_subject(child)?;
+                Ok(Proposition::CResourceContains { parent, child })
+            }
             ClickProposition::Loadable { segment } => {
                 let segment = self.lower_requirement_segment(segment)?;
                 let element_width = contract_segment_element_width_from_array_refs(
@@ -3794,6 +3910,57 @@ impl KernelPropositionLowerer {
             start,
             end,
         })
+    }
+
+    fn lower_requirement_resource_subject(
+        &mut self,
+        resource: &ResourceSubject,
+    ) -> Result<CResource, ClickError> {
+        match resource {
+            ResourceSubject::Memory(segment) => {
+                let range = self.lower_requirement_segment(segment)?;
+                Ok(CResource::Memory(CMemoryRange::new(
+                    range.base,
+                    range.start,
+                    range.end,
+                )))
+            }
+            ResourceSubject::Declared {
+                kind,
+                name,
+                arguments,
+                parameter_types,
+            } => {
+                if arguments.len() != parameter_types.len() {
+                    return Err(ClickError::new(format!(
+                        "resource `{name}` has malformed argument type metadata"
+                    )));
+                }
+                let mut values = Vec::new();
+                for (index, (argument, parameter_type)) in
+                    arguments.iter().zip(parameter_types).enumerate()
+                {
+                    let value = self.lower_requirement_value(argument)?;
+                    if !c_value_matches_click_type(&value, *parameter_type) {
+                        return Err(ClickError::new(format!(
+                            "resource `{name}` argument {index} evaluated to {value:?}, which does not match {:?}",
+                            parameter_type
+                        )));
+                    }
+                    values.push(value);
+                }
+                Ok(match kind {
+                    ResourceKind::Composite => CResource::Composite {
+                        name: name.clone(),
+                        arguments: values,
+                    },
+                    ResourceKind::Token => CResource::Token {
+                        name: name.clone(),
+                        arguments: values,
+                    },
+                })
+            }
+        }
     }
 
     fn lower_requirement_value(

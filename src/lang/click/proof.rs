@@ -2493,6 +2493,10 @@ fn project_composite_resource_observable_facts(
     append_composite_resource_observable_facts(
         definition,
         composite_body,
+        &CResource::Composite {
+            name: definition.name().to_string(),
+            arguments: resource_arguments.to_vec(),
+        },
         &substitutions,
         &contained_resources,
         parameters,
@@ -2510,6 +2514,7 @@ fn project_composite_resource_observable_facts(
 fn append_composite_resource_observable_facts(
     definition: &ResourceDefinition,
     composite_body: &CompositeResourceBody,
+    parent_resource: &CResource,
     substitutions: &BTreeMap<String, ContractExpression>,
     contained_resources: &ResourceContext,
     parameters: &[syntax::C0Parameter],
@@ -2528,6 +2533,8 @@ fn append_composite_resource_observable_facts(
         arguments,
         propositions,
     )?;
+
+    append_composite_resource_relation_facts(parent_resource, contained_resources, propositions);
 
     append_composite_resource_loadable_facts(
         definition,
@@ -2553,6 +2560,39 @@ fn append_composite_resource_observable_facts(
         predicate_environment,
         click_function_environment,
     )
+}
+
+fn append_composite_resource_relation_facts(
+    parent_resource: &CResource,
+    contained_resources: &ResourceContext,
+    propositions: &mut Vec<Proposition>,
+) {
+    let owned_children = contained_resources
+        .facts()
+        .iter()
+        .filter_map(CResourceFact::owned_resource)
+        .cloned()
+        .collect::<Vec<_>>();
+    for child in &owned_children {
+        let proposition = Proposition::CResourceContains {
+            parent: parent_resource.clone(),
+            child: child.clone(),
+        };
+        if !propositions.contains(&proposition) {
+            propositions.push(proposition);
+        }
+    }
+    for i in 0..owned_children.len() {
+        for right in &owned_children[i + 1..] {
+            let proposition = Proposition::CResourceSeparate {
+                left: owned_children[i].clone(),
+                right: right.clone(),
+            };
+            if !propositions.contains(&proposition) {
+                propositions.push(proposition);
+            }
+        }
+    }
 }
 
 fn append_composite_resource_loadable_facts(
@@ -2821,6 +2861,7 @@ fn unfold_composite_resource(
         })?;
     state = state.with_resource_context(resources);
 
+    let mut unfolded_facts = Vec::new();
     for contained in composite_body.contains() {
         let contained = instantiate_resource_clause(contained, &substitutions).map_err(|message| {
             ClickError::new(format!(
@@ -2829,6 +2870,7 @@ fn unfold_composite_resource(
             ))
         })?;
         let lowered = lower_resource_clause(&contained, parameters, arguments, state.memory())?;
+        unfolded_facts.push(lowered.clone());
         let memory = materialize_composite_resource_cells(
             state.memory().clone(),
             &contained,
@@ -2862,6 +2904,13 @@ fn unfold_composite_resource(
             ))
         })?;
     }
+
+    let unfolded_resources = ResourceContext::new().unchecked_with_facts(unfolded_facts);
+    append_composite_resource_relation_facts(
+        abstract_resource.resource(),
+        &unfolded_resources,
+        available_pure_facts,
+    );
 
     for fact in composite_body.facts() {
         let fact = substitute_click_proposition(fact, &substitutions).map_err(|message| {

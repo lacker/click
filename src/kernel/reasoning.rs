@@ -296,6 +296,8 @@ pub(super) fn collect_implication_antecedent_order_facts(
         | Proposition::CMemoryLoadable { .. }
         | Proposition::CMemoryCanStore { .. }
         | Proposition::CMemoryDisjoint { .. }
+        | Proposition::CResourceSeparate { .. }
+        | Proposition::CResourceContains { .. }
         | Proposition::CMemoryMutatesOnly { .. }
         | Proposition::CMemoryEffectSummary { .. }
         | Proposition::CWhileInvariantRule { .. } => {}
@@ -1013,6 +1015,14 @@ pub(super) fn collect_proposition_bitvector_variables(
             collect_bitvector_variables(right_start, variables);
             collect_bitvector_variables(right_end, variables);
         }
+        Proposition::CResourceSeparate { left, right } => {
+            collect_c_resource_bitvector_variables(left, variables);
+            collect_c_resource_bitvector_variables(right, variables);
+        }
+        Proposition::CResourceContains { parent, child } => {
+            collect_c_resource_bitvector_variables(parent, variables);
+            collect_c_resource_bitvector_variables(child, variables);
+        }
         Proposition::CMemoryMutatesOnly {
             before,
             after,
@@ -1391,17 +1401,16 @@ pub(super) fn collect_resource_bitvector_variables(
     resource: &CResourceFact,
     variables: &mut BTreeSet<Variable>,
 ) {
+    collect_c_resource_bitvector_variables(resource.resource(), variables);
+}
+
+pub(super) fn collect_c_resource_bitvector_variables(
+    resource: &CResource,
+    variables: &mut BTreeSet<Variable>,
+) {
     match resource {
-        CResourceFact::Own(CResource::Memory(range))
-        | CResourceFact::View(CResource::Memory(range)) => {
-            collect_c_memory_range_bitvector_variables(range, variables)
-        }
-        CResourceFact::Own(
-            CResource::Composite { arguments, .. } | CResource::Token { arguments, .. },
-        )
-        | CResourceFact::View(
-            CResource::Composite { arguments, .. } | CResource::Token { arguments, .. },
-        ) => {
+        CResource::Memory(range) => collect_c_memory_range_bitvector_variables(range, variables),
+        CResource::Composite { arguments, .. } | CResource::Token { arguments, .. } => {
             for argument in arguments {
                 collect_c_value_bitvector_variables(argument, variables);
             }
@@ -1716,6 +1725,14 @@ pub(super) fn substitute_bitvector_variable_in_proposition(
             right_base: substitute_bitvector_variable_in_pointer(right_base, from, to),
             right_start: substitute_bitvector_variable(right_start, from, to),
             right_end: substitute_bitvector_variable(right_end, from, to),
+        },
+        Proposition::CResourceSeparate { left, right } => Proposition::CResourceSeparate {
+            left: substitute_bitvector_variable_in_c_resource(left, from, to),
+            right: substitute_bitvector_variable_in_c_resource(right, from, to),
+        },
+        Proposition::CResourceContains { parent, child } => Proposition::CResourceContains {
+            parent: substitute_bitvector_variable_in_c_resource(parent, from, to),
+            child: substitute_bitvector_variable_in_c_resource(child, from, to),
         },
         Proposition::CMemoryMutatesOnly {
             before,
@@ -2545,7 +2562,7 @@ pub(super) fn substitute_bitvector_variable_in_resource(
     }
 }
 
-fn substitute_bitvector_variable_in_c_resource(
+pub(super) fn substitute_bitvector_variable_in_c_resource(
     resource: &CResource,
     from: Variable,
     to: &Bitvector32Term,
@@ -3023,6 +3040,7 @@ pub(super) fn solve_builtin_prop(proposition: &Proposition) -> bool {
             right_start,
             right_end,
         ),
+        Proposition::CResourceSeparate { .. } | Proposition::CResourceContains { .. } => false,
         Proposition::CMemoryCanStore {
             memory,
             pointer,

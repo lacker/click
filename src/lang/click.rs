@@ -222,6 +222,17 @@ pub enum ResourceClause {
     },
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ResourceSubject {
+    Memory(ContractSegment),
+    Declared {
+        kind: ResourceKind,
+        name: String,
+        arguments: Vec<ContractExpression>,
+        parameter_types: Vec<C0Type>,
+    },
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ResourceAccessMode {
     Own,
@@ -250,6 +261,14 @@ pub enum ClickProposition {
     Disjoint {
         left: ContractSegment,
         right: ContractSegment,
+    },
+    Separate {
+        left: ResourceSubject,
+        right: ResourceSubject,
+    },
+    Contains {
+        parent: ResourceSubject,
+        child: ResourceSubject,
     },
     Loadable {
         segment: ContractSegment,

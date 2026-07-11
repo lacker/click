@@ -65,28 +65,77 @@ fn memory_resource_fact_core_is_read_permission() {
 }
 
 #[test]
-fn resource_context_observes_write_disjointness() {
+fn resource_context_observes_write_separation() {
     let base = Pointer {
         block: "p".to_string(),
         offset: PointerOffsetTerm::Constant(0),
     };
+    let left = memory_range(base.clone(), 0, 1);
+    let right = memory_range(base.clone(), 1, 2);
     let facts = ResourceContext::new()
-        .unchecked_with_fact(write_element(base.clone(), 0, 1))
-        .unchecked_with_fact(write_element(base.clone(), 1, 2))
+        .unchecked_with_fact(CResourceFact::own_memory(left.clone()))
+        .unchecked_with_fact(CResourceFact::own_memory(right.clone()))
         .observable_facts(&Assumptions::new())
         .expect("adjacent writes should be a valid resource context");
 
     assert_eq!(
         facts,
-        vec![Proposition::CMemoryDisjoint {
-            left_base: base.clone(),
-            left_start: Bitvector32Term::Constant(0),
-            left_end: Bitvector32Term::Constant(1),
-            right_base: base,
-            right_start: Bitvector32Term::Constant(1),
-            right_end: Bitvector32Term::Constant(2),
+        vec![Proposition::CResourceSeparate {
+            left: CResource::Memory(left),
+            right: CResource::Memory(right),
         }]
     );
+}
+
+#[test]
+fn resource_separation_proves_memory_disjointness() {
+    let base = Pointer {
+        block: "p".to_string(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let left = memory_range(base.clone(), 0, 1);
+    let right = memory_range(base.clone(), 1, 2);
+    let assumptions = Assumptions::new().assume_proposition(Proposition::CResourceSeparate {
+        left: CResource::Memory(left),
+        right: CResource::Memory(right),
+    });
+
+    assert!(assumptions.proves(&Proposition::CMemoryDisjoint {
+        left_base: base.clone(),
+        left_start: Bitvector32Term::Constant(0),
+        left_end: Bitvector32Term::Constant(1),
+        right_base: base,
+        right_start: Bitvector32Term::Constant(1),
+        right_end: Bitvector32Term::Constant(2),
+    }));
+}
+
+#[test]
+fn resource_contains_projects_separation_to_children() {
+    let base = Pointer {
+        block: "p".to_string(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let parent = CResource::Token {
+        name: "parent".to_string(),
+        arguments: vec![],
+    };
+    let child = CResource::Memory(memory_range(base.clone(), 0, 1));
+    let other = CResource::Memory(memory_range(base.clone(), 1, 2));
+    let assumptions = Assumptions::new()
+        .assume_proposition(Proposition::CResourceSeparate {
+            left: parent.clone(),
+            right: other.clone(),
+        })
+        .assume_proposition(Proposition::CResourceContains {
+            parent,
+            child: child.clone(),
+        });
+
+    assert!(assumptions.proves(&Proposition::CResourceSeparate {
+        left: child,
+        right: other,
+    }));
 }
 
 #[test]
