@@ -319,21 +319,21 @@ fn parses_resource_relation_propositions() {
 }
 
 #[test]
-fn parses_disjoint_requirement() {
+fn parses_memory_separate_requirement() {
     let source = r#"
             verifying "copy.c";
 
             int32 copy(int32* dst, int32* src, int32 n) {
-                requires disjoint(dst[0..n], src[0..n]);
+                requires separate(memory(dst[0..n]), memory(src[0..n]));
                 ensures result == n by auto;
             }
         "#;
-    let file = parse(source).expect("disjoint requirement should parse");
+    let file = parse(source).expect("memory separation requirement should parse");
     let function = &file.function_blocks()[0];
 
     assert!(matches!(
         function.requires()[0],
-        Requirement::Disjoint { .. }
+        Requirement::Proposition(ClickProposition::Separate { .. })
     ));
 }
 
@@ -1800,7 +1800,7 @@ fn verifies_quantified_old_memory_postcondition() {
 }
 
 #[test]
-fn disjoint_requirement_proves_symbolic_unwritten_read() {
+fn separate_requirement_proves_symbolic_unwritten_read() {
     let c_source = r#"
             int32 write_i_read_j(int32 p[], int32 i, int32 j, int32 n) {
                 p[i] = 9;
@@ -1820,14 +1820,14 @@ fn disjoint_requirement_proves_symbolic_unwritten_read() {
                 requires loadable(p[0..n]);
                 requires write(p[i..i + 1]);
                 requires read(p[j..j + 1]);
-                requires disjoint(p[i..i + 1], p[j..j + 1]);
+                requires separate(memory(p[i..i + 1]), memory(p[j..j + 1]));
                 mutable p[i..i + 1] by frame;
                 ensures keeps_j: result == old(p[j]) by auto;
             }
         "#;
 
     let verified = verify_c0_sources(click_source, &[("write_i_read_j.c", c_source)])
-        .expect("disjoint singleton ranges should prove symbolic unwritten read");
+        .expect("separate singleton ranges should prove symbolic unwritten read");
 
     assert_eq!(verified.len(), 2);
 }
@@ -2980,7 +2980,7 @@ fn verifies_symbolic_copy_segment_invariant() {
                 requires loadable(src[0..n]);
                 requires write(dst[0..n]);
                 requires read(src[0..n]);
-                requires disjoint(dst[0..n], src[0..n]);
+                requires separate(memory(dst[0..n]), memory(src[0..n]));
                 for loop(0) {
                     invariant i >= 0 by auto;
                     invariant i <= n by auto;
@@ -3034,7 +3034,7 @@ fn auto_certificate_replays_for_loop_frame_claim() {
                 requires loadable(src[0..n]);
                 requires write(dst[0..n]);
                 requires read(src[0..n]);
-                requires disjoint(dst[0..n], src[0..n]);
+                requires separate(memory(dst[0..n]), memory(src[0..n]));
                 for loop(0) {
                     invariant i >= 0 by auto;
                     invariant i <= n by auto;
@@ -3083,7 +3083,7 @@ fn auto_certificate_replays_for_loop_frame_claim() {
                 requires loadable(src[0..n]);
                 requires write(dst[0..n]);
                 requires read(src[0..n]);
-                requires disjoint(dst[0..n], src[0..n]);
+                requires separate(memory(dst[0..n]), memory(src[0..n]));
                 for loop(0) {
                     invariant i >= 0 by auto;
                     invariant i <= n by auto;

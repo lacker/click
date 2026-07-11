@@ -52,8 +52,8 @@ value-producing expression inside `j = i++`.
 
 ## Aliasing Is Default
 
-Distinct pointer parameters may alias. Add `disjoint(...)` whenever a proof
-depends on non-overlap.
+Distinct pointer parameters may alias. Add
+`separate(memory(...), memory(...))` whenever a proof depends on non-overlap.
 
 ## Requirements Cannot Freely Read Memory
 
@@ -135,7 +135,7 @@ entry memory snapshots. This supports direct invariants such as
 ## Loop Invariants Need Explicit Facts
 
 Pointer-writing loops do not implicitly preserve memory. Use invariants,
-`mutable` effects, and `disjoint` requirements. Symbolic loops need invariants
+`mutable` effects, and `separate(memory(...), memory(...))` requirements. Symbolic loops need invariants
 for arithmetic bounds, memory safety, and postconditions.
 
 ## `simp` Is Not A Solver

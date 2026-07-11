@@ -1,12 +1,12 @@
-# shifted copy effect uses covering disjoint facts
+# shifted copy effect uses covering separate facts
 
-This checks that a shifted loop effect summary can use a broader disjoint
+This checks that a shifted loop effect summary can use a broader separation
 requirement. The loop only mutates `dst[1..n]`, stated as
 `(dst + 1)[0..n - 1]`, while the requirement states that the whole
-`dst[0..n]` range is disjoint from `src[0..n]`.
+`dst[0..n]` range is separate from `src[0..n]`.
 
-```c filename=shifted_copy_effect_uses_covering_disjoint.c
-int32 shifted_copy_effect_uses_covering_disjoint(int32 dst[], int32 src[], int32 n) {
+```c filename=shifted_copy_effect_uses_covering_separate.c
+int32 shifted_copy_effect_uses_covering_separate(int32 dst[], int32 src[], int32 n) {
     int32 i;
     i = 1;
     while (i < n) {
@@ -18,16 +18,16 @@ int32 shifted_copy_effect_uses_covering_disjoint(int32 dst[], int32 src[], int32
 ```
 
 ```click
-verifying "shifted_copy_effect_uses_covering_disjoint.c";
+verifying "shifted_copy_effect_uses_covering_separate.c";
 
-int32 shifted_copy_effect_uses_covering_disjoint(int32 dst[], int32 src[], int32 n) {
+int32 shifted_copy_effect_uses_covering_separate(int32 dst[], int32 src[], int32 n) {
     requires n >= 1;
     requires n <= 2147483647;
     requires loadable(dst[0..n]);
     requires loadable(src[0..n]);
     requires write(dst[0..n]);
     requires read(src[0..n]);
-    requires disjoint(dst[0..n], src[0..n]);
+    requires separate(memory(dst[0..n]), memory(src[0..n]));
     for loop(0) {
         invariant i >= 1;
         invariant i <= n;

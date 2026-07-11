@@ -15,7 +15,7 @@ Click does not assume `dst` and `src` are different. If a proof depends on
 non-overlap, state it:
 
 ```click
-requires disjoint(dst[0..1], src[0..1]);
+requires separate(memory(dst[0..1]), memory(src[0..1]));
 ```
 
 ## Why Aliasing Matters
@@ -26,7 +26,7 @@ cell.
 
 That fact can come from:
 
-- a `disjoint(...)` requirement,
+- a `separate(memory(...), memory(...))` requirement,
 - a precise `mutable` footprint,
 - a loop effect summary,
 - or an explicit invariant.
@@ -61,7 +61,7 @@ ensures forall (int32 k) {
 } by auto;
 ```
 
-Frame facts and disjointness often make these postconditions provable without
+Frame facts and separation often make these postconditions provable without
 copying every old value into a separate variable.
 
 ## Loop Frames

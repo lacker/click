@@ -70,15 +70,15 @@ Larger example projects live directly under `examples/`. They contain ordinary
 - `mdtests/write_second_old_rejects_overwritten_cell.md`: overwritten old-value
   rejection.
 
-## Aliasing And Disjointness
+## Aliasing And Separation
 
-- `mdtests/copy3_array_demo.md`: `loadable`, `disjoint`, and old source
+- `mdtests/copy3_array_demo.md`: `loadable`, `separate(memory(...))`, and old source
   values.
-- `mdtests/pointer_params_may_alias_without_disjoint.md`: aliasing is allowed by
+- `mdtests/pointer_params_may_alias_without_separate.md`: aliasing is allowed by
   default.
-- `mdtests/disjoint_symbolic_unwritten_read.md`: symbolic disjointness.
-- `mdtests/shifted_copy_effect_uses_covering_disjoint.md`: effect summary plus
-  covering disjointness.
+- `mdtests/separate_symbolic_unwritten_read.md`: symbolic memory separation.
+- `mdtests/shifted_copy_effect_uses_covering_separate.md`: effect summary plus
+  covering separation.
 
 ## Local Arrays
 
@@ -212,15 +212,15 @@ sequence:
   bundle another token resource with memory permission and a fact.
 - `mdtests/composite_resource_two_arrays.md`: a composite resource can
   bundle permissions for multiple arrays.
-- `mdtests/composite_resource_disjoint_fact.md`: a composite resource can
-  package a `disjoint(...)` fact and expose it while unfolded.
+- `mdtests/composite_resource_separate_fact.md`: a composite resource can
+  package a `separate(...)` fact and expose it while unfolded.
 - `mdtests/composite_resource_folded_pure_fact_projection.md`: a folded
   composite resource exposes pure facts while held.
 - `mdtests/composite_resource_folded_memory_fact_projection.md`: a folded
   composite resource exposes memory facts while keeping contained permission
   hidden.
-- `mdtests/composite_resource_folded_disjoint_fact_projection.md`: a folded
-  composite resource exposes a packaged `disjoint(...)` fact.
+- `mdtests/composite_resource_folded_separate_fact_projection.md`: a folded
+  composite resource exposes a packaged `separate(...)` fact.
 - `mdtests/composite_resource_folded_nested_fact_projection.md`: a folded
   composite resource does not recursively expose nested facts without
   observation.
@@ -261,13 +261,12 @@ sequence:
   contained views at entry.
 - `mdtests/composite_resource_observe_nested_separate_contains.md`: explicit
   chained observation exposes `contains(...)` and `separate(...)` facts for a
-  nested composite resource, then derives the memory-specific `disjoint(...)`
-  consequence.
-- `mdtests/composite_resource_owned_buffer_nested_hidden_disjoint_gap.md`:
+  nested composite resource.
+- `mdtests/composite_resource_owned_buffer_nested_hidden_separate_gap.md`:
   expected-fail coverage for nested hidden footprints that do not yet summarize
-  `disjoint(...)` facts across composite-resource boundaries.
-- `mdtests/composite_resource_owner_buffer_hidden_disjoint_projection.md`:
-  hidden contained writes imply folded-resource `disjoint(...)` facts without
+  `separate(...)` facts across composite-resource boundaries.
+- `mdtests/composite_resource_owner_buffer_hidden_separate_projection.md`:
+  hidden contained writes imply folded-resource `separate(...)` facts without
   exposing the hidden permissions.
 - `mdtests/composite_resource_rejects_bad_origin.md`: folding a composite
   resource fails when its fact has not been established.
@@ -275,8 +274,8 @@ sequence:
   token is still consumed linearly through a call summary.
 - `mdtests/composite_resource_rejects_duplicate_contains.md`: composite
   resources reject duplicate contained resource tokens.
-- `mdtests/write_resources_imply_disjoint.md`: two visible `write(...)`
-  resources imply a `disjoint(...)` fact without a separate requirement.
+- `mdtests/write_resources_imply_separate.md`: two visible `write(...)`
+  resources imply a `separate(...)` fact without a separate requirement.
 - `mdtests/write_resources_reject_proven_overlap.md`: provably overlapping
   visible `write(...)` resources are rejected.
 - `mdtests/composite_resource_rejects_cycle.md`: composite-resource

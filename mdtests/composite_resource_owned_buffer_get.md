@@ -27,7 +27,7 @@ resource owned_buffer(owner: struct owner*) {
     fact 1 <= owner->len;
     fact owner->len <= owner->cap;
     fact 1 <= owner->cap;
-    fact disjoint(owner[0..3], (owner->data)[0..1]);
+    fact separate(memory(owner[0..3]), memory((owner->data)[0..1]));
 }
 
 verifying "buffer_get_first.c";

@@ -25,7 +25,7 @@ in `docs/`; do not treat this file as a design doc.
   permissions.
 - `separate(resource1, resource2)` and `contains(parent, child)` are Click pure
   facts. Composite observation/folded projection emits direct relation facts,
-  and the kernel uses them to derive memory-specific `disjoint(...)`.
+  and the kernel uses memory `separate(...)` facts for frame reasoning.
 - `loadable(segment)` is now a Click proposition that lowers to the kernel
   loadability fact (`CMemoryLoadable`). Use it in composite `fact` clauses
   when a resource should expose memory loadability without exposing extra
@@ -56,7 +56,7 @@ in `docs/`; do not treat this file as a design doc.
   - `mdtests/composite_resource_execute_step_direct_mutate.md`
   - `mdtests/composite_resource_view_then_mutate.md`
   - `mdtests/composite_resource_observe_nested_separate_contains.md`
-  - `mdtests/composite_resource_owned_buffer_nested_hidden_disjoint_gap.md`
+  - `mdtests/composite_resource_owned_buffer_nested_hidden_separate_gap.md`
 - The latest verification pass recorded here:
   - `cargo fmt`
   - `cargo check`
@@ -74,8 +74,8 @@ in `docs/`; do not treat this file as a design doc.
    `contains(parent, child)` facts for owned contained resources and direct
    `separate(child1, child2)` facts for owned sibling resources. The kernel
    proves `contains` transitively, projects `separate` through contained
-   children, and derives memory `disjoint(...)` from
-   `separate(memory(...), memory(...))`.
+   children, and uses memory `separate(...)` to prove memory non-overlap for
+   frame reasoning.
 
 2. **Hidden footprint projection**
 

@@ -755,11 +755,6 @@ pub(super) fn describe_click_proposition(proposition: &ClickProposition) -> Stri
             describe_contract_expression(left),
             describe_contract_expression(right)
         ),
-        ClickProposition::Disjoint { left, right } => format!(
-            "disjoint({}, {})",
-            describe_contract_segment(left),
-            describe_contract_segment(right)
-        ),
         ClickProposition::Separate { left, right } => format!(
             "separate({}, {})",
             describe_resource_subject(left),

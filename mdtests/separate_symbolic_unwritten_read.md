@@ -1,8 +1,8 @@
-# disjoint proves a symbolic unwritten read
+# separate proves a symbolic unwritten read
 
-This checks that `requires disjoint(...)` is consumed by effect reasoning. The
+This checks that `requires separate(memory(...), memory(...))` is consumed by effect reasoning. The
 function writes `p[i]` and reads `p[j]`; the postcondition follows because the
-two singleton ranges are declared disjoint.
+two singleton ranges are declared separate.
 
 ```c filename=write_i_read_j.c
 int32 write_i_read_j(int32 p[], int32 i, int32 j, int32 n) {
@@ -24,7 +24,7 @@ int32 write_i_read_j(int32 p[], int32 i, int32 j, int32 n) {
     requires loadable(p[0..n]);
     requires write(p[i..i + 1]);
     requires read(p[j..j + 1]);
-    requires disjoint(p[i..i + 1], p[j..j + 1]);
+    requires separate(memory(p[i..i + 1]), memory(p[j..j + 1]));
     mutable p[i..i + 1] by frame;
     ensures keeps_j: result == old(p[j]) by auto;
 }

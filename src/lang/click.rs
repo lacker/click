@@ -138,10 +138,6 @@ pub enum Requirement {
     LoadableSegment {
         segment: ContractSegment,
     },
-    Disjoint {
-        left: ContractSegment,
-        right: ContractSegment,
-    },
     Resource(ResourceClause),
     Proposition(ClickProposition),
 }
@@ -257,10 +253,6 @@ pub enum ClickProposition {
         left: ContractExpression,
         operator: ComparisonOperator,
         right: ContractExpression,
-    },
-    Disjoint {
-        left: ContractSegment,
-        right: ContractSegment,
     },
     Separate {
         left: ResourceSubject,

@@ -148,7 +148,7 @@ try_compose(left, right) -> Result<M, InvalidReason>
 
 That should be treated as `compose` followed by a validity check. The
 conceptual model remains useful because it gives a clear answer to questions
-like "why do two writes imply disjointness?" They imply it because a valid
+like "why do two writes imply non-overlap?" They imply it because a valid
 composition containing both write authorities rules out overlap.
 
 ## Assertions
@@ -233,7 +233,7 @@ Examples:
 - A declared `fact loadable(data[0..cap])` exposes a pure memory-loadability fact
   for the segment without exposing the contained resource fact that justified it.
 - A valid state containing two owned memory resources exposes that their ranges
-  are disjoint.
+  are separate.
 - An owned memory resource exposes its viewed memory core, but the viewed core
   is a resource fact, not a pure fact.
 
@@ -246,16 +246,16 @@ future summary mechanism, not in default `auto` behavior.
 
 In the current code, `ResourceContext::observable_facts(...)` is the beginning
 of the pure-fact side of this interface. It derives pure facts from the
-concrete resource state after checking resource-state validity. Today it exposes disjointness facts
-from valid compositions of multiple owned memory resources. Composite-resource
+concrete resource state after checking resource-state validity. Today it exposes
+separation facts from valid compositions of multiple owned memory resources. Composite-resource
 `fact` clauses are grouped into the same composite-resource observable-pure-facts
 projection path. Their lowering still lives in the Click proof layer because it
 depends on resource definitions, substitution, and memory materialization.
 
-## Disjointness And Separation
+## Memory Separation
 
-`disjoint(range1, range2)` is a memory-specific proposition. It should not be
-treated as the general primitive for separation logic.
+Click does not expose a separate memory-specific non-overlap predicate. Memory
+non-overlap is stated through the general resource-separation proposition:
 
 The more general idea is valid composition of resource facts:
 
@@ -263,19 +263,13 @@ The more general idea is valid composition of resource facts:
 valid(compose(own(memory(range1)), own(memory(range2))))
 ```
 
-Click exposes that general idea as:
-
 ```click
-separate(resource1, resource2)
+separate(memory(range1), memory(range2))
 ```
 
 `separate(r1, r2)` means the owned versions of `r1` and `r2` can coexist in the
-resource algebra. For owned memory facts, that valid composition has a useful
-memory-specific consequence:
-
-```click
-separate(memory(range1), memory(range2)) => disjoint(range1, range2)
-```
+resource algebra. For owned memory facts, that valid composition rules out
+overlap between the memory ranges.
 
 Click also exposes resource inclusion/decomposition as:
 
@@ -292,7 +286,7 @@ Composite resources project direct `contains(parent, child)` facts for owned
 contained resources and direct `separate(child1, child2)` facts for owned
 sibling resources. Deeper facts come from deterministic theorem steps:
 `contains` is transitive, `separate` projects through contained children, and
-memory `separate` implies memory `disjoint(...)`.
+memory `separate` implies memory non-overlap for frame reasoning.
 
 ## Memory Resource Rules
 
@@ -363,7 +357,7 @@ still mostly hardcoded:
 - Memory, token, and composite resources still use family-specific entailment,
   consume, and combine functions.
 - `ResourceContext::observable_facts(...)` is the beginning of an explicit
-  observable-facts operation, currently covering owned-memory disjointness.
+  observable-facts operation, currently covering owned-memory separation.
   Projection paths call it unconditionally so observable-facts projection also
   validates the current resource context.
 - Composite-resource observable-facts projection now combines contained
@@ -378,7 +372,7 @@ explicit:
    compose, valid, core, and observable facts.
 2. Treat the current memory rules as the first resource-family implementation.
 3. Keep composite resources as declared resources with composite-body laws.
-4. Move hidden disjointness reasoning toward "facts derived from valid
+4. Move hidden memory-separation reasoning toward "facts derived from valid
    composition" instead of special cases tied to a particular projection path.
 5. Avoid adding new resource features until they can be expressed through this
    interface.

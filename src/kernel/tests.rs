@@ -111,6 +111,32 @@ fn resource_separation_proves_memory_disjointness() {
 }
 
 #[test]
+fn resource_separation_covers_larger_memory_range() {
+    let base = Pointer {
+        block: "p".to_string(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let left_first = CResource::Memory(memory_range(base.clone(), 0, 1));
+    let left_second = CResource::Memory(memory_range(base.clone(), 1, 2));
+    let left_combined = CResource::Memory(memory_range(base.clone(), 0, 2));
+    let right = CResource::Memory(memory_range(base, 10, 11));
+    let assumptions = Assumptions::new()
+        .assume_proposition(Proposition::CResourceSeparate {
+            left: left_first,
+            right: right.clone(),
+        })
+        .assume_proposition(Proposition::CResourceSeparate {
+            left: left_second,
+            right: right.clone(),
+        });
+
+    assert!(assumptions.proves(&Proposition::CResourceSeparate {
+        left: left_combined,
+        right,
+    }));
+}
+
+#[test]
 fn resource_contains_projects_separation_to_children() {
     let base = Pointer {
         block: "p".to_string(),

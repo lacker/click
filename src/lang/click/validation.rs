@@ -1019,9 +1019,7 @@ fn collect_resource_fact_scalar_assumptions_from_proposition(
             }
             Ok(())
         }
-        ClickProposition::Disjoint { .. }
-        | ClickProposition::Separate { .. }
-        | ClickProposition::Contains { .. } => Ok(()),
+        ClickProposition::Separate { .. } | ClickProposition::Contains { .. } => Ok(()),
         ClickProposition::And(left, right) => {
             collect_resource_fact_scalar_assumptions_from_proposition(
                 left,
@@ -1111,26 +1109,6 @@ fn collect_resource_fact_reads_from_proposition(
                 resource_name,
             )?;
             collect_resource_fact_reads_from_contract_expression(
-                right,
-                predicate_definitions,
-                click_function_definitions,
-                visited_predicates,
-                visited_functions,
-                reads,
-                resource_name,
-            )
-        }
-        ClickProposition::Disjoint { left, right } => {
-            collect_resource_fact_reads_from_contract_segment(
-                left,
-                predicate_definitions,
-                click_function_definitions,
-                visited_predicates,
-                visited_functions,
-                reads,
-                resource_name,
-            )?;
-            collect_resource_fact_reads_from_contract_segment(
                 right,
                 predicate_definitions,
                 click_function_definitions,
@@ -1981,10 +1959,6 @@ fn validate_proposition_expression_types(
             let _ = infer_contract_expression_type(right, variables, click_functions, context)?;
             Ok(())
         }
-        ClickProposition::Disjoint { left, right } => {
-            validate_contract_segment_expression_types(left, variables, click_functions, context)?;
-            validate_contract_segment_expression_types(right, variables, click_functions, context)
-        }
         ClickProposition::Separate { left, right } => {
             validate_resource_subject_expression_types(left, variables, click_functions, context)?;
             validate_resource_subject_expression_types(right, variables, click_functions, context)
@@ -2573,10 +2547,6 @@ fn validate_predicate_calls_in_proposition(
             validate_contract_expression_calls(left, click_functions, context)?;
             validate_contract_expression_calls(right, click_functions, context)
         }
-        ClickProposition::Disjoint { left, right } => {
-            validate_contract_segment_calls(left, click_functions, context)?;
-            validate_contract_segment_calls(right, click_functions, context)
-        }
         ClickProposition::Separate { left, right } => {
             validate_resource_subject_calls(left, click_functions, context)?;
             validate_resource_subject_calls(right, click_functions, context)
@@ -2772,10 +2742,6 @@ fn validate_if_condition_proposition(
             validate_contract_expression_calls(left, click_functions, context)?;
             validate_contract_expression_calls(right, click_functions, context)
         }
-        ClickProposition::Disjoint { left, right } => {
-            validate_contract_segment_calls(left, click_functions, context)?;
-            validate_contract_segment_calls(right, click_functions, context)
-        }
         ClickProposition::Separate { left, right } => {
             validate_resource_subject_calls(left, click_functions, context)?;
             validate_resource_subject_calls(right, click_functions, context)
@@ -2883,10 +2849,6 @@ fn proposition_contains_old_expression(proposition: &ClickProposition) -> bool {
         ClickProposition::Comparison { left, right, .. } => {
             contains_old_expression(left) || contains_old_expression(right)
         }
-        ClickProposition::Disjoint { left, right } => {
-            contract_segment_contains_old_expression(left)
-                || contract_segment_contains_old_expression(right)
-        }
         ClickProposition::Separate { left, right } => {
             resource_subject_contains_old_expression(left)
                 || resource_subject_contains_old_expression(right)
@@ -2987,10 +2949,6 @@ fn proposition_contains_at_expression(proposition: &ClickProposition) -> bool {
     match proposition {
         ClickProposition::Comparison { left, right, .. } => {
             contains_at_expression(left) || contains_at_expression(right)
-        }
-        ClickProposition::Disjoint { left, right } => {
-            contract_segment_contains_at_expression(left)
-                || contract_segment_contains_at_expression(right)
         }
         ClickProposition::Separate { left, right } => {
             resource_subject_contains_at_expression(left)
@@ -3114,10 +3072,6 @@ fn collect_click_function_calls_in_proposition(
         ClickProposition::Comparison { left, right, .. } => {
             collect_click_function_calls(left, calls);
             collect_click_function_calls(right, calls);
-        }
-        ClickProposition::Disjoint { left, right } => {
-            collect_click_function_calls_in_segment(left, calls);
-            collect_click_function_calls_in_segment(right, calls);
         }
         ClickProposition::Separate { left, right } => {
             collect_click_function_calls_in_resource_subject(left, calls);

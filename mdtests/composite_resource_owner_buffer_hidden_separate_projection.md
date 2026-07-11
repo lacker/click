@@ -1,6 +1,6 @@
-# owner buffer hidden writes imply folded disjoint
+# owner buffer hidden writes imply folded separate
 
-This checks that a folded composite resource exposes derived `disjoint(...)`
+This checks that a folded composite resource exposes derived `separate(...)`
 facts from its hidden contained `write(...)` permissions, while keeping the
 permissions themselves hidden.
 
@@ -28,7 +28,7 @@ verifying "observe_owner.c";
 int32 observe_owner(struct owner* owner) {
     requires owned_buffer(owner);
 
-    ensures disjoint(owner[0..2], (owner->data)[0..owner->len]) by auto;
+    ensures separate(memory(owner[0..2]), memory((owner->data)[0..owner->len])) by auto;
 }
 ```
 

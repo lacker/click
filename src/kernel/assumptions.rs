@@ -2415,7 +2415,7 @@ impl Assumptions {
     }
 
     pub(super) fn proves_resource_separate(&self, left: &CResource, right: &CResource) -> bool {
-        self.prop_facts.iter().any(|proposition| {
+        if self.prop_facts.iter().any(|proposition| {
             let Proposition::CResourceSeparate {
                 left: fact_left,
                 right: fact_right,
@@ -2427,7 +2427,16 @@ impl Assumptions {
                 && self.proves_resource_contains(fact_right, right)
                 || self.proves_resource_contains(fact_left, right)
                     && self.proves_resource_contains(fact_right, left)
-        })
+        }) {
+            return true;
+        }
+
+        if let (CResource::Memory(left), CResource::Memory(right)) = (left, right) {
+            return self.range_covered_by_resource_separate_ranges(left, right)
+                || self.range_covered_by_resource_separate_ranges(right, left);
+        }
+
+        false
     }
 
     fn resource_contains_builtin(&self, parent: &CResource, child: &CResource) -> bool {
@@ -2625,7 +2634,14 @@ impl Assumptions {
                 && self.pointer_in_range(pointer, right_base, right_start, right_end)
                 || self.range_covered_by_fact_range(range, right_base, right_start, right_end)
                     && self.pointer_in_range(pointer, left_base, left_start, left_end)
-        })
+        }) || self.proves_resource_separate(
+            &CResource::Memory(range.clone()),
+            &CResource::Memory(CMemoryRange::new(
+                pointer.clone(),
+                Bitvector32Term::Constant(0),
+                Bitvector32Term::Constant(1),
+            )),
+        )
     }
 
     pub(super) fn range_covered_by_fact_range(

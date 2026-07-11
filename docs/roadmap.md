@@ -131,7 +131,7 @@ Likely additions:
 - Struct-field frames:
   preserve fields or ranges not written by a function.
 - Separation-style predicates:
-  standard-library predicates for disjoint objects, object fields, byte strings,
+  standard-library predicates for separated objects, object fields, byte strings,
   arrays, and maybe linked structures.
 - Better alias diagnostics:
   failures should say which write might alias which old read or resource fact.
@@ -209,7 +209,7 @@ Likely additions:
 - Incremental verification:
   rerun the affected functions/specs, not the whole world.
 - Counterexample-oriented failure output:
-  path conditions, failing memory cell, missing bound, missing disjointness, or
+  path conditions, failing memory cell, missing bound, missing separation, or
   unsupported syntax.
 
 Design notes:

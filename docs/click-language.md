@@ -108,7 +108,7 @@ requires loadable(p, 12);
 requires loadable(p[0..n]);
 requires loadable((p + 1)[0..1]);
 requires loadable(p[0..n]);
-requires disjoint(dst[0..n], src[0..n]);
+requires separate(memory(dst[0..n]), memory(src[0..n]));
 requires read(p[0..1]);
 requires write(p[0..1]);
 ```
@@ -117,11 +117,10 @@ Requirement labels use the same `label:` spelling as `ensures` labels. Labels
 are optional, but they are the preferred way for proof-step scripts to refer to a
 specific precondition, for example `choose(k from requirement has_k);`.
 
-`loadable(base[start..end])` and `disjoint(left[start..end],
-right[start..end])` use half-open `int32` element ranges. The byte count is
-derived from the base pointer's element type: four bytes for `int32[]`, one
-byte for `uint8[]`. This `..` syntax is Click contract syntax, not C
-fragment syntax.
+`loadable(base[start..end])` and `memory(base[start..end])` use half-open
+`int32` element ranges. The byte count is derived from the base pointer's
+element type: four bytes for `int32[]`, one byte for `uint8[]`. This `..`
+syntax is Click contract syntax, not C fragment syntax.
 
 `loadable(base[start..end])` is the proposition form of memory loadability
 for a segment. Use it when the fact needs to appear where Click expects a
@@ -190,8 +189,7 @@ resource uncalled(flag: int32*) {
 Holding the folded abstract token exposes its immediate pure facts and viewed
 resource facts, but not its owned contained permissions. Hidden contained
 owned resources also expose direct `contains(...)` and `separate(...)` pure
-facts, and memory-specific `disjoint(...)` facts can be derived from
-`separate(memory(...), memory(...))`. In an explicit proof script,
+facts. In an explicit proof script,
 `observe(uncalled(flag));` non-destructively records this projection while
 keeping owned permissions hidden. `unfold(uncalled(flag));` consumes the
 abstract token resource fact and exposes its contained resource facts for

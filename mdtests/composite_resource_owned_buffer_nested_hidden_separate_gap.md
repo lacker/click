@@ -1,7 +1,7 @@
-# composite resource owned buffer nested hidden disjoint gap
+# composite resource owned buffer nested hidden separate gap
 
 This records an open design gap. Direct hidden contained `write(...)`
-resources can expose folded-resource `disjoint(...)` facts, but nested
+resources can expose folded-resource `separate(...)` facts, but nested
 composite-resource footprints are not summarized across the containing
 resource's direct fields.
 
@@ -36,10 +36,10 @@ verifying "observe_nested_owner_buffer.c";
 int32 observe_nested_owner_buffer(struct owner* owner) {
     requires nested_owned_buffer(owner);
 
-    ensures disjoint(owner[0..3], (owner->data)[0..owner->cap]) by auto;
+    ensures separate(memory(owner[0..3]), memory((owner->data)[0..owner->cap])) by auto;
 }
 ```
 
 ```expect
-fail: disjoint
+fail: separate
 ```

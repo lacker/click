@@ -26,7 +26,7 @@ resource owned_one_cell(owner: struct owner*, data: int32*) {
 verifying "set_owned_first.c";
 
 int32 set_owned_first(struct owner* owner, int32 data[]) {
-    requires disjoint(owner[0..1], data[0..1]);
+    requires separate(memory(owner[0..1]), memory(data[0..1]));
     requires owned_one_cell(owner, data);
 
     ensures owned_one_cell(owner, data) by {

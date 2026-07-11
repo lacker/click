@@ -965,36 +965,6 @@ pub(super) fn lower_predicate_body_proposition_with_environment(
             )?;
             comparison_proposition(left, *operator, right).map_err(|error| error.message)
         }
-        ClickProposition::Disjoint { left, right } => {
-            let left = evaluate_predicate_contract_segment(
-                values,
-                array_refs,
-                memory,
-                assumptions,
-                left,
-                predicate_environment,
-                click_function_environment,
-                active_functions,
-            )?;
-            let right = evaluate_predicate_contract_segment(
-                values,
-                array_refs,
-                memory,
-                assumptions,
-                right,
-                predicate_environment,
-                click_function_environment,
-                active_functions,
-            )?;
-            Ok(Proposition::CMemoryDisjoint {
-                left_base: left.base,
-                left_start: left.start,
-                left_end: left.end,
-                right_base: right.base,
-                right_start: right.start,
-                right_end: right.end,
-            })
-        }
         ClickProposition::Separate { left, right } => {
             let left = evaluate_predicate_resource_subject(
                 values,
@@ -1428,7 +1398,7 @@ fn evaluate_predicate_contract_segment(
     active_functions: &mut BTreeSet<String>,
 ) -> Result<EvaluatedContractSegment, String> {
     if segment.state != ContractSegmentState::Current {
-        return Err("`old(...)` is not available in `disjoint` propositions".to_string());
+        return Err("`old(...)` is not available in memory resource subjects".to_string());
     }
     let base = evaluate_predicate_contract_expression(
         values,
@@ -3149,40 +3119,6 @@ pub(super) fn lower_outcome_proposition_with_environment(
             )?;
             comparison_proposition(left, *operator, right).map_err(|error| error.message)
         }
-        ClickProposition::Disjoint { left, right } => {
-            let left = evaluate_contract_segment_with_environment(
-                values,
-                array_refs,
-                pre_state,
-                post_state,
-                result,
-                assumptions,
-                left,
-                predicate_environment,
-                click_function_environment,
-                active_functions,
-            )?;
-            let right = evaluate_contract_segment_with_environment(
-                values,
-                array_refs,
-                pre_state,
-                post_state,
-                result,
-                assumptions,
-                right,
-                predicate_environment,
-                click_function_environment,
-                active_functions,
-            )?;
-            Ok(Proposition::CMemoryDisjoint {
-                left_base: left.base,
-                left_start: left.start,
-                left_end: left.end,
-                right_base: right.base,
-                right_start: right.start,
-                right_end: right.end,
-            })
-        }
         ClickProposition::Separate { left, right } => {
             let left = evaluate_resource_subject_with_environment(
                 values,
@@ -3682,7 +3618,7 @@ fn evaluate_contract_segment_with_environment(
     active_functions: &mut BTreeSet<String>,
 ) -> Result<EvaluatedContractSegment, String> {
     if segment.state != ContractSegmentState::Current {
-        return Err("`old(...)` is not available in `disjoint` propositions".to_string());
+        return Err("`old(...)` is not available in memory resource subjects".to_string());
     }
     let base = evaluate_contract_expression_with_environment(
         parameter_values,

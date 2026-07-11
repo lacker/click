@@ -2,7 +2,7 @@
 
 This is a compact launch-shaped example: two array parameters, a fixed pointer
 loop, reads from source memory, writes to destination memory, explicit
-source/destination disjointness, loop invariants, and `old(...)`
+source/destination separation, loop invariants, and `old(...)`
 postconditions.
 
 ```c filename=copy3.c
@@ -25,7 +25,7 @@ int32 copy3(int32 dst[3], int32 src[3]) {
     requires loadable(src, 12);
     requires write(dst[0..3]);
     requires read(src[0..3]);
-    requires disjoint(dst[0..3], src[0..3]);
+    requires separate(memory(dst[0..3]), memory(src[0..3]));
 
     for loop(0) {
         invariant i >= 0 by auto;

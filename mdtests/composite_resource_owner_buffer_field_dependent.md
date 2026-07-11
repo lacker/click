@@ -25,7 +25,7 @@ resource owned_buffer(owner: struct owner*) {
     contains write(owner->data);
     contains write((owner->data)[0..owner->len]);
     fact owner->len == 1;
-    fact disjoint(owner[0..2], (owner->data)[0..owner->len]);
+    fact separate(memory(owner[0..2]), memory((owner->data)[0..owner->len]));
 }
 
 verifying "set_owned_first.c";

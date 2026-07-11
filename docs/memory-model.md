@@ -25,7 +25,7 @@ non-aliasing.
 If a proof relies on non-overlap, state it:
 
 ```click
-requires disjoint(dst[0..n], src[0..n]);
+requires separate(memory(dst[0..n]), memory(src[0..n]));
 ```
 
 This is intentionally C-like. C functions can be called with aliased pointers
@@ -80,7 +80,7 @@ ensures forall (int32 k) {
 ```
 
 Pointer-writing loops do not implicitly preserve old memory. Use explicit loop
-invariants, loop effect summaries, or disjointness facts.
+invariants, loop effect summaries, or separation facts.
 
 When an array parameter is passed to a pure Click function or predicate,
 `old(p)` means the entry-state array ref, not just the old pointer value:

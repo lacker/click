@@ -200,9 +200,6 @@ impl AnnotationLowerer<'_> {
                 operator: c_comparison_operator(*operator),
                 right: self.lower_contract_expression_to_spec(right, environment)?,
             }),
-            ClickProposition::Disjoint { .. } => {
-                Err("`disjoint(...)` is not supported in spec-state clauses".to_string())
-            }
             ClickProposition::Separate { .. } => {
                 Err("`separate(...)` is not supported in spec-state clauses".to_string())
             }
@@ -1142,10 +1139,6 @@ pub(super) fn unfold_click_predicates_in_proposition_with_active(
             operator: *operator,
             right: right.clone(),
         }),
-        ClickProposition::Disjoint { left, right } => Ok(ClickProposition::Disjoint {
-            left: left.clone(),
-            right: right.clone(),
-        }),
         ClickProposition::Separate { left, right } => Ok(ClickProposition::Separate {
             left: left.clone(),
             right: right.clone(),
@@ -1304,10 +1297,6 @@ pub(super) fn substitute_click_proposition(
             operator: *operator,
             right: substitute_contract_expression(right, substitutions)?,
         }),
-        ClickProposition::Disjoint { left, right } => Ok(ClickProposition::Disjoint {
-            left: substitute_contract_segment(left, substitutions)?,
-            right: substitute_contract_segment(right, substitutions)?,
-        }),
         ClickProposition::Separate { left, right } => Ok(ClickProposition::Separate {
             left: substitute_resource_subject(left, substitutions)?,
             right: substitute_resource_subject(right, substitutions)?,
@@ -1446,10 +1435,6 @@ pub(super) fn apply_contract_lets_to_requirement(
         }),
         Requirement::LoadableSegment { segment } => Ok(Requirement::LoadableSegment {
             segment: apply_contract_lets_to_segment(segment, bindings)?,
-        }),
-        Requirement::Disjoint { left, right } => Ok(Requirement::Disjoint {
-            left: apply_contract_lets_to_segment(left, bindings)?,
-            right: apply_contract_lets_to_segment(right, bindings)?,
         }),
         Requirement::Resource(resource) => Ok(Requirement::Resource(
             apply_contract_lets_to_resource_clause(resource, bindings)?,
@@ -1750,10 +1735,6 @@ pub(super) fn apply_contract_let_expressions_to_proposition(
             operator,
             right: apply_contract_lets_to_expression(right, bindings)?,
         }),
-        ClickProposition::Disjoint { left, right } => Ok(ClickProposition::Disjoint {
-            left: apply_contract_lets_to_segment(left, bindings)?,
-            right: apply_contract_lets_to_segment(right, bindings)?,
-        }),
         ClickProposition::Separate { left, right } => Ok(ClickProposition::Separate {
             left: apply_contract_lets_to_resource_subject(left, bindings)?,
             right: apply_contract_lets_to_resource_subject(right, bindings)?,
@@ -2018,10 +1999,6 @@ pub(super) fn collect_click_proposition_referenced_names(
         ClickProposition::Comparison { left, right, .. } => {
             collect_contract_expression_referenced_names(left, names);
             collect_contract_expression_referenced_names(right, names);
-        }
-        ClickProposition::Disjoint { left, right } => {
-            names.extend(contract_segment_referenced_names(left));
-            names.extend(contract_segment_referenced_names(right));
         }
         ClickProposition::Separate { left, right } => {
             collect_resource_subject_referenced_names(left, names);
@@ -2521,7 +2498,6 @@ pub(super) fn click_proposition_to_c_expression(
         | ClickProposition::Exists { .. }
         | ClickProposition::RangeAll { .. }
         | ClickProposition::RangeAny { .. }
-        | ClickProposition::Disjoint { .. }
         | ClickProposition::Separate { .. }
         | ClickProposition::Contains { .. }
         | ClickProposition::Loadable { .. }
@@ -2944,9 +2920,6 @@ pub(super) fn requirement_propositions(
             Requirement::LoadableBytes { .. } | Requirement::LoadableSegment { .. } => {
                 loadable_requirement_prop(requirement, parameters, arguments, memory)?
             }
-            Requirement::Disjoint { left, right } => {
-                disjoint_requirement_prop(parameters, arguments, memory, left, right)?
-            }
             Requirement::Proposition(proposition) => requirement_proposition_prop(
                 parameters,
                 arguments,
@@ -3222,7 +3195,6 @@ pub(super) fn requirement_loadable_name(requirement: &Requirement) -> Option<&st
         Requirement::LoadableBytes { name, .. } => Some(name),
         Requirement::Labeled { .. }
         | Requirement::LoadableSegment { .. }
-        | Requirement::Disjoint { .. }
         | Requirement::Resource(_)
         | Requirement::Proposition(_) => None,
     }
@@ -3284,10 +3256,9 @@ pub(super) fn concrete_loadable_block(
                 },
             )))
         }
-        Requirement::Labeled { .. }
-        | Requirement::Resource(_)
-        | Requirement::Disjoint { .. }
-        | Requirement::Proposition(_) => Ok(None),
+        Requirement::Labeled { .. } | Requirement::Resource(_) | Requirement::Proposition(_) => {
+            Ok(None)
+        }
     }
 }
 
@@ -3378,37 +3349,10 @@ pub(super) fn loadable_base_and_bytes(
                 bytes,
             ))
         }
-        Requirement::Labeled { .. }
-        | Requirement::Proposition(_)
-        | Requirement::Resource(_)
-        | Requirement::Disjoint { .. } => Err(ClickError::new("expected loadable requirement")),
+        Requirement::Labeled { .. } | Requirement::Proposition(_) | Requirement::Resource(_) => {
+            Err(ClickError::new("expected loadable requirement"))
+        }
     }
-}
-
-pub(super) fn disjoint_requirement_prop(
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
-    memory: &CMemory,
-    left: &ContractSegment,
-    right: &ContractSegment,
-) -> Result<Proposition, ClickError> {
-    let state = CState::new().with_memory(memory.clone());
-    let left =
-        evaluate_requirement_segment(parameters, arguments, &state, left).map_err(|message| {
-            ClickError::new(format!("could not lower `disjoint` left range: {message}"))
-        })?;
-    let right =
-        evaluate_requirement_segment(parameters, arguments, &state, right).map_err(|message| {
-            ClickError::new(format!("could not lower `disjoint` right range: {message}"))
-        })?;
-    Ok(Proposition::CMemoryDisjoint {
-        left_base: left.base,
-        left_start: left.start,
-        left_end: left.end,
-        right_base: right.base,
-        right_start: right.start,
-        right_end: right.end,
-    })
 }
 
 pub(super) fn loadable_segment_prop(
@@ -3657,18 +3601,6 @@ impl KernelPropositionLowerer {
                 let right = self.lower_requirement_value(right)?;
                 comparison_proposition(left, *operator, right)
             }
-            ClickProposition::Disjoint { left, right } => {
-                let left = self.lower_requirement_segment(left)?;
-                let right = self.lower_requirement_segment(right)?;
-                Ok(Proposition::CMemoryDisjoint {
-                    left_base: left.base,
-                    left_start: left.start,
-                    left_end: left.end,
-                    right_base: right.base,
-                    right_start: right.start,
-                    right_end: right.end,
-                })
-            }
             ClickProposition::Separate { left, right } => {
                 let left = self.lower_requirement_resource_subject(left)?;
                 let right = self.lower_requirement_resource_subject(right)?;
@@ -3886,7 +3818,7 @@ impl KernelPropositionLowerer {
     ) -> Result<EvaluatedContractSegment, ClickError> {
         if segment.state != ContractSegmentState::Current {
             return Err(ClickError::new(
-                "`old(...)` is not available in `disjoint` propositions",
+                "`old(...)` is not available in memory resource subjects",
             ));
         }
         let base = self.lower_requirement_c_expression(&segment.base)?;

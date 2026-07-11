@@ -346,7 +346,7 @@ can contain `write(dst[0..1])` and `read(src[0..1])`, while
 explicitly passed buffer pointer. In this conservative shape, the resource's
 parameters name the lower-level memory objects directly. More convenient
 field-dependent composite resources can derive a contained buffer from
-`owner->data`. The folded resource exposes derived `disjoint(...)` facts from
+`owner->data`. The folded resource exposes derived `separate(...)` facts from
 its hidden contained writes, while explicit `fact` clauses can carry additional
 shape facts such as length and capacity. A push-style buffer resource can use a
 stronger pre-state resource, such as `owned_buffer_with_room(owner)`, with
@@ -401,9 +401,8 @@ Implemented today:
   `observe(resource)` proof steps that explicitly record fact-view projection
   without exposing contained permissions,
 - `write(...)` implying read authority,
-- visible owned resources imply `separate(...)` facts, with
-  `separate(memory(...), memory(...))` implying `disjoint(...)`; provably
-  overlapping visible writes are rejected,
+- visible owned resources imply `separate(...)` facts; provably overlapping
+  visible writes are rejected,
 - composite resources project direct `contains(parent, child)` facts for owned
   contained resources and direct `separate(child1, child2)` facts for owned
   sibling resources without exposing the hidden permissions,

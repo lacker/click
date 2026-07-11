@@ -222,7 +222,8 @@ cannot depend on locals modified by the loop. Use `step` effects for
 iteration-relative footprints.
 
 Loop effect summaries are reusable. For example, if a loop mutates only
-`dst[0..n]` and requirements prove `disjoint(dst[0..n], src[0..n])`, `auto` can
+`dst[0..n]` and requirements prove
+`separate(memory(dst[0..n]), memory(src[0..n]))`, `auto` can
 use that effect summary to prove source-memory postconditions without a
 handwritten source-invariance invariant.
 
@@ -242,7 +243,7 @@ Practical approach:
 1. Find the failing mdtest and the exact guarantee label.
 2. Read pure facts to learn which branch/path failed.
 3. If a predicate is still opaque, add `unfold(predicate_name);`.
-4. If memory preservation is missing, check `loadable`, `disjoint`,
+4. If memory preservation is missing, check `loadable`, `separate(memory(...))`,
    `immutable`, `mutable`, and loop effects.
 5. If arithmetic overflow appears, add numeric requirements or invariants.
 6. If the proof needs a general new pattern, add a focused mdtest and then a
