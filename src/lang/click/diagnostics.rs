@@ -838,6 +838,7 @@ pub(super) fn describe_visit_selector(selector: &VisitSelector) -> String {
 pub(super) fn describe_program_point_ref(point: &ProgramPointRef) -> String {
     let kind = match point.kind {
         ProgramPointKind::Entry => "entry",
+        ProgramPointKind::Exit => "exit",
     };
     format!("{}.{}", describe_code_region_ref(&point.region), kind)
 }

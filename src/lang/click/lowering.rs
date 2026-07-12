@@ -556,8 +556,18 @@ impl AnnotationLowerer<'_> {
             (CodeRegion::Loop(index), ProgramPointKind::Entry) => {
                 Ok(ResolvedProgramPoint::LoopEntry(index))
             }
-            (CodeRegion::Statement(index), ProgramPointKind::Entry) => Err(format!(
-                "`at(statement({index}).entry, ...)` is not supported yet"
+            (CodeRegion::Function, ProgramPointKind::Exit) => {
+                Err("`at(function.exit, ...)` is not supported yet".to_string())
+            }
+            (CodeRegion::Loop(index), ProgramPointKind::Exit) => Err(format!(
+                "`at(loop({index}).exit, ...)` is not supported yet"
+            )),
+            (CodeRegion::Statement(index), kind) => Err(format!(
+                "`at(statement({index}).{}, ...)` is not supported in this context yet",
+                match kind {
+                    ProgramPointKind::Entry => "entry",
+                    ProgramPointKind::Exit => "exit",
+                }
             )),
         }
     }
@@ -3790,6 +3800,7 @@ impl KernelPropositionLowerer {
                     .get(name)
                     .ok_or_else(|| ClickError::new(format!("unknown predicate `{name}`")))?;
                 let state = CState::new().with_memory(self.memory.clone());
+                let program_point_states = ProgramPointStates::new();
                 let lowered_arguments = lower_predicate_call_arguments_with_environment(
                     definition,
                     arguments,
@@ -3801,6 +3812,7 @@ impl KernelPropositionLowerer {
                     &Assumptions::new(),
                     &self.predicate_environment,
                     &self.click_function_environment,
+                    &program_point_states,
                     &mut self.active_functions,
                 )
                 .map_err(ClickError::new)?;
@@ -4066,6 +4078,7 @@ impl KernelPropositionLowerer {
             }
             ContractExpression::Call { name, arguments } => {
                 let state = CState::new().with_memory(self.memory.clone());
+                let program_point_states = ProgramPointStates::new();
                 evaluate_click_function_call(
                     &self.click_function_environment.clone(),
                     name,
@@ -4077,6 +4090,7 @@ impl KernelPropositionLowerer {
                     None,
                     &Assumptions::new(),
                     &self.predicate_environment.clone(),
+                    &program_point_states,
                     &mut self.active_functions,
                 )
                 .map_err(ClickError::new)

@@ -324,6 +324,8 @@ to a program point. The initial supported selectors are deliberately narrow:
 ```click
 at(function.entry, x)
 at(loop_label.entry, x)
+at(statement(0).entry, x)
+at(statement(0).exit, x)
 ```
 
 `at(function.entry, expression)` is equivalent to `old(expression)`.
@@ -332,6 +334,12 @@ at(loop_label.entry, x)
 that same labeled loop code region. It evaluates `expression` at the visit just
 before the loop region starts, then reuses that snapshot for invariant entry and
 preservation checks.
+
+`at(statement(N).entry, expression)` and
+`at(statement(N).exit, expression)` are currently supported in proof-step
+claims after deterministic execution records that statement point. In practice,
+use `execute_step()` to cross statement `N` before proving a claim that mentions
+that statement's entry or exit snapshot.
 
 ## Pure Click Functions
 

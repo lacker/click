@@ -173,10 +173,17 @@ Snapshot expressions use visit selectors:
 ```click
 at(function.entry, x)
 at(loop_name.entry, x)
+at(statement(0).entry, x)
+at(statement(0).exit, x)
 ```
 
 The initial `loop_name.entry` support is limited to invariants on that same
 labeled loop code region.
+
+Statement entry and exit snapshots are currently recorded by deterministic
+proof execution. A proof script can use `execute_step()` to cross a statement,
+then refer to that statement's recorded entry or exit state in later proof
+steps.
 
 `assert` is a one-shot spec check at the selected statement code region. It
 currently accepts the executable proposition fragment over current-state C

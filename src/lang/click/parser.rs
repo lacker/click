@@ -2122,10 +2122,11 @@ impl Parser {
         self.expect(Token::Dot)?;
         let kind = match self.expect_ident("program point kind")?.as_str() {
             "entry" => ProgramPointKind::Entry,
+            "exit" => ProgramPointKind::Exit,
             kind => {
-                return Err(
-                    self.error(format!("expected program point kind `entry`, got `{kind}`"))
-                );
+                return Err(self.error(format!(
+                    "expected program point kind `entry` or `exit`, got `{kind}`"
+                )));
             }
         };
         Ok(ProgramPointRef { region, kind })

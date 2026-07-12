@@ -351,6 +351,7 @@ struct ClickArrayRef {
 }
 
 type ClickArrayRefs = BTreeMap<String, ClickArrayRef>;
+type ProgramPointStates = BTreeMap<ProgramPointRef, CState>;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct SpecArrayRef {
@@ -522,6 +523,7 @@ pub struct ProgramPointRef {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
 pub enum ProgramPointKind {
     Entry,
+    Exit,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

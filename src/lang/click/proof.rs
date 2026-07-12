@@ -347,12 +347,14 @@ fn prove_pure_theorem_goal(
     )
     .map_err(|message| ClickError::new(format!("`{claim_label}` failed: {message}")))?;
     let state = CState::new().with_memory(context.memory.clone());
+    let program_point_states = ProgramPointStates::new();
     let application_context = TheoremApplicationContext {
         values: &context.values,
         array_refs: &context.array_refs,
         pre_state: &state,
         post_state: &state,
         result: None,
+        program_point_states: &program_point_states,
     };
     available = apply_theorem_applications_to_available(
         theorem_environment,
@@ -402,6 +404,7 @@ struct TheoremApplicationContext<'a> {
     pre_state: &'a CState,
     post_state: &'a CState,
     result: Option<&'a CValue>,
+    program_point_states: &'a ProgramPointStates,
 }
 
 fn apply_theorem_applications_to_available(
@@ -614,6 +617,7 @@ fn theorem_application_bindings(
                 argument,
                 predicate_environment,
                 click_function_environment,
+                context.program_point_states,
                 &mut active_functions,
             )?;
             let expected_element_type =
@@ -649,6 +653,7 @@ fn theorem_application_bindings(
                 argument,
                 predicate_environment,
                 click_function_environment,
+                context.program_point_states,
                 &mut active_functions,
             )?;
             if !c_value_matches_click_type(&value, parameter.c_type()) {
@@ -1110,6 +1115,7 @@ pub(super) fn prove_claim_by_simp(
             claim_label,
             path_index,
         )?;
+        let program_point_states = ProgramPointStates::new();
         check_function_claim_by_simp(
             claim_label,
             path_index,
@@ -1122,6 +1128,7 @@ pub(super) fn prove_claim_by_simp(
             &outcome,
             predicate_environment,
             click_function_environment,
+            &program_point_states,
             &[],
         )?;
         let specification = c_function_specification(
@@ -1161,6 +1168,8 @@ pub(super) fn prove_claim_by_simp(
 struct ProofStepReplayState {
     execution_point: ProofExecutionPoint,
     execution_start_state: Option<CState>,
+    next_statement_index: usize,
+    program_point_states: ProgramPointStates,
     loop_vcs: BTreeSet<usize>,
     frames: BTreeSet<Option<CodeRegionRef>>,
     unfolded_predicates: Vec<String>,
@@ -1495,6 +1504,7 @@ pub(super) fn prove_claim_by_steps(
         &replay.unfolded_predicates,
         &replay.theorem_applications,
         &replay.resource_folds,
+        &replay.program_point_states,
         replay.simp,
         steps,
     )
@@ -1513,6 +1523,7 @@ fn execute_step_from_execution_point(
     claim_label: &str,
     step_index: usize,
 ) -> Result<(), ClickError> {
+    let statement_index = replay.next_statement_index;
     let execution_point = &replay.execution_point;
     let (execution_start_state, current_state, step_statement, remaining) = match execution_point {
         ProofExecutionPoint::FunctionEntry => {
@@ -1568,6 +1579,13 @@ fn execute_step_from_execution_point(
         }
     };
 
+    replay.program_point_states.insert(
+        ProgramPointRef {
+            region: CodeRegionRef::Statement(statement_index),
+            kind: ProgramPointKind::Entry,
+        },
+        current_state.clone(),
+    );
     let current_resources = current_state.resources().facts().to_vec();
     let execution = prove_symbolic_c_execution_paths_with_environment(
         current_state,
@@ -1594,6 +1612,20 @@ fn execute_step_from_execution_point(
             )));
         }
     };
+    if let Some(statement_exit_state) = match &outcome {
+        CStatementOutcome::Normal(state) | CStatementOutcome::Return { state, .. } => {
+            Some(state.clone())
+        }
+        CStatementOutcome::UndefinedBehavior(_) | CStatementOutcome::RuntimeError(_) => None,
+    } {
+        replay.program_point_states.insert(
+            ProgramPointRef {
+                region: CodeRegionRef::Statement(statement_index),
+                kind: ProgramPointKind::Exit,
+            },
+            statement_exit_state,
+        );
+    }
 
     match outcome {
         CStatementOutcome::Normal(next_state) => {
@@ -1609,6 +1641,7 @@ fn execute_step_from_execution_point(
             );
             replay.execution_start_state = Some(execution_start_state);
             replay.execution_point = ProofExecutionPoint::StatementEntry { remaining };
+            replay.next_statement_index = statement_index + 1;
             *state = next_state;
         }
         CStatementOutcome::Return { .. } => {
@@ -1643,6 +1676,7 @@ fn execute_step_from_execution_point(
                 execution_start_state,
                 completed,
             )?;
+            replay.next_statement_index = statement_index + 1;
             *state = replay_state;
         }
         CStatementOutcome::UndefinedBehavior(kind) => {
@@ -1818,6 +1852,14 @@ fn execute_until_statement(
     }
 
     replay.execution_start_state = Some(execution_start_state);
+    replay.next_statement_index = statement_index;
+    replay.program_point_states.insert(
+        ProgramPointRef {
+            region: CodeRegionRef::Statement(statement_index),
+            kind: ProgramPointKind::Entry,
+        },
+        callee_state.clone(),
+    );
     replay.execution_point = ProofExecutionPoint::StatementEntry { remaining };
     *state = callee_state;
     Ok(())
@@ -2997,6 +3039,7 @@ fn fold_composite_resources_on_outcome(
                         describe_resource_clause(resource)
                     ))
                 })?;
+            let program_point_states = ProgramPointStates::new();
             prove_ensure_proposition_by_simp(
                 claim_label,
                 path_index,
@@ -3009,6 +3052,7 @@ fn fold_composite_resources_on_outcome(
                 &outcome,
                 predicate_environment,
                 click_function_environment,
+                &program_point_states,
                 unfolded_predicates,
             )
             .map_err(|error| {
@@ -3422,6 +3466,7 @@ fn validate_function_frame_step(
         };
         let mut path_requirements = requirement_pure_facts.to_vec();
         path_requirements.extend(path.facts().iter().map(|fact| fact.proposition().clone()));
+        let program_point_states = ProgramPointStates::new();
         check_function_claim(
             claim_label,
             path_index,
@@ -3434,6 +3479,7 @@ fn validate_function_frame_step(
             &outcome,
             &PredicateEnvironment::new(&[]),
             &ClickFunctionEnvironment::new(&[]),
+            &program_point_states,
             &[],
         )?;
     }
@@ -3461,6 +3507,7 @@ fn prove_claim_from_steps_execution(
     unfolded_predicates: &[String],
     theorem_applications: &[(usize, TheoremApplication)],
     resource_folds: &[ResourceClause],
+    program_point_states: &ProgramPointStates,
     use_simp: bool,
     proof_steps: &[ProofStep],
 ) -> Result<Vec<VerifiedCTheorem>, ClickError> {
@@ -3566,6 +3613,7 @@ fn prove_claim_from_steps_execution(
                 pre_state: state,
                 post_state,
                 result: Some(result),
+                program_point_states,
             };
             path_requirements = apply_theorem_applications_to_available(
                 theorem_environment,
@@ -3599,6 +3647,7 @@ fn prove_claim_from_steps_execution(
                 unfolded_predicates,
                 proof_steps,
                 function_block.requires(),
+                program_point_states,
                 use_simp,
             )?;
         } else {
@@ -3615,6 +3664,7 @@ fn prove_claim_from_steps_execution(
                     &outcome,
                     predicate_environment,
                     click_function_environment,
+                    program_point_states,
                     unfolded_predicates,
                 )?;
             } else {
@@ -3630,6 +3680,7 @@ fn prove_claim_from_steps_execution(
                     &outcome,
                     predicate_environment,
                     click_function_environment,
+                    program_point_states,
                     unfolded_predicates,
                 )?;
             }
@@ -3969,6 +4020,7 @@ fn prove_claim_from_execution(
             claim_label,
             path_index,
         )?;
+        let program_point_states = ProgramPointStates::new();
         check_function_claim(
             claim_label,
             path_index,
@@ -3981,6 +4033,7 @@ fn prove_claim_from_execution(
             &outcome,
             predicate_environment,
             click_function_environment,
+            &program_point_states,
             &[],
         )?;
         let path_requirements_description = describe_pure_facts(&path_requirements);
