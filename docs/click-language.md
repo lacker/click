@@ -337,9 +337,11 @@ preservation checks.
 
 `at(statement(N).entry, expression)` and
 `at(statement(N).exit, expression)` are currently supported in proof-step
-claims after deterministic execution records that statement point. In practice,
-use `execute_step()` to cross statement `N` before proving a claim that mentions
-that statement's entry or exit snapshot.
+claims after deterministic execution records that statement point.
+`execute_step()`, `execute_until(...)`, and `execute_rest()` all record every
+straight-line statement boundary they cross. At a branch or loop, Click records
+the unique entry state but does not create a single exit snapshot for multiple
+possible visits or paths.
 
 ## Pure Click Functions
 

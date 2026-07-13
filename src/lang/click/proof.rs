@@ -1321,6 +1321,7 @@ pub(super) fn prove_claim_by_steps(
                     function_environment,
                     claim_label,
                     step_index,
+                    "execute_step",
                 )?;
                 assumptions = assumptions_from_propositions(&requirement_pure_facts);
             }
@@ -1328,15 +1329,17 @@ pub(super) fn prove_claim_by_steps(
                 execute_rest_from_execution_point(
                     &mut replay,
                     &mut state,
-                    &requirement_pure_facts,
+                    &mut requirement_pure_facts,
                     &function,
+                    parsed_function.parameters(),
                     &arguments,
-                    &assumptions,
                     function_environment,
                     claim_label,
                     step_index,
                     proof_step_name(step),
+                    matches!(step, ProofStep::ExecuteRest),
                 )?;
+                assumptions = assumptions_from_propositions(&requirement_pure_facts);
             }
             ProofStep::ExecuteUntil(region_ref) => {
                 let code_region =
@@ -1353,7 +1356,6 @@ pub(super) fn prove_claim_by_steps(
                     &function,
                     parsed_function.parameters(),
                     &arguments,
-                    &assumptions,
                     function_environment,
                     statement_index,
                     claim_label,
@@ -1522,6 +1524,7 @@ fn execute_step_from_execution_point(
     function_environment: &CFunctionEnvironment,
     claim_label: &str,
     step_index: usize,
+    step_name: &str,
 ) -> Result<(), ClickError> {
     let statement_index = replay.next_statement_index;
     let execution_point = &replay.execution_point;
@@ -1531,7 +1534,7 @@ fn execute_step_from_execution_point(
             let current_state = c_function_entry_state(&execution_start_state, function, arguments)
                 .ok_or_else(|| {
                     ClickError::new(format!(
-                        "`{claim_label}` proof step {step_index}: `execute_step` could not bind function arguments"
+                        "`{claim_label}` proof step {step_index}: `{step_name}` could not bind function arguments"
                     ))
                 })?;
             let (step_statement, remaining) = match split_next_straight_line_statement(
@@ -1540,7 +1543,7 @@ fn execute_step_from_execution_point(
                 Ok(split) => split,
                 Err(message) => {
                     return Err(ClickError::new(format!(
-                        "`{claim_label}` proof step {step_index}: `execute_step` failed: {message}"
+                        "`{claim_label}` proof step {step_index}: `{step_name}` failed: {message}"
                     )));
                 }
             };
@@ -1554,14 +1557,14 @@ fn execute_step_from_execution_point(
         ProofExecutionPoint::StatementEntry { remaining } => {
             let execution_start_state = replay.execution_start_state.clone().ok_or_else(|| {
                 ClickError::new(format!(
-                    "`{claim_label}` proof step {step_index}: `execute_step` has no execution start state"
+                    "`{claim_label}` proof step {step_index}: `{step_name}` has no execution start state"
                 ))
             })?;
             let (step_statement, remaining) = match split_next_straight_line_statement(remaining) {
                 Ok(split) => split,
                 Err(message) => {
                     return Err(ClickError::new(format!(
-                        "`{claim_label}` proof step {step_index}: `execute_step` failed: {message}"
+                        "`{claim_label}` proof step {step_index}: `{step_name}` failed: {message}"
                     )));
                 }
             };
@@ -1574,7 +1577,7 @@ fn execute_step_from_execution_point(
         }
         ProofExecutionPoint::FunctionExit { .. } => {
             return Err(ClickError::new(format!(
-                "`{claim_label}` proof step {step_index}: `execute_step` cannot run after execution already reached function exit"
+                "`{claim_label}` proof step {step_index}: `{step_name}` cannot run after execution already reached function exit"
             )));
         }
     };
@@ -1597,7 +1600,7 @@ fn execute_step_from_execution_point(
         &execution,
         claim_label,
         step_index,
-        "execute_step",
+        step_name,
         available_pure_facts,
         &current_resources,
         parameters,
@@ -1608,7 +1611,7 @@ fn execute_step_from_execution_point(
         Proposition::CStatementExecutes { outcome, .. } => outcome.clone(),
         proposition => {
             return Err(ClickError::new(format!(
-                "`{claim_label}` proof step {step_index}: `execute_step` saw unexpected step theorem {proposition:?}"
+                "`{claim_label}` proof step {step_index}: `{step_name}` saw unexpected step theorem {proposition:?}"
             )));
         }
     };
@@ -1631,7 +1634,7 @@ fn execute_step_from_execution_point(
         CStatementOutcome::Normal(next_state) => {
             let Some(remaining) = remaining else {
                 return Err(ClickError::new(format!(
-                    "`{claim_label}` proof step {step_index}: `execute_step` reached the end of the function without a return"
+                    "`{claim_label}` proof step {step_index}: `{step_name}` reached the end of the function without a return"
                 )));
             };
             available_pure_facts.extend(
@@ -1672,7 +1675,7 @@ fn execute_step_from_execution_point(
                 ProofStepExecutionMode::Verification,
                 claim_label,
                 step_index,
-                "execute_step",
+                step_name,
                 execution_start_state,
                 completed,
             )?;
@@ -1681,7 +1684,7 @@ fn execute_step_from_execution_point(
         }
         CStatementOutcome::UndefinedBehavior(kind) => {
             return Err(ClickError::new(format!(
-                "`{claim_label}` proof step {step_index}: `execute_step` produced undefined behavior: {kind:?}\n{}",
+                "`{claim_label}` proof step {step_index}: `{step_name}` produced undefined behavior: {kind:?}\n{}",
                 describe_proof_context(
                     available_pure_facts,
                     &current_resources,
@@ -1693,7 +1696,7 @@ fn execute_step_from_execution_point(
         }
         CStatementOutcome::RuntimeError(error) => {
             return Err(ClickError::new(format!(
-                "`{claim_label}` proof step {step_index}: `execute_step` produced runtime error: {error:?}\n{}",
+                "`{claim_label}` proof step {step_index}: `{step_name}` produced runtime error: {error:?}\n{}",
                 describe_proof_context(
                     available_pure_facts,
                     &current_resources,
@@ -1708,18 +1711,93 @@ fn execute_step_from_execution_point(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn execute_rest_from_execution_point(
+fn record_current_statement_entry(
     replay: &mut ProofStepReplayState,
-    state: &mut CState,
-    available_pure_facts: &[Proposition],
+    state: &CState,
     function: &CFunction,
     arguments: &[CExpression],
-    assumptions: &Assumptions,
-    function_environment: &CFunctionEnvironment,
     claim_label: &str,
     step_index: usize,
     step_name: &str,
 ) -> Result<(), ClickError> {
+    let current_state = match &replay.execution_point {
+        ProofExecutionPoint::FunctionEntry => c_function_entry_state(state, function, arguments)
+            .ok_or_else(|| {
+                ClickError::new(format!(
+                    "`{claim_label}` proof step {step_index}: `{step_name}` could not bind function arguments"
+                ))
+            })?,
+        ProofExecutionPoint::StatementEntry { .. } => state.clone(),
+        ProofExecutionPoint::FunctionExit { .. } => return Ok(()),
+    };
+    replay.program_point_states.insert(
+        ProgramPointRef {
+            region: CodeRegionRef::Statement(replay.next_statement_index),
+            kind: ProgramPointKind::Entry,
+        },
+        current_state,
+    );
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn execute_rest_from_execution_point(
+    replay: &mut ProofStepReplayState,
+    state: &mut CState,
+    available_pure_facts: &mut Vec<Proposition>,
+    function: &CFunction,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    function_environment: &CFunctionEnvironment,
+    claim_label: &str,
+    step_index: usize,
+    step_name: &str,
+    record_straight_line_snapshots: bool,
+) -> Result<(), ClickError> {
+    if record_straight_line_snapshots {
+        loop {
+            let can_execute_one_step = match &replay.execution_point {
+                ProofExecutionPoint::FunctionEntry => {
+                    split_next_straight_line_statement(function.body()).is_ok()
+                }
+                ProofExecutionPoint::StatementEntry { remaining } => {
+                    split_next_straight_line_statement(remaining).is_ok()
+                }
+                ProofExecutionPoint::FunctionExit { .. } => return Ok(()),
+            };
+            if !can_execute_one_step {
+                break;
+            }
+
+            let assumptions = assumptions_from_propositions(available_pure_facts);
+            execute_step_from_execution_point(
+                replay,
+                state,
+                available_pure_facts,
+                function,
+                parameters,
+                arguments,
+                &assumptions,
+                function_environment,
+                claim_label,
+                step_index,
+                step_name,
+            )?;
+        }
+    }
+
+    if record_straight_line_snapshots {
+        record_current_statement_entry(
+            replay,
+            state,
+            function,
+            arguments,
+            claim_label,
+            step_index,
+            step_name,
+        )?;
+    }
+    let assumptions = assumptions_from_propositions(available_pure_facts);
     match &replay.execution_point {
         ProofExecutionPoint::FunctionEntry => {
             set_replay_execution(
@@ -1756,7 +1834,7 @@ fn execute_rest_from_execution_point(
                 function,
                 arguments,
                 available_pure_facts,
-                assumptions,
+                &assumptions,
                 claim_label,
                 step_index,
                 step_name,
@@ -1790,7 +1868,6 @@ fn execute_until_statement(
     function: &CFunction,
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
-    assumptions: &Assumptions,
     function_environment: &CFunctionEnvironment,
     statement_index: usize,
     claim_label: &str,
@@ -1801,67 +1878,61 @@ fn execute_until_statement(
             "`{claim_label}` proof step {step_index}: `execute_until` is currently supported only from function entry"
         )));
     }
-    let (prefix, remaining) =
-        split_straight_line_statement_prefix(function.body(), statement_index).map_err(
-            |message| {
-                ClickError::new(format!(
-                    "`{claim_label}` proof step {step_index}: `execute_until(statement({statement_index}))` failed: {message}"
-                ))
-            },
-        )?;
-    let execution_start_state = state.clone();
-    let mut callee_state = c_function_entry_state(&execution_start_state, function, arguments)
-        .ok_or_else(|| {
-            ClickError::new(format!(
-                "`{claim_label}` proof step {step_index}: `execute_until` could not bind function arguments"
-            ))
-        })?;
+    split_straight_line_statement_prefix(function.body(), statement_index).map_err(|message| {
+        ClickError::new(format!(
+            "`{claim_label}` proof step {step_index}: `execute_until(statement({statement_index}))` failed: {message}"
+        ))
+    })?;
 
-    if let Some(prefix) = prefix {
-        let current_resources = callee_state.resources().facts().to_vec();
-        let execution = prove_symbolic_c_execution_paths_with_environment(
-            callee_state,
-            prefix,
-            assumptions.clone(),
-            function_environment.clone(),
+    if statement_index == 0 {
+        let execution_start_state = state.clone();
+        let callee_state = c_function_entry_state(&execution_start_state, function, arguments)
+            .ok_or_else(|| {
+                ClickError::new(format!(
+                    "`{claim_label}` proof step {step_index}: `execute_until` could not bind function arguments"
+                ))
+            })?;
+        replay.execution_start_state = Some(execution_start_state);
+        replay.execution_point = ProofExecutionPoint::StatementEntry {
+            remaining: function.body().clone(),
+        };
+        replay.next_statement_index = 0;
+        replay.program_point_states.insert(
+            ProgramPointRef {
+                region: CodeRegionRef::Statement(0),
+                kind: ProgramPointKind::Entry,
+            },
+            callee_state.clone(),
         );
-        let prefix_path = single_normal_statement_path(
-            &execution,
+        *state = callee_state;
+        return Ok(());
+    }
+
+    for _ in 0..statement_index {
+        let assumptions = assumptions_from_propositions(available_pure_facts);
+        execute_step_from_execution_point(
+            replay,
+            state,
+            available_pure_facts,
+            function,
+            parameters,
+            arguments,
+            &assumptions,
+            function_environment,
             claim_label,
             step_index,
             "execute_until",
-            available_pure_facts,
-            &current_resources,
-            parameters,
-            arguments,
         )?;
-        available_pure_facts.extend(
-            prefix_path
-                .facts()
-                .iter()
-                .map(|fact| fact.proposition().clone()),
-        );
-        let Proposition::CStatementExecutes {
-            outcome: CStatementOutcome::Normal(next_state),
-            ..
-        } = implication_body(prefix_path.theorem().proposition())
-        else {
-            unreachable!("single_normal_statement_path should return a normal statement path");
-        };
-        callee_state = next_state.clone();
     }
-
-    replay.execution_start_state = Some(execution_start_state);
-    replay.next_statement_index = statement_index;
-    replay.program_point_states.insert(
-        ProgramPointRef {
-            region: CodeRegionRef::Statement(statement_index),
-            kind: ProgramPointKind::Entry,
-        },
-        callee_state.clone(),
-    );
-    replay.execution_point = ProofExecutionPoint::StatementEntry { remaining };
-    *state = callee_state;
+    record_current_statement_entry(
+        replay,
+        state,
+        function,
+        arguments,
+        claim_label,
+        step_index,
+        "execute_until",
+    )?;
     Ok(())
 }
 
@@ -1953,55 +2024,6 @@ fn single_statement_step_path<'a>(
         )));
     }
     Ok(path)
-}
-
-fn single_normal_statement_path<'a>(
-    execution: &'a crate::kernel::SymbolicCExecution,
-    claim_label: &str,
-    step_index: usize,
-    step_name: &str,
-    available_pure_facts: &[Proposition],
-    resources: &[CResourceFact],
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
-) -> Result<&'a crate::kernel::SymbolicCExecutionPath, ClickError> {
-    if let Some(limit) = execution.limit() {
-        return Err(ClickError::new(format!(
-            "`{claim_label}` proof step {step_index}: `{step_name}` hit execution limit {limit:?}"
-        )));
-    }
-    if execution.paths().len() != 1 {
-        return Err(ClickError::new(format!(
-            "`{claim_label}` proof step {step_index}: `{step_name}` currently requires exactly one straight-line prefix path, got {}",
-            execution.paths().len()
-        )));
-    }
-    let path = &execution.paths()[0];
-    if !path.obligations().is_empty() {
-        return Err(ClickError::new(format!(
-            "`{claim_label}` proof step {step_index}: `{step_name}` failed: {}",
-            describe_missing_proof_obligations(
-                path.obligations(),
-                available_pure_facts,
-                resources,
-                parameters,
-                arguments,
-                path.facts()
-            )
-        )));
-    }
-    match implication_body(path.theorem().proposition()) {
-        Proposition::CStatementExecutes {
-            outcome: CStatementOutcome::Normal(_),
-            ..
-        } => Ok(path),
-        Proposition::CStatementExecutes { outcome, .. } => Err(ClickError::new(format!(
-            "`{claim_label}` proof step {step_index}: `{step_name}` prefix did not stop at a normal execution point: {outcome:?}"
-        ))),
-        proposition => Err(ClickError::new(format!(
-            "`{claim_label}` proof step {step_index}: `{step_name}` saw unexpected prefix theorem {proposition:?}"
-        ))),
-    }
 }
 
 fn split_next_straight_line_statement(

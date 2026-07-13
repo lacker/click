@@ -181,9 +181,10 @@ The initial `loop_name.entry` support is limited to invariants on that same
 labeled loop code region.
 
 Statement entry and exit snapshots are currently recorded by deterministic
-proof execution. A proof script can use `execute_step()` to cross a statement,
-then refer to that statement's recorded entry or exit state in later proof
-steps.
+proof execution. `execute_step()`, `execute_until(...)`, and `execute_rest()`
+record each straight-line boundary they cross. Branch and loop entries can have
+a unique snapshot, but their exits require a future way to select a particular
+path or visit.
 
 `assert` is a one-shot spec check at the selected statement code region. It
 currently accepts the executable proposition fragment over current-state C
