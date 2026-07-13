@@ -331,6 +331,11 @@ at(statement(0).exit, x)
 
 `at(function.entry, expression)` is equivalent to `old(expression)`.
 
+The selected snapshot is a complete recorded C state, not only a memory
+snapshot. Inside `at(...)`, reassigned parameters and declared scalar, pointer,
+and array locals resolve to their values at that point. Outside `at(...)`,
+function parameter names retain their ordinary contract meaning.
+
 `at(loop_label.entry, expression)` is currently supported inside invariants for
 that same labeled loop code region. It evaluates `expression` at the visit just
 before the loop region starts, then reuses that snapshot for invariant entry and

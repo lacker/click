@@ -192,9 +192,10 @@ labeled loop code region.
 
 Statement entry and exit snapshots are currently recorded by deterministic
 proof execution. `execute_step()`, `execute_until(...)`, and `execute_rest()`
-record each straight-line boundary they cross. Branch and loop entries can have
-a unique snapshot, but their exits require a future way to select a particular
-path or visit.
+record each straight-line boundary they cross. An `at(...)` expression reads
+memory, reassigned parameters, and declared scalar, pointer, or array locals
+from the selected state. Branch and loop entries can have a unique snapshot,
+but their exits require a future way to select a particular path or visit.
 
 `assert` is a one-shot spec check at the selected statement code region. It
 currently accepts the executable proposition fragment over current-state C

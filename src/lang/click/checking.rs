@@ -3949,9 +3949,11 @@ pub(super) fn evaluate_contract_expression_with_environment(
         } => {
             let snapshot_state =
                 concrete_program_point_state(selector, pre_state, program_point_states)?;
+            let (snapshot_values, snapshot_array_refs) =
+                contract_environment_at_state(parameter_values, array_refs, snapshot_state);
             evaluate_contract_expression_with_environment(
-                parameter_values,
-                &array_refs_with_memory(array_refs, snapshot_state.memory()),
+                &snapshot_values,
+                &snapshot_array_refs,
                 pre_state,
                 snapshot_state,
                 None,
@@ -4574,6 +4576,37 @@ pub(super) fn array_refs_with_memory(
         .collect()
 }
 
+fn contract_environment_at_state(
+    parameter_values: &BTreeMap<String, CValue>,
+    array_refs: &ClickArrayRefs,
+    state: &CState,
+) -> (BTreeMap<String, CValue>, ClickArrayRefs) {
+    let mut values = parameter_values.clone();
+    values.extend(
+        state
+            .locals()
+            .object_values()
+            .map(|(name, value)| (name.to_string(), value.clone())),
+    );
+
+    let mut state_array_refs = array_refs_with_memory(array_refs, state.memory());
+    for (name, value, element_type) in state.locals().array_object_values() {
+        let CValue::Pointer(pointer) = value.clone() else {
+            unreachable!("local array values are pointers")
+        };
+        values.insert(name.to_string(), value);
+        state_array_refs.insert(
+            name.to_string(),
+            ClickArrayRef {
+                memory: state.memory().clone(),
+                pointer,
+                element_type,
+            },
+        );
+    }
+    (values, state_array_refs)
+}
+
 fn concrete_program_point_state<'a>(
     selector: &VisitSelector,
     function_entry_state: &'a CState,
@@ -4758,9 +4791,10 @@ pub(super) fn evaluate_contract_array_ref_with_environment(
         } => {
             let snapshot_state =
                 concrete_program_point_state(selector, pre_state, program_point_states)?;
-            let snapshot_array_refs = array_refs_with_memory(array_refs, snapshot_state.memory());
+            let (snapshot_values, snapshot_array_refs) =
+                contract_environment_at_state(parameter_values, array_refs, snapshot_state);
             let pointer_value = evaluate_contract_expression_with_environment(
-                parameter_values,
+                &snapshot_values,
                 &snapshot_array_refs,
                 pre_state,
                 snapshot_state,

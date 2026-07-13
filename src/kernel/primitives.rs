@@ -1625,6 +1625,28 @@ impl CLocalEnvironment {
         }
     }
 
+    pub fn object_values(&self) -> impl Iterator<Item = (&str, &CValue)> {
+        self.bindings
+            .iter()
+            .filter_map(|(name, binding)| match binding {
+                CLocalBinding::Object { value, .. } => Some((name.as_str(), value)),
+                CLocalBinding::ArrayObject { .. } => None,
+            })
+    }
+
+    pub fn array_object_values(&self) -> impl Iterator<Item = (&str, CValue, CType)> + '_ {
+        self.bindings
+            .iter()
+            .filter_map(|(name, binding)| match binding {
+                CLocalBinding::ArrayObject { element_type, .. } => Some((
+                    name.as_str(),
+                    CValue::Pointer(CMemory::local_pointer(name)),
+                    *element_type,
+                )),
+                CLocalBinding::Object { .. } => None,
+            })
+    }
+
     pub(super) fn object_type(&self, name: &str) -> Option<CType> {
         match self.binding(name) {
             Some(CLocalBinding::Object { c_type, .. }) => Some(*c_type),

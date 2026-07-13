@@ -20,9 +20,29 @@ int32 set_first_twice(int32* p) {
 }
 ```
 
+```c filename=statement_at_local_snapshots.c
+int32 snapshot_local(int32 x) {
+    int32 y;
+    y = x;
+    x = 7;
+    return y;
+}
+```
+
+```c filename=statement_at_local_array_snapshots.c
+int32 snapshot_local_array() {
+    int32 values[1];
+    values[0] = 3;
+    values[0] = 7;
+    return values[0];
+}
+```
+
 ```click
 verifying "statement_at_snapshots.c";
 verifying "statement_at_prefix_snapshots.c";
+verifying "statement_at_local_snapshots.c";
+verifying "statement_at_local_array_snapshots.c";
 
 int32 set_first_to_seven(int32* p) {
     requires write(p[0..1]);
@@ -61,6 +81,48 @@ int32 set_first_twice(int32* p) {
 
     ensures final_exit: at(statement(1).exit, p[0]) == 7 by {
         execute_until(statement(1));
+        execute_rest();
+        simp();
+    }
+}
+
+
+int32 snapshot_local(int32 x) {
+    ensures local_after_assignment:
+        at(statement(1).exit, y) == old(x) by {
+        execute_rest();
+        simp();
+    }
+
+    ensures parameter_before_assignment:
+        at(statement(2).entry, x) == old(x) by {
+        execute_rest();
+        simp();
+    }
+
+    ensures parameter_after_assignment:
+        at(statement(2).exit, x) == 7 by {
+        execute_rest();
+        simp();
+    }
+
+    ensures result_is_local_at_return:
+        result == at(statement(3).entry, y) by {
+        execute_rest();
+        simp();
+    }
+}
+
+
+int32 snapshot_local_array() {
+    ensures first_store:
+        at(statement(1).exit, values[0]) == 3 by {
+        execute_rest();
+        simp();
+    }
+
+    ensures second_store:
+        at(statement(2).exit, values[0]) == 7 by {
         execute_rest();
         simp();
     }
