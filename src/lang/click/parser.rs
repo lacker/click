@@ -1556,6 +1556,20 @@ impl Parser {
             }
             return Ok(ProofStep::Have(ProofHave { proposition, proof }));
         }
+        if name == "if" {
+            let condition = self.parse_proposition()?;
+            let then_steps = self.parse_proof_step_block("`if` branch")?;
+            self.expect_ident_spelling("else")?;
+            let else_steps = self.parse_proof_step_block("`else` branch")?;
+            if self.peek() == Some(&Token::Semicolon) {
+                self.position += 1;
+            }
+            return Ok(ProofStep::If(ProofIf {
+                condition,
+                then_steps,
+                else_steps,
+            }));
+        }
         let step = match name.as_str() {
             "symbolic_execute" => {
                 self.expect_empty_step_args(&name)?;
@@ -1656,6 +1670,19 @@ impl Parser {
         };
         self.expect(Token::Semicolon)?;
         Ok(step)
+    }
+
+    fn parse_proof_step_block(&mut self, context: &str) -> Result<Vec<ProofStep>, ClickError> {
+        self.expect(Token::LBrace)?;
+        if self.peek() == Some(&Token::RBrace) {
+            return Err(self.error(format!("{context} must contain at least one proof step")));
+        }
+        let mut steps = Vec::new();
+        while self.peek() != Some(&Token::RBrace) {
+            steps.push(self.parse_proof_step()?);
+        }
+        self.expect(Token::RBrace)?;
+        Ok(steps)
     }
 
     fn parse_theorem_application(&mut self) -> Result<TheoremApplication, ClickError> {

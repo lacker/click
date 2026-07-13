@@ -490,6 +490,7 @@ pub enum ProofStep {
     FoldResource(ResourceClause),
     ApplyTheorem(TheoremApplication),
     Have(ProofHave),
+    If(ProofIf),
     ObserveResource(ResourceClause),
     Witness(ProofWitness),
     Choose(ProofChoice),
@@ -500,6 +501,13 @@ pub enum ProofStep {
 pub struct ProofHave {
     proposition: ClickProposition,
     proof: Proof,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProofIf {
+    condition: ClickProposition,
+    then_steps: Vec<ProofStep>,
+    else_steps: Vec<ProofStep>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

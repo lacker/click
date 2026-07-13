@@ -240,54 +240,80 @@ fn verify_theorem_ensure(
                     "`{claim_label}` has an empty proof-step script"
                 )));
             }
-            let mut unfolded_predicates = Vec::new();
-            let mut theorem_applications = Vec::new();
-            let mut use_simp = false;
-            for (step_index, step) in steps.iter().enumerate() {
-                match step {
-                    ProofStep::UnfoldPredicate(name) => {
-                        if predicate_environment.get(name).is_none() {
+            for proof_case in expand_proof_if_cases(steps, claim_label)? {
+                let mut available = context.requires.clone();
+                let mut unfolded_predicates = Vec::new();
+                let mut theorem_applications = Vec::new();
+                let mut use_simp = false;
+                for (step_index, step) in proof_case.steps.iter().enumerate() {
+                    for assumption in proof_case
+                        .assumptions
+                        .iter()
+                        .filter(|assumption| assumption.step_index == step_index)
+                    {
+                        let proposition = lower_pure_theorem_proposition(
+                            claim_label,
+                            &assumption.proposition,
+                            &context.values,
+                            &context.array_refs,
+                            &context.memory,
+                            predicate_environment,
+                            click_function_environment,
+                        )
+                        .map_err(|message| ClickError::new(format!(
+                            "`{claim_label}` proof step {step_index}: could not lower `if` condition: {message}"
+                        )))?;
+                        available.push(if assumption.value {
+                            proposition
+                        } else {
+                            Proposition::Not(Box::new(proposition))
+                        });
+                    }
+                    match step {
+                        ProofStep::UnfoldPredicate(name) => {
+                            if predicate_environment.get(name).is_none() {
+                                return Err(ClickError::new(format!(
+                                    "`{claim_label}` proof step {step_index}: unknown predicate `{name}`"
+                                )));
+                            }
+                            if !unfolded_predicates.contains(name) {
+                                unfolded_predicates.push(name.clone());
+                            }
+                        }
+                        ProofStep::ApplyTheorem(application) => {
+                            if theorem_environment.get(&application.name).is_none() {
+                                return Err(ClickError::new(format!(
+                                    "`{claim_label}` proof step {step_index}: unknown theorem `{}`",
+                                    application.name
+                                )));
+                            }
+                            theorem_applications.push((step_index, application.clone()));
+                        }
+                        ProofStep::Simp => {
+                            use_simp = true;
+                        }
+                        _ => {
                             return Err(ClickError::new(format!(
-                                "`{claim_label}` proof step {step_index}: unknown predicate `{name}`"
+                                "`{claim_label}` proof step {step_index}: `{}` cannot prove a pure theorem",
+                                proof_step_name(step)
                             )));
                         }
-                        if !unfolded_predicates.contains(name) {
-                            unfolded_predicates.push(name.clone());
-                        }
-                    }
-                    ProofStep::ApplyTheorem(application) => {
-                        if theorem_environment.get(&application.name).is_none() {
-                            return Err(ClickError::new(format!(
-                                "`{claim_label}` proof step {step_index}: unknown theorem `{}`",
-                                application.name
-                            )));
-                        }
-                        theorem_applications.push((step_index, application.clone()));
-                    }
-                    ProofStep::Simp => {
-                        use_simp = true;
-                    }
-                    _ => {
-                        return Err(ClickError::new(format!(
-                            "`{claim_label}` proof step {step_index}: `{}` cannot prove a pure theorem",
-                            proof_step_name(step)
-                        )));
                     }
                 }
+                prove_pure_theorem_goal(
+                    claim_label,
+                    "proof steps",
+                    &available,
+                    &goal,
+                    predicate_environment,
+                    click_function_environment,
+                    theorem_environment,
+                    context,
+                    &theorem_applications,
+                    &unfolded_predicates,
+                    use_simp,
+                )?;
             }
-            prove_pure_theorem_goal(
-                claim_label,
-                "proof steps",
-                &context.requires,
-                &goal,
-                predicate_environment,
-                click_function_environment,
-                theorem_environment,
-                context,
-                &theorem_applications,
-                &unfolded_predicates,
-                use_simp,
-            )?;
             Ok(VerifiedPureTheorem {
                 theorem_definition: theorem.clone(),
                 ensure_index,
@@ -299,6 +325,67 @@ fn verify_theorem_ensure(
             })
         }
     }
+}
+
+struct ExpandedProofCase {
+    steps: Vec<ProofStep>,
+    assumptions: Vec<ProofCaseAssumption>,
+}
+
+struct ProofCaseAssumption {
+    step_index: usize,
+    proposition: ClickProposition,
+    value: bool,
+}
+
+fn expand_proof_if_cases(
+    steps: &[ProofStep],
+    claim_label: &str,
+) -> Result<Vec<ExpandedProofCase>, ClickError> {
+    let Some((if_index, proof_if)) = steps.iter().enumerate().find_map(|(index, step)| {
+        let ProofStep::If(proof_if) = step else {
+            return None;
+        };
+        Some((index, proof_if))
+    }) else {
+        return Ok(vec![ExpandedProofCase {
+            steps: steps.to_vec(),
+            assumptions: Vec::new(),
+        }]);
+    };
+    if if_index + 1 != steps.len() {
+        return Err(ClickError::new(format!(
+            "`{claim_label}` proof step {if_index}: proof-level `if` must be the final step because both branches prove the current claim"
+        )));
+    }
+
+    let prefix = &steps[..if_index];
+    let mut cases = Vec::new();
+    for (value, branch_steps) in [
+        (true, proof_if.then_steps.as_slice()),
+        (false, proof_if.else_steps.as_slice()),
+    ] {
+        for mut branch in expand_proof_if_cases(branch_steps, claim_label)? {
+            let mut linear = prefix.to_vec();
+            linear.append(&mut branch.steps);
+            let mut assumptions = vec![ProofCaseAssumption {
+                step_index: prefix.len(),
+                proposition: proof_if.condition.clone(),
+                value,
+            }];
+            assumptions.extend(branch.assumptions.into_iter().map(|assumption| {
+                ProofCaseAssumption {
+                    step_index: prefix.len() + assumption.step_index,
+                    ..assumption
+                }
+            }));
+            cases.push(ExpandedProofCase {
+                steps: linear,
+                assumptions,
+            });
+        }
+    }
+    Ok(cases)
 }
 
 fn lower_pure_theorem_proposition(
@@ -1175,6 +1262,7 @@ struct ProofStepReplayState {
     unfolded_predicates: Vec<String>,
     theorem_applications: Vec<(usize, TheoremApplication)>,
     resource_folds: Vec<ResourceClause>,
+    case_assumptions: Vec<(usize, ClickProposition, bool)>,
     simp: bool,
 }
 
@@ -1500,6 +1588,43 @@ pub(super) fn prove_claim_by_steps(
     theorem_environment: &TheoremEnvironment,
     steps: &[ProofStep],
 ) -> Result<Vec<VerifiedCTheorem>, ClickError> {
+    let mut verified = Vec::new();
+    for proof_case in expand_proof_if_cases(steps, claim_label)? {
+        verified.extend(prove_claim_by_linear_steps(
+            source_path,
+            function_block,
+            parsed_function,
+            claim,
+            claim_label,
+            function_environment,
+            predicate_environment,
+            click_function_environment,
+            resource_environment,
+            theorem_environment,
+            &proof_case.steps,
+            &proof_case.assumptions,
+            steps,
+        )?);
+    }
+    Ok(verified)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn prove_claim_by_linear_steps(
+    source_path: &str,
+    function_block: &FunctionBlock,
+    parsed_function: &syntax::C0Function,
+    claim: &FunctionClaimRef<'_>,
+    claim_label: &str,
+    function_environment: &CFunctionEnvironment,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    resource_environment: &ResourceEnvironment,
+    theorem_environment: &TheoremEnvironment,
+    steps: &[ProofStep],
+    proof_case_assumptions: &[ProofCaseAssumption],
+    certificate_steps: &[ProofStep],
+) -> Result<Vec<VerifiedCTheorem>, ClickError> {
     if steps.is_empty() {
         return Err(ClickError::new(format!(
             "`{claim_label}` has an empty proof-step script"
@@ -1527,6 +1652,39 @@ pub(super) fn prove_claim_by_steps(
     let mut replay = ProofStepReplayState::default();
 
     for (step_index, step) in steps.iter().enumerate() {
+        for case_assumption in proof_case_assumptions
+            .iter()
+            .filter(|assumption| assumption.step_index == step_index)
+        {
+            if replay.is_at_function_exit() {
+                replay.case_assumptions.push((
+                    step_index,
+                    case_assumption.proposition.clone(),
+                    case_assumption.value,
+                ));
+            } else {
+                let proposition = lower_current_proposition(
+                    &case_assumption.proposition,
+                    &requirement_pure_facts,
+                    parsed_function.parameters(),
+                    &arguments,
+                    replay.execution_start_state(&state),
+                    &state,
+                    &replay.program_point_states,
+                    predicate_environment,
+                    click_function_environment,
+                )
+                .map_err(|message| ClickError::new(format!(
+                    "`{claim_label}` proof step {step_index}: could not lower `if` condition: {message}"
+                )))?;
+                requirement_pure_facts.push(if case_assumption.value {
+                    proposition
+                } else {
+                    Proposition::Not(Box::new(proposition))
+                });
+                assumptions = assumptions_from_propositions(&requirement_pure_facts);
+            }
+        }
         match step {
             ProofStep::UnfoldResource(resource) => {
                 if replay.is_at_function_exit() {
@@ -1797,6 +1955,7 @@ pub(super) fn prove_claim_by_steps(
                 }
                 assumptions = assumptions_from_propositions(&requirement_pure_facts);
             }
+            ProofStep::If(_) => unreachable!("proof-level if steps are expanded before replay"),
             ProofStep::Witness(_) => {
                 require_step_execution(&replay, claim_label, step_index, "witness")?;
             }
@@ -1837,9 +1996,11 @@ pub(super) fn prove_claim_by_steps(
         &replay.unfolded_predicates,
         &replay.theorem_applications,
         &replay.resource_folds,
+        &replay.case_assumptions,
         &replay.program_point_states,
         replay.simp,
         steps,
+        certificate_steps,
     )
 }
 
@@ -3860,9 +4021,11 @@ fn prove_claim_from_steps_execution(
     unfolded_predicates: &[String],
     theorem_applications: &[(usize, TheoremApplication)],
     resource_folds: &[ResourceClause],
+    case_assumptions: &[(usize, ClickProposition, bool)],
     program_point_states: &ProgramPointStates,
     use_simp: bool,
-    proof_steps: &[ProofStep],
+    replay_steps: &[ProofStep],
+    certificate_steps: &[ProofStep],
 ) -> Result<Vec<VerifiedCTheorem>, ClickError> {
     if let Some(limit) = execution.limit() {
         return Err(ClickError::new(format!(
@@ -3903,6 +4066,40 @@ fn prove_claim_from_steps_execution(
 
         let mut path_requirements = requirement_pure_facts.to_vec();
         path_requirements.extend(path.facts().iter().map(|fact| fact.proposition().clone()));
+        if !case_assumptions.is_empty() {
+            let CFunctionOutcome::Return {
+                value: result,
+                state: post_state,
+            } = &outcome
+            else {
+                return Err(ClickError::new(format!(
+                    "`proof steps` failed for `{claim_label}` path {path_index}: proof-level `if` requires a return outcome, got {}",
+                    describe_function_outcome(&outcome, parameters, arguments)
+                )));
+            };
+            for (step_index, condition, value) in case_assumptions {
+                let condition = lower_outcome_proposition_with_program_points(
+                    parameters,
+                    arguments,
+                    state,
+                    post_state,
+                    result,
+                    &path_requirements,
+                    condition,
+                    predicate_environment,
+                    click_function_environment,
+                    program_point_states,
+                )
+                .map_err(|message| ClickError::new(format!(
+                    "`{claim_label}` path {path_index}, proof step {step_index}: could not lower `if` condition: {message}"
+                )))?;
+                path_requirements.push(if *value {
+                    condition
+                } else {
+                    Proposition::Not(Box::new(condition))
+                });
+            }
+        }
         path_requirements = unfold_available_predicate_facts(
             predicate_environment,
             click_function_environment,
@@ -3981,7 +4178,7 @@ fn prove_claim_from_steps_execution(
             )?;
         }
         let mut checking_requirements = path_requirements.clone();
-        let has_existence_steps = proof_steps
+        let has_existence_steps = replay_steps
             .iter()
             .any(|step| matches!(step, ProofStep::Witness(_) | ProofStep::Choose(_)));
         if has_existence_steps {
@@ -3998,7 +4195,7 @@ fn prove_claim_from_steps_execution(
                 predicate_environment,
                 click_function_environment,
                 unfolded_predicates,
-                proof_steps,
+                replay_steps,
                 function_block.requires(),
                 program_point_states,
                 use_simp,
@@ -4076,7 +4273,7 @@ fn prove_claim_from_steps_execution(
             function_block: function_block.clone(),
             claim: claim.verified_claim(),
             proof_kind: ProofKind::ProofSteps,
-            proof_steps: Some(proof_steps.to_vec()),
+            proof_steps: Some(certificate_steps.to_vec()),
             specification,
             theorem,
         });

@@ -71,6 +71,11 @@ Current proof steps:
   proof and add it to the current pure facts. The nested proof accepts
   `unfold`, `apply`, `simp`, and nested `have`; it cannot execute C or transform
   resources.
+- `if proposition { ... } else { ... }`: prove the current claim twice, once
+  with the proposition added to the pure facts and once with its negation
+  added. Each branch has its own proof script and must finish the current
+  claim. A proof-level `if` is therefore the final step in its surrounding
+  script; it does not execute a C `if` statement.
 - `observe(resource);`: project one view step from a held composite resource
   fact. This exposes immediate pure facts and viewed immediate contained
   resource facts without exposing owned contained permissions.
@@ -84,6 +89,20 @@ Current proof steps:
   checked.
 
 The end of a `by { ... }` block checks the overall claim.
+
+For example, pure case analysis needs no C execution:
+
+```click
+theorem int32_sign_split(x: int32) {
+    ensures x <= 0 or x > 0 by {
+        if x <= 0 {
+            simp();
+        } else {
+            simp();
+        }
+    }
+}
+```
 
 `unfold(predicate)`, `apply(theorem)`, `have`, and `fold(resource)` update the
 current proof context immediately. They can therefore prepare the exact pure

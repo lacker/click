@@ -85,6 +85,24 @@ theorem reuses_nonnegative_body(y: int32) {
 }
 ```
 
+Proof-level `if` performs explicit case analysis on a pure proposition. It
+checks the same current claim under the proposition and its negation:
+
+```click
+theorem int32_sign_split(x: int32) {
+    ensures x <= 0 or x > 0 by {
+        if x <= 0 {
+            simp();
+        } else {
+            simp();
+        }
+    }
+}
+```
+
+The same construct can appear before or after C execution in a function proof.
+It splits proof reasoning only; it does not itself execute a C `if` statement.
+
 `apply(...)` instantiates a verified theorem, proves that theorem's proposition
 `requires` clauses from the current proof context, and adds its proposition
 `ensures` clauses as derived facts. It does not change the current resource

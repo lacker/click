@@ -841,6 +841,29 @@ fn parses_local_have_proof_step() {
 }
 
 #[test]
+fn parses_proof_if_step() {
+    let source = FILL3_CLICK.replace(
+        "by auto;",
+        "by { if n <= 0 { execute_rest(); simp(); } else { execute_rest(); simp(); } }",
+    );
+    let file = parse(&source).expect("proof if should parse");
+    let steps = file.function_blocks()[0].ensures()[0]
+        .proof()
+        .steps()
+        .expect("expected proof steps");
+
+    assert!(matches!(
+        &steps[0],
+        ProofStep::If(ProofIf {
+            then_steps,
+            else_steps,
+            ..
+        }) if then_steps == &[ProofStep::ExecuteRest, ProofStep::Simp]
+            && else_steps == &[ProofStep::ExecuteRest, ProofStep::Simp]
+    ));
+}
+
+#[test]
 fn parses_existential_proof_steps() {
     let source = FILL3_CLICK.replace(
         "by auto;",

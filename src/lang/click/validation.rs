@@ -271,6 +271,19 @@ fn expand_declared_resource_proof_step(
             proposition: have.proposition,
             proof: expand_declared_resource_proof(have.proof, resource_definitions)?,
         })),
+        ProofStep::If(proof_if) => Ok(ProofStep::If(ProofIf {
+            condition: proof_if.condition,
+            then_steps: proof_if
+                .then_steps
+                .into_iter()
+                .map(|step| expand_declared_resource_proof_step(step, resource_definitions))
+                .collect::<Result<Vec<_>, _>>()?,
+            else_steps: proof_if
+                .else_steps
+                .into_iter()
+                .map(|step| expand_declared_resource_proof_step(step, resource_definitions))
+                .collect::<Result<Vec<_>, _>>()?,
+        })),
         _ => Ok(step),
     }
 }
@@ -2050,35 +2063,39 @@ fn validate_pure_theorem_proof(theorem_name: &str, proof: &Proof) -> Result<(), 
         Proof::Tactic(Tactic::Frame) => Err(ClickError::new(format!(
             "`frame` cannot prove pure theorem `{theorem_name}`"
         ))),
-        Proof::Steps(steps) => {
-            for step in steps {
-                match step {
-                    ProofStep::UnfoldPredicate(_)
-                    | ProofStep::ApplyTheorem(_)
-                    | ProofStep::Simp => {}
-                    ProofStep::SymbolicExecute
-                    | ProofStep::ExecuteStep
-                    | ProofStep::ExecuteRest
-                    | ProofStep::ExecuteUntil(_)
-                    | ProofStep::BoundedExecute
-                    | ProofStep::LoopVc(_)
-                    | ProofStep::Frame(_)
-                    | ProofStep::ObserveResource(_)
-                    | ProofStep::UnfoldResource(_)
-                    | ProofStep::FoldResource(_)
-                    | ProofStep::Have(_)
-                    | ProofStep::Witness(_)
-                    | ProofStep::Choose(_) => {
-                        return Err(ClickError::new(format!(
-                            "proof step `{}` cannot prove pure theorem `{theorem_name}`",
-                            proof_step_name(step)
-                        )));
-                    }
-                }
+        Proof::Steps(steps) => validate_pure_theorem_steps(theorem_name, steps),
+    }
+}
+
+fn validate_pure_theorem_steps(theorem_name: &str, steps: &[ProofStep]) -> Result<(), ClickError> {
+    for step in steps {
+        match step {
+            ProofStep::UnfoldPredicate(_) | ProofStep::ApplyTheorem(_) | ProofStep::Simp => {}
+            ProofStep::If(proof_if) => {
+                validate_pure_theorem_steps(theorem_name, &proof_if.then_steps)?;
+                validate_pure_theorem_steps(theorem_name, &proof_if.else_steps)?;
             }
-            Ok(())
+            ProofStep::SymbolicExecute
+            | ProofStep::ExecuteStep
+            | ProofStep::ExecuteRest
+            | ProofStep::ExecuteUntil(_)
+            | ProofStep::BoundedExecute
+            | ProofStep::LoopVc(_)
+            | ProofStep::Frame(_)
+            | ProofStep::ObserveResource(_)
+            | ProofStep::UnfoldResource(_)
+            | ProofStep::FoldResource(_)
+            | ProofStep::Have(_)
+            | ProofStep::Witness(_)
+            | ProofStep::Choose(_) => {
+                return Err(ClickError::new(format!(
+                    "proof step `{}` cannot prove pure theorem `{theorem_name}`",
+                    proof_step_name(step)
+                )));
+            }
         }
     }
+    Ok(())
 }
 
 pub(super) fn proof_step_name(step: &ProofStep) -> &'static str {
@@ -2094,6 +2111,7 @@ pub(super) fn proof_step_name(step: &ProofStep) -> &'static str {
         ProofStep::FoldResource(_) => "fold",
         ProofStep::ApplyTheorem(_) => "apply",
         ProofStep::Have(_) => "have",
+        ProofStep::If(_) => "if",
         ProofStep::ObserveResource(_) => "observe",
         ProofStep::Witness(_) => "witness",
         ProofStep::Choose(_) => "choose",
