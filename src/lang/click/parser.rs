@@ -1548,6 +1548,14 @@ impl Parser {
 
     fn parse_proof_step(&mut self) -> Result<ProofStep, ClickError> {
         let name = self.expect_ident("proof step")?;
+        if name == "have" {
+            let proposition = self.parse_proposition()?;
+            let proof = self.parse_by_clause()?;
+            if self.peek() == Some(&Token::Semicolon) {
+                self.position += 1;
+            }
+            return Ok(ProofStep::Have(ProofHave { proposition, proof }));
+        }
         let step = match name.as_str() {
             "symbolic_execute" => {
                 self.expect_empty_step_args(&name)?;

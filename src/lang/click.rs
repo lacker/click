@@ -489,10 +489,17 @@ pub enum ProofStep {
     UnfoldResource(ResourceClause),
     FoldResource(ResourceClause),
     ApplyTheorem(TheoremApplication),
+    Have(ProofHave),
     ObserveResource(ResourceClause),
     Witness(ProofWitness),
     Choose(ProofChoice),
     Simp,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProofHave {
+    proposition: ClickProposition,
+    proof: Proof,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

@@ -819,6 +819,28 @@ fn parses_apply_theorem_proof_step() {
 }
 
 #[test]
+fn parses_local_have_proof_step() {
+    let source = FILL3_CLICK.replace(
+        "by auto;",
+        "by { have n < 2147483647 by { simp(); } execute_rest(); simp(); }",
+    );
+    let file = parse(&source).expect("local have proof step should parse");
+    let steps = file.function_blocks()[0].ensures()[0]
+        .proof()
+        .steps()
+        .expect("expected proof steps");
+
+    assert!(matches!(
+        &steps[0],
+        ProofStep::Have(ProofHave {
+            proof: Proof::Steps(inner),
+            ..
+        }) if inner == &[ProofStep::Simp]
+    ));
+    assert_eq!(&steps[1..], &[ProofStep::ExecuteRest, ProofStep::Simp]);
+}
+
+#[test]
 fn parses_existential_proof_steps() {
     let source = FILL3_CLICK.replace(
         "by auto;",

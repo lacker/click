@@ -194,11 +194,12 @@ current implementation has these execution-point states:
 - function exit, after `execute_rest()` / `symbolic_execute()` has executed the
   rest of the function.
 
-That is why `observe(...)` and `unfold(...)` can run before execution reaches
-function exit, while `fold(...)`, `apply(...)`, and `simp()` still run after
-function-exit execution. This is a transitional shape. The intended direction
-is for future proof steps to advance between more execution points and
-control-flow joins, so resource steps can happen between C regions.
+`observe(...)`, resource and predicate `unfold(...)`, `fold(...)`,
+`apply(...)`, and `have ... by { ... }` can update the proof context at the
+current pre-exit execution point. This lets deterministic proof steps prepare
+facts and resources before the next C statement. At function exit, operations
+whose meaning depends on `result` or the post-state are checked separately for
+each completed execution path.
 
 `execute_step()` is the primitive execution proof step. It advances by one
 supported straight-line statement and expects needed pure facts and resource

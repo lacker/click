@@ -67,6 +67,10 @@ Current proof steps:
   standard library or current file, prove its requirements from the current
   proof context, and add its conclusions as derived facts. This step never
   changes the resource context.
+- `have proposition by { ... }`: prove a pure proposition in a scoped nested
+  proof and add it to the current pure facts. The nested proof accepts
+  `unfold`, `apply`, `simp`, and nested `have`; it cannot execute C or transform
+  resources.
 - `observe(resource);`: project one view step from a held composite resource
   fact. This exposes immediate pure facts and viewed immediate contained
   resource facts without exposing owned contained permissions.
@@ -80,6 +84,12 @@ Current proof steps:
   checked.
 
 The end of a `by { ... }` block checks the overall claim.
+
+`unfold(predicate)`, `apply(theorem)`, `have`, and `fold(resource)` update the
+current proof context immediately. They can therefore prepare the exact pure
+fact or resource fact required by the following `execute_step()`. Applications
+after function exit remain path-local, so `result` and post-state expressions
+are interpreted separately for each completed path.
 
 Some successful `auto` proofs record replayable proof-step certificates when the
 current proof-step language can express the argument.

@@ -267,6 +267,10 @@ fn expand_declared_resource_proof_step(
         ProofStep::FoldResource(resource) => Ok(ProofStep::FoldResource(
             expand_declared_resource_clause(resource, resource_definitions)?,
         )),
+        ProofStep::Have(have) => Ok(ProofStep::Have(ProofHave {
+            proposition: have.proposition,
+            proof: expand_declared_resource_proof(have.proof, resource_definitions)?,
+        })),
         _ => Ok(step),
     }
 }
@@ -2062,6 +2066,7 @@ fn validate_pure_theorem_proof(theorem_name: &str, proof: &Proof) -> Result<(), 
                     | ProofStep::ObserveResource(_)
                     | ProofStep::UnfoldResource(_)
                     | ProofStep::FoldResource(_)
+                    | ProofStep::Have(_)
                     | ProofStep::Witness(_)
                     | ProofStep::Choose(_) => {
                         return Err(ClickError::new(format!(
@@ -2088,6 +2093,7 @@ pub(super) fn proof_step_name(step: &ProofStep) -> &'static str {
         ProofStep::UnfoldPredicate(_) | ProofStep::UnfoldResource(_) => "unfold",
         ProofStep::FoldResource(_) => "fold",
         ProofStep::ApplyTheorem(_) => "apply",
+        ProofStep::Have(_) => "have",
         ProofStep::ObserveResource(_) => "observe",
         ProofStep::Witness(_) => "witness",
         ProofStep::Choose(_) => "choose",

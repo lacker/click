@@ -1228,6 +1228,265 @@ enum ProofStepExecutionMode {
     Bounded,
 }
 
+#[allow(clippy::too_many_arguments)]
+fn apply_theorem_at_current_point(
+    theorem_environment: &TheoremEnvironment,
+    application: &TheoremApplication,
+    claim_label: &str,
+    step_index: usize,
+    available: Vec<Proposition>,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    pre_state: &CState,
+    state: &CState,
+    program_point_states: &ProgramPointStates,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    unfolded_predicates: &[String],
+) -> Result<Vec<Proposition>, ClickError> {
+    let values = parameter_values(parameters, arguments).map_err(|error| {
+        ClickError::new(format!(
+            "`{claim_label}` proof step {step_index}: {}",
+            error.message
+        ))
+    })?;
+    let array_refs = array_refs_for_parameters(parameters, &values, state.memory());
+    let context = TheoremApplicationContext {
+        values: &values,
+        array_refs: &array_refs,
+        pre_state,
+        post_state: state,
+        result: None,
+        program_point_states,
+    };
+    apply_theorem_applications_to_available(
+        theorem_environment,
+        &[(step_index, application.clone())],
+        claim_label,
+        None,
+        available,
+        &context,
+        predicate_environment,
+        click_function_environment,
+        unfolded_predicates,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn fold_composite_resource_at_current_point(
+    resource_environment: &ResourceEnvironment,
+    resource: &ResourceClause,
+    claim_label: &str,
+    step_index: usize,
+    available_pure_facts: &[Proposition],
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    pre_state: &CState,
+    state: CState,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    unfolded_predicates: &[String],
+) -> Result<CState, ClickError> {
+    let outcome = CFunctionOutcome::Return {
+        value: CValue::Int32(Bitvector32Term::Constant(0)),
+        state,
+    };
+    let outcome = fold_composite_resources_on_outcome(
+        resource_environment,
+        std::slice::from_ref(resource),
+        claim_label,
+        step_index,
+        &[],
+        available_pure_facts,
+        parameters,
+        arguments,
+        pre_state,
+        outcome,
+        predicate_environment,
+        click_function_environment,
+        unfolded_predicates,
+    )?;
+    let CFunctionOutcome::Return { state, .. } = outcome else {
+        unreachable!("folding a synthetic return outcome preserves its outcome kind")
+    };
+    Ok(state)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn lower_current_proposition(
+    proposition: &ClickProposition,
+    available: &[Proposition],
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    pre_state: &CState,
+    state: &CState,
+    program_point_states: &ProgramPointStates,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+) -> Result<Proposition, String> {
+    let mut values = parameter_values(parameters, arguments).map_err(|error| error.message)?;
+    let array_refs = array_refs_for_parameters(parameters, &values, state.memory());
+    let assumptions = assumptions_from_propositions(available);
+    let mut next_variable = 2_000_000;
+    let mut active_functions = BTreeSet::new();
+    lower_outcome_proposition_with_environment(
+        &mut values,
+        &array_refs,
+        pre_state,
+        state,
+        None,
+        &assumptions,
+        proposition,
+        &mut next_variable,
+        predicate_environment,
+        click_function_environment,
+        program_point_states,
+        &mut active_functions,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn prove_have_at_current_point(
+    have: &ProofHave,
+    theorem_environment: &TheoremEnvironment,
+    claim_label: &str,
+    outer_step_index: usize,
+    outer_available: &[Proposition],
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    pre_state: &CState,
+    state: &CState,
+    program_point_states: &ProgramPointStates,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+) -> Result<Proposition, ClickError> {
+    let mut available = outer_available.to_vec();
+    let mut unfolded_predicates = Vec::new();
+    let mut use_simp = matches!(have.proof, Proof::Tactic(Tactic::Auto | Tactic::Simp));
+    let steps: &[ProofStep] = match &have.proof {
+        Proof::Steps(steps) => steps,
+        Proof::Tactic(Tactic::Auto | Tactic::Simp) => &[],
+        Proof::Tactic(Tactic::Frame) => {
+            return Err(ClickError::new(format!(
+                "`{claim_label}` proof step {outer_step_index}: `frame` cannot prove a local `have` fact"
+            )));
+        }
+    };
+
+    for (inner_step_index, step) in steps.iter().enumerate() {
+        match step {
+            ProofStep::UnfoldPredicate(name) => {
+                if predicate_environment.get(name).is_none() {
+                    return Err(ClickError::new(format!(
+                        "`{claim_label}` proof step {outer_step_index}, `have` step {inner_step_index}: unknown predicate `{name}`"
+                    )));
+                }
+                if !unfolded_predicates.contains(name) {
+                    unfolded_predicates.push(name.clone());
+                }
+                available = unfold_available_predicate_facts(
+                    predicate_environment,
+                    click_function_environment,
+                    std::slice::from_ref(name),
+                    &available,
+                )
+                .map_err(|message| ClickError::new(format!(
+                    "`{claim_label}` proof step {outer_step_index}, `have` step {inner_step_index}: {message}"
+                )))?;
+            }
+            ProofStep::ApplyTheorem(application) => {
+                available = apply_theorem_at_current_point(
+                    theorem_environment,
+                    application,
+                    claim_label,
+                    inner_step_index,
+                    available,
+                    parameters,
+                    arguments,
+                    pre_state,
+                    state,
+                    program_point_states,
+                    predicate_environment,
+                    click_function_environment,
+                    &unfolded_predicates,
+                )?;
+            }
+            ProofStep::Have(inner_have) => {
+                let fact = prove_have_at_current_point(
+                    inner_have,
+                    theorem_environment,
+                    claim_label,
+                    outer_step_index,
+                    &available,
+                    parameters,
+                    arguments,
+                    pre_state,
+                    state,
+                    program_point_states,
+                    predicate_environment,
+                    click_function_environment,
+                )?;
+                if !available.contains(&fact) {
+                    available.push(fact);
+                }
+            }
+            ProofStep::Simp => use_simp = true,
+            _ => {
+                return Err(ClickError::new(format!(
+                    "`{claim_label}` proof step {outer_step_index}, `have` step {inner_step_index}: `{}` cannot prove a local pure fact",
+                    proof_step_name(step)
+                )));
+            }
+        }
+    }
+
+    let fact = lower_current_proposition(
+        &have.proposition,
+        &available,
+        parameters,
+        arguments,
+        pre_state,
+        state,
+        program_point_states,
+        predicate_environment,
+        click_function_environment,
+    )
+    .map_err(|message| {
+        ClickError::new(format!(
+            "`{claim_label}` proof step {outer_step_index}: could not lower `have` fact: {message}"
+        ))
+    })?;
+    let assumptions = assumptions_from_propositions(&available);
+    let goal = unfold_predicates_in_proposition(
+        predicate_environment,
+        click_function_environment,
+        &unfolded_predicates,
+        &fact,
+        &assumptions,
+    )
+    .map_err(|message| {
+        ClickError::new(format!(
+            "`{claim_label}` proof step {outer_step_index}: could not unfold `have` fact: {message}"
+        ))
+    })?;
+    if assumptions.proves(&goal)
+        || (use_simp && matches!(simp_proposition(&goal, &assumptions), SimpProposition::True))
+    {
+        return Ok(fact);
+    }
+    Err(ClickError::new(format!(
+        "`{claim_label}` proof step {outer_step_index}: `have` failed: {}",
+        describe_missing_pure_fact(
+            &goal,
+            &available,
+            state.resources().facts(),
+            parameters,
+            arguments,
+            &[]
+        )
+    )))
+}
+
 pub(super) fn prove_claim_by_steps(
     source_path: &str,
     function_block: &FunctionBlock,
@@ -1449,22 +1708,94 @@ pub(super) fn prove_claim_by_steps(
                 if !replay.unfolded_predicates.contains(name) {
                     replay.unfolded_predicates.push(name.clone());
                 }
+                requirement_pure_facts = unfold_available_predicate_facts(
+                    predicate_environment,
+                    click_function_environment,
+                    std::slice::from_ref(name),
+                    &requirement_pure_facts,
+                )
+                .map_err(|message| {
+                    ClickError::new(format!(
+                        "`{claim_label}` proof step {step_index}: {message}"
+                    ))
+                })?;
+                assumptions = assumptions_from_propositions(&requirement_pure_facts);
             }
             ProofStep::ApplyTheorem(application) => {
-                require_step_execution(&replay, claim_label, step_index, "apply")?;
                 if theorem_environment.get(&application.name).is_none() {
                     return Err(ClickError::new(format!(
                         "`{claim_label}` proof step {step_index}: unknown theorem `{}`",
                         application.name
                     )));
                 }
-                replay
-                    .theorem_applications
-                    .push((step_index, application.clone()));
+                if replay.is_at_function_exit() {
+                    replay
+                        .theorem_applications
+                        .push((step_index, application.clone()));
+                } else {
+                    requirement_pure_facts = apply_theorem_at_current_point(
+                        theorem_environment,
+                        application,
+                        claim_label,
+                        step_index,
+                        requirement_pure_facts,
+                        parsed_function.parameters(),
+                        &arguments,
+                        replay.execution_start_state(&state),
+                        &state,
+                        &replay.program_point_states,
+                        predicate_environment,
+                        click_function_environment,
+                        &replay.unfolded_predicates,
+                    )?;
+                    assumptions = assumptions_from_propositions(&requirement_pure_facts);
+                }
             }
             ProofStep::FoldResource(resource) => {
-                require_step_execution(&replay, claim_label, step_index, "fold")?;
-                replay.resource_folds.push(resource.clone());
+                if replay.is_at_function_exit() {
+                    replay.resource_folds.push(resource.clone());
+                } else {
+                    let pre_state = replay.execution_start_state(&state).clone();
+                    state = fold_composite_resource_at_current_point(
+                        resource_environment,
+                        resource,
+                        claim_label,
+                        step_index,
+                        &requirement_pure_facts,
+                        parsed_function.parameters(),
+                        &arguments,
+                        &pre_state,
+                        state,
+                        predicate_environment,
+                        click_function_environment,
+                        &replay.unfolded_predicates,
+                    )?;
+                }
+            }
+            ProofStep::Have(have) => {
+                if replay.is_at_function_exit() {
+                    return Err(ClickError::new(format!(
+                        "`{claim_label}` proof step {step_index}: `have` must run before execution reaches function exit"
+                    )));
+                }
+                let fact = prove_have_at_current_point(
+                    have,
+                    theorem_environment,
+                    claim_label,
+                    step_index,
+                    &requirement_pure_facts,
+                    parsed_function.parameters(),
+                    &arguments,
+                    replay.execution_start_state(&state),
+                    &state,
+                    &replay.program_point_states,
+                    predicate_environment,
+                    click_function_environment,
+                )?;
+                if !requirement_pure_facts.contains(&fact) {
+                    requirement_pure_facts.push(fact);
+                }
+                assumptions = assumptions_from_propositions(&requirement_pure_facts);
             }
             ProofStep::Witness(_) => {
                 require_step_execution(&replay, claim_label, step_index, "witness")?;
