@@ -1,6 +1,26 @@
 use super::*;
 use crate::kernel::int32;
 
+#[test]
+fn simp_uses_assumed_compound_proposition() {
+    let proposition = Proposition::Or(
+        Box::new(Proposition::Predicate {
+            name: "left".to_string(),
+            arguments: Vec::new(),
+        }),
+        Box::new(Proposition::Predicate {
+            name: "right".to_string(),
+            arguments: Vec::new(),
+        }),
+    );
+    let assumptions = Assumptions::new().assume_proposition(proposition.clone());
+
+    assert_eq!(
+        simp_proposition(&proposition, &assumptions),
+        SimpProposition::True
+    );
+}
+
 const FILL3_C: &str = r#"
         int32 fill3(int32* p) {
             int32 i;

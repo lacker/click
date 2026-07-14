@@ -2131,6 +2131,9 @@ pub(super) fn simp_proposition(
     proposition: &Proposition,
     assumptions: &Assumptions,
 ) -> SimpProposition {
+    if assumptions.proves(proposition) {
+        return SimpProposition::True;
+    }
     match proposition {
         Proposition::Equal(left, right) => match simp_terms_equal(left, right) {
             Some(true) => SimpProposition::True,

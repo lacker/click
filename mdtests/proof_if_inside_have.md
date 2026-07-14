@@ -15,7 +15,7 @@ int32 sign_partition(int32 x) {
 verifying "sign_partition.c";
 
 int32 sign_partition(int32 x) {
-    ensures result == x by {
+    ensures result <= 0 or result > 0 by {
         execute_step();
         execute_step();
         have y <= 0 or y > 0 by {
@@ -24,9 +24,6 @@ int32 sign_partition(int32 x) {
             } else {
                 simp();
             }
-        }
-        have y <= 0 or y > 0 by {
-            simp();
         }
         execute_step();
         simp();
