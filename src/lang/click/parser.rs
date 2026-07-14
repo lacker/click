@@ -1579,13 +1579,13 @@ impl Parser {
                 self.expect_empty_step_args(&name)?;
                 ProofStep::ExecuteStep
             }
-            "execute_then_branch" => {
+            "execute_then_step" => {
                 self.expect_empty_step_args(&name)?;
-                ProofStep::ExecuteThenBranch
+                ProofStep::ExecuteThenStep
             }
-            "execute_else_branch" => {
+            "execute_else_step" => {
                 self.expect_empty_step_args(&name)?;
-                ProofStep::ExecuteElseBranch
+                ProofStep::ExecuteElseStep
             }
             "execute_rest" => {
                 self.expect_empty_step_args(&name)?;

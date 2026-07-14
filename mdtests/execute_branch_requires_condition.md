@@ -20,10 +20,10 @@ verifying "wrong_selected_branch.c";
 int32 wrong_selected_branch(int32 x) {
     ensures result >= 0 by {
         if x >= 0 {
-            execute_else_branch();
+            execute_else_step();
             simp();
         } else {
-            execute_else_branch();
+            execute_else_step();
             simp();
         }
     }

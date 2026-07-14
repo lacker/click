@@ -480,8 +480,8 @@ pub enum Proof {
 pub enum ProofStep {
     SymbolicExecute,
     ExecuteStep,
-    ExecuteThenBranch,
-    ExecuteElseBranch,
+    ExecuteThenStep,
+    ExecuteElseStep,
     ExecuteRest,
     ExecuteUntil(CodeRegionRef),
     BoundedExecute,

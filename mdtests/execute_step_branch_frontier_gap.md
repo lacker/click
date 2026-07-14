@@ -1,9 +1,9 @@
 # explicit branch execution
 
 This checks proof-level case analysis together with explicit execution of a
-selected C `if` arm. Each proof case establishes the C condition needed by its
-branch-execution step, then derives the bound needed for the following
-potentially overflowing increment.
+selected C `if` arm. Each proof case establishes the C condition, enters its
+arm, executes the arm assignment, and then derives the bound needed for the
+following potentially overflowing increment.
 
 ```c filename=increment_nonnegative.c
 int32 increment_nonnegative(int32 x) {
@@ -27,7 +27,8 @@ int32 increment_nonnegative(int32 x) {
     ensures result > 0 by {
         execute_step();
         if x >= 0 {
-            execute_then_branch();
+            execute_then_step();
+            execute_step();
             have y < 2147483647 by {
                 simp();
             }
@@ -35,7 +36,8 @@ int32 increment_nonnegative(int32 x) {
             execute_step();
             simp();
         } else {
-            execute_else_branch();
+            execute_else_step();
+            execute_step();
             have y < 2147483647 by {
                 simp();
             }

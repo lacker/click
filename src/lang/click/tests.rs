@@ -753,7 +753,7 @@ fn parses_execute_step_proof_step() {
 fn parses_explicit_branch_execution_steps() {
     let source = FILL3_CLICK.replace(
         "by auto;",
-        "by { if n <= 0 { execute_then_branch(); execute_rest(); simp(); } else { execute_else_branch(); execute_rest(); simp(); } }",
+        "by { if n <= 0 { execute_then_step(); execute_rest(); simp(); } else { execute_else_step(); execute_rest(); simp(); } }",
     );
     let file = parse(&source).expect("explicit branch execution steps should parse");
     let steps = file.function_blocks()[0].ensures()[0]
@@ -767,8 +767,8 @@ fn parses_explicit_branch_execution_steps() {
             then_steps,
             else_steps,
             ..
-        }) if then_steps.first() == Some(&ProofStep::ExecuteThenBranch)
-            && else_steps.first() == Some(&ProofStep::ExecuteElseBranch)
+        }) if then_steps.first() == Some(&ProofStep::ExecuteThenStep)
+            && else_steps.first() == Some(&ProofStep::ExecuteElseStep)
     ));
 }
 

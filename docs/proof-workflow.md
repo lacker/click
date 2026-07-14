@@ -43,11 +43,11 @@ Current proof steps:
 - `execute_step();`: execute one supported straight-line C statement from the
   current execution point. The step uses the facts and resources already in the
   proof environment; project or prove needed facts before running it.
-- `execute_then_branch();`: require the next top-level C statement to be an
-  `if`, prove its condition from the current pure facts, execute its then arm,
-  and advance to the statement after the `if`.
-- `execute_else_branch();`: the corresponding operation for the else arm; it
-  proves the C condition false before executing the arm.
+- `execute_then_step();`: require the next C statement to be an `if`, prove its
+  condition from the current pure facts, and move the execution point to the
+  beginning of its then arm without executing the arm body.
+- `execute_else_step();`: the corresponding operation for the else arm; it
+  proves the C condition false and moves to the beginning of that arm.
 - `execute_rest();`: build symbolic verification paths from the current
   execution point to function exit. From function entry, this executes the
   whole C0 function.
@@ -99,17 +99,17 @@ Explicit C branch execution composes with proof-level case analysis:
 
 ```click
 if x >= 0 {
-    execute_then_branch();
-    // Continue after the C if with facts produced by its then arm.
+    execute_then_step();
+    execute_step(); // Execute the first statement in the C then arm.
 } else {
-    execute_else_branch();
-    // Continue after the C if with facts produced by its else arm.
+    execute_else_step();
+    execute_step(); // Execute the first statement in the C else arm.
 }
 ```
 
-The initial branch-execution steps execute the selected arm as one top-level C
-statement. If that arm itself has unresolved branching control flow, the step
-fails rather than creating multiple execution frontiers.
+The branch steps execute only the selected control-flow edge. Ordinary
+`execute_step()` calls handle statements inside the arm, so nested C `if`
+statements can be entered with another explicit branch step.
 
 For example, pure case analysis needs no C execution:
 

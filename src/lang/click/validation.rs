@@ -2077,8 +2077,8 @@ fn validate_pure_theorem_steps(theorem_name: &str, steps: &[ProofStep]) -> Resul
             }
             ProofStep::SymbolicExecute
             | ProofStep::ExecuteStep
-            | ProofStep::ExecuteThenBranch
-            | ProofStep::ExecuteElseBranch
+            | ProofStep::ExecuteThenStep
+            | ProofStep::ExecuteElseStep
             | ProofStep::ExecuteRest
             | ProofStep::ExecuteUntil(_)
             | ProofStep::BoundedExecute
@@ -2104,8 +2104,8 @@ pub(super) fn proof_step_name(step: &ProofStep) -> &'static str {
     match step {
         ProofStep::SymbolicExecute => "symbolic_execute",
         ProofStep::ExecuteStep => "execute_step",
-        ProofStep::ExecuteThenBranch => "execute_then_branch",
-        ProofStep::ExecuteElseBranch => "execute_else_branch",
+        ProofStep::ExecuteThenStep => "execute_then_step",
+        ProofStep::ExecuteElseStep => "execute_else_step",
         ProofStep::ExecuteRest => "execute_rest",
         ProofStep::ExecuteUntil(_) => "execute_until",
         ProofStep::BoundedExecute => "bounded_execute",

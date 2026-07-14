@@ -102,10 +102,10 @@ theorem int32_sign_split(x: int32) {
 
 The same construct can appear before or after C execution in a function proof.
 It splits proof reasoning only; it does not itself execute a C `if` statement.
-Inside those proof cases, `execute_then_branch()` and
-`execute_else_branch()` explicitly execute a selected arm of the next C `if`.
-Each step proves the corresponding truth value of the C condition from current
-pure facts before executing the arm.
+Inside those proof cases, `execute_then_step()` and `execute_else_step()`
+explicitly enter a selected arm of the next C `if`. Each step proves the
+corresponding truth value of the C condition from current pure facts and moves
+the execution point to the start of the arm without executing its body.
 
 `apply(...)` instantiates a verified theorem, proves that theorem's proposition
 `requires` clauses from the current proof context, and adds its proposition

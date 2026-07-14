@@ -1256,6 +1256,8 @@ struct ProofStepReplayState {
     execution_point: ProofExecutionPoint,
     execution_start_state: Option<CState>,
     next_statement_index: usize,
+    branch_continuations: Vec<ProofBranchContinuation>,
+    inside_branch: bool,
     program_point_states: ProgramPointStates,
     loop_vcs: BTreeSet<usize>,
     frames: BTreeSet<Option<CodeRegionRef>>,
@@ -1264,6 +1266,13 @@ struct ProofStepReplayState {
     resource_folds: Vec<ResourceClause>,
     case_assumptions: Vec<(usize, ClickProposition, bool)>,
     simp: bool,
+}
+
+struct ProofBranchContinuation {
+    remaining: Option<CStatement>,
+    next_statement_index: usize,
+    enclosing_statement_index: Option<usize>,
+    resumes_inside_branch: bool,
 }
 
 #[derive(Default)]
@@ -1743,8 +1752,8 @@ fn prove_claim_by_linear_steps(
                 )?;
                 assumptions = assumptions_from_propositions(&requirement_pure_facts);
             }
-            ProofStep::ExecuteThenBranch | ProofStep::ExecuteElseBranch => {
-                execute_selected_branch_from_execution_point(
+            ProofStep::ExecuteThenStep | ProofStep::ExecuteElseStep => {
+                execute_selected_branch_step_from_execution_point(
                     &mut replay,
                     &mut state,
                     &mut requirement_pure_facts,
@@ -1755,7 +1764,7 @@ fn prove_claim_by_linear_steps(
                     function_environment,
                     claim_label,
                     step_index,
-                    matches!(step, ProofStep::ExecuteThenBranch),
+                    matches!(step, ProofStep::ExecuteThenStep),
                 )?;
                 assumptions = assumptions_from_propositions(&requirement_pure_facts);
             }
@@ -2022,7 +2031,7 @@ fn prove_claim_by_linear_steps(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn execute_selected_branch_from_execution_point(
+fn execute_selected_branch_step_from_execution_point(
     replay: &mut ProofStepReplayState,
     state: &mut CState,
     available_pure_facts: &mut Vec<Proposition>,
@@ -2036,9 +2045,9 @@ fn execute_selected_branch_from_execution_point(
     take_then: bool,
 ) -> Result<(), ClickError> {
     let step_name = if take_then {
-        "execute_then_branch"
+        "execute_then_step"
     } else {
-        "execute_else_branch"
+        "execute_else_step"
     };
     let statement_index = replay.next_statement_index;
     let (execution_start_state, current_state, statement, remaining) =
@@ -2062,13 +2071,15 @@ fn execute_selected_branch_from_execution_point(
         )));
     };
 
-    replay.program_point_states.insert(
-        ProgramPointRef {
-            region: CodeRegionRef::Statement(statement_index),
-            kind: ProgramPointKind::Entry,
-        },
-        current_state.clone(),
-    );
+    if !replay.inside_branch {
+        replay.program_point_states.insert(
+            ProgramPointRef {
+                region: CodeRegionRef::Statement(statement_index),
+                kind: ProgramPointKind::Entry,
+            },
+            current_state.clone(),
+        );
+    }
     let current_resources = current_state.resources().facts().to_vec();
     let probe = CStatement::If {
         condition: condition.clone(),
@@ -2129,121 +2140,29 @@ fn execute_selected_branch_from_execution_point(
         )));
     }
 
-    let mut execution_pure_facts = probe_path.facts().to_vec();
-    let mut branch_available = available_pure_facts.clone();
-    branch_available.extend(
-        execution_pure_facts
+    available_pure_facts.extend(
+        probe_path
+            .facts()
             .iter()
             .map(|fact| fact.proposition().clone()),
     );
-    let branch_assumptions = assumptions_from_propositions(&branch_available);
-    let branch = if take_then {
+    let selected_branch = if take_then {
         *then_branch
     } else {
         *else_branch
     };
-    let branch_execution = prove_symbolic_c_execution_paths_with_environment(
-        current_state,
-        branch,
-        branch_assumptions,
-        function_environment.clone(),
-    );
-    let branch_path = single_statement_step_path(
-        &branch_execution,
-        claim_label,
-        step_index,
-        step_name,
-        &branch_available,
-        &current_resources,
-        parameters,
-        arguments,
-    )?;
-    execution_pure_facts.extend(branch_path.facts().iter().cloned());
-    let outcome = match implication_body(branch_path.theorem().proposition()) {
-        Proposition::CStatementExecutes { outcome, .. } => outcome.clone(),
-        proposition => {
-            return Err(ClickError::new(format!(
-                "`{claim_label}` proof step {step_index}: `{step_name}` saw unexpected branch theorem {proposition:?}"
-            )));
-        }
+    replay.branch_continuations.push(ProofBranchContinuation {
+        remaining,
+        next_statement_index: statement_index + usize::from(!replay.inside_branch),
+        enclosing_statement_index: (!replay.inside_branch).then_some(statement_index),
+        resumes_inside_branch: replay.inside_branch,
+    });
+    replay.execution_start_state = Some(execution_start_state);
+    replay.execution_point = ProofExecutionPoint::StatementEntry {
+        remaining: selected_branch,
     };
-    if let CStatementOutcome::Normal(exit_state)
-    | CStatementOutcome::Return {
-        state: exit_state, ..
-    } = &outcome
-    {
-        replay.program_point_states.insert(
-            ProgramPointRef {
-                region: CodeRegionRef::Statement(statement_index),
-                kind: ProgramPointKind::Exit,
-            },
-            exit_state.clone(),
-        );
-    }
-
-    match outcome {
-        CStatementOutcome::Normal(next_state) => {
-            let Some(remaining) = remaining else {
-                return Err(ClickError::new(format!(
-                    "`{claim_label}` proof step {step_index}: `{step_name}` reached the end of the function without a return"
-                )));
-            };
-            available_pure_facts.extend(
-                execution_pure_facts
-                    .iter()
-                    .map(|fact| fact.proposition().clone()),
-            );
-            replay.execution_start_state = Some(execution_start_state);
-            replay.execution_point = ProofExecutionPoint::StatementEntry { remaining };
-            replay.next_statement_index = statement_index + 1;
-            *state = next_state;
-        }
-        CStatementOutcome::Return { .. } => {
-            let mut path_pure_facts = available_pure_facts.clone();
-            path_pure_facts.extend(
-                execution_pure_facts
-                    .iter()
-                    .map(|fact| fact.proposition().clone()),
-            );
-            let return_assumptions = assumptions_from_propositions(&path_pure_facts);
-            let (outcome, obligations) = c_function_outcome_from_statement_outcome(
-                &execution_start_state,
-                function,
-                outcome,
-                branch_path.obligations().to_vec(),
-                &return_assumptions,
-            );
-            let completed = certify_c_function_execution_paths_from_outcomes(
-                execution_start_state.clone(),
-                function.clone(),
-                arguments.to_vec(),
-                assumptions.clone(),
-                vec![(outcome, execution_pure_facts, obligations)],
-            );
-            let replay_state = execution_start_state.clone();
-            set_replay_execution(
-                replay,
-                ProofStepExecutionMode::Verification,
-                claim_label,
-                step_index,
-                step_name,
-                execution_start_state,
-                completed,
-            )?;
-            replay.next_statement_index = statement_index + 1;
-            *state = replay_state;
-        }
-        CStatementOutcome::UndefinedBehavior(kind) => {
-            return Err(ClickError::new(format!(
-                "`{claim_label}` proof step {step_index}: `{step_name}` produced undefined behavior: {kind:?}"
-            )));
-        }
-        CStatementOutcome::RuntimeError(error) => {
-            return Err(ClickError::new(format!(
-                "`{claim_label}` proof step {step_index}: `{step_name}` produced runtime error: {error:?}"
-            )));
-        }
-    }
+    replay.inside_branch = true;
+    *state = current_state;
     Ok(())
 }
 
@@ -2354,13 +2273,15 @@ fn execute_step_from_execution_point(
         }
     };
 
-    replay.program_point_states.insert(
-        ProgramPointRef {
-            region: CodeRegionRef::Statement(statement_index),
-            kind: ProgramPointKind::Entry,
-        },
-        current_state.clone(),
-    );
+    if !replay.inside_branch {
+        replay.program_point_states.insert(
+            ProgramPointRef {
+                region: CodeRegionRef::Statement(statement_index),
+                kind: ProgramPointKind::Entry,
+            },
+            current_state.clone(),
+        );
+    }
     let current_resources = current_state.resources().facts().to_vec();
     let execution = prove_symbolic_c_execution_paths_with_environment(
         current_state,
@@ -2387,12 +2308,14 @@ fn execute_step_from_execution_point(
             )));
         }
     };
-    if let Some(statement_exit_state) = match &outcome {
-        CStatementOutcome::Normal(state) | CStatementOutcome::Return { state, .. } => {
-            Some(state.clone())
+    if !replay.inside_branch
+        && let Some(statement_exit_state) = match &outcome {
+            CStatementOutcome::Normal(state) | CStatementOutcome::Return { state, .. } => {
+                Some(state.clone())
+            }
+            CStatementOutcome::UndefinedBehavior(_) | CStatementOutcome::RuntimeError(_) => None,
         }
-        CStatementOutcome::UndefinedBehavior(_) | CStatementOutcome::RuntimeError(_) => None,
-    } {
+    {
         replay.program_point_states.insert(
             ProgramPointRef {
                 region: CodeRegionRef::Statement(statement_index),
@@ -2404,7 +2327,14 @@ fn execute_step_from_execution_point(
 
     match outcome {
         CStatementOutcome::Normal(next_state) => {
-            let Some(remaining) = remaining else {
+            let remaining = if let Some(remaining) = remaining {
+                if !replay.inside_branch {
+                    replay.next_statement_index = statement_index + 1;
+                }
+                remaining
+            } else if let Some(remaining) = resume_after_completed_branch(replay, &next_state) {
+                remaining
+            } else {
                 return Err(ClickError::new(format!(
                     "`{claim_label}` proof step {step_index}: `{step_name}` reached the end of the function without a return"
                 )));
@@ -2416,10 +2346,16 @@ fn execute_step_from_execution_point(
             );
             replay.execution_start_state = Some(execution_start_state);
             replay.execution_point = ProofExecutionPoint::StatementEntry { remaining };
-            replay.next_statement_index = statement_index + 1;
             *state = next_state;
         }
         CStatementOutcome::Return { .. } => {
+            if let CStatementOutcome::Return {
+                state: return_state,
+                ..
+            } = &outcome
+            {
+                record_completed_branch_exits(replay, return_state);
+            }
             let mut path_pure_facts = available_pure_facts.clone();
             path_pure_facts.extend(
                 execution_pure_facts
@@ -2482,6 +2418,43 @@ fn execute_step_from_execution_point(
     Ok(())
 }
 
+fn resume_after_completed_branch(
+    replay: &mut ProofStepReplayState,
+    state: &CState,
+) -> Option<CStatement> {
+    while let Some(continuation) = replay.branch_continuations.pop() {
+        if let Some(statement_index) = continuation.enclosing_statement_index {
+            replay.program_point_states.insert(
+                ProgramPointRef {
+                    region: CodeRegionRef::Statement(statement_index),
+                    kind: ProgramPointKind::Exit,
+                },
+                state.clone(),
+            );
+        }
+        replay.next_statement_index = continuation.next_statement_index;
+        replay.inside_branch = continuation.resumes_inside_branch;
+        if let Some(remaining) = continuation.remaining {
+            return Some(remaining);
+        }
+    }
+    None
+}
+
+fn record_completed_branch_exits(replay: &mut ProofStepReplayState, state: &CState) {
+    while let Some(continuation) = replay.branch_continuations.pop() {
+        if let Some(statement_index) = continuation.enclosing_statement_index {
+            replay.program_point_states.insert(
+                ProgramPointRef {
+                    region: CodeRegionRef::Statement(statement_index),
+                    kind: ProgramPointKind::Exit,
+                },
+                state.clone(),
+            );
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn record_current_statement_entry(
     replay: &mut ProofStepReplayState,
@@ -2492,6 +2465,9 @@ fn record_current_statement_entry(
     step_index: usize,
     step_name: &str,
 ) -> Result<(), ClickError> {
+    if replay.inside_branch {
+        return Ok(());
+    }
     let current_state = match &replay.execution_point {
         ProofExecutionPoint::FunctionEntry => c_function_entry_state(state, function, arguments)
             .ok_or_else(|| {
@@ -2589,9 +2565,10 @@ fn execute_rest_from_execution_point(
             )?;
         }
         ProofExecutionPoint::StatementEntry { remaining, .. } => {
+            let remaining = remaining_with_branch_continuations(replay, remaining);
             let execution = prove_symbolic_c_execution_paths_with_environment(
                 state.clone(),
-                remaining.clone(),
+                remaining,
                 assumptions.clone(),
                 function_environment.clone(),
             );
@@ -2630,6 +2607,20 @@ fn execute_rest_from_execution_point(
         }
     }
     Ok(())
+}
+
+fn remaining_with_branch_continuations(
+    replay: &ProofStepReplayState,
+    current: &CStatement,
+) -> CStatement {
+    replay
+        .branch_continuations
+        .iter()
+        .rev()
+        .filter_map(|continuation| continuation.remaining.as_ref())
+        .fold(current.clone(), |body, continuation| {
+            c_seq(body, continuation.clone())
+        })
 }
 
 #[allow(clippy::too_many_arguments)]
