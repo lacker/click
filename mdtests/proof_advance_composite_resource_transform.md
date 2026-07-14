@@ -1,0 +1,95 @@
+# advance joins different resource transformations
+
+Each branch consumes a different path token through a helper call. Both calls
+return the same permit, which is folded into `ready_bundle`. After `advance`
+forgets the original precondition and branch resources, `observe` recovers the
+nonnegative-key fact from the exported composite resource.
+
+```c filename=select_left.c
+int32 select_left(int32 key) {
+    return key;
+}
+```
+
+```c filename=select_right.c
+int32 select_right(int32 key) {
+    return key;
+}
+```
+
+```c filename=select_ready.c
+int32 select_ready(int32 key, int32 choose_left) {
+    int32 selected;
+    if (choose_left != 0) {
+        selected = select_left(key);
+    } else {
+        selected = select_right(key);
+    }
+    return key;
+}
+```
+
+```click
+resource left_path(key: int32);
+resource right_path(key: int32);
+resource ready_permit(key: int32);
+
+resource ready_bundle(key: int32) {
+    contains ready_permit(key);
+    fact key >= 0;
+}
+
+verifying "select_left.c";
+verifying "select_right.c";
+verifying "select_ready.c";
+
+int32 select_left(int32 key) {
+    requires left_path(key);
+    requires ready_permit(key);
+
+    ensures ready_permit(key) by auto;
+    ensures result == key by auto;
+}
+
+int32 select_right(int32 key) {
+    requires right_path(key);
+    requires ready_permit(key);
+
+    ensures ready_permit(key) by auto;
+    ensures result == key by auto;
+}
+
+int32 select_ready(int32 key, int32 choose_left) {
+    requires key >= 0;
+    requires left_path(key);
+    requires right_path(key);
+    requires ready_permit(key);
+
+    ensures result >= 0 by {
+        execute_step();
+        advance(statement(1).exit)
+        ensuring {
+            fact selected == key;
+            owns ready_bundle(key);
+        }
+        by {
+            if choose_left != 0 {
+                execute_then_step();
+                execute_step();
+                fold(ready_bundle(key));
+            } else {
+                execute_else_step();
+                execute_step();
+                fold(ready_bundle(key));
+            }
+        }
+        observe(ready_bundle(key));
+        execute_step();
+        simp();
+    }
+}
+```
+
+```expect
+pass
+```

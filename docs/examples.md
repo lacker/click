@@ -210,6 +210,9 @@ sequence:
   permission plus a fact.
 - `mdtests/composite_resource_composes_token.md`: a composite resource can
   bundle another token resource with memory permission and a fact.
+- `mdtests/proof_advance_composite_resource_transform.md`: different branch
+  token transformations fold and export one composite resource through an
+  `advance` interface, then `observe` recovers its fact after the join.
 - `mdtests/composite_resource_two_arrays.md`: a composite resource can
   bundle permissions for multiple arrays.
 - `mdtests/composite_resource_separate_fact.md`: a composite resource can
