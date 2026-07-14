@@ -1893,7 +1893,6 @@ fn prove_claim_by_linear_steps(
                     parsed_function.parameters(),
                     &arguments,
                     &assumptions,
-                    function_environment,
                     claim_label,
                     step_index,
                     matches!(step, ProofStep::ExecuteThenStep),
@@ -2171,7 +2170,6 @@ fn execute_selected_branch_step_from_execution_point(
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
     assumptions: &Assumptions,
-    function_environment: &CFunctionEnvironment,
     claim_label: &str,
     step_index: usize,
     take_then: bool,
@@ -2213,23 +2211,22 @@ fn execute_selected_branch_step_from_execution_point(
         );
     }
     let current_resources = current_state.resources().facts().to_vec();
-    let probe = CStatement::If {
-        condition: condition.clone(),
-        then_branch: Box::new(CStatement::Return(CExpression::Value(int32(1)))),
-        else_branch: Box::new(CStatement::Return(CExpression::Value(int32(0)))),
-    };
-    let probe_execution = prove_symbolic_c_execution_paths_with_environment(
+    let condition_evaluation = prove_symbolic_c_condition_evaluation(
         current_state.clone(),
-        probe,
+        condition.clone(),
         assumptions.clone(),
-        function_environment.clone(),
     );
-    if probe_execution.paths().len() != 1 {
+    if let Some(limit) = condition_evaluation.limit() {
+        return Err(ClickError::new(format!(
+            "`{claim_label}` proof step {step_index}: `{step_name}` hit execution limit {limit:?} while evaluating the next C `if` condition"
+        )));
+    }
+    if condition_evaluation.paths().len() != 1 {
         let expected = if take_then { "true" } else { "false" };
         return Err(ClickError::new(format!(
             "`{claim_label}` proof step {step_index}: `{step_name}` could not prove that the next C `if` condition `{}` is {expected}; got {} feasible condition paths\n{}",
             describe_c_expression(&condition),
-            probe_execution.paths().len(),
+            condition_evaluation.paths().len(),
             describe_proof_context(
                 available_pure_facts,
                 &current_resources,
@@ -2239,25 +2236,41 @@ fn execute_selected_branch_step_from_execution_point(
             )
         )));
     }
-    let probe_path = single_statement_step_path(
-        &probe_execution,
-        claim_label,
-        step_index,
-        step_name,
-        available_pure_facts,
-        &current_resources,
-        parameters,
-        arguments,
-    )?;
-    let selected_then = match implication_body(probe_path.theorem().proposition()) {
-        Proposition::CStatementExecutes {
-            outcome: CStatementOutcome::Return { value, .. },
+    let condition_path = &condition_evaluation.paths()[0];
+    if !condition_path.obligations().is_empty() {
+        return Err(ClickError::new(format!(
+            "`{claim_label}` proof step {step_index}: `{step_name}` could not evaluate the next C `if` condition: {}",
+            describe_missing_proof_obligations(
+                condition_path.obligations(),
+                available_pure_facts,
+                &current_resources,
+                parameters,
+                arguments,
+                condition_path.facts()
+            )
+        )));
+    }
+    let selected_then = match implication_body(condition_path.theorem().proposition()) {
+        Proposition::CConditionEvaluates {
+            outcome: CConditionOutcome::Value(value),
             ..
-        } if value == &int32(1) => true,
-        Proposition::CStatementExecutes {
-            outcome: CStatementOutcome::Return { value, .. },
+        } => *value,
+        Proposition::CConditionEvaluates {
+            outcome: CConditionOutcome::UndefinedBehavior(kind),
             ..
-        } if value == &int32(0) => false,
+        } => {
+            return Err(ClickError::new(format!(
+                "`{claim_label}` proof step {step_index}: `{step_name}` produced undefined behavior while evaluating the next C `if` condition: {kind:?}"
+            )));
+        }
+        Proposition::CConditionEvaluates {
+            outcome: CConditionOutcome::RuntimeError(error),
+            ..
+        } => {
+            return Err(ClickError::new(format!(
+                "`{claim_label}` proof step {step_index}: `{step_name}` produced runtime error while evaluating the next C `if` condition: {error:?}"
+            )));
+        }
         proposition => {
             return Err(ClickError::new(format!(
                 "`{claim_label}` proof step {step_index}: `{step_name}` saw unexpected condition theorem {proposition:?}"
@@ -2273,7 +2286,7 @@ fn execute_selected_branch_step_from_execution_point(
     }
 
     available_pure_facts.extend(
-        probe_path
+        condition_path
             .facts()
             .iter()
             .map(|fact| fact.proposition().clone()),

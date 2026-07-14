@@ -78,6 +78,12 @@ The symbolic executor produces execution paths. Each path includes:
 - proof obligations
 - outcome theorem
 
+`prove_symbolic_c_condition_evaluation` is the corresponding direct rule for
+C control-flow conditions. It evaluates an expression under assumptions,
+applies C truthiness, and returns `CConditionEvaluates` paths for true, false,
+undefined-behavior, or runtime-error outcomes. Proof steps use this rule to
+select `if` edges without constructing a synthetic C statement.
+
 The function-specification prover checks that all paths satisfy the function
 contract and that remaining facts/obligations are justified by requirements and
 proof machinery.

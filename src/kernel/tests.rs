@@ -1329,6 +1329,53 @@ fn signed_add_overflow_is_native_undefined_behavior() {
 }
 
 #[test]
+fn condition_evaluation_certifies_c_truthiness_directly() {
+    let state = CState::new();
+    let condition = c_less_than(c_int32_literal(1), c_int32_literal(2));
+    let evaluation =
+        prove_symbolic_c_condition_evaluation(state.clone(), condition.clone(), Assumptions::new());
+
+    assert_eq!(evaluation.paths().len(), 1);
+    assert_eq!(
+        evaluation.paths()[0]
+            .theorem()
+            .proposition()
+            .peel_implications(),
+        &Proposition::CConditionEvaluates {
+            state,
+            condition,
+            outcome: CConditionOutcome::Value(true),
+        }
+    );
+}
+
+#[test]
+fn symbolic_condition_evaluation_exposes_both_truthiness_paths() {
+    let x = Variable(90);
+    let state = CState::new().with_local("x", int32(Bitvector32Term::Variable(x)));
+    let condition = c_greater_equal(c_variable("x"), c_int32_literal(0));
+    let evaluation = prove_symbolic_c_condition_evaluation(state, condition, Assumptions::new());
+
+    let outcomes = evaluation
+        .paths()
+        .iter()
+        .map(
+            |path| match path.theorem().proposition().peel_implications() {
+                Proposition::CConditionEvaluates { outcome, .. } => outcome.clone(),
+                proposition => panic!("unexpected condition theorem {proposition:?}"),
+            },
+        )
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        outcomes,
+        BTreeSet::from([
+            CConditionOutcome::Value(false),
+            CConditionOutcome::Value(true),
+        ])
+    );
+}
+
+#[test]
 fn int32_subtraction_is_native() {
     let state = CState::new();
     let statement = c_return(c_subtract(c_int32_literal(7), c_int32_literal(2)));

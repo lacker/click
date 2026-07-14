@@ -2825,3 +2825,27 @@ impl SymbolicCExecutionPath {
         &self.theorem
     }
 }
+
+impl SymbolicCConditionEvaluation {
+    pub fn paths(&self) -> &[SymbolicCConditionEvaluationPath] {
+        &self.paths
+    }
+
+    pub fn limit(&self) -> Option<ExecutionLimit> {
+        self.limit
+    }
+}
+
+impl SymbolicCConditionEvaluationPath {
+    pub fn facts(&self) -> &[ExecutionPureFact] {
+        &self.facts
+    }
+
+    pub fn obligations(&self) -> &[ProofObligation] {
+        &self.obligations
+    }
+
+    pub fn theorem(&self) -> &Theorem {
+        &self.theorem
+    }
+}

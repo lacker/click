@@ -2201,6 +2201,7 @@ pub(super) fn simp_proposition(
         | Proposition::Exists { .. }
         | Proposition::Predicate { .. }
         | Proposition::CExpressionEvaluates { .. }
+        | Proposition::CConditionEvaluates { .. }
         | Proposition::CStatementExecutes { .. }
         | Proposition::CFunctionExecutes { .. }
         | Proposition::CFunctionSatisfiesSpecification { .. }

@@ -357,6 +357,76 @@ pub fn prove_c_expression_evaluation(state: CState, expression: CExpression) -> 
     }))
 }
 
+pub fn prove_symbolic_c_condition_evaluation(
+    state: CState,
+    condition: CExpression,
+    assumptions: Assumptions,
+) -> SymbolicCConditionEvaluation {
+    let mut budget = ExecutionBudget::default();
+    let expression_paths =
+        match evaluate_c_expression_paths(&state, &condition, &assumptions, &mut budget) {
+            Ok(paths) => paths,
+            Err(limit) => {
+                return SymbolicCConditionEvaluation {
+                    paths: Vec::new(),
+                    limit: Some(limit),
+                };
+            }
+        };
+    let mut outcomes = Vec::new();
+    for path in expression_paths {
+        match path.outcome {
+            CExpressionOutcome::Value(value) => {
+                outcomes.extend(
+                    c_truthiness_paths(value, path.facts, path.obligations, &assumptions)
+                        .into_iter()
+                        .map(|path| {
+                            (
+                                CConditionOutcome::Value(path.is_true),
+                                path.facts,
+                                path.obligations,
+                            )
+                        }),
+                );
+            }
+            CExpressionOutcome::UndefinedBehavior(kind) => outcomes.push((
+                CConditionOutcome::UndefinedBehavior(kind),
+                path.facts,
+                path.obligations,
+            )),
+            CExpressionOutcome::RuntimeError(error) => outcomes.push((
+                CConditionOutcome::RuntimeError(error),
+                path.facts,
+                path.obligations,
+            )),
+        }
+    }
+    let paths = outcomes
+        .into_iter()
+        .map(|(outcome, facts, obligations)| {
+            let facts = public_execution_pure_facts(&facts);
+            let proposition = Proposition::CConditionEvaluates {
+                state: state.clone(),
+                condition: condition.clone(),
+                outcome,
+            };
+            let theorem = Theorem::new(wrap_proof_facts(
+                proposition,
+                &assumptions,
+                &facts,
+                &obligations,
+            ));
+            SymbolicCConditionEvaluationPath {
+                facts,
+                obligations,
+                theorem,
+            }
+        })
+        .collect();
+
+    SymbolicCConditionEvaluation { paths, limit: None }
+}
+
 pub fn prove_c_statement_execution(state: CState, statement: CStatement) -> Option<Theorem> {
     prove_symbolic_c_execution(state, statement, Assumptions::new())
 }

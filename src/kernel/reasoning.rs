@@ -289,6 +289,7 @@ pub(super) fn collect_implication_antecedent_order_facts(
         | Proposition::Equal(_, _)
         | Proposition::Predicate { .. }
         | Proposition::CExpressionEvaluates { .. }
+        | Proposition::CConditionEvaluates { .. }
         | Proposition::CStatementExecutes { .. }
         | Proposition::CFunctionExecutes { .. }
         | Proposition::CFunctionSatisfiesSpecification { .. }
@@ -946,6 +947,12 @@ pub(super) fn collect_proposition_bitvector_variables(
             collect_c_state_bitvector_variables(state, variables);
             collect_c_expression_bitvector_variables(expression, variables);
             collect_c_expression_outcome_bitvector_variables(outcome, variables);
+        }
+        Proposition::CConditionEvaluates {
+            state, condition, ..
+        } => {
+            collect_c_state_bitvector_variables(state, variables);
+            collect_c_expression_bitvector_variables(condition, variables);
         }
         Proposition::CStatementExecutes {
             state,

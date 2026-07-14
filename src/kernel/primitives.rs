@@ -412,6 +412,13 @@ pub enum CExpressionOutcome {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub enum CConditionOutcome {
+    Value(bool),
+    UndefinedBehavior(CUndefinedBehavior),
+    RuntimeError(CRuntimeError),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub(super) enum CLValueOutcome {
     LValue(CLValue),
     UndefinedBehavior(CUndefinedBehavior),
@@ -552,6 +559,11 @@ pub enum Proposition {
         expression: CExpression,
         outcome: CExpressionOutcome,
     },
+    CConditionEvaluates {
+        state: CState,
+        condition: CExpression,
+        outcome: CConditionOutcome,
+    },
     CStatementExecutes {
         state: CState,
         statement: CStatement,
@@ -666,6 +678,19 @@ pub struct SymbolicCExecution {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SymbolicCExecutionPath {
+    pub(super) facts: Vec<ExecutionPureFact>,
+    pub(super) obligations: Vec<ProofObligation>,
+    pub(super) theorem: Theorem,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SymbolicCConditionEvaluation {
+    pub(super) paths: Vec<SymbolicCConditionEvaluationPath>,
+    pub(super) limit: Option<ExecutionLimit>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SymbolicCConditionEvaluationPath {
     pub(super) facts: Vec<ExecutionPureFact>,
     pub(super) obligations: Vec<ProofObligation>,
     pub(super) theorem: Theorem,
