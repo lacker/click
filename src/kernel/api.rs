@@ -135,6 +135,33 @@ pub fn c_loop_invariants_hold_at_back_edge(
     Ok(())
 }
 
+pub fn c_loop_invariants_hold_at_entry(
+    state: &CState,
+    invariant_checks: &[CLoopInvariantCheck],
+    assumptions: &Assumptions,
+) -> Result<(), String> {
+    let obligations = collect_invariant_check_obligations(
+        state,
+        state,
+        invariant_checks,
+        InvariantPhase::Entry,
+        assumptions,
+        &mut ExecutionBudget::default(),
+    )
+    .map_err(|error| format!("could not lower entry invariants: {error:?}"))?;
+    if let Some(obligation) = obligations.first() {
+        return Err(format!(
+            "missing invariant fact{}: {:?}",
+            obligation
+                .context()
+                .map(|context| format!(" ({context})"))
+                .unwrap_or_default(),
+            obligation.proposition()
+        ));
+    }
+    Ok(())
+}
+
 /// Builds a branch-independent symbolic state for a proof join.
 ///
 /// Locals that still equal a stable function-entry value retain that identity.
@@ -739,6 +766,56 @@ pub fn prove_symbolic_c_execution_paths_with_environment_and_budget(
         &assumptions,
         &environment,
         &mut budget,
+    ) {
+        Ok(paths) => paths,
+        Err(limit) => {
+            return SymbolicCExecution {
+                paths: Vec::new(),
+                limit: Some(limit),
+            };
+        }
+    };
+    let paths = paths
+        .into_iter()
+        .map(|path| {
+            let facts = public_execution_pure_facts(&path.facts);
+            let proposition = Proposition::CStatementExecutes {
+                state: state.clone(),
+                statement: statement.clone(),
+                outcome: path.outcome,
+            };
+            let theorem = Theorem::new(wrap_proof_facts(
+                proposition,
+                &assumptions,
+                &facts,
+                &path.obligations,
+            ));
+            SymbolicCExecutionPath {
+                facts,
+                obligations: path.obligations,
+                theorem,
+            }
+        })
+        .collect();
+
+    SymbolicCExecution { paths, limit: None }
+}
+
+pub fn prove_symbolic_c_statement_verification_paths_with_environment(
+    state: CState,
+    statement: CStatement,
+    assumptions: Assumptions,
+    environment: CFunctionEnvironment,
+) -> SymbolicCExecution {
+    let mut budget = ExecutionBudget::default();
+    let mut variables = VerificationVariableGenerator::new(1_000_000);
+    let paths = match execute_c_statement_verification_paths(
+        &state,
+        &statement,
+        &assumptions,
+        &environment,
+        &mut budget,
+        &mut variables,
     ) {
         Ok(paths) => paths,
         Err(limit) => {

@@ -312,10 +312,12 @@ runs in a fresh arbitrary-iteration context and must reach the loop back edge
 on every proof branch. It can use ordinary proof steps, including `have`,
 resource operations, proof-level `if`, and branch execution.
 
-Explicit preservation replay currently requires the selected loop to be the
-first loop reached through a straight-line top-level prefix. Later and nested
-loops continue to use automatic preservation until execution-to-loop-entry is
-generalized.
+Structural proof traversal advances forward through the function. When it
+encounters a loop, it checks initialization at the current frontier, checks
+preservation in a scoped arbitrary-iteration frontier, and advances the
+enclosing proof with the loop's abstract exit rule. Later and nested loops are
+therefore checked in their actual enclosing proof context; Click does not
+reconstruct their entry states by executing the function prefix again.
 
 ## Loop Effects
 

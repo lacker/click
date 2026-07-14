@@ -127,6 +127,10 @@ Larger example projects live directly under `examples/`. They contain ordinary
   failure.
 - `mdtests/loop_preserve_branch.md`: explicit branch-aware preservation of a
   loop invariant through one arbitrary iteration.
+- `mdtests/later_loop_preserve.md`: forward structural traversal reaches an
+  explicit preservation proof on a later loop.
+- `mdtests/nested_loop_preserve.md`: a nested loop preservation proof starts
+  from its enclosing arbitrary-iteration frontier.
 - `mdtests/count_to_three_bad_assert.md`: assertion failure.
 - `mdtests/fill_n_symbolic_pointer_loop.md`: symbolic pointer-loop safety.
 - `mdtests/fill_n_segment_invariant.md`: quantified written-segment invariant.
