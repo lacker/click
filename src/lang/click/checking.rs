@@ -4576,7 +4576,7 @@ pub(super) fn array_refs_with_memory(
         .collect()
 }
 
-fn contract_environment_at_state(
+pub(super) fn contract_environment_at_state(
     parameter_values: &BTreeMap<String, CValue>,
     array_refs: &ClickArrayRefs,
     state: &CState,

@@ -1412,8 +1412,9 @@ fn lower_current_proposition(
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<Proposition, String> {
-    let mut values = parameter_values(parameters, arguments).map_err(|error| error.message)?;
+    let values = parameter_values(parameters, arguments).map_err(|error| error.message)?;
     let array_refs = array_refs_for_parameters(parameters, &values, state.memory());
+    let (mut values, array_refs) = contract_environment_at_state(&values, &array_refs, state);
     let assumptions = assumptions_from_propositions(available);
     let mut next_variable = 2_000_000;
     let mut active_functions = BTreeSet::new();
@@ -1742,6 +1743,22 @@ fn prove_claim_by_linear_steps(
                 )?;
                 assumptions = assumptions_from_propositions(&requirement_pure_facts);
             }
+            ProofStep::ExecuteThenBranch | ProofStep::ExecuteElseBranch => {
+                execute_selected_branch_from_execution_point(
+                    &mut replay,
+                    &mut state,
+                    &mut requirement_pure_facts,
+                    &function,
+                    parsed_function.parameters(),
+                    &arguments,
+                    &assumptions,
+                    function_environment,
+                    claim_label,
+                    step_index,
+                    matches!(step, ProofStep::ExecuteThenBranch),
+                )?;
+                assumptions = assumptions_from_propositions(&requirement_pure_facts);
+            }
             ProofStep::SymbolicExecute | ProofStep::ExecuteRest => {
                 execute_rest_from_execution_point(
                     &mut replay,
@@ -2002,6 +2019,269 @@ fn prove_claim_by_linear_steps(
         steps,
         certificate_steps,
     )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn execute_selected_branch_from_execution_point(
+    replay: &mut ProofStepReplayState,
+    state: &mut CState,
+    available_pure_facts: &mut Vec<Proposition>,
+    function: &CFunction,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    assumptions: &Assumptions,
+    function_environment: &CFunctionEnvironment,
+    claim_label: &str,
+    step_index: usize,
+    take_then: bool,
+) -> Result<(), ClickError> {
+    let step_name = if take_then {
+        "execute_then_branch"
+    } else {
+        "execute_else_branch"
+    };
+    let statement_index = replay.next_statement_index;
+    let (execution_start_state, current_state, statement, remaining) =
+        next_top_level_statement_from_execution_point(
+            replay,
+            state,
+            function,
+            arguments,
+            claim_label,
+            step_index,
+            step_name,
+        )?;
+    let CStatement::If {
+        condition,
+        then_branch,
+        else_branch,
+    } = statement
+    else {
+        return Err(ClickError::new(format!(
+            "`{claim_label}` proof step {step_index}: `{step_name}` requires the next C statement to be an `if`"
+        )));
+    };
+
+    replay.program_point_states.insert(
+        ProgramPointRef {
+            region: CodeRegionRef::Statement(statement_index),
+            kind: ProgramPointKind::Entry,
+        },
+        current_state.clone(),
+    );
+    let current_resources = current_state.resources().facts().to_vec();
+    let probe = CStatement::If {
+        condition: condition.clone(),
+        then_branch: Box::new(CStatement::Return(CExpression::Value(int32(1)))),
+        else_branch: Box::new(CStatement::Return(CExpression::Value(int32(0)))),
+    };
+    let probe_execution = prove_symbolic_c_execution_paths_with_environment(
+        current_state.clone(),
+        probe,
+        assumptions.clone(),
+        function_environment.clone(),
+    );
+    if probe_execution.paths().len() != 1 {
+        let expected = if take_then { "true" } else { "false" };
+        return Err(ClickError::new(format!(
+            "`{claim_label}` proof step {step_index}: `{step_name}` could not prove that the next C `if` condition `{}` is {expected}; got {} feasible condition paths\n{}",
+            describe_c_expression(&condition),
+            probe_execution.paths().len(),
+            describe_proof_context(
+                available_pure_facts,
+                &current_resources,
+                parameters,
+                arguments,
+                &[]
+            )
+        )));
+    }
+    let probe_path = single_statement_step_path(
+        &probe_execution,
+        claim_label,
+        step_index,
+        step_name,
+        available_pure_facts,
+        &current_resources,
+        parameters,
+        arguments,
+    )?;
+    let selected_then = match implication_body(probe_path.theorem().proposition()) {
+        Proposition::CStatementExecutes {
+            outcome: CStatementOutcome::Return { value, .. },
+            ..
+        } if value == &int32(1) => true,
+        Proposition::CStatementExecutes {
+            outcome: CStatementOutcome::Return { value, .. },
+            ..
+        } if value == &int32(0) => false,
+        proposition => {
+            return Err(ClickError::new(format!(
+                "`{claim_label}` proof step {step_index}: `{step_name}` saw unexpected condition theorem {proposition:?}"
+            )));
+        }
+    };
+    if selected_then != take_then {
+        let actual = if selected_then { "then" } else { "else" };
+        return Err(ClickError::new(format!(
+            "`{claim_label}` proof step {step_index}: `{step_name}` requested the {} branch, but current pure facts prove the {actual} branch",
+            if take_then { "then" } else { "else" }
+        )));
+    }
+
+    let mut execution_pure_facts = probe_path.facts().to_vec();
+    let mut branch_available = available_pure_facts.clone();
+    branch_available.extend(
+        execution_pure_facts
+            .iter()
+            .map(|fact| fact.proposition().clone()),
+    );
+    let branch_assumptions = assumptions_from_propositions(&branch_available);
+    let branch = if take_then {
+        *then_branch
+    } else {
+        *else_branch
+    };
+    let branch_execution = prove_symbolic_c_execution_paths_with_environment(
+        current_state,
+        branch,
+        branch_assumptions,
+        function_environment.clone(),
+    );
+    let branch_path = single_statement_step_path(
+        &branch_execution,
+        claim_label,
+        step_index,
+        step_name,
+        &branch_available,
+        &current_resources,
+        parameters,
+        arguments,
+    )?;
+    execution_pure_facts.extend(branch_path.facts().iter().cloned());
+    let outcome = match implication_body(branch_path.theorem().proposition()) {
+        Proposition::CStatementExecutes { outcome, .. } => outcome.clone(),
+        proposition => {
+            return Err(ClickError::new(format!(
+                "`{claim_label}` proof step {step_index}: `{step_name}` saw unexpected branch theorem {proposition:?}"
+            )));
+        }
+    };
+    if let CStatementOutcome::Normal(exit_state)
+    | CStatementOutcome::Return {
+        state: exit_state, ..
+    } = &outcome
+    {
+        replay.program_point_states.insert(
+            ProgramPointRef {
+                region: CodeRegionRef::Statement(statement_index),
+                kind: ProgramPointKind::Exit,
+            },
+            exit_state.clone(),
+        );
+    }
+
+    match outcome {
+        CStatementOutcome::Normal(next_state) => {
+            let Some(remaining) = remaining else {
+                return Err(ClickError::new(format!(
+                    "`{claim_label}` proof step {step_index}: `{step_name}` reached the end of the function without a return"
+                )));
+            };
+            available_pure_facts.extend(
+                execution_pure_facts
+                    .iter()
+                    .map(|fact| fact.proposition().clone()),
+            );
+            replay.execution_start_state = Some(execution_start_state);
+            replay.execution_point = ProofExecutionPoint::StatementEntry { remaining };
+            replay.next_statement_index = statement_index + 1;
+            *state = next_state;
+        }
+        CStatementOutcome::Return { .. } => {
+            let mut path_pure_facts = available_pure_facts.clone();
+            path_pure_facts.extend(
+                execution_pure_facts
+                    .iter()
+                    .map(|fact| fact.proposition().clone()),
+            );
+            let return_assumptions = assumptions_from_propositions(&path_pure_facts);
+            let (outcome, obligations) = c_function_outcome_from_statement_outcome(
+                &execution_start_state,
+                function,
+                outcome,
+                branch_path.obligations().to_vec(),
+                &return_assumptions,
+            );
+            let completed = certify_c_function_execution_paths_from_outcomes(
+                execution_start_state.clone(),
+                function.clone(),
+                arguments.to_vec(),
+                assumptions.clone(),
+                vec![(outcome, execution_pure_facts, obligations)],
+            );
+            let replay_state = execution_start_state.clone();
+            set_replay_execution(
+                replay,
+                ProofStepExecutionMode::Verification,
+                claim_label,
+                step_index,
+                step_name,
+                execution_start_state,
+                completed,
+            )?;
+            replay.next_statement_index = statement_index + 1;
+            *state = replay_state;
+        }
+        CStatementOutcome::UndefinedBehavior(kind) => {
+            return Err(ClickError::new(format!(
+                "`{claim_label}` proof step {step_index}: `{step_name}` produced undefined behavior: {kind:?}"
+            )));
+        }
+        CStatementOutcome::RuntimeError(error) => {
+            return Err(ClickError::new(format!(
+                "`{claim_label}` proof step {step_index}: `{step_name}` produced runtime error: {error:?}"
+            )));
+        }
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn next_top_level_statement_from_execution_point(
+    replay: &ProofStepReplayState,
+    state: &CState,
+    function: &CFunction,
+    arguments: &[CExpression],
+    claim_label: &str,
+    step_index: usize,
+    step_name: &str,
+) -> Result<(CState, CState, CStatement, Option<CStatement>), ClickError> {
+    match &replay.execution_point {
+        ProofExecutionPoint::FunctionEntry => {
+            let execution_start_state = state.clone();
+            let current_state = c_function_entry_state(&execution_start_state, function, arguments)
+                .ok_or_else(|| {
+                    ClickError::new(format!(
+                        "`{claim_label}` proof step {step_index}: `{step_name}` could not bind function arguments"
+                    ))
+                })?;
+            let (statement, remaining) = split_next_top_level_statement(function.body());
+            Ok((execution_start_state, current_state, statement, remaining))
+        }
+        ProofExecutionPoint::StatementEntry { remaining } => {
+            let execution_start_state = replay.execution_start_state.clone().ok_or_else(|| {
+                ClickError::new(format!(
+                    "`{claim_label}` proof step {step_index}: `{step_name}` has no execution start state"
+                ))
+            })?;
+            let (statement, remaining) = split_next_top_level_statement(remaining);
+            Ok((execution_start_state, state.clone(), statement, remaining))
+        }
+        ProofExecutionPoint::FunctionExit { .. } => Err(ClickError::new(format!(
+            "`{claim_label}` proof step {step_index}: `{step_name}` cannot run after execution already reached function exit"
+        ))),
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2521,15 +2801,21 @@ fn single_statement_step_path<'a>(
 fn split_next_straight_line_statement(
     statement: &CStatement,
 ) -> Result<(CStatement, Option<CStatement>), String> {
+    let (first, remaining) = split_next_top_level_statement(statement);
+    if !is_straight_line_statement(&first) {
+        return Err("next statement is not a supported straight-line statement".to_string());
+    }
+    Ok((first, remaining))
+}
+
+fn split_next_top_level_statement(statement: &CStatement) -> (CStatement, Option<CStatement>) {
     let mut statements = Vec::new();
-    flatten_top_level_sequence(statement, &mut statements)?;
+    flatten_top_level_sequence(statement, &mut statements)
+        .expect("flattening a C statement sequence should succeed");
     let (first, rest) = statements
         .split_first()
         .expect("a CStatement should flatten to at least one statement");
-    if !is_straight_line_statement(first) {
-        return Err("next statement is not a supported straight-line statement".to_string());
-    }
-    Ok((first.clone(), sequence_from_statements(rest)))
+    (first.clone(), sequence_from_statements(rest))
 }
 
 fn split_straight_line_statement_prefix(

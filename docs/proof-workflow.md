@@ -43,6 +43,11 @@ Current proof steps:
 - `execute_step();`: execute one supported straight-line C statement from the
   current execution point. The step uses the facts and resources already in the
   proof environment; project or prove needed facts before running it.
+- `execute_then_branch();`: require the next top-level C statement to be an
+  `if`, prove its condition from the current pure facts, execute its then arm,
+  and advance to the statement after the `if`.
+- `execute_else_branch();`: the corresponding operation for the else arm; it
+  proves the C condition false before executing the arm.
 - `execute_rest();`: build symbolic verification paths from the current
   execution point to function exit. From function entry, this executes the
   whole C0 function.
@@ -89,6 +94,22 @@ Current proof steps:
   checked.
 
 The end of a `by { ... }` block checks the overall claim.
+
+Explicit C branch execution composes with proof-level case analysis:
+
+```click
+if x >= 0 {
+    execute_then_branch();
+    // Continue after the C if with facts produced by its then arm.
+} else {
+    execute_else_branch();
+    // Continue after the C if with facts produced by its else arm.
+}
+```
+
+The initial branch-execution steps execute the selected arm as one top-level C
+statement. If that arm itself has unresolved branching control flow, the step
+fails rather than creating multiple execution frontiers.
 
 For example, pure case analysis needs no C execution:
 
