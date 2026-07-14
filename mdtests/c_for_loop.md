@@ -49,7 +49,7 @@ int32 for_count_invariant(int32 n) {
     requires n >= 0 and n <= 2147483647;
 
     for loop(0) {
-        invariant i >= 0 and i <= n by auto;
+        invariant i >= 0 and i <= n;
     }
 
     ensures count: result == n by auto;

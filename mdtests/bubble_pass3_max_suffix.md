@@ -36,8 +36,12 @@ int32 bubble_pass3(int32 p[3]) {
     requires loadable(p[0..3]);
     requires write(p[0..3]);
     for loop(0) {
-        invariant j >= 0 and j <= 2 by auto;
-        invariant all_le_range(p, 0, j, p[j]) by {
+        invariant j >= 0 and j <= 2;
+        invariant all_le_range(p, 0, j, p[j]);
+        initialize by {
+            unfold(all_le_range);
+        }
+        preserve by {
             unfold(all_le_range);
         }
         mutable p[0..3] by frame;

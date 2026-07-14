@@ -19,7 +19,7 @@ verifying "count_to_three_bad_invariant_initialization.c";
 
 int32 count_to_three_bad_invariant_initialization() {
     for loop(0) {
-        invariant i == 1 by auto;
+        invariant i == 1;
     }
 
     ensures result == 3 by auto;

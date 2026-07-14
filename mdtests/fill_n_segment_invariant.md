@@ -23,10 +23,16 @@ int32 fill_n_segment_invariant(int32 p[], int32 n) {
     requires loadable(p, n * 4);
     requires write(p[0..n]);
     for loop(0) {
-        invariant i >= 0 and i <= n by auto;
+        invariant i >= 0 and i <= n;
         invariant forall (int32 k) {
             0 <= k and k < i implies p[k] == k
-        } by auto;
+        };
+        initialize by auto;
+        preserve by {
+            execute_step();
+            execute_step();
+            simp();
+        }
     }
     ensures returns_n: result == n by auto;
     ensures filled_segment: forall (int32 k) {

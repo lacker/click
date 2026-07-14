@@ -17,7 +17,7 @@ A labeled loop can also expose its entry visit to the invariant:
 
 ```click
 for loop(0) as drain {
-    invariant at(drain.entry, n) >= 0 by auto;
+    invariant at(drain.entry, n) >= 0;
 }
 ```
 
@@ -39,10 +39,30 @@ the proof needs bounds on `i`:
 
 ```click
 for loop(0) {
-    invariant i >= 0 by auto;
-    invariant i <= n by auto;
+    invariant i >= 0;
+    invariant i <= n;
 }
 ```
+
+The full induction syntax names its two obligations explicitly:
+
+```click
+for loop(0) {
+    invariant i >= 0;
+    invariant i <= n;
+
+    initialize by auto;
+    preserve by {
+        execute_step();
+        simp();
+    }
+}
+```
+
+`initialize` proves all invariants before the first iteration. `preserve`
+assumes all invariants and the loop condition, executes one complete body
+iteration, and proves all invariants again. Either proof may be omitted; an
+omitted phase uses `auto`.
 
 ## What Invariants Do
 
@@ -60,8 +80,8 @@ Pointer-writing loops often need both arithmetic invariants and memory facts:
 
 ```click
 for loop(0) {
-    invariant i >= 0 by auto;
-    invariant i <= n by auto;
+    invariant i >= 0;
+    invariant i <= n;
     mutable p[0..n] by frame;
 
     step {
@@ -74,6 +94,11 @@ The arithmetic invariants prove access bounds. The frame clauses summarize what
 memory the loop may write.
 
 ## Loop Proof Steps
+
+An explicit preservation proof for a straight-line loop body uses one
+`execute_step()` per body statement. The proof must traverse exactly one
+complete iteration. Initialization is non-executing because its execution
+point is already the first loop entry.
 
 Some loop proofs call loop-specific steps:
 

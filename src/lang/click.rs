@@ -170,6 +170,8 @@ pub struct StructuralClause {
     region: CodeRegion,
     label: Option<String>,
     items: Vec<StructuralItem>,
+    initialize_proof: Option<Proof>,
+    preserve_proof: Option<Proof>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
@@ -940,6 +942,14 @@ impl StructuralClause {
     pub fn items(&self) -> &[StructuralItem] {
         &self.items
     }
+
+    pub fn initialize_proof(&self) -> Option<&Proof> {
+        self.initialize_proof.as_ref()
+    }
+
+    pub fn preserve_proof(&self) -> Option<&Proof> {
+        self.preserve_proof.as_ref()
+    }
 }
 
 impl StructuralItem {
@@ -984,17 +994,6 @@ impl Proof {
 
     pub fn is_auto_or_frame_tactic(&self) -> bool {
         self.is_auto_tactic() || self.is_frame_tactic()
-    }
-
-    fn is_unfold_only_steps(&self) -> bool {
-        matches!(
-            self,
-            Self::Steps(steps)
-                if !steps.is_empty()
-                    && steps
-                        .iter()
-                        .all(|step| matches!(step, ProofStep::UnfoldPredicate(_)))
-        )
     }
 
     fn unfold_step_names(&self) -> Vec<String> {
@@ -1584,6 +1583,13 @@ fn validate_structural_clauses(
                 )));
             }
             CodeRegion::Statement(_) => {
+                if structural_clause.initialize_proof().is_some()
+                    || structural_clause.preserve_proof().is_some()
+                {
+                    return Err(ClickError::new(
+                        "`initialize` and `preserve` are only supported at loop code regions",
+                    ));
+                }
                 for item in structural_clause.items() {
                     if item.kind() == StructuralItemKind::Invariant {
                         return Err(ClickError::new(
@@ -1600,6 +1606,28 @@ fn validate_structural_clauses(
             CodeRegion::Loop(_) => {}
         }
 
+        for (phase, proof) in [
+            ("initialize", structural_clause.initialize_proof()),
+            ("preserve", structural_clause.preserve_proof()),
+        ] {
+            let Some(proof) = proof else {
+                continue;
+            };
+            if proof.is_frame_tactic() {
+                return Err(ClickError::new(format!(
+                    "`{phase}` must use `auto`, `simp`, or a proof-step script"
+                )));
+            }
+        }
+
+        if let CodeRegion::Loop(loop_index) = structural_clause.region() {
+            let body = c0_loop_body(parsed_function.body(), *loop_index).ok_or_else(|| {
+                ClickError::new(format!("could not resolve `loop({loop_index})` body"))
+            })?;
+            validate_loop_phase_proof("initialize", structural_clause.initialize_proof(), None)?;
+            validate_loop_phase_proof("preserve", structural_clause.preserve_proof(), Some(body))?;
+        }
+
         for item in structural_clause.items() {
             if item.is_effect_kind() {
                 if !item.proof().is_auto_or_frame_tactic() {
@@ -1608,11 +1636,7 @@ fn validate_structural_clauses(
                     ));
                 }
             } else if item.kind() == StructuralItemKind::Invariant {
-                if !item.proof().is_auto_tactic() && !item.proof().is_unfold_only_steps() {
-                    return Err(ClickError::new(
-                        "`invariant` structural clauses must use the default prover, `by auto;`, or an unfold-only proof-step script such as `by { unfold(sorted_range); }` in this first slice",
-                    ));
-                }
+                debug_assert!(item.proof().is_auto_tactic());
             } else if !item.proof().is_auto_tactic() {
                 return Err(ClickError::new(
                     "`assert` structural clauses must use the default prover or `by auto;` in this first slice",
@@ -1630,6 +1654,98 @@ fn validate_structural_clauses(
                 ));
             }
         }
+    }
+    Ok(())
+}
+
+fn c0_loop_body<'a>(
+    statement: &'a syntax::C0Statement,
+    target: usize,
+) -> Option<&'a syntax::C0Statement> {
+    fn visit<'a>(
+        statement: &'a syntax::C0Statement,
+        target: usize,
+        next: &mut usize,
+    ) -> Option<&'a syntax::C0Statement> {
+        match statement {
+            syntax::C0Statement::Seq(first, second) => {
+                visit(first, target, next).or_else(|| visit(second, target, next))
+            }
+            syntax::C0Statement::If {
+                then_branch,
+                else_branch,
+                ..
+            } => visit(then_branch, target, next).or_else(|| visit(else_branch, target, next)),
+            syntax::C0Statement::While { body, .. } => {
+                let index = *next;
+                *next += 1;
+                if index == target {
+                    Some(body)
+                } else {
+                    visit(body, target, next)
+                }
+            }
+            _ => None,
+        }
+    }
+
+    visit(statement, target, &mut 0)
+}
+
+fn straight_line_statement_count(statement: &syntax::C0Statement) -> Option<usize> {
+    match statement {
+        syntax::C0Statement::Seq(first, second) => {
+            Some(straight_line_statement_count(first)? + straight_line_statement_count(second)?)
+        }
+        syntax::C0Statement::If { .. } | syntax::C0Statement::While { .. } => None,
+        _ => Some(1),
+    }
+}
+
+fn validate_loop_phase_proof(
+    phase: &str,
+    proof: Option<&Proof>,
+    body: Option<&syntax::C0Statement>,
+) -> Result<(), ClickError> {
+    let Some(Proof::Steps(steps)) = proof else {
+        return Ok(());
+    };
+    let execute_steps = steps
+        .iter()
+        .filter(|step| matches!(step, ProofStep::ExecuteStep))
+        .count();
+    let allowed = steps.iter().all(|step| {
+        matches!(
+            step,
+            ProofStep::UnfoldPredicate(_) | ProofStep::Simp | ProofStep::ExecuteStep
+        )
+    });
+    if !allowed {
+        return Err(ClickError::new(format!(
+            "`{phase}` currently supports `unfold`, `simp`, and straight-line `execute_step()` proof steps"
+        )));
+    }
+    if phase == "initialize" && execute_steps != 0 {
+        return Err(ClickError::new(
+            "`initialize` proves the invariant at the current loop entry and cannot execute C statements",
+        ));
+    }
+    if execute_steps == 0 {
+        return Ok(());
+    }
+
+    let expected = straight_line_statement_count(
+        body.expect("preservation validation should receive the loop body"),
+    )
+    .ok_or_else(|| {
+        ClickError::new(
+            "explicit `preserve` execution currently requires a straight-line loop body",
+        )
+    })?;
+    if execute_steps != expected {
+        return Err(ClickError::new(format!(
+            "`preserve` executes one complete loop iteration: expected {expected} `execute_step()` call(s), found {execute_steps}"
+        )));
     }
     Ok(())
 }

@@ -21,8 +21,8 @@ verifying "local_array_loop_frame.c";
 
 int32 local_array_loop_frame() {
     for loop(0) {
-        invariant i >= 0 by auto;
-        invariant i <= 3 by auto;
+        invariant i >= 0;
+        invariant i <= 3;
         step {
             mutable a[i..i + 1] by frame;
         }

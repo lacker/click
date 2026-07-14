@@ -21,10 +21,10 @@ int32 loop_quantified_memory_invariant_rejects_false(int32 p[], int32 n) {
     requires n >= 1 and n <= 2147483647;
     requires loadable(p, n * 4);
     for loop(0) {
-        invariant i >= 0 and i <= n by auto;
+        invariant i >= 0 and i <= n;
         invariant forall (int32 k) {
             0 <= k and k < 1 implies p[k] == p[k] + 1
-        } by auto;
+        };
     }
     ensures returns_n: result == n by auto;
 }

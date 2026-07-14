@@ -25,8 +25,8 @@ int32 fill_n_symbolic_pointer_loop(int32 p[], int32 n) {
     requires loadable(p, n * 4);
     requires write(p[0..n]);
     for loop(0) {
-        invariant i >= 0 by auto;
-        invariant i <= n by auto;
+        invariant i >= 0;
+        invariant i <= n;
     }
     ensures returns_n: result == n by auto;
 }

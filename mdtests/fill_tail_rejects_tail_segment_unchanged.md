@@ -23,7 +23,7 @@ int32 fill_tail_rejects_tail_segment_unchanged(int32 p[], int32 n) {
     requires loadable(p, n * 4);
     requires write(p[0..n]);
     for loop(0) {
-        invariant i >= 1 and i <= n by auto;
+        invariant i >= 1 and i <= n;
     }
     ensures tail_unchanged: forall (int32 k) {
         1 <= k and k < n implies p[k] == old(p[k])

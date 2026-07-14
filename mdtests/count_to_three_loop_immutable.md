@@ -20,8 +20,8 @@ verifying "count_to_three_loop_immutable.c";
 
 int32 count_to_three_loop_immutable() {
     for loop(0) {
-        invariant i >= 0 by auto;
-        invariant i <= 3 by auto;
+        invariant i >= 0;
+        invariant i <= 3;
         immutable by frame;
     }
     ensures returns_three: result == 3 by auto;

@@ -1020,7 +1020,25 @@ impl Parser {
         };
         self.expect(Token::LBrace)?;
         let mut items = Vec::new();
+        let mut initialize_proof = None;
+        let mut preserve_proof = None;
         while self.peek() != Some(&Token::RBrace) {
+            if self.peek_ident() == Some("initialize") {
+                self.position += 1;
+                if initialize_proof.is_some() {
+                    return Err(self.error("duplicate `initialize` proof"));
+                }
+                initialize_proof = Some(self.parse_by_clause()?);
+                continue;
+            }
+            if self.peek_ident() == Some("preserve") {
+                self.position += 1;
+                if preserve_proof.is_some() {
+                    return Err(self.error("duplicate `preserve` proof"));
+                }
+                preserve_proof = Some(self.parse_by_clause()?);
+                continue;
+            }
             items.extend(self.parse_structural_items()?);
         }
         self.expect(Token::RBrace)?;
@@ -1031,6 +1049,8 @@ impl Parser {
             region,
             label,
             items,
+            initialize_proof,
+            preserve_proof,
         })
     }
 
@@ -1067,7 +1087,17 @@ impl Parser {
                     StructuralItemKind::Assert
                 };
                 let proposition = self.parse_proposition()?;
-                let proof = self.parse_proof_clause_or_default()?;
+                let proof = if item_kind == StructuralItemKind::Invariant {
+                    if self.peek_ident() == Some("by") {
+                        return Err(self.error(
+                            "invariant proofs belong to the loop; use `initialize by ...` and `preserve by ...`",
+                        ));
+                    }
+                    self.expect(Token::Semicolon)?;
+                    Proof::Tactic(Tactic::Auto)
+                } else {
+                    self.parse_proof_clause_or_default()?
+                };
                 Ok(vec![StructuralItem {
                     kind: item_kind,
                     claim: StructuralItemClaim::Proposition(proposition),

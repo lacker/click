@@ -243,8 +243,8 @@ for statement(2) {
 }
 
 for loop(0) {
-    invariant i >= 0 by auto;
-    invariant i <= n by auto;
+    invariant i >= 0;
+    invariant i <= n;
     mutable p[0..n] by frame;
 
     step {
@@ -286,20 +286,28 @@ but their exits require a future way to select a particular path or visit.
 currently accepts the executable proposition fragment over current-state C
 fragments.
 
-`invariant` generates obligations at loop program points: before the first
-visit to the loop body, when one body visit preserves the invariant, and at loop
-exit. Invariant proof blocks can use `by auto;` or an unfold-only script such
-as:
+`invariant` declarations generate obligations at loop program points. The
+loop-level `initialize` proof establishes the complete invariant set before the
+first iteration. The `preserve` proof assumes that set and the loop condition,
+executes one body iteration, and reestablishes the set:
 
 ```click
-by {
-    unfold(sorted);
-    unfold(sorted_range);
+for loop(0) {
+    invariant 0 <= i and i <= n;
+    invariant sorted(p, n);
+
+    initialize by auto;
+    preserve by {
+        unfold(sorted);
+        execute_step();
+        simp();
+    }
 }
 ```
 
-Full proof-step scripts for invariant entry and preservation are not separate
-surface proof blocks yet.
+Either phase may be omitted, meaning `by auto`. Explicit preservation execution
+currently supports straight-line loop bodies and must step across one complete
+iteration.
 
 ## Loop Effects
 

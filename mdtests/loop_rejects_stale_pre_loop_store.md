@@ -26,7 +26,7 @@ int32 loop_rejects_stale_pre_loop_store(int32 p[], int32 n) {
     requires loadable(p, 4);
     requires write(p[0..1]);
     for loop(0) {
-        invariant i >= 0 and i <= n by auto;
+        invariant i >= 0 and i <= n;
     }
     ensures stale: result == 7 by auto;
 }

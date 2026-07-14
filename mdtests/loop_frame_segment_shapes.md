@@ -52,8 +52,8 @@ int32 fill_prefix(int32 p[], int32 n) {
     requires loadable(p[0..n]);
     requires write(p[0..n]);
     for loop(0) {
-        invariant i >= 0 by auto;
-        invariant i <= n by auto;
+        invariant i >= 0;
+        invariant i <= n;
         step {
             mutable p[0..i + 1] by frame;
         }
@@ -67,8 +67,8 @@ int32 fill_tail(int32 p[], int32 n) {
     requires loadable(p[0..n]);
     requires write(p[0..n]);
     for loop(0) {
-        invariant i >= 1 by auto;
-        invariant i <= n by auto;
+        invariant i >= 1;
+        invariant i <= n;
         mutable p[1..n] by frame;
     }
     ensures returns_n: result == n by auto;
@@ -82,8 +82,8 @@ int32 fill_two(int32 p[], int32 q[], int32 n) {
     requires write(p[0..n]);
     requires write(q[0..n]);
     for loop(0) {
-        invariant i >= 0 by auto;
-        invariant i <= n by auto;
+        invariant i >= 0;
+        invariant i <= n;
         step {
             mutable p[i..i + 1], q[i..i + 1] by frame;
         }

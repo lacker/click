@@ -23,8 +23,8 @@ int32 count_to_three() {
     }
 
     for loop(0) {
-        invariant i >= 0 by auto;
-        invariant i <= 3 by auto;
+        invariant i >= 0;
+        invariant i <= 3;
     }
 
     ensures result == 3 by auto;

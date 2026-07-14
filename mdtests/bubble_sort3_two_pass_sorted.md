@@ -58,17 +58,23 @@ int32 bubble_sort3_two_pass(int32 p[3]) {
     requires loadable(p[0..3]);
     requires write(p[0..3]);
     for loop(0) {
-        invariant j >= 0 and j <= 2 by auto;
-        invariant all_le_range(p, 0, j, p[j]) by {
+        invariant j >= 0 and j <= 2;
+        invariant all_le_range(p, 0, j, p[j]);
+        initialize by {
+            unfold(all_le_range);
+        }
+        preserve by {
             unfold(all_le_range);
         }
     }
     for loop(1) {
-        invariant j >= 0 and j <= 1 by auto;
-        invariant all_le_range(p, 0, 2, p[2]) by {
+        invariant j >= 0 and j <= 1;
+        invariant all_le_range(p, 0, 2, p[2]);
+        invariant all_le_range(p, 0, j, p[j]);
+        initialize by {
             unfold(all_le_range);
         }
-        invariant all_le_range(p, 0, j, p[j]) by {
+        preserve by {
             unfold(all_le_range);
         }
     }

@@ -5507,6 +5507,16 @@ fn structural_unfold_step_names(function_block: &FunctionBlock) -> Vec<String> {
     let mut seen = BTreeSet::new();
     let mut names = Vec::new();
     for clause in function_block.structural_clauses() {
+        for proof in [clause.initialize_proof(), clause.preserve_proof()]
+            .into_iter()
+            .flatten()
+        {
+            for name in proof.unfold_step_names() {
+                if seen.insert(name.clone()) {
+                    names.push(name);
+                }
+            }
+        }
         for item in clause.items() {
             for name in item.proof().unfold_step_names() {
                 if seen.insert(name.clone()) {

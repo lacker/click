@@ -18,7 +18,7 @@ verifying "count_to_three_bad_invariant.c";
 
 int32 count_to_three_bad_invariant() {
     for loop(0) {
-        invariant i < 3 by auto;
+        invariant i < 3;
     }
 
     ensures result == 3 by auto;

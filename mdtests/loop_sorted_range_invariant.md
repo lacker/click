@@ -40,8 +40,13 @@ int32 loop_sorted_range_invariant(int32 p[3]) {
     requires loadable(p[0..3]);
     requires sorted(p, 3);
     for loop(0) as carry_sorted {
-        invariant i >= 0 and i <= 3 by auto;
-        invariant sorted(p, 3) by {
+        invariant i >= 0 and i <= 3;
+        invariant sorted(p, 3);
+        initialize by {
+            unfold(sorted);
+            unfold(sorted_range);
+        }
+        preserve by {
             unfold(sorted);
             unfold(sorted_range);
         }

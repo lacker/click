@@ -148,6 +148,20 @@ impl AnnotationLowerer<'_> {
         &mut self,
         loop_index: usize,
     ) -> Result<Vec<CLoopInvariantCheck>, ClickError> {
+        let unfolded_predicates = self
+            .structural_clauses
+            .iter()
+            .filter(|clause| clause.region() == &CodeRegion::Loop(loop_index))
+            .flat_map(|clause| {
+                clause
+                    .initialize_proof()
+                    .into_iter()
+                    .chain(clause.preserve_proof())
+            })
+            .flat_map(Proof::unfold_step_names)
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
         self.structural_clauses
             .iter()
             .filter(|clause| clause.region() == &CodeRegion::Loop(loop_index))
@@ -159,7 +173,7 @@ impl AnnotationLowerer<'_> {
                     self.predicate_environment,
                     item.proposition()
                         .expect("invariant structural item should contain a proposition"),
-                    item.proof(),
+                    &unfolded_predicates,
                 )
                 .map_err(|message| {
                     ClickError::new(format!(
@@ -1090,14 +1104,13 @@ impl AnnotationLowerer<'_> {
 pub(super) fn unfold_structural_invariant_proposition(
     predicate_environment: &PredicateEnvironment,
     proposition: &ClickProposition,
-    proof: &Proof,
+    unfolded_predicates: &[String],
 ) -> Result<ClickProposition, String> {
-    let unfolded_predicates = proof.unfold_step_names();
     if unfolded_predicates.is_empty() {
         return Ok(proposition.clone());
     }
 
-    for name in &unfolded_predicates {
+    for name in unfolded_predicates {
         if predicate_environment.get(name).is_none() {
             return Err(format!("unknown predicate `{name}`"));
         }
@@ -1106,7 +1119,7 @@ pub(super) fn unfold_structural_invariant_proposition(
     let mut active = BTreeSet::new();
     unfold_click_predicates_in_proposition_with_active(
         predicate_environment,
-        &unfolded_predicates,
+        unfolded_predicates,
         proposition,
         &mut active,
     )
@@ -1553,6 +1566,8 @@ pub(super) fn apply_contract_lets_to_structural_clause(
         region,
         label,
         items,
+        initialize_proof,
+        preserve_proof,
     } = clause;
     let items = items
         .into_iter()
@@ -1562,6 +1577,8 @@ pub(super) fn apply_contract_lets_to_structural_clause(
         region,
         label,
         items,
+        initialize_proof,
+        preserve_proof,
     })
 }
 

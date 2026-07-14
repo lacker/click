@@ -517,8 +517,24 @@ ensures sorted: sorted_range(p, 0, n) by {
 }
 ```
 
-In loop invariants, an unfold-only proof block exposes predicate bodies before
-the loop verification condition is generated.
+Loop invariants are declarations. Predicate bodies needed by the loop rule can
+be exposed in its `initialize` and `preserve` proofs:
+
+```click
+for loop(0) {
+    invariant sorted(p, n);
+    initialize by {
+        unfold(sorted);
+        simp();
+    }
+    preserve by {
+        unfold(sorted);
+        simp();
+    }
+}
+```
+
+Either phase may be omitted, in which case Click uses `auto` for that phase.
 
 Like pure Click functions, predicate array parameters are Click array refs.
 A predicate can compare two arrays from different memory states when its caller

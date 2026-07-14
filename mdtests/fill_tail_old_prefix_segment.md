@@ -24,10 +24,10 @@ int32 fill_tail_old_prefix_segment(int32 p[], int32 n) {
     requires loadable(p[0..n]);
     requires write(p[0..n]);
     for loop(0) {
-        invariant i >= 1 and i <= n by auto;
+        invariant i >= 1 and i <= n;
         invariant forall (int32 k) {
             0 <= k and k < 1 implies p[k] == old(p[k])
-        } by auto;
+        };
     }
     ensures prefix_unchanged: forall (int32 k) {
         0 <= k and k < 1 implies p[k] == old(p[k])

@@ -24,8 +24,8 @@ int32 fill_tail_keeps_first(int32 p[], int32 n) {
     requires loadable(p, n * 4);
     requires write(p[0..n]);
     for loop(0) {
-        invariant i >= 1 and i <= n by auto;
-        invariant p[0] == old(p[0]) by auto;
+        invariant i >= 1 and i <= n;
+        invariant p[0] == old(p[0]);
     }
     ensures frame_and_result: p[0] == old(p[0]) and result == n by auto;
 }

@@ -1086,11 +1086,17 @@ fn parses_loop_invariants_and_statement_asserts() {
                 }
 
                 for loop(0) as count_loop {
-                    invariant i >= 0 by auto;
-                    invariant i <= 3 by auto;
+                    invariant i >= 0;
+                    invariant i <= 3;
                     mutable p[0..n] by auto;
                     step {
                         immutable by auto;
+                    }
+                    initialize by simp;
+                    preserve by {
+                        execute_step();
+                        execute_step();
+                        simp();
                     }
                 }
 
@@ -1139,6 +1145,14 @@ fn parses_loop_invariants_and_statement_asserts() {
         function.structural_clauses()[1].items()[3].kind(),
         StructuralItemKind::StepEffect
     );
+    assert!(matches!(
+        function.structural_clauses()[1].initialize_proof(),
+        Some(Proof::Tactic(Tactic::Simp))
+    ));
+    assert!(matches!(
+        function.structural_clauses()[1].preserve_proof(),
+        Some(Proof::Steps(steps)) if steps.len() == 3
+    ));
 }
 
 #[test]
@@ -1148,7 +1162,7 @@ fn rejects_legacy_structural_region_syntax() {
 
             int32 count() {
                 loop 0 {
-                    invariant i >= 0 by auto;
+                    invariant i >= 0;
                 }
 
                 ensures result == 3 by auto;
@@ -1714,8 +1728,8 @@ fn auto_certificate_replays_for_bounded_execution() {
                 requires loadable(p, 12);
                 requires write(p[0..3]);
                 for loop(0) {
-                    invariant i >= 0 by auto;
-                    invariant i <= 3 by auto;
+                    invariant i >= 0;
+                    invariant i <= 3;
                 }
                 ensures writes_third: p[2] == 2 by auto;
             }
@@ -1739,8 +1753,8 @@ fn auto_certificate_replays_for_bounded_execution() {
                 requires loadable(p, 12);
                 requires write(p[0..3]);
                 for loop(0) {
-                    invariant i >= 0 by auto;
-                    invariant i <= 3 by auto;
+                    invariant i >= 0;
+                    invariant i <= 3;
                 }
                 ensures writes_third: p[2] == 2 by {
                     bounded_execute();
@@ -2235,8 +2249,8 @@ fn verifies_loop_invariants_and_statement_assert() {
                 }
 
                 for loop(0) {
-                    invariant i >= 0 by auto;
-                    invariant i <= 3 by auto;
+                    invariant i >= 0;
+                    invariant i <= 3;
                 }
 
                 ensures result == 3 by auto;
@@ -2271,8 +2285,8 @@ fn verifies_old_memory_loop_invariant() {
                 requires loadable(p, n * 4);
                 requires write(p[0..n]);
                 for loop(0) {
-                    invariant i >= 1 and i <= n by auto;
-                    invariant p[0] == old(p[0]) by auto;
+                    invariant i >= 1 and i <= n;
+                    invariant p[0] == old(p[0]);
                 }
                 ensures frame_and_result: p[0] == old(p[0]) and result == n by auto;
             }
@@ -2305,10 +2319,10 @@ fn verifies_old_memory_loop_invariant_with_segment_bounds() {
                 requires loadable(p[0..n]);
                 requires write(p[0..n]);
                 for loop(0) {
-                    invariant i >= 1 and i <= n by auto;
+                    invariant i >= 1 and i <= n;
                     invariant forall (int32 k) {
                         0 <= k and k < 1 implies p[k] == old(p[k])
-                    } by auto;
+                    };
                 }
                 ensures frame_and_result: forall (int32 k) {
                     0 <= k and k < 1 implies p[k] == old(p[k])
@@ -2345,8 +2359,8 @@ fn verifies_symbolic_segment_loadable() {
                 requires loadable(p[0..n]);
                 requires write(p[0..n]);
                 for loop(0) {
-                    invariant i >= 0 by auto;
-                    invariant i <= n by auto;
+                    invariant i >= 0;
+                    invariant i <= n;
                 }
                 ensures returns_n: result == n by auto;
             }
@@ -2407,8 +2421,8 @@ fn verifies_symbolic_loop_mutable_segment() {
                 requires loadable(p[0..n]);
                 requires write(p[0..n]);
                 for loop(0) {
-                    invariant i >= 0 by auto;
-                    invariant i <= n by auto;
+                    invariant i >= 0;
+                    invariant i <= n;
                 }
                 mutable p[0..n] by auto;
                 ensures returns_n: result == n by auto;
@@ -2444,8 +2458,8 @@ fn verifies_loop_level_mutable_segment() {
                 requires loadable(p[0..n]);
                 requires write(p[0..n]);
                 for loop(0) {
-                    invariant i >= 0 by auto;
-                    invariant i <= n by auto;
+                    invariant i >= 0;
+                    invariant i <= n;
                     mutable p[0..n] by auto;
                 }
                 ensures returns_n: result == n by auto;
@@ -2481,8 +2495,8 @@ fn verifies_loop_level_iteration_relative_mutable_segment() {
                 requires loadable(p[0..n]);
                 requires write(p[0..n]);
                 for loop(0) {
-                    invariant i >= 0 by auto;
-                    invariant i <= n by auto;
+                    invariant i >= 0;
+                    invariant i <= n;
                     step {
                         mutable p[i..i + 1] by frame;
                     }
@@ -2520,8 +2534,8 @@ fn loop_whole_mutable_rejects_loop_modified_local_in_segment() {
                 requires loadable(p[0..n]);
                 requires write(p[0..n]);
                 for loop(0) {
-                    invariant i >= 0 by auto;
-                    invariant i <= n by auto;
+                    invariant i >= 0;
+                    invariant i <= n;
                     mutable p[i..i + 1] by frame;
                 }
                 ensures returns_n: result == n by auto;
@@ -2562,8 +2576,8 @@ fn verifies_loop_level_growing_prefix_mutable_segment() {
                 requires loadable(p[0..n]);
                 requires write(p[0..n]);
                 for loop(0) {
-                    invariant i >= 0 by auto;
-                    invariant i <= n by auto;
+                    invariant i >= 0;
+                    invariant i <= n;
                     step {
                         mutable p[0..i + 1] by frame;
                     }
@@ -2601,8 +2615,8 @@ fn verifies_loop_level_shifted_suffix_mutable_segment() {
                 requires loadable(p[0..n]);
                 requires write(p[0..n]);
                 for loop(0) {
-                    invariant i >= 1 by auto;
-                    invariant i <= n by auto;
+                    invariant i >= 1;
+                    invariant i <= n;
                     mutable p[1..n] by frame;
                 }
                 ensures returns_n: result == n by auto;
@@ -2641,8 +2655,8 @@ fn verifies_loop_level_multi_segment_mutable_footprint() {
                 requires write(p[0..n]);
                 requires write(q[0..n]);
                 for loop(0) {
-                    invariant i >= 0 by auto;
-                    invariant i <= n by auto;
+                    invariant i >= 0;
+                    invariant i <= n;
                     step {
                         mutable p[i..i + 1], q[i..i + 1] by frame;
                     }
@@ -2680,8 +2694,8 @@ fn loop_level_mutable_segment_rejects_write_outside_segment() {
                 requires loadable(p[0..n]);
                 requires write(p[0..n]);
                 for loop(0) {
-                    invariant i >= 0 by auto;
-                    invariant i <= n by auto;
+                    invariant i >= 0;
+                    invariant i <= n;
                     mutable p[0..0] by auto;
                 }
                 ensures returns_n: result == n by auto;
@@ -2740,8 +2754,8 @@ fn loop_level_immutable_rejects_external_memory_write() {
                 requires loadable(p[0..n]);
                 requires write(p[0..n]);
                 for loop(0) {
-                    invariant i >= 0 by auto;
-                    invariant i <= n by auto;
+                    invariant i >= 0;
+                    invariant i <= n;
                     immutable by auto;
                 }
                 ensures returns_n: result == n by auto;
@@ -2780,8 +2794,8 @@ fn loop_level_immutable_allows_stack_local_update() {
 
             int32 count_to_three() {
                 for loop(0) {
-                    invariant i >= 0 by auto;
-                    invariant i <= 3 by auto;
+                    invariant i >= 0;
+                    invariant i <= 3;
                     immutable by frame;
                 }
                 ensures returns_three: result == 3 by auto;
@@ -2815,8 +2829,8 @@ fn function_immutable_allows_nonwriting_loop_with_mutable_bound() {
                 requires n <= 2147483647;
                 requires loadable(p[0..n]);
                 for loop(0) {
-                    invariant i >= 0 by auto;
-                    invariant i <= n by auto;
+                    invariant i >= 0;
+                    invariant i <= n;
                     mutable p[0..n] by frame;
                 }
                 immutable by frame;
@@ -2854,8 +2868,8 @@ fn function_mutable_uses_loop_effect_summary() {
                 requires loadable(p[0..n]);
                 requires write(p[0..n]);
                 for loop(0) {
-                    invariant i >= 0 by auto;
-                    invariant i <= n by auto;
+                    invariant i >= 0;
+                    invariant i <= n;
                     mutable p[0..n] by frame;
                 }
                 mutable p[0..n] by frame;
@@ -2893,8 +2907,8 @@ fn function_mutable_rejects_loop_effect_outside_function_bound() {
                 requires loadable(p[0..n]);
                 requires write(p[0..n]);
                 for loop(0) {
-                    invariant i >= 0 by auto;
-                    invariant i <= n by auto;
+                    invariant i >= 0;
+                    invariant i <= n;
                     mutable p[0..n] by frame;
                 }
                 mutable p[0..0] by frame;
@@ -2939,8 +2953,8 @@ fn function_mutable_accepts_shifted_loop_effect_subset() {
                 requires loadable(p[0..n]);
                 requires write(p[0..n]);
                 for loop(0) {
-                    invariant i >= 1 by auto;
-                    invariant i <= n by auto;
+                    invariant i >= 1;
+                    invariant i <= n;
                     mutable (p + 1)[0..n - 1] by frame;
                 }
                 mutable p[0..n] by frame;
@@ -2978,8 +2992,8 @@ fn function_immutable_rejects_writing_loop_effect_summary() {
                 requires loadable(p[0..n]);
                 requires write(p[0..n]);
                 for loop(0) {
-                    invariant i >= 0 by auto;
-                    invariant i <= n by auto;
+                    invariant i >= 0;
+                    invariant i <= n;
                     mutable p[0..n] by frame;
                 }
                 immutable by frame;
@@ -3014,7 +3028,8 @@ fn structural_invariant_rejects_frame_tactic() {
 
             int32 count_to_three() {
                 for loop(0) {
-                    invariant i >= 0 by frame;
+                    invariant i >= 0;
+                    preserve by frame;
                 }
                 ensures returns_three: result == 3 by auto;
             }
@@ -3024,16 +3039,92 @@ fn structural_invariant_rejects_frame_tactic() {
         .expect_err("frame should not prove invariants");
 
     assert!(
-        error
-            .message()
-            .contains("`invariant` structural clauses must use"),
+        error.message().contains("`preserve` must use"),
         "{}",
         error.message()
     );
 }
 
 #[test]
-fn structural_invariant_allows_unfold_only_steps() {
+fn loop_initialize_rejects_execution_steps() {
+    let c_source = r#"
+            int32 count_once() {
+                int32 i;
+                i = 0;
+                while (i < 1) {
+                    i = i + 1;
+                }
+                return i;
+            }
+        "#;
+    let click_source = r#"
+            verifying "count_once.c";
+
+            int32 count_once() {
+                for loop(0) {
+                    invariant i >= 0;
+                    initialize by {
+                        execute_step();
+                        simp();
+                    }
+                }
+                ensures result == 1 by auto;
+            }
+        "#;
+
+    let error = verify_c0_sources(click_source, &[("count_once.c", c_source)])
+        .expect_err("initialization should not execute loop body statements");
+
+    assert!(
+        error.message().contains("`initialize`")
+            && error.message().contains("cannot execute C statements"),
+        "{}",
+        error.message()
+    );
+}
+
+#[test]
+fn loop_preserve_requires_one_complete_iteration() {
+    let c_source = r#"
+            int32 count_once() {
+                int32 i;
+                i = 0;
+                while (i < 1) {
+                    i = i + 1;
+                    i = i;
+                }
+                return i;
+            }
+        "#;
+    let click_source = r#"
+            verifying "count_once.c";
+
+            int32 count_once() {
+                for loop(0) {
+                    invariant i >= 0;
+                    preserve by {
+                        execute_step();
+                        simp();
+                    }
+                }
+                ensures result == 1 by auto;
+            }
+        "#;
+
+    let error = verify_c0_sources(click_source, &[("count_once.c", c_source)])
+        .expect_err("preservation should traverse the complete loop body");
+
+    assert!(
+        error
+            .message()
+            .contains("expected 2 `execute_step()` call(s), found 1"),
+        "{}",
+        error.message()
+    );
+}
+
+#[test]
+fn loop_phase_proofs_can_unfold_invariant_predicates() {
     let c_source = r#"
             int32 loop_sorted_range_invariant(int32 p[3]) {
                 int32 i;
@@ -3063,8 +3154,13 @@ fn structural_invariant_allows_unfold_only_steps() {
                 requires loadable(p[0..3]);
                 requires sorted(p, 3);
                 for loop(0) {
-                    invariant i >= 0 and i <= 3 by auto;
-                    invariant sorted(p, 3) by {
+                    invariant i >= 0 and i <= 3;
+                    invariant sorted(p, 3);
+                    initialize by {
+                        unfold(sorted);
+                        unfold(sorted_range);
+                    }
+                    preserve by {
                         unfold(sorted);
                         unfold(sorted_range);
                     }
@@ -3082,7 +3178,7 @@ fn structural_invariant_allows_unfold_only_steps() {
         "#;
 
     let verified = verify_c0_sources(click_source, &[("loop_sorted_range_invariant.c", c_source)])
-        .expect("unfold-only structural invariant script should verify");
+        .expect("loop phase unfolding should verify");
 
     assert_eq!(verified.len(), 1);
 }
@@ -3112,11 +3208,11 @@ fn verifies_symbolic_copy_segment_invariant() {
                 requires read(src[0..n]);
                 requires separate(memory(dst[0..n]), memory(src[0..n]));
                 for loop(0) {
-                    invariant i >= 0 by auto;
-                    invariant i <= n by auto;
+                    invariant i >= 0;
+                    invariant i <= n;
                     invariant forall (int32 k) {
                         0 <= k and k < i implies dst[k] == old(src[k])
-                    } by auto;
+                    };
                     mutable dst[0..n] by auto;
                 }
                 ensures returns_n: result == n by auto;
@@ -3166,11 +3262,11 @@ fn auto_certificate_replays_for_loop_frame_claim() {
                 requires read(src[0..n]);
                 requires separate(memory(dst[0..n]), memory(src[0..n]));
                 for loop(0) {
-                    invariant i >= 0 by auto;
-                    invariant i <= n by auto;
+                    invariant i >= 0;
+                    invariant i <= n;
                     invariant forall (int32 k) {
                         0 <= k and k < i implies dst[k] == old(src[k])
-                    } by auto;
+                    };
                     mutable dst[0..n] by auto;
                 }
                 ensures source_unchanged: forall (int32 k) {
@@ -3215,11 +3311,11 @@ fn auto_certificate_replays_for_loop_frame_claim() {
                 requires read(src[0..n]);
                 requires separate(memory(dst[0..n]), memory(src[0..n]));
                 for loop(0) {
-                    invariant i >= 0 by auto;
-                    invariant i <= n by auto;
+                    invariant i >= 0;
+                    invariant i <= n;
                     invariant forall (int32 k) {
                         0 <= k and k < i implies dst[k] == old(src[k])
-                    } by auto;
+                    };
                     mutable dst[0..n] by auto;
                 }
                 ensures source_unchanged: forall (int32 k) {
@@ -3261,7 +3357,7 @@ fn false_loop_invariant_fails() {
 
             int32 count_to_three() {
                 for loop(0) {
-                    invariant i < 3 by auto;
+                    invariant i < 3;
                 }
 
                 ensures result == 3 by auto;
@@ -3295,7 +3391,7 @@ fn false_loop_invariant_initialization_fails() {
 
             int32 count_to_three() {
                 for loop(0) {
-                    invariant i == 1 by auto;
+                    invariant i == 1;
                 }
 
                 ensures result == 3 by auto;

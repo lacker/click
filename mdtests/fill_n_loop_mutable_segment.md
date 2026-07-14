@@ -27,8 +27,8 @@ int32 fill_n_loop_mutable_segment(int32 p[], int32 n) {
     requires loadable(p[0..n]);
     requires write(p[0..n]);
     for loop(0) {
-        invariant i >= 0 by auto;
-        invariant i <= n by auto;
+        invariant i >= 0;
+        invariant i <= n;
         step {
             mutable p[i..i + 1] by frame;
         }

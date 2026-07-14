@@ -28,8 +28,8 @@ int32 copy3(int32 dst[3], int32 src[3]) {
     requires separate(memory(dst[0..3]), memory(src[0..3]));
 
     for loop(0) {
-        invariant i >= 0 by auto;
-        invariant i <= 3 by auto;
+        invariant i >= 0;
+        invariant i <= 3;
     }
 
     ensures copies_first: dst[0] == old(src[0]) by auto;

@@ -23,8 +23,8 @@ int32 fill3_array_loop(int32 p[3]) {
     requires write(p[0..3]);
 
     for loop(0) {
-        invariant i >= 0 by auto;
-        invariant i <= 3 by auto;
+        invariant i >= 0;
+        invariant i <= 3;
     }
 
     ensures writes_first: p[0] == 0 by auto;

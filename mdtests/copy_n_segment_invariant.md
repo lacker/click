@@ -30,11 +30,11 @@ int32 copy_n_segment_invariant(int32 dst[], int32 src[], int32 n) {
     requires read(src[0..n]);
     requires separate(memory(dst[0..n]), memory(src[0..n]));
     for loop(0) {
-        invariant i >= 0 by auto;
-        invariant i <= n by auto;
+        invariant i >= 0;
+        invariant i <= n;
         invariant forall (int32 k) {
             0 <= k and k < i implies dst[k] == old(src[k])
-        } by auto;
+        };
         mutable dst[0..n] by frame;
     }
     ensures returns_n: result == n by auto;

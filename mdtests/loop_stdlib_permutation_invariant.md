@@ -22,8 +22,12 @@ verifying "loop_stdlib_permutation_invariant.c";
 int32 loop_stdlib_permutation_invariant(int32 p[3]) {
     requires loadable(p[0..3]);
     for loop(0) {
-        invariant i >= 0 and i <= 3 by auto;
-        invariant permutation(p, old(p), 0, 3) by {
+        invariant i >= 0 and i <= 3;
+        invariant permutation(p, old(p), 0, 3);
+        initialize by {
+            unfold(permutation);
+        }
+        preserve by {
             unfold(permutation);
         }
         immutable by frame;
