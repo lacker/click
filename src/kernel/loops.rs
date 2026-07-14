@@ -953,7 +953,7 @@ pub(super) fn havoc_loop_modified_locals(
         // overwritten by the loop body through a pointer. Address-escaped
         // locals were havoced above, so their preserved cells now hold fresh
         // symbolic values rather than stale ones.
-        let preserved_blocks: BTreeSet<String> = state
+        let preserved_blocks: BTreeSet<PointerBlock> = state
             .locals
             .bindings
             .keys()

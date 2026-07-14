@@ -215,7 +215,9 @@ sequence:
   `advance` interface, then `observe` recovers its fact after the join.
 - `mdtests/proof_advance_pointer_local.md`: selects a pointer in separate
   branches, exports its viewed range through an `advance` interface, and
-  dereferences the abstract pointer after the join.
+  transports the selected value to the result after the join.
+- `mdtests/proof_advance_owned_pointer_local.md`: exports ownership of a
+  branch-selected pointer, mutates it after the join, and reads back the write.
 - `mdtests/composite_resource_two_arrays.md`: a composite resource can
   bundle permissions for multiple arrays.
 - `mdtests/composite_resource_separate_fact.md`: a composite resource can

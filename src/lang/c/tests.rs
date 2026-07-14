@@ -228,7 +228,7 @@ fn c0_syntax_targets_kernel_store_and_load() {
     );
 
     let pointer = crate::kernel::Pointer {
-        block: "block".to_string(),
+        block: "block".into(),
         offset: crate::kernel::PointerOffsetTerm::Constant(0),
     };
     let statement = function.body_kernel_statement();
@@ -282,7 +282,7 @@ fn c0_syntax_targets_kernel_struct_field_load() {
     assert_eq!(function.parameters()[0].struct_name(), Some("json_object"));
 
     let pointer = crate::kernel::Pointer {
-        block: "object".to_string(),
+        block: "object".into(),
         offset: crate::kernel::PointerOffsetTerm::Constant(0),
     };
     let statement = function.body_kernel_statement();
@@ -331,7 +331,7 @@ fn c0_syntax_targets_kernel_struct_field_store() {
     .to_kernel_function();
 
     let pointer = crate::kernel::Pointer {
-        block: "object".to_string(),
+        block: "object".into(),
         offset: crate::kernel::PointerOffsetTerm::Constant(0),
     };
     let resources = write_context(pointer.clone(), 0, 1);
@@ -389,11 +389,11 @@ fn c0_syntax_targets_kernel_multifield_struct_offset_load() {
     .to_kernel_function();
 
     let base = crate::kernel::Pointer {
-        block: "pair".to_string(),
+        block: "pair".into(),
         offset: crate::kernel::PointerOffsetTerm::Constant(0),
     };
     let second = crate::kernel::Pointer {
-        block: "pair".to_string(),
+        block: "pair".into(),
         offset: crate::kernel::PointerOffsetTerm::Constant(4),
     };
     let memory = crate::kernel::CMemory::new()
@@ -448,15 +448,15 @@ fn c0_syntax_targets_kernel_struct_pointer_field_roundtrip() {
     .to_kernel_function();
 
     let owner = crate::kernel::Pointer {
-        block: "owner".to_string(),
+        block: "owner".into(),
         offset: crate::kernel::PointerOffsetTerm::Constant(0),
     };
     let owner_data = crate::kernel::Pointer {
-        block: "owner".to_string(),
+        block: "owner".into(),
         offset: crate::kernel::PointerOffsetTerm::Constant(4),
     };
     let data = crate::kernel::Pointer {
-        block: "data".to_string(),
+        block: "data".into(),
         offset: crate::kernel::PointerOffsetTerm::Constant(0),
     };
     let resources = crate::kernel::ResourceContext::new().unchecked_with_facts(vec![
@@ -523,7 +523,7 @@ fn c0_syntax_targets_kernel_store_and_load_function_call() {
     .to_kernel_function();
 
     let pointer = crate::kernel::Pointer {
-        block: "block".to_string(),
+        block: "block".into(),
         offset: crate::kernel::PointerOffsetTerm::Constant(0),
     };
     let resources = write_context(pointer.clone(), 0, 1);
@@ -570,11 +570,11 @@ fn c0_syntax_targets_kernel_pointer_addition_load() {
     .to_kernel_function();
 
     let base = crate::kernel::Pointer {
-        block: "block".to_string(),
+        block: "block".into(),
         offset: crate::kernel::PointerOffsetTerm::Constant(0),
     };
     let second = crate::kernel::Pointer {
-        block: "block".to_string(),
+        block: "block".into(),
         offset: crate::kernel::PointerOffsetTerm::Constant(4),
     };
     let memory = crate::kernel::CMemory::new()
@@ -620,11 +620,11 @@ fn c0_syntax_targets_kernel_array_index_load() {
     .to_kernel_function();
 
     let base = crate::kernel::Pointer {
-        block: "block".to_string(),
+        block: "block".into(),
         offset: crate::kernel::PointerOffsetTerm::Constant(0),
     };
     let second = crate::kernel::Pointer {
-        block: "block".to_string(),
+        block: "block".into(),
         offset: crate::kernel::PointerOffsetTerm::Constant(4),
     };
     let memory = crate::kernel::CMemory::new()
@@ -671,11 +671,11 @@ fn c0_syntax_targets_kernel_array_index_store() {
     .to_kernel_function();
 
     let base = crate::kernel::Pointer {
-        block: "block".to_string(),
+        block: "block".into(),
         offset: crate::kernel::PointerOffsetTerm::Constant(0),
     };
     let second = crate::kernel::Pointer {
-        block: "block".to_string(),
+        block: "block".into(),
         offset: crate::kernel::PointerOffsetTerm::Constant(4),
     };
     let memory = crate::kernel::CMemory::new().with_block("block", 16);
@@ -728,15 +728,15 @@ fn c0_syntax_targets_kernel_address_of_array_index() {
     .to_kernel_function();
 
     let base = crate::kernel::Pointer {
-        block: "block".to_string(),
+        block: "block".into(),
         offset: crate::kernel::PointerOffsetTerm::Constant(0),
     };
     let second = crate::kernel::Pointer {
-        block: "block".to_string(),
+        block: "block".into(),
         offset: crate::kernel::PointerOffsetTerm::Constant(4),
     };
     let local_q = crate::kernel::Pointer {
-        block: "local:q".to_string(),
+        block: "local:q".into(),
         offset: crate::kernel::PointerOffsetTerm::Constant(0),
     };
     let memory = crate::kernel::CMemory::new()
@@ -795,7 +795,7 @@ fn c0_syntax_targets_kernel_pointer_null_equality() {
     .to_kernel_function();
 
     let null = crate::kernel::Pointer {
-        block: "null".to_string(),
+        block: "null".into(),
         offset: crate::kernel::PointerOffsetTerm::Constant(0),
     };
     let state = crate::kernel::CState::new();
@@ -839,11 +839,11 @@ fn c0_syntax_targets_kernel_logical_short_circuiting() {
     .to_kernel_function();
 
     let null = crate::kernel::Pointer {
-        block: "null".to_string(),
+        block: "null".into(),
         offset: crate::kernel::PointerOffsetTerm::Constant(0),
     };
     let pointer = crate::kernel::Pointer {
-        block: "block".to_string(),
+        block: "block".into(),
         offset: crate::kernel::PointerOffsetTerm::Constant(0),
     };
     let cases = [
@@ -917,7 +917,7 @@ fn c0_syntax_targets_kernel_unary_not() {
     .to_kernel_function();
 
     let pointer = crate::kernel::Pointer {
-        block: "block".to_string(),
+        block: "block".into(),
         offset: crate::kernel::PointerOffsetTerm::Constant(0),
     };
     let state = crate::kernel::CState::new();
@@ -959,7 +959,7 @@ fn c0_syntax_targets_kernel_local_address_of() {
     .to_kernel_function();
 
     let local_pointer = crate::kernel::Pointer {
-        block: "local:x".to_string(),
+        block: "local:x".into(),
         offset: crate::kernel::PointerOffsetTerm::Constant(0),
     };
     let state = crate::kernel::CState::new();
@@ -1006,11 +1006,11 @@ fn c0_syntax_targets_kernel_local_array_storage() {
     .to_kernel_function();
 
     let a0 = crate::kernel::Pointer {
-        block: "local:a".to_string(),
+        block: "local:a".into(),
         offset: crate::kernel::PointerOffsetTerm::Constant(0),
     };
     let a1 = crate::kernel::Pointer {
-        block: "local:a".to_string(),
+        block: "local:a".into(),
         offset: crate::kernel::PointerOffsetTerm::Constant(4),
     };
     let state = crate::kernel::CState::new();
@@ -1068,11 +1068,11 @@ fn c0_syntax_local_array_decays_to_pointer_argument() {
     .to_kernel_function();
 
     let a0 = crate::kernel::Pointer {
-        block: "local:a".to_string(),
+        block: "local:a".into(),
         offset: crate::kernel::PointerOffsetTerm::Constant(0),
     };
     let result_pointer = crate::kernel::Pointer {
-        block: "local:result".to_string(),
+        block: "local:result".into(),
         offset: crate::kernel::PointerOffsetTerm::Constant(0),
     };
     let environment = crate::kernel::CFunctionEnvironment::new().with_function(read_first);
@@ -1122,7 +1122,7 @@ fn c0_syntax_rejects_assignment_to_local_array_object() {
     .to_kernel_function();
 
     let pointer = crate::kernel::Pointer {
-        block: "block".to_string(),
+        block: "block".into(),
         offset: crate::kernel::PointerOffsetTerm::Constant(0),
     };
     let state = crate::kernel::CState::new();
@@ -1371,7 +1371,7 @@ fn c0_syntax_targets_kernel_known_function_call_assignment() {
     .to_kernel_function();
 
     let local_pointer = crate::kernel::Pointer {
-        block: "local:result".to_string(),
+        block: "local:result".into(),
         offset: crate::kernel::PointerOffsetTerm::Constant(0),
     };
     let environment = crate::kernel::CFunctionEnvironment::new().with_function(increment);
@@ -1462,23 +1462,23 @@ fn c0_memory_safety_demo_fill_three_ints() {
     .to_kernel_function();
 
     let base = crate::kernel::Pointer {
-        block: "buf".to_string(),
+        block: "buf".into(),
         offset: crate::kernel::PointerOffsetTerm::Constant(0),
     };
     let first = crate::kernel::Pointer {
-        block: "buf".to_string(),
+        block: "buf".into(),
         offset: crate::kernel::PointerOffsetTerm::Constant(0),
     };
     let second = crate::kernel::Pointer {
-        block: "buf".to_string(),
+        block: "buf".into(),
         offset: crate::kernel::PointerOffsetTerm::Constant(4),
     };
     let third = crate::kernel::Pointer {
-        block: "buf".to_string(),
+        block: "buf".into(),
         offset: crate::kernel::PointerOffsetTerm::Constant(8),
     };
     let local_i = crate::kernel::Pointer {
-        block: "local:i".to_string(),
+        block: "local:i".into(),
         offset: crate::kernel::PointerOffsetTerm::Constant(0),
     };
     let initial_memory = crate::kernel::CMemory::new().with_block("buf", 12);

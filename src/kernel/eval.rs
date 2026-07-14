@@ -2157,7 +2157,7 @@ pub(super) fn pointer_is_null_condition(pointer: Pointer) -> ConditionTerm {
     pointer_equality_condition(
         pointer,
         Pointer {
-            block: "null".to_string(),
+            block: "null".into(),
             offset: PointerOffsetTerm::Constant(0),
         },
     )
@@ -2918,14 +2918,14 @@ pub(super) fn declare_local(state: &CState, name: &str, c_type: CType) -> CState
         CType::UInt8 => (uint8(0), 1),
         CType::Int32Pointer => (
             CValue::Pointer(Pointer {
-                block: "null".to_string(),
+                block: "null".into(),
                 offset: PointerOffsetTerm::Constant(0),
             }),
             C_POINTER_BYTE_WIDTH,
         ),
         CType::UInt8Pointer => (
             CValue::Pointer(Pointer {
-                block: "null".to_string(),
+                block: "null".into(),
                 offset: PointerOffsetTerm::Constant(0),
             }),
             C_POINTER_BYTE_WIDTH,

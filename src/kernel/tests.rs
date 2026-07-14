@@ -44,7 +44,7 @@ fn write_context(
 fn join_state_forgets_changed_scalars_and_memory() {
     let stable_x = int32(Bitvector32Term::Variable(Variable(7)));
     let pointer = Pointer {
-        block: "heap".to_string(),
+        block: "heap".into(),
         offset: PointerOffsetTerm::Constant(0),
     };
     let state_zero = CState::new()
@@ -80,11 +80,11 @@ fn join_state_forgets_changed_scalars_and_memory() {
 #[test]
 fn join_state_abstracts_changed_pointer_locals() {
     let left = Pointer {
-        block: "left".to_string(),
+        block: "left".into(),
         offset: PointerOffsetTerm::Constant(0),
     };
     let right = Pointer {
-        block: "right".to_string(),
+        block: "right".into(),
         offset: PointerOffsetTerm::Constant(0),
     };
     let abstract_left = abstract_c_state_for_join(
@@ -111,7 +111,7 @@ fn join_state_abstracts_changed_pointer_locals() {
 fn symbolic_pointer_blocks_do_not_imply_non_aliasing() {
     let symbolic = Pointer::symbolic(Variable(21_000));
     let concrete = Pointer {
-        block: "heap".to_string(),
+        block: "heap".into(),
         offset: PointerOffsetTerm::Constant(0),
     };
 
@@ -127,9 +127,24 @@ fn symbolic_pointer_blocks_do_not_imply_non_aliasing() {
 }
 
 #[test]
+fn concrete_pointer_block_names_cannot_create_symbolic_identity() {
+    let misleading_name = Pointer {
+        block: "symbolic-pointer:21000".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let heap = Pointer {
+        block: "heap".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+
+    assert!(!misleading_name.has_symbolic_block());
+    assert!(misleading_name.blocks_proven_distinct(&heap));
+}
+
+#[test]
 fn memory_resource_fact_core_is_read_permission() {
     let base = Pointer {
-        block: "p".to_string(),
+        block: "p".into(),
         offset: PointerOffsetTerm::Constant(0),
     };
 
@@ -153,7 +168,7 @@ fn memory_resource_fact_core_is_read_permission() {
 #[test]
 fn resource_context_observes_write_separation() {
     let base = Pointer {
-        block: "p".to_string(),
+        block: "p".into(),
         offset: PointerOffsetTerm::Constant(0),
     };
     let left = memory_range(base.clone(), 0, 1);
@@ -176,7 +191,7 @@ fn resource_context_observes_write_separation() {
 #[test]
 fn resource_separation_proves_memory_disjointness() {
     let base = Pointer {
-        block: "p".to_string(),
+        block: "p".into(),
         offset: PointerOffsetTerm::Constant(0),
     };
     let left = memory_range(base.clone(), 0, 1);
@@ -199,7 +214,7 @@ fn resource_separation_proves_memory_disjointness() {
 #[test]
 fn resource_separation_covers_larger_memory_range() {
     let base = Pointer {
-        block: "p".to_string(),
+        block: "p".into(),
         offset: PointerOffsetTerm::Constant(0),
     };
     let left_first = CResource::Memory(memory_range(base.clone(), 0, 1));
@@ -225,7 +240,7 @@ fn resource_separation_covers_larger_memory_range() {
 #[test]
 fn resource_contains_projects_separation_to_children() {
     let base = Pointer {
-        block: "p".to_string(),
+        block: "p".into(),
         offset: PointerOffsetTerm::Constant(0),
     };
     let parent = CResource::Token {
@@ -253,7 +268,7 @@ fn resource_contains_projects_separation_to_children() {
 #[test]
 fn checked_resource_composition_rejects_invalid_state_before_normalizing() {
     let base = Pointer {
-        block: "p".to_string(),
+        block: "p".into(),
         offset: PointerOffsetTerm::Constant(0),
     };
     let error = ResourceContext::new()
@@ -394,7 +409,7 @@ fn symbolic_max_function_call_reports_branch_facts() {
 #[test]
 fn function_call_threads_memory_but_discards_callee_locals() {
     let pointer = Pointer {
-        block: "block".to_string(),
+        block: "block".into(),
         offset: PointerOffsetTerm::Constant(0),
     };
     let resources = write_context(pointer.clone(), 0, 1);
@@ -440,7 +455,7 @@ fn function_call_threads_memory_but_discards_callee_locals() {
 #[test]
 fn function_call_does_not_inherit_undeclared_resources() {
     let pointer = Pointer {
-        block: "block".to_string(),
+        block: "block".into(),
         offset: PointerOffsetTerm::Constant(0),
     };
     let resources = write_context(pointer.clone(), 0, 1);
@@ -906,7 +921,7 @@ fn executor_budgets_cap_steps_calls_and_paths() {
 #[test]
 fn while_invariant_is_proof_obligation() {
     let pointer = Pointer {
-        block: "block".to_string(),
+        block: "block".into(),
         offset: PointerOffsetTerm::Constant(0),
     };
     let invariant = Proposition::CMemoryLoadable {
@@ -941,7 +956,7 @@ fn builtin_obligation_solver_proves_trivial_props() {
     let assumptions = Assumptions::new();
     let memory = CMemory::new().with_block("block", 8);
     let pointer = Pointer {
-        block: "block".to_string(),
+        block: "block".into(),
         offset: PointerOffsetTerm::Constant(4),
     };
 
@@ -998,7 +1013,7 @@ fn finite_forall_order_fact_participates_in_transitive_order_path() {
         Bitvector32Term::MemoryLoad(
             Box::new(memory.clone()),
             Box::new(Pointer {
-                block: "arg-memory".to_string(),
+                block: "arg-memory".into(),
                 offset: PointerOffsetTerm::scale_int32(index, 4),
             }),
         )
@@ -1095,7 +1110,7 @@ fn assumptions_prove_forall_int32_array_range_body() {
     let index_bits = Bitvector32Term::Variable(index);
     let memory = CMemory::new().with_block("block", 12);
     let base = Pointer {
-        block: "block".to_string(),
+        block: "block".into(),
         offset: PointerOffsetTerm::Constant(0),
     };
     let indexed_pointer = base.offset_by_int32_elements(index_bits.clone());
@@ -1245,7 +1260,7 @@ fn assumptions_do_not_prove_implication_by_treating_unknown_antecedent_as_false(
 #[test]
 fn builtin_obligation_solver_discharges_concrete_invariant() {
     let pointer = Pointer {
-        block: "block".to_string(),
+        block: "block".into(),
         offset: PointerOffsetTerm::Constant(0),
     };
     let memory = CMemory::new().with_block("block", 4);
@@ -1536,19 +1551,19 @@ fn int32_comparisons_return_c_int32_zero_or_one() {
 #[test]
 fn pointer_equality_returns_c_int32_zero_or_one() {
     let p = Pointer {
-        block: "array".to_string(),
+        block: "array".into(),
         offset: PointerOffsetTerm::Constant(0),
     };
     let same = Pointer {
-        block: "array".to_string(),
+        block: "array".into(),
         offset: PointerOffsetTerm::Constant(0),
     };
     let next = Pointer {
-        block: "array".to_string(),
+        block: "array".into(),
         offset: PointerOffsetTerm::Constant(4),
     };
     let other = Pointer {
-        block: "other".to_string(),
+        block: "other".into(),
         offset: PointerOffsetTerm::Constant(0),
     };
     let state = CState::new()
@@ -1593,11 +1608,11 @@ fn symbolic_pointer_truthiness_keeps_null_and_nonnull_paths() {
 #[test]
 fn pointer_equality_accepts_int32_zero_as_null_pointer_constant() {
     let null = Pointer {
-        block: "null".to_string(),
+        block: "null".into(),
         offset: PointerOffsetTerm::Constant(0),
     };
     let nonnull = Pointer {
-        block: "array".to_string(),
+        block: "array".into(),
         offset: PointerOffsetTerm::Constant(0),
     };
     let state = CState::new()
@@ -1638,19 +1653,19 @@ fn pointer_equality_accepts_int32_zero_as_null_pointer_constant() {
 #[test]
 fn not_equal_and_not_return_c_int32_zero_or_one() {
     let null = Pointer {
-        block: "null".to_string(),
+        block: "null".into(),
         offset: PointerOffsetTerm::Constant(0),
     };
     let p = Pointer {
-        block: "array".to_string(),
+        block: "array".into(),
         offset: PointerOffsetTerm::Constant(0),
     };
     let same = Pointer {
-        block: "array".to_string(),
+        block: "array".into(),
         offset: PointerOffsetTerm::Constant(0),
     };
     let next = Pointer {
-        block: "array".to_string(),
+        block: "array".into(),
         offset: PointerOffsetTerm::Constant(4),
     };
     let state = CState::new()
@@ -1692,13 +1707,13 @@ fn not_equal_and_not_return_c_int32_zero_or_one() {
 #[test]
 fn logical_and_or_short_circuit_right_operand() {
     let invalid_pointer = Pointer {
-        block: "missing".to_string(),
+        block: "missing".into(),
         offset: PointerOffsetTerm::Constant(0),
     };
     let invalid_load = c_load(c_pointer_value(invalid_pointer));
     let state = CState::new().with_resource_context(read_context(
         Pointer {
-            block: "missing".to_string(),
+            block: "missing".into(),
             offset: PointerOffsetTerm::Constant(0),
         },
         0,
@@ -1736,11 +1751,11 @@ fn logical_and_or_short_circuit_right_operand() {
 fn symbolic_pointer_equality_reports_branch_facts() {
     let offset = Variable(80);
     let left = Pointer {
-        block: "array".to_string(),
+        block: "array".into(),
         offset: PointerOffsetTerm::Constant(0),
     };
     let right = Pointer {
-        block: "array".to_string(),
+        block: "array".into(),
         offset: PointerOffsetTerm::Variable(offset),
     };
     let condition = ConditionTerm::pointer_offset_equal(left.offset.clone(), right.offset.clone());
@@ -1863,7 +1878,7 @@ fn assignment_and_sequence_update_native_state() {
 #[test]
 fn store_then_load_threads_native_memory() {
     let pointer = Pointer {
-        block: "block".to_string(),
+        block: "block".into(),
         offset: PointerOffsetTerm::Constant(0),
     };
     let resources = write_context(pointer.clone(), 0, 1);
@@ -1894,7 +1909,7 @@ fn store_then_load_threads_native_memory() {
 #[test]
 fn read_element_permits_symbolic_external_load_from_incomplete_memory() {
     let pointer = Pointer {
-        block: "block".to_string(),
+        block: "block".into(),
         offset: PointerOffsetTerm::Constant(4),
     };
     let state = CState::new()
@@ -1925,7 +1940,7 @@ fn read_element_permits_symbolic_external_load_from_incomplete_memory() {
 #[test]
 fn block_backed_store_then_load_needs_no_memory_obligation() {
     let pointer = Pointer {
-        block: "block".to_string(),
+        block: "block".into(),
         offset: PointerOffsetTerm::Constant(0),
     };
     let memory = CMemory::new().with_block("block", 16);
@@ -1959,7 +1974,7 @@ fn block_backed_store_then_load_needs_no_memory_obligation() {
 #[test]
 fn block_backed_missing_load_returns_symbolic_value_without_obligation() {
     let pointer = Pointer {
-        block: "block".to_string(),
+        block: "block".into(),
         offset: PointerOffsetTerm::Constant(4),
     };
     let memory = CMemory::new().with_block("block", 16);
@@ -1990,11 +2005,11 @@ fn block_backed_missing_load_returns_symbolic_value_without_obligation() {
 #[test]
 fn pointer_addition_scales_int32_offsets_for_loads() {
     let base = Pointer {
-        block: "block".to_string(),
+        block: "block".into(),
         offset: PointerOffsetTerm::Constant(0),
     };
     let second = Pointer {
-        block: "block".to_string(),
+        block: "block".into(),
         offset: PointerOffsetTerm::Constant(4),
     };
     let memory = CMemory::new()
@@ -2020,7 +2035,7 @@ fn pointer_addition_scales_int32_offsets_for_loads() {
                     .with_local(
                         "p",
                         CValue::Pointer(Pointer {
-                            block: "block".to_string(),
+                            block: "block".into(),
                             offset: PointerOffsetTerm::Constant(0),
                         }),
                     )
@@ -2038,11 +2053,11 @@ fn pointer_addition_scales_int32_offsets_for_loads() {
 #[test]
 fn read_element_permits_pointer_addition_load_beyond_memory_block() {
     let base = Pointer {
-        block: "block".to_string(),
+        block: "block".into(),
         offset: PointerOffsetTerm::Constant(0),
     };
     let derived = Pointer {
-        block: "block".to_string(),
+        block: "block".into(),
         offset: PointerOffsetTerm::Constant(4),
     };
     let memory = CMemory::new().with_block("block", 4);
@@ -2075,7 +2090,7 @@ fn read_element_permits_pointer_addition_load_beyond_memory_block() {
 #[test]
 fn fixed_bound_store_loop_touches_only_valid_pointer_range() {
     let base = Pointer {
-        block: "block".to_string(),
+        block: "block".into(),
         offset: PointerOffsetTerm::Constant(0),
     };
     let memory = CMemory::new().with_block("block", 12);
@@ -2097,21 +2112,21 @@ fn fixed_bound_store_loop_touches_only_valid_pointer_range() {
     let final_memory = memory
         .store(
             Pointer {
-                block: "block".to_string(),
+                block: "block".into(),
                 offset: PointerOffsetTerm::Constant(0),
             },
             int32(0),
         )
         .store(
             Pointer {
-                block: "block".to_string(),
+                block: "block".into(),
                 offset: PointerOffsetTerm::Constant(4),
             },
             int32(1),
         )
         .store(
             Pointer {
-                block: "block".to_string(),
+                block: "block".into(),
                 offset: PointerOffsetTerm::Constant(8),
             },
             int32(2),
@@ -2120,7 +2135,7 @@ fn fixed_bound_store_loop_touches_only_valid_pointer_range() {
         .with_local(
             "p",
             CValue::Pointer(Pointer {
-                block: "block".to_string(),
+                block: "block".into(),
                 offset: PointerOffsetTerm::Constant(0),
             }),
         )
@@ -2156,7 +2171,7 @@ fn symbolic_loadable_discharges_pointer_access_obligation() {
     let n_bits = Bitvector32Term::Variable(n);
     let memory = CMemory::new();
     let base = Pointer {
-        block: "array".to_string(),
+        block: "array".into(),
         offset: PointerOffsetTerm::Constant(0),
     };
     let state = CState::new()
@@ -2312,7 +2327,7 @@ fn additive_upper_bound_covers_incremented_pointer_access() {
     let j_bits = Bitvector32Term::Variable(j);
     let incremented = Bitvector32Term::add(j_bits.clone(), Bitvector32Term::Constant(1));
     let base = Pointer {
-        block: "p".to_string(),
+        block: "p".into(),
         offset: PointerOffsetTerm::Constant(0),
     };
     let pointer = base.offset_by_int32_elements(incremented.clone());
@@ -2485,11 +2500,11 @@ fn mutable_frame_proves_unwritten_load_equal_across_stack_locals() {
         .with_block("local:i", 4)
         .store(CMemory::local_pointer("i"), int32(i_bits.clone()));
     let first_cell = Pointer {
-        block: "p".to_string(),
+        block: "p".into(),
         offset: PointerOffsetTerm::Constant(0),
     };
     let written_cell = Pointer {
-        block: "p".to_string(),
+        block: "p".into(),
         offset: PointerOffsetTerm::Int32Scaled {
             value: Box::new(i_bits.clone()),
             byte_width: 4,
@@ -2519,11 +2534,11 @@ fn mutable_frame_proves_unwritten_load_equal_across_stack_locals() {
 fn unrelated_external_cell_store_preserves_memory_load_with_stack_temporary() {
     let old_memory = CMemory::new();
     let p0 = Pointer {
-        block: "arg-memory".to_string(),
+        block: "arg-memory".into(),
         offset: PointerOffsetTerm::Constant(0),
     };
     let p1 = Pointer {
-        block: "arg-memory".to_string(),
+        block: "arg-memory".into(),
         offset: PointerOffsetTerm::Constant(4),
     };
     let stack_memory = CMemory::new()
@@ -2553,7 +2568,7 @@ fn equivalent_memory_load_order_facts_can_be_inconsistent() {
         .with_block("local:tmp", 4)
         .store(CMemory::local_pointer("tmp"), int32(0));
     let p0 = Pointer {
-        block: "arg-memory".to_string(),
+        block: "arg-memory".into(),
         offset: PointerOffsetTerm::Constant(0),
     };
     let old_p0 = Bitvector32Term::MemoryLoad(Box::new(old_memory), Box::new(p0.clone()));
@@ -2571,11 +2586,11 @@ fn equivalent_memory_load_order_facts_can_be_inconsistent() {
 #[test]
 fn equivalent_condition_facts_with_different_truth_values_are_inconsistent() {
     let p0 = Pointer {
-        block: "arg-memory".to_string(),
+        block: "arg-memory".into(),
         offset: PointerOffsetTerm::Constant(0),
     };
     let p1 = Pointer {
-        block: "arg-memory".to_string(),
+        block: "arg-memory".into(),
         offset: PointerOffsetTerm::Constant(4),
     };
     let memory_a = CMemory::new()
@@ -2604,18 +2619,18 @@ fn disjoint_range_proves_mutable_frame_cell_distinct() {
     let before_memory = CMemory::new();
     let after_memory = CMemory::new();
     let base = Pointer {
-        block: "p".to_string(),
+        block: "p".into(),
         offset: PointerOffsetTerm::Constant(0),
     };
     let written_cell = Pointer {
-        block: "p".to_string(),
+        block: "p".into(),
         offset: PointerOffsetTerm::Int32Scaled {
             value: Box::new(i_bits.clone()),
             byte_width: 4,
         },
     };
     let read_cell = Pointer {
-        block: "p".to_string(),
+        block: "p".into(),
         offset: PointerOffsetTerm::Int32Scaled {
             value: Box::new(j_bits.clone()),
             byte_width: 4,
@@ -2670,11 +2685,11 @@ fn covering_disjoint_fact_handles_shifted_mutable_range() {
     let before_memory = CMemory::new();
     let after_memory = CMemory::new();
     let dst_base = Pointer {
-        block: "arg-memory".to_string(),
+        block: "arg-memory".into(),
         offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(85)), 4),
     };
     let src_base = Pointer {
-        block: "arg-memory".to_string(),
+        block: "arg-memory".into(),
         offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(86)), 4),
     };
     let src_cell = src_base.offset_by_int32_elements(k_bits.clone());
@@ -2719,12 +2734,12 @@ fn covering_disjoint_fact_handles_shifted_mutable_range() {
 fn adjacent_disjoint_fact_ranges_cover_larger_disjoint_goal() {
     let n_bits = Bitvector32Term::Variable(Variable(87));
     let p_base = Pointer {
-        block: "arg-memory".to_string(),
+        block: "arg-memory".into(),
         offset: PointerOffsetTerm::Constant(0),
     };
     let p_plus_one = p_base.offset_by_int32_elements(Bitvector32Term::Constant(1));
     let q_base = Pointer {
-        block: "arg-memory".to_string(),
+        block: "arg-memory".into(),
         offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(88)), 4),
     };
     let assumptions = Assumptions::new()
@@ -2759,11 +2774,11 @@ fn adjacent_disjoint_fact_ranges_cover_larger_disjoint_goal() {
 fn symbolic_disjoint_fact_proves_itself() {
     let n_bits = Bitvector32Term::Variable(Variable(89));
     let p_base = Pointer {
-        block: "arg-memory".to_string(),
+        block: "arg-memory".into(),
         offset: PointerOffsetTerm::Constant(0),
     };
     let q_base = Pointer {
-        block: "arg-memory".to_string(),
+        block: "arg-memory".into(),
         offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(90)), 4),
     };
     let fact = Proposition::CMemoryDisjoint {
@@ -2848,7 +2863,7 @@ fn same_block_frame_uses_symbolic_offset_inequality() {
     let i_bits = Bitvector32Term::Variable(i);
     let j_bits = Bitvector32Term::Variable(j);
     let base = Pointer {
-        block: "array".to_string(),
+        block: "array".into(),
         offset: PointerOffsetTerm::Constant(0),
     };
     let stored_pointer = base.offset_by_int32_elements(i_bits);
@@ -2884,11 +2899,11 @@ fn same_block_frame_uses_symbolic_offset_inequality() {
 fn same_symbolic_base_constant_offsets_are_distinct() {
     let base = PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(90)), 4);
     let first = Pointer {
-        block: "arg-memory".to_string(),
+        block: "arg-memory".into(),
         offset: base.clone(),
     };
     let second = Pointer {
-        block: "arg-memory".to_string(),
+        block: "arg-memory".into(),
         offset: PointerOffsetTerm::add(base, PointerOffsetTerm::Constant(4)),
     };
 
@@ -3028,11 +3043,11 @@ fn symbolic_store_invalidates_only_possible_aliasing_cells() {
     let i = Variable(81);
     let i_bits = Bitvector32Term::Variable(i);
     let concrete_cell = Pointer {
-        block: "array".to_string(),
+        block: "array".into(),
         offset: PointerOffsetTerm::Constant(4),
     };
     let symbolic_cell = Pointer {
-        block: "array".to_string(),
+        block: "array".into(),
         offset: PointerOffsetTerm::Int32Scaled {
             value: Box::new(i_bits.clone()),
             byte_width: 4,
@@ -3063,11 +3078,11 @@ fn assumptions_resolve_materialized_symbolic_memory_load_aliases() {
     let k_bits = Bitvector32Term::Variable(k);
     let base_memory = CMemory::new().with_block("dst", 12).with_block("src", 12);
     let src_pointers = [0, 4, 8].map(|offset| Pointer {
-        block: "src".to_string(),
+        block: "src".into(),
         offset: PointerOffsetTerm::Constant(offset),
     });
     let symbolic_src = Pointer {
-        block: "src".to_string(),
+        block: "src".into(),
         offset: PointerOffsetTerm::Int32Scaled {
             value: Box::new(k_bits),
             byte_width: 4,
@@ -3123,11 +3138,11 @@ fn assumptions_prove_wrapped_materialized_load_branch_obligation() {
     let k_bits = Bitvector32Term::Variable(k);
     let base_memory = CMemory::new().with_block("dst", 12).with_block("src", 12);
     let src_pointers = [0, 4, 8].map(|offset| Pointer {
-        block: "src".to_string(),
+        block: "src".into(),
         offset: PointerOffsetTerm::Constant(offset),
     });
     let symbolic_src = Pointer {
-        block: "src".to_string(),
+        block: "src".into(),
         offset: PointerOffsetTerm::Int32Scaled {
             value: Box::new(k_bits.clone()),
             byte_width: 4,
@@ -3218,11 +3233,11 @@ fn assumptions_prove_copied_prefix_new_cell_obligation() {
     let k_bits = Bitvector32Term::Variable(k);
     let base_memory = CMemory::new().with_block("dst", 12).with_block("src", 12);
     let src_pointers = [0, 4, 8].map(|offset| Pointer {
-        block: "src".to_string(),
+        block: "src".into(),
         offset: PointerOffsetTerm::Constant(offset),
     });
     let symbolic_src = Pointer {
-        block: "src".to_string(),
+        block: "src".into(),
         offset: PointerOffsetTerm::Int32Scaled {
             value: Box::new(k_bits.clone()),
             byte_width: 4,
@@ -3308,7 +3323,7 @@ fn assumptions_prove_copied_prefix_new_cell_obligation() {
 #[test]
 fn local_declaration_allocates_stack_object_for_address_of() {
     let local_pointer = Pointer {
-        block: "local:x".to_string(),
+        block: "local:x".into(),
         offset: PointerOffsetTerm::Constant(0),
     };
     let state = CState::new();
@@ -3541,7 +3556,7 @@ fn symbolic_increment_uses_int_max_bound_to_rule_out_overflow() {
 #[test]
 fn pointer_store_through_local_address_updates_named_lvalue() {
     let local_pointer = Pointer {
-        block: "local:x".to_string(),
+        block: "local:x".into(),
         offset: PointerOffsetTerm::Constant(0),
     };
     let statement = c_seq(
@@ -3575,7 +3590,7 @@ fn pointer_store_through_local_address_updates_named_lvalue() {
 #[test]
 fn memory_load_store_are_native_theorems() {
     let pointer = Pointer {
-        block: "block".to_string(),
+        block: "block".into(),
         offset: PointerOffsetTerm::Constant(0),
     };
     let value = int32(7);
@@ -3595,11 +3610,11 @@ fn memory_load_store_are_native_theorems() {
 #[test]
 fn store_preserves_distinct_memory_cell_frame() {
     let stored_pointer = Pointer {
-        block: "left".to_string(),
+        block: "left".into(),
         offset: PointerOffsetTerm::Constant(0),
     };
     let loaded_pointer = Pointer {
-        block: "right".to_string(),
+        block: "right".into(),
         offset: PointerOffsetTerm::Constant(0),
     };
     let memory = CMemory::new().store(loaded_pointer.clone(), int32(42));
@@ -3624,7 +3639,7 @@ fn store_preserves_distinct_memory_cell_frame() {
 #[test]
 fn missing_memory_load_is_native_undefined_behavior() {
     let pointer = Pointer {
-        block: "block".to_string(),
+        block: "block".into(),
         offset: PointerOffsetTerm::Constant(4),
     };
     let theorem = prove_memory_load(CMemory::new(), pointer.clone());

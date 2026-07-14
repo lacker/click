@@ -88,11 +88,49 @@ pub enum ConditionTerm {
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct Pointer {
-    pub block: String,
+    pub block: PointerBlock,
     pub offset: PointerOffsetTerm,
 }
 
-const SYMBOLIC_POINTER_BLOCK_PREFIX: &str = "symbolic-pointer:";
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub enum PointerBlock {
+    Concrete(String),
+    Symbolic(Variable),
+}
+
+impl PointerBlock {
+    pub(crate) fn starts_with(&self, prefix: &str) -> bool {
+        matches!(self, Self::Concrete(name) if name.starts_with(prefix))
+    }
+
+    pub(crate) fn strip_prefix<'a>(&'a self, prefix: &str) -> Option<&'a str> {
+        match self {
+            Self::Concrete(name) => name.strip_prefix(prefix),
+            Self::Symbolic(_) => None,
+        }
+    }
+}
+
+impl From<String> for PointerBlock {
+    fn from(name: String) -> Self {
+        Self::Concrete(name)
+    }
+}
+
+impl From<&str> for PointerBlock {
+    fn from(name: &str) -> Self {
+        Self::Concrete(name.to_string())
+    }
+}
+
+impl std::fmt::Display for PointerBlock {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Concrete(name) => formatter.write_str(name),
+            Self::Symbolic(variable) => write!(formatter, "symbolic-pointer:{}", variable.0),
+        }
+    }
+}
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum CValue {
@@ -456,7 +494,7 @@ pub(super) enum CLocalBinding {
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct CMemory {
-    pub(super) blocks: BTreeMap<String, CBlock>,
+    pub(super) blocks: BTreeMap<PointerBlock, CBlock>,
     pub(super) cells: BTreeMap<Pointer, CValue>,
 }
 
@@ -1358,17 +1396,20 @@ impl CLValue {
 impl Pointer {
     pub(super) fn symbolic(variable: Variable) -> Self {
         Self {
-            block: format!("{SYMBOLIC_POINTER_BLOCK_PREFIX}{}", variable.0),
+            block: PointerBlock::Symbolic(variable),
             offset: PointerOffsetTerm::Constant(0),
         }
     }
 
     pub(super) fn has_symbolic_block(&self) -> bool {
-        self.block.starts_with(SYMBOLIC_POINTER_BLOCK_PREFIX)
+        matches!(self.block, PointerBlock::Symbolic(_))
     }
 
     pub(super) fn blocks_proven_distinct(&self, other: &Self) -> bool {
-        self.block != other.block && !self.has_symbolic_block() && !other.has_symbolic_block()
+        matches!(
+            (&self.block, &other.block),
+            (PointerBlock::Concrete(left), PointerBlock::Concrete(right)) if left != right
+        )
     }
 
     #[cfg_attr(not(test), allow(dead_code))]
@@ -1741,7 +1782,7 @@ impl CMemory {
         Self::default()
     }
 
-    pub fn with_block(mut self, block: impl Into<String>, size: u32) -> Self {
+    pub fn with_block(mut self, block: impl Into<PointerBlock>, size: u32) -> Self {
         self.blocks.insert(block.into(), CBlock::new(size));
         self
     }
@@ -1749,7 +1790,7 @@ impl CMemory {
     pub(super) fn with_loop_memory_havoc(
         mut self,
         variable: Variable,
-        preserved_blocks: &BTreeSet<String>,
+        preserved_blocks: &BTreeSet<PointerBlock>,
     ) -> Self {
         // A loop body that may write memory can clobber, through some
         // pointer, any cell it can reach. Drop concrete cells outside the
@@ -1761,7 +1802,7 @@ impl CMemory {
         self.cells
             .retain(|pointer, _| preserved_blocks.contains(&pointer.block));
         self.blocks
-            .insert(format!("havoc:{}", variable.0), CBlock::new(0));
+            .insert(format!("havoc:{}", variable.0).into(), CBlock::new(0));
         self
     }
 
@@ -1837,12 +1878,12 @@ impl CMemory {
 
     pub(super) fn local_pointer(name: &str) -> Pointer {
         Pointer {
-            block: format!("local:{name}"),
+            block: format!("local:{name}").into(),
             offset: PointerOffsetTerm::Constant(0),
         }
     }
 
-    pub(super) fn has_block(&self, block: &str) -> bool {
+    pub(super) fn has_block(&self, block: &PointerBlock) -> bool {
         self.blocks.contains_key(block)
     }
 

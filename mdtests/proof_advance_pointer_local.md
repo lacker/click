@@ -23,12 +23,14 @@ int32 advance_selected_pointer(int32* left, int32* right, int32 choose_left) {
     requires read(left[0..1]);
     requires read(right[0..1]);
 
-    ensures result == result by {
+    ensures result == left[0] or result == right[0] by {
         execute_step();
         advance(statement(1).exit)
         ensuring {
             fact selected == left or selected == right;
             views selected[0..1];
+            views left[0..1];
+            views right[0..1];
         }
         by {
             if choose_left != 0 {

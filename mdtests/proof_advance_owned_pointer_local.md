@@ -1,0 +1,62 @@
+# advance abstracts an owned selected pointer
+
+Both branches select an owned input pointer. The `advance` interface exports
+ownership of the selected cell, allowing the shared suffix to mutate it without
+retaining either branch's concrete symbolic state.
+
+```c filename=advance_owned_selected_pointer.c
+int32 advance_owned_selected_pointer(
+    int32* left,
+    int32* right,
+    int32 choose_left,
+    int32 value
+) {
+    int32* selected;
+    if (choose_left != 0) {
+        selected = left;
+    } else {
+        selected = right;
+    }
+    selected[0] = value;
+    return selected[0];
+}
+```
+
+```click
+verifying "advance_owned_selected_pointer.c";
+
+int32 advance_owned_selected_pointer(
+    int32* left,
+    int32* right,
+    int32 choose_left,
+    int32 value
+) {
+    requires write(left[0..1]);
+    requires write(right[0..1]);
+
+    ensures result == value by {
+        execute_step();
+        advance(statement(1).exit)
+        ensuring {
+            fact selected == left or selected == right;
+            owns selected[0..1];
+        }
+        by {
+            if choose_left != 0 {
+                execute_then_step();
+                execute_step();
+            } else {
+                execute_else_step();
+                execute_step();
+            }
+        }
+        execute_step();
+        execute_step();
+        simp();
+    }
+}
+```
+
+```expect
+pass
+```

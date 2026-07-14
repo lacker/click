@@ -3370,7 +3370,7 @@ fn verifies_fill3_c0_source_with_sidecar_specification() {
     assert_eq!(verified.len(), 1);
     let verified = &verified[0];
     let base = Pointer {
-        block: EXTERNAL_ARGUMENT_MEMORY_BLOCK.to_string(),
+        block: EXTERNAL_ARGUMENT_MEMORY_BLOCK.into(),
         offset: scale_int32_offset(
             Bitvector32Term::Variable(Variable(POINTER_ARGUMENT_VARIABLE_BASE)),
             4,
@@ -3380,7 +3380,7 @@ fn verifies_fill3_c0_source_with_sidecar_specification() {
     let second = offset_pointer_by_int32_elements(base.clone(), Bitvector32Term::Constant(1));
     let third = offset_pointer_by_int32_elements(base.clone(), Bitvector32Term::Constant(2));
     let local_i = Pointer {
-        block: "local:i".to_string(),
+        block: "local:i".into(),
         offset: PointerOffsetTerm::Constant(0),
     };
     let initial_memory = memory_with_symbolic_loadable_cells(
