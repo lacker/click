@@ -138,6 +138,10 @@ Pointer-writing loops do not implicitly preserve memory. Use invariants,
 `mutable` effects, and `separate(memory(...), memory(...))` requirements. Symbolic loops need invariants
 for arithmetic bounds, memory safety, and postconditions.
 
+Explicit `preserve` proof replay currently targets the first loop reached
+through a straight-line top-level prefix. Automatic invariant verification
+still supports later and nested loops.
+
 ## `simp` Is Not A Solver
 
 `simp` performs deterministic local normalization and selected proof rules. It

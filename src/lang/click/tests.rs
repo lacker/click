@@ -3117,7 +3117,45 @@ fn loop_preserve_requires_one_complete_iteration() {
     assert!(
         error
             .message()
-            .contains("expected 2 `execute_step()` call(s), found 1"),
+            .contains("must execute exactly one complete loop-body iteration"),
+        "{}",
+        error.message()
+    );
+}
+
+#[test]
+fn loop_preserve_non_execution_steps_do_not_fall_back_to_auto() {
+    let c_source = r#"
+            int32 count_once() {
+                int32 i;
+                i = 0;
+                while (i < 1) {
+                    i = i + 1;
+                }
+                return i;
+            }
+        "#;
+    let click_source = r#"
+            verifying "count_once.c";
+
+            int32 count_once() {
+                for loop(0) {
+                    invariant i >= 0;
+                    preserve by {
+                        simp();
+                    }
+                }
+                ensures result == 1 by auto;
+            }
+        "#;
+
+    let error = verify_c0_sources(click_source, &[("count_once.c", c_source)])
+        .expect_err("an explicit preservation script should not fall back to auto");
+
+    assert!(
+        error
+            .message()
+            .contains("must execute exactly one complete loop-body iteration"),
         "{}",
         error.message()
     );

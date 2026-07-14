@@ -1498,6 +1498,7 @@ struct ProofStepReplayState {
     resource_folds: Vec<ResourceClause>,
     case_assumptions: Vec<(usize, ClickProposition, bool)>,
     simp: bool,
+    region_proof: bool,
 }
 
 #[derive(Clone)]
@@ -1564,6 +1565,311 @@ impl ProofStepReplayState {
 enum ProofStepExecutionMode {
     Verification,
     Bounded,
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn verify_explicit_loop_preservation_proofs(
+    function_block: &FunctionBlock,
+    parsed_function: &syntax::C0Function,
+    function_environment: &CFunctionEnvironment,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    resource_environment: &ResourceEnvironment,
+    theorem_environment: &TheoremEnvironment,
+) -> Result<(), ClickError> {
+    let explicit = function_block
+        .structural_clauses()
+        .iter()
+        .filter_map(|clause| {
+            let CodeRegion::Loop(loop_index) = clause.region() else {
+                return None;
+            };
+            let proof = clause.preserve_proof()?;
+            matches!(proof, Proof::Steps(steps) if !steps.iter().all(|step| matches!(step, ProofStep::UnfoldPredicate(_))))
+                .then_some((*loop_index, proof))
+        })
+        .collect::<Vec<_>>();
+    if explicit.is_empty() {
+        return Ok(());
+    }
+
+    let label = format!("{}.loop_preservation", function_block.signature().name());
+    let (initial_state, arguments, requirement_facts) = initial_claim_context(
+        function_block,
+        parsed_function,
+        resource_environment,
+        predicate_environment,
+        click_function_environment,
+        &label,
+    )?;
+    let function = annotated_function(
+        function_block,
+        parsed_function,
+        &initial_state,
+        &arguments,
+        predicate_environment,
+        click_function_environment,
+        resource_environment,
+    )?;
+
+    for (loop_index, proof) in explicit {
+        let Proof::Steps(steps) = proof else {
+            unreachable!();
+        };
+        verify_one_loop_preservation_proof(
+            loop_index,
+            steps,
+            function_block,
+            parsed_function,
+            function_environment,
+            predicate_environment,
+            click_function_environment,
+            resource_environment,
+            theorem_environment,
+            &function,
+            &initial_state,
+            &arguments,
+            &requirement_facts,
+        )?;
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn verify_one_loop_preservation_proof(
+    loop_index: usize,
+    steps: &[ProofStep],
+    function_block: &FunctionBlock,
+    parsed_function: &syntax::C0Function,
+    function_environment: &CFunctionEnvironment,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    resource_environment: &ResourceEnvironment,
+    theorem_environment: &TheoremEnvironment,
+    function: &CFunction,
+    initial_state: &CState,
+    arguments: &[CExpression],
+    requirement_facts: &[Proposition],
+) -> Result<(), ClickError> {
+    let claim_label = format!(
+        "{}.loop({loop_index}).preserve",
+        function_block.signature().name()
+    );
+    let (loop_entry_state, entry_facts, condition, invariant_checks, effect_checks, body) =
+        reach_top_level_loop_entry(
+            loop_index,
+            function,
+            initial_state,
+            arguments,
+            requirement_facts,
+            parsed_function.parameters(),
+            function_environment,
+            &claim_label,
+        )?;
+    let base_assumptions = assumptions_from_propositions(&entry_facts);
+    let preservation_contexts = c_loop_preservation_contexts(
+        &loop_entry_state,
+        &condition,
+        &invariant_checks,
+        &effect_checks,
+        &body,
+        &base_assumptions,
+        11_000_000_000 + loop_index as u64 * 1_000_000,
+    )
+    .map_err(|message| ClickError::new(format!("`{claim_label}`: {message}")))?;
+    if preservation_contexts.is_empty() {
+        return Err(ClickError::new(format!(
+            "`{claim_label}` has no reachable arbitrary-iteration context"
+        )));
+    }
+
+    let dummy_ensure = EnsureClause {
+        name: None,
+        ensure: Ensure::Proposition(ClickProposition::Comparison {
+            left: ContractExpression::CFragment(CExpression::Value(int32(0))),
+            operator: ComparisonOperator::Equal,
+            right: ContractExpression::CFragment(CExpression::Value(int32(0))),
+        }),
+        proof: Proof::Tactic(Tactic::Auto),
+    };
+    let dummy_claim = FunctionClaimRef::Ensure(0, &dummy_ensure);
+    let program = build_internal_proof(steps, &claim_label)?;
+    let sentinel = CStatement::Return(CExpression::Value(int32(0)));
+    let remaining = c_seq(body.clone(), sentinel.clone());
+
+    for preservation in preservation_contexts {
+        let mut pure_facts = entry_facts.clone();
+        pure_facts.extend_from_slice(preservation.pure_facts());
+        pure_facts.sort();
+        pure_facts.dedup();
+        let mut replay = ProofStepReplayState {
+            execution_point: ProofExecutionPoint::StatementEntry {
+                remaining: remaining.clone(),
+            },
+            execution_start_state: Some(preservation.state().clone()),
+            region_proof: true,
+            ..ProofStepReplayState::default()
+        };
+        replay.program_point_states.insert(
+            ProgramPointRef {
+                region: CodeRegionRef::Loop(loop_index),
+                kind: ProgramPointKind::Entry,
+            },
+            preservation.loop_entry_state().clone(),
+        );
+        let contexts = execute_internal_proof(
+            &program,
+            ProofReplayContext {
+                state: preservation.state().clone(),
+                pure_facts,
+                replay,
+                branch_path: Vec::new(),
+            },
+            function_block,
+            parsed_function,
+            &dummy_claim,
+            &claim_label,
+            function_environment,
+            predicate_environment,
+            click_function_environment,
+            resource_environment,
+            theorem_environment,
+            function,
+            arguments,
+        )?;
+        for context in contexts {
+            let at_back_edge = matches!(
+                &context.replay.execution_point,
+                ProofExecutionPoint::StatementEntry { remaining } if remaining == &sentinel
+            ) && context.replay.branch_continuations.is_empty();
+            if !at_back_edge {
+                return Err(ClickError::new(format!(
+                    "`{claim_label}` must execute exactly one complete loop-body iteration"
+                )));
+            }
+            let assumptions = assumptions_from_propositions(&context.pure_facts);
+            c_loop_invariants_hold_at_back_edge(
+                &context.state,
+                preservation.loop_entry_state(),
+                &invariant_checks,
+                &assumptions,
+            )
+            .map_err(|message| ClickError::new(format!("`{claim_label}`: {message}")))?;
+        }
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn reach_top_level_loop_entry(
+    target_loop: usize,
+    function: &CFunction,
+    initial_state: &CState,
+    arguments: &[CExpression],
+    requirement_facts: &[Proposition],
+    parameters: &[syntax::C0Parameter],
+    function_environment: &CFunctionEnvironment,
+    claim_label: &str,
+) -> Result<
+    (
+        CState,
+        Vec<Proposition>,
+        CExpression,
+        Vec<CLoopInvariantCheck>,
+        Vec<CLoopEffectCheck>,
+        CStatement,
+    ),
+    ClickError,
+> {
+    let mut statements = Vec::new();
+    flatten_top_level_sequence(function.body(), &mut statements)
+        .map_err(|message| ClickError::new(format!("`{claim_label}`: {message}")))?;
+    let mut state =
+        c_function_entry_state(initial_state, function, arguments).ok_or_else(|| {
+            ClickError::new(format!("`{claim_label}` could not bind function arguments"))
+        })?;
+    let mut pure_facts = requirement_facts.to_vec();
+
+    for (statement_index, statement) in statements.into_iter().enumerate() {
+        if let CStatement::While {
+            condition,
+            invariant_checks,
+            effect_checks,
+            body,
+            ..
+        } = &statement
+        {
+            if target_loop == 0 {
+                return Ok((
+                    state,
+                    pure_facts,
+                    condition.clone(),
+                    invariant_checks.clone(),
+                    effect_checks.clone(),
+                    body.as_ref().clone(),
+                ));
+            }
+        }
+
+        let loops = c_statement_loop_count(&statement);
+        if loops != 0 {
+            return Err(ClickError::new(format!(
+                "`{claim_label}` currently requires the selected loop to be the first loop reached through a straight-line top-level prefix"
+            )));
+        }
+        let assumptions = assumptions_from_propositions(&pure_facts);
+        let resources = state.resources().facts().to_vec();
+        let execution = prove_symbolic_c_execution_paths_with_environment(
+            state.clone(),
+            statement,
+            assumptions,
+            function_environment.clone(),
+        );
+        let path = single_statement_step_path(
+            &execution,
+            claim_label,
+            statement_index,
+            "loop-entry execution",
+            &pure_facts,
+            &resources,
+            parameters,
+            arguments,
+        )?;
+        pure_facts.extend(path.facts().iter().map(|fact| fact.proposition().clone()));
+        let Proposition::CStatementExecutes { outcome, .. } =
+            implication_body(path.theorem().proposition())
+        else {
+            return Err(ClickError::new(format!(
+                "`{claim_label}` saw an unexpected loop-entry execution theorem"
+            )));
+        };
+        match outcome {
+            CStatementOutcome::Normal(next_state) => state = next_state.clone(),
+            _ => {
+                return Err(ClickError::new(format!(
+                    "`{claim_label}` did not reach the selected loop"
+                )));
+            }
+        }
+    }
+    Err(ClickError::new(format!(
+        "`{claim_label}` currently requires the selected loop to be reachable through a straight-line top-level prefix"
+    )))
+}
+
+fn c_statement_loop_count(statement: &CStatement) -> usize {
+    match statement {
+        CStatement::Seq(first, second) => {
+            c_statement_loop_count(first) + c_statement_loop_count(second)
+        }
+        CStatement::If {
+            then_branch,
+            else_branch,
+            ..
+        } => c_statement_loop_count(then_branch) + c_statement_loop_count(else_branch),
+        CStatement::While { body, .. } => 1 + c_statement_loop_count(body),
+        _ => 0,
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2372,7 +2678,9 @@ fn replay_linear_steps(
                 require_step_execution(&replay, claim_label, step_index, "choose")?;
             }
             ProofStep::Simp => {
-                require_step_execution(&replay, claim_label, step_index, "simp")?;
+                if !replay.region_proof {
+                    require_step_execution(&replay, claim_label, step_index, "simp")?;
+                }
                 replay.simp = true;
             }
         }

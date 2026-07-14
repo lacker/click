@@ -31,6 +31,9 @@ int32 fill_n_segment_invariant(int32 p[], int32 n) {
         preserve by {
             execute_step();
             execute_step();
+            have i == at(loop(0).entry, i) + 1 by {
+                simp();
+            }
             simp();
         }
     }

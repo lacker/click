@@ -17,9 +17,9 @@ use crate::kernel::{
     Sort, SpecExpression, SpecMemory, SpecProposition, Term, Theorem, Variable,
     abstract_c_state_for_join, c_function, c_function_entry_state,
     c_function_outcome_from_statement_outcome, c_function_specification, c_labeled_assert,
-    c_pointer_value, c_seq, c_while_with_invariant_and_effect_checks,
-    certify_c_function_execution_paths_from_outcomes, int32,
-    prove_c_function_satisfies_specification_from_symbolic_path,
+    c_loop_invariants_hold_at_back_edge, c_loop_preservation_contexts, c_pointer_value, c_seq,
+    c_while_with_invariant_and_effect_checks, certify_c_function_execution_paths_from_outcomes,
+    int32, prove_c_function_satisfies_specification_from_symbolic_path,
     prove_c_function_satisfies_specification_with_environment,
     prove_symbolic_c_condition_evaluation, prove_symbolic_c_execution_paths_with_environment,
     prove_symbolic_c_function_execution_paths_with_environment,
@@ -1122,6 +1122,15 @@ pub fn verify_c0_sources(
             })?;
         check_signature(&function_block.signature, parsed_function, source_path)?;
         validate_structural_clauses(&function_block, parsed_function)?;
+        verify_explicit_loop_preservation_proofs(
+            &function_block,
+            parsed_function,
+            &function_environment,
+            &predicate_environment,
+            &click_function_environment,
+            &resource_environment,
+            &theorem_environment,
+        )?;
         for claim in function_claims(&function_block) {
             let claim_label = function_claim_label(function_block.signature.name(), &claim);
             match claim.proof() {
@@ -1620,13 +1629,8 @@ fn validate_structural_clauses(
             }
         }
 
-        if let CodeRegion::Loop(loop_index) = structural_clause.region() {
-            let body = c0_loop_body(parsed_function.body(), *loop_index).ok_or_else(|| {
-                ClickError::new(format!("could not resolve `loop({loop_index})` body"))
-            })?;
-            validate_loop_phase_proof("initialize", structural_clause.initialize_proof(), None)?;
-            validate_loop_phase_proof("preserve", structural_clause.preserve_proof(), Some(body))?;
-        }
+        validate_loop_phase_proof("initialize", structural_clause.initialize_proof())?;
+        validate_loop_phase_proof("preserve", structural_clause.preserve_proof())?;
 
         for item in structural_clause.items() {
             if item.is_effect_kind() {
@@ -1658,58 +1662,13 @@ fn validate_structural_clauses(
     Ok(())
 }
 
-fn c0_loop_body<'a>(
-    statement: &'a syntax::C0Statement,
-    target: usize,
-) -> Option<&'a syntax::C0Statement> {
-    fn visit<'a>(
-        statement: &'a syntax::C0Statement,
-        target: usize,
-        next: &mut usize,
-    ) -> Option<&'a syntax::C0Statement> {
-        match statement {
-            syntax::C0Statement::Seq(first, second) => {
-                visit(first, target, next).or_else(|| visit(second, target, next))
-            }
-            syntax::C0Statement::If {
-                then_branch,
-                else_branch,
-                ..
-            } => visit(then_branch, target, next).or_else(|| visit(else_branch, target, next)),
-            syntax::C0Statement::While { body, .. } => {
-                let index = *next;
-                *next += 1;
-                if index == target {
-                    Some(body)
-                } else {
-                    visit(body, target, next)
-                }
-            }
-            _ => None,
-        }
-    }
-
-    visit(statement, target, &mut 0)
-}
-
-fn straight_line_statement_count(statement: &syntax::C0Statement) -> Option<usize> {
-    match statement {
-        syntax::C0Statement::Seq(first, second) => {
-            Some(straight_line_statement_count(first)? + straight_line_statement_count(second)?)
-        }
-        syntax::C0Statement::If { .. } | syntax::C0Statement::While { .. } => None,
-        _ => Some(1),
-    }
-}
-
-fn validate_loop_phase_proof(
-    phase: &str,
-    proof: Option<&Proof>,
-    body: Option<&syntax::C0Statement>,
-) -> Result<(), ClickError> {
+fn validate_loop_phase_proof(phase: &str, proof: Option<&Proof>) -> Result<(), ClickError> {
     let Some(Proof::Steps(steps)) = proof else {
         return Ok(());
     };
+    if phase == "preserve" {
+        return Ok(());
+    }
     let execute_steps = steps
         .iter()
         .filter(|step| matches!(step, ProofStep::ExecuteStep))
@@ -1729,23 +1688,6 @@ fn validate_loop_phase_proof(
         return Err(ClickError::new(
             "`initialize` proves the invariant at the current loop entry and cannot execute C statements",
         ));
-    }
-    if execute_steps == 0 {
-        return Ok(());
-    }
-
-    let expected = straight_line_statement_count(
-        body.expect("preservation validation should receive the loop body"),
-    )
-    .ok_or_else(|| {
-        ClickError::new(
-            "explicit `preserve` execution currently requires a straight-line loop body",
-        )
-    })?;
-    if execute_steps != expected {
-        return Err(ClickError::new(format!(
-            "`preserve` executes one complete loop iteration: expected {expected} `execute_step()` call(s), found {execute_steps}"
-        )));
     }
     Ok(())
 }

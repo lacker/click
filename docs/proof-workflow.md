@@ -272,15 +272,17 @@ at(statement(0).entry, x)
 at(statement(0).exit, x)
 ```
 
-The initial `loop_name.entry` support is limited to invariants on that same
-labeled loop code region.
+The initial `loop_name.entry` support is available in invariants on that loop
+and in its explicit `preserve` proof.
 
 Statement entry and exit snapshots are currently recorded by deterministic
 proof execution. `execute_step()`, `execute_until(...)`, and `execute_rest()`
 record each straight-line boundary they cross. An `at(...)` expression reads
 memory, reassigned parameters, and declared scalar, pointer, or array locals
-from the selected state. Branch and loop entries can have a unique snapshot,
-but their exits require a future way to select a particular path or visit.
+from the selected state. Branch entries can have a unique snapshot. An explicit
+loop `preserve` proof binds `at(loop_name.entry, ...)` to its fresh arbitrary
+iteration state. Loop exits and historical runtime visits still require a
+future selection model.
 
 `assert` is a one-shot spec check at the selected statement code region. It
 currently accepts the executable proposition fragment over current-state C
@@ -305,9 +307,15 @@ for loop(0) {
 }
 ```
 
-Either phase may be omitted, meaning `by auto`. Explicit preservation execution
-currently supports straight-line loop bodies and must step across one complete
-iteration.
+Either phase may be omitted, meaning `by auto`. An explicit preservation proof
+runs in a fresh arbitrary-iteration context and must reach the loop back edge
+on every proof branch. It can use ordinary proof steps, including `have`,
+resource operations, proof-level `if`, and branch execution.
+
+Explicit preservation replay currently requires the selected loop to be the
+first loop reached through a straight-line top-level prefix. Later and nested
+loops continue to use automatic preservation until execution-to-loop-entry is
+generalized.
 
 ## Loop Effects
 

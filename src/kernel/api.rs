@@ -8,6 +8,133 @@ pub fn uint8(bits: impl Into<Bitvector32Term>) -> CValue {
     CValue::UInt8(bits.into())
 }
 
+#[derive(Clone, Debug)]
+pub struct CLoopPreservationContext {
+    state: CState,
+    loop_entry_state: CState,
+    pure_facts: Vec<Proposition>,
+}
+
+impl CLoopPreservationContext {
+    pub fn state(&self) -> &CState {
+        &self.state
+    }
+
+    pub fn loop_entry_state(&self) -> &CState {
+        &self.loop_entry_state
+    }
+
+    pub fn pure_facts(&self) -> &[Proposition] {
+        &self.pure_facts
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn c_loop_preservation_contexts(
+    loop_entry_state: &CState,
+    condition: &CExpression,
+    invariant_checks: &[CLoopInvariantCheck],
+    effect_checks: &[CLoopEffectCheck],
+    body: &CStatement,
+    assumptions: &Assumptions,
+    variable_start: u64,
+) -> Result<Vec<CLoopPreservationContext>, String> {
+    let mut budget = ExecutionBudget::default();
+    let mut variables = VerificationVariableGenerator::new(variable_start);
+    let top_state = havoc_loop_modified_locals(loop_entry_state, body, &mut variables);
+    let whole_loop_effect_summaries = collect_whole_loop_effect_summaries(
+        loop_entry_state,
+        &top_state,
+        effect_checks,
+        statement_may_write_memory(body),
+        assumptions,
+        &mut budget,
+    )
+    .map_err(|error| format!("could not prepare loop effects: {error:?}"))?;
+    let mut contexts = Vec::new();
+    for (mut invariant_facts, invariant_obligations) in assume_invariant_checks(
+        &top_state,
+        loop_entry_state,
+        invariant_checks,
+        assumptions,
+        &[],
+        &[],
+        &mut budget,
+    )
+    .map_err(|error| format!("could not assume loop invariants: {error:?}"))?
+    {
+        for summary in &whole_loop_effect_summaries {
+            let _ = add_path_fact(&mut invariant_facts, assumptions, summary.clone());
+        }
+        for (facts, obligations) in assume_condition_truthiness(
+            &top_state,
+            condition,
+            assumptions,
+            &invariant_facts,
+            &invariant_obligations,
+            true,
+            &mut budget,
+        )
+        .map_err(|error| format!("could not assume the loop condition: {error:?}"))?
+        {
+            let context_assumptions = assumptions_with_path_context(assumptions, &facts, &[]);
+            if let Some(obligation) = obligations
+                .iter()
+                .find(|obligation| !context_assumptions.proves(obligation.proposition()))
+            {
+                return Err(format!(
+                    "missing loop-head prerequisite{}: {:?}",
+                    obligation
+                        .context()
+                        .map(|context| format!(" ({context})"))
+                        .unwrap_or_default(),
+                    obligation.proposition()
+                ));
+            }
+            let mut pure_facts = facts
+                .into_iter()
+                .map(|fact| fact.proposition().clone())
+                .collect::<Vec<_>>();
+            pure_facts.sort();
+            pure_facts.dedup();
+            contexts.push(CLoopPreservationContext {
+                state: top_state.clone(),
+                loop_entry_state: top_state.clone(),
+                pure_facts,
+            });
+        }
+    }
+    Ok(contexts)
+}
+
+pub fn c_loop_invariants_hold_at_back_edge(
+    state: &CState,
+    iteration_entry_state: &CState,
+    invariant_checks: &[CLoopInvariantCheck],
+    assumptions: &Assumptions,
+) -> Result<(), String> {
+    let obligations = collect_invariant_check_obligations(
+        state,
+        iteration_entry_state,
+        invariant_checks,
+        InvariantPhase::Preservation,
+        assumptions,
+        &mut ExecutionBudget::default(),
+    )
+    .map_err(|error| format!("could not lower back-edge invariants: {error:?}"))?;
+    if let Some(obligation) = obligations.first() {
+        return Err(format!(
+            "missing invariant fact{}: {:?}",
+            obligation
+                .context()
+                .map(|context| format!(" ({context})"))
+                .unwrap_or_default(),
+            obligation.proposition()
+        ));
+    }
+    Ok(())
+}
+
 /// Builds a branch-independent symbolic state for a proof join.
 ///
 /// Locals that still equal a stable function-entry value retain that identity.

@@ -4623,7 +4623,7 @@ fn concrete_program_point_state<'a>(
             kind: ProgramPointKind::Entry,
         }) => Ok(function_entry_state),
         VisitSelector::ProgramPoint(point @ ProgramPointRef {
-            region: CodeRegionRef::Statement(_),
+            region: CodeRegionRef::Statement(_) | CodeRegionRef::Loop(_),
             ..
         }) => program_point_states.get(point).ok_or_else(|| {
             format!(

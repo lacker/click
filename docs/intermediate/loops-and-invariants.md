@@ -95,10 +95,11 @@ memory the loop may write.
 
 ## Loop Proof Steps
 
-An explicit preservation proof for a straight-line loop body uses one
-`execute_step()` per body statement. The proof must traverse exactly one
-complete iteration. Initialization is non-executing because its execution
-point is already the first loop entry.
+An explicit preservation proof starts at an arbitrary loop-head visit and must
+traverse exactly one complete iteration. Straight-line bodies use one
+`execute_step()` per statement. Bodies with conditionals can use proof-level
+`if`, `execute_then_step()`, and `execute_else_step()`. Initialization is
+non-executing because its execution point is already the first loop entry.
 
 Some loop proofs call loop-specific steps:
 
