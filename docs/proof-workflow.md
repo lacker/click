@@ -84,9 +84,10 @@ Current proof steps:
   script unless it is inside `advance`; it does not execute a C `if` statement.
 - `advance(program_point) ensuring { ... } by { ... }`: execute the nested
   proof cases to the exact statement entry or exit, checking the listed `fact`,
-  `owns`, and `views` assertions in every case. The surrounding script then
-  continues once in source. The implementation verifies that shared suffix
-  independently for every nested case; it does not merge symbolic C states.
+  `owns`, and `views` assertions in every case. Click then forgets
+  branch-specific facts, scalar values, mutable memory, and resources, and
+  continues from a fresh symbolic frontier constrained by the declared
+  interface. Unchanged function parameters retain their entry identity.
 - `observe(resource);`: project one view step from a held composite resource
   fact. This exposes immediate pure facts and viewed immediate contained
   resource facts without exposing owned contained permissions.
@@ -144,7 +145,14 @@ execute_step();
 must reach exactly that point and establish every assertion. `advance` is the
 execution-changing counterpart to `have`: `have` proves one pure fact without
 moving the execution point, while `advance` proves a postcondition for a scoped
-piece of execution.
+piece of execution. Facts and resources needed by the continuation must be
+listed explicitly. Deterministic consequences of listed resources, such as
+memory loadability and the view of an owned resource, remain available.
+
+Snapshots created inside the scoped execution are not exported. The function
+entry state used by `old(...)` and the abstract target snapshot remain
+available. Changing pointer-valued locals across an `advance` is not supported
+yet because the current pointer model cannot abstract over allocation blocks.
 
 For example, pure case analysis needs no C execution:
 

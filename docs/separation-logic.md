@@ -189,8 +189,8 @@ The execution point is where symbolic execution is currently paused. The
 current implementation has these execution-point states:
 
 - function entry, before C execution has started,
-- statement entry after `execute_step()` or a straight-line
-  `execute_until(statement(N))` pause,
+- statement entry after `execute_step()`, explicit entry into a selected `if`
+  arm, or a straight-line `execute_until(statement(N))` pause,
 - function exit, after `execute_rest()` / `symbolic_execute()` has executed the
   rest of the function.
 
@@ -204,6 +204,14 @@ each completed execution path.
 `execute_step()` is the primitive execution proof step. It advances by one
 supported straight-line statement and expects needed pure facts and resource
 facts to already be available in the proof context.
+
+`advance(point) ensuring { Q } by { steps }` is the sequencing rule for scoped
+execution. Every proof case in `steps` must reach `point` and prove `Q`. Click
+then replaces branch-local scalar values, mutable memory, pure facts, resource
+facts, and snapshots with one fresh symbolic frontier satisfying exactly `Q`
+and its deterministic resource consequences. The continuation therefore cannot
+depend on an unstated branch fact. Stable function parameters and the function
+entry state used by `old(...)` retain their identity across the boundary.
 
 Function entry projects `views composite(...)` resources one step
 automatically: the view remains available, and immediate contained resource

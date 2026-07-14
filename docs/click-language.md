@@ -128,8 +128,11 @@ execute_step();
 ```
 
 Each case must reach exactly the requested statement entry or exit and prove
-every listed pure or resource fact. The remaining proof steps are then written
-once and verified independently from every case.
+every listed pure or resource fact. Click forgets facts, resources, scalar
+values, mutable memory, and snapshots not named by that interface, then checks
+the remaining proof from the resulting abstract frontier. Unchanged function
+parameters and the function-entry state used by `old(...)` retain their stable
+identity.
 
 `apply(...)` instantiates a verified theorem, proves that theorem's proposition
 `requires` clauses from the current proof context, and adds its proposition

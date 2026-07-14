@@ -41,6 +41,43 @@ fn write_context(
 }
 
 #[test]
+fn join_state_forgets_changed_scalars_and_memory() {
+    let stable_x = int32(Bitvector32Term::Variable(Variable(7)));
+    let pointer = Pointer {
+        block: "heap".to_string(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let state_zero = CState::new()
+        .with_local("x", stable_x.clone())
+        .with_local("y", int32(0))
+        .with_memory(
+            CMemory::new()
+                .with_block("heap", 4)
+                .store(pointer.clone(), int32(0)),
+        )
+        .with_resource_context(write_context(pointer.clone(), 0, 1));
+    let state_one = CState::new()
+        .with_local("x", stable_x.clone())
+        .with_local("y", int32(1))
+        .with_memory(
+            CMemory::new()
+                .with_block("heap", 4)
+                .store(pointer, int32(1)),
+        );
+    let stable = BTreeMap::from([("x".to_string(), stable_x.clone())]);
+
+    let abstract_zero =
+        abstract_c_state_for_join(&state_zero, &stable, 10_000).expect("join abstraction");
+    let abstract_one =
+        abstract_c_state_for_join(&state_one, &stable, 10_000).expect("join abstraction");
+
+    assert_eq!(abstract_zero, abstract_one);
+    assert_eq!(abstract_zero.locals().get("x"), Some(&stable_x));
+    assert_ne!(abstract_zero.locals().get("y"), Some(&int32(0)));
+    assert!(abstract_zero.resources().is_empty());
+}
+
+#[test]
 fn memory_resource_fact_core_is_read_permission() {
     let base = Pointer {
         block: "p".to_string(),

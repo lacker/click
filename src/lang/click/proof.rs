@@ -340,6 +340,7 @@ struct ProofCaseAssumption {
 }
 
 struct ProofAdvanceCheck {
+    join_id: usize,
     step_index: usize,
     target: ProgramPointRef,
     assertions: Vec<ProofAssertion>,
@@ -348,6 +349,15 @@ struct ProofAdvanceCheck {
 fn expand_proof_if_cases(
     steps: &[ProofStep],
     claim_label: &str,
+) -> Result<Vec<ExpandedProofCase>, ClickError> {
+    let mut next_join_id = 0;
+    expand_structured_proof_cases(steps, claim_label, &mut next_join_id)
+}
+
+fn expand_structured_proof_cases(
+    steps: &[ProofStep],
+    claim_label: &str,
+    next_join_id: &mut usize,
 ) -> Result<Vec<ExpandedProofCase>, ClickError> {
     let Some((control_index, control_step)) = steps
         .iter()
@@ -375,7 +385,9 @@ fn expand_proof_if_cases(
                 (true, proof_if.then_steps.as_slice()),
                 (false, proof_if.else_steps.as_slice()),
             ] {
-                for mut branch in expand_proof_if_cases(branch_steps, claim_label)? {
+                for mut branch in
+                    expand_structured_proof_cases(branch_steps, claim_label, next_join_id)?
+                {
                     let mut linear = prefix.to_vec();
                     linear.append(&mut branch.steps);
                     let mut assumptions = vec![ProofCaseAssumption {
@@ -407,8 +419,15 @@ fn expand_proof_if_cases(
             Ok(cases)
         }
         ProofStep::Advance(advance) => {
-            let body_cases = expand_proof_if_cases(&advance.steps, claim_label)?;
-            let suffix_cases = expand_proof_if_cases(&steps[control_index + 1..], claim_label)?;
+            let join_id = *next_join_id;
+            *next_join_id += 1;
+            let body_cases =
+                expand_structured_proof_cases(&advance.steps, claim_label, next_join_id)?;
+            let suffix_cases = expand_structured_proof_cases(
+                &steps[control_index + 1..],
+                claim_label,
+                next_join_id,
+            )?;
             let mut cases = Vec::new();
             for body in &body_cases {
                 for suffix in &suffix_cases {
@@ -438,18 +457,21 @@ fn expand_proof_if_cases(
                         .advance_checks
                         .iter()
                         .map(|check| ProofAdvanceCheck {
+                            join_id: check.join_id,
                             step_index: prefix.len() + check.step_index,
                             target: check.target.clone(),
                             assertions: check.assertions.clone(),
                         })
                         .collect::<Vec<_>>();
                     advance_checks.push(ProofAdvanceCheck {
+                        join_id,
                         step_index: boundary,
                         target: advance.target.clone(),
                         assertions: advance.assertions.clone(),
                     });
                     advance_checks.extend(suffix.advance_checks.iter().map(|check| {
                         ProofAdvanceCheck {
+                            join_id: check.join_id,
                             step_index: boundary + check.step_index,
                             target: check.target.clone(),
                             assertions: check.assertions.clone(),
@@ -1821,7 +1843,7 @@ pub(super) fn prove_claim_by_steps(
 ) -> Result<Vec<VerifiedCTheorem>, ClickError> {
     let mut verified = Vec::new();
     for proof_case in expand_proof_if_cases(steps, claim_label)? {
-        verified.extend(prove_claim_by_linear_steps(
+        for theorem in prove_claim_by_linear_steps(
             source_path,
             function_block,
             parsed_function,
@@ -1836,7 +1858,11 @@ pub(super) fn prove_claim_by_steps(
             &proof_case.assumptions,
             &proof_case.advance_checks,
             steps,
-        )?);
+        )? {
+            if !verified.contains(&theorem) {
+                verified.push(theorem);
+            }
+        }
     }
     Ok(verified)
 }
@@ -1885,6 +1911,25 @@ fn prove_claim_by_linear_steps(
     let mut replay = ProofStepReplayState::default();
 
     for (step_index, step) in steps.iter().enumerate() {
+        if proof_advance_checks
+            .iter()
+            .any(|check| check.step_index == step_index)
+        {
+            apply_advance_checks_at_step(
+                proof_advance_checks,
+                step_index,
+                &mut replay,
+                &mut state,
+                &mut requirement_pure_facts,
+                function_block,
+                parsed_function.parameters(),
+                &arguments,
+                predicate_environment,
+                click_function_environment,
+                claim_label,
+            )?;
+            assumptions = assumptions_from_propositions(&requirement_pure_facts);
+        }
         for case_assumption in proof_case_assumptions
             .iter()
             .filter(|assumption| assumption.step_index == step_index)
@@ -1917,25 +1962,6 @@ fn prove_claim_by_linear_steps(
                 });
                 assumptions = assumptions_from_propositions(&requirement_pure_facts);
             }
-        }
-        if proof_advance_checks
-            .iter()
-            .any(|check| check.step_index == step_index)
-        {
-            apply_advance_checks_at_step(
-                proof_advance_checks,
-                step_index,
-                &mut replay,
-                &state,
-                &mut requirement_pure_facts,
-                function_block,
-                parsed_function.parameters(),
-                &arguments,
-                predicate_environment,
-                click_function_environment,
-                claim_label,
-            )?;
-            assumptions = assumptions_from_propositions(&requirement_pure_facts);
         }
         match step {
             ProofStep::UnfoldResource(resource) => {
@@ -2242,7 +2268,7 @@ fn prove_claim_by_linear_steps(
         proof_advance_checks,
         steps.len(),
         &mut replay,
-        &state,
+        &mut state,
         &mut requirement_pure_facts,
         function_block,
         parsed_function.parameters(),
@@ -2292,7 +2318,7 @@ fn apply_advance_checks_at_step(
     checks: &[ProofAdvanceCheck],
     step_index: usize,
     replay: &mut ProofStepReplayState,
-    state: &CState,
+    state: &mut CState,
     available_pure_facts: &mut Vec<Proposition>,
     function_block: &FunctionBlock,
     parameters: &[syntax::C0Parameter],
@@ -2335,12 +2361,13 @@ fn apply_advance_checks_at_step(
             )));
         }
 
+        let mut concrete_facts = available_pure_facts.clone();
         for assertion in &check.assertions {
             match assertion {
                 ProofAssertion::Fact(surface_fact) => {
                     let fact = lower_current_proposition(
                         surface_fact,
-                        available_pure_facts,
+                        &concrete_facts,
                         parameters,
                         arguments,
                         replay.execution_start_state(state),
@@ -2354,13 +2381,13 @@ fn apply_advance_checks_at_step(
                             "`{claim_label}` proof step {step_index}: could not lower `advance` fact: {message}"
                         ))
                     })?;
-                    let assumptions = assumptions_from_propositions(available_pure_facts);
+                    let assumptions = assumptions_from_propositions(&concrete_facts);
                     if !assumptions.proves(&fact) {
                         return Err(ClickError::new(format!(
                             "`{claim_label}` proof step {step_index}: `advance` did not establish fact: {}",
                             describe_missing_pure_fact(
                                 &fact,
-                                available_pure_facts,
+                                &concrete_facts,
                                 state.resources().facts(),
                                 parameters,
                                 arguments,
@@ -2368,20 +2395,20 @@ fn apply_advance_checks_at_step(
                             )
                         )));
                     }
-                    if !available_pure_facts.contains(&fact) {
-                        available_pure_facts.push(fact);
+                    if !concrete_facts.contains(&fact) {
+                        concrete_facts.push(fact);
                     }
                 }
                 ProofAssertion::Resource(resource) => {
                     let expected =
                         lower_resource_clause(resource, parameters, arguments, state.memory())?;
-                    let assumptions = assumptions_from_propositions(available_pure_facts);
+                    let assumptions = assumptions_from_propositions(&concrete_facts);
                     if !state.resources().satisfies_fact(&expected, &assumptions) {
                         return Err(ClickError::new(format!(
                             "`{claim_label}` proof step {step_index}: `advance` did not establish resource fact: {}",
                             describe_missing_resource_fact(
                                 &expected,
-                                available_pure_facts,
+                                &concrete_facts,
                                 state.resources().facts(),
                                 parameters,
                                 arguments,
@@ -2392,6 +2419,99 @@ fn apply_advance_checks_at_step(
                 }
             }
         }
+
+        let entry_state = replay.execution_start_state(state).clone();
+        let stable_entry_locals = parameter_values(parameters, arguments)?;
+        let variable_start = (check.join_id as u64)
+            .checked_mul(1_000_000)
+            .and_then(|offset| 10_000_000_000u64.checked_add(offset))
+            .ok_or_else(|| {
+                ClickError::new(format!(
+                    "`{claim_label}` proof step {step_index}: too many nested `advance` joins"
+                ))
+            })?;
+        let mut abstract_state = abstract_c_state_for_join(
+            state,
+            &stable_entry_locals,
+            variable_start,
+        )
+        .map_err(|message| {
+            ClickError::new(format!(
+                "`{claim_label}` proof step {step_index}: could not abstract `advance` target state: {message}"
+            ))
+        })?;
+
+        replay.program_point_states.clear();
+        replay
+            .program_point_states
+            .insert(check.target.clone(), abstract_state.clone());
+        replay.unfolded_predicates.clear();
+        replay.case_assumptions.clear();
+        replay.simp = false;
+
+        let mut exported_resources = ResourceContext::new();
+        let mut exported_pure_facts = Vec::new();
+        for assertion in &check.assertions {
+            if let ProofAssertion::Resource(resource) = assertion {
+                let fact = lower_resource_clause(
+                    resource,
+                    parameters,
+                    arguments,
+                    abstract_state.memory(),
+                )?;
+                exported_resources = exported_resources.unchecked_with_fact(fact);
+                append_resource_clause_loadable_fact(
+                    resource,
+                    parameters,
+                    arguments,
+                    abstract_state.memory(),
+                    &mut exported_pure_facts,
+                )?;
+            }
+        }
+        abstract_state = abstract_state.with_resource_context(exported_resources.clone());
+        replay
+            .program_point_states
+            .insert(check.target.clone(), abstract_state.clone());
+
+        for assertion in &check.assertions {
+            if let ProofAssertion::Fact(surface_fact) = assertion {
+                let fact = lower_current_proposition(
+                    surface_fact,
+                    &exported_pure_facts,
+                    parameters,
+                    arguments,
+                    &entry_state,
+                    &abstract_state,
+                    &replay.program_point_states,
+                    predicate_environment,
+                    click_function_environment,
+                )
+                .map_err(|message| {
+                    ClickError::new(format!(
+                        "`{claim_label}` proof step {step_index}: could not abstract `advance` fact: {message}"
+                    ))
+                })?;
+                if !exported_pure_facts.contains(&fact) {
+                    exported_pure_facts.push(fact);
+                }
+            }
+        }
+
+        let exported_assumptions = assumptions_from_propositions(&exported_pure_facts);
+        exported_resources = ResourceContext::new()
+            .try_compose_with_facts(exported_resources.facts().iter().cloned(), &exported_assumptions)
+            .map_err(|error| {
+                ClickError::new(format!(
+                    "`{claim_label}` proof step {step_index}: invalid `advance` resource interface: {error:?}"
+                ))
+            })?;
+        abstract_state = abstract_state.with_resource_context(exported_resources);
+        replay
+            .program_point_states
+            .insert(check.target.clone(), abstract_state.clone());
+        *state = abstract_state;
+        *available_pure_facts = exported_pure_facts;
     }
     Ok(())
 }

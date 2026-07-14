@@ -8,6 +8,58 @@ pub fn uint8(bits: impl Into<Bitvector32Term>) -> CValue {
     CValue::UInt8(bits.into())
 }
 
+/// Builds a branch-independent symbolic state for a proof join.
+///
+/// Locals that still equal a stable function-entry value retain that identity.
+/// Other scalar locals and non-stack memory are forgotten. Pointer locals may
+/// only cross the join when they retain a stable entry value; the current
+/// pointer representation cannot soundly abstract over a changing allocation
+/// block.
+pub fn abstract_c_state_for_join(
+    state: &CState,
+    stable_entry_locals: &BTreeMap<String, CValue>,
+    variable_start: u64,
+) -> Result<CState, String> {
+    let mut variables = VerificationVariableGenerator::new(variable_start);
+    let mut abstract_state = state.clone();
+    let mut abstract_objects = Vec::new();
+    let mut preserved_blocks = BTreeSet::new();
+
+    for (name, binding) in &state.locals.bindings {
+        let CLocalBinding::Object { value, c_type } = binding else {
+            continue;
+        };
+        let abstract_value = if stable_entry_locals.get(name) == Some(value) {
+            value.clone()
+        } else {
+            match c_type {
+                CType::Int32 => int32(Bitvector32Term::Variable(variables.next())),
+                CType::UInt8 => uint8(Bitvector32Term::Variable(variables.next())),
+                CType::Int32Pointer | CType::UInt8Pointer => {
+                    return Err(format!(
+                        "pointer local `{name}` changes before the join; add pointer-state abstraction before joining this region"
+                    ));
+                }
+                CType::Int32Array(_) | CType::UInt8Array(_) => {
+                    unreachable!("array objects use CLocalBinding::ArrayObject")
+                }
+            }
+        };
+        preserved_blocks.insert(CMemory::local_pointer(name).block);
+        abstract_objects.push((name.clone(), abstract_value, *c_type));
+    }
+
+    abstract_state.memory = abstract_state
+        .memory
+        .with_loop_memory_havoc(variables.next(), &preserved_blocks);
+    for (name, value, c_type) in abstract_objects {
+        sync_stack_local(&mut abstract_state, &name, &value);
+        abstract_state.locals.set_typed(name, value, c_type);
+    }
+    abstract_state.resources = ResourceContext::new();
+    Ok(abstract_state)
+}
+
 pub fn c_variable(name: impl Into<String>) -> CExpression {
     CExpression::Variable(name.into())
 }
