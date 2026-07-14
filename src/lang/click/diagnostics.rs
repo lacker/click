@@ -1031,6 +1031,13 @@ pub(super) fn describe_condition(condition: &ConditionTerm) -> String {
             describe_pointer_offset(left),
             describe_pointer_offset(right)
         ),
+        ConditionTerm::PointerEqual(left, right) => {
+            format!(
+                "{} == {}",
+                describe_pointer(left, &[], &[]),
+                describe_pointer(right, &[], &[])
+            )
+        }
     }
 }
 

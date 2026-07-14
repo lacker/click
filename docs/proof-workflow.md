@@ -151,8 +151,10 @@ memory loadability and the view of an owned resource, remain available.
 
 Snapshots created inside the scoped execution are not exported. The function
 entry state used by `old(...)` and the abstract target snapshot remain
-available. Changing pointer-valued locals across an `advance` is not supported
-yet because the current pointer model cannot abstract over allocation blocks.
+available. Changed pointer-valued locals become fresh symbolic pointers at the
+join. The interface must export the facts and resources needed to use them,
+such as `views selected[0..len]`; symbolic pointers do not imply non-aliasing
+with concrete allocations.
 
 For example, pure case analysis needs no C execution:
 

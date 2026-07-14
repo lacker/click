@@ -78,6 +78,55 @@ fn join_state_forgets_changed_scalars_and_memory() {
 }
 
 #[test]
+fn join_state_abstracts_changed_pointer_locals() {
+    let left = Pointer {
+        block: "left".to_string(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let right = Pointer {
+        block: "right".to_string(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let abstract_left = abstract_c_state_for_join(
+        &CState::new().with_local("selected", CValue::Pointer(left)),
+        &BTreeMap::new(),
+        20_000,
+    )
+    .expect("pointer join abstraction");
+    let abstract_right = abstract_c_state_for_join(
+        &CState::new().with_local("selected", CValue::Pointer(right)),
+        &BTreeMap::new(),
+        20_000,
+    )
+    .expect("pointer join abstraction");
+
+    assert_eq!(abstract_left, abstract_right);
+    let Some(CValue::Pointer(selected)) = abstract_left.locals().get("selected") else {
+        panic!("selected should remain a pointer local");
+    };
+    assert!(selected.has_symbolic_block());
+}
+
+#[test]
+fn symbolic_pointer_blocks_do_not_imply_non_aliasing() {
+    let symbolic = Pointer::symbolic(Variable(21_000));
+    let concrete = Pointer {
+        block: "heap".to_string(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+
+    assert!(!pointers_proven_distinct(
+        &symbolic,
+        &concrete,
+        &Assumptions::new()
+    ));
+    assert_eq!(
+        Assumptions::new().decide(&ConditionTerm::pointer_equal(symbolic, concrete)),
+        None
+    );
+}
+
+#[test]
 fn memory_resource_fact_core_is_read_permission() {
     let base = Pointer {
         block: "p".to_string(),
@@ -1525,6 +1574,20 @@ fn pointer_equality_returns_c_int32_zero_or_one() {
             }
         );
     }
+}
+
+#[test]
+fn symbolic_pointer_truthiness_keeps_null_and_nonnull_paths() {
+    let paths = c_truthiness_paths(
+        CValue::Pointer(Pointer::symbolic(Variable(22_000))),
+        Vec::new(),
+        Vec::new(),
+        &Assumptions::new(),
+    );
+
+    assert_eq!(paths.len(), 2);
+    assert!(paths.iter().any(|path| path.is_true));
+    assert!(paths.iter().any(|path| !path.is_true));
 }
 
 #[test]

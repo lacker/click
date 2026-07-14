@@ -213,6 +213,9 @@ sequence:
 - `mdtests/proof_advance_composite_resource_transform.md`: different branch
   token transformations fold and export one composite resource through an
   `advance` interface, then `observe` recovers its fact after the join.
+- `mdtests/proof_advance_pointer_local.md`: selects a pointer in separate
+  branches, exports its viewed range through an `advance` interface, and
+  dereferences the abstract pointer after the join.
 - `mdtests/composite_resource_two_arrays.md`: a composite resource can
   bundle permissions for multiple arrays.
 - `mdtests/composite_resource_separate_fact.md`: a composite resource can
@@ -265,9 +268,9 @@ sequence:
 - `mdtests/composite_resource_observe_nested_separate_contains.md`: explicit
   chained observation exposes `contains(...)` and `separate(...)` facts for a
   nested composite resource.
-- `mdtests/composite_resource_owned_buffer_nested_hidden_separate_gap.md`:
-  expected-fail coverage for nested hidden footprints that do not yet summarize
-  `separate(...)` facts across composite-resource boundaries.
+- `mdtests/composite_resource_nested_observe_not_automatic.md`: expected-fail
+  coverage for the deliberate boundary where `auto` does not recursively
+  observe nested composite resources.
 - `mdtests/composite_resource_owner_buffer_hidden_separate_projection.md`:
   hidden contained writes imply folded-resource `separate(...)` facts without
   exposing the hidden permissions.

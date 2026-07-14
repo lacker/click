@@ -198,6 +198,9 @@ impl Assumptions {
             ConditionTerm::PointerOffsetEqual(left, right) => {
                 ConditionTerm::pointer_offset_equal(left.as_ref().clone(), right.as_ref().clone())
             }
+            ConditionTerm::PointerEqual(left, right) => {
+                ConditionTerm::pointer_equal(left.as_ref().clone(), right.as_ref().clone())
+            }
         }
     }
 
@@ -396,6 +399,10 @@ impl Assumptions {
 
     pub(super) fn decide_from_order_facts(&self, condition: &ConditionTerm) -> Option<bool> {
         match condition {
+            ConditionTerm::PointerEqual(left, right) if left == right => Some(true),
+            ConditionTerm::PointerEqual(left, right) => {
+                left.blocks_proven_distinct(right).then_some(false)
+            }
             ConditionTerm::PointerOffsetEqual(left, right) if left == right => Some(true),
             ConditionTerm::PointerOffsetEqual(left, right) => {
                 match (left.as_ref().as_const(), right.as_ref().as_const()) {
@@ -1361,22 +1368,18 @@ impl Assumptions {
             return Some(value);
         }
 
-        let mut unresolved_same_block_cell = false;
+        let mut unresolved_alias = false;
         for (cell_pointer, value) in &memory.cells {
-            if cell_pointer.block != pointer.block {
+            if pointers_proven_distinct(cell_pointer, pointer, self) {
                 continue;
             }
-            match self.decide(&ConditionTerm::pointer_offset_equal(
-                cell_pointer.offset.clone(),
-                pointer.offset.clone(),
-            )) {
-                Some(true) => return Some(value.clone()),
-                Some(false) => {}
-                None => unresolved_same_block_cell = true,
+            if pointers_proven_equal(cell_pointer, pointer, self) {
+                return Some(value.clone());
             }
+            unresolved_alias = true;
         }
 
-        if unresolved_same_block_cell {
+        if unresolved_alias {
             return None;
         }
 
@@ -2660,7 +2663,7 @@ impl Assumptions {
         range: &CMemoryRange,
         pointer: &Pointer,
     ) -> bool {
-        if range.base.block != pointer.block {
+        if range.base.blocks_proven_distinct(pointer) {
             return true;
         }
 

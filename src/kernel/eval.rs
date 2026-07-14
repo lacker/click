@@ -752,18 +752,48 @@ pub(super) fn c_truthiness_paths(
                 }
             }
         }
-        CValue::Pointer(pointer) => match (&pointer.block[..], &pointer.offset) {
-            ("null", PointerOffsetTerm::Constant(0)) => vec![CTruthinessPath {
-                is_true: false,
-                facts,
-                obligations,
-            }],
-            _ => vec![CTruthinessPath {
-                is_true: true,
-                facts,
-                obligations,
-            }],
-        },
+        CValue::Pointer(pointer) => {
+            let is_null = pointer_is_null_condition(pointer);
+            match decide_with_facts(assumptions, &facts, &is_null) {
+                Some(true) => vec![CTruthinessPath {
+                    is_true: false,
+                    facts,
+                    obligations,
+                }],
+                Some(false) => vec![CTruthinessPath {
+                    is_true: true,
+                    facts,
+                    obligations,
+                }],
+                None => {
+                    let mut nonnull_facts = facts.clone();
+                    add_condition_path_fact(
+                        &mut nonnull_facts,
+                        assumptions,
+                        is_null.clone(),
+                        false,
+                    )
+                    .expect("unknown pointer truthiness fact should be consistent");
+
+                    let mut null_facts = facts;
+                    add_condition_path_fact(&mut null_facts, assumptions, is_null, true)
+                        .expect("unknown pointer truthiness fact should be consistent");
+
+                    vec![
+                        CTruthinessPath {
+                            is_true: true,
+                            facts: nonnull_facts,
+                            obligations: obligations.clone(),
+                        },
+                        CTruthinessPath {
+                            is_true: false,
+                            facts: null_facts,
+                            obligations,
+                        },
+                    ]
+                }
+            }
+        }
     }
 }
 
@@ -809,6 +839,21 @@ pub(super) fn evaluate_c_memory_load_paths(
                 obligations,
             }];
         }
+        return vec![CExpressionPath {
+            outcome: CExpressionOutcome::Value(value),
+            facts,
+            obligations,
+        }];
+    }
+
+    if pointer.has_symbolic_block() && has_external_read_resource {
+        let Some(value) = symbolic_load_value(&memory, &pointer, value_type) else {
+            return vec![CExpressionPath {
+                outcome: CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+                facts,
+                obligations,
+            }];
+        };
         return vec![CExpressionPath {
             outcome: CExpressionOutcome::Value(value),
             facts,
@@ -2101,10 +2146,10 @@ pub(super) fn evaluate_c_logical_or_paths(
 }
 
 pub(super) fn pointer_equality_condition(left: Pointer, right: Pointer) -> ConditionTerm {
-    if left.block != right.block {
-        ConditionTerm::Constant(false)
-    } else {
+    if left.block == right.block {
         ConditionTerm::pointer_offset_equal(left.offset, right.offset)
+    } else {
+        ConditionTerm::pointer_equal(left, right)
     }
 }
 

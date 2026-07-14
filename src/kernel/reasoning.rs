@@ -45,11 +45,14 @@ pub(super) fn pointers_proven_distinct(
     right: &Pointer,
     assumptions: &Assumptions,
 ) -> bool {
-    left.block != right.block
-        || assumptions.decide(&ConditionTerm::pointer_offset_equal(
-            left.offset.clone(),
-            right.offset.clone(),
-        )) == Some(false)
+    left.blocks_proven_distinct(right)
+        || left.block == right.block
+            && assumptions.decide(&ConditionTerm::pointer_offset_equal(
+                left.offset.clone(),
+                right.offset.clone(),
+            )) == Some(false)
+        || assumptions.decide(&ConditionTerm::pointer_equal(left.clone(), right.clone()))
+            == Some(false)
         || assumptions.pointers_proven_disjoint_by_range(left, right)
 }
 
@@ -64,6 +67,8 @@ pub(super) fn pointers_proven_equal(
                 left.offset.clone(),
                 right.offset.clone(),
             )) == Some(true)
+        || assumptions.decide(&ConditionTerm::pointer_equal(left.clone(), right.clone()))
+            == Some(true)
 }
 
 pub(super) fn memories_match_for_pointer_load(
@@ -847,6 +852,13 @@ fn condition_terms_alpha_equivalent(
             pointer_offsets_alpha_equivalent(left_a, right_a, variable_pairs)
                 && pointer_offsets_alpha_equivalent(left_b, right_b, variable_pairs)
         }
+        (
+            ConditionTerm::PointerEqual(left_a, left_b),
+            ConditionTerm::PointerEqual(right_a, right_b),
+        ) => {
+            pointers_alpha_equivalent(left_a, right_a, variable_pairs)
+                && pointers_alpha_equivalent(left_b, right_b, variable_pairs)
+        }
         _ => false,
     }
 }
@@ -1524,6 +1536,10 @@ pub(super) fn collect_condition_bitvector_variables(
         ConditionTerm::PointerOffsetEqual(left, right) => {
             collect_pointer_offset_bitvector_variables(left, variables);
             collect_pointer_offset_bitvector_variables(right, variables);
+        }
+        ConditionTerm::PointerEqual(left, right) => {
+            collect_pointer_offset_bitvector_variables(&left.offset, variables);
+            collect_pointer_offset_bitvector_variables(&right.offset, variables);
         }
     }
 }
@@ -2768,6 +2784,10 @@ pub(super) fn substitute_bitvector_variable_in_condition(
             substitute_bitvector_variable_in_pointer_offset(left, from, to),
             substitute_bitvector_variable_in_pointer_offset(right, from, to),
         ),
+        ConditionTerm::PointerEqual(left, right) => ConditionTerm::pointer_equal(
+            substitute_bitvector_variable_in_pointer(left, from, to),
+            substitute_bitvector_variable_in_pointer(right, from, to),
+        ),
     }
 }
 
@@ -3065,7 +3085,7 @@ pub(super) fn memory_ranges_disjoint_builtin(
     right_start: &Bitvector32Term,
     right_end: &Bitvector32Term,
 ) -> bool {
-    if left_base.block != right_base.block {
+    if left_base.blocks_proven_distinct(right_base) {
         return true;
     }
 

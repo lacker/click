@@ -11,10 +11,9 @@ pub fn uint8(bits: impl Into<Bitvector32Term>) -> CValue {
 /// Builds a branch-independent symbolic state for a proof join.
 ///
 /// Locals that still equal a stable function-entry value retain that identity.
-/// Other scalar locals and non-stack memory are forgotten. Pointer locals may
-/// only cross the join when they retain a stable entry value; the current
-/// pointer representation cannot soundly abstract over a changing allocation
-/// block.
+/// Other scalar and pointer locals become fresh symbolic values, and non-stack
+/// memory is forgotten. Exported facts and resources constrain those values at
+/// the abstract frontier.
 pub fn abstract_c_state_for_join(
     state: &CState,
     stable_entry_locals: &BTreeMap<String, CValue>,
@@ -36,9 +35,7 @@ pub fn abstract_c_state_for_join(
                 CType::Int32 => int32(Bitvector32Term::Variable(variables.next())),
                 CType::UInt8 => uint8(Bitvector32Term::Variable(variables.next())),
                 CType::Int32Pointer | CType::UInt8Pointer => {
-                    return Err(format!(
-                        "pointer local `{name}` changes before the join; add pointer-state abstraction before joining this region"
-                    ));
+                    CValue::Pointer(Pointer::symbolic(variables.next()))
                 }
                 CType::Int32Array(_) | CType::UInt8Array(_) => {
                     unreachable!("array objects use CLocalBinding::ArrayObject")

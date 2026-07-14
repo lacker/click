@@ -1,9 +1,10 @@
-# composite resource owned buffer nested hidden separate gap
+# nested composite observation is not automatic
 
-This records an open design gap. Direct hidden contained `write(...)`
-resources can expose folded-resource `separate(...)` facts, but nested
-composite-resource footprints are not summarized across the containing
-resource's direct fields.
+This records the bounded-automation boundary for composite resources. Direct
+hidden contained `write(...)` resources expose folded-resource
+`separate(...)` facts, but `auto` does not recursively observe nested composite
+resources. The corresponding positive example uses an explicit chain of
+`observe(...)` steps.
 
 ```c filename=observe_nested_owner_buffer.c
 struct owner {

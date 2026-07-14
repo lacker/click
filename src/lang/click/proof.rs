@@ -2769,7 +2769,7 @@ fn apply_advance_interface(
             }
             ProofAssertion::Resource(resource) => {
                 let expected =
-                    lower_resource_clause(resource, parameters, arguments, state.memory())?;
+                    lower_resource_clause_at_state(resource, parameters, arguments, state)?;
                 let assumptions = assumptions_from_propositions(&concrete_facts);
                 if !state.resources().satisfies_fact(&expected, &assumptions) {
                     return Err(ClickError::new(format!(
@@ -2822,15 +2822,18 @@ fn apply_advance_interface(
     for assertion in assertions {
         if let ProofAssertion::Resource(resource) = assertion {
             let fact =
-                lower_resource_clause(resource, parameters, arguments, abstract_state.memory())?;
+                lower_resource_clause_at_state(resource, parameters, arguments, &abstract_state)?;
             exported_resources = exported_resources.unchecked_with_fact(fact);
-            append_resource_clause_loadable_fact(
+            append_lowered_resource_clause_loadable_fact(
                 resource,
                 parameters,
-                arguments,
-                abstract_state.memory(),
+                exported_resources
+                    .facts()
+                    .last()
+                    .expect("exported resource was just appended"),
+                &abstract_state,
                 &mut exported_pure_facts,
-            )?;
+            );
         }
     }
     abstract_state = abstract_state.with_resource_context(exported_resources.clone());
@@ -4341,6 +4344,32 @@ fn append_resource_clause_loadable_fact(
         propositions.push(proposition);
     }
     Ok(())
+}
+
+fn append_lowered_resource_clause_loadable_fact(
+    resource: &ResourceClause,
+    parameters: &[syntax::C0Parameter],
+    lowered: &CResourceFact,
+    state: &CState,
+    propositions: &mut Vec<Proposition>,
+) {
+    let (ResourceClause::Read(segment) | ResourceClause::Write(segment)) = resource else {
+        return;
+    };
+    let Some(range) = lowered
+        .memory_view_range()
+        .or_else(|| lowered.memory_own_range())
+    else {
+        return;
+    };
+    let proposition = memory_range_loadable_prop(
+        state.memory(),
+        range,
+        contract_segment_element_width(parameters, segment),
+    );
+    if !propositions.contains(&proposition) {
+        propositions.push(proposition);
+    }
 }
 
 fn append_composite_resource_declared_facts(

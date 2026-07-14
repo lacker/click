@@ -1,7 +1,7 @@
 use super::api::{int32, uint8};
 use super::reasoning::{
     instantiate_range_fold_step, int32_element_index_from_offset, pointers_proven_distinct,
-    signed_bitvector_constant, signed_i64_bitvector_constant,
+    pointers_proven_equal, signed_bitvector_constant, signed_i64_bitvector_constant,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -83,6 +83,7 @@ pub enum ConditionTerm {
     Bitvector32SignedDivideOverflows(Box<Bitvector32Term>, Box<Bitvector32Term>),
     Bitvector32SignedShiftLeftOverflows(Box<Bitvector32Term>, Box<Bitvector32Term>),
     PointerOffsetEqual(Box<PointerOffsetTerm>, Box<PointerOffsetTerm>),
+    PointerEqual(Box<Pointer>, Box<Pointer>),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -90,6 +91,8 @@ pub struct Pointer {
     pub block: String,
     pub offset: PointerOffsetTerm,
 }
+
+const SYMBOLIC_POINTER_BLOCK_PREFIX: &str = "symbolic-pointer:";
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum CValue {
@@ -1259,6 +1262,18 @@ impl ConditionTerm {
             _ => Self::PointerOffsetEqual(Box::new(left), Box::new(right)),
         }
     }
+
+    pub fn pointer_equal(left: Pointer, right: Pointer) -> Self {
+        if left == right {
+            Self::Constant(true)
+        } else if left.blocks_proven_distinct(&right) {
+            Self::Constant(false)
+        } else if left.block == right.block {
+            Self::pointer_offset_equal(left.offset, right.offset)
+        } else {
+            Self::PointerEqual(Box::new(left), Box::new(right))
+        }
+    }
 }
 
 impl CType {
@@ -1341,6 +1356,21 @@ impl CLValue {
 }
 
 impl Pointer {
+    pub(super) fn symbolic(variable: Variable) -> Self {
+        Self {
+            block: format!("{SYMBOLIC_POINTER_BLOCK_PREFIX}{}", variable.0),
+            offset: PointerOffsetTerm::Constant(0),
+        }
+    }
+
+    pub(super) fn has_symbolic_block(&self) -> bool {
+        self.block.starts_with(SYMBOLIC_POINTER_BLOCK_PREFIX)
+    }
+
+    pub(super) fn blocks_proven_distinct(&self, other: &Self) -> bool {
+        self.block != other.block && !self.has_symbolic_block() && !other.has_symbolic_block()
+    }
+
     #[cfg_attr(not(test), allow(dead_code))]
     pub(super) fn offset_by_int32_elements(&self, elements: Bitvector32Term) -> Self {
         self.offset_by_elements(elements, 4)
@@ -1773,8 +1803,7 @@ impl CMemory {
     ) -> Self {
         let mut memory = self.clone();
         memory.cells.retain(|cell_pointer, _| {
-            cell_pointer.block != pointer.block
-                || !pointers_proven_distinct(cell_pointer, pointer, assumptions)
+            !pointers_proven_distinct(cell_pointer, pointer, assumptions)
         });
         memory
     }
@@ -1785,10 +1814,9 @@ impl CMemory {
         assumptions: &Assumptions,
     ) -> Self {
         let mut memory = self.clone();
-        memory.cells.retain(|cell_pointer, _| {
-            cell_pointer.block != pointer.block
-                || pointers_proven_distinct(cell_pointer, pointer, assumptions)
-        });
+        memory
+            .cells
+            .retain(|cell_pointer, _| pointers_proven_distinct(cell_pointer, pointer, assumptions));
         memory
     }
 
@@ -1800,14 +1828,9 @@ impl CMemory {
         self.cells
             .iter()
             .find(|(cell_pointer, _)| {
-                cell_pointer.block == pointer.block
-                    && *cell_pointer != pointer
-                    && assumptions
-                        .decide(&ConditionTerm::pointer_offset_equal(
-                            cell_pointer.offset.clone(),
-                            pointer.offset.clone(),
-                        ))
-                        .is_none()
+                *cell_pointer != pointer
+                    && !pointers_proven_distinct(cell_pointer, pointer, assumptions)
+                    && !pointers_proven_equal(cell_pointer, pointer, assumptions)
             })
             .map(|(pointer, value)| (pointer.clone(), value.clone()))
     }
@@ -2369,7 +2392,7 @@ fn memory_ranges_proven_overlapping(
     right: &CMemoryRange,
     assumptions: &Assumptions,
 ) -> bool {
-    if left.base().block != right.base().block {
+    if left.base().blocks_proven_distinct(right.base()) {
         return false;
     }
 

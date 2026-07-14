@@ -2979,13 +2979,41 @@ pub(super) fn lower_resource_clause(
     arguments: &[CExpression],
     memory: &CMemory,
 ) -> Result<CResourceFact, ClickError> {
+    let values =
+        parameter_values(parameters, arguments).map_err(|error| ClickError::new(error.message))?;
+    let state = CState::new().with_memory(memory.clone());
+    lower_resource_clause_with_values(resource, &values, &state)
+}
+
+pub(super) fn lower_resource_clause_at_state(
+    resource: &ResourceClause,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    state: &CState,
+) -> Result<CResourceFact, ClickError> {
+    let mut values =
+        parameter_values(parameters, arguments).map_err(|error| ClickError::new(error.message))?;
+    values.extend(
+        state
+            .locals()
+            .object_values()
+            .map(|(name, value)| (name.to_string(), value.clone())),
+    );
+    lower_resource_clause_with_values(resource, &values, state)
+}
+
+fn lower_resource_clause_with_values(
+    resource: &ResourceClause,
+    values: &BTreeMap<String, CValue>,
+    state: &CState,
+) -> Result<CResourceFact, ClickError> {
     match resource {
         ResourceClause::Read(segment) => {
-            let range = lower_resource_segment("read", segment, parameters, arguments, memory)?;
+            let range = lower_resource_segment_with_values("read", segment, values, state)?;
             Ok(CResourceFact::view_memory(range))
         }
         ResourceClause::Write(segment) => {
-            let range = lower_resource_segment("write", segment, parameters, arguments, memory)?;
+            let range = lower_resource_segment_with_values("write", segment, values, state)?;
             Ok(CResourceFact::own_memory(range))
         }
         ResourceClause::Declared {
@@ -2995,11 +3023,8 @@ pub(super) fn lower_resource_clause(
             arguments: resource_arguments,
             parameter_types,
         } => {
-            let parameter_values = parameter_values(parameters, arguments)
-                .map_err(|error| ClickError::new(error.message))?;
-            let state = CState::new().with_memory(memory.clone());
             let assumptions = Assumptions::new();
-            let mut values = Vec::new();
+            let mut resource_values = Vec::new();
             if resource_arguments.len() != parameter_types.len() {
                 return Err(ClickError::new(format!(
                     "resource `{name}` has malformed argument type metadata"
@@ -3009,34 +3034,29 @@ pub(super) fn lower_resource_clause(
                 resource_arguments.iter().zip(parameter_types).enumerate()
             {
                 let argument = resource_argument_to_c_expression(argument)?;
-                let value = evaluate_c_contract_expression(
-                    &parameter_values,
-                    &state,
-                    None,
-                    &assumptions,
-                    &argument,
-                )
-                .map_err(|message| {
-                    ClickError::new(format!(
-                        "could not lower resource `{name}` argument {index}: {message}"
-                    ))
-                })?;
+                let value =
+                    evaluate_c_contract_expression(values, state, None, &assumptions, &argument)
+                        .map_err(|message| {
+                            ClickError::new(format!(
+                                "could not lower resource `{name}` argument {index}: {message}"
+                            ))
+                        })?;
                 if !c_value_matches_click_type(&value, *parameter_type) {
                     return Err(ClickError::new(format!(
                         "resource `{name}` argument {index} evaluated to {value:?}, which does not match {:?}",
                         parameter_type
                     )));
                 }
-                values.push(value);
+                resource_values.push(value);
             }
             let resource = match kind {
                 ResourceKind::Composite => CResource::Composite {
                     name: name.clone(),
-                    arguments: values,
+                    arguments: resource_values,
                 },
                 ResourceKind::Token => CResource::Token {
                     name: name.clone(),
-                    arguments: values,
+                    arguments: resource_values,
                 },
             };
             Ok(match access {
@@ -3110,31 +3130,59 @@ pub(super) fn resource_argument_to_c_expression(
     }
 }
 
-pub(super) fn lower_resource_segment(
+fn lower_resource_segment_with_values(
     resource_name: &str,
     segment: &ContractSegment,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
-    memory: &CMemory,
+    values: &BTreeMap<String, CValue>,
+    state: &CState,
 ) -> Result<CMemoryRange, ClickError> {
-    let state = CState::new().with_memory(memory.clone());
-    let segment = evaluate_requirement_segment(parameters, arguments, &state, segment).map_err(
-        |message| {
+    if segment.state != ContractSegmentState::Current {
+        return Err(ClickError::new(format!(
+            "could not lower `{resource_name}` resource: resource segments cannot use `old(...)`"
+        )));
+    }
+    let assumptions = Assumptions::new();
+    let base = evaluate_c_contract_expression(values, state, None, &assumptions, &segment.base)
+        .map_err(|message| {
             ClickError::new(format!(
                 "could not lower `{resource_name}` resource: {message}"
             ))
-        },
-    )?;
-    if let (Bitvector32Term::Constant(start), Bitvector32Term::Constant(end)) =
-        (&segment.start, &segment.end)
+        })?;
+    let CValue::Pointer(base) = base else {
+        return Err(ClickError::new(format!(
+            "could not lower `{resource_name}` resource: segment base did not evaluate to a pointer"
+        )));
+    };
+    let start = evaluate_c_contract_expression(values, state, None, &assumptions, &segment.start)
+        .map_err(|message| {
+        ClickError::new(format!(
+            "could not lower `{resource_name}` resource: {message}"
+        ))
+    })?;
+    let CValue::Int32(start) = start else {
+        return Err(ClickError::new(format!(
+            "could not lower `{resource_name}` resource: segment start did not evaluate to int32"
+        )));
+    };
+    let end = evaluate_c_contract_expression(values, state, None, &assumptions, &segment.end)
+        .map_err(|message| {
+            ClickError::new(format!(
+                "could not lower `{resource_name}` resource: {message}"
+            ))
+        })?;
+    let CValue::Int32(end) = end else {
+        return Err(ClickError::new(format!(
+            "could not lower `{resource_name}` resource: segment end did not evaluate to int32"
+        )));
+    };
+    if let (Bitvector32Term::Constant(start), Bitvector32Term::Constant(end)) = (&start, &end)
+        && end < start
     {
-        if end < start {
-            return Err(ClickError::new(format!(
-                "`{resource_name}` segment has an end before its start: {start}..{end}"
-            )));
-        }
+        return Err(ClickError::new(format!(
+            "`{resource_name}` segment has an end before its start: {start}..{end}"
+        )));
     }
-    Ok(CMemoryRange::new(segment.base, segment.start, segment.end))
+    Ok(CMemoryRange::new(base, start, end))
 }
 
 pub(super) fn loadable_requirement_prop(
@@ -4199,6 +4247,21 @@ pub(super) fn comparison_proposition(
     operator: ComparisonOperator,
     right: CValue,
 ) -> Result<Proposition, ClickError> {
+    if let (CValue::Pointer(left), CValue::Pointer(right)) = (&left, &right) {
+        let value = match operator {
+            ComparisonOperator::Equal => true,
+            ComparisonOperator::NotEqual => false,
+            _ => {
+                return Err(ClickError::new(
+                    "pointer propositions support only `==` and `!=`",
+                ));
+            }
+        };
+        return Ok(Proposition::ConditionIs(
+            ConditionTerm::pointer_equal(left.clone(), right.clone()),
+            value,
+        ));
+    }
     if let (Some(left_term), Some(right_term)) =
         (promoted_int32_term(&left), promoted_int32_term(&right))
     {

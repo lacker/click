@@ -2334,7 +2334,8 @@ pub(super) fn simp_condition_without_assumptions(condition: &ConditionTerm) -> O
         | ConditionTerm::Bitvector32SignedMultiplyOverflows(_, _)
         | ConditionTerm::Bitvector32SignedDivideOverflows(_, _)
         | ConditionTerm::Bitvector32SignedShiftLeftOverflows(_, _)
-        | ConditionTerm::PointerOffsetEqual(_, _) => None,
+        | ConditionTerm::PointerOffsetEqual(_, _)
+        | ConditionTerm::PointerEqual(_, _) => None,
     }
 }
 
