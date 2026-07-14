@@ -1458,12 +1458,15 @@ fn prove_have_at_current_point(
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<Proposition, ClickError> {
-    let mut available = outer_available.to_vec();
-    let mut unfolded_predicates = Vec::new();
-    let mut use_simp = matches!(have.proof, Proof::Tactic(Tactic::Auto | Tactic::Simp));
-    let steps: &[ProofStep] = match &have.proof {
-        Proof::Steps(steps) => steps,
-        Proof::Tactic(Tactic::Auto | Tactic::Simp) => &[],
+    let (proof_cases, tactic_simp) = match &have.proof {
+        Proof::Steps(steps) => (expand_proof_if_cases(steps, claim_label)?, false),
+        Proof::Tactic(Tactic::Auto | Tactic::Simp) => (
+            vec![ExpandedProofCase {
+                steps: Vec::new(),
+                assumptions: Vec::new(),
+            }],
+            true,
+        ),
         Proof::Tactic(Tactic::Frame) => {
             return Err(ClickError::new(format!(
                 "`{claim_label}` proof step {outer_step_index}: `frame` cannot prove a local `have` fact"
@@ -1471,7 +1474,76 @@ fn prove_have_at_current_point(
         }
     };
 
-    for (inner_step_index, step) in steps.iter().enumerate() {
+    let mut proven_fact = None;
+    for proof_case in proof_cases {
+        let fact = prove_have_case_at_current_point(
+            have,
+            &proof_case,
+            tactic_simp,
+            theorem_environment,
+            claim_label,
+            outer_step_index,
+            outer_available,
+            parameters,
+            arguments,
+            pre_state,
+            state,
+            program_point_states,
+            predicate_environment,
+            click_function_environment,
+        )?;
+        if let Some(expected) = &proven_fact
+            && expected != &fact
+        {
+            return Err(ClickError::new(format!(
+                "`{claim_label}` proof step {outer_step_index}: `have` cases lowered the same surface fact differently"
+            )));
+        }
+        proven_fact = Some(fact);
+    }
+    proven_fact.ok_or_else(|| {
+        ClickError::new(format!(
+            "`{claim_label}` proof step {outer_step_index}: `have` has no proof cases"
+        ))
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn prove_have_case_at_current_point(
+    have: &ProofHave,
+    proof_case: &ExpandedProofCase,
+    tactic_simp: bool,
+    theorem_environment: &TheoremEnvironment,
+    claim_label: &str,
+    outer_step_index: usize,
+    outer_available: &[Proposition],
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    pre_state: &CState,
+    state: &CState,
+    program_point_states: &ProgramPointStates,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+) -> Result<Proposition, ClickError> {
+    let mut available = outer_available.to_vec();
+    let mut unfolded_predicates = Vec::new();
+    let mut use_simp = tactic_simp;
+
+    for (inner_step_index, step) in proof_case.steps.iter().enumerate() {
+        add_have_case_assumptions(
+            proof_case,
+            inner_step_index,
+            &mut available,
+            claim_label,
+            outer_step_index,
+            parameters,
+            arguments,
+            pre_state,
+            state,
+            program_point_states,
+            predicate_environment,
+            click_function_environment,
+        )?;
         match step {
             ProofStep::UnfoldPredicate(name) => {
                 if predicate_environment.get(name).is_none() {
@@ -1529,6 +1601,7 @@ fn prove_have_at_current_point(
                 }
             }
             ProofStep::Simp => use_simp = true,
+            ProofStep::If(_) => unreachable!("proof-level if steps are expanded before replay"),
             _ => {
                 return Err(ClickError::new(format!(
                     "`{claim_label}` proof step {outer_step_index}, `have` step {inner_step_index}: `{}` cannot prove a local pure fact",
@@ -1537,6 +1610,20 @@ fn prove_have_at_current_point(
             }
         }
     }
+    add_have_case_assumptions(
+        proof_case,
+        proof_case.steps.len(),
+        &mut available,
+        claim_label,
+        outer_step_index,
+        parameters,
+        arguments,
+        pre_state,
+        state,
+        program_point_states,
+        predicate_environment,
+        click_function_environment,
+    )?;
 
     let fact = lower_current_proposition(
         &have.proposition,
@@ -1583,6 +1670,51 @@ fn prove_have_at_current_point(
             &[]
         )
     )))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn add_have_case_assumptions(
+    proof_case: &ExpandedProofCase,
+    inner_step_index: usize,
+    available: &mut Vec<Proposition>,
+    claim_label: &str,
+    outer_step_index: usize,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    pre_state: &CState,
+    state: &CState,
+    program_point_states: &ProgramPointStates,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+) -> Result<(), ClickError> {
+    for case_assumption in proof_case
+        .assumptions
+        .iter()
+        .filter(|assumption| assumption.step_index == inner_step_index)
+    {
+        let proposition = lower_current_proposition(
+            &case_assumption.proposition,
+            available,
+            parameters,
+            arguments,
+            pre_state,
+            state,
+            program_point_states,
+            predicate_environment,
+            click_function_environment,
+        )
+        .map_err(|message| {
+            ClickError::new(format!(
+                "`{claim_label}` proof step {outer_step_index}, `have` step {inner_step_index}: could not lower `if` condition: {message}"
+            ))
+        })?;
+        available.push(if case_assumption.value {
+            proposition
+        } else {
+            Proposition::Not(Box::new(proposition))
+        });
+    }
+    Ok(())
 }
 
 pub(super) fn prove_claim_by_steps(

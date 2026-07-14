@@ -74,8 +74,9 @@ Current proof steps:
   changes the resource context.
 - `have proposition by { ... }`: prove a pure proposition in a scoped nested
   proof and add it to the current pure facts. The nested proof accepts
-  `unfold`, `apply`, `simp`, and nested `have`; it cannot execute C or transform
-  resources.
+  `unfold`, `apply`, `simp`, nested `have`, and proof-level `if` case analysis;
+  it cannot execute C or transform resources. Both `if` branches prove the
+  local proposition, after which the surrounding proof continues.
 - `if proposition { ... } else { ... }`: prove the current claim twice, once
   with the proposition added to the pure facts and once with its negation
   added. Each branch has its own proof script and must finish the current
