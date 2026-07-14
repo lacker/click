@@ -2308,6 +2308,65 @@ fn equality_facts_are_transitive() {
 }
 
 #[test]
+fn equality_transports_signed_order_facts_in_both_directions() {
+    let selected = Bitvector32Term::Variable(Variable(86));
+    let key = Bitvector32Term::Variable(Variable(87));
+    let assumptions = Assumptions::new()
+        .assume_condition(ConditionTerm::equal(selected.clone(), key.clone()), true)
+        .assume_condition(
+            ConditionTerm::signed_greater_equal(key.clone(), Bitvector32Term::Constant(0)),
+            true,
+        )
+        .assume_condition(
+            ConditionTerm::signed_less_equal(Bitvector32Term::Constant(10), selected.clone()),
+            true,
+        );
+
+    assert_eq!(
+        assumptions.decide(&ConditionTerm::signed_greater_equal(
+            selected,
+            Bitvector32Term::Constant(0),
+        )),
+        Some(true)
+    );
+    assert_eq!(
+        assumptions.decide(&ConditionTerm::signed_less_equal(
+            Bitvector32Term::Constant(10),
+            key,
+        )),
+        Some(true)
+    );
+}
+
+#[test]
+fn equality_transport_reaches_chains_and_arithmetic_terms() {
+    let x = Bitvector32Term::Variable(Variable(88));
+    let y = Bitvector32Term::Variable(Variable(89));
+    let z = Bitvector32Term::Variable(Variable(90));
+    let assumptions = Assumptions::new()
+        .assume_condition(ConditionTerm::equal(x.clone(), y), true)
+        .assume_condition(ConditionTerm::equal(z.clone(), x), true)
+        .assume_condition(
+            ConditionTerm::signed_less_than(
+                Bitvector32Term::add(z, Bitvector32Term::Constant(1)),
+                Bitvector32Term::Constant(8),
+            ),
+            true,
+        );
+
+    assert_eq!(
+        assumptions.decide(&ConditionTerm::signed_less_than(
+            Bitvector32Term::add(
+                Bitvector32Term::Variable(Variable(89)),
+                Bitvector32Term::Constant(1),
+            ),
+            Bitvector32Term::Constant(8),
+        )),
+        Some(true)
+    );
+}
+
+#[test]
 fn excluded_small_integer_range_is_inconsistent() {
     let k = Bitvector32Term::Variable(Variable(80));
     let assumptions = Assumptions::new()

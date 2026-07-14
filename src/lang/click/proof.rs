@@ -346,6 +346,8 @@ struct ProofAdvanceCheck {
     assertions: Vec<ProofAssertion>,
 }
 
+// Pure theorem and local `have` proofs still use flat logical cases. Function
+// execution proofs use `InternalProofNode`, where `advance` has join semantics.
 fn expand_proof_if_cases(
     steps: &[ProofStep],
     claim_label: &str,
@@ -370,7 +372,6 @@ fn expand_structured_proof_cases(
             advance_checks: Vec::new(),
         }]);
     };
-
     let prefix = &steps[..control_index];
     match control_step {
         ProofStep::If(proof_if) => {
@@ -379,7 +380,6 @@ fn expand_structured_proof_cases(
                     "`{claim_label}` proof step {control_index}: proof-level `if` must be the final step because both branches prove the current claim; use `advance(...)` to join C execution before a shared suffix"
                 )));
             }
-
             let mut cases = Vec::new();
             for (value, branch_steps) in [
                 (true, proof_if.then_steps.as_slice()),
@@ -435,7 +435,6 @@ fn expand_structured_proof_cases(
                     let mut linear = prefix.to_vec();
                     linear.extend(body.steps.iter().cloned());
                     linear.extend(suffix.steps.iter().cloned());
-
                     let mut assumptions = body
                         .assumptions
                         .iter()
@@ -452,7 +451,6 @@ fn expand_structured_proof_cases(
                             value: assumption.value,
                         }
                     }));
-
                     let mut advance_checks = body
                         .advance_checks
                         .iter()
@@ -487,6 +485,138 @@ fn expand_structured_proof_cases(
             Ok(cases)
         }
         _ => unreachable!("control-step search only returns if or advance"),
+    }
+}
+
+#[derive(Clone)]
+struct IndexedProofStep {
+    index: usize,
+    step: ProofStep,
+}
+
+enum InternalProofNode {
+    Done,
+    Linear {
+        steps: Vec<IndexedProofStep>,
+        continuation: Box<InternalProofNode>,
+    },
+    If {
+        index: usize,
+        condition: ClickProposition,
+        then_branch: Box<InternalProofNode>,
+        else_branch: Box<InternalProofNode>,
+    },
+    Advance {
+        index: usize,
+        join_id: usize,
+        target: ProgramPointRef,
+        assertions: Vec<ProofAssertion>,
+        body: Box<InternalProofNode>,
+        continuation: Box<InternalProofNode>,
+    },
+}
+
+fn build_internal_proof(
+    steps: &[ProofStep],
+    claim_label: &str,
+) -> Result<InternalProofNode, ClickError> {
+    let mut next_join_id = 0;
+    build_internal_proof_at(steps, claim_label, &mut next_join_id, 0)
+}
+
+fn build_internal_proof_at(
+    steps: &[ProofStep],
+    claim_label: &str,
+    next_join_id: &mut usize,
+    index_offset: usize,
+) -> Result<InternalProofNode, ClickError> {
+    let Some((control_index, control_step)) = steps
+        .iter()
+        .enumerate()
+        .find(|(_, step)| matches!(step, ProofStep::If(_) | ProofStep::Advance(_)))
+    else {
+        if steps.is_empty() {
+            return Ok(InternalProofNode::Done);
+        }
+        return Ok(InternalProofNode::Linear {
+            steps: steps
+                .iter()
+                .cloned()
+                .enumerate()
+                .map(|(index, step)| IndexedProofStep {
+                    index: index_offset + index,
+                    step,
+                })
+                .collect(),
+            continuation: Box::new(InternalProofNode::Done),
+        });
+    };
+
+    let index = index_offset + control_index;
+    let control = match control_step {
+        ProofStep::If(proof_if) => {
+            if control_index + 1 != steps.len() {
+                return Err(ClickError::new(format!(
+                    "`{claim_label}` proof step {index}: proof-level `if` must be the final step because both branches prove the current claim; use `advance(...)` to join C execution before a shared suffix"
+                )));
+            }
+            InternalProofNode::If {
+                index,
+                condition: proof_if.condition.clone(),
+                then_branch: Box::new(build_internal_proof_at(
+                    &proof_if.then_steps,
+                    claim_label,
+                    next_join_id,
+                    index + 1,
+                )?),
+                else_branch: Box::new(build_internal_proof_at(
+                    &proof_if.else_steps,
+                    claim_label,
+                    next_join_id,
+                    index + 1,
+                )?),
+            }
+        }
+        ProofStep::Advance(advance) => {
+            let join_id = *next_join_id;
+            *next_join_id += 1;
+            InternalProofNode::Advance {
+                index,
+                join_id,
+                target: advance.target.clone(),
+                assertions: advance.assertions.clone(),
+                body: Box::new(build_internal_proof_at(
+                    &advance.steps,
+                    claim_label,
+                    next_join_id,
+                    index + 1,
+                )?),
+                continuation: Box::new(build_internal_proof_at(
+                    &steps[control_index + 1..],
+                    claim_label,
+                    next_join_id,
+                    index + 1,
+                )?),
+            }
+        }
+        _ => unreachable!("control-step search only returns if or advance"),
+    };
+
+    if control_index == 0 {
+        Ok(control)
+    } else {
+        Ok(InternalProofNode::Linear {
+            steps: steps[..control_index]
+                .iter()
+                .cloned()
+                .enumerate()
+                .map(|(prefix_index, step)| IndexedProofStep {
+                    index: index_offset + prefix_index,
+                    step,
+                })
+                .collect(),
+            continuation: Box::new(control),
+        })
     }
 }
 
@@ -1353,7 +1483,7 @@ pub(super) fn prove_claim_by_simp(
     Ok(verified)
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct ProofStepReplayState {
     execution_point: ProofExecutionPoint,
     execution_start_state: Option<CState>,
@@ -1370,6 +1500,7 @@ struct ProofStepReplayState {
     simp: bool,
 }
 
+#[derive(Clone)]
 struct ProofBranchContinuation {
     remaining: Option<CStatement>,
     next_statement_index: usize,
@@ -1377,7 +1508,7 @@ struct ProofBranchContinuation {
     resumes_inside_branch: bool,
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 enum ProofExecutionPoint {
     #[default]
     FunctionEntry,
@@ -1388,6 +1519,14 @@ enum ProofExecutionPoint {
         execution: crate::kernel::SymbolicCExecution,
         mode: ProofStepExecutionMode,
     },
+}
+
+#[derive(Clone)]
+struct ProofReplayContext {
+    state: CState,
+    pure_facts: Vec<Proposition>,
+    replay: ProofStepReplayState,
+    branch_path: Vec<String>,
 }
 
 impl ProofStepReplayState {
@@ -1841,56 +1980,13 @@ pub(super) fn prove_claim_by_steps(
     theorem_environment: &TheoremEnvironment,
     steps: &[ProofStep],
 ) -> Result<Vec<VerifiedCTheorem>, ClickError> {
-    let mut verified = Vec::new();
-    for proof_case in expand_proof_if_cases(steps, claim_label)? {
-        for theorem in prove_claim_by_linear_steps(
-            source_path,
-            function_block,
-            parsed_function,
-            claim,
-            claim_label,
-            function_environment,
-            predicate_environment,
-            click_function_environment,
-            resource_environment,
-            theorem_environment,
-            &proof_case.steps,
-            &proof_case.assumptions,
-            &proof_case.advance_checks,
-            steps,
-        )? {
-            if !verified.contains(&theorem) {
-                verified.push(theorem);
-            }
-        }
-    }
-    Ok(verified)
-}
-
-#[allow(clippy::too_many_arguments)]
-fn prove_claim_by_linear_steps(
-    source_path: &str,
-    function_block: &FunctionBlock,
-    parsed_function: &syntax::C0Function,
-    claim: &FunctionClaimRef<'_>,
-    claim_label: &str,
-    function_environment: &CFunctionEnvironment,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
-    resource_environment: &ResourceEnvironment,
-    theorem_environment: &TheoremEnvironment,
-    steps: &[ProofStep],
-    proof_case_assumptions: &[ProofCaseAssumption],
-    proof_advance_checks: &[ProofAdvanceCheck],
-    certificate_steps: &[ProofStep],
-) -> Result<Vec<VerifiedCTheorem>, ClickError> {
     if steps.is_empty() {
         return Err(ClickError::new(format!(
             "`{claim_label}` has an empty proof-step script"
         )));
     }
-
-    let (mut state, arguments, mut requirement_pure_facts) = initial_claim_context(
+    let program = build_internal_proof(steps, claim_label)?;
+    let (state, arguments, pure_facts) = initial_claim_context(
         function_block,
         parsed_function,
         resource_environment,
@@ -1907,62 +2003,80 @@ fn prove_claim_by_linear_steps(
         click_function_environment,
         resource_environment,
     )?;
-    let mut assumptions = assumptions_from_propositions(&requirement_pure_facts);
-    let mut replay = ProofStepReplayState::default();
+    let contexts = execute_internal_proof(
+        &program,
+        ProofReplayContext {
+            state,
+            pure_facts,
+            replay: ProofStepReplayState::default(),
+            branch_path: Vec::new(),
+        },
+        function_block,
+        parsed_function,
+        claim,
+        claim_label,
+        function_environment,
+        predicate_environment,
+        click_function_environment,
+        resource_environment,
+        theorem_environment,
+        &function,
+        &arguments,
+    )?;
 
-    for (step_index, step) in steps.iter().enumerate() {
-        if proof_advance_checks
-            .iter()
-            .any(|check| check.step_index == step_index)
-        {
-            apply_advance_checks_at_step(
-                proof_advance_checks,
-                step_index,
-                &mut replay,
-                &mut state,
-                &mut requirement_pure_facts,
-                function_block,
-                parsed_function.parameters(),
-                &arguments,
-                predicate_environment,
-                click_function_environment,
-                claim_label,
-            )?;
-            assumptions = assumptions_from_propositions(&requirement_pure_facts);
-        }
-        for case_assumption in proof_case_assumptions
-            .iter()
-            .filter(|assumption| assumption.step_index == step_index)
-        {
-            if replay.is_at_function_exit() {
-                replay.case_assumptions.push((
-                    step_index,
-                    case_assumption.proposition.clone(),
-                    case_assumption.value,
-                ));
-            } else {
-                let proposition = lower_current_proposition(
-                    &case_assumption.proposition,
-                    &requirement_pure_facts,
-                    parsed_function.parameters(),
-                    &arguments,
-                    replay.execution_start_state(&state),
-                    &state,
-                    &replay.program_point_states,
-                    predicate_environment,
-                    click_function_environment,
-                )
-                .map_err(|message| ClickError::new(format!(
-                    "`{claim_label}` proof step {step_index}: could not lower `if` condition: {message}"
-                )))?;
-                requirement_pure_facts.push(if case_assumption.value {
-                    proposition
-                } else {
-                    Proposition::Not(Box::new(proposition))
-                });
-                assumptions = assumptions_from_propositions(&requirement_pure_facts);
+    let mut verified = Vec::new();
+    for context in contexts {
+        for theorem in finish_proof_replay(
+            context,
+            source_path,
+            function_block,
+            parsed_function,
+            claim,
+            claim_label,
+            function_environment,
+            predicate_environment,
+            click_function_environment,
+            resource_environment,
+            theorem_environment,
+            &function,
+            &arguments,
+            steps,
+        )? {
+            if !verified.contains(&theorem) {
+                verified.push(theorem);
             }
         }
+    }
+    Ok(verified)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn replay_linear_steps(
+    context: ProofReplayContext,
+    function_block: &FunctionBlock,
+    parsed_function: &syntax::C0Function,
+    claim: &FunctionClaimRef<'_>,
+    claim_label: &str,
+    function_environment: &CFunctionEnvironment,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    resource_environment: &ResourceEnvironment,
+    theorem_environment: &TheoremEnvironment,
+    function: &CFunction,
+    arguments: &[CExpression],
+    steps: &[IndexedProofStep],
+) -> Result<ProofReplayContext, ClickError> {
+    let ProofReplayContext {
+        mut state,
+        pure_facts: mut requirement_pure_facts,
+        mut replay,
+        branch_path,
+    } = context;
+    let mut assumptions = assumptions_from_propositions(&requirement_pure_facts);
+
+    for indexed_step in steps {
+        let step_index = indexed_step.index;
+        let step = &indexed_step.step;
         match step {
             ProofStep::UnfoldResource(resource) => {
                 if replay.is_at_function_exit() {
@@ -2009,9 +2123,9 @@ fn prove_claim_by_linear_steps(
                     &mut replay,
                     &mut state,
                     &mut requirement_pure_facts,
-                    &function,
+                    function,
                     parsed_function.parameters(),
-                    &arguments,
+                    arguments,
                     &assumptions,
                     function_environment,
                     claim_label,
@@ -2025,9 +2139,9 @@ fn prove_claim_by_linear_steps(
                     &mut replay,
                     &mut state,
                     &mut requirement_pure_facts,
-                    &function,
+                    function,
                     parsed_function.parameters(),
-                    &arguments,
+                    arguments,
                     &assumptions,
                     claim_label,
                     step_index,
@@ -2040,9 +2154,9 @@ fn prove_claim_by_linear_steps(
                     &mut replay,
                     &mut state,
                     &mut requirement_pure_facts,
-                    &function,
+                    function,
                     parsed_function.parameters(),
-                    &arguments,
+                    arguments,
                     function_environment,
                     claim_label,
                     step_index,
@@ -2089,7 +2203,7 @@ fn prove_claim_by_linear_steps(
                     prove_symbolic_c_function_execution_paths_with_environment(
                         state.clone(),
                         function.clone(),
-                        arguments.clone(),
+                        arguments.to_vec(),
                         assumptions.clone(),
                         function_environment.clone(),
                     ),
@@ -2249,7 +2363,7 @@ fn prove_claim_by_linear_steps(
                 assumptions = assumptions_from_propositions(&requirement_pure_facts);
             }
             ProofStep::If(_) | ProofStep::Advance(_) => {
-                unreachable!("structured proof steps are expanded before replay")
+                unreachable!("structured proof steps are represented by internal proof nodes")
             }
             ProofStep::Witness(_) => {
                 require_step_execution(&replay, claim_label, step_index, "witness")?;
@@ -2264,58 +2378,318 @@ fn prove_claim_by_linear_steps(
         }
     }
 
-    apply_advance_checks_at_step(
-        proof_advance_checks,
-        steps.len(),
-        &mut replay,
-        &mut state,
-        &mut requirement_pure_facts,
-        function_block,
-        parsed_function.parameters(),
-        &arguments,
-        predicate_environment,
-        click_function_environment,
-        claim_label,
-    )?;
-
-    let execution = replay.execution().ok_or_else(|| {
-        ClickError::new(format!(
-            "`{claim_label}` proof-step script must reach function exit with `execute_step()`, `execute_rest()`, `symbolic_execute()`, or `bounded_execute()`"
-        ))
-    })?;
-    prove_claim_from_steps_execution(
-        execution,
-        replay
-            .execution_mode()
-            .expect("proof-step execution should have an execution mode"),
-        source_path,
-        function_block,
-        claim,
-        claim_label,
-        function_environment,
-        predicate_environment,
-        click_function_environment,
-        resource_environment,
-        theorem_environment,
-        parsed_function.parameters(),
-        &function,
-        replay.execution_start_state(&state),
-        &arguments,
-        &requirement_pure_facts,
-        &replay.unfolded_predicates,
-        &replay.theorem_applications,
-        &replay.resource_folds,
-        &replay.case_assumptions,
-        &replay.program_point_states,
-        replay.simp,
-        steps,
-        certificate_steps,
-    )
+    Ok(ProofReplayContext {
+        state,
+        pure_facts: requirement_pure_facts,
+        replay,
+        branch_path,
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
-fn apply_advance_checks_at_step(
-    checks: &[ProofAdvanceCheck],
+fn execute_internal_proof(
+    node: &InternalProofNode,
+    context: ProofReplayContext,
+    function_block: &FunctionBlock,
+    parsed_function: &syntax::C0Function,
+    claim: &FunctionClaimRef<'_>,
+    claim_label: &str,
+    function_environment: &CFunctionEnvironment,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    resource_environment: &ResourceEnvironment,
+    theorem_environment: &TheoremEnvironment,
+    function: &CFunction,
+    arguments: &[CExpression],
+) -> Result<Vec<ProofReplayContext>, ClickError> {
+    match node {
+        InternalProofNode::Done => Ok(vec![context]),
+        InternalProofNode::Linear {
+            steps,
+            continuation,
+        } => {
+            let branch_path = context.branch_path.clone();
+            let context = replay_linear_steps(
+                context,
+                function_block,
+                parsed_function,
+                claim,
+                claim_label,
+                function_environment,
+                predicate_environment,
+                click_function_environment,
+                resource_environment,
+                theorem_environment,
+                function,
+                arguments,
+                steps,
+            )
+            .map_err(|error| add_proof_branch_path(error, &branch_path))?;
+            execute_internal_proof(
+                continuation,
+                context,
+                function_block,
+                parsed_function,
+                claim,
+                claim_label,
+                function_environment,
+                predicate_environment,
+                click_function_environment,
+                resource_environment,
+                theorem_environment,
+                function,
+                arguments,
+            )
+        }
+        InternalProofNode::If {
+            index,
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            let condition_text = describe_click_proposition(condition);
+            let mut contexts = Vec::new();
+            for (branch_name, value, branch) in [
+                ("then", true, then_branch.as_ref()),
+                ("else", false, else_branch.as_ref()),
+            ] {
+                let mut branch_context = context.clone();
+                let branch_description =
+                    format!("{branch_name} branch of proof `if {condition_text}`");
+                branch_context.branch_path.push(branch_description);
+                introduce_proof_case_assumption(
+                    &mut branch_context,
+                    condition,
+                    value,
+                    *index,
+                    parsed_function.parameters(),
+                    arguments,
+                    predicate_environment,
+                    click_function_environment,
+                    claim_label,
+                )
+                .map_err(|error| add_proof_branch_path(error, &branch_context.branch_path))?;
+                let mut branch_contexts = execute_internal_proof(
+                    branch,
+                    branch_context,
+                    function_block,
+                    parsed_function,
+                    claim,
+                    claim_label,
+                    function_environment,
+                    predicate_environment,
+                    click_function_environment,
+                    resource_environment,
+                    theorem_environment,
+                    function,
+                    arguments,
+                )?;
+                contexts.append(&mut branch_contexts);
+            }
+            Ok(contexts)
+        }
+        InternalProofNode::Advance {
+            index,
+            join_id,
+            target,
+            assertions,
+            body,
+            continuation,
+        } => {
+            let body_contexts = execute_internal_proof(
+                body,
+                context,
+                function_block,
+                parsed_function,
+                claim,
+                claim_label,
+                function_environment,
+                predicate_environment,
+                click_function_environment,
+                resource_environment,
+                theorem_environment,
+                function,
+                arguments,
+            )?;
+            let mut joined_context: Option<ProofReplayContext> = None;
+            for mut branch_context in body_contexts {
+                let result = apply_advance_interface(
+                    *join_id,
+                    target,
+                    assertions,
+                    *index,
+                    &mut branch_context.replay,
+                    &mut branch_context.state,
+                    &mut branch_context.pure_facts,
+                    function_block,
+                    parsed_function.parameters(),
+                    arguments,
+                    predicate_environment,
+                    click_function_environment,
+                    claim_label,
+                );
+                if let Err(error) = result {
+                    return Err(add_proof_branch_path(error, &branch_context.branch_path));
+                }
+                if let Some(canonical) = &joined_context {
+                    if canonical.state != branch_context.state
+                        || canonical.pure_facts != branch_context.pure_facts
+                    {
+                        let error = ClickError::new(format!(
+                            "`{claim_label}` proof step {index}: `advance` branches produced different abstract interfaces"
+                        ));
+                        return Err(add_proof_branch_path(error, &branch_context.branch_path));
+                    }
+                    branch_context.branch_path.clear();
+                } else {
+                    branch_context.branch_path.clear();
+                    joined_context = Some(branch_context);
+                }
+            }
+            let joined_context = joined_context.ok_or_else(|| {
+                ClickError::new(format!(
+                    "`{claim_label}` proof step {index}: `advance` body produced no proof frontier"
+                ))
+            })?;
+            execute_internal_proof(
+                continuation,
+                joined_context,
+                function_block,
+                parsed_function,
+                claim,
+                claim_label,
+                function_environment,
+                predicate_environment,
+                click_function_environment,
+                resource_environment,
+                theorem_environment,
+                function,
+                arguments,
+            )
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn introduce_proof_case_assumption(
+    context: &mut ProofReplayContext,
+    condition: &ClickProposition,
+    value: bool,
+    step_index: usize,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    claim_label: &str,
+) -> Result<(), ClickError> {
+    if context.replay.is_at_function_exit() {
+        context
+            .replay
+            .case_assumptions
+            .push((step_index, condition.clone(), value));
+        return Ok(());
+    }
+    let proposition = lower_current_proposition(
+        condition,
+        &context.pure_facts,
+        parameters,
+        arguments,
+        context.replay.execution_start_state(&context.state),
+        &context.state,
+        &context.replay.program_point_states,
+        predicate_environment,
+        click_function_environment,
+    )
+    .map_err(|message| {
+        ClickError::new(format!(
+            "`{claim_label}` proof step {step_index}: could not lower `if` condition: {message}"
+        ))
+    })?;
+    context.pure_facts.push(if value {
+        proposition
+    } else {
+        Proposition::Not(Box::new(proposition))
+    });
+    Ok(())
+}
+
+fn add_proof_branch_context(error: ClickError, branch: &str) -> ClickError {
+    ClickError::new(format!("in {branch}:\n{}", error.message()))
+}
+
+fn add_proof_branch_path(mut error: ClickError, branch_path: &[String]) -> ClickError {
+    for branch in branch_path.iter().rev() {
+        error = add_proof_branch_context(error, branch);
+    }
+    error
+}
+
+#[allow(clippy::too_many_arguments)]
+fn finish_proof_replay(
+    context: ProofReplayContext,
+    source_path: &str,
+    function_block: &FunctionBlock,
+    parsed_function: &syntax::C0Function,
+    claim: &FunctionClaimRef<'_>,
+    claim_label: &str,
+    function_environment: &CFunctionEnvironment,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    resource_environment: &ResourceEnvironment,
+    theorem_environment: &TheoremEnvironment,
+    function: &CFunction,
+    arguments: &[CExpression],
+    certificate_steps: &[ProofStep],
+) -> Result<Vec<VerifiedCTheorem>, ClickError> {
+    let ProofReplayContext {
+        state,
+        pure_facts,
+        replay,
+        branch_path,
+    } = context;
+    let result = (|| {
+        let execution = replay.execution().ok_or_else(|| {
+            ClickError::new(format!(
+                "`{claim_label}` proof-step script must reach function exit with `execute_step()`, `execute_rest()`, `symbolic_execute()`, or `bounded_execute()`"
+            ))
+        })?;
+        prove_claim_from_steps_execution(
+            execution,
+            replay
+                .execution_mode()
+                .expect("proof-step execution should have an execution mode"),
+            source_path,
+            function_block,
+            claim,
+            claim_label,
+            function_environment,
+            predicate_environment,
+            click_function_environment,
+            resource_environment,
+            theorem_environment,
+            parsed_function.parameters(),
+            function,
+            replay.execution_start_state(&state),
+            arguments,
+            &pure_facts,
+            &replay.unfolded_predicates,
+            &replay.theorem_applications,
+            &replay.resource_folds,
+            &replay.case_assumptions,
+            &replay.program_point_states,
+            replay.simp,
+            certificate_steps,
+            certificate_steps,
+        )
+    })();
+    result.map_err(|error| add_proof_branch_path(error, &branch_path))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn apply_advance_interface(
+    join_id: usize,
+    target: &ProgramPointRef,
+    assertions: &[ProofAssertion],
     step_index: usize,
     replay: &mut ProofStepReplayState,
     state: &mut CState,
@@ -2327,45 +2701,39 @@ fn apply_advance_checks_at_step(
     click_function_environment: &ClickFunctionEnvironment,
     claim_label: &str,
 ) -> Result<(), ClickError> {
-    for check in checks.iter().filter(|check| check.step_index == step_index) {
-        let region = resolve_code_region_ref(
-            function_block,
-            &check.target.region,
-            claim_label,
-            step_index,
-        )?;
-        let CodeRegion::Statement(statement_index) = region else {
-            return Err(ClickError::new(format!(
-                "`{claim_label}` proof step {step_index}: `advance` currently requires a statement entry or exit target"
-            )));
+    let region = resolve_code_region_ref(function_block, &target.region, claim_label, step_index)?;
+    let CodeRegion::Statement(statement_index) = region else {
+        return Err(ClickError::new(format!(
+            "`{claim_label}` proof step {step_index}: `advance` currently requires a statement entry or exit target"
+        )));
+    };
+    let at_target = !replay.inside_branch
+        && match (&replay.execution_point, target.kind) {
+            (ProofExecutionPoint::StatementEntry { .. }, ProgramPointKind::Entry) => {
+                replay.next_statement_index == statement_index
+            }
+            (ProofExecutionPoint::StatementEntry { .. }, ProgramPointKind::Exit) => {
+                replay.next_statement_index == statement_index + 1
+                    && replay.program_point_states.contains_key(target)
+            }
+            _ => false,
         };
-        let at_target = !replay.inside_branch
-            && match (&replay.execution_point, check.target.kind) {
-                (ProofExecutionPoint::StatementEntry { .. }, ProgramPointKind::Entry) => {
-                    replay.next_statement_index == statement_index
-                }
-                (ProofExecutionPoint::StatementEntry { .. }, ProgramPointKind::Exit) => {
-                    replay.next_statement_index == statement_index + 1
-                        && replay.program_point_states.contains_key(&check.target)
-                }
-                _ => false,
-            };
-        if !at_target {
-            return Err(ClickError::new(format!(
-                "`{claim_label}` proof step {step_index}: `advance` branch did not reach `{}.{}`",
-                describe_code_region_ref(&check.target.region),
-                match check.target.kind {
-                    ProgramPointKind::Entry => "entry",
-                    ProgramPointKind::Exit => "exit",
-                }
-            )));
-        }
+    if !at_target {
+        return Err(ClickError::new(format!(
+            "`{claim_label}` proof step {step_index}: `advance` branch did not reach `{}.{}`",
+            describe_code_region_ref(&target.region),
+            match target.kind {
+                ProgramPointKind::Entry => "entry",
+                ProgramPointKind::Exit => "exit",
+            }
+        )));
+    }
 
-        let mut concrete_facts = available_pure_facts.clone();
-        for assertion in &check.assertions {
-            match assertion {
-                ProofAssertion::Fact(surface_fact) => {
-                    let fact = lower_current_proposition(
+    let mut concrete_facts = available_pure_facts.clone();
+    for assertion in assertions {
+        match assertion {
+            ProofAssertion::Fact(surface_fact) => {
+                let fact = lower_current_proposition(
                         surface_fact,
                         &concrete_facts,
                         parameters,
@@ -2381,56 +2749,56 @@ fn apply_advance_checks_at_step(
                             "`{claim_label}` proof step {step_index}: could not lower `advance` fact: {message}"
                         ))
                     })?;
-                    let assumptions = assumptions_from_propositions(&concrete_facts);
-                    if !assumptions.proves(&fact) {
-                        return Err(ClickError::new(format!(
-                            "`{claim_label}` proof step {step_index}: `advance` did not establish fact: {}",
-                            describe_missing_pure_fact(
-                                &fact,
-                                &concrete_facts,
-                                state.resources().facts(),
-                                parameters,
-                                arguments,
-                                &[]
-                            )
-                        )));
-                    }
-                    if !concrete_facts.contains(&fact) {
-                        concrete_facts.push(fact);
-                    }
+                let assumptions = assumptions_from_propositions(&concrete_facts);
+                if !assumptions.proves(&fact) {
+                    return Err(ClickError::new(format!(
+                        "`{claim_label}` proof step {step_index}: `advance` did not establish fact: {}",
+                        describe_missing_pure_fact(
+                            &fact,
+                            &concrete_facts,
+                            state.resources().facts(),
+                            parameters,
+                            arguments,
+                            &[]
+                        )
+                    )));
                 }
-                ProofAssertion::Resource(resource) => {
-                    let expected =
-                        lower_resource_clause(resource, parameters, arguments, state.memory())?;
-                    let assumptions = assumptions_from_propositions(&concrete_facts);
-                    if !state.resources().satisfies_fact(&expected, &assumptions) {
-                        return Err(ClickError::new(format!(
-                            "`{claim_label}` proof step {step_index}: `advance` did not establish resource fact: {}",
-                            describe_missing_resource_fact(
-                                &expected,
-                                &concrete_facts,
-                                state.resources().facts(),
-                                parameters,
-                                arguments,
-                                &[]
-                            )
-                        )));
-                    }
+                if !concrete_facts.contains(&fact) {
+                    concrete_facts.push(fact);
+                }
+            }
+            ProofAssertion::Resource(resource) => {
+                let expected =
+                    lower_resource_clause(resource, parameters, arguments, state.memory())?;
+                let assumptions = assumptions_from_propositions(&concrete_facts);
+                if !state.resources().satisfies_fact(&expected, &assumptions) {
+                    return Err(ClickError::new(format!(
+                        "`{claim_label}` proof step {step_index}: `advance` did not establish resource fact: {}",
+                        describe_missing_resource_fact(
+                            &expected,
+                            &concrete_facts,
+                            state.resources().facts(),
+                            parameters,
+                            arguments,
+                            &[]
+                        )
+                    )));
                 }
             }
         }
+    }
 
-        let entry_state = replay.execution_start_state(state).clone();
-        let stable_entry_locals = parameter_values(parameters, arguments)?;
-        let variable_start = (check.join_id as u64)
-            .checked_mul(1_000_000)
-            .and_then(|offset| 10_000_000_000u64.checked_add(offset))
-            .ok_or_else(|| {
-                ClickError::new(format!(
-                    "`{claim_label}` proof step {step_index}: too many nested `advance` joins"
-                ))
-            })?;
-        let mut abstract_state = abstract_c_state_for_join(
+    let entry_state = replay.execution_start_state(state).clone();
+    let stable_entry_locals = parameter_values(parameters, arguments)?;
+    let variable_start = (join_id as u64)
+        .checked_mul(1_000_000)
+        .and_then(|offset| 10_000_000_000u64.checked_add(offset))
+        .ok_or_else(|| {
+            ClickError::new(format!(
+                "`{claim_label}` proof step {step_index}: too many nested `advance` joins"
+            ))
+        })?;
+    let mut abstract_state = abstract_c_state_for_join(
             state,
             &stable_entry_locals,
             variable_start,
@@ -2441,42 +2809,38 @@ fn apply_advance_checks_at_step(
             ))
         })?;
 
-        replay.program_point_states.clear();
-        replay
-            .program_point_states
-            .insert(check.target.clone(), abstract_state.clone());
-        replay.unfolded_predicates.clear();
-        replay.case_assumptions.clear();
-        replay.simp = false;
+    replay.program_point_states.clear();
+    replay
+        .program_point_states
+        .insert(target.clone(), abstract_state.clone());
+    replay.unfolded_predicates.clear();
+    replay.case_assumptions.clear();
+    replay.simp = false;
 
-        let mut exported_resources = ResourceContext::new();
-        let mut exported_pure_facts = Vec::new();
-        for assertion in &check.assertions {
-            if let ProofAssertion::Resource(resource) = assertion {
-                let fact = lower_resource_clause(
-                    resource,
-                    parameters,
-                    arguments,
-                    abstract_state.memory(),
-                )?;
-                exported_resources = exported_resources.unchecked_with_fact(fact);
-                append_resource_clause_loadable_fact(
-                    resource,
-                    parameters,
-                    arguments,
-                    abstract_state.memory(),
-                    &mut exported_pure_facts,
-                )?;
-            }
+    let mut exported_resources = ResourceContext::new();
+    let mut exported_pure_facts = Vec::new();
+    for assertion in assertions {
+        if let ProofAssertion::Resource(resource) = assertion {
+            let fact =
+                lower_resource_clause(resource, parameters, arguments, abstract_state.memory())?;
+            exported_resources = exported_resources.unchecked_with_fact(fact);
+            append_resource_clause_loadable_fact(
+                resource,
+                parameters,
+                arguments,
+                abstract_state.memory(),
+                &mut exported_pure_facts,
+            )?;
         }
-        abstract_state = abstract_state.with_resource_context(exported_resources.clone());
-        replay
-            .program_point_states
-            .insert(check.target.clone(), abstract_state.clone());
+    }
+    abstract_state = abstract_state.with_resource_context(exported_resources.clone());
+    replay
+        .program_point_states
+        .insert(target.clone(), abstract_state.clone());
 
-        for assertion in &check.assertions {
-            if let ProofAssertion::Fact(surface_fact) = assertion {
-                let fact = lower_current_proposition(
+    for assertion in assertions {
+        if let ProofAssertion::Fact(surface_fact) = assertion {
+            let fact = lower_current_proposition(
                     surface_fact,
                     &exported_pure_facts,
                     parameters,
@@ -2492,27 +2856,26 @@ fn apply_advance_checks_at_step(
                         "`{claim_label}` proof step {step_index}: could not abstract `advance` fact: {message}"
                     ))
                 })?;
-                if !exported_pure_facts.contains(&fact) {
-                    exported_pure_facts.push(fact);
-                }
+            if !exported_pure_facts.contains(&fact) {
+                exported_pure_facts.push(fact);
             }
         }
+    }
 
-        let exported_assumptions = assumptions_from_propositions(&exported_pure_facts);
-        exported_resources = ResourceContext::new()
+    let exported_assumptions = assumptions_from_propositions(&exported_pure_facts);
+    exported_resources = ResourceContext::new()
             .try_compose_with_facts(exported_resources.facts().iter().cloned(), &exported_assumptions)
             .map_err(|error| {
                 ClickError::new(format!(
                     "`{claim_label}` proof step {step_index}: invalid `advance` resource interface: {error:?}"
                 ))
             })?;
-        abstract_state = abstract_state.with_resource_context(exported_resources);
-        replay
-            .program_point_states
-            .insert(check.target.clone(), abstract_state.clone());
-        *state = abstract_state;
-        *available_pure_facts = exported_pure_facts;
-    }
+    abstract_state = abstract_state.with_resource_context(exported_resources);
+    replay
+        .program_point_states
+        .insert(target.clone(), abstract_state.clone());
+    *state = abstract_state;
+    *available_pure_facts = exported_pure_facts;
     Ok(())
 }
 

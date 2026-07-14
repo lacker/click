@@ -25,7 +25,7 @@ int32 select_ready(int32 key, int32 choose_left) {
     } else {
         selected = select_right(key);
     }
-    return key;
+    return selected;
 }
 ```
 

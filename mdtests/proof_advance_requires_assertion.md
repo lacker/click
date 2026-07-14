@@ -20,7 +20,7 @@ int32 advance_missing_fact(int32 x) {
         execute_step();
         advance(statement(1).exit)
         ensuring {
-            fact y > 0;
+            fact y == x;
         }
         by {
             if x >= 0 {
@@ -38,5 +38,6 @@ int32 advance_missing_fact(int32 x) {
 ```
 
 ```expect
-fail: `advance` did not establish fact
+fail: in else branch of proof `if x >= 0`:
+`advance_missing_fact.ensures_0` proof step 1: `advance` did not establish fact
 ```

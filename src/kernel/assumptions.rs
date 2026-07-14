@@ -762,13 +762,13 @@ impl Assumptions {
             if !seen.insert((current.clone(), strict_so_far)) {
                 continue;
             }
-            if self.bitvector_terms_proven_equal(&current, right)
+            if self.bitvector_terms_equal_for_transport(&current, right)
                 && (!require_strict || strict_so_far)
             {
                 return true;
             }
             for (edge_left, edge_right, edge_strict) in order_facts {
-                if self.bitvector_terms_proven_equal(&current, edge_left) {
+                if self.bitvector_terms_equal_for_transport(&current, edge_left) {
                     stack.push((edge_right.clone(), strict_so_far || *edge_strict));
                 }
             }
@@ -1897,13 +1897,13 @@ impl Assumptions {
                 let target_left = target_left.as_ref();
                 let target_right = target_right.as_ref();
                 fact_right == target_right
-                    && self.bitvector_terms_proven_equal(fact_left, target_left)
+                    && self.bitvector_terms_equal_for_transport(fact_left, target_left)
                     || fact_right == target_left
-                        && self.bitvector_terms_proven_equal(fact_left, target_right)
+                        && self.bitvector_terms_equal_for_transport(fact_left, target_right)
                     || fact_left == target_right
-                        && self.bitvector_terms_proven_equal(fact_right, target_left)
+                        && self.bitvector_terms_equal_for_transport(fact_right, target_left)
                     || fact_left == target_left
-                        && self.bitvector_terms_proven_equal(fact_right, target_right)
+                        && self.bitvector_terms_equal_for_transport(fact_right, target_right)
             }
             (
                 ConditionTerm::Bitvector32SignedLessThan(fact_left, fact_right),
@@ -1921,8 +1921,8 @@ impl Assumptions {
                 ConditionTerm::Bitvector32SignedGreaterEqual(fact_left, fact_right),
                 ConditionTerm::Bitvector32SignedGreaterEqual(target_left, target_right),
             ) => {
-                self.bitvector_terms_proven_equal(fact_left, target_left)
-                    && self.bitvector_terms_proven_equal(fact_right, target_right)
+                self.bitvector_terms_equal_for_transport(fact_left, target_left)
+                    && self.bitvector_terms_equal_for_transport(fact_right, target_right)
             }
             (
                 ConditionTerm::Bitvector32SignedLessThan(fact_left, fact_right),
@@ -1940,8 +1940,8 @@ impl Assumptions {
                 ConditionTerm::Bitvector32SignedGreaterEqual(fact_left, fact_right),
                 ConditionTerm::Bitvector32SignedLessEqual(target_left, target_right),
             ) => {
-                self.bitvector_terms_proven_equal(fact_left, target_right)
-                    && self.bitvector_terms_proven_equal(fact_right, target_left)
+                self.bitvector_terms_equal_for_transport(fact_left, target_right)
+                    && self.bitvector_terms_equal_for_transport(fact_right, target_left)
             }
             _ => false,
         }
@@ -1958,6 +1958,65 @@ impl Assumptions {
             || self.count_fold_split_terms_proven_equal(left, right)
             || self.range_fold_terms_alpha_equivalent(left, right)
             || self.memory_loads_proven_equal(left, right)
+    }
+
+    pub(super) fn bitvector_terms_equal_for_transport(
+        &self,
+        left: &Bitvector32Term,
+        right: &Bitvector32Term,
+    ) -> bool {
+        if self.bitvector_terms_equal_from_facts(left, right)
+            || self.bitvector_terms_proven_equal(left, right)
+        {
+            return true;
+        }
+
+        match (left, right) {
+            (Bitvector32Term::Add(left_a, left_b), Bitvector32Term::Add(right_a, right_b))
+            | (
+                Bitvector32Term::Subtract(left_a, left_b),
+                Bitvector32Term::Subtract(right_a, right_b),
+            )
+            | (
+                Bitvector32Term::Multiply(left_a, left_b),
+                Bitvector32Term::Multiply(right_a, right_b),
+            )
+            | (
+                Bitvector32Term::Divide(left_a, left_b),
+                Bitvector32Term::Divide(right_a, right_b),
+            )
+            | (
+                Bitvector32Term::Remainder(left_a, left_b),
+                Bitvector32Term::Remainder(right_a, right_b),
+            )
+            | (
+                Bitvector32Term::ShiftLeft(left_a, left_b),
+                Bitvector32Term::ShiftLeft(right_a, right_b),
+            )
+            | (
+                Bitvector32Term::ArithmeticShiftRight(left_a, left_b),
+                Bitvector32Term::ArithmeticShiftRight(right_a, right_b),
+            )
+            | (
+                Bitvector32Term::BitwiseAnd(left_a, left_b),
+                Bitvector32Term::BitwiseAnd(right_a, right_b),
+            )
+            | (
+                Bitvector32Term::BitwiseOr(left_a, left_b),
+                Bitvector32Term::BitwiseOr(right_a, right_b),
+            )
+            | (
+                Bitvector32Term::BitwiseXor(left_a, left_b),
+                Bitvector32Term::BitwiseXor(right_a, right_b),
+            ) => {
+                self.bitvector_terms_equal_for_transport(left_a, right_a)
+                    && self.bitvector_terms_equal_for_transport(left_b, right_b)
+            }
+            (Bitvector32Term::BitwiseNot(left), Bitvector32Term::BitwiseNot(right)) => {
+                self.bitvector_terms_equal_for_transport(left, right)
+            }
+            _ => false,
+        }
     }
 
     pub(super) fn bitvector_if_terms_proven_equal(
