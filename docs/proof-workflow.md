@@ -179,13 +179,20 @@ are interpreted separately for each completed path.
 Some successful `auto` proofs record replayable proof-step certificates when the
 current proof-step language can express the argument.
 
-The proof-script implementation tracks an execution point. Proof scripts can
+The proof-script implementation tracks an execution frontier: the current
+execution point together with its enclosing continuation stack. Proof scripts can
 start at function entry, advance by one straight-line statement with
 `execute_step();`, enter a selected C branch, join branch-local proofs at an
 explicit statement point with `advance`, pause at a straight-line statement
 entry with `execute_until(statement(N));`, and execute to function exit with
 `execute_rest();`. Resource steps such as `observe`, `unfold`, and `fold` can
 happen between those execution steps.
+
+Ordinary statement steps, explicit branch entry, and structural traversal use
+the same certified condition and statement transitions. `advance` composes
+those transitions inside its body and then replaces the reached branch-local
+frontiers with the declared abstract interface. `execute_rest()` is the batch
+form that continues from the same frontier to function exit.
 
 At function entry, `views composite(...)` resource requirements are projected
 one step automatically, matching `observe(composite(...))` for immediate

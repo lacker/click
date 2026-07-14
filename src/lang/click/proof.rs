@@ -1485,11 +1485,7 @@ pub(super) fn prove_claim_by_simp(
 
 #[derive(Clone, Default)]
 struct ProofStepReplayState {
-    execution_point: ProofExecutionPoint,
-    execution_start_state: Option<CState>,
-    next_statement_index: usize,
-    branch_continuations: Vec<ProofBranchContinuation>,
-    inside_branch: bool,
+    frontier: ExecutionFrontier,
     program_point_states: ProgramPointStates,
     loop_vcs: BTreeSet<usize>,
     frames: BTreeSet<Option<CodeRegionRef>>,
@@ -1501,12 +1497,19 @@ struct ProofStepReplayState {
     region_proof: bool,
 }
 
+#[derive(Clone, Default)]
+struct ExecutionFrontier {
+    point: ProofExecutionPoint,
+    execution_start_state: Option<CState>,
+    next_statement_index: usize,
+    continuations: Vec<ProofBranchContinuation>,
+}
+
 #[derive(Clone)]
 struct ProofBranchContinuation {
     remaining: Option<CStatement>,
     next_statement_index: usize,
     enclosing_statement_index: Option<usize>,
-    resumes_inside_branch: bool,
 }
 
 #[derive(Clone, Default)]
@@ -1533,31 +1536,40 @@ struct ProofReplayContext {
 impl ProofStepReplayState {
     fn is_at_function_exit(&self) -> bool {
         matches!(
-            self.execution_point,
+            self.frontier.point,
             ProofExecutionPoint::FunctionExit { .. }
         )
     }
 
     fn is_at_function_entry(&self) -> bool {
-        matches!(self.execution_point, ProofExecutionPoint::FunctionEntry)
+        matches!(self.frontier.point, ProofExecutionPoint::FunctionEntry)
     }
 
     fn execution(&self) -> Option<&crate::kernel::SymbolicCExecution> {
-        match &self.execution_point {
+        match &self.frontier.point {
             ProofExecutionPoint::FunctionEntry | ProofExecutionPoint::StatementEntry { .. } => None,
             ProofExecutionPoint::FunctionExit { execution, .. } => Some(execution),
         }
     }
 
     fn execution_mode(&self) -> Option<ProofStepExecutionMode> {
-        match self.execution_point {
+        match self.frontier.point {
             ProofExecutionPoint::FunctionEntry | ProofExecutionPoint::StatementEntry { .. } => None,
             ProofExecutionPoint::FunctionExit { mode, .. } => Some(mode),
         }
     }
 
     fn execution_start_state<'a>(&'a self, current_state: &'a CState) -> &'a CState {
-        self.execution_start_state.as_ref().unwrap_or(current_state)
+        self.frontier
+            .execution_start_state
+            .as_ref()
+            .unwrap_or(current_state)
+    }
+}
+
+impl ExecutionFrontier {
+    fn inside_branch(&self) -> bool {
+        !self.continuations.is_empty()
     }
 }
 
@@ -1656,6 +1668,140 @@ struct StructuralProofEnvironment<'a> {
 struct StructuralProofContext {
     state: CState,
     pure_facts: Vec<Proposition>,
+}
+
+#[derive(Clone)]
+struct CertifiedConditionTransition {
+    is_true: bool,
+    pure_facts: Vec<Proposition>,
+}
+
+#[derive(Clone)]
+struct CertifiedStatementTransition {
+    outcome: CStatementOutcome,
+    execution_facts: Vec<ExecutionPureFact>,
+    obligations: Vec<ProofObligation>,
+    pure_facts: Vec<Proposition>,
+}
+
+fn certified_condition_transitions(
+    state: &CState,
+    pure_facts: &[Proposition],
+    condition: &CExpression,
+    context_label: &str,
+) -> Result<Vec<CertifiedConditionTransition>, ClickError> {
+    let assumptions = assumptions_from_propositions(pure_facts);
+    let evaluation =
+        prove_symbolic_c_condition_evaluation(state.clone(), condition.clone(), assumptions);
+    if let Some(limit) = evaluation.limit() {
+        return Err(ClickError::new(format!(
+            "{context_label} hit condition execution limit {limit:?}"
+        )));
+    }
+    evaluation
+        .paths()
+        .iter()
+        .map(|path| {
+            let mut successor_facts = pure_facts.to_vec();
+            successor_facts.extend(path.facts().iter().map(|fact| fact.proposition().clone()));
+            let successor_assumptions = assumptions_from_propositions(&successor_facts);
+            if let Some(obligation) = path
+                .obligations()
+                .iter()
+                .find(|obligation| !successor_assumptions.proves(obligation.proposition()))
+            {
+                return Err(ClickError::new(format!(
+                    "{context_label} is missing condition prerequisite{}: {:?}",
+                    obligation
+                        .context()
+                        .map(|context| format!(" ({context})"))
+                        .unwrap_or_default(),
+                    obligation.proposition()
+                )));
+            }
+            match implication_body(path.theorem().proposition()) {
+                Proposition::CConditionEvaluates {
+                    outcome: CConditionOutcome::Value(is_true),
+                    ..
+                } => Ok(CertifiedConditionTransition {
+                    is_true: *is_true,
+                    pure_facts: successor_facts,
+                }),
+                Proposition::CConditionEvaluates {
+                    outcome: CConditionOutcome::UndefinedBehavior(kind),
+                    ..
+                } => Err(ClickError::new(format!(
+                    "{context_label} produced undefined behavior while evaluating the condition: {kind:?}"
+                ))),
+                Proposition::CConditionEvaluates {
+                    outcome: CConditionOutcome::RuntimeError(error),
+                    ..
+                } => Err(ClickError::new(format!(
+                    "{context_label} produced runtime error while evaluating the condition: {error:?}"
+                ))),
+                proposition => Err(ClickError::new(format!(
+                    "{context_label} saw unexpected condition theorem {proposition:?}"
+                ))),
+            }
+        })
+        .collect()
+}
+
+fn certified_statement_transitions(
+    state: &CState,
+    pure_facts: &[Proposition],
+    statement: &CStatement,
+    function_environment: &CFunctionEnvironment,
+    context_label: &str,
+) -> Result<Vec<CertifiedStatementTransition>, ClickError> {
+    let assumptions = assumptions_from_propositions(pure_facts);
+    let execution = prove_symbolic_c_statement_verification_paths_with_environment(
+        state.clone(),
+        statement.clone(),
+        assumptions,
+        function_environment.clone(),
+    );
+    if let Some(limit) = execution.limit() {
+        return Err(ClickError::new(format!(
+            "{context_label} hit execution limit {limit:?}"
+        )));
+    }
+    execution
+        .paths()
+        .iter()
+        .map(|path| {
+            let mut successor_facts = pure_facts.to_vec();
+            successor_facts.extend(path.facts().iter().map(|fact| fact.proposition().clone()));
+            let successor_assumptions = assumptions_from_propositions(&successor_facts);
+            if let Some(obligation) = path
+                .obligations()
+                .iter()
+                .find(|obligation| !successor_assumptions.proves(obligation.proposition()))
+            {
+                return Err(ClickError::new(format!(
+                    "{context_label} is missing prerequisite{}: {:?}",
+                    obligation
+                        .context()
+                        .map(|context| format!(" ({context})"))
+                        .unwrap_or_default(),
+                    obligation.proposition()
+                )));
+            }
+            let Proposition::CStatementExecutes { outcome, .. } =
+                implication_body(path.theorem().proposition())
+            else {
+                return Err(ClickError::new(format!(
+                    "{context_label} saw an unexpected execution theorem"
+                )));
+            };
+            Ok(CertifiedStatementTransition {
+                outcome: outcome.clone(),
+                execution_facts: path.facts().to_vec(),
+                obligations: path.obligations().to_vec(),
+                pure_facts: successor_facts,
+            })
+        })
+        .collect()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1778,55 +1924,20 @@ fn split_structural_branch_contexts(
     let mut then_contexts = Vec::new();
     let mut else_contexts = Vec::new();
     for context in contexts {
-        let assumptions = assumptions_from_propositions(&context.pure_facts);
-        let evaluation = prove_symbolic_c_condition_evaluation(
-            context.state.clone(),
-            condition.clone(),
-            assumptions.clone(),
-        );
-        if let Some(limit) = evaluation.limit() {
-            return Err(ClickError::new(format!(
-                "structural proof traversal hit condition execution limit {limit:?}"
-            )));
-        }
-        for path in evaluation.paths() {
-            let mut pure_facts = context.pure_facts.clone();
-            pure_facts.extend(path.facts().iter().map(|fact| fact.proposition().clone()));
-            let path_assumptions = assumptions_from_propositions(&pure_facts);
-            if let Some(obligation) = path
-                .obligations()
-                .iter()
-                .find(|obligation| !path_assumptions.proves(obligation.proposition()))
-            {
-                return Err(ClickError::new(format!(
-                    "structural proof traversal is missing branch prerequisite {:?}",
-                    obligation.proposition()
-                )));
-            }
-            let Proposition::CConditionEvaluates { outcome, .. } =
-                implication_body(path.theorem().proposition())
-            else {
-                return Err(ClickError::new(
-                    "structural proof traversal saw an unexpected condition theorem",
-                ));
-            };
+        for transition in certified_condition_transitions(
+            &context.state,
+            &context.pure_facts,
+            condition,
+            "structural proof traversal",
+        )? {
             let next = StructuralProofContext {
                 state: context.state.clone(),
-                pure_facts,
+                pure_facts: transition.pure_facts,
             };
-            match outcome {
-                CConditionOutcome::Value(true) => then_contexts.push(next),
-                CConditionOutcome::Value(false) => else_contexts.push(next),
-                CConditionOutcome::UndefinedBehavior(kind) => {
-                    return Err(ClickError::new(format!(
-                        "structural proof traversal produced undefined behavior: {kind:?}"
-                    )));
-                }
-                CConditionOutcome::RuntimeError(error) => {
-                    return Err(ClickError::new(format!(
-                        "structural proof traversal produced runtime error: {error:?}"
-                    )));
-                }
+            if transition.is_true {
+                then_contexts.push(next);
+            } else {
+                else_contexts.push(next);
             }
         }
     }
@@ -1841,47 +1952,18 @@ fn advance_structural_statement(
 ) -> Result<Vec<StructuralProofContext>, ClickError> {
     let mut advanced = Vec::new();
     for context in contexts {
-        let assumptions = assumptions_from_propositions(&context.pure_facts);
-        let execution = prove_symbolic_c_statement_verification_paths_with_environment(
-            context.state.clone(),
-            statement.clone(),
-            assumptions,
-            environment.function_environment.clone(),
-        );
-        if let Some(limit) = execution.limit() {
-            return Err(ClickError::new(format!(
-                "structural proof traversal hit execution limit {limit:?} at region {region_index}"
-            )));
-        }
-        for path in execution.paths() {
-            let mut pure_facts = context.pure_facts.clone();
-            pure_facts.extend(path.facts().iter().map(|fact| fact.proposition().clone()));
-            let path_assumptions = assumptions_from_propositions(&pure_facts);
-            if let Some(obligation) = path
-                .obligations()
-                .iter()
-                .find(|obligation| !path_assumptions.proves(obligation.proposition()))
-            {
-                return Err(ClickError::new(format!(
-                    "structural proof traversal is missing prerequisite{}: {:?}",
-                    obligation
-                        .context()
-                        .map(|context| format!(" ({context})"))
-                        .unwrap_or_default(),
-                    obligation.proposition()
-                )));
-            }
-            let Proposition::CStatementExecutes { outcome, .. } =
-                implication_body(path.theorem().proposition())
-            else {
-                return Err(ClickError::new(
-                    "structural proof traversal saw an unexpected execution theorem",
-                ));
-            };
-            match outcome {
+        let label = format!("structural proof traversal at region {region_index}");
+        for transition in certified_statement_transitions(
+            &context.state,
+            &context.pure_facts,
+            statement,
+            environment.function_environment,
+            &label,
+        )? {
+            match transition.outcome {
                 CStatementOutcome::Normal(state) => advanced.push(StructuralProofContext {
-                    state: state.clone(),
-                    pure_facts,
+                    state,
+                    pure_facts: transition.pure_facts,
                 }),
                 CStatementOutcome::Return { .. } => {}
                 CStatementOutcome::UndefinedBehavior(kind) => {
@@ -1929,8 +2011,11 @@ fn verify_one_loop_preservation_proof(
     let sentinel = CStatement::Return(CExpression::Value(int32(0)));
     let remaining = c_seq(body.clone(), sentinel.clone());
     let mut replay = ProofStepReplayState {
-        execution_point: ProofExecutionPoint::StatementEntry { remaining },
-        execution_start_state: Some(preservation.state().clone()),
+        frontier: ExecutionFrontier {
+            point: ProofExecutionPoint::StatementEntry { remaining },
+            execution_start_state: Some(preservation.state().clone()),
+            ..ExecutionFrontier::default()
+        },
         region_proof: true,
         ..ProofStepReplayState::default()
     };
@@ -1963,9 +2048,9 @@ fn verify_one_loop_preservation_proof(
     )?;
     for context in contexts {
         let at_back_edge = matches!(
-            &context.replay.execution_point,
+            &context.replay.frontier.point,
             ProofExecutionPoint::StatementEntry { remaining } if remaining == &sentinel
-        ) && context.replay.branch_continuations.is_empty();
+        ) && context.replay.frontier.continuations.is_empty();
         if !at_back_edge {
             return Err(ClickError::new(format!(
                 "`{claim_label}` must execute exactly one complete loop-body iteration"
@@ -2559,7 +2644,6 @@ fn replay_linear_steps(
                     function,
                     parsed_function.parameters(),
                     arguments,
-                    &assumptions,
                     claim_label,
                     step_index,
                     matches!(step, ProofStep::ExecuteThenStep),
@@ -3126,13 +3210,13 @@ fn apply_advance_interface(
             "`{claim_label}` proof step {step_index}: `advance` currently requires a statement entry or exit target"
         )));
     };
-    let at_target = !replay.inside_branch
-        && match (&replay.execution_point, target.kind) {
+    let at_target = !replay.frontier.inside_branch()
+        && match (&replay.frontier.point, target.kind) {
             (ProofExecutionPoint::StatementEntry { .. }, ProgramPointKind::Entry) => {
-                replay.next_statement_index == statement_index
+                replay.frontier.next_statement_index == statement_index
             }
             (ProofExecutionPoint::StatementEntry { .. }, ProgramPointKind::Exit) => {
-                replay.next_statement_index == statement_index + 1
+                replay.frontier.next_statement_index == statement_index + 1
                     && replay.program_point_states.contains_key(target)
             }
             _ => false,
@@ -3309,7 +3393,6 @@ fn execute_selected_branch_step_from_execution_point(
     function: &CFunction,
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
-    assumptions: &Assumptions,
     claim_label: &str,
     step_index: usize,
     take_then: bool,
@@ -3319,7 +3402,7 @@ fn execute_selected_branch_step_from_execution_point(
     } else {
         "execute_else_step"
     };
-    let statement_index = replay.next_statement_index;
+    let statement_index = replay.frontier.next_statement_index;
     let (execution_start_state, current_state, statement, remaining) =
         next_top_level_statement_from_execution_point(
             replay,
@@ -3341,7 +3424,7 @@ fn execute_selected_branch_step_from_execution_point(
         )));
     };
 
-    if !replay.inside_branch {
+    if !replay.frontier.inside_branch() {
         replay.program_point_states.insert(
             ProgramPointRef {
                 region: CodeRegionRef::Statement(statement_index),
@@ -3351,22 +3434,19 @@ fn execute_selected_branch_step_from_execution_point(
         );
     }
     let current_resources = current_state.resources().facts().to_vec();
-    let condition_evaluation = prove_symbolic_c_condition_evaluation(
-        current_state.clone(),
-        condition.clone(),
-        assumptions.clone(),
-    );
-    if let Some(limit) = condition_evaluation.limit() {
-        return Err(ClickError::new(format!(
-            "`{claim_label}` proof step {step_index}: `{step_name}` hit execution limit {limit:?} while evaluating the next C `if` condition"
-        )));
-    }
-    if condition_evaluation.paths().len() != 1 {
+    let transition_label = format!("`{claim_label}` proof step {step_index}: `{step_name}`");
+    let condition_transitions = certified_condition_transitions(
+        &current_state,
+        available_pure_facts,
+        &condition,
+        &transition_label,
+    )?;
+    if condition_transitions.len() != 1 {
         let expected = if take_then { "true" } else { "false" };
         return Err(ClickError::new(format!(
             "`{claim_label}` proof step {step_index}: `{step_name}` could not prove that the next C `if` condition `{}` is {expected}; got {} feasible condition paths\n{}",
             describe_c_expression(&condition),
-            condition_evaluation.paths().len(),
+            condition_transitions.len(),
             describe_proof_context(
                 available_pure_facts,
                 &current_resources,
@@ -3376,47 +3456,11 @@ fn execute_selected_branch_step_from_execution_point(
             )
         )));
     }
-    let condition_path = &condition_evaluation.paths()[0];
-    if !condition_path.obligations().is_empty() {
-        return Err(ClickError::new(format!(
-            "`{claim_label}` proof step {step_index}: `{step_name}` could not evaluate the next C `if` condition: {}",
-            describe_missing_proof_obligations(
-                condition_path.obligations(),
-                available_pure_facts,
-                &current_resources,
-                parameters,
-                arguments,
-                condition_path.facts()
-            )
-        )));
-    }
-    let selected_then = match implication_body(condition_path.theorem().proposition()) {
-        Proposition::CConditionEvaluates {
-            outcome: CConditionOutcome::Value(value),
-            ..
-        } => *value,
-        Proposition::CConditionEvaluates {
-            outcome: CConditionOutcome::UndefinedBehavior(kind),
-            ..
-        } => {
-            return Err(ClickError::new(format!(
-                "`{claim_label}` proof step {step_index}: `{step_name}` produced undefined behavior while evaluating the next C `if` condition: {kind:?}"
-            )));
-        }
-        Proposition::CConditionEvaluates {
-            outcome: CConditionOutcome::RuntimeError(error),
-            ..
-        } => {
-            return Err(ClickError::new(format!(
-                "`{claim_label}` proof step {step_index}: `{step_name}` produced runtime error while evaluating the next C `if` condition: {error:?}"
-            )));
-        }
-        proposition => {
-            return Err(ClickError::new(format!(
-                "`{claim_label}` proof step {step_index}: `{step_name}` saw unexpected condition theorem {proposition:?}"
-            )));
-        }
-    };
+    let condition_transition = condition_transitions
+        .into_iter()
+        .next()
+        .expect("one condition transition was required");
+    let selected_then = condition_transition.is_true;
     if selected_then != take_then {
         let actual = if selected_then { "then" } else { "else" };
         return Err(ClickError::new(format!(
@@ -3425,28 +3469,22 @@ fn execute_selected_branch_step_from_execution_point(
         )));
     }
 
-    available_pure_facts.extend(
-        condition_path
-            .facts()
-            .iter()
-            .map(|fact| fact.proposition().clone()),
-    );
+    *available_pure_facts = condition_transition.pure_facts;
     let selected_branch = if take_then {
         *then_branch
     } else {
         *else_branch
     };
-    replay.branch_continuations.push(ProofBranchContinuation {
+    let inside_branch = replay.frontier.inside_branch();
+    replay.frontier.continuations.push(ProofBranchContinuation {
         remaining,
-        next_statement_index: statement_index + usize::from(!replay.inside_branch),
-        enclosing_statement_index: (!replay.inside_branch).then_some(statement_index),
-        resumes_inside_branch: replay.inside_branch,
+        next_statement_index: statement_index + usize::from(!inside_branch),
+        enclosing_statement_index: (!inside_branch).then_some(statement_index),
     });
-    replay.execution_start_state = Some(execution_start_state);
-    replay.execution_point = ProofExecutionPoint::StatementEntry {
+    replay.frontier.execution_start_state = Some(execution_start_state);
+    replay.frontier.point = ProofExecutionPoint::StatementEntry {
         remaining: selected_branch,
     };
-    replay.inside_branch = true;
     *state = current_state;
     Ok(())
 }
@@ -3461,7 +3499,7 @@ fn next_top_level_statement_from_execution_point(
     step_index: usize,
     step_name: &str,
 ) -> Result<(CState, CState, CStatement, Option<CStatement>), ClickError> {
-    match &replay.execution_point {
+    match &replay.frontier.point {
         ProofExecutionPoint::FunctionEntry => {
             let execution_start_state = state.clone();
             let current_state = c_function_entry_state(&execution_start_state, function, arguments)
@@ -3474,7 +3512,11 @@ fn next_top_level_statement_from_execution_point(
             Ok((execution_start_state, current_state, statement, remaining))
         }
         ProofExecutionPoint::StatementEntry { remaining } => {
-            let execution_start_state = replay.execution_start_state.clone().ok_or_else(|| {
+            let execution_start_state = replay
+                .frontier
+                .execution_start_state
+                .clone()
+                .ok_or_else(|| {
                 ClickError::new(format!(
                     "`{claim_label}` proof step {step_index}: `{step_name}` has no execution start state"
                 ))
@@ -3502,8 +3544,8 @@ fn execute_step_from_execution_point(
     step_index: usize,
     step_name: &str,
 ) -> Result<(), ClickError> {
-    let statement_index = replay.next_statement_index;
-    let execution_point = &replay.execution_point;
+    let statement_index = replay.frontier.next_statement_index;
+    let execution_point = &replay.frontier.point;
     let (execution_start_state, current_state, step_statement, remaining) = match execution_point {
         ProofExecutionPoint::FunctionEntry => {
             let execution_start_state = state.clone();
@@ -3531,7 +3573,11 @@ fn execute_step_from_execution_point(
             )
         }
         ProofExecutionPoint::StatementEntry { remaining } => {
-            let execution_start_state = replay.execution_start_state.clone().ok_or_else(|| {
+            let execution_start_state = replay
+                .frontier
+                .execution_start_state
+                .clone()
+                .ok_or_else(|| {
                 ClickError::new(format!(
                     "`{claim_label}` proof step {step_index}: `{step_name}` has no execution start state"
                 ))
@@ -3558,7 +3604,7 @@ fn execute_step_from_execution_point(
         }
     };
 
-    if !replay.inside_branch {
+    if !replay.frontier.inside_branch() {
         replay.program_point_states.insert(
             ProgramPointRef {
                 region: CodeRegionRef::Statement(statement_index),
@@ -3568,32 +3614,29 @@ fn execute_step_from_execution_point(
         );
     }
     let current_resources = current_state.resources().facts().to_vec();
-    let execution = prove_symbolic_c_execution_paths_with_environment(
-        current_state,
-        step_statement,
-        assumptions.clone(),
-        function_environment.clone(),
-    );
-    let path = single_statement_step_path(
-        &execution,
-        claim_label,
-        step_index,
-        step_name,
+    let transition_label = format!("`{claim_label}` proof step {step_index}: `{step_name}`");
+    let transitions = certified_statement_transitions(
+        &current_state,
         available_pure_facts,
-        &current_resources,
-        parameters,
-        arguments,
+        &step_statement,
+        function_environment,
+        &transition_label,
     )?;
-    let execution_pure_facts = path.facts().to_vec();
-    let outcome = match implication_body(path.theorem().proposition()) {
-        Proposition::CStatementExecutes { outcome, .. } => outcome.clone(),
-        proposition => {
-            return Err(ClickError::new(format!(
-                "`{claim_label}` proof step {step_index}: `{step_name}` saw unexpected step theorem {proposition:?}"
-            )));
-        }
-    };
-    if !replay.inside_branch
+    if transitions.len() != 1 {
+        return Err(ClickError::new(format!(
+            "`{claim_label}` proof step {step_index}: `{step_name}` requires exactly one statement successor, got {}",
+            transitions.len()
+        )));
+    }
+    let transition = transitions
+        .into_iter()
+        .next()
+        .expect("one statement transition was required");
+    let execution_pure_facts = transition.execution_facts;
+    let transition_obligations = transition.obligations;
+    let successor_pure_facts = transition.pure_facts;
+    let outcome = transition.outcome;
+    if !replay.frontier.inside_branch()
         && let Some(statement_exit_state) = match &outcome {
             CStatementOutcome::Normal(state) | CStatementOutcome::Return { state, .. } => {
                 Some(state.clone())
@@ -3613,8 +3656,8 @@ fn execute_step_from_execution_point(
     match outcome {
         CStatementOutcome::Normal(next_state) => {
             let remaining = if let Some(remaining) = remaining {
-                if !replay.inside_branch {
-                    replay.next_statement_index = statement_index + 1;
+                if !replay.frontier.inside_branch() {
+                    replay.frontier.next_statement_index = statement_index + 1;
                 }
                 remaining
             } else if let Some(remaining) = resume_after_completed_branch(replay, &next_state) {
@@ -3624,13 +3667,9 @@ fn execute_step_from_execution_point(
                     "`{claim_label}` proof step {step_index}: `{step_name}` reached the end of the function without a return"
                 )));
             };
-            available_pure_facts.extend(
-                execution_pure_facts
-                    .iter()
-                    .map(|fact| fact.proposition().clone()),
-            );
-            replay.execution_start_state = Some(execution_start_state);
-            replay.execution_point = ProofExecutionPoint::StatementEntry { remaining };
+            *available_pure_facts = successor_pure_facts;
+            replay.frontier.execution_start_state = Some(execution_start_state);
+            replay.frontier.point = ProofExecutionPoint::StatementEntry { remaining };
             *state = next_state;
         }
         CStatementOutcome::Return { .. } => {
@@ -3641,18 +3680,12 @@ fn execute_step_from_execution_point(
             {
                 record_completed_branch_exits(replay, return_state);
             }
-            let mut path_pure_facts = available_pure_facts.clone();
-            path_pure_facts.extend(
-                execution_pure_facts
-                    .iter()
-                    .map(|fact| fact.proposition().clone()),
-            );
-            let return_assumptions = assumptions_from_propositions(&path_pure_facts);
+            let return_assumptions = assumptions_from_propositions(&successor_pure_facts);
             let (outcome, obligations) = c_function_outcome_from_statement_outcome(
                 &execution_start_state,
                 function,
                 outcome,
-                path.obligations().to_vec(),
+                transition_obligations,
                 &return_assumptions,
             );
             let completed = certify_c_function_execution_paths_from_outcomes(
@@ -3672,7 +3705,7 @@ fn execute_step_from_execution_point(
                 execution_start_state,
                 completed,
             )?;
-            replay.next_statement_index = statement_index + 1;
+            replay.frontier.next_statement_index = statement_index + 1;
             *state = replay_state;
         }
         CStatementOutcome::UndefinedBehavior(kind) => {
@@ -3707,7 +3740,7 @@ fn resume_after_completed_branch(
     replay: &mut ProofStepReplayState,
     state: &CState,
 ) -> Option<CStatement> {
-    while let Some(continuation) = replay.branch_continuations.pop() {
+    while let Some(continuation) = replay.frontier.continuations.pop() {
         if let Some(statement_index) = continuation.enclosing_statement_index {
             replay.program_point_states.insert(
                 ProgramPointRef {
@@ -3717,8 +3750,7 @@ fn resume_after_completed_branch(
                 state.clone(),
             );
         }
-        replay.next_statement_index = continuation.next_statement_index;
-        replay.inside_branch = continuation.resumes_inside_branch;
+        replay.frontier.next_statement_index = continuation.next_statement_index;
         if let Some(remaining) = continuation.remaining {
             return Some(remaining);
         }
@@ -3727,7 +3759,7 @@ fn resume_after_completed_branch(
 }
 
 fn record_completed_branch_exits(replay: &mut ProofStepReplayState, state: &CState) {
-    while let Some(continuation) = replay.branch_continuations.pop() {
+    while let Some(continuation) = replay.frontier.continuations.pop() {
         if let Some(statement_index) = continuation.enclosing_statement_index {
             replay.program_point_states.insert(
                 ProgramPointRef {
@@ -3750,10 +3782,10 @@ fn record_current_statement_entry(
     step_index: usize,
     step_name: &str,
 ) -> Result<(), ClickError> {
-    if replay.inside_branch {
+    if replay.frontier.inside_branch() {
         return Ok(());
     }
-    let current_state = match &replay.execution_point {
+    let current_state = match &replay.frontier.point {
         ProofExecutionPoint::FunctionEntry => c_function_entry_state(state, function, arguments)
             .ok_or_else(|| {
                 ClickError::new(format!(
@@ -3765,7 +3797,7 @@ fn record_current_statement_entry(
     };
     replay.program_point_states.insert(
         ProgramPointRef {
-            region: CodeRegionRef::Statement(replay.next_statement_index),
+            region: CodeRegionRef::Statement(replay.frontier.next_statement_index),
             kind: ProgramPointKind::Entry,
         },
         current_state,
@@ -3789,7 +3821,7 @@ fn execute_rest_from_execution_point(
 ) -> Result<(), ClickError> {
     if record_straight_line_snapshots {
         loop {
-            let can_execute_one_step = match &replay.execution_point {
+            let can_execute_one_step = match &replay.frontier.point {
                 ProofExecutionPoint::FunctionEntry => {
                     split_next_straight_line_statement(function.body()).is_ok()
                 }
@@ -3831,7 +3863,7 @@ fn execute_rest_from_execution_point(
         )?;
     }
     let assumptions = assumptions_from_propositions(available_pure_facts);
-    match &replay.execution_point {
+    match &replay.frontier.point {
         ProofExecutionPoint::FunctionEntry => {
             set_replay_execution(
                 replay,
@@ -3857,7 +3889,7 @@ fn execute_rest_from_execution_point(
                 assumptions.clone(),
                 function_environment.clone(),
             );
-            let Some(execution_start_state) = replay.execution_start_state.clone() else {
+            let Some(execution_start_state) = replay.frontier.execution_start_state.clone() else {
                 return Err(ClickError::new(format!(
                     "`{claim_label}` proof step {step_index}: `{step_name}` has no execution start state"
                 )));
@@ -3899,7 +3931,8 @@ fn remaining_with_branch_continuations(
     current: &CStatement,
 ) -> CStatement {
     replay
-        .branch_continuations
+        .frontier
+        .continuations
         .iter()
         .rev()
         .filter_map(|continuation| continuation.remaining.as_ref())
@@ -3940,11 +3973,11 @@ fn execute_until_statement(
                     "`{claim_label}` proof step {step_index}: `execute_until` could not bind function arguments"
                 ))
             })?;
-        replay.execution_start_state = Some(execution_start_state);
-        replay.execution_point = ProofExecutionPoint::StatementEntry {
+        replay.frontier.execution_start_state = Some(execution_start_state);
+        replay.frontier.point = ProofExecutionPoint::StatementEntry {
             remaining: function.body().clone(),
         };
-        replay.next_statement_index = 0;
+        replay.frontier.next_statement_index = 0;
         replay.program_point_states.insert(
             ProgramPointRef {
                 region: CodeRegionRef::Statement(0),
@@ -4036,44 +4069,6 @@ fn complete_segmented_function_execution(
     ))
 }
 
-fn single_statement_step_path<'a>(
-    execution: &'a crate::kernel::SymbolicCExecution,
-    claim_label: &str,
-    step_index: usize,
-    step_name: &str,
-    available_pure_facts: &[Proposition],
-    resources: &[CResourceFact],
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
-) -> Result<&'a crate::kernel::SymbolicCExecutionPath, ClickError> {
-    if let Some(limit) = execution.limit() {
-        return Err(ClickError::new(format!(
-            "`{claim_label}` proof step {step_index}: `{step_name}` hit execution limit {limit:?}"
-        )));
-    }
-    if execution.paths().len() != 1 {
-        return Err(ClickError::new(format!(
-            "`{claim_label}` proof step {step_index}: `{step_name}` currently requires exactly one statement path, got {}",
-            execution.paths().len()
-        )));
-    }
-    let path = &execution.paths()[0];
-    if !path.obligations().is_empty() {
-        return Err(ClickError::new(format!(
-            "`{claim_label}` proof step {step_index}: `{step_name}` failed: {}",
-            describe_missing_proof_obligations(
-                path.obligations(),
-                available_pure_facts,
-                resources,
-                parameters,
-                arguments,
-                path.facts()
-            )
-        )));
-    }
-    Ok(path)
-}
-
 fn split_next_straight_line_statement(
     statement: &CStatement,
 ) -> Result<(CStatement, Option<CStatement>), String> {
@@ -4162,8 +4157,8 @@ fn set_replay_execution(
             "`{claim_label}` proof step {step_index}: `{step_name}` cannot run after {existing:?} execution already reached function exit"
         )));
     }
-    replay.execution_start_state = Some(execution_start_state);
-    replay.execution_point = ProofExecutionPoint::FunctionExit { execution, mode };
+    replay.frontier.execution_start_state = Some(execution_start_state);
+    replay.frontier.point = ProofExecutionPoint::FunctionExit { execution, mode };
     Ok(())
 }
 

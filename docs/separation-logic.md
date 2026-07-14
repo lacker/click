@@ -182,17 +182,25 @@ goal
 pure facts
 symbolic C state
 resource facts
-execution point
+execution frontier
 ```
 
-The execution point is where symbolic execution is currently paused. The
-current implementation has these execution-point states:
+The execution frontier contains the point where symbolic execution is paused
+and the continuation stack for enclosing branch regions. The current
+implementation has these frontier points:
 
 - function entry, before C execution has started,
 - statement entry after `execute_step()`, explicit entry into a selected `if`
   arm, or a straight-line `execute_until(statement(N))` pause,
 - function exit, after `execute_rest()` / `symbolic_execute()` has executed the
-  rest of the function.
+rest of the function.
+
+Condition edges and statement execution produce shared certified transitions.
+The ordinary execution tactics and structural-region traversal consume those
+same transitions, so they cannot disagree about successor states, generated
+facts, or missing prerequisites. Whether the frontier is inside a branch is
+derived from its continuation stack rather than maintained as an independent
+flag.
 
 `observe(...)`, resource and predicate `unfold(...)`, `fold(...)`,
 `apply(...)`, and `have ... by { ... }` can update the proof context at the
