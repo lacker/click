@@ -493,6 +493,7 @@ pub enum ProofStep {
     ApplyTheorem(TheoremApplication),
     Have(ProofHave),
     If(ProofIf),
+    Advance(ProofAdvance),
     ObserveResource(ResourceClause),
     Witness(ProofWitness),
     Choose(ProofChoice),
@@ -510,6 +511,19 @@ pub struct ProofIf {
     condition: ClickProposition,
     then_steps: Vec<ProofStep>,
     else_steps: Vec<ProofStep>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProofAdvance {
+    target: ProgramPointRef,
+    assertions: Vec<ProofAssertion>,
+    steps: Vec<ProofStep>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ProofAssertion {
+    Fact(ClickProposition),
+    Resource(ResourceClause),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

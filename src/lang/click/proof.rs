@@ -330,6 +330,7 @@ fn verify_theorem_ensure(
 struct ExpandedProofCase {
     steps: Vec<ProofStep>,
     assumptions: Vec<ProofCaseAssumption>,
+    advance_checks: Vec<ProofAdvanceCheck>,
 }
 
 struct ProofCaseAssumption {
@@ -338,54 +339,133 @@ struct ProofCaseAssumption {
     value: bool,
 }
 
+struct ProofAdvanceCheck {
+    step_index: usize,
+    target: ProgramPointRef,
+    assertions: Vec<ProofAssertion>,
+}
+
 fn expand_proof_if_cases(
     steps: &[ProofStep],
     claim_label: &str,
 ) -> Result<Vec<ExpandedProofCase>, ClickError> {
-    let Some((if_index, proof_if)) = steps.iter().enumerate().find_map(|(index, step)| {
-        let ProofStep::If(proof_if) = step else {
-            return None;
-        };
-        Some((index, proof_if))
-    }) else {
+    let Some((control_index, control_step)) = steps
+        .iter()
+        .enumerate()
+        .find(|(_, step)| matches!(step, ProofStep::If(_) | ProofStep::Advance(_)))
+    else {
         return Ok(vec![ExpandedProofCase {
             steps: steps.to_vec(),
             assumptions: Vec::new(),
+            advance_checks: Vec::new(),
         }]);
     };
-    if if_index + 1 != steps.len() {
-        return Err(ClickError::new(format!(
-            "`{claim_label}` proof step {if_index}: proof-level `if` must be the final step because both branches prove the current claim"
-        )));
-    }
 
-    let prefix = &steps[..if_index];
-    let mut cases = Vec::new();
-    for (value, branch_steps) in [
-        (true, proof_if.then_steps.as_slice()),
-        (false, proof_if.else_steps.as_slice()),
-    ] {
-        for mut branch in expand_proof_if_cases(branch_steps, claim_label)? {
-            let mut linear = prefix.to_vec();
-            linear.append(&mut branch.steps);
-            let mut assumptions = vec![ProofCaseAssumption {
-                step_index: prefix.len(),
-                proposition: proof_if.condition.clone(),
-                value,
-            }];
-            assumptions.extend(branch.assumptions.into_iter().map(|assumption| {
-                ProofCaseAssumption {
-                    step_index: prefix.len() + assumption.step_index,
-                    ..assumption
+    let prefix = &steps[..control_index];
+    match control_step {
+        ProofStep::If(proof_if) => {
+            if control_index + 1 != steps.len() {
+                return Err(ClickError::new(format!(
+                    "`{claim_label}` proof step {control_index}: proof-level `if` must be the final step because both branches prove the current claim; use `advance(...)` to join C execution before a shared suffix"
+                )));
+            }
+
+            let mut cases = Vec::new();
+            for (value, branch_steps) in [
+                (true, proof_if.then_steps.as_slice()),
+                (false, proof_if.else_steps.as_slice()),
+            ] {
+                for mut branch in expand_proof_if_cases(branch_steps, claim_label)? {
+                    let mut linear = prefix.to_vec();
+                    linear.append(&mut branch.steps);
+                    let mut assumptions = vec![ProofCaseAssumption {
+                        step_index: prefix.len(),
+                        proposition: proof_if.condition.clone(),
+                        value,
+                    }];
+                    assumptions.extend(branch.assumptions.into_iter().map(|assumption| {
+                        ProofCaseAssumption {
+                            step_index: prefix.len() + assumption.step_index,
+                            ..assumption
+                        }
+                    }));
+                    let advance_checks = branch
+                        .advance_checks
+                        .into_iter()
+                        .map(|check| ProofAdvanceCheck {
+                            step_index: prefix.len() + check.step_index,
+                            ..check
+                        })
+                        .collect();
+                    cases.push(ExpandedProofCase {
+                        steps: linear,
+                        assumptions,
+                        advance_checks,
+                    });
                 }
-            }));
-            cases.push(ExpandedProofCase {
-                steps: linear,
-                assumptions,
-            });
+            }
+            Ok(cases)
         }
+        ProofStep::Advance(advance) => {
+            let body_cases = expand_proof_if_cases(&advance.steps, claim_label)?;
+            let suffix_cases = expand_proof_if_cases(&steps[control_index + 1..], claim_label)?;
+            let mut cases = Vec::new();
+            for body in &body_cases {
+                for suffix in &suffix_cases {
+                    let boundary = prefix.len() + body.steps.len();
+                    let mut linear = prefix.to_vec();
+                    linear.extend(body.steps.iter().cloned());
+                    linear.extend(suffix.steps.iter().cloned());
+
+                    let mut assumptions = body
+                        .assumptions
+                        .iter()
+                        .map(|assumption| ProofCaseAssumption {
+                            step_index: prefix.len() + assumption.step_index,
+                            proposition: assumption.proposition.clone(),
+                            value: assumption.value,
+                        })
+                        .collect::<Vec<_>>();
+                    assumptions.extend(suffix.assumptions.iter().map(|assumption| {
+                        ProofCaseAssumption {
+                            step_index: boundary + assumption.step_index,
+                            proposition: assumption.proposition.clone(),
+                            value: assumption.value,
+                        }
+                    }));
+
+                    let mut advance_checks = body
+                        .advance_checks
+                        .iter()
+                        .map(|check| ProofAdvanceCheck {
+                            step_index: prefix.len() + check.step_index,
+                            target: check.target.clone(),
+                            assertions: check.assertions.clone(),
+                        })
+                        .collect::<Vec<_>>();
+                    advance_checks.push(ProofAdvanceCheck {
+                        step_index: boundary,
+                        target: advance.target.clone(),
+                        assertions: advance.assertions.clone(),
+                    });
+                    advance_checks.extend(suffix.advance_checks.iter().map(|check| {
+                        ProofAdvanceCheck {
+                            step_index: boundary + check.step_index,
+                            target: check.target.clone(),
+                            assertions: check.assertions.clone(),
+                        }
+                    }));
+                    cases.push(ExpandedProofCase {
+                        steps: linear,
+                        assumptions,
+                        advance_checks,
+                    });
+                }
+            }
+            Ok(cases)
+        }
+        _ => unreachable!("control-step search only returns if or advance"),
     }
-    Ok(cases)
 }
 
 fn lower_pure_theorem_proposition(
@@ -1464,6 +1544,7 @@ fn prove_have_at_current_point(
             vec![ExpandedProofCase {
                 steps: Vec::new(),
                 assumptions: Vec::new(),
+                advance_checks: Vec::new(),
             }],
             true,
         ),
@@ -1473,6 +1554,14 @@ fn prove_have_at_current_point(
             )));
         }
     };
+    if proof_cases
+        .iter()
+        .any(|proof_case| !proof_case.advance_checks.is_empty())
+    {
+        return Err(ClickError::new(format!(
+            "`{claim_label}` proof step {outer_step_index}: `advance` cannot prove a local `have` fact"
+        )));
+    }
 
     let mut proven_fact = None;
     for proof_case in proof_cases {
@@ -1745,6 +1834,7 @@ pub(super) fn prove_claim_by_steps(
             theorem_environment,
             &proof_case.steps,
             &proof_case.assumptions,
+            &proof_case.advance_checks,
             steps,
         )?);
     }
@@ -1765,6 +1855,7 @@ fn prove_claim_by_linear_steps(
     theorem_environment: &TheoremEnvironment,
     steps: &[ProofStep],
     proof_case_assumptions: &[ProofCaseAssumption],
+    proof_advance_checks: &[ProofAdvanceCheck],
     certificate_steps: &[ProofStep],
 ) -> Result<Vec<VerifiedCTheorem>, ClickError> {
     if steps.is_empty() {
@@ -1826,6 +1917,25 @@ fn prove_claim_by_linear_steps(
                 });
                 assumptions = assumptions_from_propositions(&requirement_pure_facts);
             }
+        }
+        if proof_advance_checks
+            .iter()
+            .any(|check| check.step_index == step_index)
+        {
+            apply_advance_checks_at_step(
+                proof_advance_checks,
+                step_index,
+                &mut replay,
+                &state,
+                &mut requirement_pure_facts,
+                function_block,
+                parsed_function.parameters(),
+                &arguments,
+                predicate_environment,
+                click_function_environment,
+                claim_label,
+            )?;
+            assumptions = assumptions_from_propositions(&requirement_pure_facts);
         }
         match step {
             ProofStep::UnfoldResource(resource) => {
@@ -2112,7 +2222,9 @@ fn prove_claim_by_linear_steps(
                 }
                 assumptions = assumptions_from_propositions(&requirement_pure_facts);
             }
-            ProofStep::If(_) => unreachable!("proof-level if steps are expanded before replay"),
+            ProofStep::If(_) | ProofStep::Advance(_) => {
+                unreachable!("structured proof steps are expanded before replay")
+            }
             ProofStep::Witness(_) => {
                 require_step_execution(&replay, claim_label, step_index, "witness")?;
             }
@@ -2125,6 +2237,20 @@ fn prove_claim_by_linear_steps(
             }
         }
     }
+
+    apply_advance_checks_at_step(
+        proof_advance_checks,
+        steps.len(),
+        &mut replay,
+        &state,
+        &mut requirement_pure_facts,
+        function_block,
+        parsed_function.parameters(),
+        &arguments,
+        predicate_environment,
+        click_function_environment,
+        claim_label,
+    )?;
 
     let execution = replay.execution().ok_or_else(|| {
         ClickError::new(format!(
@@ -2159,6 +2285,115 @@ fn prove_claim_by_linear_steps(
         steps,
         certificate_steps,
     )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn apply_advance_checks_at_step(
+    checks: &[ProofAdvanceCheck],
+    step_index: usize,
+    replay: &mut ProofStepReplayState,
+    state: &CState,
+    available_pure_facts: &mut Vec<Proposition>,
+    function_block: &FunctionBlock,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    claim_label: &str,
+) -> Result<(), ClickError> {
+    for check in checks.iter().filter(|check| check.step_index == step_index) {
+        let region = resolve_code_region_ref(
+            function_block,
+            &check.target.region,
+            claim_label,
+            step_index,
+        )?;
+        let CodeRegion::Statement(statement_index) = region else {
+            return Err(ClickError::new(format!(
+                "`{claim_label}` proof step {step_index}: `advance` currently requires a statement entry or exit target"
+            )));
+        };
+        let at_target = !replay.inside_branch
+            && match (&replay.execution_point, check.target.kind) {
+                (ProofExecutionPoint::StatementEntry { .. }, ProgramPointKind::Entry) => {
+                    replay.next_statement_index == statement_index
+                }
+                (ProofExecutionPoint::StatementEntry { .. }, ProgramPointKind::Exit) => {
+                    replay.next_statement_index == statement_index + 1
+                        && replay.program_point_states.contains_key(&check.target)
+                }
+                _ => false,
+            };
+        if !at_target {
+            return Err(ClickError::new(format!(
+                "`{claim_label}` proof step {step_index}: `advance` branch did not reach `{}.{}`",
+                describe_code_region_ref(&check.target.region),
+                match check.target.kind {
+                    ProgramPointKind::Entry => "entry",
+                    ProgramPointKind::Exit => "exit",
+                }
+            )));
+        }
+
+        for assertion in &check.assertions {
+            match assertion {
+                ProofAssertion::Fact(surface_fact) => {
+                    let fact = lower_current_proposition(
+                        surface_fact,
+                        available_pure_facts,
+                        parameters,
+                        arguments,
+                        replay.execution_start_state(state),
+                        state,
+                        &replay.program_point_states,
+                        predicate_environment,
+                        click_function_environment,
+                    )
+                    .map_err(|message| {
+                        ClickError::new(format!(
+                            "`{claim_label}` proof step {step_index}: could not lower `advance` fact: {message}"
+                        ))
+                    })?;
+                    let assumptions = assumptions_from_propositions(available_pure_facts);
+                    if !assumptions.proves(&fact) {
+                        return Err(ClickError::new(format!(
+                            "`{claim_label}` proof step {step_index}: `advance` did not establish fact: {}",
+                            describe_missing_pure_fact(
+                                &fact,
+                                available_pure_facts,
+                                state.resources().facts(),
+                                parameters,
+                                arguments,
+                                &[]
+                            )
+                        )));
+                    }
+                    if !available_pure_facts.contains(&fact) {
+                        available_pure_facts.push(fact);
+                    }
+                }
+                ProofAssertion::Resource(resource) => {
+                    let expected =
+                        lower_resource_clause(resource, parameters, arguments, state.memory())?;
+                    let assumptions = assumptions_from_propositions(available_pure_facts);
+                    if !state.resources().satisfies_fact(&expected, &assumptions) {
+                        return Err(ClickError::new(format!(
+                            "`{claim_label}` proof step {step_index}: `advance` did not establish resource fact: {}",
+                            describe_missing_resource_fact(
+                                &expected,
+                                available_pure_facts,
+                                state.resources().facts(),
+                                parameters,
+                                arguments,
+                                &[]
+                            )
+                        )));
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]

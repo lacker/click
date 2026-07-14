@@ -793,6 +793,48 @@ fn parses_explicit_branch_execution_steps() {
 }
 
 #[test]
+fn parses_advance_with_fact_and_resource_assertions() {
+    let source = FILL3_CLICK.replace(
+        "by auto;",
+        r#"by {
+            advance(statement(1).exit)
+            ensuring {
+                fact i >= 0;
+                owns p[0..3];
+                views p[0..3];
+            }
+            by {
+                execute_step();
+            }
+            execute_rest();
+            simp();
+        }"#,
+    );
+    let file = parse(&source).expect("advance proof step should parse");
+    let steps = file.function_blocks()[0].ensures()[0]
+        .proof()
+        .steps()
+        .expect("expected proof steps");
+
+    assert!(matches!(
+        &steps[0],
+        ProofStep::Advance(ProofAdvance {
+            target: ProgramPointRef {
+                region: CodeRegionRef::Statement(1),
+                kind: ProgramPointKind::Exit,
+            },
+            assertions,
+            steps,
+        }) if matches!(assertions.as_slice(), [
+            ProofAssertion::Fact(_),
+            ProofAssertion::Resource(ResourceClause::Write(_)),
+            ProofAssertion::Resource(ResourceClause::Read(_)),
+        ]) && steps == &[ProofStep::ExecuteStep]
+    ));
+    assert_eq!(steps[1..], [ProofStep::ExecuteRest, ProofStep::Simp]);
+}
+
+#[test]
 fn parses_execute_until_proof_step() {
     let source = FILL3_CLICK.replace(
         "by auto;",

@@ -284,6 +284,24 @@ fn expand_declared_resource_proof_step(
                 .map(|step| expand_declared_resource_proof_step(step, resource_definitions))
                 .collect::<Result<Vec<_>, _>>()?,
         })),
+        ProofStep::Advance(advance) => Ok(ProofStep::Advance(ProofAdvance {
+            target: advance.target,
+            assertions: advance
+                .assertions
+                .into_iter()
+                .map(|assertion| match assertion {
+                    ProofAssertion::Fact(fact) => Ok(ProofAssertion::Fact(fact)),
+                    ProofAssertion::Resource(resource) => Ok(ProofAssertion::Resource(
+                        expand_declared_resource_clause(resource, resource_definitions)?,
+                    )),
+                })
+                .collect::<Result<Vec<_>, ClickError>>()?,
+            steps: advance
+                .steps
+                .into_iter()
+                .map(|step| expand_declared_resource_proof_step(step, resource_definitions))
+                .collect::<Result<Vec<_>, _>>()?,
+        })),
         _ => Ok(step),
     }
 }
@@ -2075,6 +2093,11 @@ fn validate_pure_theorem_steps(theorem_name: &str, steps: &[ProofStep]) -> Resul
                 validate_pure_theorem_steps(theorem_name, &proof_if.then_steps)?;
                 validate_pure_theorem_steps(theorem_name, &proof_if.else_steps)?;
             }
+            ProofStep::Advance(_) => {
+                return Err(ClickError::new(format!(
+                    "proof step `advance` cannot prove pure theorem `{theorem_name}`"
+                )));
+            }
             ProofStep::SymbolicExecute
             | ProofStep::ExecuteStep
             | ProofStep::ExecuteThenStep
@@ -2116,6 +2139,7 @@ pub(super) fn proof_step_name(step: &ProofStep) -> &'static str {
         ProofStep::ApplyTheorem(_) => "apply",
         ProofStep::Have(_) => "have",
         ProofStep::If(_) => "if",
+        ProofStep::Advance(_) => "advance",
         ProofStep::ObserveResource(_) => "observe",
         ProofStep::Witness(_) => "witness",
         ProofStep::Choose(_) => "choose",

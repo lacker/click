@@ -81,7 +81,12 @@ Current proof steps:
   with the proposition added to the pure facts and once with its negation
   added. Each branch has its own proof script and must finish the current
   claim. A proof-level `if` is therefore the final step in its surrounding
-  script; it does not execute a C `if` statement.
+  script unless it is inside `advance`; it does not execute a C `if` statement.
+- `advance(program_point) ensuring { ... } by { ... }`: execute the nested
+  proof cases to the exact statement entry or exit, checking the listed `fact`,
+  `owns`, and `views` assertions in every case. The surrounding script then
+  continues once in source. The implementation verifies that shared suffix
+  independently for every nested case; it does not merge symbolic C states.
 - `observe(resource);`: project one view step from a held composite resource
   fact. This exposes immediate pure facts and viewed immediate contained
   resource facts without exposing owned contained permissions.
@@ -112,6 +117,35 @@ The branch steps execute only the selected control-flow edge. Ordinary
 `execute_step()` calls handle statements inside the arm, so nested C `if`
 statements can be entered with another explicit branch step.
 
+Use `advance` when branch-local execution should establish a common interface
+before the rest of the function proof:
+
+```click
+advance(statement(1).exit)
+ensuring {
+    fact y >= 0;
+    owns buffer(data, len);
+    views metadata(data, len);
+}
+by {
+    if x >= 0 {
+        execute_then_step();
+        execute_step();
+    } else {
+        execute_else_step();
+        execute_step();
+    }
+}
+execute_step();
+```
+
+`statement(N).entry` means immediately before statement region `N` executes.
+`statement(N).exit` means immediately after it completes. Every nested case
+must reach exactly that point and establish every assertion. `advance` is the
+execution-changing counterpart to `have`: `have` proves one pure fact without
+moving the execution point, while `advance` proves a postcondition for a scoped
+piece of execution.
+
 For example, pure case analysis needs no C execution:
 
 ```click
@@ -135,13 +169,13 @@ are interpreted separately for each completed path.
 Some successful `auto` proofs record replayable proof-step certificates when the
 current proof-step language can express the argument.
 
-The proof-script implementation tracks an execution point. Currently proof
-scripts can start at function entry, advance by one straight-line statement with
-`execute_step();`, pause at a straight-line statement entry with
-`execute_until(statement(N));`, and execute to function exit with
-`execute_rest();`. Future region/statement execution steps should support more
-control-flow shapes, so resource steps such as `observe`, `unfold`, and `fold`
-can happen between code regions.
+The proof-script implementation tracks an execution point. Proof scripts can
+start at function entry, advance by one straight-line statement with
+`execute_step();`, enter a selected C branch, join branch-local proofs at an
+explicit statement point with `advance`, pause at a straight-line statement
+entry with `execute_until(statement(N));`, and execute to function exit with
+`execute_rest();`. Resource steps such as `observe`, `unfold`, and `fold` can
+happen between those execution steps.
 
 At function entry, `views composite(...)` resource requirements are projected
 one step automatically, matching `observe(composite(...))` for immediate

@@ -107,6 +107,30 @@ explicitly enter a selected arm of the next C `if`. Each step proves the
 corresponding truth value of the C condition from current pure facts and moves
 the execution point to the start of the arm without executing its body.
 
+When both proof cases should continue through common code, `advance` gives the
+branch-local execution a shared, explicit postcondition:
+
+```click
+advance(statement(1).exit)
+ensuring {
+    fact y >= 0;
+}
+by {
+    if x >= 0 {
+        execute_then_step();
+        execute_step();
+    } else {
+        execute_else_step();
+        execute_step();
+    }
+}
+execute_step();
+```
+
+Each case must reach exactly the requested statement entry or exit and prove
+every listed pure or resource fact. The remaining proof steps are then written
+once and verified independently from every case.
+
 `apply(...)` instantiates a verified theorem, proves that theorem's proposition
 `requires` clauses from the current proof context, and adds its proposition
 `ensures` clauses as derived facts. It does not change the current resource

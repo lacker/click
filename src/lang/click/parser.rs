@@ -1570,6 +1570,47 @@ impl Parser {
                 else_steps,
             }));
         }
+        if name == "advance" {
+            self.expect(Token::LParen)?;
+            let target = self.parse_program_point_ref()?;
+            self.expect(Token::RParen)?;
+            self.expect_ident_spelling("ensuring")?;
+            self.expect(Token::LBrace)?;
+            let mut assertions = Vec::new();
+            while self.peek() != Some(&Token::RBrace) {
+                let kind = self.expect_ident("advance assertion kind")?;
+                let assertion = match kind.as_str() {
+                    "fact" => ProofAssertion::Fact(self.parse_proposition()?),
+                    "owns" => ProofAssertion::Resource(
+                        self.parse_resource_target(ResourceAccessMode::Own)?,
+                    ),
+                    "views" => ProofAssertion::Resource(
+                        self.parse_resource_target(ResourceAccessMode::View)?,
+                    ),
+                    _ => {
+                        return Err(self.error(format!(
+                            "expected advance assertion `fact`, `owns`, or `views`, got `{kind}`"
+                        )));
+                    }
+                };
+                self.expect(Token::Semicolon)?;
+                assertions.push(assertion);
+            }
+            if assertions.is_empty() {
+                return Err(self.error("`ensuring` block must contain at least one assertion"));
+            }
+            self.expect(Token::RBrace)?;
+            self.expect_ident_spelling("by")?;
+            let steps = self.parse_proof_step_block("`advance` proof")?;
+            if self.peek() == Some(&Token::Semicolon) {
+                self.position += 1;
+            }
+            return Ok(ProofStep::Advance(ProofAdvance {
+                target,
+                assertions,
+                steps,
+            }));
+        }
         let step = match name.as_str() {
             "symbolic_execute" => {
                 self.expect_empty_step_args(&name)?;
