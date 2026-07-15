@@ -1588,13 +1588,13 @@ pub(super) fn verify_structural_loop_proofs(
     click_function_environment: &ClickFunctionEnvironment,
     resource_environment: &ResourceEnvironment,
     theorem_environment: &TheoremEnvironment,
-) -> Result<(), ClickError> {
-    let has_explicit = function_block
+) -> Result<Vec<CVerifiedLoopRule>, ClickError> {
+    let has_structural_loops = function_block
         .structural_clauses()
         .iter()
-        .any(|clause| explicit_loop_preservation_steps(clause).is_some());
-    if !has_explicit {
-        return Ok(());
+        .any(|clause| matches!(clause.region(), CodeRegion::Loop(_)));
+    if !has_structural_loops {
+        return Ok(Vec::new());
     }
 
     let label = format!("{}.loop_preservation", function_block.signature().name());
@@ -1630,6 +1630,7 @@ pub(super) fn verify_structural_loop_proofs(
         arguments: &arguments,
     };
     let mut next_loop_index = 0;
+    let mut verified_loop_rules = Vec::new();
     verify_structural_proofs_forward(
         function.body(),
         vec![StructuralProofContext {
@@ -1638,8 +1639,9 @@ pub(super) fn verify_structural_loop_proofs(
         }],
         &mut next_loop_index,
         &environment,
+        &mut verified_loop_rules,
     )?;
-    Ok(())
+    Ok(verified_loop_rules)
 }
 
 fn explicit_loop_preservation_steps(clause: &StructuralClause) -> Option<&[ProofStep]> {
@@ -1753,20 +1755,21 @@ fn certified_statement_transitions(
     statement: &CStatement,
     function_environment: &CFunctionEnvironment,
     context_label: &str,
-) -> Result<Vec<CertifiedStatementTransition>, ClickError> {
+) -> Result<(Vec<CertifiedStatementTransition>, Option<CVerifiedLoopRule>), ClickError> {
     let assumptions = assumptions_from_propositions(pure_facts);
-    let execution = prove_symbolic_c_statement_verification_paths_with_environment(
-        state.clone(),
-        statement.clone(),
-        assumptions,
-        function_environment.clone(),
-    );
+    let (execution, loop_rule) =
+        prove_symbolic_c_statement_verification_paths_with_environment_and_loop_rule(
+            state.clone(),
+            statement.clone(),
+            assumptions,
+            function_environment.clone(),
+        );
     if let Some(limit) = execution.limit() {
         return Err(ClickError::new(format!(
             "{context_label} hit execution limit {limit:?}"
         )));
     }
-    execution
+    let transitions = execution
         .paths()
         .iter()
         .map(|path| {
@@ -1801,7 +1804,8 @@ fn certified_statement_transitions(
                 pure_facts: successor_facts,
             })
         })
-        .collect()
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok((transitions, loop_rule))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1810,12 +1814,24 @@ fn verify_structural_proofs_forward(
     contexts: Vec<StructuralProofContext>,
     next_loop_index: &mut usize,
     environment: &StructuralProofEnvironment<'_>,
+    verified_loop_rules: &mut Vec<CVerifiedLoopRule>,
 ) -> Result<Vec<StructuralProofContext>, ClickError> {
     match statement {
         CStatement::Seq(first, second) => {
-            let contexts =
-                verify_structural_proofs_forward(first, contexts, next_loop_index, environment)?;
-            verify_structural_proofs_forward(second, contexts, next_loop_index, environment)
+            let contexts = verify_structural_proofs_forward(
+                first,
+                contexts,
+                next_loop_index,
+                environment,
+                verified_loop_rules,
+            )?;
+            verify_structural_proofs_forward(
+                second,
+                contexts,
+                next_loop_index,
+                environment,
+                verified_loop_rules,
+            )
         }
         CStatement::If {
             condition,
@@ -1829,12 +1845,14 @@ fn verify_structural_proofs_forward(
                 then_contexts,
                 next_loop_index,
                 environment,
+                verified_loop_rules,
             )?;
             joined.extend(verify_structural_proofs_forward(
                 else_branch,
                 else_contexts,
                 next_loop_index,
                 environment,
+                verified_loop_rules,
             )?);
             Ok(joined)
         }
@@ -1908,12 +1926,25 @@ fn verify_structural_proofs_forward(
                 iteration_contexts,
                 next_loop_index,
                 environment,
+                verified_loop_rules,
             )?;
 
-            advance_structural_statement(statement, contexts, loop_index, environment)
+            advance_structural_statement(
+                statement,
+                contexts,
+                loop_index,
+                environment,
+                verified_loop_rules,
+            )
         }
         CStatement::Return(_) => Ok(Vec::new()),
-        _ => advance_structural_statement(statement, contexts, *next_loop_index, environment),
+        _ => advance_structural_statement(
+            statement,
+            contexts,
+            *next_loop_index,
+            environment,
+            verified_loop_rules,
+        ),
     }
 }
 
@@ -1949,17 +1980,24 @@ fn advance_structural_statement(
     contexts: Vec<StructuralProofContext>,
     region_index: usize,
     environment: &StructuralProofEnvironment<'_>,
+    verified_loop_rules: &mut Vec<CVerifiedLoopRule>,
 ) -> Result<Vec<StructuralProofContext>, ClickError> {
     let mut advanced = Vec::new();
     for context in contexts {
         let label = format!("structural proof traversal at region {region_index}");
-        for transition in certified_statement_transitions(
+        let (transitions, loop_rule) = certified_statement_transitions(
             &context.state,
             &context.pure_facts,
             statement,
             environment.function_environment,
             &label,
-        )? {
+        )?;
+        if matches!(statement, CStatement::While { .. })
+            && let Some(loop_rule) = loop_rule
+        {
+            verified_loop_rules.push(loop_rule);
+        }
+        for transition in transitions {
             match transition.outcome {
                 CStatementOutcome::Normal(state) => advanced.push(StructuralProofContext {
                     state,
@@ -3615,7 +3653,7 @@ fn execute_step_from_execution_point(
     }
     let current_resources = current_state.resources().facts().to_vec();
     let transition_label = format!("`{claim_label}` proof step {step_index}: `{step_name}`");
-    let transitions = certified_statement_transitions(
+    let (transitions, _) = certified_statement_transitions(
         &current_state,
         available_pure_facts,
         &step_statement,

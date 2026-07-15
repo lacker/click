@@ -12,10 +12,10 @@ use crate::kernel::{
     CExpressionOutcome, CFunction, CFunctionEnvironment, CFunctionOutcome, CFunctionSpecification,
     CLoopEffect, CLoopEffectCheck, CLoopEffectSpan, CLoopInvariantCheck, CMemory, CMemoryRange,
     CMemorySegment, CResource, CResourceAccessMode, CResourceFact, CResourceSpec, CState,
-    CStatement, CStatementOutcome, CType, CValue, ConditionTerm, ExecutionPureFact, Pointer,
-    PointerOffsetTerm, ProofObligation, Proposition, ResourceContext, ResourceContextValidityError,
-    Sort, SpecExpression, SpecMemory, SpecProposition, Term, Theorem, Variable,
-    abstract_c_state_for_join, c_function, c_function_entry_state,
+    CStatement, CStatementOutcome, CType, CValue, CVerifiedLoopRule, ConditionTerm,
+    ExecutionPureFact, Pointer, PointerOffsetTerm, ProofObligation, Proposition, ResourceContext,
+    ResourceContextValidityError, Sort, SpecExpression, SpecMemory, SpecProposition, Term, Theorem,
+    Variable, abstract_c_state_for_join, c_function, c_function_entry_state,
     c_function_outcome_from_statement_outcome, c_function_specification, c_labeled_assert,
     c_loop_invariants_hold_at_back_edge, c_loop_invariants_hold_at_entry,
     c_loop_preservation_contexts, c_pointer_value, c_seq, c_while_with_invariant_and_effect_checks,
@@ -25,7 +25,7 @@ use crate::kernel::{
     prove_symbolic_c_condition_evaluation, prove_symbolic_c_execution_paths_with_environment,
     prove_symbolic_c_function_execution_paths_with_environment,
     prove_symbolic_c_function_verification_paths_with_environment,
-    prove_symbolic_c_statement_verification_paths_with_environment,
+    prove_symbolic_c_statement_verification_paths_with_environment_and_loop_rule,
     substitute_int32_variable_in_proposition,
 };
 use crate::lang::c::syntax::{self, C0Expression, C0Type};
@@ -1124,7 +1124,7 @@ pub fn verify_c0_sources(
             })?;
         check_signature(&function_block.signature, parsed_function, source_path)?;
         validate_structural_clauses(&function_block, parsed_function)?;
-        verify_structural_loop_proofs(
+        let verified_loop_rules = verify_structural_loop_proofs(
             &function_block,
             parsed_function,
             &function_environment,
@@ -1133,6 +1133,9 @@ pub fn verify_c0_sources(
             &resource_environment,
             &theorem_environment,
         )?;
+        let verification_function_environment = function_environment
+            .clone()
+            .with_verified_loop_rules(verified_loop_rules);
         for claim in function_claims(&function_block) {
             let claim_label = function_claim_label(function_block.signature.name(), &claim);
             match claim.proof() {
@@ -1143,7 +1146,7 @@ pub fn verify_c0_sources(
                         parsed_function,
                         &claim,
                         &claim_label,
-                        &function_environment,
+                        &verification_function_environment,
                         &predicate_environment,
                         &click_function_environment,
                         &resource_environment,
@@ -1158,7 +1161,7 @@ pub fn verify_c0_sources(
                         parsed_function,
                         &claim,
                         &claim_label,
-                        &function_environment,
+                        &verification_function_environment,
                         &predicate_environment,
                         &click_function_environment,
                         &resource_environment,
@@ -1173,7 +1176,7 @@ pub fn verify_c0_sources(
                         parsed_function,
                         &claim,
                         &claim_label,
-                        &function_environment,
+                        &verification_function_environment,
                         &predicate_environment,
                         &click_function_environment,
                         &resource_environment,
@@ -1188,7 +1191,7 @@ pub fn verify_c0_sources(
                         parsed_function,
                         &claim,
                         &claim_label,
-                        &function_environment,
+                        &verification_function_environment,
                         &predicate_environment,
                         &click_function_environment,
                         &resource_environment,

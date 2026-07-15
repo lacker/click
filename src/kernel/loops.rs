@@ -110,6 +110,24 @@ pub(super) fn execute_c_statement_verification_paths(
     variables: &mut VerificationVariableGenerator,
 ) -> ExecutionResult<Vec<CStatementExecutionPath>> {
     budget.consume_statement_step()?;
+    if environment.requires_verified_loop_rules()
+        && matches!(
+            statement,
+            CStatement::While {
+                invariant_checks,
+                effect_checks,
+                ..
+            } if !invariant_checks.is_empty() || !effect_checks.is_empty()
+        )
+    {
+        let Some(rule) = environment.applicable_verified_loop_rule(state, statement, assumptions)
+        else {
+            return Ok(Vec::new());
+        };
+        let paths = rule.paths.clone();
+        budget.consume_paths(paths.len())?;
+        return Ok(paths);
+    }
     let paths = match statement {
         CStatement::Seq(first, second) => {
             let mut paths = Vec::new();

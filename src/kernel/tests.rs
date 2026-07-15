@@ -783,6 +783,52 @@ fn call_assign_uses_function_environment() {
 }
 
 #[test]
+fn verified_loop_rule_is_required_and_accepts_stronger_assumptions() {
+    let state = CState::new().with_local("i", int32(0));
+    let statement = c_while_with_invariant_checks(
+        c_less_than(c_variable("i"), c_int32_literal(1)),
+        Vec::new(),
+        vec![CLoopInvariantCheck::new(
+            SpecProposition::Comparison {
+                left: SpecExpression::Value(int32(0)),
+                operator: CComparisonOperator::LessEqual,
+                right: SpecExpression::CExpression(c_variable("i")),
+            },
+            Some("loop entry".to_string()),
+            Some("loop preservation".to_string()),
+        )],
+        c_assign("i", c_add(c_variable("i"), c_int32_literal(1))),
+    );
+    let assumptions = Assumptions::new();
+    let (certified, loop_rule) =
+        prove_symbolic_c_statement_verification_paths_with_environment_and_loop_rule(
+            state.clone(),
+            statement.clone(),
+            assumptions.clone(),
+            CFunctionEnvironment::new(),
+        );
+    let loop_rule = loop_rule.expect("loop verification should produce a rule");
+
+    let reused = prove_symbolic_c_statement_verification_paths_with_environment(
+        state.clone(),
+        statement.clone(),
+        assumptions
+            .clone()
+            .assume_condition(ConditionTerm::Constant(true), true),
+        CFunctionEnvironment::new().with_verified_loop_rules([loop_rule.clone()]),
+    );
+    assert_eq!(reused.paths().len(), certified.paths().len());
+
+    let mismatched = prove_symbolic_c_statement_verification_paths_with_environment(
+        state.with_local("unrelated", int32(0)),
+        statement,
+        assumptions,
+        CFunctionEnvironment::new().with_verified_loop_rules([loop_rule]),
+    );
+    assert!(mismatched.paths().is_empty());
+}
+
+#[test]
 fn unknown_call_assign_is_runtime_error() {
     let state = CState::new();
     let statement = c_call_assign("result", "missing", Vec::new());

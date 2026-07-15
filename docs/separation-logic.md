@@ -202,6 +202,13 @@ facts, or missing prerequisites. Whether the frontier is inside a branch is
 derived from its continuation stack rather than maintained as an independent
 flag.
 
+Structural loop verification packages its abstract exit transitions as an
+opaque kernel `VerifiedLoopRule`. The symbolic values in its entry state stand
+for arbitrary values constrained by the rule's required assumptions. Later
+execution may strengthen those assumptions, but it must apply the registered
+rule when crossing an annotated loop. A missing or incompatible rule is a
+proof failure, not a request to run automatic loop verification again.
+
 `observe(...)`, resource and predicate `unfold(...)`, `fold(...)`,
 `apply(...)`, and `have ... by { ... }` can update the proof context at the
 current pre-exit execution point. This lets deterministic proof steps prepare

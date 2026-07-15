@@ -60,6 +60,17 @@ impl Assumptions {
         facts
     }
 
+    pub(super) fn includes(&self, required: &Self) -> bool {
+        required
+            .condition_facts
+            .iter()
+            .all(|(condition, value)| self.condition_facts.get(condition) == Some(value))
+            && required
+                .prop_facts
+                .iter()
+                .all(|proposition| self.prop_facts.contains(proposition))
+    }
+
     pub(super) fn decide(&self, condition: &ConditionTerm) -> Option<bool> {
         match condition {
             ConditionTerm::Constant(value) => Some(*value),

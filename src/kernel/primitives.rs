@@ -392,9 +392,19 @@ pub struct CFunctionSpecification {
     pub(super) outcome: CFunctionOutcome,
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq, Hash, Ord, PartialOrd)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct CFunctionEnvironment {
     pub(super) functions: BTreeMap<String, CFunction>,
+    pub(super) verified_loop_rules: Vec<CVerifiedLoopRule>,
+    pub(super) require_verified_loop_rules: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CVerifiedLoopRule {
+    pub(super) symbolic_entry_state: CState,
+    pub(super) loop_statement: CStatement,
+    pub(super) required_assumptions: Assumptions,
+    pub(super) paths: Vec<CStatementExecutionPath>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -1658,6 +1668,32 @@ impl CFunctionEnvironment {
 
     pub fn get_function(&self, name: &str) -> Option<&CFunction> {
         self.functions.get(name)
+    }
+
+    pub fn with_verified_loop_rules(
+        mut self,
+        rules: impl IntoIterator<Item = CVerifiedLoopRule>,
+    ) -> Self {
+        self.verified_loop_rules.extend(rules);
+        self.require_verified_loop_rules = true;
+        self
+    }
+
+    pub(super) fn requires_verified_loop_rules(&self) -> bool {
+        self.require_verified_loop_rules
+    }
+
+    pub(super) fn applicable_verified_loop_rule(
+        &self,
+        state: &CState,
+        statement: &CStatement,
+        assumptions: &Assumptions,
+    ) -> Option<&CVerifiedLoopRule> {
+        self.verified_loop_rules.iter().find(|rule| {
+            rule.symbolic_entry_state == *state
+                && rule.loop_statement == *statement
+                && assumptions.includes(&rule.required_assumptions)
+        })
     }
 }
 

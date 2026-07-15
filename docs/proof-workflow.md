@@ -326,6 +326,13 @@ enclosing proof with the loop's abstract exit rule. Later and nested loops are
 therefore checked in their actual enclosing proof context; Click does not
 reconstruct their entry states by executing the function prefix again.
 
+That abstract exit produces an opaque kernel `VerifiedLoopRule` over the
+symbolic loop-entry state and its required assumptions. Subsequent function
+claims must consume the registered rule when they encounter an annotated loop.
+Additional assumptions are allowed, but an incompatible symbolic state or
+missing rule makes verification fail; execution does not fall back to proving
+the loop again.
+
 ## Loop Effects
 
 Whole-loop effects:

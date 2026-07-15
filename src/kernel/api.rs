@@ -807,6 +807,21 @@ pub fn prove_symbolic_c_statement_verification_paths_with_environment(
     assumptions: Assumptions,
     environment: CFunctionEnvironment,
 ) -> SymbolicCExecution {
+    prove_symbolic_c_statement_verification_paths_with_environment_and_loop_rule(
+        state,
+        statement,
+        assumptions,
+        environment,
+    )
+    .0
+}
+
+pub fn prove_symbolic_c_statement_verification_paths_with_environment_and_loop_rule(
+    state: CState,
+    statement: CStatement,
+    assumptions: Assumptions,
+    environment: CFunctionEnvironment,
+) -> (SymbolicCExecution, Option<CVerifiedLoopRule>) {
     let mut budget = ExecutionBudget::default();
     let mut variables = VerificationVariableGenerator::new(1_000_000);
     let paths = match execute_c_statement_verification_paths(
@@ -819,12 +834,21 @@ pub fn prove_symbolic_c_statement_verification_paths_with_environment(
     ) {
         Ok(paths) => paths,
         Err(limit) => {
-            return SymbolicCExecution {
-                paths: Vec::new(),
-                limit: Some(limit),
-            };
+            return (
+                SymbolicCExecution {
+                    paths: Vec::new(),
+                    limit: Some(limit),
+                },
+                None,
+            );
         }
     };
+    let loop_rule = matches!(statement, CStatement::While { .. }).then(|| CVerifiedLoopRule {
+        symbolic_entry_state: state.clone(),
+        loop_statement: statement.clone(),
+        required_assumptions: assumptions.clone(),
+        paths: paths.clone(),
+    });
     let paths = paths
         .into_iter()
         .map(|path| {
@@ -848,7 +872,7 @@ pub fn prove_symbolic_c_statement_verification_paths_with_environment(
         })
         .collect();
 
-    SymbolicCExecution { paths, limit: None }
+    (SymbolicCExecution { paths, limit: None }, loop_rule)
 }
 
 pub fn prove_symbolic_c_function_execution(
