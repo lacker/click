@@ -550,6 +550,90 @@ fn omitted_effect_proof_uses_default_prover() {
 }
 
 #[test]
+fn parses_grouped_function_proof() {
+    let source = r#"
+            verifying "set.c";
+
+            int32 set(int32 p[], int32 value) {
+                consumes p[0..1];
+                mutable p[0..1];
+                produces p[0..1];
+                ensures result == value;
+                ensures p[0] == value;
+            } by {
+                execute_rest();
+                frame();
+                simp();
+            }
+        "#;
+    let file = parse(source).expect("grouped function proof should parse");
+    let function = &file.function_blocks()[0];
+
+    assert_eq!(
+        function.grouped_proof().and_then(Proof::steps),
+        Some(
+            [
+                ProofStep::ExecuteRest,
+                ProofStep::Frame(None),
+                ProofStep::Simp
+            ]
+            .as_slice()
+        )
+    );
+    assert!(matches!(function.effects()[0].proof(), Proof::Default));
+    assert!(matches!(function.ensures()[0].proof(), Proof::Default));
+}
+
+#[test]
+fn rejects_mixed_grouped_and_individual_claim_proofs() {
+    let source = r#"
+            verifying "identity.c";
+
+            int32 identity(int32 value) {
+                ensures result == value by auto;
+            } by {
+                execute_rest();
+                simp();
+            }
+        "#;
+    let error = parse(source).expect_err("proof styles must not be mixed");
+
+    assert!(
+        error
+            .message()
+            .contains("a grouped function proof cannot be combined with individual claim proofs")
+    );
+}
+
+#[test]
+fn grouped_function_proof_checks_every_claim() {
+    let c_source = r#"
+            int32 identity(int32 value) {
+                return value;
+            }
+        "#;
+    let click_source = r#"
+            verifying "identity.c";
+
+            int32 identity(int32 value) {
+                ensures result == value;
+                ensures result != value;
+            } by {
+                execute_rest();
+                simp();
+            }
+        "#;
+    let error = verify_c0_sources(click_source, &[("identity.c", c_source)])
+        .expect_err("every grouped postcondition must be checked");
+
+    assert!(
+        error.message().contains("identity.ensures_1"),
+        "unexpected error: {}",
+        error.message()
+    );
+}
+
+#[test]
 fn omitted_region_proofs_use_default_prover() {
     let source = r#"
             verifying "count.c";
@@ -752,7 +836,7 @@ fn parses_resource_verb_function_clauses() {
                     start: CExpression::Value(int32(0)),
                     end: CExpression::Value(int32(1)),
                 })),
-                proof: Proof::Tactic(Tactic::Auto),
+                proof: Proof::Default,
             },
             EnsureClause {
                 name: None,
@@ -763,7 +847,7 @@ fn parses_resource_verb_function_clauses() {
                     arguments: vec![current_int(9)],
                     parameter_types: vec![C0Type::Int32],
                 }),
-                proof: Proof::Tactic(Tactic::Auto),
+                proof: Proof::Default,
             },
         ]
     );

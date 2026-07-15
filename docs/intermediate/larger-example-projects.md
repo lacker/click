@@ -45,8 +45,8 @@ pipeline.
 
 The pipeline uses verified opaque call summaries for all operations, including
 calls that consume and produce memory-backed composite resources. The project
-README records the remaining duplicated execution scripts for separate
-postconditions.
+uses one grouped execution proof per function so effects, produced resources,
+and pure postconditions share one execution replay.
 
 ## How To Read An Example Project
 

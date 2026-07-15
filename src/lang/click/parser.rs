@@ -665,6 +665,23 @@ impl Parser {
             }
         }
         self.expect(Token::RBrace)?;
+        let grouped_proof = if self.peek_ident() == Some("by") {
+            let proof = self.parse_by_clause()?;
+            if effects
+                .iter()
+                .any(|clause| !matches!(clause.proof(), Proof::Default))
+                || ensures
+                    .iter()
+                    .any(|clause| !matches!(clause.proof(), Proof::Default))
+            {
+                return Err(self.error(
+                    "a grouped function proof cannot be combined with individual claim proofs",
+                ));
+            }
+            Some(proof)
+        } else {
+            None
+        };
         self.current_struct_params = previous_struct_params;
 
         Ok(FunctionBlock {
@@ -673,6 +690,7 @@ impl Parser {
             structural_clauses,
             effects,
             ensures,
+            grouped_proof,
         })
     }
 
@@ -1585,7 +1603,7 @@ impl Parser {
             self.parse_by_clause()
         } else {
             self.expect(Token::Semicolon)?;
-            Ok(Proof::Tactic(Tactic::Auto))
+            Ok(Proof::Default)
         }
     }
 

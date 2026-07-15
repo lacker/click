@@ -183,7 +183,7 @@ fn verify_theorem_ensure(
     })?;
 
     match ensure_clause.proof() {
-        Proof::Tactic(Tactic::Auto) => {
+        Proof::Default | Proof::Tactic(Tactic::Auto) => {
             prove_pure_theorem_goal(
                 claim_label,
                 "auto",
@@ -2189,6 +2189,7 @@ fn verify_one_loop_preservation_proof(
         proof: Proof::Tactic(Tactic::Auto),
     };
     let dummy_claim = FunctionClaimRef::Ensure(0, &dummy_ensure);
+    let proof_claims = [dummy_claim];
     let program = build_internal_proof(steps, &claim_label)?;
     let sentinel = CStatement::Return(CExpression::Value(int32(0)));
     let remaining = c_seq(body.clone(), sentinel.clone());
@@ -2224,7 +2225,7 @@ fn verify_one_loop_preservation_proof(
         },
         environment.function_block,
         environment.parsed_function,
-        &dummy_claim,
+        &proof_claims,
         &claim_label,
         environment.function_environment,
         environment.predicate_environment,
@@ -2436,7 +2437,7 @@ fn prove_pure_proposition_at_current_point(
 ) -> Result<Proposition, ClickError> {
     let (proof_cases, tactic_simp) = match proof {
         Proof::Steps(steps) => (expand_proof_if_cases(steps, claim_label)?, false),
-        Proof::Tactic(Tactic::Auto | Tactic::Simp) => (
+        Proof::Default | Proof::Tactic(Tactic::Auto | Tactic::Simp) => (
             vec![ExpandedProofCase {
                 steps: Vec::new(),
                 assumptions: Vec::new(),
@@ -2746,6 +2747,7 @@ pub(super) fn prove_claim_by_steps(
         click_function_environment,
         resource_environment,
     )?;
+    let proof_claims = [*claim];
     let contexts = execute_internal_proof(
         &program,
         ProofReplayContext {
@@ -2759,7 +2761,7 @@ pub(super) fn prove_claim_by_steps(
         },
         function_block,
         parsed_function,
-        claim,
+        &proof_claims,
         claim_label,
         function_environment,
         predicate_environment,
@@ -2797,11 +2799,112 @@ pub(super) fn prove_claim_by_steps(
 }
 
 #[allow(clippy::too_many_arguments)]
+pub(super) fn prove_claims_by_grouped_steps(
+    source_path: &str,
+    function_block: &FunctionBlock,
+    parsed_function: &syntax::C0Function,
+    claims: &[FunctionClaimRef<'_>],
+    function_environment: &CExecutionEnvironment,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    resource_environment: &ResourceEnvironment,
+    theorem_environment: &TheoremEnvironment,
+    steps: &[ProofStep],
+) -> Result<Vec<VerifiedCTheorem>, ClickError> {
+    let proof_label = format!("{}.contract", function_block.signature().name());
+    if claims.is_empty() {
+        return Err(ClickError::new(format!(
+            "`{proof_label}` grouped proof has no contract claims"
+        )));
+    }
+    if steps.is_empty() {
+        return Err(ClickError::new(format!(
+            "`{proof_label}` has an empty grouped proof-step script"
+        )));
+    }
+    let program = build_internal_proof(steps, &proof_label)?;
+    let (state, arguments, pure_facts) = initial_claim_context(
+        function_block,
+        parsed_function,
+        resource_environment,
+        predicate_environment,
+        click_function_environment,
+        &proof_label,
+    )?;
+    let function = annotated_function(
+        function_block,
+        parsed_function,
+        &state,
+        &arguments,
+        predicate_environment,
+        click_function_environment,
+        resource_environment,
+    )?;
+    let contexts = execute_internal_proof(
+        &program,
+        ProofReplayContext {
+            state,
+            pure_facts,
+            replay: ProofStepReplayState {
+                source_layout: SourceExecutionLayout::new(parsed_function.body()),
+                ..ProofStepReplayState::default()
+            },
+            branch_path: Vec::new(),
+        },
+        function_block,
+        parsed_function,
+        claims,
+        &proof_label,
+        function_environment,
+        predicate_environment,
+        click_function_environment,
+        resource_environment,
+        theorem_environment,
+        &function,
+        &arguments,
+    )?;
+
+    let mut verified = Vec::new();
+    for context in contexts {
+        for claim in claims {
+            let claim_label = function_claim_label(function_block.signature().name(), claim);
+            let mut claim_context = context.clone();
+            if matches!(claim, FunctionClaimRef::Effect(_, _)) {
+                // A grouped proof closes effect goals with its validated frame steps.
+                // `simp` applies to the ensure goals that share this execution replay.
+                claim_context.replay.simp = false;
+            }
+            for theorem in finish_proof_replay(
+                claim_context,
+                source_path,
+                function_block,
+                parsed_function,
+                claim,
+                &claim_label,
+                function_environment,
+                predicate_environment,
+                click_function_environment,
+                resource_environment,
+                theorem_environment,
+                &function,
+                &arguments,
+                steps,
+            )? {
+                if !verified.contains(&theorem) {
+                    verified.push(theorem);
+                }
+            }
+        }
+    }
+    Ok(verified)
+}
+
+#[allow(clippy::too_many_arguments)]
 fn replay_linear_steps(
     context: ProofReplayContext,
     function_block: &FunctionBlock,
     parsed_function: &syntax::C0Function,
-    claim: &FunctionClaimRef<'_>,
+    claims: &[FunctionClaimRef<'_>],
     claim_label: &str,
     function_environment: &CExecutionEnvironment,
     predicate_environment: &PredicateEnvironment,
@@ -2987,31 +3090,50 @@ fn replay_linear_steps(
                         resolve_code_region_ref(function_block, region_ref, claim_label, step_index)
                     })
                     .transpose()?;
-                validate_frame_code_region(
-                    function_block,
-                    parsed_function,
-                    code_region,
-                    claim,
-                    claim_label,
-                    step_index,
-                )?;
-                match code_region {
-                    None | Some(CodeRegion::Function) => {
-                        validate_function_frame_step(
-                            replay.execution().expect("execution should exist"),
-                            claim,
+                let effect_claims = claims
+                    .iter()
+                    .filter(|claim| matches!(claim, FunctionClaimRef::Effect(_, _)))
+                    .collect::<Vec<_>>();
+                if effect_claims.is_empty() {
+                    validate_frame_code_region(
+                        function_block,
+                        parsed_function,
+                        code_region,
+                        &claims[0],
+                        claim_label,
+                        step_index,
+                    )?;
+                }
+                for claim in effect_claims {
+                    validate_frame_code_region(
+                        function_block,
+                        parsed_function,
+                        code_region,
+                        claim,
+                        claim_label,
+                        step_index,
+                    )?;
+                    match code_region {
+                        None | Some(CodeRegion::Function) => {
+                            validate_function_frame_step(
+                                replay.execution().expect("execution should exist"),
+                                claim,
+                                claim_label,
+                                step_index,
+                                parsed_function.parameters(),
+                                &arguments,
+                                &state,
+                                &requirement_pure_facts,
+                            )?;
+                        }
+                        Some(CodeRegion::Loop(_)) => require_verification_execution(
+                            &replay,
                             claim_label,
                             step_index,
-                            parsed_function.parameters(),
-                            &arguments,
-                            &state,
-                            &requirement_pure_facts,
-                        )?;
+                            "frame",
+                        )?,
+                        Some(CodeRegion::Statement(_)) => {}
                     }
-                    Some(CodeRegion::Loop(_)) => {
-                        require_verification_execution(&replay, claim_label, step_index, "frame")?;
-                    }
-                    Some(CodeRegion::Statement(_)) => {}
                 }
                 replay.frames.insert(region_ref.clone());
             }
@@ -3145,7 +3267,7 @@ fn execute_internal_proof(
     context: ProofReplayContext,
     function_block: &FunctionBlock,
     parsed_function: &syntax::C0Function,
-    claim: &FunctionClaimRef<'_>,
+    claims: &[FunctionClaimRef<'_>],
     claim_label: &str,
     function_environment: &CExecutionEnvironment,
     predicate_environment: &PredicateEnvironment,
@@ -3166,7 +3288,7 @@ fn execute_internal_proof(
                 context,
                 function_block,
                 parsed_function,
-                claim,
+                claims,
                 claim_label,
                 function_environment,
                 predicate_environment,
@@ -3183,7 +3305,7 @@ fn execute_internal_proof(
                 context,
                 function_block,
                 parsed_function,
-                claim,
+                claims,
                 claim_label,
                 function_environment,
                 predicate_environment,
@@ -3227,7 +3349,7 @@ fn execute_internal_proof(
                     branch_context,
                     function_block,
                     parsed_function,
-                    claim,
+                    claims,
                     claim_label,
                     function_environment,
                     predicate_environment,
@@ -3254,7 +3376,7 @@ fn execute_internal_proof(
                 context,
                 function_block,
                 parsed_function,
-                claim,
+                claims,
                 claim_label,
                 function_environment,
                 predicate_environment,
@@ -3309,7 +3431,7 @@ fn execute_internal_proof(
                 joined_context,
                 function_block,
                 parsed_function,
-                claim,
+                claims,
                 claim_label,
                 function_environment,
                 predicate_environment,

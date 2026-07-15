@@ -36,8 +36,9 @@ so folding either resource tests dependent composite-resource definitions.
   ownership and vector metadata.
 - `vector_push` transitions an empty vector to a nonempty vector.
 - `vector_clear` transitions a nonempty vector back to an empty vector.
-- `vector_pipeline` calls every operation through its verified contract. Each
-  call advances as one execution step without unfolding the callee body.
+- `vector_pipeline` composes the mutating and indexed operations through their
+  verified contracts. Each call advances as one execution step without
+  unfolding the callee body.
 
 The integration test in `tests/examples.rs` verifies every C file against
 `vector.click`.
@@ -48,8 +49,9 @@ The caller supplies the backing array, capacity is at least one, and the example
 does not allocate, free, resize, or handle a full vector. Those operations need
 resource-algebra features beyond composite resources.
 
-The example still exposes one proof-system limitation: proving a produced
-resource and a pure result repeats much of the same execution proof.
+Functions with several effects, produced resources, and pure postconditions
+use one trailing grouped proof. Click executes each function body once and
+checks every contract claim from that shared proof state.
 
 The contracts intentionally state precise mutation footprints and memory
 postconditions. The pipeline can therefore rely on a setter's result without

@@ -90,6 +90,11 @@ pub(super) fn expand_declared_resource_clauses(
             .drain(..)
             .map(|clause| expand_declared_resource_structural_clause(clause, &resource_definitions))
             .collect::<Result<Vec<_>, _>>()?;
+        function.grouped_proof = function
+            .grouped_proof
+            .take()
+            .map(|proof| expand_declared_resource_proof(proof, &resource_definitions))
+            .transpose()?;
     }
 
     for theorem in &mut file.theorem_definitions {
@@ -235,6 +240,7 @@ fn expand_declared_resource_proof(
     resource_definitions: &BTreeMap<String, DeclaredResourceInfo>,
 ) -> Result<Proof, ClickError> {
     match proof {
+        Proof::Default => Ok(proof),
         Proof::Tactic(_) => Ok(proof),
         Proof::Steps(steps) => Ok(Proof::Steps(
             steps
@@ -2069,6 +2075,7 @@ fn validate_resource_subject_expression_types(
 
 fn validate_pure_theorem_proof(theorem_name: &str, proof: &Proof) -> Result<(), ClickError> {
     match proof {
+        Proof::Default => Ok(()),
         Proof::Tactic(Tactic::Auto | Tactic::Simp) => Ok(()),
         Proof::Tactic(Tactic::Frame) => Err(ClickError::new(format!(
             "`frame` is not available in the pure proof for theorem `{theorem_name}`"

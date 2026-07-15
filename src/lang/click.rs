@@ -115,6 +115,7 @@ pub struct FunctionBlock {
     structural_clauses: Vec<StructuralClause>,
     effects: Vec<EffectClause>,
     ensures: Vec<EnsureClause>,
+    grouped_proof: Option<Proof>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -494,6 +495,7 @@ impl fmt::Display for ComparisonOperator {
 /// fixed deterministic sequence of axiom invocations.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Proof {
+    Default,
     Tactic(Tactic),
     Steps(Vec<ProofStep>),
 }
@@ -857,6 +859,10 @@ impl FunctionBlock {
     pub fn ensures(&self) -> &[EnsureClause] {
         &self.ensures
     }
+
+    pub fn grouped_proof(&self) -> Option<&Proof> {
+        self.grouped_proof.as_ref()
+    }
 }
 
 impl FunctionSignature {
@@ -1008,7 +1014,7 @@ impl StructuralItem {
 
 impl Proof {
     pub fn is_auto_tactic(&self) -> bool {
-        matches!(self, Self::Tactic(Tactic::Auto))
+        matches!(self, Self::Default | Self::Tactic(Tactic::Auto))
     }
 
     pub fn is_frame_tactic(&self) -> bool {
@@ -1021,6 +1027,7 @@ impl Proof {
 
     fn unfold_step_names(&self) -> Vec<String> {
         match self {
+            Self::Default | Self::Tactic(_) => Vec::new(),
             Self::Steps(steps) => steps
                 .iter()
                 .filter_map(|step| match step {
@@ -1028,12 +1035,12 @@ impl Proof {
                     _ => None,
                 })
                 .collect(),
-            Self::Tactic(_) => Vec::new(),
         }
     }
 
     pub fn tactic(&self) -> Option<&Tactic> {
         match self {
+            Self::Default => None,
             Self::Tactic(tactic) => Some(tactic),
             Self::Steps(_) => None,
         }
@@ -1041,6 +1048,7 @@ impl Proof {
 
     pub fn steps(&self) -> Option<&[ProofStep]> {
         match self {
+            Self::Default => None,
             Self::Tactic(_) => None,
             Self::Steps(steps) => Some(steps),
         }
@@ -1174,66 +1182,95 @@ pub fn verify_c0_sources(
             claims.push(FunctionClaimRef::Ensure(0, &implicit_safety_clause));
         }
         let mut function_verified = Vec::new();
-        for claim in claims {
-            let claim_label = if has_explicit_claims {
-                function_claim_label(function_block.signature.name(), &claim)
-            } else {
-                format!("{}.body_safety", function_block.signature.name())
+        if let Some(grouped_proof) = function_block.grouped_proof() {
+            if !has_explicit_claims {
+                return Err(ClickError::new(format!(
+                    "grouped proof for `{}` requires at least one effect or postcondition",
+                    function_block.signature().name()
+                )));
+            }
+            let Proof::Steps(steps) = grouped_proof else {
+                return Err(ClickError::new(format!(
+                    "grouped proof for `{}` must use an explicit `by {{ ... }}` proof-step block",
+                    function_block.signature().name()
+                )));
             };
-            let theorems = match claim.proof() {
-                Proof::Tactic(Tactic::Auto) => prove_claim_by_auto(
-                    source_path,
-                    &function_block,
-                    parsed_function,
-                    &claim,
-                    &claim_label,
-                    &verification_function_environment,
-                    &predicate_environment,
-                    &click_function_environment,
-                    &resource_environment,
-                    &theorem_environment,
-                )?,
-                Proof::Tactic(Tactic::Frame) => prove_claim_by_frame(
-                    source_path,
-                    &function_block,
-                    parsed_function,
-                    &claim,
-                    &claim_label,
-                    &verification_function_environment,
-                    &predicate_environment,
-                    &click_function_environment,
-                    &resource_environment,
-                    &theorem_environment,
-                )?,
-                Proof::Tactic(Tactic::Simp) => prove_claim_by_simp(
-                    source_path,
-                    &function_block,
-                    parsed_function,
-                    &claim,
-                    &claim_label,
-                    &verification_function_environment,
-                    &predicate_environment,
-                    &click_function_environment,
-                    &resource_environment,
-                    &theorem_environment,
-                )?,
-                Proof::Steps(steps) => prove_claim_by_steps(
-                    source_path,
-                    &function_block,
-                    parsed_function,
-                    &claim,
-                    &claim_label,
-                    &verification_function_environment,
-                    &predicate_environment,
-                    &click_function_environment,
-                    &resource_environment,
-                    &theorem_environment,
-                    steps,
-                )?,
-            };
+            let theorems = prove_claims_by_grouped_steps(
+                source_path,
+                &function_block,
+                parsed_function,
+                &claims,
+                &verification_function_environment,
+                &predicate_environment,
+                &click_function_environment,
+                &resource_environment,
+                &theorem_environment,
+                steps,
+            )?;
             function_verified.extend(theorems.iter().cloned());
-            if has_explicit_claims {
-                verified.extend(theorems);
+            verified.extend(theorems);
+        } else {
+            for claim in claims {
+                let claim_label = if has_explicit_claims {
+                    function_claim_label(function_block.signature.name(), &claim)
+                } else {
+                    format!("{}.body_safety", function_block.signature.name())
+                };
+                let theorems = match claim.proof() {
+                    Proof::Default | Proof::Tactic(Tactic::Auto) => prove_claim_by_auto(
+                        source_path,
+                        &function_block,
+                        parsed_function,
+                        &claim,
+                        &claim_label,
+                        &verification_function_environment,
+                        &predicate_environment,
+                        &click_function_environment,
+                        &resource_environment,
+                        &theorem_environment,
+                    )?,
+                    Proof::Tactic(Tactic::Frame) => prove_claim_by_frame(
+                        source_path,
+                        &function_block,
+                        parsed_function,
+                        &claim,
+                        &claim_label,
+                        &verification_function_environment,
+                        &predicate_environment,
+                        &click_function_environment,
+                        &resource_environment,
+                        &theorem_environment,
+                    )?,
+                    Proof::Tactic(Tactic::Simp) => prove_claim_by_simp(
+                        source_path,
+                        &function_block,
+                        parsed_function,
+                        &claim,
+                        &claim_label,
+                        &verification_function_environment,
+                        &predicate_environment,
+                        &click_function_environment,
+                        &resource_environment,
+                        &theorem_environment,
+                    )?,
+                    Proof::Steps(steps) => prove_claim_by_steps(
+                        source_path,
+                        &function_block,
+                        parsed_function,
+                        &claim,
+                        &claim_label,
+                        &verification_function_environment,
+                        &predicate_environment,
+                        &click_function_environment,
+                        &resource_environment,
+                        &theorem_environment,
+                        steps,
+                    )?,
+                };
+                function_verified.extend(theorems.iter().cloned());
+                if has_explicit_claims {
+                    verified.extend(theorems);
+                }
             }
         }
         let contract_function = function_environment

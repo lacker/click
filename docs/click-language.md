@@ -38,6 +38,30 @@ the current pure facts must prove `0 <= value <= 255`.
 Each `ensures` clause is a separate guarantee. A guarantee may be labeled with
 `label:`. Omitting a proof clause uses the default prover, currently `auto`.
 
+A function with several effect and postcondition clauses may instead use one
+grouped execution proof after the contract block:
+
+```click
+int32 set_first(int32 p[], int32 value) {
+    consumes p[0..1];
+    mutable p[0..1];
+    produces p[0..1];
+    ensures result == value;
+    ensures p[0] == value;
+} by {
+    execute_rest();
+    frame();
+    simp();
+}
+```
+
+The trailing block executes the function once and proves every listed claim
+from that shared replay. `frame()` discharges the effect claims, while
+`simp()` and resource steps discharge the postconditions. A function uses
+either this grouped form or per-claim `by` clauses; the two forms cannot be
+mixed. Structural region clauses, including loop proofs, retain their own
+proof blocks.
+
 ## Pure Theorems
 
 Pure theorem declarations prove Click propositions without attaching the proof

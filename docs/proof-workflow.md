@@ -21,6 +21,30 @@ entry; loop preservation is an execution proof of one arbitrary iteration.
 Together they justify the loop rule used by the execution proof of the
 enclosing function region.
 
+For contracts with several claims, a trailing `by { ... }` block is one
+grouped execution proof of the function contract:
+
+```click
+int32 set_first(int32 p[], int32 value) {
+    consumes p[0..1];
+    mutable p[0..1];
+    produces p[0..1];
+    ensures result == value;
+    ensures p[0] == value;
+} by {
+    execute_rest();
+    frame();
+    simp();
+}
+```
+
+Click replays the C region once. Every effect and postcondition is then checked
+against the resulting shared proof state. Goal-specific closing steps still
+have their normal roles: `frame()` closes effect goals, and `simp()` or
+resource reasoning closes postconditions. Per-claim proof clauses remain
+available for independent proofs, but cannot be mixed with a grouped proof in
+the same function.
+
 ## Tactics
 
 Currently accepted tactics:
@@ -124,7 +148,9 @@ Current proof steps:
 - `simp();`: request deterministic simplification when the proof block is
   checked.
 
-The end of a `by { ... }` block checks the overall claim.
+The end of a per-claim `by { ... }` block checks that claim. The end of a
+trailing grouped function block checks every effect and postcondition in the
+contract.
 
 Explicit C branch execution composes with proof-level case analysis:
 

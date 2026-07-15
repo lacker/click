@@ -30,17 +30,17 @@ int32 vector_init(struct vector* owner, int32 data[], int32 capacity) {
     requires 1 <= capacity;
     consumes owner[0..4];
     consumes data[0..capacity];
-    mutable_field(owner->len), (owner->cap), (owner->data) by frame;
-
-    produces empty_vector(owner) by {
-        execute_rest();
-        fold(empty_vector(owner));
-    }
-
-    ensures result == 0 by auto;
-    ensures owner->len == 0 by auto;
-    ensures owner->cap == capacity by auto;
-    ensures owner->data == data by auto;
+    mutable_field(owner->len), (owner->cap), (owner->data);
+    produces empty_vector(owner);
+    ensures result == 0;
+    ensures owner->len == 0;
+    ensures owner->cap == capacity;
+    ensures owner->data == data;
+} by {
+    execute_rest();
+    fold(empty_vector(owner));
+    frame();
+    simp();
 }
 
 int32 vector_len(struct vector* owner) {
@@ -60,112 +60,49 @@ int32 vector_get(struct vector* owner, int32 index) {
 int32 vector_set(struct vector* owner, int32 index, int32 value) {
     requires 0 <= index;
     requires index < owner->len;
-    mutable (owner->data)[index..index + 1] by {
-        unfold(vector(owner));
-        execute_rest();
-        frame();
-    }
-
-    owns vector(owner) by {
-        unfold(vector(owner));
-        execute_rest();
-        fold(vector(owner));
-    }
-
-    ensures result == value by {
-        unfold(vector(owner));
-        execute_rest();
-        fold(vector(owner));
-        simp();
-    }
-    ensures (owner->data)[index] == value by {
-        unfold(vector(owner));
-        execute_rest();
-        fold(vector(owner));
-        simp();
-    }
-    ensures owner->len == old(owner->len) by {
-        unfold(vector(owner));
-        execute_rest();
-        simp();
-    }
+    mutable (owner->data)[index..index + 1];
+    owns vector(owner);
+    ensures result == value;
+    ensures (owner->data)[index] == value;
+    ensures owner->len == old(owner->len);
+} by {
+    unfold(vector(owner));
+    execute_rest();
+    fold(vector(owner));
+    frame();
+    simp();
 }
 
 int32 vector_push(struct vector* owner, int32 value) {
     consumes empty_vector(owner);
-    mutable owner[0..1], (owner->data)[0..1] by {
-        unfold(empty_vector(owner));
-        have owner->len < owner->cap by simp;
-        execute_until(statement(8));
-        have owner->len == 1 by simp;
-        execute_rest();
-        frame();
-    }
-
-    produces vector(owner) by {
-        unfold(empty_vector(owner));
-        have owner->len < owner->cap by simp;
-        execute_until(statement(8));
-        have owner->len == 1 by simp;
-        fold(vector(owner));
-        execute_rest();
-    }
-
-    ensures result == 1 by {
-        unfold(empty_vector(owner));
-        have owner->len < owner->cap by simp;
-        execute_until(statement(8));
-        have owner->len == 1 by simp;
-        fold(vector(owner));
-        execute_rest();
-        simp();
-    }
-    ensures owner->len == 1 by {
-        unfold(empty_vector(owner));
-        have owner->len < owner->cap by simp;
-        execute_until(statement(8));
-        have owner->len == 1 by simp;
-        fold(vector(owner));
-        execute_rest();
-        simp();
-    }
-    ensures (owner->data)[0] == value by {
-        unfold(empty_vector(owner));
-        have owner->len < owner->cap by simp;
-        execute_until(statement(8));
-        have owner->len == 1 by simp;
-        fold(vector(owner));
-        execute_rest();
-        simp();
-    }
+    mutable owner[0..1], (owner->data)[0..1];
+    produces vector(owner);
+    ensures result == 1;
+    ensures owner->len == 1;
+    ensures (owner->data)[0] == value;
+} by {
+    unfold(empty_vector(owner));
+    have owner->len < owner->cap by simp;
+    execute_until(statement(8));
+    have owner->len == 1 by simp;
+    fold(vector(owner));
+    execute_rest();
+    frame();
+    simp();
 }
 
 int32 vector_clear(struct vector* owner) {
     consumes vector(owner);
-    mutable_field(owner->len) by {
-        unfold(vector(owner));
-        execute_rest();
-        frame();
-    }
-
-    produces empty_vector(owner) by {
-        unfold(vector(owner));
-        execute_rest();
-        fold(empty_vector(owner));
-    }
-
-    ensures result == 0 by {
-        unfold(vector(owner));
-        execute_rest();
-        fold(empty_vector(owner));
-        simp();
-    }
-    ensures owner->len == 0 by {
-        unfold(vector(owner));
-        execute_rest();
-        fold(empty_vector(owner));
-        simp();
-    }
+    mutable_field(owner->len);
+    produces empty_vector(owner);
+    ensures result == 0;
+    ensures owner->len == 0;
+} by {
+    unfold(vector(owner));
+    execute_rest();
+    fold(empty_vector(owner));
+    frame();
+    simp();
 }
 
 int32 vector_pipeline(
@@ -179,30 +116,18 @@ int32 vector_pipeline(
     consumes owner[0..4];
     consumes data[0..capacity];
 
-    produces empty_vector(owner) by {
-        execute_step();
-        execute_step();
-        execute_step();
-        execute_step();
-        execute_step();
-        execute_step();
-        observe(vector(owner));
-        execute_step();
-        execute_step();
-        execute_step();
-    }
-
-    ensures result == replacement by {
-        execute_step();
-        execute_step();
-        execute_step();
-        execute_step();
-        execute_step();
-        execute_step();
-        observe(vector(owner));
-        execute_step();
-        execute_step();
-        execute_step();
-        simp();
-    }
+    produces empty_vector(owner);
+    ensures result == replacement;
+} by {
+    execute_step();
+    execute_step();
+    execute_step();
+    execute_step();
+    execute_step();
+    execute_step();
+    observe(vector(owner));
+    execute_step();
+    execute_step();
+    execute_step();
+    simp();
 }
