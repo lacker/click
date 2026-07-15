@@ -35,19 +35,13 @@ verifying "buffer_set_first.c";
 
 int32 buffer_set_first(struct owner* owner, int32 value) {
     consumes owned_buffer(owner);
-
-    produces owned_buffer(owner) by {
-        unfold(owned_buffer(owner));
-        execute_rest();
-        fold(owned_buffer(owner));
-    }
-
-    ensures result == value by {
-        unfold(owned_buffer(owner));
-        execute_rest();
-        fold(owned_buffer(owner));
-        simp();
-    }
+    produces owned_buffer(owner);
+    ensures result == value;
+} by {
+    unfold(owned_buffer(owner));
+    execute_rest();
+    fold(owned_buffer(owner));
+    simp();
 }
 ```
 

@@ -45,6 +45,11 @@ resource reasoning closes postconditions. Per-claim proof clauses remain
 available for independent proofs, but cannot be mixed with a grouped proof in
 the same function.
 
+The shorthand `} by auto;` builds one deterministic grouped script:
+`execute_rest()`, declared loop checks, `frame()` when the contract has effects,
+and `simp()` when it has postconditions. Composite-resource folds and theorem
+applications remain explicit.
+
 After execution reaches the return frontier, grouped proof steps retain source
 order. `fold`, `apply`, and `have` transform the current finalized path;
 `frame()` closes the effect goals then provable, and `simp()` closes the
@@ -64,9 +69,10 @@ by frame;
 
 Omitting a proof clause uses `auto`.
 
-`auto` is the broad orchestration tactic. It runs the current symbolic
-execution, loop-VC, effect-checking, simplification, and bounded-execution
-fallback paths as needed.
+For an individual claim, `auto` is the broad orchestration tactic. It chooses
+between verification execution and bounded execution, then records the proof
+steps that succeeded. Grouped `auto` has the fixed expansion described above,
+so grouped proofs do not depend on proof search.
 
 `simp` is deterministic local normalization. It is useful for straight-line
 postconditions and unfolded predicate goals. It simplifies logical connectives,

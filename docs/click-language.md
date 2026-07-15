@@ -62,6 +62,11 @@ either this grouped form or per-claim `by` clauses; the two forms cannot be
 mixed. Structural region clauses, including loop proofs, retain their own
 proof blocks.
 
+For contracts that need only ordinary execution, loop checks, framing, and
+simplification, the grouped proof can be written `} by auto;`. This is a fixed
+expansion of those steps. It does not search through composite-resource folds
+or theorem applications; use an explicit grouped block for those operations.
+
 Goal-specific pure reasoning can be isolated with `have`, including after the
 function reaches its return frontier:
 

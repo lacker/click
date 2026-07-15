@@ -37,11 +37,11 @@ int32 fill_n_segment_invariant(int32 p[], int32 n) {
             simp();
         }
     }
-    ensures returns_n: result == n by auto;
+    ensures returns_n: result == n;
     ensures filled_segment: forall (int32 k) {
         0 <= k and k < n implies p[k] == k
-    } by auto;
-}
+    };
+} by auto;
 ```
 
 ```expect

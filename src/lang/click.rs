@@ -1189,24 +1189,37 @@ pub fn verify_c0_sources(
                     function_block.signature().name()
                 )));
             }
-            let Proof::Steps(steps) = grouped_proof else {
-                return Err(ClickError::new(format!(
-                    "grouped proof for `{}` must use an explicit `by {{ ... }}` proof-step block",
-                    function_block.signature().name()
-                )));
+            let theorems = match grouped_proof {
+                Proof::Tactic(Tactic::Auto) => prove_claims_by_grouped_auto(
+                    source_path,
+                    &function_block,
+                    parsed_function,
+                    &claims,
+                    &verification_function_environment,
+                    &predicate_environment,
+                    &click_function_environment,
+                    &resource_environment,
+                    &theorem_environment,
+                )?,
+                Proof::Steps(steps) => prove_claims_by_grouped_steps(
+                    source_path,
+                    &function_block,
+                    parsed_function,
+                    &claims,
+                    &verification_function_environment,
+                    &predicate_environment,
+                    &click_function_environment,
+                    &resource_environment,
+                    &theorem_environment,
+                    steps,
+                )?,
+                Proof::Default | Proof::Tactic(Tactic::Simp | Tactic::Frame) => {
+                    return Err(ClickError::new(format!(
+                        "grouped proof for `{}` must use `by auto;` or an explicit `by {{ ... }}` proof-step block",
+                        function_block.signature().name()
+                    )));
+                }
             };
-            let theorems = prove_claims_by_grouped_steps(
-                source_path,
-                &function_block,
-                parsed_function,
-                &claims,
-                &verification_function_environment,
-                &predicate_environment,
-                &click_function_environment,
-                &resource_environment,
-                &theorem_environment,
-                steps,
-            )?;
             function_verified.extend(theorems.iter().cloned());
             verified.extend(theorems);
         } else {

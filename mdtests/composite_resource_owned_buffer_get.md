@@ -34,18 +34,13 @@ verifying "buffer_get_first.c";
 
 int32 buffer_get_first(struct owner* owner) {
     consumes owned_buffer(owner);
-
-    ensures result == (owner->data)[0] by {
-        unfold(owned_buffer(owner));
-        execute_rest();
-        simp();
-    }
-
-    produces owned_buffer(owner) by {
-        unfold(owned_buffer(owner));
-        execute_rest();
-        fold(owned_buffer(owner));
-    }
+    ensures result == (owner->data)[0];
+    produces owned_buffer(owner);
+} by {
+    unfold(owned_buffer(owner));
+    execute_rest();
+    fold(owned_buffer(owner));
+    simp();
 }
 ```
 

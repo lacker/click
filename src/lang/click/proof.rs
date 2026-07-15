@@ -1496,26 +1496,21 @@ struct ProofStepReplayState {
     loop_vcs: BTreeSet<usize>,
     frames: BTreeSet<Option<CodeRegionRef>>,
     unfolded_predicates: Vec<String>,
-    deferred_pure_steps: Vec<DeferredPureStep>,
-    grouped_post_steps: Vec<(usize, GroupedPostStep)>,
-    resource_folds: Vec<ResourceClause>,
+    post_execution_steps: Vec<(usize, PostExecutionStep)>,
     case_assumptions: Vec<(usize, ClickProposition, bool)>,
-    simp: bool,
     region_proof: bool,
-    grouped_proof: bool,
+    ordered_finalization: bool,
+    grouped_contract: bool,
 }
 
 #[derive(Clone)]
-enum DeferredPureStep {
-    Apply(usize, TheoremApplication),
-    Have(usize, ProofHave),
-}
-
-#[derive(Clone)]
-enum GroupedPostStep {
+enum PostExecutionStep {
     Fold(ResourceClause),
+    UnfoldPredicate(String),
     Apply(TheoremApplication),
     Have(ProofHave),
+    Choose(ProofChoice),
+    Witness(ProofWitness),
     Frame,
     Simp,
 }
@@ -2954,6 +2949,7 @@ pub(super) fn prove_claim_by_steps(
             pure_facts,
             replay: ProofStepReplayState {
                 source_layout: SourceExecutionLayout::new(parsed_function.body()),
+                ordered_finalization: true,
                 ..ProofStepReplayState::default()
             },
             branch_path: Vec::new(),
@@ -2973,13 +2969,13 @@ pub(super) fn prove_claim_by_steps(
 
     let mut verified = Vec::new();
     for context in contexts {
-        for theorem in finish_proof_replay(
+        for theorem in finish_ordered_proof_replay(
             context,
             source_path,
             function_block,
             parsed_function,
-            claim,
-            claim_label,
+            &proof_claims,
+            false,
             function_environment,
             predicate_environment,
             click_function_environment,
@@ -3046,7 +3042,8 @@ pub(super) fn prove_claims_by_grouped_steps(
             pure_facts,
             replay: ProofStepReplayState {
                 source_layout: SourceExecutionLayout::new(parsed_function.body()),
-                grouped_proof: true,
+                ordered_finalization: true,
+                grouped_contract: true,
                 ..ProofStepReplayState::default()
             },
             branch_path: Vec::new(),
@@ -3066,12 +3063,13 @@ pub(super) fn prove_claims_by_grouped_steps(
 
     let mut verified = Vec::new();
     for context in contexts {
-        for theorem in finish_grouped_proof_replay(
+        for theorem in finish_ordered_proof_replay(
             context,
             source_path,
             function_block,
             parsed_function,
             claims,
+            true,
             function_environment,
             predicate_environment,
             click_function_environment,
@@ -3090,12 +3088,63 @@ pub(super) fn prove_claims_by_grouped_steps(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn finish_grouped_proof_replay(
+pub(super) fn prove_claims_by_grouped_auto(
+    source_path: &str,
+    function_block: &FunctionBlock,
+    parsed_function: &syntax::C0Function,
+    claims: &[FunctionClaimRef<'_>],
+    function_environment: &CExecutionEnvironment,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    resource_environment: &ResourceEnvironment,
+    theorem_environment: &TheoremEnvironment,
+) -> Result<Vec<VerifiedCTheorem>, ClickError> {
+    let mut steps = vec![ProofStep::ExecuteRest];
+    steps.extend(
+        loop_step_regions(function_block)
+            .into_iter()
+            .map(|loop_index| ProofStep::LoopVc(CodeRegionRef::Loop(loop_index))),
+    );
+    steps.extend(
+        loop_effect_summary_regions(function_block)
+            .into_iter()
+            .map(|loop_index| ProofStep::Frame(Some(CodeRegionRef::Loop(loop_index)))),
+    );
+    if claims
+        .iter()
+        .any(|claim| matches!(claim, FunctionClaimRef::Effect(_, _)))
+    {
+        steps.push(ProofStep::Frame(None));
+    }
+    if claims
+        .iter()
+        .any(|claim| matches!(claim, FunctionClaimRef::Ensure(_, _)))
+    {
+        steps.push(ProofStep::Simp);
+    }
+
+    prove_claims_by_grouped_steps(
+        source_path,
+        function_block,
+        parsed_function,
+        claims,
+        function_environment,
+        predicate_environment,
+        click_function_environment,
+        resource_environment,
+        theorem_environment,
+        &steps,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn finish_ordered_proof_replay(
     context: ProofReplayContext,
     source_path: &str,
     function_block: &FunctionBlock,
     parsed_function: &syntax::C0Function,
     claims: &[FunctionClaimRef<'_>],
+    require_explicit_closers: bool,
     function_environment: &CExecutionEnvironment,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
@@ -3111,33 +3160,37 @@ fn finish_grouped_proof_replay(
         replay,
         branch_path,
     } = context;
-    let proof_label = format!("{}.contract", function_block.signature().name());
+    let proof_label = if require_explicit_closers {
+        format!("{}.contract", function_block.signature().name())
+    } else {
+        function_claim_label(function_block.signature().name(), &claims[0])
+    };
     let result = (|| {
         let execution = replay.execution().ok_or_else(|| {
             ClickError::new(format!(
-                "`{proof_label}` grouped proof must reach function exit with `execute_step()`, `execute_rest()`, or `bounded_execute()`"
+                "`{proof_label}` execution proof must reach function exit with `execute_step()`, `execute_rest()`, or `bounded_execute()`"
             ))
         })?;
         if let Some(limit) = execution.limit() {
             return Err(ClickError::new(format!(
-                "grouped proof hit execution limit {limit:?} for `{proof_label}`"
+                "execution proof hit execution limit {limit:?} for `{proof_label}`"
             )));
         }
         if execution.paths().is_empty() {
             return Err(ClickError::new(format!(
-                "grouped proof could not prove any complete execution path for `{proof_label}`"
+                "execution proof could not prove any complete execution path for `{proof_label}`"
             )));
         }
         let execution_mode = replay
             .execution_mode()
-            .expect("grouped proof execution should have an execution mode");
+            .expect("execution proof should have an execution mode");
         let pre_state = replay.execution_start_state(&state);
         let mut verified = Vec::new();
 
         for (path_index, path) in execution.paths().iter().enumerate() {
             if !path.obligations().is_empty() {
                 return Err(ClickError::new(format!(
-                    "grouped proof failed for `{proof_label}` path {path_index}: {}",
+                    "execution proof failed for `{proof_label}` path {path_index}: {}",
                     describe_missing_proof_obligations(
                         path.obligations(),
                         &pure_facts,
@@ -3152,7 +3205,7 @@ fn finish_grouped_proof_replay(
                 Proposition::CFunctionExecutes { outcome, .. } => outcome.clone(),
                 proposition => {
                     return Err(ClickError::new(format!(
-                        "grouped proof failed for `{proof_label}` path {path_index}: unexpected theorem body {proposition:?}"
+                        "execution proof failed for `{proof_label}` path {path_index}: unexpected theorem body {proposition:?}"
                     )));
                 }
             };
@@ -3166,7 +3219,7 @@ fn finish_grouped_proof_replay(
                 } = &outcome
                 else {
                     return Err(ClickError::new(format!(
-                        "grouped proof failed for `{proof_label}` path {path_index}: proof-level `if` requires a return outcome"
+                        "execution proof failed for `{proof_label}` path {path_index}: proof-level `if` requires a return outcome"
                     )));
                 };
                 for (step_index, condition, value) in &replay.case_assumptions {
@@ -3194,15 +3247,16 @@ fn finish_grouped_proof_replay(
                     });
                 }
             }
+            let mut unfolded_predicates = replay.unfolded_predicates.clone();
             path_requirements = unfold_available_predicate_facts(
                 predicate_environment,
                 click_function_environment,
-                &replay.unfolded_predicates,
+                &unfolded_predicates,
                 &path_requirements,
             )
             .map_err(|message| {
                 ClickError::new(format!(
-                    "grouped proof failed for `{proof_label}` path {path_index}: {message}"
+                    "execution proof failed for `{proof_label}` path {path_index}: {message}"
                 ))
             })?;
             path_requirements = project_outcome_resource_facts(
@@ -3219,9 +3273,11 @@ fn finish_grouped_proof_replay(
             )?;
 
             let mut closed_claims = vec![false; claims.len()];
-            for (step_index, post_step) in &replay.grouped_post_steps {
+            let mut closer_errors = vec![None; claims.len()];
+            let mut existence_steps = Vec::new();
+            for (step_index, post_step) in &replay.post_execution_steps {
                 match post_step {
-                    GroupedPostStep::Fold(resource) => {
+                    PostExecutionStep::Fold(resource) => {
                         outcome = fold_composite_resources_on_outcome(
                             resource_environment,
                             std::slice::from_ref(resource),
@@ -3235,7 +3291,7 @@ fn finish_grouped_proof_replay(
                             outcome,
                             predicate_environment,
                             click_function_environment,
-                            &replay.unfolded_predicates,
+                            &unfolded_predicates,
                         )?;
                         path_requirements = project_outcome_resource_facts(
                             resource_environment,
@@ -3250,7 +3306,23 @@ fn finish_grouped_proof_replay(
                             path_index,
                         )?;
                     }
-                    GroupedPostStep::Apply(application) => {
+                    PostExecutionStep::UnfoldPredicate(name) => {
+                        if !unfolded_predicates.contains(name) {
+                            unfolded_predicates.push(name.clone());
+                        }
+                        path_requirements = unfold_available_predicate_facts(
+                            predicate_environment,
+                            click_function_environment,
+                            std::slice::from_ref(name),
+                            &path_requirements,
+                        )
+                        .map_err(|message| {
+                            ClickError::new(format!(
+                                "`{proof_label}` path {path_index}, proof step {step_index}: {message}"
+                            ))
+                        })?;
+                    }
+                    PostExecutionStep::Apply(application) => {
                         let CFunctionOutcome::Return {
                             value: result,
                             state: post_state,
@@ -3284,10 +3356,10 @@ fn finish_grouped_proof_replay(
                             &application_context,
                             predicate_environment,
                             click_function_environment,
-                            &replay.unfolded_predicates,
+                            &unfolded_predicates,
                         )?;
                     }
-                    GroupedPostStep::Have(have) => {
+                    PostExecutionStep::Have(have) => {
                         let CFunctionOutcome::Return {
                             value: result,
                             state: post_state,
@@ -3318,7 +3390,13 @@ fn finish_grouped_proof_replay(
                             path_requirements.push(fact);
                         }
                     }
-                    GroupedPostStep::Frame => {
+                    PostExecutionStep::Choose(choice) => {
+                        existence_steps.push(ProofStep::Choose(choice.clone()));
+                    }
+                    PostExecutionStep::Witness(witness) => {
+                        existence_steps.push(ProofStep::Witness(witness.clone()));
+                    }
+                    PostExecutionStep::Frame => {
                         for (claim_index, claim) in claims.iter().enumerate() {
                             if !matches!(claim, FunctionClaimRef::Effect(_, _)) {
                                 continue;
@@ -3338,12 +3416,12 @@ fn finish_grouped_proof_replay(
                                 predicate_environment,
                                 click_function_environment,
                                 &replay.program_point_states,
-                                &replay.unfolded_predicates,
+                                &unfolded_predicates,
                             )?;
                             closed_claims[claim_index] = true;
                         }
                     }
-                    GroupedPostStep::Simp => {
+                    PostExecutionStep::Simp => {
                         for (claim_index, claim) in claims.iter().enumerate() {
                             if closed_claims[claim_index]
                                 || !matches!(claim, FunctionClaimRef::Ensure(_, _))
@@ -3352,25 +3430,105 @@ fn finish_grouped_proof_replay(
                             }
                             let claim_label =
                                 function_claim_label(function_block.signature().name(), claim);
-                            if check_function_claim_by_simp(
-                                &claim_label,
-                                path_index,
-                                path.facts(),
-                                &path_requirements,
-                                claim,
-                                parsed_function.parameters(),
-                                arguments,
-                                pre_state,
-                                &outcome,
-                                predicate_environment,
-                                click_function_environment,
-                                &replay.program_point_states,
-                                &replay.unfolded_predicates,
-                            )
-                            .is_ok()
-                            {
-                                closed_claims[claim_index] = true;
+                            let result = if existence_steps.is_empty() {
+                                check_function_claim_by_simp(
+                                    &claim_label,
+                                    path_index,
+                                    path.facts(),
+                                    &path_requirements,
+                                    claim,
+                                    parsed_function.parameters(),
+                                    arguments,
+                                    pre_state,
+                                    &outcome,
+                                    predicate_environment,
+                                    click_function_environment,
+                                    &replay.program_point_states,
+                                    &unfolded_predicates,
+                                )
+                            } else {
+                                let mut available = path_requirements.clone();
+                                check_function_claim_with_existence_steps(
+                                    &claim_label,
+                                    path_index,
+                                    path.facts(),
+                                    &mut available,
+                                    claim,
+                                    parsed_function.parameters(),
+                                    arguments,
+                                    pre_state,
+                                    &outcome,
+                                    predicate_environment,
+                                    click_function_environment,
+                                    &unfolded_predicates,
+                                    &existence_steps,
+                                    function_block.requires(),
+                                    &replay.program_point_states,
+                                    true,
+                                )
+                            };
+                            match result {
+                                Ok(()) => {
+                                    closed_claims[claim_index] = true;
+                                    closer_errors[claim_index] = None;
+                                }
+                                Err(error) => {
+                                    closer_errors[claim_index] = Some(error.message().to_string());
+                                }
                             }
+                        }
+                    }
+                }
+            }
+
+            if !require_explicit_closers {
+                for (claim_index, claim) in claims.iter().enumerate() {
+                    if closed_claims[claim_index] {
+                        continue;
+                    }
+                    let claim_label =
+                        function_claim_label(function_block.signature().name(), claim);
+                    let result = if !existence_steps.is_empty() {
+                        let mut available = path_requirements.clone();
+                        check_function_claim_with_existence_steps(
+                            &claim_label,
+                            path_index,
+                            path.facts(),
+                            &mut available,
+                            claim,
+                            parsed_function.parameters(),
+                            arguments,
+                            pre_state,
+                            &outcome,
+                            predicate_environment,
+                            click_function_environment,
+                            &unfolded_predicates,
+                            &existence_steps,
+                            function_block.requires(),
+                            &replay.program_point_states,
+                            false,
+                        )
+                    } else {
+                        check_function_claim(
+                            &claim_label,
+                            path_index,
+                            path.facts(),
+                            &path_requirements,
+                            claim,
+                            parsed_function.parameters(),
+                            arguments,
+                            pre_state,
+                            &outcome,
+                            predicate_environment,
+                            click_function_environment,
+                            &replay.program_point_states,
+                            &unfolded_predicates,
+                        )
+                    };
+                    match result {
+                        Ok(()) => closed_claims[claim_index] = true,
+                        Err(error) => {
+                            closer_errors[claim_index] = Some(error.message().to_string())
                         }
                     }
                 }
@@ -3386,8 +3544,12 @@ fn finish_grouped_proof_replay(
                     FunctionClaimRef::Effect(_, _) => "`frame()`",
                     FunctionClaimRef::Ensure(_, _) => "`simp()`",
                 };
+                let detail = closer_errors[claim_index]
+                    .as_deref()
+                    .map(|message| format!("\nlast closing attempt:\n{message}"))
+                    .unwrap_or_default();
                 return Err(ClickError::new(format!(
-                    "`{proof_label}` path {path_index} left `{claim_label}` unproved; use {closer} after establishing the facts and resources it needs (claim index {claim_index})"
+                    "`{proof_label}` path {path_index} left `{claim_label}` unproved; use {closer} after establishing the facts and resources it needs (claim index {claim_index}){detail}"
                 )));
             }
 
@@ -3417,7 +3579,7 @@ fn finish_grouped_proof_replay(
                     )
                     .ok_or_else(|| {
                         ClickError::new(format!(
-                            "grouped proof failed to package `{proof_label}` path {path_index}"
+                            "execution proof failed to package `{proof_label}` path {path_index}"
                         ))
                     })?
                 }
@@ -3630,10 +3792,20 @@ fn replay_linear_steps(
                         resolve_code_region_ref(function_block, region_ref, claim_label, step_index)
                     })
                     .transpose()?;
-                if replay.grouped_proof
+                if replay.ordered_finalization
                     && replay.is_at_function_exit()
                     && matches!(code_region, None | Some(CodeRegion::Function))
                 {
+                    if !replay.grouped_contract {
+                        validate_frame_code_region(
+                            function_block,
+                            parsed_function,
+                            code_region,
+                            &claims[0],
+                            claim_label,
+                            step_index,
+                        )?;
+                    }
                     let Some(effect_claim) = claims
                         .iter()
                         .find(|claim| matches!(claim, FunctionClaimRef::Effect(_, _)))
@@ -3651,8 +3823,8 @@ fn replay_linear_steps(
                         step_index,
                     )?;
                     replay
-                        .grouped_post_steps
-                        .push((step_index, GroupedPostStep::Frame));
+                        .post_execution_steps
+                        .push((step_index, PostExecutionStep::Frame));
                     replay.frames.insert(region_ref.clone());
                     continue;
                 }
@@ -3709,6 +3881,12 @@ fn replay_linear_steps(
                         "`{claim_label}` proof step {step_index}: unknown predicate `{name}`"
                     )));
                 }
+                if replay.ordered_finalization && replay.is_at_function_exit() {
+                    replay
+                        .post_execution_steps
+                        .push((step_index, PostExecutionStep::UnfoldPredicate(name.clone())));
+                    continue;
+                }
                 if !replay.unfolded_predicates.contains(name) {
                     replay.unfolded_predicates.push(name.clone());
                 }
@@ -3733,14 +3911,14 @@ fn replay_linear_steps(
                     )));
                 }
                 if replay.is_at_function_exit() {
-                    if replay.grouped_proof {
+                    if replay.ordered_finalization {
                         replay
-                            .grouped_post_steps
-                            .push((step_index, GroupedPostStep::Apply(application.clone())));
+                            .post_execution_steps
+                            .push((step_index, PostExecutionStep::Apply(application.clone())));
                     } else {
-                        replay
-                            .deferred_pure_steps
-                            .push(DeferredPureStep::Apply(step_index, application.clone()));
+                        return Err(ClickError::new(format!(
+                            "`{claim_label}` proof step {step_index}: post-execution `apply` is not available in this region proof"
+                        )));
                     }
                 } else {
                     requirement_pure_facts = apply_theorem_at_current_point(
@@ -3763,12 +3941,14 @@ fn replay_linear_steps(
             }
             ProofStep::FoldResource(resource) => {
                 if replay.is_at_function_exit() {
-                    if replay.grouped_proof {
+                    if replay.ordered_finalization {
                         replay
-                            .grouped_post_steps
-                            .push((step_index, GroupedPostStep::Fold(resource.clone())));
+                            .post_execution_steps
+                            .push((step_index, PostExecutionStep::Fold(resource.clone())));
                     } else {
-                        replay.resource_folds.push(resource.clone());
+                        return Err(ClickError::new(format!(
+                            "`{claim_label}` proof step {step_index}: post-execution `fold` is not available in this region proof"
+                        )));
                     }
                 } else {
                     let pre_state = replay.execution_start_state(&state).clone();
@@ -3790,14 +3970,14 @@ fn replay_linear_steps(
             }
             ProofStep::Have(have) => {
                 if replay.is_at_function_exit() {
-                    if replay.grouped_proof {
+                    if replay.ordered_finalization {
                         replay
-                            .grouped_post_steps
-                            .push((step_index, GroupedPostStep::Have(have.clone())));
+                            .post_execution_steps
+                            .push((step_index, PostExecutionStep::Have(have.clone())));
                     } else {
-                        replay
-                            .deferred_pure_steps
-                            .push(DeferredPureStep::Have(step_index, have.clone()));
+                        return Err(ClickError::new(format!(
+                            "`{claim_label}` proof step {step_index}: post-execution `have` is not available in this region proof"
+                        )));
                     }
                     continue;
                 }
@@ -3825,21 +4005,47 @@ fn replay_linear_steps(
                 unreachable!("structured proof steps are represented by internal proof nodes")
             }
             ProofStep::Witness(_) => {
+                if replay.grouped_contract {
+                    return Err(ClickError::new(format!(
+                        "`{claim_label}` proof step {step_index}: top-level `witness` is not available in a grouped proof; use it inside `have proposition by {{ ... }}`"
+                    )));
+                }
+                if replay.ordered_finalization && replay.is_at_function_exit() {
+                    let ProofStep::Witness(witness) = step else {
+                        unreachable!()
+                    };
+                    replay
+                        .post_execution_steps
+                        .push((step_index, PostExecutionStep::Witness(witness.clone())));
+                    continue;
+                }
                 require_step_execution(&replay, claim_label, step_index, "witness")?;
             }
             ProofStep::Choose(_) => {
+                if replay.grouped_contract {
+                    return Err(ClickError::new(format!(
+                        "`{claim_label}` proof step {step_index}: top-level `choose` is not available in a grouped proof; use it inside `have proposition by {{ ... }}`"
+                    )));
+                }
+                if replay.ordered_finalization && replay.is_at_function_exit() {
+                    let ProofStep::Choose(choice) = step else {
+                        unreachable!()
+                    };
+                    replay
+                        .post_execution_steps
+                        .push((step_index, PostExecutionStep::Choose(choice.clone())));
+                    continue;
+                }
                 require_step_execution(&replay, claim_label, step_index, "choose")?;
             }
             ProofStep::Simp => {
                 if !replay.region_proof {
                     require_step_execution(&replay, claim_label, step_index, "simp")?;
                 }
-                if replay.grouped_proof && replay.is_at_function_exit() {
+                if replay.ordered_finalization && replay.is_at_function_exit() {
                     replay
-                        .grouped_post_steps
-                        .push((step_index, GroupedPostStep::Simp));
-                } else {
-                    replay.simp = true;
+                        .post_execution_steps
+                        .push((step_index, PostExecutionStep::Simp));
                 }
             }
         }
@@ -4092,68 +4298,6 @@ fn add_proof_branch_path(mut error: ClickError, branch_path: &[String]) -> Click
     error
 }
 
-#[allow(clippy::too_many_arguments)]
-fn finish_proof_replay(
-    context: ProofReplayContext,
-    source_path: &str,
-    function_block: &FunctionBlock,
-    parsed_function: &syntax::C0Function,
-    claim: &FunctionClaimRef<'_>,
-    claim_label: &str,
-    function_environment: &CExecutionEnvironment,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
-    resource_environment: &ResourceEnvironment,
-    theorem_environment: &TheoremEnvironment,
-    function: &CFunction,
-    arguments: &[CExpression],
-    certificate_steps: &[ProofStep],
-) -> Result<Vec<VerifiedCTheorem>, ClickError> {
-    let ProofReplayContext {
-        state,
-        pure_facts,
-        replay,
-        branch_path,
-    } = context;
-    let result = (|| {
-        let execution = replay.execution().ok_or_else(|| {
-            ClickError::new(format!(
-                "`{claim_label}` proof-step script must reach function exit with `execute_step()`, `execute_rest()`, or `bounded_execute()`"
-            ))
-        })?;
-        prove_claim_from_steps_execution(
-            execution,
-            replay
-                .execution_mode()
-                .expect("proof-step execution should have an execution mode"),
-            source_path,
-            function_block,
-            claim,
-            claim_label,
-            function_environment,
-            predicate_environment,
-            click_function_environment,
-            resource_environment,
-            theorem_environment,
-            parsed_function.parameters(),
-            function,
-            replay.execution_start_state(&state),
-            arguments,
-            &pure_facts,
-            &replay.unfolded_predicates,
-            &replay.deferred_pure_steps,
-            &replay.resource_folds,
-            &replay.case_assumptions,
-            &replay.program_point_states,
-            replay.simp,
-            certificate_steps,
-            certificate_steps,
-        )
-    })();
-    result.map_err(|error| add_proof_branch_path(error, &branch_path))
-}
-
-#[allow(clippy::too_many_arguments)]
 fn apply_advance_interface(
     join_id: usize,
     target: &ProgramPointRef,
@@ -4316,7 +4460,6 @@ fn apply_advance_interface(
         .insert(target.clone(), abstract_state.clone());
     replay.unfolded_predicates.clear();
     replay.case_assumptions.clear();
-    replay.simp = false;
 
     let mut exported_resources = ResourceContext::new();
     let mut exported_pure_facts = Vec::new();
@@ -6809,316 +6952,6 @@ fn validate_function_frame_step(
     }
 
     Ok(())
-}
-
-fn prove_claim_from_steps_execution(
-    execution: &crate::kernel::SymbolicCExecution,
-    execution_mode: ProofStepExecutionMode,
-    source_path: &str,
-    function_block: &FunctionBlock,
-    claim: &FunctionClaimRef<'_>,
-    claim_label: &str,
-    function_environment: &CExecutionEnvironment,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
-    resource_environment: &ResourceEnvironment,
-    theorem_environment: &TheoremEnvironment,
-    parameters: &[syntax::C0Parameter],
-    function: &CFunction,
-    state: &CState,
-    arguments: &[CExpression],
-    requirement_pure_facts: &[Proposition],
-    unfolded_predicates: &[String],
-    deferred_pure_steps: &[DeferredPureStep],
-    resource_folds: &[ResourceClause],
-    case_assumptions: &[(usize, ClickProposition, bool)],
-    program_point_states: &ProgramPointStates,
-    use_simp: bool,
-    replay_steps: &[ProofStep],
-    certificate_steps: &[ProofStep],
-) -> Result<Vec<VerifiedCTheorem>, ClickError> {
-    if let Some(limit) = execution.limit() {
-        return Err(ClickError::new(format!(
-            "`proof steps` hit execution limit {limit:?} for `{claim_label}`"
-        )));
-    }
-    if execution.paths().is_empty() {
-        return Err(ClickError::new(format!(
-            "`proof steps` could not prove any complete execution path for `{claim_label}`"
-        )));
-    }
-
-    let mut verified = Vec::new();
-    for (path_index, path) in execution.paths().iter().enumerate() {
-        if !path.obligations().is_empty() {
-            return Err(ClickError::new(format!(
-                "`proof steps` failed for `{claim_label}` path {path_index}: {}",
-                describe_missing_proof_obligations(
-                    path.obligations(),
-                    requirement_pure_facts,
-                    state.resources().facts(),
-                    parameters,
-                    arguments,
-                    path.facts()
-                )
-            )));
-        }
-        let mut outcome = match implication_body(path.theorem().proposition()) {
-            Proposition::CFunctionExecutes { outcome, .. } => outcome.clone(),
-            proposition => {
-                return Err(ClickError::new(format!(
-                    "`proof steps` failed for `{claim_label}` path {path_index}: unexpected theorem body {proposition:?}\n  pure facts: {}\n  execution pure facts: {}",
-                    describe_pure_facts(requirement_pure_facts),
-                    describe_execution_pure_facts(path.facts())
-                )));
-            }
-        };
-
-        let mut path_requirements = requirement_pure_facts.to_vec();
-        path_requirements.extend(path.facts().iter().map(|fact| fact.proposition().clone()));
-        if !case_assumptions.is_empty() {
-            let CFunctionOutcome::Return {
-                value: result,
-                state: post_state,
-            } = &outcome
-            else {
-                return Err(ClickError::new(format!(
-                    "`proof steps` failed for `{claim_label}` path {path_index}: proof-level `if` requires a return outcome, got {}",
-                    describe_function_outcome(&outcome, parameters, arguments)
-                )));
-            };
-            for (step_index, condition, value) in case_assumptions {
-                let condition = lower_outcome_proposition_with_program_points(
-                    parameters,
-                    arguments,
-                    state,
-                    post_state,
-                    result,
-                    &path_requirements,
-                    condition,
-                    predicate_environment,
-                    click_function_environment,
-                    program_point_states,
-                )
-                .map_err(|message| ClickError::new(format!(
-                    "`{claim_label}` path {path_index}, proof step {step_index}: could not lower `if` condition: {message}"
-                )))?;
-                path_requirements.push(if *value {
-                    condition
-                } else {
-                    Proposition::Not(Box::new(condition))
-                });
-            }
-        }
-        path_requirements = unfold_available_predicate_facts(
-            predicate_environment,
-            click_function_environment,
-            unfolded_predicates,
-            &path_requirements,
-        )
-        .map_err(|message| {
-            ClickError::new(format!(
-                "`proof steps` failed for `{claim_label}` path {path_index}: {message}"
-            ))
-        })?;
-        outcome = fold_composite_resources_on_outcome(
-            resource_environment,
-            resource_folds,
-            claim_label,
-            path_index,
-            path.facts(),
-            &path_requirements,
-            parameters,
-            arguments,
-            state,
-            outcome,
-            predicate_environment,
-            click_function_environment,
-            unfolded_predicates,
-        )?;
-        path_requirements = project_outcome_resource_facts(
-            resource_environment,
-            parameters,
-            arguments,
-            state,
-            &outcome,
-            &path_requirements,
-            predicate_environment,
-            click_function_environment,
-            claim_label,
-            path_index,
-        )?;
-        if !deferred_pure_steps.is_empty() {
-            let CFunctionOutcome::Return {
-                value: result,
-                state: post_state,
-            } = &outcome
-            else {
-                return Err(ClickError::new(format!(
-                    "`proof steps` failed for `{claim_label}` path {path_index}: post-execution pure proof requires a return outcome, got {}\n  execution pure facts: {}",
-                    describe_function_outcome(&outcome, parameters, arguments),
-                    describe_execution_pure_facts(path.facts())
-                )));
-            };
-            let values = parameter_values(parameters, arguments).map_err(|error| {
-                ClickError::new(format!(
-                    "`proof steps` failed for `{claim_label}` path {path_index}: {}",
-                    error.message
-                ))
-            })?;
-            let array_refs = array_refs_for_parameters(parameters, &values, post_state.memory());
-            for deferred_step in deferred_pure_steps {
-                match deferred_step {
-                    DeferredPureStep::Apply(step_index, application) => {
-                        let application_context = TheoremApplicationContext {
-                            values: &values,
-                            array_refs: &array_refs,
-                            pre_state: state,
-                            post_state,
-                            result: Some(result),
-                            program_point_states,
-                        };
-                        path_requirements = apply_theorem_applications_to_available(
-                            theorem_environment,
-                            &[(*step_index, application.clone())],
-                            claim_label,
-                            Some(path_index),
-                            path_requirements,
-                            &application_context,
-                            predicate_environment,
-                            click_function_environment,
-                            unfolded_predicates,
-                        )?;
-                    }
-                    DeferredPureStep::Have(step_index, have) => {
-                        let fact = prove_have_at_point(
-                            have,
-                            theorem_environment,
-                            claim_label,
-                            *step_index,
-                            &path_requirements,
-                            parameters,
-                            arguments,
-                            state,
-                            post_state,
-                            Some(result),
-                            program_point_states,
-                            predicate_environment,
-                            click_function_environment,
-                            function_block.requires(),
-                            Some(path_index),
-                        )?;
-                        if !path_requirements.contains(&fact) {
-                            path_requirements.push(fact);
-                        }
-                    }
-                }
-            }
-        }
-        let mut checking_requirements = path_requirements.clone();
-        let has_existence_steps = replay_steps
-            .iter()
-            .any(|step| matches!(step, ProofStep::Witness(_) | ProofStep::Choose(_)));
-        if has_existence_steps {
-            check_function_claim_with_existence_steps(
-                claim_label,
-                path_index,
-                path.facts(),
-                &mut checking_requirements,
-                claim,
-                parameters,
-                arguments,
-                state,
-                &outcome,
-                predicate_environment,
-                click_function_environment,
-                unfolded_predicates,
-                replay_steps,
-                function_block.requires(),
-                program_point_states,
-                use_simp,
-            )?;
-        } else {
-            if use_simp {
-                check_function_claim_by_simp(
-                    claim_label,
-                    path_index,
-                    path.facts(),
-                    &path_requirements,
-                    claim,
-                    parameters,
-                    arguments,
-                    state,
-                    &outcome,
-                    predicate_environment,
-                    click_function_environment,
-                    program_point_states,
-                    unfolded_predicates,
-                )?;
-            } else {
-                check_function_claim(
-                    claim_label,
-                    path_index,
-                    path.facts(),
-                    &path_requirements,
-                    claim,
-                    parameters,
-                    arguments,
-                    state,
-                    &outcome,
-                    predicate_environment,
-                    click_function_environment,
-                    program_point_states,
-                    unfolded_predicates,
-                )?;
-            }
-        }
-        let specification = c_function_specification(
-            state.clone(),
-            arguments.to_vec(),
-            path_requirements,
-            outcome.clone(),
-        );
-        let theorem = match execution_mode {
-            ProofStepExecutionMode::Verification => {
-                prove_c_function_satisfies_specification_from_symbolic_path(
-                    function.clone(),
-                    specification.clone(),
-                    Assumptions::new(),
-                    path.facts(),
-                    path.obligations(),
-                )
-            }
-            ProofStepExecutionMode::Bounded => {
-                prove_c_function_satisfies_specification_with_environment(
-                    function.clone(),
-                    specification.clone(),
-                    Assumptions::new(),
-                    function_environment.clone(),
-                    CExecutionSemantics::APPLY_VERIFIED_RULES,
-                )
-                .ok_or_else(|| {
-                    ClickError::new(format!(
-                        "`proof steps` failed for `{claim_label}` path {path_index}: bounded execution did not satisfy the packaged specification\n  pure facts: {}\n  execution pure facts: {}",
-                        describe_pure_facts(&specification.requires()),
-                        describe_execution_pure_facts(path.facts())
-                    ))
-                })?
-            }
-        };
-
-        verified.push(VerifiedCTheorem {
-            source_path: source_path.to_string(),
-            function_block: function_block.clone(),
-            claim: claim.verified_claim(),
-            proof_kind: ProofKind::ProofSteps,
-            proof_steps: Some(certificate_steps.to_vec()),
-            specification,
-            theorem,
-        });
-    }
-
-    Ok(verified)
 }
 
 enum AutoExecutionKind<'a> {
