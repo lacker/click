@@ -11,7 +11,7 @@ int32 noop_flag(int32* flag) {
 
 ```click
 resource zero_flag(flag: int32*) {
-    contains write(flag[0..1]);
+    owns flag[0..1];
     fact flag[0] == 0;
 }
 

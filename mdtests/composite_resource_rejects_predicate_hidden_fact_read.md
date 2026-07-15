@@ -14,5 +14,5 @@ resource bogus(flag: int32*) {
 ```
 
 ```expect
-fail: resource `bogus` fact reads `flag[0]` without a covering contained `write(...)` resource
+fail: resource `bogus` fact reads `flag[0]` without a covering contained owned memory resource
 ```

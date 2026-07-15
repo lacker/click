@@ -1,22 +1,20 @@
 # Separation Logic Internals
 
-This page is an internal design target for Click's resource system. It explains
-the separation-logic shape we want the implementation to move toward. It is not
-new surface syntax.
+This page describes Click's internal resource architecture. The algebraic
+notation is explanatory; function contracts use the resource verbs described
+in the language guide.
 
-Click is not currently implemented as a full Iris-style resource algebra. The
-current implementation has a concrete `ResourceContext` containing
-`CResourceFact` values, with family-specific code for entailment,
-consumption, splitting, and joining. The intended direction is to make that
-code line up with a small, explicit algebraic model.
+Click is not a full Iris implementation. It has a concrete `ResourceContext`
+containing `CResourceFact` values and a `ResourceFamilyAlgebra` interface that
+defines validity, entailment, consumption, normalization, core, and observable
+facts for each built-in family.
 
 ## Current Resource Cases
 
-The Click surface currently has memory clauses and declared-resource clauses:
+The Click surface has memory resources and declared resources:
 
 ```text
-read(range)
-write(range)
+memory(range)
 name(arguments)
 ```
 
@@ -27,8 +25,8 @@ context: a resource plus an access mode. Internally, the Rust type for a
 resource fact is currently `CResourceFact`.
 
 ```text
-view(memory(range))  // surface read(range)
-own(memory(range))   // surface write(range)
+view(memory(range))
+own(memory(range))
 view(token(name, arguments))
 own(token(name, arguments))
 view(composite(name, arguments))
@@ -40,8 +38,8 @@ composite resources:
 
 ```click
 resource owner_buffer(owner: struct owner*) {
-    contains write(owner[0..1]);
-    contains write(owner->data[0..owner->len]);
+    owns owner[0..1];
+    owns owner->data[0..owner->len];
     fact owner->len >= 0;
 }
 ```
@@ -51,14 +49,13 @@ composite resource fact. Its contained resource facts stay hidden until
 `unfold(owner_buffer(owner))`. Its declared pure facts, and some pure facts
 derived from the contained resource facts, may be observed without unfolding.
 
-So the current surface clauses lower to these resource facts:
+Surface verbs lower to these resource facts:
 
-- `read(range)` lowers to `view(memory(range))`,
-- `write(range)` lowers to `own(memory(range))`,
-- a bodyless declared resource lowers to `own(token(name, arguments))` by
-  default, or `view(token(name, arguments))` when explicitly viewed,
-- a body-backed declared resource lowers to `own(composite(name, arguments))`
-  by default, or `view(composite(name, arguments))` when explicitly viewed.
+- `views range` lowers to `view(memory(range))`,
+- `owns range`, `consumes range`, and `produces range` use
+  `own(memory(range))`,
+- the same verbs select owned or viewed elements for token and composite
+  resources.
 
 The access modes are `own` and `view`. The composite body is consulted by
 proof-layer `fold`, `unfold`, and `observe` operations.
@@ -81,12 +78,11 @@ Internally, those clauses should be understood as resource facts composed
 into one resource state:
 
 ```text
-write(p[0..1]) * read(q[0..1]) * owner_buffer(owner)
+own(memory(p[0..1])) * view(memory(q[0..1])) * own(owner_buffer(owner))
 ```
 
-The current implementation represents this as a normalized list of concrete
-resource facts. The design target is to treat the whole list as one resource
-state in `M`.
+The implementation represents this as a normalized list of concrete resource
+facts. Algebraically, the whole list is one resource state in `M`.
 
 ## Algebraic Operations
 
@@ -110,7 +106,7 @@ exclusive owned memory resource facts over overlapping ranges should compose to
 an invalid state:
 
 ```text
-valid(write(p[0..1]) * write(p[0..1])) = false
+valid(own(memory(p[0..1])) * own(memory(p[0..1]))) = false
 ```
 
 `core(m)` returns the duplicable read-only view of `m`. For memory resources,
@@ -121,9 +117,8 @@ core(view(memory(range))) = view(memory(range))
 core(own(memory(range)))  = view(memory(range))
 ```
 
-That is why a surface `write(...)` resource, internally
-`own(memory(...))`, can satisfy a surface `read(...)` requirement, internally
-`view(memory(...))`, without losing the write authority.
+That is why `owns p[...]` can satisfy a callee's `views p[...]` requirement
+without losing write authority.
 
 In the current code, `CResourceFact::core()` returns
 `Option<CResourceFact>`, but every current resource fact has a non-empty
@@ -175,7 +170,7 @@ or repackaged according to their algebraic rules.
 
 ## Proof Script State
 
-The internal proof-script model should be a state transformer over:
+The internal proof-script model is a state transformer over:
 
 ```text
 goal
@@ -249,13 +244,13 @@ Click also needs a deterministic way to turn held resource facts into
 observable proof facts. This is the role currently played by composite-resource
 fact projection and `observe(resource)`.
 
-The design target is:
+The deterministic interface is:
 
 ```text
 observe : resource fact -> pure facts + resource facts
 ```
 
-or, more precisely, each resource family should define which pure facts and
+or, more precisely, each resource family defines which pure facts and
 resource facts are observable from a valid held resource state.
 
 Examples:
@@ -275,13 +270,12 @@ observed resource fact. It should also stay one-step: recursive expansion of
 large composite resources belongs behind an explicit bounded proof step or
 future summary mechanism, not in default `auto` behavior.
 
-In the current code, `ResourceContext::observable_facts(...)` is the beginning
-of the pure-fact side of this interface. It derives pure facts from the
-concrete resource state after checking resource-state validity. Today it exposes
-separation facts from valid compositions of multiple owned memory resources. Composite-resource
-`fact` clauses are grouped into the same composite-resource observable-pure-facts
-projection path. Their lowering still lives in the Click proof layer because it
-depends on resource definitions, substitution, and memory materialization.
+`ResourceContext::observable_facts(...)` implements the pure-fact side of this
+interface. It validates the concrete resource state, asks each family for its
+observations, and adds separation between owned facts from different families.
+Composite-resource `fact` clauses join the same observable-pure-facts projection
+path. Their lowering lives in the Click proof layer because it depends on
+resource definitions, substitution, and memory materialization.
 
 ## Memory Separation
 
@@ -321,11 +315,12 @@ memory `separate` implies memory non-overlap for frame reasoning.
 
 ## Memory Resource Rules
 
-The memory family should satisfy these rules:
+The memory family implements these rules:
 
-- `view(memory(range))`, exposed as `read(range)`, permits loads from `range`.
-- `own(memory(range))`, exposed as `write(range)`, permits loads and stores to
+- `view(memory(range))`, requested with `views range`, permits loads from
   `range`.
+- `own(memory(range))`, requested with `owns`, `consumes`, or `produces`,
+  permits loads and stores to `range`.
 - `core(view(memory(range))) = view(memory(range))`.
 - `core(own(memory(range))) = view(memory(range))`.
 - viewed memory resources are duplicable.
@@ -337,9 +332,9 @@ The memory family should satisfy these rules:
   see the updated value unless another owner writes a new value.
 - Repeated reads with no intervening write to the same cell are stable.
 
-Read stability is a memory-model promise, not a permission to mutate. A
-`read(...)` resource allows code to rely on the current cell value across
-ordinary repeated loads, but it does not allow stores.
+Read stability is a memory-model promise, not a permission to mutate. A viewed
+memory resource allows code to rely on the current cell value across ordinary
+repeated loads, but it does not allow stores.
 
 ## Token And Composite Rules
 
@@ -366,47 +361,34 @@ family. It is a declared resource whose resource facts have laws connecting the
 owned composite resource fact to a composite body made from other resource facts
 and pure facts. Its core is the viewed composite resource fact.
 
-## Refactor Direction
+## Implementation Boundary
 
-The current code already has several pieces of this model, but they are
-still mostly hardcoded:
+The code maps onto this model as follows:
 
-- `ResourceContext` is a list of concrete resource facts, represented as
-  `CResourceFact` values, rather than an
-  explicit `M`.
-- `ResourceContext::validity_error` is the beginning of an explicit validity
-  check, currently covering duplicate token resources and overlapping writes.
-- `ResourceContext::try_compose_with_fact(s)(...)` is the beginning of an
-  explicit checked composition operation. It validates the raw combined context
-  before normalizing it, so invalid combinations cannot merge away before being
-  rejected.
-- Raw list construction is explicitly named `unchecked_with_fact(s)(...)`.
-  It should stay limited to tests and assumption-free lowering/materialization
-  paths that build provisional contexts before validity can be checked.
-- `CResourceFact::core()` is the beginning of an explicit core operation,
-  currently mapping `own(resource)` and `view(resource)` to `view(resource)`.
-- Memory, token, and composite resources still use family-specific entailment,
-  consume, and combine functions.
-- `ResourceContext::observable_facts(...)` is the beginning of an explicit
-  observable-facts operation, currently covering owned-memory separation.
-  Projection paths call it unconditionally so observable-facts projection also
-  validates the current resource context.
-- Composite-resource observable-facts projection now combines contained
-  resource-context observable facts with declared `fact` clauses, but this is
-  still implemented in the Click proof layer rather than as a full
-  resource-family observable-facts interface.
+- `ResourceContext` is the concrete representation of a resource state `M`.
+- `try_compose_with_fact(s)` appends facts, checks validity before
+  normalization, and then applies family normalization rules.
+- `ResourceFamilyAlgebra` is the internal family contract. It supplies
+  same-family validity, entailment, consumption and residual ownership,
+  pair normalization, core, and observable facts.
+- `MemoryResourceAlgebra` implements range coverage, splitting, joining,
+  exclusive writes, and viewed cores.
+- `TokenResourceAlgebra` implements strict exact-match tokens.
+- `CompositeResourceAlgebra` implements the folded fact's exact-match algebra.
+  Source declarations add separate definition laws connecting that folded fact
+  to its body.
+- `ResourceContext::observable_facts` combines family observations with the
+  generic theorem that distinct owned facts in a valid composition are
+  separate.
+- Raw `unchecked_with_fact(s)` construction is limited to tests and
+  assumption-free materialization paths that produce provisional states.
 
-The next refactor should preserve current behavior while making these concepts
-explicit:
+Composite definition laws remain in the Click proof layer because they require
+source-level argument substitution, proposition lowering, and symbolic-memory
+materialization. `observe`, `unfold`, and `fold` are the explicit operations
+that apply those laws.
 
-1. Introduce names in code and docs that match the model: resource state,
-   compose, valid, core, and observable facts.
-2. Treat the current memory rules as the first resource-family implementation.
-3. Keep composite resources as declared resources with composite-body laws.
-4. Move hidden memory-separation reasoning toward "facts derived from valid
-   composition" instead of special cases tied to a particular projection path.
-5. Avoid adding new resource features until they can be expressed through this
-   interface.
-
-This gives Click an Iris-inspired foundation without requiring the full Iris
-machinery in the first implementation.
+New primitive resource families should implement this interface rather than add
+dispatch to `ResourceContext`. Features such as fractional ownership,
+authoritative ghost state, allocation authority, and invariants are not yet
+implemented.

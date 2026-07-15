@@ -5,7 +5,7 @@ memory read using scalar bounds from the fact.
 
 ```click
 resource indexed_zero(p: int32*, k: int32, n: int32) {
-    contains write(p[0..n]);
+    owns p[0..n];
     fact 0 <= k and k < n and p[k] == 0;
 }
 ```

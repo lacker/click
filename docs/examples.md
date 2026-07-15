@@ -95,7 +95,7 @@ Larger example projects live directly under `examples/`. They contain ordinary
 - `mdtests/struct_multifield_explicit_permissions.md`: compact multi-field
   struct loads/stores with explicit loadability and write ranges.
 - `mdtests/struct_field_resources_imply_loadability.md`: preferred field-resource
-  shape where `read(p->field)` and `write(p->field)` imply field loadability.
+  shape where viewed and owned field resources imply field loadability.
 - `mdtests/struct_pointer_field_explicit_permissions.md`: pointer-valued
   struct field load followed by a write through the loaded pointer, again using
   explicit ranges rather than ownership sugar.
@@ -151,11 +151,11 @@ Larger example projects live directly under `examples/`. They contain ordinary
   effect.
 - `mdtests/shifted_loop_effect_preserves_prefix.md`: effect summary preserves
   prefix.
-- `mdtests/resource_context_write.md`: first `write(...)` resource-context
+- `mdtests/resource_context_write.md`: first owned-memory resource-context
   example threaded through helper calls.
 - `mdtests/resource_context_write_rejects_missing.md`: missing write resource
   diagnostic.
-- `mdtests/resource_context_read.md`: first `read(...)` resource-context
+- `mdtests/resource_context_read.md`: first viewed-memory resource-context
   example.
 - `mdtests/read_permission_stable_repeated_load.md`: read permission gives a
   stable repeated-load view when no write intervenes.
@@ -290,10 +290,10 @@ sequence:
   token is still consumed linearly through a call summary.
 - `mdtests/composite_resource_rejects_duplicate_contains.md`: composite
   resources reject duplicate contained resource tokens.
-- `mdtests/write_resources_imply_separate.md`: two visible `write(...)`
+- `mdtests/write_resources_imply_separate.md`: two visible owned-memory
   resources imply a `separate(...)` fact without a separate requirement.
 - `mdtests/write_resources_reject_proven_overlap.md`: provably overlapping
-  visible `write(...)` resources are rejected.
+  visible owned-memory resources are rejected.
 - `mdtests/composite_resource_rejects_cycle.md`: composite-resource
   definitions reject containment cycles.
 - `mdtests/composite_resource_pure_fact.md`: composite resources can carry

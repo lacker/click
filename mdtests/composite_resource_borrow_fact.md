@@ -14,7 +14,7 @@ resource socket_open(fd: int32);
 
 resource live_server(fd: int32, state: int32*) {
     contains socket_open(fd);
-    contains write(state[0..1]);
+    owns state[0..1];
     fact state[0] == 1;
 }
 

@@ -12,7 +12,7 @@ int32 write_flag_observed(int32* flag) {
 
 ```click
 resource zero_flag(flag: int32*) {
-    contains write(flag[0..1]);
+    owns flag[0..1];
     fact flag[0] == 0;
 }
 
@@ -29,5 +29,5 @@ int32 write_flag_observed(int32* flag) {
 ```
 
 ```expect
-fail: missing resource fact `write(flag[0..1])`
+fail: missing resource fact `owns flag[0..1]`
 ```

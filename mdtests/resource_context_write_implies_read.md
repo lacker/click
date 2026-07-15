@@ -1,7 +1,7 @@
 # write resources imply read
 
-This checks that `write(...)` permits external loads and can satisfy a
-`read(...)` guarantee.
+This checks that owned memory permits external loads and can satisfy a viewed
+requirement.
 
 ```c filename=read_with_write.c
 int32 read_with_write(int32 p[]) {

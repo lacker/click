@@ -1,6 +1,6 @@
 # write resources
 
-This checks the first resource-context slice. `write(p[0..1])` is not a
+This checks the first resource-context slice. Owning `p[0..1]` is not a
 classical predicate: it is carried in the verifier state and must be present for
 external memory writes.
 

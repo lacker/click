@@ -1,7 +1,7 @@
 # permission call returns write access
 
 This checks the successful linear write-transfer shape. The helper receives
-`write(p[0..1])` and returns the same write resource in its postcondition, so
+ownership of `p[0..1]` and returns the same resource, so
 the caller can prove it still has write permission after the call.
 
 ```c filename=write_and_return_permission.c

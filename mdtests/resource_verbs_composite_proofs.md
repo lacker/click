@@ -26,7 +26,7 @@ int32 inspect_cell(int32 p[]) {
 
 ```click
 resource initialized_cell(p: int32*) {
-    contains write(p[0..1]);
+    owns p[0..1];
     fact p[0] >= 0;
 }
 

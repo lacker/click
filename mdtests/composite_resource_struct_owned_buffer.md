@@ -18,8 +18,8 @@ int32 set_owned_first(struct owner* owner, int32 data[]) {
 
 ```click
 resource owned_one_cell(owner: struct owner*, data: int32*) {
-    contains write(owner->len);
-    contains write(data[0..1]);
+    owns owner->len;
+    owns data[0..1];
     fact owner->len == 1;
 }
 

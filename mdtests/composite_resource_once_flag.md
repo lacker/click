@@ -1,7 +1,7 @@
 # composite resource over memory
 
 This checks the first composite-resource slice. `uncalled(flag)` wraps
-`write(flag[0..1])` plus the abstract fact that `flag[0] == 0`; `called(flag)`
+owned memory for `flag[0..1]` plus the abstract fact that `flag[0] == 0`; `called(flag)`
 wraps the same write permission plus the fact that `flag[0] == 1`.
 
 ```c filename=init_once.c
@@ -24,12 +24,12 @@ int32 complete_once(int32 flag[]) {
 
 ```click
 resource uncalled(flag: int32*) {
-    contains write(flag[0..1]);
+    owns flag[0..1];
     fact flag[0] == 0;
 }
 
 resource called(flag: int32*) {
-    contains write(flag[0..1]);
+    owns flag[0..1];
     fact flag[0] == 1;
 }
 

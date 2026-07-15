@@ -15,8 +15,8 @@ consumes p[0..1];
 These clauses create resource facts in the verifier's resource context. External C
 memory accesses must be covered by the current resource context:
 
-- a load requires `read(...)` or `write(...)`,
-- a store requires `write(...)`,
+- a load requires a viewed or owned memory resource,
+- a store requires an owned memory resource,
 - local stack memory does not require a resource.
 
 ## Resource Context And Families
@@ -34,25 +34,24 @@ group of related resources:
 - what gets consumed by a function call or statement,
 - what other resources are invalidated by consumption.
 
-The main built-in resource family is memory. `read(...)` and `write(...)` are
-memory resource facts over a range. This is similar in spirit to a resource
-algebra: the context is not just a bag of pure facts, because each resource
-family has rules for combining, transferring, and consuming its facts.
+The main built-in resource family is memory. Its viewed and owned elements are
+resource facts over a range. The context is not just a bag of pure facts:
+`ResourceFamilyAlgebra` defines how each family validates, combines, transfers,
+and consumes its facts.
 
-In the first-layer model, `read(...)` is the stable read view of memory.
-Algebraically, it is the core of `write(...)`:
+In the first-layer model, the viewed element is the stable read view of memory.
+Algebraically, it is the core of the owned element:
 
 ```text
-core(write(p[lo..hi])) = read(p[lo..hi])
-core(read(p[lo..hi])) = read(p[lo..hi])
+core(own(memory(p[lo..hi]))) = view(memory(p[lo..hi]))
+core(view(memory(p[lo..hi]))) = view(memory(p[lo..hi]))
 ```
 
-Internally, the kernel now spells this relationship as
-`core(own(memory(range))) = view(memory(range))`; the Click surface still uses
-`write(...)` and `read(...)`.
+The Click surface requests these elements with `owns`/`consumes`/`produces` and
+`views` respectively.
 
-That is why a write resource can satisfy read requirements and read guarantees
-without consuming the write resource.
+That is why owned memory can satisfy viewed requirements without consuming the
+owned element.
 
 This resource-family boundary is intentionally more general than memory
 ownership. Click also has exact-match user-defined resources, which can model
@@ -66,10 +65,10 @@ permissions include the loadability needed for the covered access.
 `loadable(p[0..n])` says the range is loadable. It is about
 memory safety and bounds.
 
-`read(p[0..n])` or `write(p[0..n])` says the current code has authority to
-access that range. It is about permission.
+`views p[0..n]` or `owns p[0..n]` says the current code has authority to access
+that range. It is about permission.
 
-For an external read, `read(...)` is normally enough:
+For an external read, `views` is normally enough:
 
 ```click
 int32 first(int32 p[]) {
@@ -79,8 +78,8 @@ int32 first(int32 p[]) {
 }
 ```
 
-Similarly, `write(...)` grants authority to store and makes the covered range
-loadable. Use `loadable(...)` separately when you need to prove memory exists
+Similarly, an owned memory resource grants authority to store and makes the
+covered range loadable. Use `loadable(...)` separately when you need to prove memory exists
 without granting read or write authority, or when a larger structural bound is
 useful for index reasoning.
 
@@ -88,9 +87,9 @@ When the same loadability fact must appear as a proposition, use
 `loadable(segment)`. This is common in composite resource definitions, where
 `fact` clauses are pure propositions rather than structural requirements.
 
-## Read Permission
+## Viewed Memory
 
-`read(...)` permits loads. It does not permit stores. While no write to the
+`views` permits loads. It does not permit stores. While no write to the
 same cell occurs in the current execution, repeated reads of that cell are
 stable: they produce the same symbolic value.
 
@@ -100,11 +99,11 @@ int32 peek(int32 p[]) {
 }
 ```
 
-Read resources are copyable across function calls. If a caller has
-`write(p[0..1])`, it may pass the `read(p[0..1])` core view to a helper and
-still keep its write permission afterward.
+Viewed resources are copyable across function calls. If a caller owns
+`p[0..1]`, it may satisfy a helper's `views p[0..1]` requirement and still keep
+its owned element afterward.
 
-## Write Permission
+## Owned Memory
 
 An owned memory resource permits both loads and stores and entails its viewed
 core. Stores update the symbolic memory state; later reads of the same cell see
@@ -123,7 +122,7 @@ resource to the callee and returns it; `consumes` transfers it without returning
 it. The caller cannot use a consumed resource afterward.
 
 This is the main difference between a permission and an ordinary proposition.
-Ordinary facts can be used repeatedly. A write resource can be transferred.
+Ordinary facts can be used repeatedly. An owned resource can be transferred.
 
 ## Function Calls
 
@@ -238,12 +237,12 @@ the proof has rebuilt the body, use `fold(resource)`:
 
 ```click
 resource uncalled(flag: int32*) {
-    contains write(flag[0..1]);
+    owns flag[0..1];
     fact flag[0] == 0;
 }
 
 resource called(flag: int32*) {
-    contains write(flag[0..1]);
+    owns flag[0..1];
     fact flag[0] == 1;
 }
 
@@ -266,9 +265,9 @@ int32 complete_once(int32 flag[]) {
 ```
 
 `unfold(uncalled(flag))` consumes the folded `uncalled(flag)` resource and adds
-the contained `write(flag[0..1])` resource to the proof state. The C execution
-can then mutate the flag. `fold(called(flag))` proves the `called` body's fact,
-consumes the contained write resource, and adds the folded `called(flag)`
+the contained owned memory resource for `flag[0..1]` to the proof state. The C
+execution can then mutate the flag. `fold(called(flag))` proves the `called`
+body's fact, consumes the contained owned resource, and adds the folded `called(flag)`
 resource. The end of the `by { ... }` block checks the overall claim.
 
 `fold` also builds a composite resource from lower-level resources at a
@@ -303,7 +302,7 @@ the resource is folded:
 
 ```click
 resource uncalled(flag: int32*) {
-    contains write(flag[0..1]);
+    owns flag[0..1];
     fact flag[0] == 0;
 }
 ```
@@ -312,15 +311,15 @@ The coverage check can use scalar facts from the fact itself:
 
 ```click
 resource indexed_zero(p: int32*, k: int32, n: int32) {
-    contains write(p[0..n]);
+    owns p[0..n];
     fact 0 <= k and k < n and p[k] == 0;
 }
 ```
 
 This symbolic check proves the index is inside the range; the memory base must
-still match the contained write resource directly.
+still match the contained owned memory resource directly.
 
-`read(flag[0..1])` is not enough for this purpose. A read resource authorizes
+`views flag[0..1]` is not enough for this purpose. A viewed resource authorizes
 inspection but does not prevent another holder of write permission from
 changing the cell. Pure scalar facts such as `fd >= 0` do not need a contained
 memory resource.
@@ -329,14 +328,14 @@ This is resource-context reasoning, not theorem application. Theorems stay
 pure; `apply(theorem(...))` can add proposition facts, but it does not consume
 or return resources.
 
-This first slice supports built-in `read(...)` and `write(...)` clauses plus
-exact-match token resources inside `contains`. Duplicate contained resource
+This first slice supports viewed and owned memory elements plus exact-match
+token resources inside composite bodies. Duplicate contained resource
 tokens are rejected, and composite-resource cycles are rejected. Resource
 unfolding is explicit; `auto` does not yet choose unfold/fold steps on its own.
 
 The smallest ownership-shaped pattern is a composite resource that bundles
 several concrete permissions. For example, `first_cell_copy_access(dst, src)`
-can contain `write(dst[0..1])` and `read(src[0..1])`, while
+can own `dst[0..1]` and view `src[0..1]`, while
 `owned_one_cell(owner, data)` can contain permission for an owner object and an
 explicitly passed buffer pointer. In this conservative shape, the resource's
 parameters name the lower-level memory objects directly. More convenient
@@ -350,7 +349,7 @@ back to the ordinary `owned_buffer(owner)` shape.
 
 ## Split And Rejoin
 
-A caller can pass a subrange of a larger write resource:
+A caller can pass a subrange of a larger owned memory resource:
 
 ```click
 int32 helper(int32 p[]) {
@@ -385,7 +384,7 @@ cover `p[1]`.
 Implemented today:
 
 - mandatory permission checks for external loads and stores,
-- `read(...)` and `write(...)` over memory ranges,
+- viewed and owned elements over memory ranges,
 - an internal memory resource family boundary for entailment, consumption,
   access authorization, splitting, and joining,
 - exact-match token resources declared with `resource name(...)`,
@@ -395,7 +394,7 @@ Implemented today:
 - one-step fact views for folded composite resources, plus
   `observe(resource)` proof steps that explicitly record fact-view projection
   without exposing contained permissions,
-- `write(...)` implying read authority,
+- owned memory implying viewed authority,
 - visible owned resources imply `separate(...)` facts; provably overlapping
   visible writes are rejected,
 - composite resources project direct `contains(parent, child)` facts for owned

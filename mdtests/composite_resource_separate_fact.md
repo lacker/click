@@ -12,8 +12,8 @@ int32 clobber_dst_packaged(int32* dst, int32* src) {
 
 ```click
 resource separated_first_cells(dst: int32*, src: int32*) {
-    contains write(dst[0..1]);
-    contains read(src[0..1]);
+    owns dst[0..1];
+    views src[0..1];
     fact separate(memory(dst[0..1]), memory(src[0..1]));
 }
 

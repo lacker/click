@@ -49,11 +49,11 @@ one-byte elements.
 
 Symbolic memory access usually needs:
 
-- a covering `read(...)` or `write(...)` resource, or a separate loadable range
+- a covering viewed or owned memory resource, or a separate loadable range
 - lower and upper index bounds
 - loop invariants if the bounds are established by a loop
 
-`read(...)` and `write(...)` imply loadability for the covered range. A separate
+Viewed and owned memory resources imply loadability for the covered range. A separate
 `loadable(...)` clause is useful when a proof needs loadability without access
 permission, or when it needs a larger structural range than the immediate
 permission covers.

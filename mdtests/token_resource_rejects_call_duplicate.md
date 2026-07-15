@@ -37,5 +37,5 @@ int32 call_same(int32 cb) {
 ```
 
 ```expect
-fail: duplicate resource fact `can_complete(cb)`
+fail: duplicate resource fact `owns can_complete(cb)`
 ```

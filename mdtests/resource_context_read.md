@@ -1,6 +1,6 @@
 # read resources
 
-This checks the first `read(...)` permission slice. `read(...)` permits
+This checks the first viewed permission slice. A view permits
 external loads and makes the covered memory loadable, but it does not grant write
 permission.
 

@@ -12,8 +12,8 @@ int32 copy_first(int32 dst[], int32 src[]) {
 
 ```click
 resource first_cell_copy_access(dst: int32*, src: int32*) {
-    contains write(dst[0..1]);
-    contains read(src[0..1]);
+    owns dst[0..1];
+    views src[0..1];
 }
 
 verifying "copy_first.c";

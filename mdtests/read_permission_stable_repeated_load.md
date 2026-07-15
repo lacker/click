@@ -1,6 +1,6 @@
 # read permission stable repeated load
 
-This checks that a held `read(...)` resource gives a stable read view: two
+This checks that a held viewed-memory resource gives a stable read view: two
 loads from the same cell with no intervening write produce the same value.
 
 ```c filename=read_same_twice.c

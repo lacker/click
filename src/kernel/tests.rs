@@ -154,7 +154,7 @@ fn concrete_pointer_block_names_cannot_create_symbolic_identity() {
 }
 
 #[test]
-fn memory_resource_fact_core_is_read_permission() {
+fn resource_family_cores_are_view_facts() {
     let base = Pointer {
         block: "p".into(),
         offset: PointerOffsetTerm::Constant(0),
@@ -175,6 +175,49 @@ fn memory_resource_fact_core_is_read_permission() {
             vec![int32(0)]
         ))
     );
+    assert_eq!(
+        CResourceFact::own_composite("box".to_string(), vec![int32(1)]).core(),
+        Some(CResourceFact::view_composite(
+            "box".to_string(),
+            vec![int32(1)]
+        ))
+    );
+}
+
+#[test]
+fn exact_resource_families_reject_duplicate_owned_facts() {
+    for fact in [
+        CResourceFact::own_token("token".to_string(), vec![int32(0)]),
+        CResourceFact::own_composite("box".to_string(), vec![int32(1)]),
+    ] {
+        let error = ResourceContext::new()
+            .try_compose_with_facts([fact.clone(), fact.clone()], &Assumptions::new())
+            .expect_err("duplicate exact owned resources must be invalid");
+        assert_eq!(
+            error,
+            ResourceContextValidityError::DuplicateOwnedResourceFact(fact)
+        );
+    }
+}
+
+#[test]
+fn exact_resource_views_are_preserved_when_satisfied() {
+    for (owned, viewed) in [
+        (
+            CResourceFact::own_token("token".to_string(), vec![int32(0)]),
+            CResourceFact::view_token("token".to_string(), vec![int32(0)]),
+        ),
+        (
+            CResourceFact::own_composite("box".to_string(), vec![int32(1)]),
+            CResourceFact::view_composite("box".to_string(), vec![int32(1)]),
+        ),
+    ] {
+        let context = ResourceContext::new().unchecked_with_fact(owned.clone());
+        let after_view = context
+            .without_fact(&viewed, &Assumptions::new())
+            .expect("owned exact resource should satisfy its view");
+        assert_eq!(after_view.facts(), &[owned]);
+    }
 }
 
 #[test]
@@ -198,6 +241,41 @@ fn resource_context_observes_write_separation() {
             right: CResource::Memory(right),
         }]
     );
+}
+
+#[test]
+fn resource_context_observes_same_and_cross_family_separation() {
+    let memory = CResource::Memory(memory_range(
+        Pointer {
+            block: "p".into(),
+            offset: PointerOffsetTerm::Constant(0),
+        },
+        0,
+        1,
+    ));
+    let token = CResource::Token {
+        name: "left".to_string(),
+        arguments: vec![],
+    };
+    let other_token = CResource::Token {
+        name: "right".to_string(),
+        arguments: vec![],
+    };
+    let facts = ResourceContext::new()
+        .unchecked_with_fact(CResourceFact::Own(memory.clone()))
+        .unchecked_with_fact(CResourceFact::Own(token.clone()))
+        .unchecked_with_fact(CResourceFact::Own(other_token.clone()))
+        .observable_facts(&Assumptions::new())
+        .expect("distinct owned resources should compose validly");
+
+    assert!(facts.contains(&Proposition::CResourceSeparate {
+        left: token.clone(),
+        right: other_token,
+    }));
+    assert!(facts.contains(&Proposition::CResourceSeparate {
+        left: memory,
+        right: token,
+    }));
 }
 
 #[test]

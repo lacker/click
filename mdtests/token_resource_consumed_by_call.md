@@ -52,5 +52,5 @@ int32 borrow_after_close(int32 fd) {
 ```
 
 ```expect
-fail: missing resource fact `open_fd(fd)`
+fail: missing resource fact `owns open_fd(fd)`
 ```

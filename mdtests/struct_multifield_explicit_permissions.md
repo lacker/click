@@ -2,7 +2,7 @@
 
 This checks that compact multi-field struct lowering still works with an
 explicit object-range footprint. Most field-sized contracts should prefer
-`read(p->field)` and `write(p->field)`.
+viewed and owned field resources.
 
 ```c filename=write_second.c
 struct pair {

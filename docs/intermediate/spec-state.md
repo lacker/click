@@ -11,7 +11,7 @@ name is a simple immutable abbreviation or extra proof/model state across
 program points.
 
 Click does not yet have general first-class mutable spec state. It does have a
-small resource context for `read(...)` and `write(...)` memory resources,
+small resource context for viewed and owned memory resources,
 described in [Permissions](permissions.md). This page records the intended
 place of the broader feature so future permission and ownership work has a
 clean target.
@@ -72,8 +72,8 @@ different mental model.
 
 This matters for permission logic. A resource fact may say that the current
 proof state has read or write authority over some memory. Unlike pure facts,
-some resource facts must not be copied freely. Click's first `read(...)` and
-`write(...)` slices therefore live in a resource context rather than as
+some resource facts must not be copied freely. Click's viewed and owned memory
+elements therefore live in a resource context rather than as
 classical predicate facts.
 
 ## Relationship To Permission Logic

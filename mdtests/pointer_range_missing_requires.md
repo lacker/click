@@ -1,6 +1,6 @@
 # pointer range verification rejects missing requirements
 
-This checks that an indexed pointer load without a `read(...)` requirement
+This checks that an indexed pointer load without a viewed-memory requirement
 reports a missing resource fact.
 
 ```c filename=pointer_range_missing_requires.c
@@ -18,5 +18,5 @@ int32 read_second(int32* p) {
 ```
 
 ```expect
-fail: missing resource fact `read(p[1..2])`
+fail: missing resource fact `views p[1..2]`
 ```

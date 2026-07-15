@@ -21,7 +21,7 @@ int32 first(int32 p[]) {
 }
 ```
 
-`read(...)` and `write(...)` imply loadability for the range they cover. Use
+Viewed and owned memory resources imply loadability for the range they cover. Use
 `loadable(...)` when you need memory-loadability information without granting
 access permission, or when the proof needs a larger range than any single
 access resource provides.

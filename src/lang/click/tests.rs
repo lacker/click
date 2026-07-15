@@ -342,7 +342,7 @@ fn parses_loadable_segment_proposition() {
 fn parses_resource_relation_propositions() {
     let source = r#"
             resource backing(p: int32*, n: int32) {
-                contains write(p[0..n]);
+                owns p[0..n];
             }
 
             predicate separated_backing(int32* p, int32* q, int32 n) {
@@ -606,7 +606,7 @@ fn parses_composite_resource_definition() {
 
             resource uncalled(flag: int32*) {
                 contains socket_open(7);
-                contains write(flag[0..1]);
+                owns flag[0..1];
                 fact flag[0] == 0;
             }
         "#;

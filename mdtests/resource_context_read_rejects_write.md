@@ -1,7 +1,7 @@
 # read resources reject stores
 
-This checks that `read(...)` does not grant write permission. External stores
-require a covering `write(...)`.
+This checks that a view does not grant write permission. External stores
+require a covering owned-memory resource.
 
 ```c filename=write_with_read_only.c
 int32 write_with_read_only(int32 p[]) {
@@ -21,5 +21,5 @@ int32 write_with_read_only(int32 p[]) {
 ```
 
 ```expect
-fail: missing resource fact `write(p[0..1])`
+fail: missing resource fact `owns p[0..1]`
 ```

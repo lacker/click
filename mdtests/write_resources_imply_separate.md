@@ -1,6 +1,6 @@
 # write resources imply separate
 
-This checks that two held `write(...)` resources imply a `separate(...)` fact
+This checks that two held owned-memory resources imply a `separate(...)` fact
 for their ranges. No explicit `separate(...)` requirement is needed here.
 
 ```c filename=write_dst_read_src_from_write.c

@@ -1,6 +1,6 @@
 # uint8 read resources
 
-This checks that `read(...)` permissions use byte-width indexing for `uint8[]`
+This checks that viewed permissions use byte-width indexing for `uint8[]`
 parameters.
 
 ```c filename=read_second_byte.c

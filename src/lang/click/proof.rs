@@ -5003,7 +5003,7 @@ fn observe_composite_resource(
     claim_label: &str,
     step_index: usize,
 ) -> Result<CState, ClickError> {
-    let definition = composite_resource_definition(
+    let definition = composite_resource_law_definition(
         resource_environment,
         resource,
         "observe",
@@ -5038,8 +5038,7 @@ fn observe_composite_resource(
             "`{claim_label}` proof step {step_index}: `observe` expects a composite resource"
         )));
     };
-    let (memory, contained_resources) = project_composite_resource_observable_facts(
-        resource_environment,
+    let (memory, contained_resources) = apply_composite_observation_law(
         definition,
         &resource_arguments,
         parameters,
@@ -5098,8 +5097,7 @@ fn project_held_resource_observable_facts(
     let Some(definition) = resource_environment.get(name) else {
         return Ok(memory);
     };
-    project_composite_resource_observable_facts(
-        resource_environment,
+    apply_composite_observation_law(
         definition,
         resource_arguments,
         parameters,
@@ -5114,8 +5112,11 @@ fn project_held_resource_observable_facts(
     .map(|(memory, _)| memory)
 }
 
-fn project_composite_resource_observable_facts(
-    _resource_environment: &ResourceEnvironment,
+/// Applies the non-consuming observation law declared by a composite body.
+/// The kernel algebra handles the folded resource fact itself; Click owns this
+/// definitional layer because it requires source-level substitution and fact
+/// lowering.
+fn apply_composite_observation_law(
     definition: &ResourceDefinition,
     resource_arguments: &[CValue],
     parameters: &[syntax::C0Parameter],
@@ -5148,7 +5149,7 @@ fn project_composite_resource_observable_facts(
     )?;
     let fact_state = pre_state.clone().with_memory(memory.clone());
 
-    append_composite_resource_observable_facts(
+    append_composite_definition_observable_facts(
         definition,
         composite_body,
         &CResource::Composite {
@@ -5169,7 +5170,7 @@ fn project_composite_resource_observable_facts(
     Ok((memory, contained_resources))
 }
 
-fn append_composite_resource_observable_facts(
+fn append_composite_definition_observable_facts(
     definition: &ResourceDefinition,
     composite_body: &CompositeResourceBody,
     parent_resource: &CResource,
@@ -5415,7 +5416,7 @@ fn describe_resource_context_validity_error(
         }
         ResourceContextValidityError::OverlappingWriteResources { left, right } => {
             format!(
-                "overlapping write resource facts `write({})` and `write({})`",
+                "overlapping owned memory resource facts `owns {}` and `owns {}`",
                 describe_memory_range(&left, parameters, arguments),
                 describe_memory_range(&right, parameters, arguments)
             )
@@ -5442,6 +5443,9 @@ fn materialize_composite_resource_memory(
     Ok(memory)
 }
 
+/// Instantiates the resource-state side of a composite definition. The result
+/// is provisional until the caller composes it with assumptions and checks
+/// validity through `ResourceContext`.
 fn instantiate_composite_resource_body_resources(
     name: &str,
     composite_body: &CompositeResourceBody,
@@ -5499,6 +5503,9 @@ fn resource_value_substitutions(
         .collect())
 }
 
+/// Applies the owned-composite equivalence from the folded fact to one
+/// instantiated body. This is a definition law, not primitive consumption
+/// behavior of the kernel's folded composite fact.
 fn unfold_composite_resource(
     resource_environment: &ResourceEnvironment,
     resource: &ResourceClause,
@@ -5511,7 +5518,7 @@ fn unfold_composite_resource(
     claim_label: &str,
     step_index: usize,
 ) -> Result<CState, ClickError> {
-    let definition = composite_resource_definition(
+    let definition = composite_resource_law_definition(
         resource_environment,
         resource,
         "unfold",
@@ -5520,7 +5527,7 @@ fn unfold_composite_resource(
     )?;
     let composite_body = definition
         .composite_body()
-        .expect("composite_resource_definition should require a composite body");
+        .expect("composite_resource_law_definition should require a composite body");
     let substitutions =
         resource_argument_substitutions(definition, resource, claim_label, step_index)?;
     let abstract_resource = lower_resource_clause(resource, parameters, arguments, state.memory())?;
@@ -5645,6 +5652,8 @@ fn unfold_composite_resource(
     Ok(state)
 }
 
+/// Applies the reverse composite definition law after proving the body's pure
+/// facts and consuming its immediate contained resource state.
 fn fold_composite_resources_on_outcome(
     resource_environment: &ResourceEnvironment,
     resource_folds: &[ResourceClause],
@@ -5661,7 +5670,7 @@ fn fold_composite_resources_on_outcome(
     unfolded_predicates: &[String],
 ) -> Result<CFunctionOutcome, ClickError> {
     for resource in resource_folds {
-        let definition = composite_resource_definition(
+        let definition = composite_resource_law_definition(
             resource_environment,
             resource,
             "fold",
@@ -5670,7 +5679,7 @@ fn fold_composite_resources_on_outcome(
         )?;
         let composite_body = definition
             .composite_body()
-            .expect("composite_resource_definition should require a composite body");
+            .expect("composite_resource_law_definition should require a composite body");
         let substitutions =
             resource_argument_substitutions(definition, resource, claim_label, path_index)?;
 
@@ -5770,7 +5779,9 @@ fn fold_composite_resources_on_outcome(
     Ok(outcome)
 }
 
-fn composite_resource_definition<'a>(
+/// Resolves the source declaration that supplies fold, unfold, and observation
+/// laws for a composite resource fact.
+fn composite_resource_law_definition<'a>(
     resource_environment: &'a ResourceEnvironment,
     resource: &ResourceClause,
     action: &str,

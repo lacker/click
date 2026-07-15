@@ -27,20 +27,20 @@ int32 push_one(struct owner* owner, int32 value) {
 
 ```click
 resource owned_buffer(owner: struct owner*) {
-    contains write(owner->len);
-    contains write(owner->cap);
-    contains write(owner->data);
-    contains write((owner->data)[0..owner->cap]);
+    owns owner->len;
+    owns owner->cap;
+    owns owner->data;
+    owns (owner->data)[0..owner->cap];
     fact 0 <= owner->len;
     fact owner->len <= owner->cap;
     fact separate(memory(owner[0..3]), memory((owner->data)[0..owner->cap]));
 }
 
 resource owned_buffer_with_room(owner: struct owner*) {
-    contains write(owner->len);
-    contains write(owner->cap);
-    contains write(owner->data);
-    contains write((owner->data)[0..owner->cap]);
+    owns owner->len;
+    owns owner->cap;
+    owns owner->data;
+    owns (owner->data)[0..owner->cap];
     fact 0 <= owner->len;
     fact owner->len < owner->cap;
     fact separate(memory(owner[0..3]), memory((owner->data)[0..owner->cap]));

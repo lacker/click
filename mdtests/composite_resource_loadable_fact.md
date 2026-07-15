@@ -11,7 +11,7 @@ int32 slice_get(int32* data, int32 index, int32 len) {
 
 ```click
 resource readable_slice(data: int32*, len: int32) {
-    contains read(data[0..len]);
+    views data[0..len];
     fact loadable(data[0..len]);
 }
 

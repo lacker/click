@@ -3352,14 +3352,14 @@ pub(super) fn resource_clause_loadable_prop(
             let lowered = lower_resource_clause(resource, parameters, arguments, memory)?;
             let range = lowered
                 .memory_view_range()
-                .expect("read resource should lower to view memory");
+                .expect("viewed memory clause should lower to viewed memory");
             (segment, range.clone())
         }
         ResourceClause::Write(segment) => {
             let lowered = lower_resource_clause(resource, parameters, arguments, memory)?;
             let range = lowered
                 .memory_own_range()
-                .expect("write resource should lower to owned memory");
+                .expect("owned memory clause should lower to owned memory");
             (segment, range.clone())
         }
         ResourceClause::Declared { .. } => return Ok(None),

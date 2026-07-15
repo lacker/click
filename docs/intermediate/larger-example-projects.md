@@ -25,8 +25,8 @@ This fixture's proof scope is intentionally narrow:
 - one `int32` field in the json-c-shaped struct,
 - pointer-to-struct parameters,
 - `->` field loads and stores for that first field,
-- `read(obj->ref_count)` for field reads,
-- `write(obj->ref_count)` for field writes.
+- `views obj->ref_count` for field reads,
+- `owns obj->ref_count` for field writes.
 
 This gives Click a realistic shape to verify without pretending it already has
 heap allocation or ownership transfer.

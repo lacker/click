@@ -1,7 +1,7 @@
 # uint8 buffer read
 
 This checks that `uint8[]` parameters use byte-width indexing and can be read
-with a matching `read(...)` permission.
+with a matching viewed permission.
 
 ```c filename=uint8_buffer_read.c
 uint8 read_first_byte(uint8 p[]) {

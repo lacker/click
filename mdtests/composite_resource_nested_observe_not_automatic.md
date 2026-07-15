@@ -1,7 +1,7 @@
 # nested composite observation is not automatic
 
 This records the bounded-automation boundary for composite resources. Direct
-hidden contained `write(...)` resources expose folded-resource
+hidden contained owned-memory resources expose folded-resource
 `separate(...)` facts, but `auto` does not recursively observe nested composite
 resources. The corresponding positive example uses an explicit chain of
 `observe(...)` steps.
@@ -20,13 +20,13 @@ int32 observe_nested_owner_buffer(struct owner* owner) {
 
 ```click
 resource backing_buffer(owner: struct owner*) {
-    contains write((owner->data)[0..owner->cap]);
+    owns (owner->data)[0..owner->cap];
 }
 
 resource nested_owned_buffer(owner: struct owner*) {
-    contains write(owner->len);
-    contains write(owner->cap);
-    contains write(owner->data);
+    owns owner->len;
+    owns owner->cap;
+    owns owner->data;
     contains backing_buffer(owner);
     fact 0 <= owner->len;
     fact owner->len <= owner->cap;

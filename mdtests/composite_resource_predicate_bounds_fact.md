@@ -9,7 +9,7 @@ predicate in_bounds(int32 k, int32 n) {
 }
 
 resource indexed_zero(p: int32*, k: int32, n: int32) {
-    contains write(p[0..n]);
+    owns p[0..n];
     fact in_bounds(k, n) and p[k] == 0;
 }
 ```

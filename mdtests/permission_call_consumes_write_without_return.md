@@ -1,7 +1,7 @@
 # permission call consumes unreturned write access
 
 This checks that write permission is linear across a call. The helper receives
-`write(p[0..1])` but does not return it, so the caller cannot prove it still has
+owned memory for `p[0..1]` but does not return it, so the caller cannot prove it still has
 that write permission after the call.
 
 ```c filename=consume_first_write.c

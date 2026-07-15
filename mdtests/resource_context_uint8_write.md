@@ -1,6 +1,6 @@
 # uint8 write resources
 
-This checks that `write(...)` permissions use byte-width indexing for `uint8[]`
+This checks that owned permissions use byte-width indexing for `uint8[]`
 stores.
 
 ```c filename=write_second_byte.c

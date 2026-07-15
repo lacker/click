@@ -553,11 +553,84 @@ pub enum ResourceContextValidityError {
     },
 }
 
+/// The result of consuming one available resource fact to satisfy a required
+/// fact. Viewed facts are normally preserved; owned facts may be removed or
+/// replaced by residual ownership.
+pub(super) enum ResourceFactConsumption {
+    Preserve,
+    Replace(Vec<CResourceFact>),
+}
+
+/// The algebraic behavior supplied by one resource family.
+///
+/// `ResourceContext` provides state-level composition. Families define when
+/// same-family facts are valid together, how one fact entails or satisfies
+/// another, how consumed ownership leaves residues, how redundant facts are
+/// normalized, and which facts are observable from a valid composition.
+pub(super) trait ResourceFamilyAlgebra {
+    fn family(&self) -> ResourceFamily;
+
+    fn pair_validity_error(
+        &self,
+        left: &CResourceFact,
+        right: &CResourceFact,
+        assumptions: &Assumptions,
+    ) -> Option<ResourceContextValidityError>;
+
+    fn entails(
+        &self,
+        available: &CResourceFact,
+        required: &CResourceFact,
+        assumptions: &Assumptions,
+    ) -> bool;
+
+    fn consume(
+        &self,
+        available: &CResourceFact,
+        required: &CResourceFact,
+        assumptions: &Assumptions,
+    ) -> Option<ResourceFactConsumption>;
+
+    /// Returns one fact equivalent to composing this pair when the pair can be
+    /// losslessly normalized. `None` leaves both facts in the resource state.
+    fn normalize_pair(
+        &self,
+        left: &CResourceFact,
+        right: &CResourceFact,
+        assumptions: &Assumptions,
+    ) -> Option<CResourceFact>;
+
+    fn core(&self, fact: &CResourceFact) -> Option<CResourceFact>;
+
+    fn observable_facts(
+        &self,
+        facts: &[&CResourceFact],
+        assumptions: &Assumptions,
+    ) -> Vec<Proposition>;
+}
+
+struct MemoryResourceAlgebra;
+struct TokenResourceAlgebra;
+/// The kernel algebra for a folded composite fact is exact-match ownership and
+/// viewing. Source-declared body equivalences are applied as fold, unfold, and
+/// observation laws by the Click proof layer.
+struct CompositeResourceAlgebra;
+
+static MEMORY_RESOURCE_ALGEBRA: MemoryResourceAlgebra = MemoryResourceAlgebra;
+static TOKEN_RESOURCE_ALGEBRA: TokenResourceAlgebra = TokenResourceAlgebra;
+static COMPOSITE_RESOURCE_ALGEBRA: CompositeResourceAlgebra = CompositeResourceAlgebra;
+
+/// Primitive resource families. Adding a variant also requires registering one
+/// `ResourceFamilyAlgebra` implementation in `resource_family_algebra`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum ResourceFamily {
     Memory,
     Composite,
     Token,
+}
+
+impl ResourceFamily {
+    const ALL: [Self; 3] = [Self::Memory, Self::Composite, Self::Token];
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -2097,16 +2170,20 @@ impl ResourceContext {
         &self,
         assumptions: &Assumptions,
     ) -> Option<ResourceContextValidityError> {
-        if let Some(resource) = self.duplicate_owned_fact() {
-            return Some(ResourceContextValidityError::DuplicateOwnedResourceFact(
-                resource.clone(),
-            ));
-        }
-        if let Some((left, right)) = self.overlapping_owned_memory_pair(assumptions) {
-            return Some(ResourceContextValidityError::OverlappingWriteResources {
-                left: left.clone(),
-                right: right.clone(),
-            });
+        for i in 0..self.facts.len() {
+            for right in &self.facts[i + 1..] {
+                let left = &self.facts[i];
+                if left.family() != right.family() {
+                    continue;
+                }
+                if let Some(error) = resource_family_algebra(left.family()).pair_validity_error(
+                    left,
+                    right,
+                    assumptions,
+                ) {
+                    return Some(error);
+                }
+            }
         }
         None
     }
@@ -2122,39 +2199,21 @@ impl ResourceContext {
         if let Some(error) = self.validity_error(assumptions) {
             return Err(error);
         }
-        Ok(self.owned_resource_separate_facts())
-    }
-
-    pub fn has_multiple_owned_memory_resources(&self) -> bool {
-        self.facts
-            .iter()
-            .filter(|resource| resource.memory_own_range().is_some())
-            .take(2)
-            .count()
-            == 2
-    }
-
-    pub fn overlapping_owned_memory_pair(
-        &self,
-        assumptions: &Assumptions,
-    ) -> Option<(&CMemoryRange, &CMemoryRange)> {
-        for i in 0..self.facts.len() {
-            let Some(left) = self.facts[i].memory_own_range() else {
-                continue;
-            };
-            for candidate in &self.facts[i + 1..] {
-                let Some(right) = candidate.memory_own_range() else {
-                    continue;
-                };
-                if memory_ranges_proven_overlapping(left, right, assumptions) {
-                    return Some((left, right));
-                }
-            }
+        let mut propositions = Vec::new();
+        for family in ResourceFamily::ALL {
+            let facts = self
+                .facts
+                .iter()
+                .filter(|fact| fact.family() == family)
+                .collect::<Vec<_>>();
+            propositions
+                .extend(resource_family_algebra(family).observable_facts(&facts, assumptions));
         }
-        None
+        propositions.extend(self.cross_family_separate_facts());
+        Ok(propositions)
     }
 
-    fn owned_resource_separate_facts(&self) -> Vec<Proposition> {
+    fn cross_family_separate_facts(&self) -> Vec<Proposition> {
         let owned = self
             .facts
             .iter()
@@ -2164,6 +2223,9 @@ impl ResourceContext {
         for i in 0..owned.len() {
             for right in &owned[i + 1..] {
                 let left = owned[i];
+                if left.family() == right.family() {
+                    continue;
+                }
                 propositions.push(Proposition::CResourceSeparate {
                     left: (*left).clone(),
                     right: (**right).clone(),
@@ -2171,21 +2233,6 @@ impl ResourceContext {
             }
         }
         propositions
-    }
-
-    pub fn duplicate_owned_fact(&self) -> Option<&CResourceFact> {
-        for i in 0..self.facts.len() {
-            if !self.facts[i].is_owned_non_memory() {
-                continue;
-            }
-            if self.facts[i + 1..]
-                .iter()
-                .any(|candidate| candidate == &self.facts[i])
-            {
-                return Some(&self.facts[i]);
-            }
-        }
-        None
     }
 
     pub fn satisfies_fact(&self, fact: &CResourceFact, assumptions: &Assumptions) -> bool {
@@ -2221,7 +2268,26 @@ impl ResourceContext {
     }
 
     pub fn without_fact(self, fact: &CResourceFact, assumptions: &Assumptions) -> Option<Self> {
-        consume_fact(self, fact, assumptions)
+        let algebra = resource_family_algebra(fact.family());
+        let mut context = self;
+        for index in 0..context.facts.len() {
+            let available = &context.facts[index];
+            if available.family() != fact.family() {
+                continue;
+            }
+            let Some(consumption) = algebra.consume(available, fact, assumptions) else {
+                continue;
+            };
+            match consumption {
+                ResourceFactConsumption::Preserve => {}
+                ResourceFactConsumption::Replace(residual) => {
+                    context.facts.remove(index);
+                    context.facts.extend(residual);
+                }
+            }
+            return Some(context.normalized(assumptions));
+        }
+        None
     }
 
     pub(super) fn normalized(mut self, assumptions: &Assumptions) -> Self {
@@ -2231,7 +2297,7 @@ impl ResourceContext {
             let mut j = i + 1;
             while j < self.facts.len() {
                 if let Some(merged) =
-                    combine_resource_facts(&self.facts[i], &self.facts[j], assumptions)
+                    normalize_resource_fact_pair(&self.facts[i], &self.facts[j], assumptions)
                 {
                     self.facts[i] = merged;
                     self.facts.remove(j);
@@ -2250,36 +2316,26 @@ impl ResourceContext {
     }
 }
 
+fn resource_family_algebra(family: ResourceFamily) -> &'static dyn ResourceFamilyAlgebra {
+    let algebra: &'static dyn ResourceFamilyAlgebra = match family {
+        ResourceFamily::Memory => &MEMORY_RESOURCE_ALGEBRA,
+        ResourceFamily::Composite => &COMPOSITE_RESOURCE_ALGEBRA,
+        ResourceFamily::Token => &TOKEN_RESOURCE_ALGEBRA,
+    };
+    debug_assert_eq!(algebra.family(), family);
+    algebra
+}
+
 fn resource_fact_entails(
     available: &CResourceFact,
     required: &CResourceFact,
     assumptions: &Assumptions,
 ) -> bool {
-    if available.family() != required.family() {
-        return false;
-    }
-    match available.family() {
-        ResourceFamily::Memory => memory_resource_fact_entails(available, required, assumptions),
-        ResourceFamily::Composite | ResourceFamily::Token => {
-            non_memory_resource_fact_entails(available, required)
-        }
-    }
+    available.family() == required.family()
+        && resource_family_algebra(available.family()).entails(available, required, assumptions)
 }
 
-fn consume_fact(
-    context: ResourceContext,
-    required: &CResourceFact,
-    assumptions: &Assumptions,
-) -> Option<ResourceContext> {
-    match required.family() {
-        ResourceFamily::Memory => consume_memory_resource_fact(context, required, assumptions),
-        ResourceFamily::Composite | ResourceFamily::Token => {
-            consume_non_memory_resource_fact(context, required, assumptions)
-        }
-    }
-}
-
-fn combine_resource_facts(
+fn normalize_resource_fact_pair(
     left: &CResourceFact,
     right: &CResourceFact,
     assumptions: &Assumptions,
@@ -2287,12 +2343,7 @@ fn combine_resource_facts(
     if left.family() != right.family() {
         return None;
     }
-    match left.family() {
-        ResourceFamily::Memory => combine_memory_resource_facts(left, right, assumptions),
-        ResourceFamily::Composite | ResourceFamily::Token => {
-            combine_non_memory_resource_facts(left, right)
-        }
-    }
+    resource_family_algebra(left.family()).normalize_pair(left, right, assumptions)
 }
 
 fn memory_resource_fact_entails(
@@ -2320,42 +2371,31 @@ fn memory_resource_fact_entails(
 }
 
 fn consume_memory_resource_fact(
-    mut context: ResourceContext,
+    available: &CResourceFact,
     required: &CResourceFact,
     assumptions: &Assumptions,
-) -> Option<ResourceContext> {
+) -> Option<ResourceFactConsumption> {
     if let Some(required) = required.memory_view_range() {
-        return context
-            .facts
-            .iter()
-            .any(|candidate| {
-                resource_fact_read_core_range(candidate)
-                    .is_some_and(|available| memory_range_covers(&available, required, assumptions))
-            })
-            .then(|| context.normalized(assumptions));
+        return resource_fact_read_core_range(available)
+            .is_some_and(|available| memory_range_covers(&available, required, assumptions))
+            .then_some(ResourceFactConsumption::Preserve);
     }
     if let Some(required) = required.memory_own_range() {
-        let index = context.facts.iter().position(|candidate| {
-            candidate
-                .memory_own_range()
-                .is_some_and(|available| memory_range_covers(available, required, assumptions))
-        })?;
-        let available = context
-            .facts
-            .remove(index)
-            .into_memory_own_range()
-            .expect("own resource lookup ignored non-own resources");
-        context.facts.extend(
-            split_memory_range(&available, required, assumptions)?
+        let available = available.memory_own_range()?;
+        if !memory_range_covers(available, required, assumptions) {
+            return None;
+        }
+        return Some(ResourceFactConsumption::Replace(
+            split_memory_range(available, required, assumptions)?
                 .into_iter()
-                .map(CResourceFact::own_memory),
-        );
-        return Some(context.normalized(assumptions));
+                .map(CResourceFact::own_memory)
+                .collect(),
+        ));
     }
     unreachable!("non-memory resource sent to memory resource consumer")
 }
 
-fn non_memory_resource_fact_entails(available: &CResourceFact, required: &CResourceFact) -> bool {
+fn exact_resource_fact_entails(available: &CResourceFact, required: &CResourceFact) -> bool {
     match (available, required) {
         (CResourceFact::Own(available), CResourceFact::Own(required)) => available == required,
         (
@@ -2366,27 +2406,22 @@ fn non_memory_resource_fact_entails(available: &CResourceFact, required: &CResou
     }
 }
 
-fn consume_non_memory_resource_fact(
-    mut context: ResourceContext,
+fn consume_exact_resource_fact(
+    available: &CResourceFact,
     required: &CResourceFact,
-    assumptions: &Assumptions,
-) -> Option<ResourceContext> {
-    if matches!(required, CResourceFact::View(_)) {
-        return context
-            .facts
-            .iter()
-            .any(|candidate| non_memory_resource_fact_entails(candidate, required))
-            .then(|| context.normalized(assumptions));
+    _assumptions: &Assumptions,
+) -> Option<ResourceFactConsumption> {
+    if !exact_resource_fact_entails(available, required) {
+        return None;
     }
-    let index = context
-        .facts
-        .iter()
-        .position(|candidate| candidate == required)?;
-    context.facts.remove(index);
-    Some(context.normalized(assumptions))
+    Some(if required.is_view() {
+        ResourceFactConsumption::Preserve
+    } else {
+        ResourceFactConsumption::Replace(Vec::new())
+    })
 }
 
-fn combine_non_memory_resource_facts(
+fn combine_exact_resource_facts(
     left: &CResourceFact,
     right: &CResourceFact,
 ) -> Option<CResourceFact> {
@@ -2404,13 +2439,161 @@ fn combine_non_memory_resource_facts(
     }
 }
 
-fn resource_fact_core(resource: &CResourceFact) -> Option<CResourceFact> {
+fn access_mode_core(resource: &CResourceFact) -> Option<CResourceFact> {
     match resource {
         CResourceFact::Own(resource) | CResourceFact::View(resource) => {
             Some(CResourceFact::View(resource.clone()))
         }
     }
 }
+
+fn exact_resource_pair_validity_error(
+    left: &CResourceFact,
+    right: &CResourceFact,
+) -> Option<ResourceContextValidityError> {
+    (left.is_own() && left == right)
+        .then(|| ResourceContextValidityError::DuplicateOwnedResourceFact(left.clone()))
+}
+
+fn same_family_separate_facts(facts: &[&CResourceFact]) -> Vec<Proposition> {
+    let owned = facts
+        .iter()
+        .filter_map(|fact| fact.owned_resource())
+        .collect::<Vec<_>>();
+    let mut propositions = Vec::new();
+    for i in 0..owned.len() {
+        for right in &owned[i + 1..] {
+            propositions.push(Proposition::CResourceSeparate {
+                left: owned[i].clone(),
+                right: (*right).clone(),
+            });
+        }
+    }
+    propositions
+}
+
+impl ResourceFamilyAlgebra for MemoryResourceAlgebra {
+    fn family(&self) -> ResourceFamily {
+        ResourceFamily::Memory
+    }
+
+    fn pair_validity_error(
+        &self,
+        left: &CResourceFact,
+        right: &CResourceFact,
+        assumptions: &Assumptions,
+    ) -> Option<ResourceContextValidityError> {
+        let (Some(left), Some(right)) = (left.memory_own_range(), right.memory_own_range()) else {
+            return None;
+        };
+        memory_ranges_proven_overlapping(left, right, assumptions).then(|| {
+            ResourceContextValidityError::OverlappingWriteResources {
+                left: left.clone(),
+                right: right.clone(),
+            }
+        })
+    }
+
+    fn entails(
+        &self,
+        available: &CResourceFact,
+        required: &CResourceFact,
+        assumptions: &Assumptions,
+    ) -> bool {
+        memory_resource_fact_entails(available, required, assumptions)
+    }
+
+    fn consume(
+        &self,
+        available: &CResourceFact,
+        required: &CResourceFact,
+        assumptions: &Assumptions,
+    ) -> Option<ResourceFactConsumption> {
+        consume_memory_resource_fact(available, required, assumptions)
+    }
+
+    fn normalize_pair(
+        &self,
+        left: &CResourceFact,
+        right: &CResourceFact,
+        assumptions: &Assumptions,
+    ) -> Option<CResourceFact> {
+        combine_memory_resource_facts(left, right, assumptions)
+    }
+
+    fn core(&self, fact: &CResourceFact) -> Option<CResourceFact> {
+        access_mode_core(fact)
+    }
+
+    fn observable_facts(
+        &self,
+        facts: &[&CResourceFact],
+        _assumptions: &Assumptions,
+    ) -> Vec<Proposition> {
+        same_family_separate_facts(facts)
+    }
+}
+
+macro_rules! impl_exact_resource_algebra {
+    ($algebra:ty, $family:expr) => {
+        impl ResourceFamilyAlgebra for $algebra {
+            fn family(&self) -> ResourceFamily {
+                $family
+            }
+
+            fn pair_validity_error(
+                &self,
+                left: &CResourceFact,
+                right: &CResourceFact,
+                _assumptions: &Assumptions,
+            ) -> Option<ResourceContextValidityError> {
+                exact_resource_pair_validity_error(left, right)
+            }
+
+            fn entails(
+                &self,
+                available: &CResourceFact,
+                required: &CResourceFact,
+                _assumptions: &Assumptions,
+            ) -> bool {
+                exact_resource_fact_entails(available, required)
+            }
+
+            fn consume(
+                &self,
+                available: &CResourceFact,
+                required: &CResourceFact,
+                assumptions: &Assumptions,
+            ) -> Option<ResourceFactConsumption> {
+                consume_exact_resource_fact(available, required, assumptions)
+            }
+
+            fn normalize_pair(
+                &self,
+                left: &CResourceFact,
+                right: &CResourceFact,
+                _assumptions: &Assumptions,
+            ) -> Option<CResourceFact> {
+                combine_exact_resource_facts(left, right)
+            }
+
+            fn core(&self, fact: &CResourceFact) -> Option<CResourceFact> {
+                access_mode_core(fact)
+            }
+
+            fn observable_facts(
+                &self,
+                facts: &[&CResourceFact],
+                _assumptions: &Assumptions,
+            ) -> Vec<Proposition> {
+                same_family_separate_facts(facts)
+            }
+        }
+    };
+}
+
+impl_exact_resource_algebra!(TokenResourceAlgebra, ResourceFamily::Token);
+impl_exact_resource_algebra!(CompositeResourceAlgebra, ResourceFamily::Composite);
 
 fn resource_fact_read_core_range(resource: &CResourceFact) -> Option<CMemoryRange> {
     match resource.core()? {
@@ -2520,6 +2703,16 @@ fn memory_ranges_proven_overlapping(
         )) == Some(true)
 }
 
+impl CResource {
+    pub fn family(&self) -> ResourceFamily {
+        match self {
+            Self::Memory(_) => ResourceFamily::Memory,
+            Self::Composite { .. } => ResourceFamily::Composite,
+            Self::Token { .. } => ResourceFamily::Token,
+        }
+    }
+}
+
 impl CResourceFact {
     pub fn own_memory(range: CMemoryRange) -> Self {
         Self::Own(CResource::Memory(range))
@@ -2559,23 +2752,12 @@ impl CResourceFact {
         matches!(self, Self::View(_))
     }
 
-    pub fn is_owned_non_memory(&self) -> bool {
-        matches!(
-            self,
-            Self::Own(CResource::Composite { .. } | CResource::Token { .. })
-        )
-    }
-
     pub fn family(&self) -> ResourceFamily {
-        match self.resource() {
-            CResource::Memory(_) => ResourceFamily::Memory,
-            CResource::Composite { .. } => ResourceFamily::Composite,
-            CResource::Token { .. } => ResourceFamily::Token,
-        }
+        self.resource().family()
     }
 
     pub fn core(&self) -> Option<Self> {
-        resource_fact_core(self)
+        resource_family_algebra(self.family()).core(self)
     }
 
     pub fn memory_own_range(&self) -> Option<&CMemoryRange> {
@@ -2610,15 +2792,6 @@ impl CResourceFact {
         match self {
             Self::Own(resource) => Some(resource),
             Self::View(_) => None,
-        }
-    }
-
-    fn into_memory_own_range(self) -> Option<CMemoryRange> {
-        match self {
-            Self::Own(CResource::Memory(range)) => Some(range),
-            Self::Own(CResource::Composite { .. } | CResource::Token { .. }) | Self::View(_) => {
-                None
-            }
         }
     }
 }

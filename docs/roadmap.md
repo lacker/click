@@ -108,7 +108,7 @@ Likely additions:
 
 - Permission logic:
   read/write authority over memory locations or ranges. A first mandatory
-  `read(...)`/`write(...)` resource context exists for memory ranges, including
+  viewed/owned resource context exists for memory ranges, including
   covered subrange transfer for function calls. The implementation now has an
   explicit internal resource-family boundary for the memory family plus
   exact-match token resources with declared argument types and duplicate-owned-token

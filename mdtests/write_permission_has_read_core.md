@@ -1,6 +1,6 @@
 # write permission has read core
 
-This checks that `write(...)` carries the same stable read view as `read(...)`
+This checks that owned memory carries the same stable view as viewed memory
 while still returning the write resource.
 
 ```c filename=write_read_same_twice.c

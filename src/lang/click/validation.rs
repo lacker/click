@@ -1446,13 +1446,13 @@ fn collect_resource_fact_reads_from_contract_expression(
             )?;
             let Some(base) = contract_expression_as_c_fragment(base) else {
                 return Err(ClickError::new(format!(
-                    "resource `{resource_name}` fact reads `{}` in a form that cannot be matched to a contained `write(...)` resource",
+                    "resource `{resource_name}` fact reads `{}` in a form that cannot be matched to a contained owned memory resource",
                     describe_contract_expression(expression)
                 )));
             };
             let Some(index) = contract_expression_as_c_fragment(index) else {
                 return Err(ClickError::new(format!(
-                    "resource `{resource_name}` fact reads `{}` in a form that cannot be matched to a contained `write(...)` resource",
+                    "resource `{resource_name}` fact reads `{}` in a form that cannot be matched to a contained owned memory resource",
                     describe_contract_expression(expression)
                 )));
             };
@@ -1682,7 +1682,7 @@ fn analyze_resource_fact_read_ownership(
     for resource in contained {
         let ResourceClause::Write(segment) = resource else {
             notes.push(format!(
-                "`{}` is not a `write(...)` resource",
+                "`{}` is not an owned memory resource",
                 describe_resource_clause(resource)
             ));
             continue;
@@ -1751,7 +1751,7 @@ fn resource_fact_read_ownership_error(
     scalar_assumptions: &[ResourceFactScalarAssumption],
 ) -> String {
     let mut lines = vec![format!(
-        "resource `{resource_name}` fact reads `{}` without a covering contained `write(...)` resource",
+        "resource `{resource_name}` fact reads `{}` without a covering contained owned memory resource",
         read.expression
     )];
     if analysis.notes.is_empty() {
@@ -2168,13 +2168,13 @@ fn reject_duplicate_owned_declared_resource_clauses<'a>(
 pub(super) fn describe_resource_clause(resource: &ResourceClause) -> String {
     match resource {
         ResourceClause::Read(segment) => format!(
-            "read({}[{}..{}])",
+            "views {}[{}..{}]",
             describe_c_expression(&segment.base),
             describe_c_expression(&segment.start),
             describe_c_expression(&segment.end)
         ),
         ResourceClause::Write(segment) => format!(
-            "write({}[{}..{}])",
+            "owns {}[{}..{}]",
             describe_c_expression(&segment.base),
             describe_c_expression(&segment.start),
             describe_c_expression(&segment.end)

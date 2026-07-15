@@ -1,7 +1,7 @@
 # composite resource rejects bad origin
 
 This checks that folding a composite resource proves its fact. The code
-keeps `write(flag[0..1])`, but it never establishes `flag[0] == 0`, so it
+keeps ownership of `flag[0..1]`, but it never establishes `flag[0] == 0`, so it
 cannot fold `uncalled(flag)`.
 
 ```c filename=init_bad.c
@@ -12,7 +12,7 @@ int32 init_bad(int32 flag[]) {
 
 ```click
 resource uncalled(flag: int32*) {
-    contains write(flag[0..1]);
+    owns flag[0..1];
     fact flag[0] == 0;
 }
 

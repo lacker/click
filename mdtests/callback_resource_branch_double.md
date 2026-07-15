@@ -41,5 +41,5 @@ int32 complete_maybe_twice(int32 cb, int32 failed) {
 ```
 
 ```expect
-fail: missing resource fact `can_complete(cb)`
+fail: missing resource fact `owns can_complete(cb)`
 ```

@@ -256,7 +256,7 @@ pub(super) fn describe_runtime_error(
             describe_resource_fact(resource, parameters, arguments)
         ),
         crate::kernel::CRuntimeError::OverlappingWriteResources { left, right } => format!(
-            "overlapping write resource facts `write({})` and `write({})`",
+            "overlapping owned memory resource facts `owns {}` and `owns {}`",
             describe_memory_range(left, parameters, arguments),
             describe_memory_range(right, parameters, arguments)
         ),
@@ -285,13 +285,13 @@ pub(super) fn describe_resource_fact(
 ) -> String {
     if let Some(range) = resource.memory_view_range() {
         return format!(
-            "read({})",
+            "views {}",
             describe_memory_range(range, parameters, arguments)
         );
     }
     if let Some(range) = resource.memory_own_range() {
         return format!(
-            "write({})",
+            "owns {}",
             describe_memory_range(range, parameters, arguments)
         );
     }
@@ -305,7 +305,10 @@ pub(super) fn describe_resource_fact(
                 name,
                 arguments: resource_arguments,
             },
-        ) => format_declared_resource(name, resource_arguments, parameters, arguments),
+        ) => format!(
+            "owns {}",
+            format_declared_resource(name, resource_arguments, parameters, arguments)
+        ),
         CResourceFact::View(
             CResource::Composite {
                 name,
@@ -316,7 +319,7 @@ pub(super) fn describe_resource_fact(
                 arguments: resource_arguments,
             },
         ) => format!(
-            "view {}",
+            "views {}",
             format_declared_resource(name, resource_arguments, parameters, arguments)
         ),
         CResourceFact::Own(CResource::Memory(_)) | CResourceFact::View(CResource::Memory(_)) => {

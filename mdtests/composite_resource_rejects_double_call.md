@@ -21,7 +21,7 @@ int32 call_twice(int32 flag[]) {
 
 ```click
 resource uncalled(flag: int32*) {
-    contains write(flag[0..1]);
+    owns flag[0..1];
     fact flag[0] == 0;
 }
 
@@ -40,5 +40,5 @@ int32 call_twice(int32 flag[]) {
 ```
 
 ```expect
-fail: missing resource fact `uncalled(flag)`
+fail: missing resource fact `owns uncalled(flag)`
 ```

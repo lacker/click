@@ -1,6 +1,6 @@
 # read requirements do not consume write resources
 
-This checks that a caller with `write(...)` can pass `read(...)` to a helper and
+This checks that a caller with owned memory can pass its viewed core to a helper and
 still write the same range after the call.
 
 ```c filename=peek_first.c
