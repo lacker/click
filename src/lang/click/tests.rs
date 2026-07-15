@@ -3630,6 +3630,9 @@ fn verifies_fill3_c0_source_with_sidecar_specification() {
                         CExpression::Value(int32(0)),
                         CExpression::Value(int32(3)),
                     )],
+                    vec![CFunctionContractClaim::new(
+                        CFunctionContractClaimKey::Ensure(0),
+                    )],
                     true,
                 ),
             specification: verified.specification.clone(),

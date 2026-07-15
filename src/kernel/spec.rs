@@ -240,7 +240,264 @@ pub(super) fn lower_spec_proposition_at_state_with_loop_entry(
                 budget,
             )
         }
+        SpecProposition::ResourceSeparate { left, right } => lower_spec_resource_relation_at_state(
+            state,
+            left,
+            right,
+            loop_entry_state,
+            assumptions,
+            budget,
+            |left, right| Proposition::CResourceSeparate { left, right },
+        ),
+        SpecProposition::ResourceContains { parent, child } => {
+            lower_spec_resource_relation_at_state(
+                state,
+                parent,
+                child,
+                loop_entry_state,
+                assumptions,
+                budget,
+                |parent, child| Proposition::CResourceContains { parent, child },
+            )
+        }
+        SpecProposition::MemoryLoadable {
+            memory,
+            base,
+            start,
+            end,
+            element_width,
+        } => lower_spec_memory_loadable_at_state(
+            state,
+            memory,
+            base,
+            start,
+            end,
+            *element_width,
+            loop_entry_state,
+            assumptions,
+            budget,
+        ),
     }
+}
+
+#[derive(Clone)]
+struct SpecValuesPath {
+    values: Vec<CValue>,
+    facts: Vec<ExecutionPureFact>,
+    obligations: Vec<ProofObligation>,
+}
+
+fn evaluate_spec_values_at_state(
+    state: &CState,
+    expressions: &[SpecExpression],
+    loop_entry_state: Option<&CState>,
+    assumptions: &Assumptions,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<SpecValuesPath>> {
+    let mut paths = vec![SpecValuesPath {
+        values: Vec::new(),
+        facts: Vec::new(),
+        obligations: Vec::new(),
+    }];
+    for expression in expressions {
+        let mut next_paths = Vec::new();
+        for prefix in paths {
+            let path_assumptions =
+                assumptions_with_path_context(assumptions, &prefix.facts, &prefix.obligations);
+            for value_path in evaluate_spec_expression_paths_with_loop_entry(
+                state,
+                expression,
+                loop_entry_state,
+                &path_assumptions,
+                budget,
+            )? {
+                let Some((facts, obligations)) = merge_execution_pure_facts_and_obligations(
+                    &prefix.facts,
+                    &prefix.obligations,
+                    &value_path.facts,
+                    &value_path.obligations,
+                    assumptions,
+                ) else {
+                    continue;
+                };
+                let mut values = prefix.values.clone();
+                values.push(value_path.value);
+                next_paths.push(SpecValuesPath {
+                    values,
+                    facts,
+                    obligations,
+                });
+            }
+        }
+        paths = next_paths;
+    }
+    Ok(paths)
+}
+
+fn evaluate_spec_resource_at_state(
+    state: &CState,
+    resource: &SpecResource,
+    loop_entry_state: Option<&CState>,
+    assumptions: &Assumptions,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<(CResource, Vec<ExecutionPureFact>, Vec<ProofObligation>)>> {
+    let (expressions, build): (
+        Vec<SpecExpression>,
+        Box<dyn Fn(Vec<CValue>) -> Option<CResource>>,
+    ) = match resource {
+        SpecResource::Memory { base, start, end } => (
+            vec![base.clone(), start.clone(), end.clone()],
+            Box::new(|values| match values.as_slice() {
+                [
+                    CValue::Pointer(base),
+                    CValue::Int32(start),
+                    CValue::Int32(end),
+                ] => Some(CResource::Memory(CMemoryRange::new(
+                    base.clone(),
+                    start.clone(),
+                    end.clone(),
+                ))),
+                _ => None,
+            }),
+        ),
+        SpecResource::Composite { name, arguments } => {
+            let name = name.clone();
+            (
+                arguments.clone(),
+                Box::new(move |arguments| {
+                    Some(CResource::Composite {
+                        name: name.clone(),
+                        arguments,
+                    })
+                }),
+            )
+        }
+        SpecResource::Token { name, arguments } => {
+            let name = name.clone();
+            (
+                arguments.clone(),
+                Box::new(move |arguments| {
+                    Some(CResource::Token {
+                        name: name.clone(),
+                        arguments,
+                    })
+                }),
+            )
+        }
+    };
+    Ok(
+        evaluate_spec_values_at_state(state, &expressions, loop_entry_state, assumptions, budget)?
+            .into_iter()
+            .filter_map(|path| {
+                build(path.values).map(|resource| (resource, path.facts, path.obligations))
+            })
+            .collect(),
+    )
+}
+
+fn lower_spec_resource_relation_at_state(
+    state: &CState,
+    left: &SpecResource,
+    right: &SpecResource,
+    loop_entry_state: Option<&CState>,
+    assumptions: &Assumptions,
+    budget: &mut ExecutionBudget,
+    relation: impl Fn(CResource, CResource) -> Proposition,
+) -> ExecutionResult<Vec<SpecPropositionPath>> {
+    let mut paths = Vec::new();
+    for (left, left_facts, left_obligations) in
+        evaluate_spec_resource_at_state(state, left, loop_entry_state, assumptions, budget)?
+    {
+        let right_assumptions =
+            assumptions_with_path_context(assumptions, &left_facts, &left_obligations);
+        for (right, right_facts, right_obligations) in evaluate_spec_resource_at_state(
+            state,
+            right,
+            loop_entry_state,
+            &right_assumptions,
+            budget,
+        )? {
+            let Some((facts, obligations)) = merge_execution_pure_facts_and_obligations(
+                &left_facts,
+                &left_obligations,
+                &right_facts,
+                &right_obligations,
+                assumptions,
+            ) else {
+                continue;
+            };
+            paths.push(SpecPropositionPath {
+                proposition: relation(left.clone(), right),
+                facts,
+                obligations,
+            });
+        }
+    }
+    Ok(paths)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn lower_spec_memory_loadable_at_state(
+    state: &CState,
+    memory: &SpecMemory,
+    base: &SpecExpression,
+    start: &SpecExpression,
+    end: &SpecExpression,
+    element_width: u32,
+    loop_entry_state: Option<&CState>,
+    assumptions: &Assumptions,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<SpecPropositionPath>> {
+    let memory = match memory {
+        SpecMemory::Current => state.memory(),
+        SpecMemory::FunctionEntry | SpecMemory::LoopEntry => match loop_entry_state {
+            Some(entry) => entry.memory(),
+            None => return Ok(Vec::new()),
+        },
+        SpecMemory::Fixed(memory) => memory,
+    };
+    Ok(evaluate_spec_values_at_state(
+        state,
+        &[base.clone(), start.clone(), end.clone()],
+        loop_entry_state,
+        assumptions,
+        budget,
+    )?
+    .into_iter()
+    .filter_map(|path| match path.values.as_slice() {
+        [
+            CValue::Pointer(base),
+            CValue::Int32(start),
+            CValue::Int32(end),
+        ] => {
+            let elements =
+                Bitvector32Term::Subtract(Box::new(end.clone()), Box::new(start.clone()));
+            let base = Pointer {
+                block: base.block.clone(),
+                offset: PointerOffsetTerm::Add(
+                    Box::new(base.offset.clone()),
+                    Box::new(PointerOffsetTerm::Int32Scaled {
+                        value: Box::new(start.clone()),
+                        byte_width: i64::from(element_width),
+                    }),
+                ),
+            };
+            Some(SpecPropositionPath {
+                proposition: Proposition::CMemoryLoadable {
+                    memory: memory.clone(),
+                    base,
+                    bytes: Bitvector32Term::Multiply(
+                        Box::new(elements),
+                        Box::new(Bitvector32Term::Constant(element_width)),
+                    ),
+                },
+                facts: path.facts,
+                obligations: path.obligations,
+            })
+        }
+        _ => None,
+    })
+    .collect())
 }
 
 pub(super) fn lower_spec_binary_proposition_at_state(

@@ -9,19 +9,20 @@ use std::fmt;
 
 use crate::kernel::{
     Assumptions, Bitvector32Term, CComparisonOperator, CConditionOutcome, CExpression,
-    CExpressionOutcome, CFunction, CFunctionEnvironment, CFunctionOutcome, CFunctionSpecification,
-    CLoopEffect, CLoopEffectCheck, CLoopEffectSpan, CLoopInvariantCheck, CMemory, CMemoryRange,
-    CMemorySegment, CResource, CResourceAccessMode, CResourceFact, CResourceSpec, CState,
-    CStatement, CStatementOutcome, CType, CValue, CVerifiedLoopRule, ConditionTerm,
-    ExecutionPureFact, Pointer, PointerOffsetTerm, ProofObligation, Proposition, ResourceContext,
-    ResourceContextValidityError, Sort, SpecExpression, SpecMemory, SpecProposition,
-    SymbolicCExecution, Term, Theorem, Variable, abstract_c_state_for_join, c_function,
-    c_function_entry_state, c_function_outcome_from_statement_outcome, c_function_specification,
-    c_if, c_labeled_assert, c_loop_effects_hold_at_back_edge, c_loop_invariants_hold_at_back_edge,
+    CExpressionOutcome, CFunction, CFunctionContractClaim, CFunctionContractClaimKey,
+    CFunctionEnvironment, CFunctionOutcome, CFunctionSpecification, CLoopEffect, CLoopEffectCheck,
+    CLoopEffectSpan, CLoopInvariantCheck, CMemory, CMemoryRange, CMemorySegment, CResource,
+    CResourceAccessMode, CResourceFact, CResourceSpec, CState, CStatement, CStatementOutcome,
+    CType, CValue, CVerifiedLoopRule, ConditionTerm, ExecutionPureFact, Pointer, PointerOffsetTerm,
+    ProofObligation, Proposition, ResourceContext, ResourceContextValidityError, Sort,
+    SpecExpression, SpecMemory, SpecProposition, SpecResource, SymbolicCExecution, Term, Theorem,
+    Variable, abstract_c_state_for_join, c_function, c_function_entry_state,
+    c_function_outcome_from_statement_outcome, c_function_specification, c_if, c_labeled_assert,
+    c_loop_effects_hold_at_back_edge, c_loop_invariants_hold_at_back_edge,
     c_loop_invariants_hold_at_entry, c_loop_preservation_contexts, c_pointer_value, c_seq,
-    c_verified_function_rule, c_while_with_invariant_and_effect_checks,
-    certify_c_function_execution_paths_from_outcomes, int32,
-    prove_c_function_satisfies_specification_from_symbolic_path,
+    c_verified_function_contract_claim, c_verified_function_rule,
+    c_while_with_invariant_and_effect_checks, certify_c_function_execution_paths_from_outcomes,
+    int32, prove_c_function_satisfies_specification_from_symbolic_path,
     prove_c_function_satisfies_specification_with_environment,
     prove_symbolic_c_condition_evaluation, prove_symbolic_c_execution_paths_with_environment,
     prove_symbolic_c_function_execution_paths_with_environment,
@@ -1243,8 +1244,28 @@ pub fn verify_c0_sources(
             .expect("verified source should be present in the function environment");
         let proof_objects = function_verified
             .iter()
-            .map(|verified| verified.theorem.clone())
-            .collect::<Vec<_>>();
+            .map(|verified| {
+                let key = if has_explicit_claims {
+                    match &verified.claim {
+                        VerifiedClaim::Ensure { index, .. } => {
+                            CFunctionContractClaimKey::Ensure(*index)
+                        }
+                        VerifiedClaim::Effect { index, .. } => {
+                            CFunctionContractClaimKey::Effect(*index)
+                        }
+                    }
+                } else {
+                    CFunctionContractClaimKey::BodySafety
+                };
+                c_verified_function_contract_claim(&contract_function, key, &verified.theorem)
+                    .ok_or_else(|| {
+                        ClickError::new(format!(
+                            "could not certify a contract claim for `{}`",
+                            function_block.signature.name()
+                        ))
+                    })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
         if contract_function.opaque_contract_supported() {
             let rule =
                 c_verified_function_rule(contract_function, &proof_objects).ok_or_else(|| {
@@ -1338,14 +1359,19 @@ fn build_function_environment(
             Some(function_block) => {
                 let (resource_requires, resource_ensures) =
                     function_resource_summary(function_block, resource_environment)?;
-                let (contract_requires, contract_ensures, contract_mutable, opaque_supported) =
-                    function_contract_summary(
-                        function_block,
-                        function,
-                        predicate_environment,
-                        click_function_environment,
-                        resource_environment,
-                    )?;
+                let (
+                    contract_requires,
+                    contract_ensures,
+                    contract_mutable,
+                    contract_claims,
+                    opaque_supported,
+                ) = function_contract_summary(
+                    function_block,
+                    function,
+                    predicate_environment,
+                    click_function_environment,
+                    resource_environment,
+                )?;
                 function
                     .to_kernel_function()
                     .with_resource_summary(resource_requires, resource_ensures)
@@ -1353,6 +1379,7 @@ fn build_function_environment(
                         contract_requires,
                         contract_ensures,
                         contract_mutable,
+                        contract_claims,
                         opaque_supported,
                     )
             }

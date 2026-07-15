@@ -252,7 +252,10 @@ pub(super) fn describe_runtime_error(
             describe_resource_fact(resource, parameters, arguments)
         ),
         crate::kernel::CRuntimeError::MissingVerifiedFunctionRule(name) => format!(
-            "cannot execute call to `{name}` opaquely: no verified function rule is available"
+            "cannot execute call to `{name}` opaquely: its contract has not been verified yet"
+        ),
+        crate::kernel::CRuntimeError::UnsupportedOpaqueFunctionContract(name) => format!(
+            "cannot execute call to `{name}` opaquely: its contract refers to an internal program point that is unavailable at the call site"
         ),
         crate::kernel::CRuntimeError::FunctionContract(message) => {
             format!("function contract could not be applied: {message}")

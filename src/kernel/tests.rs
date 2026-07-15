@@ -4021,6 +4021,9 @@ fn verified_function_rule_applies_contract_without_executing_body() {
             right: SpecExpression::CExpression(c_variable("x")),
         }],
         Vec::new(),
+        vec![CFunctionContractClaim::new(
+            CFunctionContractClaimKey::Ensure(0),
+        )],
         true,
     );
     let environment = CFunctionEnvironment::new()
@@ -4069,4 +4072,143 @@ fn verified_function_rule_applies_contract_without_executing_body() {
         ),
         true,
     )));
+}
+
+#[test]
+fn verified_immutable_calls_allocate_distinct_results() {
+    let helper = c_function(
+        CType::Int32,
+        "opaque_identity",
+        vec![c_parameter("x", CType::Int32)],
+        c_return(c_variable("x")),
+    )
+    .with_contract(
+        Vec::new(),
+        vec![SpecProposition::Comparison {
+            left: SpecExpression::CExpression(c_variable("result")),
+            operator: CComparisonOperator::Equal,
+            right: SpecExpression::CExpression(c_variable("x")),
+        }],
+        Vec::new(),
+        vec![CFunctionContractClaim::new(
+            CFunctionContractClaimKey::Ensure(0),
+        )],
+        true,
+    );
+    let environment = CFunctionEnvironment::new()
+        .with_function(helper.clone())
+        .with_verified_function_rule(CVerifiedFunctionRule { function: helper })
+        .requiring_verified_function_rules();
+    let statement = c_seq(
+        c_call_assign("first", "opaque_identity", vec![c_int32_literal(5)]),
+        c_seq(
+            c_call_assign("second", "opaque_identity", vec![c_int32_literal(7)]),
+            c_return(c_variable("second")),
+        ),
+    );
+    let execution = prove_symbolic_c_execution_paths_with_environment(
+        CState::new(),
+        statement,
+        Assumptions::new(),
+        environment,
+    );
+    let path = execution.paths().first().expect("calls should execute");
+    let mut proposition = path.theorem().proposition();
+    while let Proposition::Implies(_, body) = proposition {
+        proposition = body;
+    }
+    let Proposition::CStatementExecutes {
+        outcome: CStatementOutcome::Return { value, .. },
+        ..
+    } = proposition
+    else {
+        panic!("calls should return normally")
+    };
+
+    assert_eq!(
+        value,
+        &CValue::Int32(Bitvector32Term::Variable(Variable(8_100_001)))
+    );
+}
+
+#[test]
+fn verified_function_rule_requires_every_contract_claim_certificate() {
+    let function = c_function(
+        CType::Int32,
+        "two_claims",
+        Vec::new(),
+        c_return(c_int32_literal(0)),
+    )
+    .with_contract(
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        vec![
+            CFunctionContractClaim::new(CFunctionContractClaimKey::Ensure(0)),
+            CFunctionContractClaim::new(CFunctionContractClaimKey::Ensure(1)),
+        ],
+        true,
+    );
+    let specification = c_function_specification(
+        CState::new(),
+        Vec::new(),
+        Vec::new(),
+        CFunctionOutcome::Return {
+            value: int32(0),
+            state: CState::new(),
+        },
+    );
+    let theorem = prove_c_function_satisfies_specification(
+        function.clone(),
+        specification,
+        Assumptions::new(),
+    )
+    .expect("function should satisfy its concrete specification");
+
+    let impostor = c_function(
+        CType::Int32,
+        "two_claims",
+        Vec::new(),
+        c_return(c_int32_literal(1)),
+    );
+    let impostor_specification = c_function_specification(
+        CState::new(),
+        Vec::new(),
+        Vec::new(),
+        CFunctionOutcome::Return {
+            value: int32(1),
+            state: CState::new(),
+        },
+    );
+    let impostor_theorem = prove_c_function_satisfies_specification(
+        impostor,
+        impostor_specification,
+        Assumptions::new(),
+    )
+    .expect("impostor should satisfy its own specification");
+    assert!(
+        c_verified_function_contract_claim(
+            &function,
+            CFunctionContractClaimKey::Ensure(0),
+            &impostor_theorem,
+        )
+        .is_none()
+    );
+
+    let first = c_verified_function_contract_claim(
+        &function,
+        CFunctionContractClaimKey::Ensure(0),
+        &theorem,
+    )
+    .expect("first claim should certify");
+
+    assert!(c_verified_function_rule(function.clone(), &[first.clone()]).is_none());
+
+    let second = c_verified_function_contract_claim(
+        &function,
+        CFunctionContractClaimKey::Ensure(1),
+        &theorem,
+    )
+    .expect("second claim should certify");
+    assert!(c_verified_function_rule(function, &[first, second]).is_some());
 }

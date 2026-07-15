@@ -204,14 +204,18 @@ execution may strengthen those assumptions, but it must apply the registered
 rule when crossing an annotated loop. A missing or incompatible rule is a
 proof failure, not a request to run automatic loop verification again.
 
-Function contracts are packaged similarly. Once every contract claim for a
-function has been verified, the kernel records a `CVerifiedFunctionRule`.
+Function contracts are packaged similarly. Each checked clause produces a
+kernel certificate keyed to that exact effect or postcondition. Only a complete
+set of certificates can construct a `CVerifiedFunctionRule`; a theorem about
+the same function is not sufficient by itself.
 Crossing a call instantiates that rule at the caller's arguments and entry
 state, checks its pure and resource premises, constructs a fresh abstract
 post-state constrained by the mutation footprint, transfers output resources,
 and publishes the instantiated postconditions. The callee body is not part of
-this transition. Rules accumulate in verification order, so an unresolved
-callee is a direct error rather than an invitation to inline its body.
+this transition. Every call receives a monotonic fresh identity used for its
+abstract result and memory havoc, including immutable calls. Rules accumulate
+in verification order, so an unresolved callee is a direct error rather than
+an invitation to inline its body.
 
 Each loop-rule premise can be automatic or explicit. Explicit `initialize` is a
 pure proof of the invariants at the actual loop entry. Explicit `preserve` is an

@@ -33,14 +33,20 @@ pub(super) fn annotated_function(
     let body = lowerer.lower_statement(parsed_function.body())?;
     let (resource_requires, resource_ensures) =
         function_resource_summary(function_block, resource_environment)?;
-    let (contract_requires, contract_ensures, contract_mutable, opaque_contract_supported) =
-        function_contract_summary(
-            function_block,
-            parsed_function,
-            predicate_environment,
-            click_function_environment,
-            resource_environment,
-        )?;
+    let (
+        contract_requires,
+        contract_ensures,
+        contract_mutable,
+        contract_claims,
+        opaque_contract_supported,
+    ) = function_contract_summary(
+        function_block,
+        parsed_function,
+        predicate_environment,
+        click_function_environment,
+        resource_environment,
+    )?;
+    let source_body = parsed_function.to_kernel_function().body().clone();
     Ok(c_function(
         parsed_function.return_type().to_kernel_type(),
         parsed_function.name().to_string(),
@@ -51,11 +57,13 @@ pub(super) fn annotated_function(
             .collect(),
         body,
     )
+    .with_source_body(source_body)
     .with_resource_summary(resource_requires, resource_ensures)
     .with_contract(
         contract_requires,
         contract_ensures,
         contract_mutable,
+        contract_claims,
         opaque_contract_supported,
     ))
 }
@@ -71,6 +79,7 @@ pub(super) fn function_contract_summary(
         Vec<SpecProposition>,
         Vec<SpecProposition>,
         Vec<CMemorySegment>,
+        Vec<CFunctionContractClaim>,
         bool,
     ),
     ClickError,
@@ -159,14 +168,41 @@ pub(super) fn function_contract_summary(
             }
         }
     }
-    Ok((requires, ensures, mutable, opaque_contract_supported))
+    let claims = if function_block.effects().is_empty() && function_block.ensures().is_empty() {
+        vec![CFunctionContractClaim::new(
+            CFunctionContractClaimKey::BodySafety,
+        )]
+    } else {
+        function_block
+            .effects()
+            .iter()
+            .enumerate()
+            .map(|(index, _)| CFunctionContractClaim::new(CFunctionContractClaimKey::Effect(index)))
+            .chain(
+                function_block
+                    .ensures()
+                    .iter()
+                    .enumerate()
+                    .map(|(index, _)| {
+                        CFunctionContractClaim::new(CFunctionContractClaimKey::Ensure(index))
+                    }),
+            )
+            .collect()
+    };
+    Ok((
+        requires,
+        ensures,
+        mutable,
+        claims,
+        opaque_contract_supported,
+    ))
 }
 
 fn proposition_supported_in_opaque_contract(proposition: &ClickProposition) -> bool {
     match proposition {
         ClickProposition::Separate { .. }
         | ClickProposition::Contains { .. }
-        | ClickProposition::Loadable { .. } => false,
+        | ClickProposition::Loadable { .. } => true,
         ClickProposition::And(left, right)
         | ClickProposition::Or(left, right)
         | ClickProposition::Implies(left, right) => {
@@ -411,14 +447,23 @@ impl AnnotationLowerer<'_> {
                 operator: c_comparison_operator(*operator),
                 right: self.lower_contract_expression_to_spec(right, environment)?,
             }),
-            ClickProposition::Separate { .. } => {
-                Err("`separate(...)` is not supported in spec-state clauses".to_string())
-            }
-            ClickProposition::Contains { .. } => {
-                Err("`contains(...)` is not supported in spec-state clauses".to_string())
-            }
-            ClickProposition::Loadable { .. } => {
-                Err("`loadable(...)` is not supported in spec-state clauses".to_string())
+            ClickProposition::Separate { left, right } => Ok(SpecProposition::ResourceSeparate {
+                left: self.lower_resource_subject_to_spec(left, environment)?,
+                right: self.lower_resource_subject_to_spec(right, environment)?,
+            }),
+            ClickProposition::Contains { parent, child } => Ok(SpecProposition::ResourceContains {
+                parent: self.lower_resource_subject_to_spec(parent, environment)?,
+                child: self.lower_resource_subject_to_spec(child, environment)?,
+            }),
+            ClickProposition::Loadable { segment } => {
+                let segment_environment = self.spec_segment_environment(segment, environment)?;
+                Ok(SpecProposition::MemoryLoadable {
+                    memory: segment_environment.current_memory.clone(),
+                    base: self.lower_c_fragment_to_spec(&segment.base, &segment_environment)?,
+                    start: self.lower_c_fragment_to_spec(&segment.start, &segment_environment)?,
+                    end: self.lower_c_fragment_to_spec(&segment.end, &segment_environment)?,
+                    element_width: self.contract_segment_element_width(segment),
+                })
             }
             ClickProposition::And(left, right) => Ok(SpecProposition::And(
                 Box::new(self.click_proposition_to_spec_proposition(left, environment)?),
@@ -715,6 +760,69 @@ impl AnnotationLowerer<'_> {
             }
             ContractExpression::Call { name, arguments } => {
                 self.lower_click_function_call_to_spec(name, arguments, environment)
+            }
+        }
+    }
+
+    fn spec_segment_environment(
+        &self,
+        segment: &ContractSegment,
+        environment: &SpecElaborationContext,
+    ) -> Result<SpecElaborationContext, String> {
+        match segment.state {
+            ContractSegmentState::Current => Ok(environment.clone()),
+            ContractSegmentState::Old => {
+                environment.old_state(&self.entry_values, self.entry_state.memory())
+            }
+        }
+    }
+
+    fn contract_segment_element_width(&self, segment: &ContractSegment) -> u32 {
+        match &segment.base {
+            CExpression::Variable(name) => self
+                .parameter_array_element_types
+                .get(name)
+                .copied()
+                .unwrap_or(CType::Int32)
+                .byte_width(),
+            _ => CType::Int32.byte_width(),
+        }
+    }
+
+    fn lower_resource_subject_to_spec(
+        &mut self,
+        resource: &ResourceSubject,
+        environment: &SpecElaborationContext,
+    ) -> Result<SpecResource, String> {
+        match resource {
+            ResourceSubject::Memory(segment) => {
+                let environment = self.spec_segment_environment(segment, environment)?;
+                Ok(SpecResource::Memory {
+                    base: self.lower_c_fragment_to_spec(&segment.base, &environment)?,
+                    start: self.lower_c_fragment_to_spec(&segment.start, &environment)?,
+                    end: self.lower_c_fragment_to_spec(&segment.end, &environment)?,
+                })
+            }
+            ResourceSubject::Declared {
+                kind,
+                name,
+                arguments,
+                ..
+            } => {
+                let arguments = arguments
+                    .iter()
+                    .map(|argument| self.lower_contract_expression_to_spec(argument, environment))
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(match kind {
+                    ResourceKind::Composite => SpecResource::Composite {
+                        name: name.clone(),
+                        arguments,
+                    },
+                    ResourceKind::Token => SpecResource::Token {
+                        name: name.clone(),
+                        arguments,
+                    },
+                })
             }
         }
     }

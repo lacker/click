@@ -1336,6 +1336,44 @@ pub(super) fn collect_spec_proposition_bitvector_variables(
                 collect_spec_expression_bitvector_variables(argument, variables);
             }
         }
+        SpecProposition::ResourceSeparate { left, right }
+        | SpecProposition::ResourceContains {
+            parent: left,
+            child: right,
+        } => {
+            collect_spec_resource_bitvector_variables(left, variables);
+            collect_spec_resource_bitvector_variables(right, variables);
+        }
+        SpecProposition::MemoryLoadable {
+            memory,
+            base,
+            start,
+            end,
+            ..
+        } => {
+            collect_spec_memory_bitvector_variables(memory, variables);
+            collect_spec_expression_bitvector_variables(base, variables);
+            collect_spec_expression_bitvector_variables(start, variables);
+            collect_spec_expression_bitvector_variables(end, variables);
+        }
+    }
+}
+
+fn collect_spec_resource_bitvector_variables(
+    resource: &SpecResource,
+    variables: &mut BTreeSet<Variable>,
+) {
+    match resource {
+        SpecResource::Memory { base, start, end } => {
+            collect_spec_expression_bitvector_variables(base, variables);
+            collect_spec_expression_bitvector_variables(start, variables);
+            collect_spec_expression_bitvector_variables(end, variables);
+        }
+        SpecResource::Composite { arguments, .. } | SpecResource::Token { arguments, .. } => {
+            for argument in arguments {
+                collect_spec_expression_bitvector_variables(argument, variables);
+            }
+        }
     }
 }
 
@@ -2458,7 +2496,60 @@ pub(super) fn substitute_bitvector_variable_in_spec_proposition(
                 })
                 .collect(),
         },
+        SpecProposition::ResourceSeparate { left, right } => SpecProposition::ResourceSeparate {
+            left: substitute_bitvector_variable_in_spec_resource(left, from, to),
+            right: substitute_bitvector_variable_in_spec_resource(right, from, to),
+        },
+        SpecProposition::ResourceContains { parent, child } => SpecProposition::ResourceContains {
+            parent: substitute_bitvector_variable_in_spec_resource(parent, from, to),
+            child: substitute_bitvector_variable_in_spec_resource(child, from, to),
+        },
+        SpecProposition::MemoryLoadable {
+            memory,
+            base,
+            start,
+            end,
+            element_width,
+        } => SpecProposition::MemoryLoadable {
+            memory: substitute_bitvector_variable_in_spec_memory(memory, from, to),
+            base: substitute_bitvector_variable_in_spec_expression(base, from, to),
+            start: substitute_bitvector_variable_in_spec_expression(start, from, to),
+            end: substitute_bitvector_variable_in_spec_expression(end, from, to),
+            element_width: *element_width,
+        },
         proposition => proposition.clone(),
+    }
+}
+
+fn substitute_bitvector_variable_in_spec_resource(
+    resource: &SpecResource,
+    from: Variable,
+    to: &Bitvector32Term,
+) -> SpecResource {
+    match resource {
+        SpecResource::Memory { base, start, end } => SpecResource::Memory {
+            base: substitute_bitvector_variable_in_spec_expression(base, from, to),
+            start: substitute_bitvector_variable_in_spec_expression(start, from, to),
+            end: substitute_bitvector_variable_in_spec_expression(end, from, to),
+        },
+        SpecResource::Composite { name, arguments } => SpecResource::Composite {
+            name: name.clone(),
+            arguments: arguments
+                .iter()
+                .map(|argument| {
+                    substitute_bitvector_variable_in_spec_expression(argument, from, to)
+                })
+                .collect(),
+        },
+        SpecResource::Token { name, arguments } => SpecResource::Token {
+            name: name.clone(),
+            arguments: arguments
+                .iter()
+                .map(|argument| {
+                    substitute_bitvector_variable_in_spec_expression(argument, from, to)
+                })
+                .collect(),
+        },
     }
 }
 
@@ -2633,6 +2724,7 @@ pub(super) fn substitute_bitvector_variable_in_c_function(
         name: function.name.clone(),
         parameters: function.parameters.clone(),
         body: substitute_bitvector_variable_in_c_statement(function.body(), from, to),
+        source_body: substitute_bitvector_variable_in_c_statement(function.source_body(), from, to),
         resource_requires: function
             .resource_requires()
             .iter()
@@ -2666,6 +2758,7 @@ pub(super) fn substitute_bitvector_variable_in_c_function(
                 end: substitute_bitvector_variable_in_c_expression(&segment.end, from, to),
             })
             .collect(),
+        contract_claims: function.contract_claims.clone(),
         opaque_contract_supported: function.opaque_contract_supported,
     }
 }

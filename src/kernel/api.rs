@@ -1280,30 +1280,50 @@ pub fn prove_c_function_satisfies_specification_from_symbolic_path(
     ))
 }
 
-/// Packages a function contract for opaque calls after its body claims have
-/// been checked. The proof objects must all concern this function; the Click
-/// layer is responsible for supplying one successful proof for every clause.
+/// Certifies one checked contract claim against its exact target function.
+pub fn c_verified_function_contract_claim(
+    function: &CFunction,
+    key: CFunctionContractClaimKey,
+    proof: &Theorem,
+) -> Option<CVerifiedFunctionContractClaim> {
+    let mut proposition = proof.proposition();
+    while let Proposition::Implies(_, body) = proposition {
+        proposition = body;
+    }
+    let proved_function = match proposition {
+        Proposition::CFunctionSatisfiesSpecification { function, .. } => function,
+        _ => return None,
+    };
+    if proved_function.name() != function.name()
+        || proved_function.parameters() != function.parameters()
+        || proved_function.return_type() != function.return_type()
+        || proved_function.source_body() != function.source_body()
+        || !function
+            .contract_claims()
+            .iter()
+            .any(|claim| claim.key() == &key)
+    {
+        return None;
+    }
+    Some(CVerifiedFunctionContractClaim {
+        function: function.clone(),
+        key,
+    })
+}
+
+/// Packages an opaque rule only after every recorded contract claim has a
+/// certificate for this exact function.
 pub fn c_verified_function_rule(
     function: CFunction,
-    proofs: &[Theorem],
+    proofs: &[CVerifiedFunctionContractClaim],
 ) -> Option<CVerifiedFunctionRule> {
     if !function.opaque_contract_supported()
-        || proofs.is_empty()
-        || proofs.iter().any(|proof| {
-            let mut proposition = proof.proposition();
-            while let Proposition::Implies(_, body) = proposition {
-                proposition = body;
-            }
-            !matches!(
-                proposition,
-                Proposition::CFunctionSatisfiesSpecification {
-                    function: proved,
-                    ..
-                } if proved.name() == function.name()
-                    && proved.parameters() == function.parameters()
-                    && proved.return_type() == function.return_type()
-            )
-        })
+        || function.contract_claims().is_empty()
+        || proofs.iter().any(|proof| proof.function != function)
+        || function
+            .contract_claims()
+            .iter()
+            .any(|claim| !proofs.iter().any(|proof| proof.key == *claim.key()))
     {
         return None;
     }

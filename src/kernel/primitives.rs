@@ -283,6 +283,38 @@ pub enum SpecProposition {
         name: String,
         arguments: Vec<SpecExpression>,
     },
+    ResourceSeparate {
+        left: SpecResource,
+        right: SpecResource,
+    },
+    ResourceContains {
+        parent: SpecResource,
+        child: SpecResource,
+    },
+    MemoryLoadable {
+        memory: SpecMemory,
+        base: SpecExpression,
+        start: SpecExpression,
+        end: SpecExpression,
+        element_width: u32,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub enum SpecResource {
+    Memory {
+        base: SpecExpression,
+        start: SpecExpression,
+        end: SpecExpression,
+    },
+    Composite {
+        name: String,
+        arguments: Vec<SpecExpression>,
+    },
+    Token {
+        name: String,
+        arguments: Vec<SpecExpression>,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -381,12 +413,26 @@ pub struct CFunction {
     pub(super) name: String,
     pub(super) parameters: Vec<CParameter>,
     pub(super) body: CStatement,
+    pub(super) source_body: CStatement,
     pub(super) resource_requires: Vec<CResourceSpec>,
     pub(super) resource_ensures: Vec<CResourceSpec>,
     pub(super) contract_requires: Vec<SpecProposition>,
     pub(super) contract_ensures: Vec<SpecProposition>,
     pub(super) contract_mutable: Vec<CMemorySegment>,
+    pub(super) contract_claims: Vec<CFunctionContractClaim>,
     pub(super) opaque_contract_supported: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub enum CFunctionContractClaimKey {
+    BodySafety,
+    Effect(usize),
+    Ensure(usize),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct CFunctionContractClaim {
+    pub(super) key: CFunctionContractClaimKey,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -409,6 +455,12 @@ pub struct CFunctionEnvironment {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CVerifiedFunctionRule {
     pub(super) function: CFunction,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CVerifiedFunctionContractClaim {
+    pub(super) function: CFunction,
+    pub(super) key: CFunctionContractClaimKey,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -441,6 +493,7 @@ pub enum CRuntimeError {
         resource: CResourceFact,
     },
     MissingVerifiedFunctionRule(String),
+    UnsupportedOpaqueFunctionContract(String),
     FunctionContract(String),
     DuplicateResource {
         resource: CResourceFact,
@@ -467,6 +520,7 @@ pub struct ExecutionBudget {
     pub(super) function_calls: usize,
     pub(super) loop_unrolls: usize,
     pub(super) paths: usize,
+    pub(super) next_opaque_call: u64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -1613,14 +1667,21 @@ impl CFunction {
             return_type,
             name: name.into(),
             parameters,
+            source_body: body.clone(),
             body,
             resource_requires: Vec::new(),
             resource_ensures: Vec::new(),
             contract_requires: Vec::new(),
             contract_ensures: Vec::new(),
             contract_mutable: Vec::new(),
+            contract_claims: Vec::new(),
             opaque_contract_supported: true,
         }
+    }
+
+    pub fn with_source_body(mut self, source_body: CStatement) -> Self {
+        self.source_body = source_body;
+        self
     }
 
     pub fn with_resource_summary(
@@ -1638,11 +1699,13 @@ impl CFunction {
         requires: Vec<SpecProposition>,
         ensures: Vec<SpecProposition>,
         mutable: Vec<CMemorySegment>,
+        claims: Vec<CFunctionContractClaim>,
         opaque_supported: bool,
     ) -> Self {
         self.contract_requires = requires;
         self.contract_ensures = ensures;
         self.contract_mutable = mutable;
+        self.contract_claims = claims;
         self.opaque_contract_supported = opaque_supported;
         self
     }
@@ -1661,6 +1724,10 @@ impl CFunction {
 
     pub fn body(&self) -> &CStatement {
         &self.body
+    }
+
+    pub fn source_body(&self) -> &CStatement {
+        &self.source_body
     }
 
     pub fn resource_requires(&self) -> &[CResourceSpec] {
@@ -1683,8 +1750,22 @@ impl CFunction {
         &self.contract_mutable
     }
 
+    pub fn contract_claims(&self) -> &[CFunctionContractClaim] {
+        &self.contract_claims
+    }
+
     pub fn opaque_contract_supported(&self) -> bool {
         self.opaque_contract_supported
+    }
+}
+
+impl CFunctionContractClaim {
+    pub fn new(key: CFunctionContractClaimKey) -> Self {
+        Self { key }
+    }
+
+    pub fn key(&self) -> &CFunctionContractClaimKey {
+        &self.key
     }
 }
 
@@ -2947,6 +3028,7 @@ impl Default for ExecutionBudget {
             function_calls: 1_000,
             loop_unrolls: 256,
             paths: 10_000,
+            next_opaque_call: 0,
         }
     }
 }
@@ -2991,6 +3073,12 @@ impl ExecutionBudget {
 
     pub(super) fn consume_function_call(&mut self) -> ExecutionResult<()> {
         consume_budget(&mut self.function_calls, ExecutionLimit::FunctionCalls)
+    }
+
+    pub(super) fn allocate_opaque_call(&mut self) -> u64 {
+        let call = self.next_opaque_call;
+        self.next_opaque_call += 1;
+        call
     }
 
     pub(super) fn consume_loop_unroll(&mut self) -> ExecutionResult<()> {

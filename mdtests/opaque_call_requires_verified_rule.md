@@ -4,8 +4,6 @@ The caller is deliberately listed before its callee. Click must report the
 missing verified rule instead of silently stepping into the callee body.
 
 ```c filename=caller.c
-int32 helper(int32 x);
-
 int32 caller(int32 x) {
     int32 y;
     y = helper(x);
@@ -38,5 +36,5 @@ int32 helper(int32 x) {
 ```
 
 ```expect
-fail contains="cannot execute call to `helper` opaquely: no verified function rule is available"
+fail: cannot execute call to `helper` opaquely: its contract has not been verified yet
 ```

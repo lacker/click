@@ -284,6 +284,9 @@ sequence:
   from the callee contract.
 - `mdtests/opaque_call_old_entry_state.md`: a callee's `old(...)` postcondition
   is instantiated at the call-entry memory snapshot.
+- `mdtests/opaque_resource_proposition_contract.md`: `separate(...)`,
+  `contains(...)`, and `loadable(...)` cross an opaque call as ordinary
+  state-indexed propositions.
 - `mdtests/composite_resource_observe_nested_separate_contains.md`: explicit
   chained observation exposes `contains(...)` and `separate(...)` facts for a
   nested composite resource.

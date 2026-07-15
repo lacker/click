@@ -21,6 +21,11 @@ int32 caller() {
 verifying "increment.c";
 verifying "caller.c";
 
+int32 increment(int32 x) {
+    requires x < 2147483647;
+    ensures returns_incremented_value: result == x + 1 by auto;
+}
+
 int32 caller() {
     ensures returns_incremented_value: result == 42 by auto;
 }

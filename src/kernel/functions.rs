@@ -191,10 +191,13 @@ pub(super) fn execute_c_function_call_paths(
         return execute_verified_function_rule(caller_state, rule, arguments, assumptions, budget);
     }
     if environment.requires_verified_function_rules() {
+        let error = if function.opaque_contract_supported() {
+            CRuntimeError::MissingVerifiedFunctionRule(function.name().to_string())
+        } else {
+            CRuntimeError::UnsupportedOpaqueFunctionContract(function.name().to_string())
+        };
         return Ok(vec![CFunctionPath {
-            outcome: CFunctionOutcome::RuntimeError(CRuntimeError::MissingVerifiedFunctionRule(
-                function.name().to_string(),
-            )),
+            outcome: CFunctionOutcome::RuntimeError(error),
             facts: Vec::new(),
             obligations: Vec::new(),
         }]);
@@ -306,6 +309,7 @@ fn execute_verified_function_rule(
 ) -> ExecutionResult<Vec<CFunctionPath>> {
     let function = &rule.function;
     budget.consume_function_call()?;
+    let call = budget.allocate_opaque_call();
     let mut paths = Vec::new();
     for arguments_path in evaluate_c_arguments_paths(caller_state, arguments, assumptions, budget)?
     {
@@ -410,17 +414,11 @@ fn execute_verified_function_rule(
             continue;
         }
 
-        let nonce = entry_state
-            .memory
-            .blocks
-            .keys()
-            .filter(|block| block.starts_with("call-havoc:"))
-            .count() as u64;
         let memory = if mutable_ranges.is_empty() {
             entry_state.memory.clone()
         } else {
             entry_state.memory.clone().with_call_memory_havoc(
-                Variable(8_000_000 + nonce),
+                Variable(8_000_000 + call),
                 &mutable_ranges,
                 &effective_assumptions,
             )
@@ -432,7 +430,7 @@ fn execute_verified_function_rule(
                 mutable_ranges: mutable_ranges.clone(),
             }));
         }
-        let result = symbolic_call_result(function.return_type(), Variable(8_100_000 + nonce));
+        let result = symbolic_call_result(function.return_type(), Variable(8_100_000 + call));
         let mut post_state = entry_state.clone().with_memory(memory);
         post_state
             .locals
@@ -687,6 +685,14 @@ fn prepare_function_resource_transfer(
 
     let mut return_resources = caller_state.resources().clone();
     for resource in &required_resource_list {
+        if matches!(
+            resource,
+            CResourceFact::View(CResource::Memory(range))
+                if range.base().block.starts_with("local:")
+                    && caller_state.memory().has_block(&range.base().block)
+        ) {
+            continue;
+        }
         let Some(resources) = return_resources.without_fact(resource, assumptions) else {
             return Ok(Err(CRuntimeError::MissingResource {
                 resource: resource.clone(),

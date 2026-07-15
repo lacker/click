@@ -4238,7 +4238,8 @@ fn execute_step_from_execution_point(
         }
         CStatementOutcome::RuntimeError(error) => {
             return Err(ClickError::new(format!(
-                "`{claim_label}` proof step {step_index}: `{step_name}` produced runtime error: {error:?}\n{}",
+                "`{claim_label}` proof step {step_index}: `{step_name}` produced runtime error: {}\n{}",
+                describe_runtime_error(&error, parameters, arguments),
                 describe_proof_context(
                     available_pure_facts,
                     &current_resources,
