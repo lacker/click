@@ -40,7 +40,7 @@ int32 count_from_to(int32 i, int32 n) {
     }
 
     ensures execute_until_crosses_loop: result == n by {
-        execute_until(statement(1));
+        execute_until(statement(2));
         have at(count.exit, i) == n by {
             simp();
         }

@@ -163,13 +163,17 @@ execute_step();
 ```
 
 `statement(N).entry` means immediately before statement region `N` executes.
-`statement(N).exit` means immediately after it completes. Every nested case
-must reach exactly that point and establish every assertion. `advance` is the
+`statement(N).exit` means immediately after it completes. Lowering assigns
+statement IDs globally in source preorder: a compound statement receives its
+ID before the statements nested in its arms or body. A sequence itself does
+not receive an ID. Every nested case must reach exactly the requested point
+and establish every assertion. `advance` is the
 execution-proof counterpart to `have`: `have` runs a pure proof without moving
 the execution point, while `advance` proves a postcondition for a scoped code
-  region and advances to its exit. Facts and resources needed by the
-  continuation must be listed explicitly. Deterministic consequences of listed resources, such as
-memory loadability and the view of an owned resource, remain available.
+region and advances to its exit. Facts and resources needed by the
+continuation must be listed explicitly. Deterministic consequences of listed
+resources, such as memory loadability and the view of an owned resource,
+remain available.
 
 Snapshots created inside the scoped execution are not exported. The function
 entry state used by `old(...)` and the abstract target snapshot remain
@@ -210,11 +214,10 @@ entry with `execute_until(statement(N));`, and execute to function exit with
 `execute_rest();`. Resource steps such as `observe`, `unfold`, and `fold` can
 happen between those execution steps.
 
-Internally, the frontier keeps the user-visible statement position separate
-from an immutable source-region cursor. The source layout identifies branch
-children, continuations, and nested loops. Checks inserted by annotation
-lowering remain attached to their source statement and do not become extra
-proof steps.
+The execution frontier carries the same global statement ID assigned by
+lowering. The source layout uses that ID to identify branch children,
+continuations, and nested loops. Checks inserted by annotation lowering remain
+attached to their source statement and do not become extra proof steps.
 
 Ordinary statement steps, explicit branch entry, and region execution-proof
 traversal use the same certified condition and statement transitions. `advance` composes

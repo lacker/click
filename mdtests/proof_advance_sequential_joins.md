@@ -38,7 +38,7 @@ int32 advance_sequential_joins(int32 x) {
                 execute_step();
             }
         }
-        advance(statement(3).exit)
+        advance(statement(5).exit)
         ensuring {
             fact z >= 0;
         }

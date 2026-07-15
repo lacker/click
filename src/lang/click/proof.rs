@@ -1503,7 +1503,6 @@ struct ExecutionFrontier {
     point: ProofExecutionPoint,
     execution_start_state: Option<CState>,
     next_statement_index: usize,
-    next_source_node: usize,
     continuations: Vec<ProofBranchContinuation>,
 }
 
@@ -1511,7 +1510,6 @@ struct ExecutionFrontier {
 struct ProofBranchContinuation {
     remaining: Option<CStatement>,
     next_statement_index: usize,
-    next_source_node: usize,
     enclosing_statement_index: Option<usize>,
 }
 
@@ -1526,129 +1524,6 @@ enum ProofExecutionPoint {
         execution: crate::kernel::SymbolicCExecution,
         mode: ProofStepExecutionMode,
     },
-}
-
-#[derive(Clone, Default)]
-struct SourceExecutionLayout {
-    statements: BTreeMap<usize, SourceStatementRegion>,
-    loop_bodies: BTreeMap<usize, usize>,
-    loop_statements: BTreeMap<usize, usize>,
-    top_level_statement_count: usize,
-}
-
-#[derive(Clone, Copy)]
-struct SourceStatementRegion {
-    continuation_node: usize,
-    kind: SourceStatementKind,
-}
-
-#[derive(Clone, Copy)]
-enum SourceStatementKind {
-    Plain,
-    If {
-        then_statement_index: usize,
-        else_statement_index: usize,
-    },
-    Loop {
-        loop_index: usize,
-    },
-}
-
-impl SourceExecutionLayout {
-    fn new(statement: &syntax::C0Statement) -> Self {
-        fn top_level_statement_count(statement: &syntax::C0Statement) -> usize {
-            match statement {
-                syntax::C0Statement::Seq(first, second) => {
-                    top_level_statement_count(first) + top_level_statement_count(second)
-                }
-                _ => 1,
-            }
-        }
-
-        fn visit(
-            statement: &syntax::C0Statement,
-            next_statement_index: &mut usize,
-            next_loop_index: &mut usize,
-            layout: &mut SourceExecutionLayout,
-        ) {
-            match statement {
-                syntax::C0Statement::Seq(first, second) => {
-                    visit(first, next_statement_index, next_loop_index, layout);
-                    visit(second, next_statement_index, next_loop_index, layout);
-                }
-                syntax::C0Statement::If {
-                    then_branch,
-                    else_branch,
-                    ..
-                } => {
-                    let statement_index = *next_statement_index;
-                    *next_statement_index += 1;
-                    let then_statement_index = *next_statement_index;
-                    visit(then_branch, next_statement_index, next_loop_index, layout);
-                    let else_statement_index = *next_statement_index;
-                    visit(else_branch, next_statement_index, next_loop_index, layout);
-                    layout.statements.insert(
-                        statement_index,
-                        SourceStatementRegion {
-                            continuation_node: *next_statement_index,
-                            kind: SourceStatementKind::If {
-                                then_statement_index,
-                                else_statement_index,
-                            },
-                        },
-                    );
-                }
-                syntax::C0Statement::While { body, .. } => {
-                    let statement_index = *next_statement_index;
-                    let loop_index = *next_loop_index;
-                    *next_statement_index += 1;
-                    *next_loop_index += 1;
-                    layout.loop_bodies.insert(loop_index, *next_statement_index);
-                    layout.loop_statements.insert(loop_index, statement_index);
-                    visit(body, next_statement_index, next_loop_index, layout);
-                    layout.statements.insert(
-                        statement_index,
-                        SourceStatementRegion {
-                            continuation_node: *next_statement_index,
-                            kind: SourceStatementKind::Loop { loop_index },
-                        },
-                    );
-                }
-                _ => {
-                    let statement_index = *next_statement_index;
-                    *next_statement_index += 1;
-                    layout.statements.insert(
-                        statement_index,
-                        SourceStatementRegion {
-                            continuation_node: *next_statement_index,
-                            kind: SourceStatementKind::Plain,
-                        },
-                    );
-                }
-            }
-        }
-
-        let mut layout = Self::default();
-        layout.top_level_statement_count = top_level_statement_count(statement);
-        visit(statement, &mut 0, &mut 0, &mut layout);
-        layout
-    }
-
-    fn statement(&self, index: usize) -> Option<SourceStatementRegion> {
-        self.statements.get(&index).copied()
-    }
-
-    fn loop_body_entry(&self, loop_index: usize) -> Option<usize> {
-        self.loop_bodies.get(&loop_index).copied()
-    }
-
-    fn loop_statement(&self, loop_index: usize) -> Option<usize> {
-        self.loop_statements.get(&loop_index).copied()
-    }
-
-    fn has_top_level_statement(&self, statement_index: usize) -> bool {
-        statement_index < self.top_level_statement_count
-    }
 }
 
 #[derive(Clone)]
@@ -2319,7 +2194,6 @@ fn verify_one_loop_preservation_proof(
             point: ProofExecutionPoint::StatementEntry { remaining },
             execution_start_state: Some(preservation.state().clone()),
             next_statement_index: loop_body_statement_index,
-            next_source_node: loop_body_statement_index,
             ..ExecutionFrontier::default()
         },
         source_layout,
@@ -3644,7 +3518,12 @@ fn apply_advance_interface(
                 ProofExecutionPoint::StatementEntry { .. },
                 ProgramPointKind::Exit,
             ) => {
-                replay.frontier.next_statement_index == statement_index + 1
+                replay.frontier.next_statement_index
+                    == replay
+                        .source_layout
+                        .statement(statement_index)
+                        .map(|region| region.continuation_node)
+                        .unwrap_or(usize::MAX)
                     && replay.program_point_states.contains_key(target)
             }
             (CodeRegion::Loop(loop_index), ProofExecutionPoint::StatementEntry { .. }, kind) => {
@@ -3665,7 +3544,7 @@ fn apply_advance_interface(
                     ProgramPointKind::Entry => loop_node,
                     ProgramPointKind::Exit => continuation_node,
                 };
-                replay.frontier.next_source_node == expected_node
+                replay.frontier.next_statement_index == expected_node
                     && replay.program_point_states.contains_key(target)
             }
             (CodeRegion::Function, _, _) => {
@@ -3859,13 +3738,13 @@ fn execute_selected_branch_step_from_execution_point(
         "execute_else_step"
     };
     let statement_index = replay.frontier.next_statement_index;
-    let source_node = replay.frontier.next_source_node;
-    let source_region = replay.source_layout.statement(source_node).ok_or_else(|| {
+    let source_region = replay.source_layout.statement(statement_index).ok_or_else(|| {
         ClickError::new(format!(
-            "`{claim_label}` proof step {step_index}: `{step_name}` could not resolve source node {source_node}"
+            "`{claim_label}` proof step {step_index}: `{step_name}` could not resolve source statement({statement_index})"
         ))
     })?;
-    let assertion_prefix_count = source_assertion_prefix_count(function_block, source_node, None);
+    let assertion_prefix_count =
+        source_assertion_prefix_count(function_block, statement_index, None);
     let (execution_start_state, mut current_state, assertion_prefix, statement, remaining) =
         next_top_level_statement_from_execution_point(
             replay,
@@ -3971,11 +3850,10 @@ fn execute_selected_branch_step_from_execution_point(
     };
     replay.frontier.continuations.push(ProofBranchContinuation {
         remaining,
-        next_statement_index: statement_index + usize::from(!replay.frontier.inside_branch()),
-        next_source_node: source_region.continuation_node,
+        next_statement_index: source_region.continuation_node,
         enclosing_statement_index: Some(statement_index),
     });
-    replay.frontier.next_source_node = if take_then {
+    replay.frontier.next_statement_index = if take_then {
         then_statement_index
     } else {
         else_statement_index
@@ -4113,10 +3991,9 @@ fn execute_step_from_execution_point(
     step_name: &str,
 ) -> Result<(), ClickError> {
     let statement_index = replay.frontier.next_statement_index;
-    let source_node = replay.frontier.next_source_node;
-    let source_region = replay.source_layout.statement(source_node).ok_or_else(|| {
+    let source_region = replay.source_layout.statement(statement_index).ok_or_else(|| {
         ClickError::new(format!(
-            "`{claim_label}` proof step {step_index}: `{step_name}` could not resolve source node {source_node}"
+            "`{claim_label}` proof step {step_index}: `{step_name}` could not resolve source statement({statement_index})"
         ))
     })?;
     let loop_index = match source_region.kind {
@@ -4124,7 +4001,7 @@ fn execute_step_from_execution_point(
         SourceStatementKind::Plain | SourceStatementKind::If { .. } => None,
     };
     let assertion_prefix_count =
-        source_assertion_prefix_count(function_block, source_node, loop_index);
+        source_assertion_prefix_count(function_block, statement_index, loop_index);
     let execution_point = &replay.frontier.point;
     let (execution_start_state, current_state, step_statement, remaining) = match execution_point {
         ProofExecutionPoint::FunctionEntry => {
@@ -4189,19 +4066,17 @@ fn execute_step_from_execution_point(
     };
     if matches!(step_statement, CStatement::While { .. }) && loop_index.is_none() {
         return Err(ClickError::new(format!(
-            "`{claim_label}` proof step {step_index}: `{step_name}` could not resolve the source loop at node {source_node}"
+            "`{claim_label}` proof step {step_index}: `{step_name}` could not resolve the source loop at statement({statement_index})"
         )));
     }
 
-    if !replay.frontier.inside_branch() {
-        replay.program_point_states.insert(
-            ProgramPointRef {
-                region: CodeRegionRef::Statement(statement_index),
-                kind: ProgramPointKind::Entry,
-            },
-            current_state.clone(),
-        );
-    }
+    replay.program_point_states.insert(
+        ProgramPointRef {
+            region: CodeRegionRef::Statement(statement_index),
+            kind: ProgramPointKind::Entry,
+        },
+        current_state.clone(),
+    );
     if let Some(loop_index) = loop_index {
         record_loop_program_point_state(
             replay,
@@ -4240,15 +4115,13 @@ fn execute_step_from_execution_point(
         }
         CStatementOutcome::UndefinedBehavior(_) | CStatementOutcome::RuntimeError(_) => None,
     } {
-        if !replay.frontier.inside_branch() {
-            replay.program_point_states.insert(
-                ProgramPointRef {
-                    region: CodeRegionRef::Statement(statement_index),
-                    kind: ProgramPointKind::Exit,
-                },
-                statement_exit_state,
-            );
-        }
+        replay.program_point_states.insert(
+            ProgramPointRef {
+                region: CodeRegionRef::Statement(statement_index),
+                kind: ProgramPointKind::Exit,
+            },
+            statement_exit_state,
+        );
         if let Some(loop_index) = loop_index {
             record_loop_program_point_state(
                 replay,
@@ -4269,10 +4142,7 @@ fn execute_step_from_execution_point(
     match outcome {
         CStatementOutcome::Normal(next_state) => {
             let remaining = if let Some(remaining) = remaining {
-                replay.frontier.next_source_node = source_region.continuation_node;
-                if !replay.frontier.inside_branch() {
-                    replay.frontier.next_statement_index = statement_index + 1;
-                }
+                replay.frontier.next_statement_index = source_region.continuation_node;
                 remaining
             } else if let Some(remaining) = resume_after_completed_branch(replay, &next_state) {
                 remaining
@@ -4319,8 +4189,7 @@ fn execute_step_from_execution_point(
                 execution_start_state,
                 completed,
             )?;
-            replay.frontier.next_statement_index = statement_index + 1;
-            replay.frontier.next_source_node = source_region.continuation_node;
+            replay.frontier.next_statement_index = source_region.continuation_node;
             *state = replay_state;
         }
         CStatementOutcome::UndefinedBehavior(kind) => {
@@ -4366,7 +4235,6 @@ fn resume_after_completed_branch(
             );
         }
         replay.frontier.next_statement_index = continuation.next_statement_index;
-        replay.frontier.next_source_node = continuation.next_source_node;
         if let Some(remaining) = continuation.remaining {
             return Some(remaining);
         }
@@ -4440,7 +4308,7 @@ fn execute_rest_from_execution_point(
         loop {
             let assertion_prefix_count = replay
                 .source_layout
-                .statement(replay.frontier.next_source_node)
+                .statement(replay.frontier.next_statement_index)
                 .map(|region| {
                     let loop_index = match region.kind {
                         SourceStatementKind::Loop { loop_index } => Some(loop_index),
@@ -4448,7 +4316,7 @@ fn execute_rest_from_execution_point(
                     };
                     source_assertion_prefix_count(
                         function_block,
-                        replay.frontier.next_source_node,
+                        replay.frontier.next_statement_index,
                         loop_index,
                     )
                 })
@@ -4593,12 +4461,10 @@ fn execute_until_statement(
             "`{claim_label}` proof step {step_index}: `execute_until` is currently supported only from function entry"
         )));
     }
-    if !replay
-        .source_layout
-        .has_top_level_statement(statement_index)
-    {
+    if replay.source_layout.statement(statement_index).is_none() {
         return Err(ClickError::new(format!(
-            "`{claim_label}` proof step {step_index}: function has no source statement({statement_index})"
+            "`{claim_label}` proof step {step_index}: function has no source statement({statement_index}); it contains {} statement regions",
+            replay.source_layout.statement_count()
         )));
     }
 
@@ -4613,7 +4479,6 @@ fn execute_until_statement(
     replay.frontier.point = ProofExecutionPoint::StatementEntry {
         remaining: function.body().clone(),
     };
-    replay.frontier.next_statement_index = 0;
     *state = callee_state;
 
     while replay.frontier.next_statement_index != statement_index {

@@ -134,6 +134,11 @@ the remaining proof from the resulting abstract frontier. Unchanged function
 parameters and the function-entry state used by `old(...)` retain their stable
 identity.
 
+Statement IDs are global within a function and follow source preorder. An
+`if` or loop receives its ID before statements nested in its arms or body; a
+sequence does not receive a separate ID. The same IDs name execution targets,
+annotations, and `at(statement(N).entry|exit, ...)` snapshots.
+
 `apply(...)` instantiates a verified theorem, proves that theorem's proposition
 `requires` clauses from the current proof context, and adds its proposition
 `ensures` clauses as derived facts. It does not change the current resource

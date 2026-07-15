@@ -29,11 +29,17 @@ int32 branch_count_to_one(int32 flag, int32 i) {
         assert flag != 0 by auto;
     }
 
+    for statement(1) {
+        assert i == 1 by auto;
+    }
+
     for loop(0) as count {
         invariant i == 1;
     }
 
-    ensures result == 1 by {
+    ensures result == 1
+        and at(statement(1).exit, i) == 1
+        and at(statement(4).entry, i) == 1 by {
         execute_then_step();
         execute_step();
         have at(count.exit, i) == 1 by {

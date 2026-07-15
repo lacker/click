@@ -97,6 +97,19 @@ impl AnnotationLowerer<'_> {
                 let lowered_loop = prepend_labeled_asserts(lowered_loop, &loop_asserts);
                 self.prepend_statement_asserts(statement_index, lowered_loop)
             }
+            syntax::C0Statement::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                let statement_index = self.next_statement_index();
+                let lowered = c_if(
+                    condition.to_kernel_expression(),
+                    self.lower_statement(then_branch)?,
+                    self.lower_statement(else_branch)?,
+                );
+                self.prepend_statement_asserts(statement_index, lowered)
+            }
             statement => {
                 let statement_index = self.next_statement_index();
                 let lowered = statement.to_kernel_statement();
@@ -2629,6 +2642,118 @@ pub(super) fn count_statements(statement: &syntax::C0Statement) -> usize {
         } => 1 + count_statements(then_branch) + count_statements(else_branch),
         syntax::C0Statement::While { body, .. } => 1 + count_statements(body),
         _ => 1,
+    }
+}
+
+#[derive(Clone, Default)]
+pub(super) struct SourceExecutionLayout {
+    statements: BTreeMap<usize, SourceStatementRegion>,
+    loop_bodies: BTreeMap<usize, usize>,
+    loop_statements: BTreeMap<usize, usize>,
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct SourceStatementRegion {
+    pub(super) continuation_node: usize,
+    pub(super) kind: SourceStatementKind,
+}
+
+#[derive(Clone, Copy)]
+pub(super) enum SourceStatementKind {
+    Plain,
+    If {
+        then_statement_index: usize,
+        else_statement_index: usize,
+    },
+    Loop {
+        loop_index: usize,
+    },
+}
+
+impl SourceExecutionLayout {
+    pub(super) fn new(statement: &syntax::C0Statement) -> Self {
+        fn visit(
+            statement: &syntax::C0Statement,
+            next_statement_index: &mut usize,
+            next_loop_index: &mut usize,
+            layout: &mut SourceExecutionLayout,
+        ) {
+            match statement {
+                syntax::C0Statement::Seq(first, second) => {
+                    visit(first, next_statement_index, next_loop_index, layout);
+                    visit(second, next_statement_index, next_loop_index, layout);
+                }
+                syntax::C0Statement::If {
+                    then_branch,
+                    else_branch,
+                    ..
+                } => {
+                    let statement_index = *next_statement_index;
+                    *next_statement_index += 1;
+                    let then_statement_index = *next_statement_index;
+                    visit(then_branch, next_statement_index, next_loop_index, layout);
+                    let else_statement_index = *next_statement_index;
+                    visit(else_branch, next_statement_index, next_loop_index, layout);
+                    layout.statements.insert(
+                        statement_index,
+                        SourceStatementRegion {
+                            continuation_node: *next_statement_index,
+                            kind: SourceStatementKind::If {
+                                then_statement_index,
+                                else_statement_index,
+                            },
+                        },
+                    );
+                }
+                syntax::C0Statement::While { body, .. } => {
+                    let statement_index = *next_statement_index;
+                    let loop_index = *next_loop_index;
+                    *next_statement_index += 1;
+                    *next_loop_index += 1;
+                    layout.loop_bodies.insert(loop_index, *next_statement_index);
+                    layout.loop_statements.insert(loop_index, statement_index);
+                    visit(body, next_statement_index, next_loop_index, layout);
+                    layout.statements.insert(
+                        statement_index,
+                        SourceStatementRegion {
+                            continuation_node: *next_statement_index,
+                            kind: SourceStatementKind::Loop { loop_index },
+                        },
+                    );
+                }
+                _ => {
+                    let statement_index = *next_statement_index;
+                    *next_statement_index += 1;
+                    layout.statements.insert(
+                        statement_index,
+                        SourceStatementRegion {
+                            continuation_node: *next_statement_index,
+                            kind: SourceStatementKind::Plain,
+                        },
+                    );
+                }
+            }
+        }
+
+        let mut layout = Self::default();
+        visit(statement, &mut 0, &mut 0, &mut layout);
+        layout
+    }
+
+    pub(super) fn statement(&self, index: usize) -> Option<SourceStatementRegion> {
+        self.statements.get(&index).copied()
+    }
+
+    pub(super) fn statement_count(&self) -> usize {
+        self.statements.len()
+    }
+
+    pub(super) fn loop_body_entry(&self, loop_index: usize) -> Option<usize> {
+        self.loop_bodies.get(&loop_index).copied()
+    }
+
+    pub(super) fn loop_statement(&self, loop_index: usize) -> Option<usize> {
+        self.loop_statements.get(&loop_index).copied()
     }
 }
 

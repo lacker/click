@@ -17,7 +17,7 @@ use crate::kernel::{
     ResourceContextValidityError, Sort, SpecExpression, SpecMemory, SpecProposition,
     SymbolicCExecution, Term, Theorem, Variable, abstract_c_state_for_join, c_function,
     c_function_entry_state, c_function_outcome_from_statement_outcome, c_function_specification,
-    c_labeled_assert, c_loop_effects_hold_at_back_edge, c_loop_invariants_hold_at_back_edge,
+    c_if, c_labeled_assert, c_loop_effects_hold_at_back_edge, c_loop_invariants_hold_at_back_edge,
     c_loop_invariants_hold_at_entry, c_loop_preservation_contexts, c_pointer_value, c_seq,
     c_while_with_invariant_and_effect_checks, certify_c_function_execution_paths_from_outcomes,
     int32, prove_c_function_satisfies_specification_from_symbolic_path,

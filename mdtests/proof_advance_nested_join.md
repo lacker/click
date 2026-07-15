@@ -23,7 +23,7 @@ int32 advance_nested_join(int32 x) {
     requires x < 2147483647;
 
     ensures result > 0 by {
-        advance(statement(2).exit)
+        advance(statement(4).exit)
         ensuring {
             fact y > 0;
         }
