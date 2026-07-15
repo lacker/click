@@ -346,6 +346,13 @@ enclosing execution proof with the loop's abstract exit rule. Later and nested
 loops are therefore checked in their actual enclosing proof context; Click does not
 reconstruct their entry states by executing the function prefix again.
 
+An explicit `preserve by { ... }` execution proof now directly supplies the
+preservation premise for that abstract exit rule. After every proof branch
+reaches the back edge and establishes the invariants and effects, the kernel
+constructs the loop exit without symbolically executing the body again. If
+`preserve` is omitted, `auto` verifies preservation and constructs the same
+kind of rule.
+
 That abstract exit produces an opaque kernel `VerifiedLoopRule` over the
 symbolic loop-entry state and its required assumptions. Subsequent function
 claims must consume the registered rule when they encounter an annotated loop.

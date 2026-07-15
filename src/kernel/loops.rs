@@ -295,6 +295,58 @@ pub(super) fn execute_c_while_verification_paths(
     budget: &mut ExecutionBudget,
     variables: &mut VerificationVariableGenerator,
 ) -> ExecutionResult<Vec<CStatementExecutionPath>> {
+    execute_c_while_exit_paths(
+        state,
+        condition,
+        invariant,
+        invariant_checks,
+        effect_checks,
+        body,
+        assumptions,
+        Some(environment),
+        budget,
+        variables,
+    )
+}
+
+pub(super) fn execute_c_while_exit_paths_after_preservation_proof(
+    state: &CState,
+    condition: &CExpression,
+    invariant: &[Proposition],
+    invariant_checks: &[CLoopInvariantCheck],
+    effect_checks: &[CLoopEffectCheck],
+    body: &CStatement,
+    assumptions: &Assumptions,
+    budget: &mut ExecutionBudget,
+    variables: &mut VerificationVariableGenerator,
+) -> ExecutionResult<Vec<CStatementExecutionPath>> {
+    execute_c_while_exit_paths(
+        state,
+        condition,
+        invariant,
+        invariant_checks,
+        effect_checks,
+        body,
+        assumptions,
+        None,
+        budget,
+        variables,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn execute_c_while_exit_paths(
+    state: &CState,
+    condition: &CExpression,
+    invariant: &[Proposition],
+    invariant_checks: &[CLoopInvariantCheck],
+    effect_checks: &[CLoopEffectCheck],
+    body: &CStatement,
+    assumptions: &Assumptions,
+    preservation_environment: Option<&CFunctionEnvironment>,
+    budget: &mut ExecutionBudget,
+    variables: &mut VerificationVariableGenerator,
+) -> ExecutionResult<Vec<CStatementExecutionPath>> {
     let mut base_obligations = Vec::new();
     for proposition in invariant {
         if add_proof_obligation(&mut base_obligations, assumptions, proposition.clone()).is_none() {
@@ -319,25 +371,30 @@ pub(super) fn execute_c_while_verification_paths(
         assumptions,
         budget,
     )?;
-    let preservation_summary = collect_loop_preservation_summary(
-        state,
-        &top_state,
-        condition,
-        invariant_checks,
-        effect_checks,
-        &whole_loop_effect_summaries,
-        body,
-        assumptions,
-        environment,
-        budget,
-        variables,
-    )?;
+    let preservation_obligations = if let Some(environment) = preservation_environment {
+        collect_loop_preservation_summary(
+            state,
+            &top_state,
+            condition,
+            invariant_checks,
+            effect_checks,
+            &whole_loop_effect_summaries,
+            body,
+            assumptions,
+            environment,
+            budget,
+            variables,
+        )?
+        .obligations
+    } else {
+        Vec::new()
+    };
     let mut loop_check_obligations = Vec::new();
     append_required_proof_obligations(&mut loop_check_obligations, assumptions, &entry_obligations);
     append_required_proof_obligations(
         &mut loop_check_obligations,
         assumptions,
-        &preservation_summary.obligations,
+        &preservation_obligations,
     );
 
     let mut paths = Vec::new();

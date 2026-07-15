@@ -829,6 +829,48 @@ fn verified_loop_rule_is_required_and_accepts_stronger_assumptions() {
 }
 
 #[test]
+fn loop_exit_rule_after_preservation_proof_does_not_reverify_the_body() {
+    let state = CState::new().with_local("i", int32(0));
+    let statement = c_while_with_invariant_checks(
+        c_less_than(c_variable("i"), c_int32_literal(1)),
+        Vec::new(),
+        vec![CLoopInvariantCheck::new(
+            SpecProposition::Comparison {
+                left: SpecExpression::Value(int32(0)),
+                operator: CComparisonOperator::LessEqual,
+                right: SpecExpression::CExpression(c_variable("i")),
+            },
+            Some("loop entry".to_string()),
+            Some("loop preservation".to_string()),
+        )],
+        c_assign("i", c_int32_literal(u32::MAX)),
+    );
+    let assumptions = Assumptions::new();
+    let automatic = prove_symbolic_c_statement_verification_paths_with_environment(
+        state.clone(),
+        statement.clone(),
+        assumptions.clone(),
+        CFunctionEnvironment::new(),
+    );
+    assert!(
+        automatic
+            .paths()
+            .iter()
+            .flat_map(SymbolicCExecutionPath::obligations)
+            .any(|obligation| obligation.context() == Some("loop preservation"))
+    );
+
+    let (after_proof, loop_rule) =
+        prove_symbolic_c_loop_exit_after_preservation_proof(state, statement, assumptions);
+    assert!(loop_rule.is_some());
+    assert!(after_proof.paths().iter().all(|path| {
+        path.obligations()
+            .iter()
+            .all(|obligation| obligation.context() != Some("loop preservation"))
+    }));
+}
+
+#[test]
 fn unknown_call_assign_is_runtime_error() {
     let state = CState::new();
     let statement = c_call_assign("result", "missing", Vec::new());

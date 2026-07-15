@@ -209,6 +209,12 @@ execution may strengthen those assumptions, but it must apply the registered
 rule when crossing an annotated loop. A missing or incompatible rule is a
 proof failure, not a request to run automatic loop verification again.
 
+There are two ways to establish the preservation premise. An omitted
+`preserve` clause invokes automatic body verification. An explicit preservation
+execution proof advances through one arbitrary iteration and checks every
+reached back edge. The latter feeds the abstract-exit constructor directly;
+the kernel does not run automatic body preservation afterward.
+
 `apply(...)` and `have ... by { ... }` perform pure proofs at the current
 execution point. `observe(...)`, resource `unfold(...)`, and `fold(...)` perform
 resource reasoning there. None advances execution. This lets deterministic

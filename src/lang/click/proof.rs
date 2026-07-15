@@ -1686,6 +1686,12 @@ struct CertifiedStatementTransition {
     pure_facts: Vec<Proposition>,
 }
 
+#[derive(Clone, Copy)]
+enum LoopPreservationSource {
+    Automatic,
+    ExecutionProof,
+}
+
 fn certified_condition_transitions(
     state: &CState,
     pure_facts: &[Proposition],
@@ -1764,6 +1770,30 @@ fn certified_statement_transitions(
             assumptions,
             function_environment.clone(),
         );
+    certified_transitions_from_execution(execution, loop_rule, pure_facts, context_label)
+}
+
+fn certified_loop_exit_transitions_after_preservation_proof(
+    state: &CState,
+    pure_facts: &[Proposition],
+    statement: &CStatement,
+    context_label: &str,
+) -> Result<(Vec<CertifiedStatementTransition>, Option<CVerifiedLoopRule>), ClickError> {
+    let assumptions = assumptions_from_propositions(pure_facts);
+    let (execution, loop_rule) = prove_symbolic_c_loop_exit_after_preservation_proof(
+        state.clone(),
+        statement.clone(),
+        assumptions,
+    );
+    certified_transitions_from_execution(execution, loop_rule, pure_facts, context_label)
+}
+
+fn certified_transitions_from_execution(
+    execution: SymbolicCExecution,
+    loop_rule: Option<CVerifiedLoopRule>,
+    pure_facts: &[Proposition],
+    context_label: &str,
+) -> Result<(Vec<CertifiedStatementTransition>, Option<CVerifiedLoopRule>), ClickError> {
     if let Some(limit) = execution.limit() {
         return Err(ClickError::new(format!(
             "{context_label} hit execution limit {limit:?}"
@@ -1908,6 +1938,7 @@ fn verify_execution_proofs_forward(
                             &preservation,
                             &pure_facts,
                             invariant_checks,
+                            effect_checks,
                             body,
                             environment,
                         )?;
@@ -1935,6 +1966,11 @@ fn verify_execution_proofs_forward(
                 loop_index,
                 environment,
                 verified_loop_rules,
+                if explicit_steps.is_some() {
+                    LoopPreservationSource::ExecutionProof
+                } else {
+                    LoopPreservationSource::Automatic
+                },
             )
         }
         CStatement::Return(_) => Ok(Vec::new()),
@@ -1944,6 +1980,7 @@ fn verify_execution_proofs_forward(
             *next_loop_index,
             environment,
             verified_loop_rules,
+            LoopPreservationSource::Automatic,
         ),
     }
 }
@@ -1981,17 +2018,28 @@ fn advance_execution_proof_statement(
     region_index: usize,
     environment: &ExecutionProofEnvironment<'_>,
     verified_loop_rules: &mut Vec<CVerifiedLoopRule>,
+    loop_preservation_source: LoopPreservationSource,
 ) -> Result<Vec<ExecutionProofContext>, ClickError> {
     let mut advanced = Vec::new();
     for context in contexts {
         let label = format!("execution proof traversal at region {region_index}");
-        let (transitions, loop_rule) = certified_statement_transitions(
-            &context.state,
-            &context.pure_facts,
-            statement,
-            environment.function_environment,
-            &label,
-        )?;
+        let (transitions, loop_rule) = match loop_preservation_source {
+            LoopPreservationSource::Automatic => certified_statement_transitions(
+                &context.state,
+                &context.pure_facts,
+                statement,
+                environment.function_environment,
+                &label,
+            )?,
+            LoopPreservationSource::ExecutionProof => {
+                certified_loop_exit_transitions_after_preservation_proof(
+                    &context.state,
+                    &context.pure_facts,
+                    statement,
+                    &label,
+                )?
+            }
+        };
         if matches!(statement, CStatement::While { .. })
             && let Some(loop_rule) = loop_rule
         {
@@ -2027,6 +2075,7 @@ fn verify_one_loop_preservation_proof(
     preservation: &crate::kernel::CLoopPreservationContext,
     pure_facts: &[Proposition],
     invariant_checks: &[CLoopInvariantCheck],
+    effect_checks: &[CLoopEffectCheck],
     body: &CStatement,
     environment: &ExecutionProofEnvironment<'_>,
 ) -> Result<(), ClickError> {
@@ -2099,6 +2148,14 @@ fn verify_one_loop_preservation_proof(
             &context.state,
             preservation.loop_entry_state(),
             invariant_checks,
+            &assumptions,
+        )
+        .map_err(|message| ClickError::new(format!("`{claim_label}`: {message}")))?;
+        c_loop_effects_hold_at_back_edge(
+            preservation.state(),
+            &context.state,
+            effect_checks,
+            &context.pure_facts,
             &assumptions,
         )
         .map_err(|message| ClickError::new(format!("`{claim_label}`: {message}")))?;

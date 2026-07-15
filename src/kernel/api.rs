@@ -135,6 +135,41 @@ pub fn c_loop_invariants_hold_at_back_edge(
     Ok(())
 }
 
+pub fn c_loop_effects_hold_at_back_edge(
+    iteration_entry_state: &CState,
+    state: &CState,
+    effect_checks: &[CLoopEffectCheck],
+    pure_facts: &[Proposition],
+    assumptions: &Assumptions,
+) -> Result<(), String> {
+    let execution_facts = pure_facts
+        .iter()
+        .cloned()
+        .map(ExecutionPureFact::new)
+        .collect::<Vec<_>>();
+    let obligations = collect_loop_effect_check_obligations(
+        iteration_entry_state,
+        state,
+        effect_checks,
+        &execution_facts,
+        &[],
+        assumptions,
+        &mut ExecutionBudget::default(),
+    )
+    .map_err(|error| format!("could not lower back-edge effects: {error:?}"))?;
+    if let Some(obligation) = obligations.first() {
+        return Err(format!(
+            "missing loop effect fact{}: {:?}",
+            obligation
+                .context()
+                .map(|context| format!(" ({context})"))
+                .unwrap_or_default(),
+            obligation.proposition()
+        ));
+    }
+    Ok(())
+}
+
 pub fn c_loop_invariants_hold_at_entry(
     state: &CState,
     invariant_checks: &[CLoopInvariantCheck],
@@ -843,6 +878,63 @@ pub fn prove_symbolic_c_statement_verification_paths_with_environment_and_loop_r
             );
         }
     };
+    symbolic_c_statement_execution_with_loop_rule(state, statement, assumptions, paths)
+}
+
+pub(crate) fn prove_symbolic_c_loop_exit_after_preservation_proof(
+    state: CState,
+    statement: CStatement,
+    assumptions: Assumptions,
+) -> (SymbolicCExecution, Option<CVerifiedLoopRule>) {
+    let CStatement::While {
+        condition,
+        invariant,
+        invariant_checks,
+        effect_checks,
+        body,
+    } = &statement
+    else {
+        return (
+            SymbolicCExecution {
+                paths: Vec::new(),
+                limit: None,
+            },
+            None,
+        );
+    };
+    let mut budget = ExecutionBudget::default();
+    let mut variables = VerificationVariableGenerator::new(1_000_000);
+    let paths = match execute_c_while_exit_paths_after_preservation_proof(
+        &state,
+        condition,
+        invariant,
+        invariant_checks,
+        effect_checks,
+        body,
+        &assumptions,
+        &mut budget,
+        &mut variables,
+    ) {
+        Ok(paths) => paths,
+        Err(limit) => {
+            return (
+                SymbolicCExecution {
+                    paths: Vec::new(),
+                    limit: Some(limit),
+                },
+                None,
+            );
+        }
+    };
+    symbolic_c_statement_execution_with_loop_rule(state, statement, assumptions, paths)
+}
+
+fn symbolic_c_statement_execution_with_loop_rule(
+    state: CState,
+    statement: CStatement,
+    assumptions: Assumptions,
+    paths: Vec<CStatementExecutionPath>,
+) -> (SymbolicCExecution, Option<CVerifiedLoopRule>) {
     let loop_rule = matches!(statement, CStatement::While { .. }).then(|| CVerifiedLoopRule {
         symbolic_entry_state: state.clone(),
         loop_statement: statement.clone(),
