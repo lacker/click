@@ -73,10 +73,11 @@ Current proof steps:
   execution point to function exit. From function entry, this executes the
   whole C0 function.
 - `symbolic_execute();`: legacy spelling for `execute_rest();`.
-- `execute_until(statement(N));`: execute the current straight-line prefix up
-  to the entry of statement region `N`. This first slice only supports pausing
-  from function entry and requires the prefix to produce exactly one normal
-  path.
+- `execute_until(statement(N));`: execute the current deterministic prefix up
+  to the entry of statement region `N`. It can cross verified loops, but an
+  unresolved `if` still requires explicit branch entry. This first slice only
+  supports pausing from function entry and requires each source step to produce
+  exactly one normal path.
 - `bounded_execute();`: use deterministic bounded execution for concrete-loop
   fallback proofs.
 - `loop_vc(loop(N));`: check the generated verification conditions for loop
@@ -209,11 +210,22 @@ entry with `execute_until(statement(N));`, and execute to function exit with
 `execute_rest();`. Resource steps such as `observe`, `unfold`, and `fold` can
 happen between those execution steps.
 
+Internally, the frontier keeps the user-visible statement position separate
+from an immutable source-region cursor. The source layout identifies branch
+children, continuations, and nested loops. Checks inserted by annotation
+lowering remain attached to their source statement and do not become extra
+proof steps.
+
 Ordinary statement steps, explicit branch entry, and region execution-proof
 traversal use the same certified condition and statement transitions. `advance` composes
 those transitions inside its body and then replaces the reached branch-local
 frontiers with the declared abstract interface. `execute_rest()` is the batch
 form that continues from the same frontier to function exit.
+
+`advance` accepts statement entry/exit targets and loop entry/exit targets. In
+particular, `advance(loop_name.exit) ensuring { ... } by { ... }` executes to a
+verified loop's abstract exit and makes the declared facts and resources the
+only proof-visible interface afterward.
 
 At function entry, `views composite(...)` resource requirements are projected
 one step automatically, matching `observe(composite(...))` for immediate

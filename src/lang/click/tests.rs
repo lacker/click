@@ -63,6 +63,51 @@ fn old_index(base: &str, index: u32) -> ContractExpression {
     ContractExpression::Old(Box::new(current_index(base, index)))
 }
 
+#[test]
+fn executes_verified_loop_inside_selected_branch() {
+    let c_source = r#"
+        int32 branch_count_to_one(int32 flag, int32 i) {
+            if (flag) {
+                while (i < 1) {
+                    i = i + 1;
+                }
+            } else {
+                i = 1;
+            }
+            return i;
+        }
+    "#;
+    let click_source = r#"
+        verifying "branch_count_to_one.c";
+
+        int32 branch_count_to_one(int32 flag, int32 i) {
+            requires i == 1;
+            requires flag != 0;
+
+            for statement(0) {
+                assert flag != 0 by auto;
+            }
+
+            for loop(0) as count {
+                invariant i == 1;
+            }
+
+            ensures result == 1 by {
+                execute_then_step();
+                execute_step();
+                have at(count.exit, i) == 1 by {
+                    simp();
+                }
+                execute_step();
+                simp();
+            }
+        }
+    "#;
+
+    verify_c0_sources(click_source, &[("branch_count_to_one.c", c_source)])
+        .expect("branch-local loop execution should verify");
+}
+
 fn ensure_comparison(
     left: ContractExpression,
     operator: ComparisonOperator,

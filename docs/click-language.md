@@ -400,6 +400,8 @@ deterministic statement boundary they cross. Executing an annotated loop uses
 its verified abstract rule and records both `at(loop_label.entry, expression)`
 and the unique post-loop state `at(loop_label.exit, expression)`. Branches still
 require explicit arm selection and joining before a unique exit snapshot exists.
+`advance(loop_label.exit)` can use that exit as a checked abstract interface for
+the proof that follows.
 
 ## Pure Click Functions
 
