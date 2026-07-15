@@ -2911,7 +2911,9 @@ fn replay_linear_steps(
                     &mut replay,
                     &mut state,
                     &mut requirement_pure_facts,
+                    function_block,
                     function,
+                    parsed_function.body(),
                     parsed_function.parameters(),
                     arguments,
                     &assumptions,
@@ -2941,7 +2943,9 @@ fn replay_linear_steps(
                     &mut replay,
                     &mut state,
                     &mut requirement_pure_facts,
+                    function_block,
                     function,
+                    parsed_function.body(),
                     parsed_function.parameters(),
                     arguments,
                     function_environment,
@@ -2964,7 +2968,9 @@ fn replay_linear_steps(
                     &mut replay,
                     &mut state,
                     &mut requirement_pure_facts,
+                    function_block,
                     &function,
+                    parsed_function.body(),
                     parsed_function.parameters(),
                     &arguments,
                     function_environment,
@@ -3816,12 +3822,44 @@ fn next_top_level_statement_from_execution_point(
     }
 }
 
+fn record_loop_program_point_state(
+    replay: &mut ProofStepReplayState,
+    function_block: &FunctionBlock,
+    loop_index: usize,
+    kind: ProgramPointKind,
+    state: CState,
+) {
+    replay.program_point_states.insert(
+        ProgramPointRef {
+            region: CodeRegionRef::Loop(loop_index),
+            kind,
+        },
+        state.clone(),
+    );
+    for label in function_block
+        .structural_clauses()
+        .iter()
+        .filter(|clause| clause.region() == &CodeRegion::Loop(loop_index))
+        .filter_map(StructuralClause::label)
+    {
+        replay.program_point_states.insert(
+            ProgramPointRef {
+                region: CodeRegionRef::Label(label.to_string()),
+                kind,
+            },
+            state.clone(),
+        );
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn execute_step_from_execution_point(
     replay: &mut ProofStepReplayState,
     state: &mut CState,
     available_pure_facts: &mut Vec<Proposition>,
+    function_block: &FunctionBlock,
     function: &CFunction,
+    source_body: &syntax::C0Statement,
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
     assumptions: &Assumptions,
@@ -3841,9 +3879,7 @@ fn execute_step_from_execution_point(
                         "`{claim_label}` proof step {step_index}: `{step_name}` could not bind function arguments"
                     ))
                 })?;
-            let (step_statement, remaining) = match split_next_straight_line_statement(
-                function.body(),
-            ) {
+            let (step_statement, remaining) = match split_next_execution_step(function.body()) {
                 Ok(split) => split,
                 Err(message) => {
                     return Err(ClickError::new(format!(
@@ -3868,7 +3904,7 @@ fn execute_step_from_execution_point(
                     "`{claim_label}` proof step {step_index}: `{step_name}` has no execution start state"
                 ))
             })?;
-            let (step_statement, remaining) = match split_next_straight_line_statement(remaining) {
+            let (step_statement, remaining) = match split_next_execution_step(remaining) {
                 Ok(split) => split,
                 Err(message) => {
                     return Err(ClickError::new(format!(
@@ -3889,6 +3925,17 @@ fn execute_step_from_execution_point(
             )));
         }
     };
+    let source_metadata = source_statement_metadata(source_body, statement_index).ok_or_else(|| {
+        ClickError::new(format!(
+            "`{claim_label}` proof step {step_index}: `{step_name}` could not resolve source statement({statement_index})"
+        ))
+    })?;
+    let loop_index = source_metadata.loop_index;
+    if matches!(step_statement, CStatement::While { .. }) && loop_index.is_none() {
+        return Err(ClickError::new(format!(
+            "`{claim_label}` proof step {step_index}: `{step_name}` could not resolve the source loop for statement({statement_index})"
+        )));
+    }
 
     if !replay.frontier.inside_branch() {
         replay.program_point_states.insert(
@@ -3898,6 +3945,15 @@ fn execute_step_from_execution_point(
             },
             current_state.clone(),
         );
+        if let Some(loop_index) = loop_index {
+            record_loop_program_point_state(
+                replay,
+                function_block,
+                loop_index,
+                ProgramPointKind::Entry,
+                current_state.clone(),
+            );
+        }
     }
     let current_resources = current_state.resources().facts().to_vec();
     let transition_label = format!("`{claim_label}` proof step {step_index}: `{step_name}`");
@@ -3937,13 +3993,29 @@ fn execute_step_from_execution_point(
             },
             statement_exit_state,
         );
+        if let Some(loop_index) = loop_index {
+            record_loop_program_point_state(
+                replay,
+                function_block,
+                loop_index,
+                ProgramPointKind::Exit,
+                match &outcome {
+                    CStatementOutcome::Normal(state) | CStatementOutcome::Return { state, .. } => {
+                        state.clone()
+                    }
+                    CStatementOutcome::UndefinedBehavior(_)
+                    | CStatementOutcome::RuntimeError(_) => unreachable!(),
+                },
+            );
+        }
     }
 
     match outcome {
         CStatementOutcome::Normal(next_state) => {
             let remaining = if let Some(remaining) = remaining {
                 if !replay.frontier.inside_branch() {
-                    replay.frontier.next_statement_index = statement_index + 1;
+                    replay.frontier.next_statement_index =
+                        statement_index + source_metadata.statement_span;
                 }
                 remaining
             } else if let Some(remaining) = resume_after_completed_branch(replay, &next_state) {
@@ -4096,7 +4168,9 @@ fn execute_rest_from_execution_point(
     replay: &mut ProofStepReplayState,
     state: &mut CState,
     available_pure_facts: &mut Vec<Proposition>,
+    function_block: &FunctionBlock,
     function: &CFunction,
+    source_body: &syntax::C0Statement,
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
     function_environment: &CFunctionEnvironment,
@@ -4109,10 +4183,10 @@ fn execute_rest_from_execution_point(
         loop {
             let can_execute_one_step = match &replay.frontier.point {
                 ProofExecutionPoint::FunctionEntry => {
-                    split_next_straight_line_statement(function.body()).is_ok()
+                    split_next_execution_step(function.body()).is_ok()
                 }
                 ProofExecutionPoint::StatementEntry { remaining } => {
-                    split_next_straight_line_statement(remaining).is_ok()
+                    split_next_execution_step(remaining).is_ok()
                 }
                 ProofExecutionPoint::FunctionExit { .. } => return Ok(()),
             };
@@ -4125,7 +4199,9 @@ fn execute_rest_from_execution_point(
                 replay,
                 state,
                 available_pure_facts,
+                function_block,
                 function,
+                source_body,
                 parameters,
                 arguments,
                 &assumptions,
@@ -4232,7 +4308,9 @@ fn execute_until_statement(
     replay: &mut ProofStepReplayState,
     state: &mut CState,
     available_pure_facts: &mut Vec<Proposition>,
+    function_block: &FunctionBlock,
     function: &CFunction,
+    source_body: &syntax::C0Statement,
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
     function_environment: &CFunctionEnvironment,
@@ -4281,7 +4359,9 @@ fn execute_until_statement(
             replay,
             state,
             available_pure_facts,
+            function_block,
             function,
+            source_body,
             parameters,
             arguments,
             &assumptions,
@@ -4355,12 +4435,79 @@ fn complete_segmented_function_execution(
     ))
 }
 
-fn split_next_straight_line_statement(
+#[derive(Clone, Copy)]
+struct SourceStatementMetadata {
+    statement_span: usize,
+    loop_index: Option<usize>,
+}
+
+fn source_statement_metadata(
+    statement: &syntax::C0Statement,
+    target_statement_index: usize,
+) -> Option<SourceStatementMetadata> {
+    fn visit(
+        statement: &syntax::C0Statement,
+        target: usize,
+        next_statement_index: &mut usize,
+        next_loop_index: &mut usize,
+    ) -> Option<SourceStatementMetadata> {
+        match statement {
+            syntax::C0Statement::Seq(first, second) => {
+                visit(first, target, next_statement_index, next_loop_index)
+                    .or_else(|| visit(second, target, next_statement_index, next_loop_index))
+            }
+            syntax::C0Statement::If {
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                let statement_index = *next_statement_index;
+                *next_statement_index += 1;
+                if statement_index == target {
+                    return Some(SourceStatementMetadata {
+                        statement_span: count_statements(statement),
+                        loop_index: None,
+                    });
+                }
+                visit(then_branch, target, next_statement_index, next_loop_index)
+                    .or_else(|| visit(else_branch, target, next_statement_index, next_loop_index))
+            }
+            syntax::C0Statement::While { body, .. } => {
+                let statement_index = *next_statement_index;
+                let loop_index = *next_loop_index;
+                *next_statement_index += 1;
+                *next_loop_index += 1;
+                if statement_index == target {
+                    return Some(SourceStatementMetadata {
+                        statement_span: count_statements(statement),
+                        loop_index: Some(loop_index),
+                    });
+                }
+                visit(body, target, next_statement_index, next_loop_index)
+            }
+            _ => {
+                let statement_index = *next_statement_index;
+                *next_statement_index += 1;
+                (statement_index == target).then_some(SourceStatementMetadata {
+                    statement_span: 1,
+                    loop_index: None,
+                })
+            }
+        }
+    }
+
+    visit(statement, target_statement_index, &mut 0, &mut 0)
+}
+
+fn split_next_execution_step(
     statement: &CStatement,
 ) -> Result<(CStatement, Option<CStatement>), String> {
     let (first, remaining) = split_next_top_level_statement(statement);
-    if !is_straight_line_statement(&first) {
-        return Err("next statement is not a supported straight-line statement".to_string());
+    if matches!(first, CStatement::If { .. }) {
+        return Err(
+            "next statement is an `if`; use `execute_then_step()` or `execute_else_step()`"
+                .to_string(),
+        );
     }
     Ok((first, remaining))
 }

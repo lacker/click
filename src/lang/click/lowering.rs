@@ -574,7 +574,7 @@ impl AnnotationLowerer<'_> {
                 Err("`at(function.exit, ...)` is not supported yet".to_string())
             }
             (CodeRegion::Loop(index), ProgramPointKind::Exit) => Err(format!(
-                "`at(loop({index}).exit, ...)` is not supported yet"
+                "`at(loop({index}).exit, ...)` requires a recorded snapshot in an execution proof"
             )),
             (CodeRegion::Statement(index), kind) => Err(format!(
                 "`at(statement({index}).{}, ...)` is not supported in this context yet",

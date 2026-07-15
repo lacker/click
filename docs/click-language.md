@@ -396,9 +396,10 @@ proved.
 `at(statement(N).exit, expression)` are currently supported in proof-step
 claims after deterministic execution records that statement point.
 `execute_step()`, `execute_until(...)`, and `execute_rest()` all record every
-straight-line statement boundary they cross. At a branch or loop, Click records
-the unique entry state but does not create a single exit snapshot for multiple
-possible visits or paths.
+deterministic statement boundary they cross. Executing an annotated loop uses
+its verified abstract rule and records both `at(loop_label.entry, expression)`
+and the unique post-loop state `at(loop_label.exit, expression)`. Branches still
+require explicit arm selection and joining before a unique exit snapshot exists.
 
 ## Pure Click Functions
 

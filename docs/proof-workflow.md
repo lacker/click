@@ -59,8 +59,10 @@ by {
 
 Current proof steps:
 
-- `execute_step();`: execute one supported straight-line C statement from the
-  current execution point. The step uses the facts and resources already in the
+- `execute_step();`: execute one C statement from the current execution point.
+  Straight-line statements use their certified transition. An annotated loop
+  uses its previously verified abstract loop rule and records the loop entry
+  and exit snapshots. The step uses the facts and resources already in the
   proof environment; project or prove needed facts before running it.
 - `execute_then_step();`: require the next C statement to be an `if`, prove its
   condition from the current pure facts, and move the execution point to the
@@ -200,9 +202,9 @@ current proof-step language can express the argument.
 
 An execution proof tracks an execution frontier: the current
 execution point together with its enclosing continuation stack. Proof scripts can
-start at function entry, advance by one straight-line statement with
-`execute_step();`, enter a selected C branch, join branch-local proofs at an
-explicit statement point with `advance`, pause at a straight-line statement
+start at function entry, advance by one statement with `execute_step();`, enter
+a selected C branch, join branch-local proofs at an explicit statement point
+with `advance`, pause at a statement
 entry with `execute_until(statement(N));`, and execute to function exit with
 `execute_rest();`. Resource steps such as `observe`, `unfold`, and `fold` can
 happen between those execution steps.
@@ -304,12 +306,13 @@ and in its explicit `preserve` proof.
 
 Statement entry and exit snapshots are currently recorded by deterministic
 proof execution. `execute_step()`, `execute_until(...)`, and `execute_rest()`
-record each straight-line boundary they cross. An `at(...)` expression reads
+record each deterministic boundary they cross. An `at(...)` expression reads
 memory, reassigned parameters, and declared scalar, pointer, or array locals
 from the selected state. Branch entries can have a unique snapshot. An explicit
 loop `preserve` proof binds `at(loop_name.entry, ...)` to its fresh arbitrary
-iteration state. Loop exits and historical runtime visits still require a
-future selection model.
+iteration state. Executing a verified loop records its unique abstract exit as
+`at(loop_name.exit, ...)`. Historical iteration visits still require a future
+selection model.
 
 `assert` is a one-shot spec check at the selected statement code region. It
 currently accepts the executable proposition fragment over current-state C
