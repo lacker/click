@@ -72,7 +72,8 @@ Current proof steps:
 - `execute_rest();`: build symbolic verification paths from the current
   execution point to function exit. From function entry, this executes the
   whole C0 function.
-- `symbolic_execute();`: legacy spelling for `execute_rest();`.
+- `symbolic_execute();`: deprecated source alias for `execute_rest();`; both
+  spellings parse to the same proof step.
 - `execute_until(statement(N));`: execute the current deterministic prefix up
   to the entry of statement region `N`. It can cross verified loops, but an
   unresolved `if` still requires explicit branch entry. It composes with prior
@@ -241,7 +242,7 @@ typical existential-introduction proof names a witness:
 
 ```click
 ensures found: (0..n).any(|k| { k == result }) by {
-    symbolic_execute();
+    execute_rest();
     witness(k = 0);
     simp();
 }
@@ -256,7 +257,7 @@ proposition, either directly or after an explicit `unfold(predicate);` step.
 ```click
 requires has_k: exists (int32 k) { k == x };
 ensures again: exists (int32 j) { j == x } by {
-    symbolic_execute();
+    execute_rest();
     choose(k from requirement has_k);
     witness(j = k);
     simp();
@@ -269,7 +270,7 @@ first:
 ```click
 requires has_x: bytes_contains(p, 0, n, 'x');
 ensures again: bytes_contains(p, 0, n, 'x') by {
-    symbolic_execute();
+    execute_rest();
     unfold(bytes_contains);
     choose(found from requirement has_x);
     witness(k = found);

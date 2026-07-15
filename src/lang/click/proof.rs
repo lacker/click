@@ -1110,7 +1110,7 @@ pub(super) fn prove_claim_by_auto(
     parsed_function: &syntax::C0Function,
     claim: &FunctionClaimRef<'_>,
     claim_label: &str,
-    function_environment: &CFunctionEnvironment,
+    function_environment: &CExecutionEnvironment,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
     resource_environment: &ResourceEnvironment,
@@ -1140,7 +1140,7 @@ pub(super) fn prove_claim_by_auto(
         arguments.clone(),
         assumptions.clone(),
         function_environment.clone(),
-        CCallSemantics::ApplyVerifiedRules,
+        CExecutionSemantics::APPLY_VERIFIED_RULES,
     );
     if let Some(error) = execution_obligation_error(
         &vc_execution,
@@ -1192,7 +1192,7 @@ pub(super) fn prove_claim_by_auto(
         arguments.clone(),
         assumptions,
         function_environment.clone(),
-        CCallSemantics::ApplyVerifiedRules,
+        CExecutionSemantics::APPLY_VERIFIED_RULES,
     );
     if let Some(error) = execution_obligation_error(
         &execution,
@@ -1247,7 +1247,7 @@ pub(super) fn prove_claim_by_frame(
     parsed_function: &syntax::C0Function,
     claim: &FunctionClaimRef<'_>,
     claim_label: &str,
-    function_environment: &CFunctionEnvironment,
+    function_environment: &CExecutionEnvironment,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
     resource_environment: &ResourceEnvironment,
@@ -1283,7 +1283,7 @@ pub(super) fn prove_claim_by_frame(
         arguments.clone(),
         assumptions,
         function_environment.clone(),
-        CCallSemantics::ApplyVerifiedRules,
+        CExecutionSemantics::APPLY_VERIFIED_RULES,
     );
     if let Some(error) = execution_obligation_error_for_tactic(
         "frame",
@@ -1335,7 +1335,7 @@ pub(super) fn prove_claim_by_simp(
     parsed_function: &syntax::C0Function,
     claim: &FunctionClaimRef<'_>,
     claim_label: &str,
-    function_environment: &CFunctionEnvironment,
+    function_environment: &CExecutionEnvironment,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
     resource_environment: &ResourceEnvironment,
@@ -1375,7 +1375,7 @@ pub(super) fn prove_claim_by_simp(
         click_function_environment,
         resource_environment,
         theorem_environment,
-        vec![vec![ProofStep::SymbolicExecute, ProofStep::Simp]],
+        vec![vec![ProofStep::ExecuteRest, ProofStep::Simp]],
     );
     let assumptions = assumptions_from_propositions(&requirement_pure_facts);
     let execution = prove_symbolic_c_function_execution_paths_with_environment(
@@ -1384,7 +1384,7 @@ pub(super) fn prove_claim_by_simp(
         arguments.clone(),
         assumptions,
         function_environment.clone(),
-        CCallSemantics::ApplyVerifiedRules,
+        CExecutionSemantics::APPLY_VERIFIED_RULES,
     );
     if let Some(limit) = execution.limit() {
         return Err(ClickError::new(format!(
@@ -1465,7 +1465,7 @@ pub(super) fn prove_claim_by_simp(
             specification.clone(),
             Assumptions::new(),
             function_environment.clone(),
-            CCallSemantics::ApplyVerifiedRules,
+            CExecutionSemantics::APPLY_VERIFIED_RULES,
         )
         .ok_or_else(|| {
             ClickError::new(format!(
@@ -1589,7 +1589,7 @@ enum ProofStepExecutionMode {
 pub(super) fn verify_loop_execution_proofs(
     function_block: &FunctionBlock,
     parsed_function: &syntax::C0Function,
-    function_environment: &CFunctionEnvironment,
+    function_environment: &CExecutionEnvironment,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
     resource_environment: &ResourceEnvironment,
@@ -1665,7 +1665,7 @@ struct ExecutionProofEnvironment<'a> {
     initial_state: &'a CState,
     function_block: &'a FunctionBlock,
     parsed_function: &'a syntax::C0Function,
-    function_environment: &'a CFunctionEnvironment,
+    function_environment: &'a CExecutionEnvironment,
     predicate_environment: &'a PredicateEnvironment,
     click_function_environment: &'a ClickFunctionEnvironment,
     resource_environment: &'a ResourceEnvironment,
@@ -1767,7 +1767,8 @@ fn certified_statement_transitions(
     state: &CState,
     pure_facts: &[Proposition],
     statement: &CStatement,
-    function_environment: &CFunctionEnvironment,
+    function_environment: &CExecutionEnvironment,
+    execution_semantics: CExecutionSemantics,
     context_label: &str,
 ) -> Result<(Vec<CertifiedStatementTransition>, Option<CVerifiedLoopRule>), ClickError> {
     let assumptions = assumptions_from_propositions(pure_facts);
@@ -1777,7 +1778,7 @@ fn certified_statement_transitions(
             statement.clone(),
             assumptions,
             function_environment.clone(),
-            CCallSemantics::ApplyVerifiedRules,
+            execution_semantics,
         );
     certified_transitions_from_execution(execution, loop_rule, pure_facts, context_label)
 }
@@ -1786,7 +1787,7 @@ fn certified_loop_exit_transitions_with_proven_phases(
     state: &CState,
     pure_facts: &[Proposition],
     statement: &CStatement,
-    function_environment: &CFunctionEnvironment,
+    function_environment: &CExecutionEnvironment,
     context_label: &str,
     initialization_proven: bool,
     preservation_proven: bool,
@@ -2065,6 +2066,7 @@ fn advance_execution_proof_statement(
                 &context.pure_facts,
                 statement,
                 environment.function_environment,
+                CExecutionSemantics::APPLY_CALL_RULES_AND_VERIFY_LOOPS,
                 &label,
             )?,
             _ => certified_loop_exit_transitions_with_proven_phases(
@@ -2152,7 +2154,6 @@ fn verify_loop_initialization_pure_proof(
             environment.predicate_environment,
             environment.click_function_environment,
         )?;
-        let fact = index_current_predicates(&fact, context.state.memory()).unwrap_or(fact);
         if !available.contains(&fact) {
             available.push(fact);
         }
@@ -2295,7 +2296,7 @@ fn apply_theorem_at_current_point(
         result: None,
         program_point_states,
     };
-    let mut available = apply_theorem_applications_to_available(
+    let available = apply_theorem_applications_to_available(
         theorem_environment,
         &[(step_index, application.clone())],
         claim_label,
@@ -2306,66 +2307,7 @@ fn apply_theorem_at_current_point(
         click_function_environment,
         unfolded_predicates,
     )?;
-    let indexed_predicates = available
-        .iter()
-        .filter_map(|proposition| {
-            index_current_predicates(proposition, state.memory())
-                .filter(|indexed| indexed != proposition && !available.contains(indexed))
-        })
-        .collect::<Vec<_>>();
-    available.extend(indexed_predicates);
     Ok(available)
-}
-
-fn index_current_predicates(proposition: &Proposition, memory: &CMemory) -> Option<Proposition> {
-    match proposition {
-        Proposition::Predicate { name, arguments }
-            if !matches!(arguments.first(), Some(Term::CMemory(_))) =>
-        {
-            let mut arguments = arguments.clone();
-            arguments.insert(0, Term::CMemory(memory.clone()));
-            Some(Proposition::Predicate {
-                name: name.clone(),
-                arguments,
-            })
-        }
-        Proposition::And(left, right) => Some(Proposition::And(
-            Box::new(index_current_predicates(left, memory).unwrap_or_else(|| (**left).clone())),
-            Box::new(index_current_predicates(right, memory).unwrap_or_else(|| (**right).clone())),
-        )),
-        Proposition::Or(left, right) => Some(Proposition::Or(
-            Box::new(index_current_predicates(left, memory).unwrap_or_else(|| (**left).clone())),
-            Box::new(index_current_predicates(right, memory).unwrap_or_else(|| (**right).clone())),
-        )),
-        Proposition::Not(body) => Some(Proposition::Not(Box::new(
-            index_current_predicates(body, memory).unwrap_or_else(|| (**body).clone()),
-        ))),
-        Proposition::Implies(left, right) => Some(Proposition::Implies(
-            Box::new(index_current_predicates(left, memory).unwrap_or_else(|| (**left).clone())),
-            Box::new(index_current_predicates(right, memory).unwrap_or_else(|| (**right).clone())),
-        )),
-        Proposition::ForAll { var, sort, body } => Some(Proposition::ForAll {
-            var: *var,
-            sort: sort.clone(),
-            body: Box::new(
-                index_current_predicates(body, memory).unwrap_or_else(|| (**body).clone()),
-            ),
-        }),
-        Proposition::Exists {
-            name,
-            var,
-            sort,
-            body,
-        } => Some(Proposition::Exists {
-            name: name.clone(),
-            var: *var,
-            sort: sort.clone(),
-            body: Box::new(
-                index_current_predicates(body, memory).unwrap_or_else(|| (**body).clone()),
-            ),
-        }),
-        _ => None,
-    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2774,7 +2716,7 @@ pub(super) fn prove_claim_by_steps(
     parsed_function: &syntax::C0Function,
     claim: &FunctionClaimRef<'_>,
     claim_label: &str,
-    function_environment: &CFunctionEnvironment,
+    function_environment: &CExecutionEnvironment,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
     resource_environment: &ResourceEnvironment,
@@ -2861,7 +2803,7 @@ fn replay_linear_steps(
     parsed_function: &syntax::C0Function,
     claim: &FunctionClaimRef<'_>,
     claim_label: &str,
-    function_environment: &CFunctionEnvironment,
+    function_environment: &CExecutionEnvironment,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
     resource_environment: &ResourceEnvironment,
@@ -2955,7 +2897,7 @@ fn replay_linear_steps(
                 )?;
                 assumptions = assumptions_from_propositions(&requirement_pure_facts);
             }
-            ProofStep::SymbolicExecute | ProofStep::ExecuteRest => {
+            ProofStep::ExecuteRest => {
                 execute_rest_from_execution_point(
                     &mut replay,
                     &mut state,
@@ -3014,7 +2956,7 @@ fn replay_linear_steps(
                         arguments.to_vec(),
                         assumptions.clone(),
                         function_environment.clone(),
-                        CCallSemantics::ApplyVerifiedRules,
+                        CExecutionSemantics::APPLY_VERIFIED_RULES,
                     ),
                 )?;
             }
@@ -3205,7 +3147,7 @@ fn execute_internal_proof(
     parsed_function: &syntax::C0Function,
     claim: &FunctionClaimRef<'_>,
     claim_label: &str,
-    function_environment: &CFunctionEnvironment,
+    function_environment: &CExecutionEnvironment,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
     resource_environment: &ResourceEnvironment,
@@ -3443,7 +3385,7 @@ fn finish_proof_replay(
     parsed_function: &syntax::C0Function,
     claim: &FunctionClaimRef<'_>,
     claim_label: &str,
-    function_environment: &CFunctionEnvironment,
+    function_environment: &CExecutionEnvironment,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
     resource_environment: &ResourceEnvironment,
@@ -3461,7 +3403,7 @@ fn finish_proof_replay(
     let result = (|| {
         let execution = replay.execution().ok_or_else(|| {
             ClickError::new(format!(
-                "`{claim_label}` proof-step script must reach function exit with `execute_step()`, `execute_rest()`, `symbolic_execute()`, or `bounded_execute()`"
+                "`{claim_label}` proof-step script must reach function exit with `execute_step()`, `execute_rest()`, or `bounded_execute()`"
             ))
         })?;
         prove_claim_from_steps_execution(
@@ -3734,7 +3676,7 @@ fn execute_selected_branch_step_from_execution_point(
     function: &CFunction,
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
-    function_environment: &CFunctionEnvironment,
+    function_environment: &CExecutionEnvironment,
     claim_label: &str,
     step_index: usize,
     take_then: bool,
@@ -3797,6 +3739,7 @@ fn execute_selected_branch_step_from_execution_point(
             available_pure_facts,
             &assertion_prefix,
             function_environment,
+            CExecutionSemantics::APPLY_VERIFIED_RULES,
             &transition_label,
         )?;
         let [transition] = transitions.as_slice() else {
@@ -4022,7 +3965,7 @@ fn execute_step_from_execution_point(
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
     assumptions: &Assumptions,
-    function_environment: &CFunctionEnvironment,
+    function_environment: &CExecutionEnvironment,
     claim_label: &str,
     step_index: usize,
     step_name: &str,
@@ -4130,6 +4073,7 @@ fn execute_step_from_execution_point(
         available_pure_facts,
         &step_statement,
         function_environment,
+        CExecutionSemantics::APPLY_VERIFIED_RULES,
         &transition_label,
     )?;
     if transitions.len() != 1 {
@@ -4341,7 +4285,7 @@ fn execute_rest_from_execution_point(
     function: &CFunction,
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
-    function_environment: &CFunctionEnvironment,
+    function_environment: &CExecutionEnvironment,
     claim_label: &str,
     step_index: usize,
     step_name: &str,
@@ -4423,7 +4367,7 @@ fn execute_rest_from_execution_point(
                     arguments.to_vec(),
                     assumptions.clone(),
                     function_environment.clone(),
-                    CCallSemantics::ApplyVerifiedRules,
+                    CExecutionSemantics::APPLY_VERIFIED_RULES,
                 ),
             )?;
         }
@@ -4434,7 +4378,7 @@ fn execute_rest_from_execution_point(
                 remaining,
                 assumptions.clone(),
                 function_environment.clone(),
-                CCallSemantics::ApplyVerifiedRules,
+                CExecutionSemantics::APPLY_VERIFIED_RULES,
             );
             let Some(execution_start_state) = replay.frontier.execution_start_state.clone() else {
                 return Err(ClickError::new(format!(
@@ -4497,7 +4441,7 @@ fn execute_until_statement(
     function: &CFunction,
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
-    function_environment: &CFunctionEnvironment,
+    function_environment: &CExecutionEnvironment,
     statement_index: usize,
     claim_label: &str,
     step_index: usize,
@@ -6157,7 +6101,7 @@ fn prove_claim_from_steps_execution(
     function_block: &FunctionBlock,
     claim: &FunctionClaimRef<'_>,
     claim_label: &str,
-    function_environment: &CFunctionEnvironment,
+    function_environment: &CExecutionEnvironment,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
     resource_environment: &ResourceEnvironment,
@@ -6406,7 +6350,7 @@ fn prove_claim_from_steps_execution(
                     specification.clone(),
                     Assumptions::new(),
                     function_environment.clone(),
-                    CCallSemantics::ApplyVerifiedRules,
+                    CExecutionSemantics::APPLY_VERIFIED_RULES,
                 )
                 .ok_or_else(|| {
                     ClickError::new(format!(
@@ -6436,7 +6380,7 @@ enum AutoExecutionKind<'a> {
     Frame,
     LoopVerification,
     BoundedExecution {
-        environment: &'a CFunctionEnvironment,
+        environment: &'a CExecutionEnvironment,
     },
 }
 
@@ -6515,7 +6459,7 @@ fn certified_proof_steps(
     parsed_function: &syntax::C0Function,
     claim: &FunctionClaimRef<'_>,
     claim_label: &str,
-    function_environment: &CFunctionEnvironment,
+    function_environment: &CExecutionEnvironment,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
     resource_environment: &ResourceEnvironment,
@@ -6541,7 +6485,7 @@ fn certified_proof_steps(
 }
 
 fn frame_proof_step_candidates() -> Vec<Vec<ProofStep>> {
-    vec![vec![ProofStep::SymbolicExecute, ProofStep::Frame(None)]]
+    vec![vec![ProofStep::ExecuteRest, ProofStep::Frame(None)]]
 }
 
 fn bounded_execution_proof_step_candidates(claim: &FunctionClaimRef<'_>) -> Vec<Vec<ProofStep>> {
@@ -6560,7 +6504,7 @@ fn auto_loop_verification_proof_step_candidates(
     function_block: &FunctionBlock,
     claim: &FunctionClaimRef<'_>,
 ) -> Vec<Vec<ProofStep>> {
-    let mut base = vec![ProofStep::SymbolicExecute];
+    let mut base = vec![ProofStep::ExecuteRest];
     base.extend(
         loop_step_regions(function_block)
             .into_iter()
@@ -6769,7 +6713,7 @@ fn prove_claim_from_execution(
                     specification.clone(),
                     Assumptions::new(),
                     (*environment).clone(),
-                    CCallSemantics::ApplyVerifiedRules,
+                    CExecutionSemantics::APPLY_VERIFIED_RULES,
                 )
                 .ok_or_else(|| {
                     ClickError::new(format!(

@@ -66,7 +66,8 @@ Common steps include:
   current execution point.
 - `execute_rest();`: execute symbolically from the current execution point to
   function exit. From function entry, this executes the whole C function.
-- `symbolic_execute();`: legacy spelling for `execute_rest();`.
+- `symbolic_execute();`: deprecated source alias for `execute_rest();`; both
+  spellings parse to the same proof step.
 - `execute_until(statement(N));`: advance from the current execution point to
   a forward, reachable statement entry point. An unresolved branch still
   requires explicit arm selection.

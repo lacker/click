@@ -571,8 +571,8 @@ fn function_call_does_not_inherit_undeclared_resources() {
         caller.clone(),
         arguments.clone(),
         Assumptions::new(),
-        CFunctionEnvironment::new().with_function(helper),
-        CCallSemantics::ExecuteBodies,
+        CExecutionEnvironment::new().with_function(helper),
+        CExecutionSemantics::EXECUTE_BODIES,
     )
     .expect("call should report missing callee permission");
 
@@ -845,7 +845,7 @@ fn call_assign_uses_function_environment() {
         vec![c_parameter("x", CType::Int32)],
         c_return(c_add(c_variable("x"), c_int32_literal(1))),
     );
-    let environment = CFunctionEnvironment::new().with_function(increment);
+    let environment = CExecutionEnvironment::new().with_function(increment);
     let state = CState::new();
     let statement = c_seq(
         c_call_assign("result", "increment", vec![c_int32_literal(41)]),
@@ -857,7 +857,7 @@ fn call_assign_uses_function_environment() {
         statement.clone(),
         Assumptions::new(),
         environment,
-        CCallSemantics::ExecuteBodies,
+        CExecutionSemantics::EXECUTE_BODIES,
     )
     .expect("known function call should execute");
 
@@ -875,7 +875,7 @@ fn call_assign_uses_function_environment() {
 }
 
 #[test]
-fn verified_loop_rule_is_required_and_accepts_stronger_assumptions() {
+fn loop_semantics_explicitly_select_verification_or_verified_rules() {
     let state = CState::new().with_local("i", int32(0));
     let statement = c_while_with_invariant_checks(
         c_less_than(c_variable("i"), c_int32_literal(1)),
@@ -897,10 +897,30 @@ fn verified_loop_rule_is_required_and_accepts_stronger_assumptions() {
             state.clone(),
             statement.clone(),
             assumptions.clone(),
-            CFunctionEnvironment::new(),
-            CCallSemantics::ExecuteBodies,
+            CExecutionEnvironment::new(),
+            CExecutionSemantics::EXECUTE_BODIES,
         );
     let loop_rule = loop_rule.expect("loop verification should produce a rule");
+
+    let missing = prove_symbolic_c_statement_verification_paths_with_environment(
+        state.clone(),
+        statement.clone(),
+        assumptions.clone(),
+        CExecutionEnvironment::new(),
+        CExecutionSemantics::APPLY_VERIFIED_RULES,
+    );
+    assert!(missing.paths().is_empty());
+
+    let mut ignored_rule = loop_rule.clone();
+    ignored_rule.paths.clear();
+    let verified_directly = prove_symbolic_c_statement_verification_paths_with_environment(
+        state.clone(),
+        statement.clone(),
+        assumptions.clone(),
+        CExecutionEnvironment::new().with_verified_loop_rules([ignored_rule]),
+        CExecutionSemantics::EXECUTE_BODIES,
+    );
+    assert!(!verified_directly.paths().is_empty());
 
     let reused = prove_symbolic_c_statement_verification_paths_with_environment(
         state.clone(),
@@ -908,8 +928,8 @@ fn verified_loop_rule_is_required_and_accepts_stronger_assumptions() {
         assumptions
             .clone()
             .assume_condition(ConditionTerm::Constant(true), true),
-        CFunctionEnvironment::new().with_verified_loop_rules([loop_rule.clone()]),
-        CCallSemantics::ExecuteBodies,
+        CExecutionEnvironment::new().with_verified_loop_rules([loop_rule.clone()]),
+        CExecutionSemantics::APPLY_VERIFIED_RULES,
     );
     assert_eq!(reused.paths().len(), certified.paths().len());
 
@@ -917,8 +937,8 @@ fn verified_loop_rule_is_required_and_accepts_stronger_assumptions() {
         state.with_local("unrelated", int32(0)),
         statement,
         assumptions,
-        CFunctionEnvironment::new().with_verified_loop_rules([loop_rule]),
-        CCallSemantics::ExecuteBodies,
+        CExecutionEnvironment::new().with_verified_loop_rules([loop_rule]),
+        CExecutionSemantics::APPLY_VERIFIED_RULES,
     );
     assert!(mismatched.paths().is_empty());
 }
@@ -945,8 +965,8 @@ fn loop_exit_rule_with_proven_preservation_does_not_reverify_the_body() {
         state.clone(),
         statement.clone(),
         assumptions.clone(),
-        CFunctionEnvironment::new(),
-        CCallSemantics::ExecuteBodies,
+        CExecutionEnvironment::new(),
+        CExecutionSemantics::EXECUTE_BODIES,
     );
     assert!(
         automatic
@@ -960,7 +980,7 @@ fn loop_exit_rule_with_proven_preservation_does_not_reverify_the_body() {
         state,
         statement,
         assumptions,
-        CFunctionEnvironment::new(),
+        CExecutionEnvironment::new(),
         false,
         true,
     );
@@ -993,7 +1013,7 @@ fn loop_exit_rule_with_proven_initialization_checks_preservation_only() {
         state,
         statement,
         Assumptions::new(),
-        CFunctionEnvironment::new(),
+        CExecutionEnvironment::new(),
         true,
         false,
     );
@@ -1024,8 +1044,8 @@ fn unknown_call_assign_is_runtime_error() {
         state.clone(),
         statement.clone(),
         Assumptions::new(),
-        CFunctionEnvironment::new(),
-        CCallSemantics::ExecuteBodies,
+        CExecutionEnvironment::new(),
+        CExecutionSemantics::EXECUTE_BODIES,
     )
     .expect("unknown function should produce a single runtime-error path");
 
@@ -4033,7 +4053,7 @@ fn verified_function_rule_applies_contract_without_executing_body() {
         )],
         true,
     );
-    let environment = CFunctionEnvironment::new()
+    let environment = CExecutionEnvironment::new()
         .with_function(helper.clone())
         .with_verified_function_rule(CVerifiedFunctionRule { function: helper });
     let statement = c_seq(
@@ -4045,7 +4065,7 @@ fn verified_function_rule_applies_contract_without_executing_body() {
         statement.clone(),
         Assumptions::new(),
         environment.clone(),
-        CCallSemantics::ApplyVerifiedRules,
+        CExecutionSemantics::APPLY_VERIFIED_RULES,
     );
     let path = execution
         .paths()
@@ -4085,7 +4105,7 @@ fn verified_function_rule_applies_contract_without_executing_body() {
         statement,
         Assumptions::new(),
         environment,
-        CCallSemantics::ExecuteBodies,
+        CExecutionSemantics::EXECUTE_BODIES,
     );
     let mut proposition = body_execution.paths()[0].theorem().proposition();
     while let Proposition::Implies(_, body) = proposition {
@@ -4121,7 +4141,7 @@ fn verified_immutable_calls_allocate_distinct_results() {
         )],
         true,
     );
-    let environment = CFunctionEnvironment::new()
+    let environment = CExecutionEnvironment::new()
         .with_function(helper.clone())
         .with_verified_function_rule(CVerifiedFunctionRule { function: helper });
     let statement = c_seq(
@@ -4136,7 +4156,7 @@ fn verified_immutable_calls_allocate_distinct_results() {
         statement,
         Assumptions::new(),
         environment,
-        CCallSemantics::ApplyVerifiedRules,
+        CExecutionSemantics::APPLY_VERIFIED_RULES,
     );
     let path = execution.paths().first().expect("calls should execute");
     let mut proposition = path.theorem().proposition();

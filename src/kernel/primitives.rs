@@ -259,6 +259,15 @@ pub enum SpecExpression {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub enum SpecPredicateArgument {
+    Value(SpecExpression),
+    ArrayRef {
+        memory: SpecMemory,
+        pointer: SpecExpression,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum SpecProposition {
     Comparison {
         left: SpecExpression,
@@ -281,7 +290,7 @@ pub enum SpecProposition {
     },
     Predicate {
         name: String,
-        arguments: Vec<SpecExpression>,
+        arguments: Vec<SpecPredicateArgument>,
     },
     ResourceSeparate {
         left: SpecResource,
@@ -444,17 +453,45 @@ pub struct CFunctionSpecification {
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct CFunctionEnvironment {
+pub struct CExecutionEnvironment {
     pub(super) functions: BTreeMap<String, CFunction>,
     pub(super) verified_function_rules: BTreeMap<String, CVerifiedFunctionRule>,
     pub(super) verified_loop_rules: Vec<CVerifiedLoopRule>,
-    pub(super) require_verified_loop_rules: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CCallSemantics {
     ExecuteBodies,
     ApplyVerifiedRules,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CLoopSemantics {
+    Verify,
+    ApplyVerifiedRules,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CExecutionSemantics {
+    pub calls: CCallSemantics,
+    pub loops: CLoopSemantics,
+}
+
+impl CExecutionSemantics {
+    pub const EXECUTE_BODIES: Self = Self {
+        calls: CCallSemantics::ExecuteBodies,
+        loops: CLoopSemantics::Verify,
+    };
+
+    pub const APPLY_VERIFIED_RULES: Self = Self {
+        calls: CCallSemantics::ApplyVerifiedRules,
+        loops: CLoopSemantics::ApplyVerifiedRules,
+    };
+
+    pub const APPLY_CALL_RULES_AND_VERIFY_LOOPS: Self = Self {
+        calls: CCallSemantics::ApplyVerifiedRules,
+        loops: CLoopSemantics::Verify,
+    };
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1890,7 +1927,7 @@ impl CFunctionSpecification {
     }
 }
 
-impl CFunctionEnvironment {
+impl CExecutionEnvironment {
     pub fn new() -> Self {
         Self::default()
     }
@@ -1919,12 +1956,7 @@ impl CFunctionEnvironment {
         rules: impl IntoIterator<Item = CVerifiedLoopRule>,
     ) -> Self {
         self.verified_loop_rules.extend(rules);
-        self.require_verified_loop_rules = true;
         self
-    }
-
-    pub(super) fn requires_verified_loop_rules(&self) -> bool {
-        self.require_verified_loop_rules
     }
 
     pub(super) fn applicable_verified_loop_rule(

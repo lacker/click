@@ -14,7 +14,7 @@ Then a contract can use:
 
 ```click
 ensures sorted_pair(p) by {
-    symbolic_execute();
+    execute_rest();
     unfold(sorted_pair);
     simp();
 }

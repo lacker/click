@@ -37,13 +37,13 @@ int32 buffer_get_first(struct owner* owner) {
 
     ensures result == (owner->data)[0] by {
         unfold(owned_buffer(owner));
-        symbolic_execute();
+        execute_rest();
         simp();
     }
 
     produces owned_buffer(owner) by {
         unfold(owned_buffer(owner));
-        symbolic_execute();
+        execute_rest();
         fold(owned_buffer(owner));
     }
 }

@@ -210,6 +210,5 @@ those terms before lowering the predicate body. This keeps the kernel free
 of domain names like `permutation` while still making memory state explicit
 enough for `old(p)` to work as an array argument.
 
-The old one-hidden-memory predicate shape is still accepted for legacy opaque
-facts and C predicate lowering. New Click predicate calls with known signatures
-use expanded array-ref arguments.
+All predicate calls use expanded array-ref arguments. Each array-ref parameter
+contributes its memory snapshot and pointer as separate kernel terms.

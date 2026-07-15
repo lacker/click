@@ -65,7 +65,7 @@ Only after you understand the claim should you read the proof script:
 
 ```click
 by {
-    symbolic_execute();
+    execute_rest();
     unfold(sorted);
     simp();
 }

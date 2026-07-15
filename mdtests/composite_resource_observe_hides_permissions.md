@@ -23,7 +23,7 @@ int32 write_flag_observed(int32* flag) {
 
     produces zero_flag(flag) by {
         observe(zero_flag(flag));
-        symbolic_execute();
+        execute_rest();
     }
 }
 ```

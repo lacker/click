@@ -26,7 +26,7 @@ int32 sorted_predicate(int32 p[], int32 n) {
     requires loadable(p[0..n]);
     requires sorted(p, n);
     ensures still_sorted: sorted(p, n) by {
-        symbolic_execute();
+        execute_rest();
         unfold(sorted);
         simp();
     }

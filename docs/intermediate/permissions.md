@@ -242,7 +242,7 @@ int32 return_fd(int32 fd) {
     ensures result >= 0 by {
         observe(live_fd(fd));
         observe(nonnegative_fd(fd));
-        symbolic_execute();
+        execute_rest();
         simp();
     }
 
@@ -275,13 +275,13 @@ int32 complete_once(int32 flag[]) {
 
     produces called(flag) by {
         unfold(uncalled(flag));
-        symbolic_execute();
+        execute_rest();
         fold(called(flag));
     }
 
     ensures result == 1 by {
         unfold(uncalled(flag));
-        symbolic_execute();
+        execute_rest();
         fold(called(flag));
         simp();
     }
@@ -302,7 +302,7 @@ int32 init_once(int32 flag[]) {
     consumes flag[0..1];
 
     produces uncalled(flag) by {
-        symbolic_execute();
+        execute_rest();
         fold(uncalled(flag));
     }
 }

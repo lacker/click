@@ -24,7 +24,7 @@ int32 copy_first(int32 dst[], int32 src[]) {
 
     produces first_cell_copy_access(dst, src) by {
         unfold(first_cell_copy_access(dst, src));
-        symbolic_execute();
+        execute_rest();
         fold(first_cell_copy_access(dst, src));
     }
 }

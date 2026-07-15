@@ -12,8 +12,8 @@ pub(super) fn execute_c_function_paths(
     function: &CFunction,
     arguments: &[CExpression],
     assumptions: &Assumptions,
-    environment: &CFunctionEnvironment,
-    call_semantics: CCallSemantics,
+    environment: &CExecutionEnvironment,
+    execution_semantics: CExecutionSemantics,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<CFunctionPath>> {
     budget.consume_function_call()?;
@@ -59,7 +59,7 @@ pub(super) fn execute_c_function_paths(
             function.body(),
             &body_assumptions,
             environment,
-            call_semantics,
+            execution_semantics,
             budget,
         )? {
             let Some((facts, obligations)) = merge_execution_pure_facts_and_obligations(
@@ -99,8 +99,8 @@ pub(super) fn execute_c_function_verification_paths(
     function: &CFunction,
     arguments: &[CExpression],
     assumptions: &Assumptions,
-    environment: &CFunctionEnvironment,
-    call_semantics: CCallSemantics,
+    environment: &CExecutionEnvironment,
+    execution_semantics: CExecutionSemantics,
     budget: &mut ExecutionBudget,
     variables: &mut VerificationVariableGenerator,
 ) -> ExecutionResult<Vec<CFunctionPath>> {
@@ -147,7 +147,7 @@ pub(super) fn execute_c_function_verification_paths(
             function.body(),
             &body_assumptions,
             environment,
-            call_semantics,
+            execution_semantics,
             budget,
             variables,
         )? {
@@ -188,11 +188,11 @@ pub(super) fn execute_c_function_call_paths(
     function: &CFunction,
     arguments: &[CExpression],
     assumptions: &Assumptions,
-    environment: &CFunctionEnvironment,
-    call_semantics: CCallSemantics,
+    environment: &CExecutionEnvironment,
+    execution_semantics: CExecutionSemantics,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<CFunctionPath>> {
-    match call_semantics {
+    match execution_semantics.calls {
         CCallSemantics::ExecuteBodies => {}
         CCallSemantics::ApplyVerifiedRules => {
             let Some(rule) = environment.get_verified_function_rule(function.name()) else {
@@ -280,7 +280,7 @@ pub(super) fn execute_c_function_call_paths(
             function.body(),
             &body_assumptions,
             environment,
-            call_semantics,
+            execution_semantics,
             budget,
         )? {
             let Some((facts, obligations)) = merge_execution_pure_facts_and_obligations(

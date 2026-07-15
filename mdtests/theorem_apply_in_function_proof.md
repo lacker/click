@@ -29,7 +29,7 @@ int32 theorem_apply_identity(int32 x) {
     requires nonnegative(x);
 
     ensures result >= 0 by {
-        symbolic_execute();
+        execute_rest();
         apply(nonnegative_body(result));
         simp();
     }

@@ -596,7 +596,7 @@ pub(super) fn lower_spec_comparison_proposition_at_state(
 pub(super) fn lower_spec_predicate_proposition_at_state(
     state: &CState,
     name: &str,
-    arguments: &[SpecExpression],
+    arguments: &[SpecPredicateArgument],
     loop_entry_state: Option<&CState>,
     assumptions: &Assumptions,
     budget: &mut ExecutionBudget,
@@ -604,16 +604,20 @@ pub(super) fn lower_spec_predicate_proposition_at_state(
     let mut paths = vec![SpecPropositionPath {
         proposition: Proposition::Predicate {
             name: name.to_string(),
-            arguments: vec![Term::CMemory(state.memory().clone())],
+            arguments: Vec::new(),
         },
         facts: Vec::new(),
         obligations: Vec::new(),
     }];
 
     for argument in arguments {
+        let (expression, memory) = match argument {
+            SpecPredicateArgument::Value(expression) => (expression, None),
+            SpecPredicateArgument::ArrayRef { memory, pointer } => (pointer, Some(memory)),
+        };
         let argument_paths = evaluate_spec_expression_paths_with_loop_entry(
             state,
-            argument,
+            expression,
             loop_entry_state,
             assumptions,
             budget,
@@ -642,6 +646,19 @@ pub(super) fn lower_spec_predicate_proposition_at_state(
                 else {
                     unreachable!("predicate lowering should carry predicate propositions")
                 };
+                if let Some(memory) = memory {
+                    let memory = match memory {
+                        SpecMemory::Current => state.memory(),
+                        SpecMemory::FunctionEntry | SpecMemory::LoopEntry => {
+                            let Some(entry_state) = loop_entry_state else {
+                                continue;
+                            };
+                            entry_state.memory()
+                        }
+                        SpecMemory::Fixed(memory) => memory,
+                    };
+                    arguments.push(Term::CMemory(memory.clone()));
+                }
                 arguments.push(Term::CValue(argument_path.value.clone()));
                 next_paths.push(SpecPropositionPath {
                     proposition: Proposition::Predicate { name, arguments },

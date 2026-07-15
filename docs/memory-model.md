@@ -87,7 +87,7 @@ When an array parameter is passed to a pure Click function or predicate,
 
 ```click
 ensures permutation(p, old(p), 0, 2) by {
-    symbolic_execute();
+    execute_rest();
     unfold(permutation);
     simp();
 }

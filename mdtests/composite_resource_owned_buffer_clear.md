@@ -36,13 +36,13 @@ int32 buffer_clear(struct owner* owner) {
 
     produces owned_buffer(owner) by {
         unfold(owned_buffer(owner));
-        symbolic_execute();
+        execute_rest();
         fold(owned_buffer(owner));
     }
 
     ensures result == 0 by {
         unfold(owned_buffer(owner));
-        symbolic_execute();
+        execute_rest();
         fold(owned_buffer(owner));
         simp();
     }

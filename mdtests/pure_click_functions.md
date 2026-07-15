@@ -96,7 +96,7 @@ int32 increment_value(int32 x) {
     requires x < 2147483647;
     ensures result_value: result == inc(x) by simp;
     ensures predicate_value: one_more(x, result) by {
-        symbolic_execute();
+        execute_rest();
         unfold(one_more);
         simp();
     }
@@ -122,11 +122,11 @@ int32 count_three_matches(int32 p[3], int32 x) {
 
 int32 range_helpers() {
     ensures all_reflexive: (0..3).all(|k| { k == k }) by {
-        symbolic_execute();
+        execute_rest();
         simp();
     }
     ensures any_has_one: (0..3).any(|k| { k == 1 }) by {
-        symbolic_execute();
+        execute_rest();
         simp();
     }
 }
@@ -134,7 +134,7 @@ int32 range_helpers() {
 int32 identity_permutation(int32 p[3]) {
     requires loadable(p[0..3]);
     ensures same_multiset: permutation(p, p, 0, 3) by {
-        symbolic_execute();
+        execute_rest();
         unfold(permutation);
         simp();
     }

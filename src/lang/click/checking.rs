@@ -883,58 +883,10 @@ pub(super) fn decode_predicate_arguments(
         return Ok((default_memory.unwrap_or_default(), values, array_refs));
     }
 
-    if arguments.len() == definition.parameters().len() + 1 {
-        let Term::CMemory(memory) = &arguments[0] else {
-            return Err(format!(
-                "predicate `{}` is missing its legacy hidden memory argument",
-                definition.name()
-            ));
-        };
-        let mut values = BTreeMap::new();
-        let mut array_refs = BTreeMap::new();
-        for (parameter, argument) in definition.parameters().iter().zip(&arguments[1..]) {
-            let Term::CValue(value) = argument else {
-                return Err(format!(
-                    "predicate `{}` argument `{}` did not lower to a C value",
-                    definition.name(),
-                    parameter.name()
-                ));
-            };
-            if parameter_is_click_array_ref(parameter) {
-                let CValue::Pointer(pointer) = value else {
-                    return Err(format!(
-                        "predicate `{}` argument `{}` did not lower to a pointer",
-                        definition.name(),
-                        parameter.name()
-                    ));
-                };
-                array_refs.insert(
-                    parameter.name().to_string(),
-                    ClickArrayRef {
-                        memory: memory.clone(),
-                        pointer: pointer.clone(),
-                        element_type: click_array_element_type(parameter.c_type()).ok_or_else(
-                            || {
-                                format!(
-                                    "predicate `{}` argument `{}` is not an array-ref parameter",
-                                    definition.name(),
-                                    parameter.name()
-                                )
-                            },
-                        )?,
-                    },
-                );
-            }
-            values.insert(parameter.name().to_string(), value.clone());
-        }
-        return Ok((memory.clone(), values, array_refs));
-    }
-
     Err(format!(
-        "predicate `{}` has malformed lowered argument count: expected {} expanded argument term(s), or legacy hidden memory plus {} argument(s), got {}",
+        "predicate `{}` has malformed lowered argument count: expected {} expanded argument term(s), got {}",
         definition.name(),
         expanded_len,
-        definition.parameters().len(),
         arguments.len()
     ))
 }

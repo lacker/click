@@ -8,17 +8,17 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use crate::kernel::{
-    Assumptions, Bitvector32Term, CCallSemantics, CComparisonOperator, CConditionOutcome,
-    CExpression, CExpressionOutcome, CFunction, CFunctionContractClaim, CFunctionContractClaimKey,
-    CFunctionEnvironment, CFunctionOutcome, CFunctionSpecification, CLoopEffect, CLoopEffectCheck,
-    CLoopEffectSpan, CLoopInvariantCheck, CMemory, CMemoryRange, CMemorySegment, CResource,
-    CResourceAccessMode, CResourceFact, CResourceSpec, CState, CStatement, CStatementOutcome,
-    CType, CValue, CVerifiedLoopRule, ConditionTerm, ExecutionPureFact, Pointer, PointerOffsetTerm,
-    ProofObligation, Proposition, ResourceContext, ResourceContextValidityError, Sort,
-    SpecExpression, SpecMemory, SpecProposition, SpecResource, SymbolicCExecution, Term, Theorem,
-    Variable, abstract_c_state_for_join, c_function, c_function_entry_state,
-    c_function_outcome_from_statement_outcome, c_function_specification, c_if, c_labeled_assert,
-    c_loop_effects_hold_at_back_edge, c_loop_invariants_hold_at_back_edge,
+    Assumptions, Bitvector32Term, CComparisonOperator, CConditionOutcome, CExecutionEnvironment,
+    CExecutionSemantics, CExpression, CExpressionOutcome, CFunction, CFunctionContractClaim,
+    CFunctionContractClaimKey, CFunctionOutcome, CFunctionSpecification, CLoopEffect,
+    CLoopEffectCheck, CLoopEffectSpan, CLoopInvariantCheck, CMemory, CMemoryRange, CMemorySegment,
+    CResource, CResourceAccessMode, CResourceFact, CResourceSpec, CState, CStatement,
+    CStatementOutcome, CType, CValue, CVerifiedLoopRule, ConditionTerm, ExecutionPureFact, Pointer,
+    PointerOffsetTerm, ProofObligation, Proposition, ResourceContext, ResourceContextValidityError,
+    Sort, SpecExpression, SpecMemory, SpecPredicateArgument, SpecProposition, SpecResource,
+    SymbolicCExecution, Term, Theorem, Variable, abstract_c_state_for_join, c_function,
+    c_function_entry_state, c_function_outcome_from_statement_outcome, c_function_specification,
+    c_if, c_labeled_assert, c_loop_effects_hold_at_back_edge, c_loop_invariants_hold_at_back_edge,
     c_loop_invariants_hold_at_entry, c_loop_preservation_contexts, c_pointer_value, c_seq,
     c_verified_function_contract_claim, c_verified_function_rule,
     c_while_with_invariant_and_effect_checks, certify_c_function_execution_paths_from_outcomes,
@@ -505,7 +505,6 @@ pub enum Proof {
 /// steps as replayable proof certificates.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ProofStep {
-    SymbolicExecute,
     ExecuteStep,
     ExecuteThenStep,
     ExecuteElseStep,
@@ -1348,8 +1347,8 @@ fn build_function_environment(
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
     resource_environment: &ResourceEnvironment,
-) -> Result<CFunctionEnvironment, ClickError> {
-    let mut environment = CFunctionEnvironment::new();
+) -> Result<CExecutionEnvironment, ClickError> {
+    let mut environment = CExecutionEnvironment::new();
     for (_, function) in parsed_sources.values() {
         let function = match function_blocks
             .iter()

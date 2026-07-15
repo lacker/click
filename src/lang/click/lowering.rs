@@ -612,13 +612,47 @@ impl AnnotationLowerer<'_> {
                     body: Box::new(SpecProposition::And(Box::new(range), Box::new(body))),
                 })
             }
-            ClickProposition::PredicateCall { name, arguments } => Ok(SpecProposition::Predicate {
-                name: name.clone(),
-                arguments: arguments
-                    .iter()
-                    .map(|argument| self.lower_contract_expression_to_spec(argument, environment))
-                    .collect::<Result<Vec<_>, _>>()?,
-            }),
+            ClickProposition::PredicateCall { name, arguments } => {
+                let definition = self
+                    .predicate_environment
+                    .get(name)
+                    .ok_or_else(|| format!("unknown predicate `{name}`"))?;
+                let mut lowered_arguments = Vec::new();
+                for (parameter, argument) in definition.parameters().iter().zip(arguments) {
+                    if parameter_is_click_array_ref(parameter) {
+                        let expected_element_type = click_array_element_type(parameter.c_type())
+                            .ok_or_else(|| {
+                                format!(
+                                    "predicate `{}` parameter `{}` is not an array-ref parameter",
+                                    definition.name(),
+                                    parameter.name()
+                                )
+                            })?;
+                        let array_ref = self.lower_array_ref_to_spec(argument, environment)?;
+                        if array_ref.element_type != expected_element_type {
+                            return Err(format!(
+                                "predicate `{}` parameter `{}` expects {:?} array elements, got {:?}",
+                                definition.name(),
+                                parameter.name(),
+                                expected_element_type,
+                                array_ref.element_type
+                            ));
+                        }
+                        lowered_arguments.push(SpecPredicateArgument::ArrayRef {
+                            memory: array_ref.memory,
+                            pointer: array_ref.pointer,
+                        });
+                    } else {
+                        lowered_arguments.push(SpecPredicateArgument::Value(
+                            self.lower_contract_expression_to_spec(argument, environment)?,
+                        ));
+                    }
+                }
+                Ok(SpecProposition::Predicate {
+                    name: name.clone(),
+                    arguments: lowered_arguments,
+                })
+            }
         }
     }
 

@@ -1657,7 +1657,7 @@ impl Parser {
         let step = match name.as_str() {
             "symbolic_execute" => {
                 self.expect_empty_step_args(&name)?;
-                ProofStep::SymbolicExecute
+                ProofStep::ExecuteRest
             }
             "execute_step" => {
                 self.expect_empty_step_args(&name)?;

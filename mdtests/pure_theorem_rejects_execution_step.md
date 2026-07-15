@@ -6,12 +6,12 @@ sense when a C function claim supplies an execution frontier.
 ```click
 theorem reflexive(x: int32) {
     ensures x == x by {
-        symbolic_execute();
+        execute_rest();
         simp();
     }
 }
 ```
 
 ```expect
-fail: proof step `symbolic_execute` is not available in the pure proof
+fail: proof step `execute_rest` is not available in the pure proof
 ```

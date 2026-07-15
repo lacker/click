@@ -7,8 +7,6 @@ Click specs.
 
 - `src/kernel/`: proof terms, C semantics, assumptions, symbolic execution,
   and theorem-producing functions.
-- `src/megakernel.rs`: compatibility facade for existing `crate::megakernel`
-  callers. New code should use `crate::kernel`.
 - `src/lang/c/syntax.rs`: C0 parser and lowering to kernel C terms.
 - `src/lang/click.rs`: Click parser, validation, lowering, tactics, and proof
   orchestration.
@@ -91,18 +89,23 @@ proof machinery.
 Budget exhaustion is represented as `ExecutionLimit`. It is a proof/executor
 failure, not C undefined behavior.
 
-Function-call behavior is an explicit input to kernel execution:
+Call and loop behavior are explicit inputs to kernel execution. The common
+configurations are:
 
-- `CCallSemantics::ExecuteBodies` evaluates callee bodies and ignores verified
-  function rules. Low-level C evaluator tests use this mode.
-- `CCallSemantics::ApplyVerifiedRules` applies opaque verified function rules
-  and never evaluates callee bodies. Click execution proofs use this mode.
+- `CExecutionSemantics::EXECUTE_BODIES` evaluates callee bodies, verifies
+  annotated loops directly, and ignores available verified rules. Low-level C
+  evaluator tests use this mode.
+- `CExecutionSemantics::APPLY_VERIFIED_RULES` applies opaque function and loop
+  rules and never evaluates the corresponding bodies. Click execution proofs
+  use this mode.
 
-`CFunctionEnvironment` contains the function definitions and verified rules
+`CExecutionEnvironment` contains the function definitions and verified rules
 available to an execution; it does not select between these semantics. In
 particular, rule lookup is not a fallback mechanism. Applying verified rules
-without a matching rule is an error, while body execution behaves the same
-whether or not a matching rule is present.
+without a matching rule fails, while direct body verification behaves the same
+whether or not a matching rule is present. `CExecutionSemantics` also exposes
+`APPLY_CALL_RULES_AND_VERIFY_LOOPS` for the certificate-construction phase,
+where calls remain modular while the current loop body is verified directly.
 
 ## Assumption Reasoning
 

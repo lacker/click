@@ -2090,8 +2090,7 @@ fn validate_pure_theorem_steps(theorem_name: &str, steps: &[ProofStep]) -> Resul
                     "execution proof step `advance` is not available in the pure proof for theorem `{theorem_name}`"
                 )));
             }
-            ProofStep::SymbolicExecute
-            | ProofStep::ExecuteStep
+            ProofStep::ExecuteStep
             | ProofStep::ExecuteThenStep
             | ProofStep::ExecuteElseStep
             | ProofStep::ExecuteRest
@@ -2117,7 +2116,6 @@ fn validate_pure_theorem_steps(theorem_name: &str, steps: &[ProofStep]) -> Resul
 
 pub(super) fn proof_step_name(step: &ProofStep) -> &'static str {
     match step {
-        ProofStep::SymbolicExecute => "symbolic_execute",
         ProofStep::ExecuteStep => "execute_step",
         ProofStep::ExecuteThenStep => "execute_then_step",
         ProofStep::ExecuteElseStep => "execute_else_step",

@@ -187,7 +187,7 @@ implementation has these frontier points:
 - function entry, before C execution has started,
 - statement entry after `execute_step()`, explicit entry into a selected `if`
   arm, or a straight-line `execute_until(statement(N))` pause,
-- function exit, after `execute_rest()` / `symbolic_execute()` has executed the
+- function exit, after `execute_rest()` / `execute_rest()` has executed the
 rest of the function.
 
 Condition edges and statement execution produce shared certified transitions.
@@ -218,11 +218,11 @@ in verification order, so an unresolved callee is a direct error rather than
 an invitation to inline its body.
 
 This is an explicit execution mode, not behavior inferred from which entries
-happen to be present in the function environment. Click selects
-`CCallSemantics::ApplyVerifiedRules`, so a missing rule fails the proof and
-never falls back to body execution. The kernel's low-level evaluator can
-instead select `CCallSemantics::ExecuteBodies`; that mode ignores verified
-rules even when they are available.
+happen to be present in the execution environment. Click selects
+`CExecutionSemantics::APPLY_VERIFIED_RULES`, so a missing function or loop rule
+fails the proof and never falls back to body execution. The kernel's low-level
+evaluator can instead select `CExecutionSemantics::EXECUTE_BODIES`; that mode
+ignores verified rules even when they are available.
 
 Each loop-rule premise can be automatic or explicit. Explicit `initialize` is a
 pure proof of the invariants at the actual loop entry. Explicit `preserve` is an
@@ -255,7 +255,7 @@ automatically: the view remains available, and immediate contained resource
 facts are available through their views. This is entry setup, not a general
 recursive execution heuristic.
 
-`symbolic_execute()` is now best understood as legacy spelling for
+`execute_rest()` is now best understood as legacy spelling for
 `execute_rest()`: advance the current execution point to function exit.
 
 ## Observable Facts

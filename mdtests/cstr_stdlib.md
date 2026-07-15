@@ -30,25 +30,25 @@ int32 cstr_stdlib(uint8 p[], int32 len, int32 max) {
     requires bounded: cstr_bounded(p, max);
 
     ensures exact_length_nonnegative: 0 <= len by {
-        symbolic_execute();
+        execute_rest();
         apply(cstr_len_nonnegative(p, len));
         simp();
     }
 
     ensures exact_prefix_has_no_null: cstr_prefix(p, len) by {
-        symbolic_execute();
+        execute_rest();
         apply(cstr_len_has_prefix(p, len));
         simp();
     }
 
     ensures exact_has_terminator: bytes_contains(p, len, len + 1, '\0') by {
-        symbolic_execute();
+        execute_rest();
         apply(cstr_len_has_terminator(p, len));
         simp();
     }
 
     ensures bounded_has_terminator: bytes_contains(p, 0, max, '\0') by {
-        symbolic_execute();
+        execute_rest();
         unfold(cstr_bounded);
         simp();
     }
@@ -60,7 +60,7 @@ int32 plain_cstr(uint8 p[]) {
     ensures exposes_ghost_length: exists (int32 len) {
         cstr_len(p, len)
     } by {
-        symbolic_execute();
+        execute_rest();
         unfold(cstr);
         choose(found_len from requirement input_is_cstr);
         witness(len = found_len);

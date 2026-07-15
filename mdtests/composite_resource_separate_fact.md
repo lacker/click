@@ -26,13 +26,13 @@ int32 clobber_dst_packaged(int32* dst, int32* src) {
 
     produces separated_first_cells(dst, src) by {
         unfold(separated_first_cells(dst, src));
-        symbolic_execute();
+        execute_rest();
         fold(separated_first_cells(dst, src));
     }
 
     ensures source_unchanged: src[0] == old(src[0]) by {
         unfold(separated_first_cells(dst, src));
-        symbolic_execute();
+        execute_rest();
         fold(separated_first_cells(dst, src));
     }
 }

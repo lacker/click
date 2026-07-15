@@ -31,13 +31,13 @@ int32 set_owned_first(struct owner* owner, int32 data[]) {
 
     produces owned_one_cell(owner, data) by {
         unfold(owned_one_cell(owner, data));
-        symbolic_execute();
+        execute_rest();
         fold(owned_one_cell(owner, data));
     }
 
     ensures result == 1 by {
         unfold(owned_one_cell(owner, data));
-        symbolic_execute();
+        execute_rest();
         fold(owned_one_cell(owner, data));
         simp();
     }

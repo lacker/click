@@ -1333,7 +1333,14 @@ pub(super) fn collect_spec_proposition_bitvector_variables(
         }
         SpecProposition::Predicate { arguments, .. } => {
             for argument in arguments {
-                collect_spec_expression_bitvector_variables(argument, variables);
+                match argument {
+                    SpecPredicateArgument::Value(expression) => {
+                        collect_spec_expression_bitvector_variables(expression, variables);
+                    }
+                    SpecPredicateArgument::ArrayRef { pointer, .. } => {
+                        collect_spec_expression_bitvector_variables(pointer, variables);
+                    }
+                }
             }
         }
         SpecProposition::ResourceSeparate { left, right }
@@ -2491,8 +2498,18 @@ pub(super) fn substitute_bitvector_variable_in_spec_proposition(
             name: name.clone(),
             arguments: arguments
                 .iter()
-                .map(|argument| {
-                    substitute_bitvector_variable_in_spec_expression(argument, from, to)
+                .map(|argument| match argument {
+                    SpecPredicateArgument::Value(expression) => SpecPredicateArgument::Value(
+                        substitute_bitvector_variable_in_spec_expression(expression, from, to),
+                    ),
+                    SpecPredicateArgument::ArrayRef { memory, pointer } => {
+                        SpecPredicateArgument::ArrayRef {
+                            memory: memory.clone(),
+                            pointer: substitute_bitvector_variable_in_spec_expression(
+                                pointer, from, to,
+                            ),
+                        }
+                    }
                 })
                 .collect(),
         },

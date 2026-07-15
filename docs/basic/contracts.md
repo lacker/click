@@ -38,7 +38,7 @@ A contract can also bind an immutable witness with `let ... where`:
 let k: int32 where k == x;
 
 ensures result == k by {
-    symbolic_execute();
+    execute_rest();
     witness(k = x);
     simp();
 }

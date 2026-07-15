@@ -49,7 +49,7 @@ int32 loop_explicit_initialize_and_preserve(int32 x) {
     }
 
     ensures acceptable(result) by {
-        symbolic_execute();
+        execute_rest();
         unfold(acceptable);
         simp();
     }

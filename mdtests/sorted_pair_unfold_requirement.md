@@ -20,7 +20,7 @@ int32 sorted_pair_unfold_requirement(int32 p[2]) {
     requires loadable(p[0..2]);
     requires sorted_pair(p);
     ensures consequence: p[0] <= p[1] by {
-        symbolic_execute();
+        execute_rest();
         unfold(sorted_pair);
         simp();
     }

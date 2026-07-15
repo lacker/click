@@ -350,7 +350,7 @@ range item name is the existential binder:
 
 ```click
 ensures found: (lo..hi).any(|k| { p[k] == result }) by {
-    symbolic_execute();
+    execute_rest();
     witness(k = lo);
     simp();
 }
@@ -467,7 +467,7 @@ Proposition clauses may also use witness lets:
 let k: int32 where k == x;
 
 ensures result == k by {
-    symbolic_execute();
+    execute_rest();
     witness(k = x);
     simp();
 }
@@ -528,7 +528,7 @@ proof asks for it:
 
 ```click
 ensures sorted: sorted_range(p, 0, n) by {
-    symbolic_execute();
+    execute_rest();
     unfold(sorted_range);
     simp();
 }

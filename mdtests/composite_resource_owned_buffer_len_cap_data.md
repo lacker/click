@@ -53,13 +53,13 @@ int32 push_one(struct owner* owner, int32 value) {
 
     produces owned_buffer(owner) by {
         unfold(owned_buffer_with_room(owner));
-        symbolic_execute();
+        execute_rest();
         fold(owned_buffer(owner));
     }
 
     ensures result <= owner->cap by {
         unfold(owned_buffer_with_room(owner));
-        symbolic_execute();
+        execute_rest();
         fold(owned_buffer(owner));
         simp();
     }

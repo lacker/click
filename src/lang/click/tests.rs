@@ -580,7 +580,7 @@ fn omitted_region_proofs_use_default_prover() {
 fn parses_proof_step_script() {
     let source = FILL3_CLICK.replace(
         "by auto;",
-        "by { symbolic_execute(); loop_vc(loop(0)); frame(loop(0)); simp(); }",
+        "by { execute_rest(); loop_vc(loop(0)); frame(loop(0)); simp(); }",
     );
     let file = parse(&source).expect("proof-step script should parse");
     let ensure = &file.function_blocks()[0].ensures()[0];
@@ -589,7 +589,7 @@ fn parses_proof_step_script() {
         ensure.proof().steps(),
         Some(
             [
-                ProofStep::SymbolicExecute,
+                ProofStep::ExecuteRest,
                 ProofStep::LoopVc(CodeRegionRef::Loop(0)),
                 ProofStep::Frame(Some(CodeRegionRef::Loop(0))),
                 ProofStep::Simp,
@@ -659,7 +659,7 @@ fn parses_resource_observe_unfold_and_fold_steps() {
                 owns uncalled(flag) by {
                     observe(uncalled(flag));
                     unfold(uncalled(flag));
-                    symbolic_execute();
+                    execute_rest();
                     fold(uncalled(flag));
                 }
             }
@@ -685,7 +685,7 @@ fn parses_resource_observe_unfold_and_fold_steps() {
                     arguments: vec![current_var("flag")],
                     parameter_types: vec![C0Type::Int32Pointer],
                 }),
-                ProofStep::SymbolicExecute,
+                ProofStep::ExecuteRest,
                 ProofStep::FoldResource(ResourceClause::Declared {
                     access: ResourceAccessMode::Own,
                     kind: ResourceKind::Composite,
@@ -785,6 +785,18 @@ fn parses_bounded_execute_proof_step() {
 fn parses_execute_rest_proof_step() {
     let source = FILL3_CLICK.replace("by auto;", "by { execute_rest(); simp(); }");
     let file = parse(&source).expect("execute_rest proof-step script should parse");
+    let ensure = &file.function_blocks()[0].ensures()[0];
+
+    assert_eq!(
+        ensure.proof().steps(),
+        Some([ProofStep::ExecuteRest, ProofStep::Simp].as_slice())
+    );
+}
+
+#[test]
+fn parses_symbolic_execute_as_execute_rest() {
+    let source = FILL3_CLICK.replace("by auto;", "by { symbolic_execute(); simp(); }");
+    let file = parse(&source).expect("legacy alias should parse as execute_rest");
     let ensure = &file.function_blocks()[0].ensures()[0];
 
     assert_eq!(
@@ -901,10 +913,7 @@ fn parses_execute_until_proof_step() {
 
 #[test]
 fn parses_unfold_proof_step() {
-    let source = FILL3_CLICK.replace(
-        "by auto;",
-        "by { symbolic_execute(); unfold(sorted); simp(); }",
-    );
+    let source = FILL3_CLICK.replace("by auto;", "by { execute_rest(); unfold(sorted); simp(); }");
     let file = parse(&source).expect("unfold proof-step script should parse");
     let ensure = &file.function_blocks()[0].ensures()[0];
 
@@ -912,7 +921,7 @@ fn parses_unfold_proof_step() {
         ensure.proof().steps(),
         Some(
             [
-                ProofStep::SymbolicExecute,
+                ProofStep::ExecuteRest,
                 ProofStep::UnfoldPredicate("sorted".to_string()),
                 ProofStep::Simp,
             ]
@@ -925,7 +934,7 @@ fn parses_unfold_proof_step() {
 fn parses_apply_theorem_proof_step() {
     let source = FILL3_CLICK.replace(
         "by auto;",
-        "by { symbolic_execute(); apply(nonnegative(result)); simp(); }",
+        "by { execute_rest(); apply(nonnegative(result)); simp(); }",
     );
     let file = parse(&source).expect("apply proof-step script should parse");
     let ensure = &file.function_blocks()[0].ensures()[0];
@@ -934,7 +943,7 @@ fn parses_apply_theorem_proof_step() {
         ensure.proof().steps(),
         Some(
             [
-                ProofStep::SymbolicExecute,
+                ProofStep::ExecuteRest,
                 ProofStep::ApplyTheorem(TheoremApplication {
                     name: "nonnegative".to_string(),
                     arguments: vec![current_var("result")],
@@ -995,7 +1004,7 @@ fn parses_proof_if_step() {
 fn parses_existential_proof_steps() {
     let source = FILL3_CLICK.replace(
         "by auto;",
-        "by { symbolic_execute(); choose(k from requirement has_k); witness(j = k + 1); simp(); }",
+        "by { execute_rest(); choose(k from requirement has_k); witness(j = k + 1); simp(); }",
     );
     let file = parse(&source).expect("existential proof-step script should parse");
     let ensure = &file.function_blocks()[0].ensures()[0];
@@ -1004,7 +1013,7 @@ fn parses_existential_proof_steps() {
         ensure.proof().steps(),
         Some(
             [
-                ProofStep::SymbolicExecute,
+                ProofStep::ExecuteRest,
                 ProofStep::Choose(ProofChoice {
                     name: "k".to_string(),
                     source: ProofFactSource::RequirementLabel("has_k".to_string()),
@@ -1222,7 +1231,7 @@ fn rejects_legacy_structural_region_syntax() {
 
 #[test]
 fn rejects_legacy_proof_step_region_syntax() {
-    let source = FILL3_CLICK.replace("by auto;", "by { symbolic_execute(); loop_vc(loop 0); }");
+    let source = FILL3_CLICK.replace("by auto;", "by { execute_rest(); loop_vc(loop 0); }");
     let error = parse(&source).expect_err("legacy proof-step region syntax should fail");
 
     assert!(
@@ -1497,7 +1506,7 @@ fn unfolds_predicate_requirement_to_prove_consequence() {
                 requires loadable(p, 8);
                 requires sorted_pair(p);
                 ensures consequence: p[0] <= p[1] by {
-                    symbolic_execute();
+                    execute_rest();
                     unfold(sorted_pair);
                     simp();
                 }
@@ -1512,7 +1521,7 @@ fn unfolds_predicate_requirement_to_prove_consequence() {
         verified[0].proof_steps(),
         Some(
             [
-                ProofStep::SymbolicExecute,
+                ProofStep::ExecuteRest,
                 ProofStep::UnfoldPredicate("sorted_pair".to_string()),
                 ProofStep::Simp,
             ]
@@ -1547,7 +1556,7 @@ fn unfolds_predicate_goal_to_prove_compare_swap_sorted() {
                 requires loadable(p, 8);
                 consumes p[0..2];
                 ensures sorted: sorted_pair(p) by {
-                    symbolic_execute();
+                    execute_rest();
                     unfold(sorted_pair);
                     simp();
                 }
@@ -1583,7 +1592,7 @@ fn unfolds_general_sorted_predicate() {
                 requires loadable(p[0..n]);
                 requires sorted(p, n);
                 ensures still_sorted: sorted(p, n) by {
-                    symbolic_execute();
+                    execute_rest();
                     unfold(sorted);
                     simp();
                 }
@@ -1654,7 +1663,7 @@ fn verifies_simple_postcondition_with_proof_steps() {
 
             int32 identity(int32 x) {
                 ensures returns_x: result == x by {
-                    symbolic_execute();
+                    execute_rest();
                     simp();
                 }
             }
@@ -1733,7 +1742,7 @@ fn bare_frame_step_rejects_ensure_claim() {
 
             int32 identity(int32 x) {
                 ensures returns_x: result == x by {
-                    symbolic_execute();
+                    execute_rest();
                     frame();
                 }
             }
@@ -3249,7 +3258,7 @@ fn loop_phase_proofs_can_unfold_invariant_predicates() {
                     immutable by frame;
                 }
                 ensures still_sorted: sorted(p, 3) by {
-                    symbolic_execute();
+                    execute_rest();
                     loop_vc(loop(0));
                     frame(loop(0));
                     unfold(sorted);
@@ -3301,7 +3310,7 @@ fn verifies_symbolic_copy_segment_invariant() {
                 ensures source_unchanged: forall (int32 k) {
                     0 <= k and k < n implies src[k] == old(src[k])
                 } by {
-                    symbolic_execute();
+                    execute_rest();
                     loop_vc(loop(0));
                     frame(loop(0));
                     simp();
@@ -3369,7 +3378,7 @@ fn auto_certificate_replays_for_loop_frame_claim() {
         })
         .expect("source_unchanged theorem should be present");
     let expected_steps = [
-        ProofStep::SymbolicExecute,
+        ProofStep::ExecuteRest,
         ProofStep::LoopVc(CodeRegionRef::Loop(0)),
         ProofStep::Frame(Some(CodeRegionRef::Loop(0))),
         ProofStep::Simp,
@@ -3403,7 +3412,7 @@ fn auto_certificate_replays_for_loop_frame_claim() {
                 ensures source_unchanged: forall (int32 k) {
                     0 <= k and k < n implies src[k] == old(src[k])
                 } by {
-                    symbolic_execute();
+                    execute_rest();
                     loop_vc(loop(0));
                     frame(loop(0));
                     simp();

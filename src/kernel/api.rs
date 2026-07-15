@@ -700,8 +700,8 @@ pub fn prove_symbolic_c_execution_with_budget(
         state,
         statement,
         assumptions,
-        CFunctionEnvironment::new(),
-        CCallSemantics::ExecuteBodies,
+        CExecutionEnvironment::new(),
+        CExecutionSemantics::EXECUTE_BODIES,
         budget,
     )
 }
@@ -710,15 +710,15 @@ pub fn prove_symbolic_c_execution_with_environment(
     state: CState,
     statement: CStatement,
     assumptions: Assumptions,
-    environment: CFunctionEnvironment,
-    call_semantics: CCallSemantics,
+    environment: CExecutionEnvironment,
+    execution_semantics: CExecutionSemantics,
 ) -> Option<Theorem> {
     prove_symbolic_c_execution_with_environment_and_budget(
         state,
         statement,
         assumptions,
         environment,
-        call_semantics,
+        execution_semantics,
         ExecutionBudget::default(),
     )
 }
@@ -727,8 +727,8 @@ pub fn prove_symbolic_c_execution_with_environment_and_budget(
     state: CState,
     statement: CStatement,
     assumptions: Assumptions,
-    environment: CFunctionEnvironment,
-    call_semantics: CCallSemantics,
+    environment: CExecutionEnvironment,
+    execution_semantics: CExecutionSemantics,
     budget: ExecutionBudget,
 ) -> Option<Theorem> {
     let execution = prove_symbolic_c_execution_paths_with_environment_and_budget(
@@ -736,7 +736,7 @@ pub fn prove_symbolic_c_execution_with_environment_and_budget(
         statement,
         assumptions,
         environment,
-        call_semantics,
+        execution_semantics,
         budget,
     );
     if execution.limit().is_some() {
@@ -773,8 +773,8 @@ pub fn prove_symbolic_c_execution_paths_with_budget(
         state,
         statement,
         assumptions,
-        CFunctionEnvironment::new(),
-        CCallSemantics::ExecuteBodies,
+        CExecutionEnvironment::new(),
+        CExecutionSemantics::EXECUTE_BODIES,
         budget,
     )
 }
@@ -783,15 +783,15 @@ pub fn prove_symbolic_c_execution_paths_with_environment(
     state: CState,
     statement: CStatement,
     assumptions: Assumptions,
-    environment: CFunctionEnvironment,
-    call_semantics: CCallSemantics,
+    environment: CExecutionEnvironment,
+    execution_semantics: CExecutionSemantics,
 ) -> SymbolicCExecution {
     prove_symbolic_c_execution_paths_with_environment_and_budget(
         state,
         statement,
         assumptions,
         environment,
-        call_semantics,
+        execution_semantics,
         ExecutionBudget::default(),
     )
 }
@@ -800,8 +800,8 @@ pub fn prove_symbolic_c_execution_paths_with_environment_and_budget(
     state: CState,
     statement: CStatement,
     assumptions: Assumptions,
-    environment: CFunctionEnvironment,
-    call_semantics: CCallSemantics,
+    environment: CExecutionEnvironment,
+    execution_semantics: CExecutionSemantics,
     mut budget: ExecutionBudget,
 ) -> SymbolicCExecution {
     let paths = match execute_c_statement_paths(
@@ -809,7 +809,7 @@ pub fn prove_symbolic_c_execution_paths_with_environment_and_budget(
         &statement,
         &assumptions,
         &environment,
-        call_semantics,
+        execution_semantics,
         &mut budget,
     ) {
         Ok(paths) => paths,
@@ -850,15 +850,15 @@ pub fn prove_symbolic_c_statement_verification_paths_with_environment(
     state: CState,
     statement: CStatement,
     assumptions: Assumptions,
-    environment: CFunctionEnvironment,
-    call_semantics: CCallSemantics,
+    environment: CExecutionEnvironment,
+    execution_semantics: CExecutionSemantics,
 ) -> SymbolicCExecution {
     prove_symbolic_c_statement_verification_paths_with_environment_and_loop_rule(
         state,
         statement,
         assumptions,
         environment,
-        call_semantics,
+        execution_semantics,
     )
     .0
 }
@@ -867,8 +867,8 @@ pub fn prove_symbolic_c_statement_verification_paths_with_environment_and_loop_r
     state: CState,
     statement: CStatement,
     assumptions: Assumptions,
-    environment: CFunctionEnvironment,
-    call_semantics: CCallSemantics,
+    environment: CExecutionEnvironment,
+    execution_semantics: CExecutionSemantics,
 ) -> (SymbolicCExecution, Option<CVerifiedLoopRule>) {
     let mut budget = ExecutionBudget::default();
     let mut variables = VerificationVariableGenerator::new(1_000_000);
@@ -877,7 +877,7 @@ pub fn prove_symbolic_c_statement_verification_paths_with_environment_and_loop_r
         &statement,
         &assumptions,
         &environment,
-        call_semantics,
+        execution_semantics,
         &mut budget,
         &mut variables,
     ) {
@@ -899,7 +899,7 @@ pub(crate) fn prove_symbolic_c_loop_exit_with_proven_phases(
     state: CState,
     statement: CStatement,
     assumptions: Assumptions,
-    environment: CFunctionEnvironment,
+    environment: CExecutionEnvironment,
     initialization_proven: bool,
     preservation_proven: bool,
 ) -> (SymbolicCExecution, Option<CVerifiedLoopRule>) {
@@ -930,7 +930,7 @@ pub(crate) fn prove_symbolic_c_loop_exit_with_proven_phases(
         body,
         &assumptions,
         &environment,
-        CCallSemantics::ApplyVerifiedRules,
+        CExecutionSemantics::APPLY_VERIFIED_RULES,
         initialization_proven,
         preservation_proven,
         &mut budget,
@@ -1015,8 +1015,8 @@ pub fn prove_symbolic_c_function_execution_with_budget(
         function,
         arguments,
         assumptions,
-        CFunctionEnvironment::new(),
-        CCallSemantics::ExecuteBodies,
+        CExecutionEnvironment::new(),
+        CExecutionSemantics::EXECUTE_BODIES,
         budget,
     )
 }
@@ -1026,8 +1026,8 @@ pub fn prove_symbolic_c_function_execution_with_environment(
     function: CFunction,
     arguments: Vec<CExpression>,
     assumptions: Assumptions,
-    environment: CFunctionEnvironment,
-    call_semantics: CCallSemantics,
+    environment: CExecutionEnvironment,
+    execution_semantics: CExecutionSemantics,
 ) -> Option<Theorem> {
     prove_symbolic_c_function_execution_with_environment_and_budget(
         state,
@@ -1035,7 +1035,7 @@ pub fn prove_symbolic_c_function_execution_with_environment(
         arguments,
         assumptions,
         environment,
-        call_semantics,
+        execution_semantics,
         ExecutionBudget::default(),
     )
 }
@@ -1045,8 +1045,8 @@ pub fn prove_symbolic_c_function_execution_with_environment_and_budget(
     function: CFunction,
     arguments: Vec<CExpression>,
     assumptions: Assumptions,
-    environment: CFunctionEnvironment,
-    call_semantics: CCallSemantics,
+    environment: CExecutionEnvironment,
+    execution_semantics: CExecutionSemantics,
     budget: ExecutionBudget,
 ) -> Option<Theorem> {
     let execution = prove_symbolic_c_function_execution_paths_with_environment_and_budget(
@@ -1055,7 +1055,7 @@ pub fn prove_symbolic_c_function_execution_with_environment_and_budget(
         arguments,
         assumptions,
         environment,
-        call_semantics,
+        execution_semantics,
         budget,
     );
     if execution.limit().is_some() {
@@ -1096,8 +1096,8 @@ pub fn prove_symbolic_c_function_execution_paths_with_budget(
         function,
         arguments,
         assumptions,
-        CFunctionEnvironment::new(),
-        CCallSemantics::ExecuteBodies,
+        CExecutionEnvironment::new(),
+        CExecutionSemantics::EXECUTE_BODIES,
         budget,
     )
 }
@@ -1107,8 +1107,8 @@ pub fn prove_symbolic_c_function_execution_paths_with_environment(
     function: CFunction,
     arguments: Vec<CExpression>,
     assumptions: Assumptions,
-    environment: CFunctionEnvironment,
-    call_semantics: CCallSemantics,
+    environment: CExecutionEnvironment,
+    execution_semantics: CExecutionSemantics,
 ) -> SymbolicCExecution {
     prove_symbolic_c_function_execution_paths_with_environment_and_budget(
         state,
@@ -1116,7 +1116,7 @@ pub fn prove_symbolic_c_function_execution_paths_with_environment(
         arguments,
         assumptions,
         environment,
-        call_semantics,
+        execution_semantics,
         ExecutionBudget::default(),
     )
 }
@@ -1126,8 +1126,8 @@ pub fn prove_symbolic_c_function_execution_paths_with_environment_and_budget(
     function: CFunction,
     arguments: Vec<CExpression>,
     assumptions: Assumptions,
-    environment: CFunctionEnvironment,
-    call_semantics: CCallSemantics,
+    environment: CExecutionEnvironment,
+    execution_semantics: CExecutionSemantics,
     mut budget: ExecutionBudget,
 ) -> SymbolicCExecution {
     let paths = match execute_c_function_paths(
@@ -1136,7 +1136,7 @@ pub fn prove_symbolic_c_function_execution_paths_with_environment_and_budget(
         &arguments,
         &assumptions,
         &environment,
-        call_semantics,
+        execution_semantics,
         &mut budget,
     ) {
         Ok(paths) => paths,
@@ -1179,8 +1179,8 @@ pub fn prove_symbolic_c_function_verification_paths_with_environment(
     function: CFunction,
     arguments: Vec<CExpression>,
     assumptions: Assumptions,
-    environment: CFunctionEnvironment,
-    call_semantics: CCallSemantics,
+    environment: CExecutionEnvironment,
+    execution_semantics: CExecutionSemantics,
 ) -> SymbolicCExecution {
     prove_symbolic_c_function_verification_paths_with_environment_and_budget(
         state,
@@ -1188,7 +1188,7 @@ pub fn prove_symbolic_c_function_verification_paths_with_environment(
         arguments,
         assumptions,
         environment,
-        call_semantics,
+        execution_semantics,
         ExecutionBudget::default(),
     )
 }
@@ -1198,8 +1198,8 @@ pub fn prove_symbolic_c_function_verification_paths_with_environment_and_budget(
     function: CFunction,
     arguments: Vec<CExpression>,
     assumptions: Assumptions,
-    environment: CFunctionEnvironment,
-    call_semantics: CCallSemantics,
+    environment: CExecutionEnvironment,
+    execution_semantics: CExecutionSemantics,
     mut budget: ExecutionBudget,
 ) -> SymbolicCExecution {
     let mut variables = VerificationVariableGenerator::new(1_000_000);
@@ -1209,7 +1209,7 @@ pub fn prove_symbolic_c_function_verification_paths_with_environment_and_budget(
         &arguments,
         &assumptions,
         &environment,
-        call_semantics,
+        execution_semantics,
         &mut budget,
         &mut variables,
     ) {
@@ -1368,8 +1368,8 @@ pub fn prove_c_function_satisfies_specification(
         function,
         specification,
         assumptions,
-        CFunctionEnvironment::new(),
-        CCallSemantics::ExecuteBodies,
+        CExecutionEnvironment::new(),
+        CExecutionSemantics::EXECUTE_BODIES,
     )
 }
 
@@ -1377,8 +1377,8 @@ pub fn prove_c_function_satisfies_specification_with_environment(
     function: CFunction,
     specification: CFunctionSpecification,
     assumptions: Assumptions,
-    environment: CFunctionEnvironment,
-    call_semantics: CCallSemantics,
+    environment: CExecutionEnvironment,
+    execution_semantics: CExecutionSemantics,
 ) -> Option<Theorem> {
     let specification_assumptions =
         assumptions_with_propositions(&assumptions, specification.requires());
@@ -1388,7 +1388,7 @@ pub fn prove_c_function_satisfies_specification_with_environment(
         specification.arguments(),
         &specification_assumptions,
         &environment,
-        call_semantics,
+        execution_semantics,
         &mut ExecutionBudget::default(),
     )
     .ok()?;
@@ -1472,8 +1472,8 @@ pub fn prove_c_statement_executes_and_propositions(
         &state,
         &statement,
         &assumptions,
-        &CFunctionEnvironment::new(),
-        CCallSemantics::ExecuteBodies,
+        &CExecutionEnvironment::new(),
+        CExecutionSemantics::EXECUTE_BODIES,
         &mut ExecutionBudget::default(),
     )
     .ok()?;
@@ -1673,8 +1673,8 @@ pub fn prove_c_while_invariant_rule(
                 &state,
                 &body,
                 &step_assumptions,
-                &CFunctionEnvironment::new(),
-                CCallSemantics::ExecuteBodies,
+                &CExecutionEnvironment::new(),
+                CExecutionSemantics::EXECUTE_BODIES,
                 &mut ExecutionBudget::default(),
             );
             let Ok(body_paths) = body_paths else {

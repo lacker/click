@@ -1075,7 +1075,7 @@ fn c0_syntax_local_array_decays_to_pointer_argument() {
         block: "local:result".into(),
         offset: crate::kernel::PointerOffsetTerm::Constant(0),
     };
-    let environment = crate::kernel::CFunctionEnvironment::new().with_function(read_first);
+    let environment = crate::kernel::CExecutionEnvironment::new().with_function(read_first);
     let state = crate::kernel::CState::new();
     let final_state = crate::kernel::CState::new().with_memory(
         crate::kernel::CMemory::new()
@@ -1090,7 +1090,7 @@ fn c0_syntax_local_array_decays_to_pointer_argument() {
         Vec::new(),
         Default::default(),
         environment,
-        crate::kernel::CCallSemantics::ExecuteBodies,
+        crate::kernel::CExecutionSemantics::EXECUTE_BODIES,
     )
     .expect("local array should decay to pointer argument");
 
@@ -1375,7 +1375,7 @@ fn c0_syntax_targets_kernel_known_function_call_assignment() {
         block: "local:result".into(),
         offset: crate::kernel::PointerOffsetTerm::Constant(0),
     };
-    let environment = crate::kernel::CFunctionEnvironment::new().with_function(increment);
+    let environment = crate::kernel::CExecutionEnvironment::new().with_function(increment);
     let state = crate::kernel::CState::new();
     let final_state = crate::kernel::CState::new().with_memory(
         crate::kernel::CMemory::new()
@@ -1388,7 +1388,7 @@ fn c0_syntax_targets_kernel_known_function_call_assignment() {
         Vec::new(),
         Default::default(),
         environment,
-        crate::kernel::CCallSemantics::ExecuteBodies,
+        crate::kernel::CExecutionSemantics::EXECUTE_BODIES,
     )
     .expect("known C0 function call should execute");
 

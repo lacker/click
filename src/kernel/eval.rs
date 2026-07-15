@@ -2322,8 +2322,8 @@ pub(super) fn execute_c_statement(
         state,
         statement,
         assumptions,
-        &CFunctionEnvironment::new(),
-        CCallSemantics::ExecuteBodies,
+        &CExecutionEnvironment::new(),
+        CExecutionSemantics::EXECUTE_BODIES,
         &mut ExecutionBudget::default(),
     )
     .ok()?;
@@ -2529,8 +2529,8 @@ pub(super) fn execute_c_statement_paths(
     state: &CState,
     statement: &CStatement,
     assumptions: &Assumptions,
-    environment: &CFunctionEnvironment,
-    call_semantics: CCallSemantics,
+    environment: &CExecutionEnvironment,
+    execution_semantics: CExecutionSemantics,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<CStatementExecutionPath>> {
     budget.consume_statement_step()?;
@@ -2558,7 +2558,7 @@ pub(super) fn execute_c_statement_paths(
             arguments,
             assumptions,
             environment,
-            call_semantics,
+            execution_semantics,
             budget,
         )?,
         CStatement::Assert { condition, label } => {
@@ -2571,7 +2571,7 @@ pub(super) fn execute_c_statement_paths(
                 first,
                 assumptions,
                 environment,
-                call_semantics,
+                execution_semantics,
                 budget,
             )? {
                 match first_path.outcome {
@@ -2581,7 +2581,7 @@ pub(super) fn execute_c_statement_paths(
                             second,
                             assumptions,
                             environment,
-                            call_semantics,
+                            execution_semantics,
                             &first_path.facts,
                             &first_path.obligations,
                             budget,
@@ -2669,7 +2669,7 @@ pub(super) fn execute_c_statement_paths(
                                 branch,
                                 assumptions,
                                 environment,
-                                call_semantics,
+                                execution_semantics,
                                 &truthiness_path.facts,
                                 &truthiness_path.obligations,
                                 budget,
@@ -2707,7 +2707,7 @@ pub(super) fn execute_c_statement_paths(
             body,
             assumptions,
             environment,
-            call_semantics,
+            execution_semantics,
             budget,
         )?,
     };
@@ -2783,8 +2783,8 @@ pub(super) fn execute_c_while_paths(
     invariant: &[Proposition],
     body: &CStatement,
     assumptions: &Assumptions,
-    environment: &CFunctionEnvironment,
-    call_semantics: CCallSemantics,
+    environment: &CExecutionEnvironment,
+    execution_semantics: CExecutionSemantics,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<CStatementExecutionPath>> {
     budget.consume_loop_unroll()?;
@@ -2825,7 +2825,7 @@ pub(super) fn execute_c_while_paths(
                             body,
                             assumptions,
                             environment,
-                            call_semantics,
+                            execution_semantics,
                             truthiness_path.facts,
                             truthiness_path.obligations,
                             budget,
@@ -2864,8 +2864,8 @@ pub(super) fn execute_c_while_body_paths(
     invariant: &[Proposition],
     body: &CStatement,
     assumptions: &Assumptions,
-    environment: &CFunctionEnvironment,
-    call_semantics: CCallSemantics,
+    environment: &CExecutionEnvironment,
+    execution_semantics: CExecutionSemantics,
     facts: Vec<ExecutionPureFact>,
     obligations: Vec<ProofObligation>,
     budget: &mut ExecutionBudget,
@@ -2877,7 +2877,7 @@ pub(super) fn execute_c_while_body_paths(
         body,
         &body_assumptions,
         environment,
-        call_semantics,
+        execution_semantics,
         budget,
     )? {
         let Some((facts, obligations)) = merge_execution_pure_facts_and_obligations(
@@ -2901,7 +2901,7 @@ pub(super) fn execute_c_while_body_paths(
                     body,
                     &next_assumptions,
                     environment,
-                    call_semantics,
+                    execution_semantics,
                     budget,
                 )? {
                     let (facts, obligations) = merge_execution_pure_facts_and_obligations(
