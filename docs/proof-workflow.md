@@ -339,6 +339,12 @@ runs in a fresh arbitrary-iteration context and must reach the loop back edge
 on every proof branch. It can use ordinary proof steps, including `have`,
 resource operations, proof-level `if`, and branch execution.
 
+An explicit initialization proof is an ordinary pure proof at the actual loop
+entry. It can use `apply`, nested `have`, proof-level `if`, `unfold`, and `simp`,
+but it cannot execute C or transform resources. The loop-entry snapshot
+`at(loop(N).entry, ...)` is bound while this proof runs. The facts it proves are
+checked against the kernel invariant instances before rule construction.
+
 Execution-proof traversal advances forward through the function. When it
 encounters a loop, it checks initialization at the current frontier, checks
 preservation in a scoped arbitrary-iteration frontier, and advances the
@@ -346,12 +352,11 @@ enclosing execution proof with the loop's abstract exit rule. Later and nested
 loops are therefore checked in their actual enclosing proof context; Click does not
 reconstruct their entry states by executing the function prefix again.
 
-An explicit `preserve by { ... }` execution proof now directly supplies the
-preservation premise for that abstract exit rule. After every proof branch
-reaches the back edge and establishes the invariants and effects, the kernel
-constructs the loop exit without symbolically executing the body again. If
-`preserve` is omitted, `auto` verifies preservation and constructs the same
-kind of rule.
+Explicit `initialize` and `preserve` proofs directly supply the two premises for
+that abstract exit rule. After initialization establishes every entry invariant
+and every preservation branch reaches the back edge with the invariants and
+effects reestablished, the kernel constructs the loop exit without proving
+either premise again. An omitted phase uses `auto` for that premise.
 
 That abstract exit produces an opaque kernel `VerifiedLoopRule` over the
 symbolic loop-entry state and its required assumptions. Subsequent function

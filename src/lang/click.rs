@@ -25,7 +25,7 @@ use crate::kernel::{
     prove_symbolic_c_condition_evaluation, prove_symbolic_c_execution_paths_with_environment,
     prove_symbolic_c_function_execution_paths_with_environment,
     prove_symbolic_c_function_verification_paths_with_environment,
-    prove_symbolic_c_loop_exit_after_preservation_proof,
+    prove_symbolic_c_loop_exit_with_proven_phases,
     prove_symbolic_c_statement_verification_paths_with_environment_and_loop_rule,
     substitute_int32_variable_in_proposition,
 };
@@ -1675,25 +1675,27 @@ fn validate_loop_phase_proof(phase: &str, proof: Option<&Proof>) -> Result<(), C
     if phase == "preserve" {
         return Ok(());
     }
-    let execute_steps = steps
-        .iter()
-        .filter(|step| matches!(step, ProofStep::ExecuteStep))
-        .count();
-    let allowed = steps.iter().all(|step| {
-        matches!(
-            step,
-            ProofStep::UnfoldPredicate(_) | ProofStep::Simp | ProofStep::ExecuteStep
-        )
-    });
-    if !allowed {
-        return Err(ClickError::new(format!(
-            "`{phase}` currently supports `unfold`, `simp`, and straight-line `execute_step()` proof steps"
-        )));
-    }
-    if phase == "initialize" && execute_steps != 0 {
-        return Err(ClickError::new(
-            "`initialize` proves the invariant at the current loop entry and cannot execute C statements",
-        ));
+    validate_loop_initialization_steps(steps)
+}
+
+fn validate_loop_initialization_steps(steps: &[ProofStep]) -> Result<(), ClickError> {
+    for step in steps {
+        match step {
+            ProofStep::UnfoldPredicate(_)
+            | ProofStep::ApplyTheorem(_)
+            | ProofStep::Have(_)
+            | ProofStep::Simp => {}
+            ProofStep::If(proof_if) => {
+                validate_loop_initialization_steps(&proof_if.then_steps)?;
+                validate_loop_initialization_steps(&proof_if.else_steps)?;
+            }
+            step => {
+                return Err(ClickError::new(format!(
+                    "`initialize` is a pure proof and cannot use `{}`",
+                    validation::proof_step_name(step)
+                )));
+            }
+        }
     }
     Ok(())
 }

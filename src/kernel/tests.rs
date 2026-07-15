@@ -829,7 +829,7 @@ fn verified_loop_rule_is_required_and_accepts_stronger_assumptions() {
 }
 
 #[test]
-fn loop_exit_rule_after_preservation_proof_does_not_reverify_the_body() {
+fn loop_exit_rule_with_proven_preservation_does_not_reverify_the_body() {
     let state = CState::new().with_local("i", int32(0));
     let statement = c_while_with_invariant_checks(
         c_less_than(c_variable("i"), c_int32_literal(1)),
@@ -860,14 +860,64 @@ fn loop_exit_rule_after_preservation_proof_does_not_reverify_the_body() {
             .any(|obligation| obligation.context() == Some("loop preservation"))
     );
 
-    let (after_proof, loop_rule) =
-        prove_symbolic_c_loop_exit_after_preservation_proof(state, statement, assumptions);
+    let (after_proof, loop_rule) = prove_symbolic_c_loop_exit_with_proven_phases(
+        state,
+        statement,
+        assumptions,
+        CFunctionEnvironment::new(),
+        false,
+        true,
+    );
     assert!(loop_rule.is_some());
     assert!(after_proof.paths().iter().all(|path| {
         path.obligations()
             .iter()
             .all(|obligation| obligation.context() != Some("loop preservation"))
     }));
+}
+
+#[test]
+fn loop_exit_rule_with_proven_initialization_checks_preservation_only() {
+    let state = CState::new().with_local("i", int32(u32::MAX));
+    let statement = c_while_with_invariant_checks(
+        c_int32_literal(1),
+        Vec::new(),
+        vec![CLoopInvariantCheck::new(
+            SpecProposition::Comparison {
+                left: SpecExpression::Value(int32(0)),
+                operator: CComparisonOperator::LessEqual,
+                right: SpecExpression::CExpression(c_variable("i")),
+            },
+            Some("loop entry".to_string()),
+            Some("loop preservation".to_string()),
+        )],
+        c_assign("i", c_int32_literal(u32::MAX)),
+    );
+    let (execution, loop_rule) = prove_symbolic_c_loop_exit_with_proven_phases(
+        state,
+        statement,
+        Assumptions::new(),
+        CFunctionEnvironment::new(),
+        true,
+        false,
+    );
+
+    assert!(loop_rule.is_some());
+    let obligations = execution
+        .paths()
+        .iter()
+        .flat_map(SymbolicCExecutionPath::obligations)
+        .collect::<Vec<_>>();
+    assert!(
+        obligations
+            .iter()
+            .all(|obligation| obligation.context() != Some("loop entry"))
+    );
+    assert!(
+        obligations
+            .iter()
+            .any(|obligation| obligation.context() == Some("loop preservation"))
+    );
 }
 
 #[test]

@@ -304,12 +304,13 @@ pub(super) fn execute_c_while_verification_paths(
         body,
         assumptions,
         Some(environment),
+        false,
         budget,
         variables,
     )
 }
 
-pub(super) fn execute_c_while_exit_paths_after_preservation_proof(
+pub(super) fn execute_c_while_exit_paths_with_proven_phases(
     state: &CState,
     condition: &CExpression,
     invariant: &[Proposition],
@@ -317,6 +318,9 @@ pub(super) fn execute_c_while_exit_paths_after_preservation_proof(
     effect_checks: &[CLoopEffectCheck],
     body: &CStatement,
     assumptions: &Assumptions,
+    environment: &CFunctionEnvironment,
+    initialization_proven: bool,
+    preservation_proven: bool,
     budget: &mut ExecutionBudget,
     variables: &mut VerificationVariableGenerator,
 ) -> ExecutionResult<Vec<CStatementExecutionPath>> {
@@ -328,7 +332,8 @@ pub(super) fn execute_c_while_exit_paths_after_preservation_proof(
         effect_checks,
         body,
         assumptions,
-        None,
+        (!preservation_proven).then_some(environment),
+        initialization_proven,
         budget,
         variables,
     )
@@ -344,6 +349,7 @@ fn execute_c_while_exit_paths(
     body: &CStatement,
     assumptions: &Assumptions,
     preservation_environment: Option<&CFunctionEnvironment>,
+    initialization_proven: bool,
     budget: &mut ExecutionBudget,
     variables: &mut VerificationVariableGenerator,
 ) -> ExecutionResult<Vec<CStatementExecutionPath>> {
@@ -354,14 +360,18 @@ fn execute_c_while_exit_paths(
         }
     }
 
-    let entry_obligations = collect_invariant_check_obligations(
-        state,
-        state,
-        invariant_checks,
-        InvariantPhase::Entry,
-        assumptions,
-        budget,
-    )?;
+    let entry_obligations = if initialization_proven {
+        Vec::new()
+    } else {
+        collect_invariant_check_obligations(
+            state,
+            state,
+            invariant_checks,
+            InvariantPhase::Entry,
+            assumptions,
+            budget,
+        )?
+    };
     let top_state = havoc_loop_modified_locals(state, body, variables);
     let whole_loop_effect_summaries = collect_whole_loop_effect_summaries(
         state,

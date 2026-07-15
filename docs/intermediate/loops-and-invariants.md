@@ -59,10 +59,11 @@ for loop(0) {
 }
 ```
 
-`initialize` proves all invariants before the first iteration. `preserve`
-assumes all invariants and the loop condition, executes one complete body
-iteration, and proves all invariants again. Either proof may be omitted; an
-omitted phase uses `auto`.
+`initialize` is a pure proof of all invariants at the actual loop entry. It can
+use `apply`, nested `have`, proof-level `if`, `unfold`, and `simp`, but cannot
+execute C or transform resources. `preserve` assumes all invariants and the loop
+condition, executes one complete body iteration, and proves all invariants
+again. Either proof may be omitted; an omitted phase uses `auto`.
 
 ## What Invariants Do
 

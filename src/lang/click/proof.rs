@@ -1619,6 +1619,7 @@ pub(super) fn verify_loop_execution_proofs(
     let entry_state = c_function_entry_state(&initial_state, &function, &arguments)
         .ok_or_else(|| ClickError::new(format!("`{label}` could not bind function arguments")))?;
     let environment = ExecutionProofEnvironment {
+        initial_state: &initial_state,
         function_block,
         parsed_function,
         function_environment,
@@ -1655,6 +1656,7 @@ fn explicit_loop_preservation_steps(clause: &StructuralClause) -> Option<&[Proof
 }
 
 struct ExecutionProofEnvironment<'a> {
+    initial_state: &'a CState,
     function_block: &'a FunctionBlock,
     parsed_function: &'a syntax::C0Function,
     function_environment: &'a CFunctionEnvironment,
@@ -1773,17 +1775,23 @@ fn certified_statement_transitions(
     certified_transitions_from_execution(execution, loop_rule, pure_facts, context_label)
 }
 
-fn certified_loop_exit_transitions_after_preservation_proof(
+fn certified_loop_exit_transitions_with_proven_phases(
     state: &CState,
     pure_facts: &[Proposition],
     statement: &CStatement,
+    function_environment: &CFunctionEnvironment,
     context_label: &str,
+    initialization_proven: bool,
+    preservation_proven: bool,
 ) -> Result<(Vec<CertifiedStatementTransition>, Option<CVerifiedLoopRule>), ClickError> {
     let assumptions = assumptions_from_propositions(pure_facts);
-    let (execution, loop_rule) = prove_symbolic_c_loop_exit_after_preservation_proof(
+    let (execution, loop_rule) = prove_symbolic_c_loop_exit_with_proven_phases(
         state.clone(),
         statement.clone(),
         assumptions,
+        function_environment.clone(),
+        initialization_proven,
+        preservation_proven,
     );
     certified_transitions_from_execution(execution, loop_rule, pure_facts, context_label)
 }
@@ -1895,22 +1903,36 @@ fn verify_execution_proofs_forward(
         } => {
             let loop_index = *next_loop_index;
             *next_loop_index += 1;
-            let explicit_steps = environment
+            let loop_clause = environment
                 .function_block
                 .structural_clauses()
                 .iter()
-                .find(|clause| clause.region() == &CodeRegion::Loop(loop_index))
-                .and_then(explicit_loop_preservation_steps);
+                .find(|clause| clause.region() == &CodeRegion::Loop(loop_index));
+            let explicit_steps = loop_clause.and_then(explicit_loop_preservation_steps);
+            let explicit_initialization = loop_clause
+                .and_then(StructuralClause::initialize_proof)
+                .filter(|proof| !proof.is_auto_tactic());
             let mut iteration_contexts = Vec::new();
             for (path_index, context) in contexts.iter().enumerate() {
                 let assumptions = assumptions_from_propositions(&context.pure_facts);
-                c_loop_invariants_hold_at_entry(&context.state, invariant_checks, &assumptions)
-                    .map_err(|message| {
-                        ClickError::new(format!(
-                            "`{}.loop({loop_index}).initialize`: {message}",
-                            environment.function_block.signature().name()
-                        ))
-                    })?;
+                if let (Some(clause), Some(proof)) = (loop_clause, explicit_initialization) {
+                    verify_loop_initialization_pure_proof(
+                        loop_index,
+                        proof,
+                        clause,
+                        context,
+                        invariant_checks,
+                        environment,
+                    )?;
+                } else {
+                    c_loop_invariants_hold_at_entry(&context.state, invariant_checks, &assumptions)
+                        .map_err(|message| {
+                            ClickError::new(format!(
+                                "`{}.loop({loop_index}).initialize`: {message}",
+                                environment.function_block.signature().name()
+                            ))
+                        })?;
+                }
                 let preservation_contexts = c_loop_preservation_contexts(
                     &context.state,
                     condition,
@@ -1971,6 +1993,7 @@ fn verify_execution_proofs_forward(
                 } else {
                     LoopPreservationSource::Automatic
                 },
+                explicit_initialization.is_some(),
             )
         }
         CStatement::Return(_) => Ok(Vec::new()),
@@ -1981,6 +2004,7 @@ fn verify_execution_proofs_forward(
             environment,
             verified_loop_rules,
             LoopPreservationSource::Automatic,
+            false,
         ),
     }
 }
@@ -2019,26 +2043,32 @@ fn advance_execution_proof_statement(
     environment: &ExecutionProofEnvironment<'_>,
     verified_loop_rules: &mut Vec<CVerifiedLoopRule>,
     loop_preservation_source: LoopPreservationSource,
+    initialization_proven: bool,
 ) -> Result<Vec<ExecutionProofContext>, ClickError> {
     let mut advanced = Vec::new();
     for context in contexts {
         let label = format!("execution proof traversal at region {region_index}");
-        let (transitions, loop_rule) = match loop_preservation_source {
-            LoopPreservationSource::Automatic => certified_statement_transitions(
+        let preservation_proven = matches!(
+            loop_preservation_source,
+            LoopPreservationSource::ExecutionProof
+        );
+        let (transitions, loop_rule) = match (initialization_proven, preservation_proven) {
+            (false, false) => certified_statement_transitions(
                 &context.state,
                 &context.pure_facts,
                 statement,
                 environment.function_environment,
                 &label,
             )?,
-            LoopPreservationSource::ExecutionProof => {
-                certified_loop_exit_transitions_after_preservation_proof(
-                    &context.state,
-                    &context.pure_facts,
-                    statement,
-                    &label,
-                )?
-            }
+            _ => certified_loop_exit_transitions_with_proven_phases(
+                &context.state,
+                &context.pure_facts,
+                statement,
+                environment.function_environment,
+                &label,
+                initialization_proven,
+                preservation_proven,
+            )?,
         };
         if matches!(statement, CStatement::While { .. })
             && let Some(loop_rule) = loop_rule
@@ -2066,6 +2096,63 @@ fn advance_execution_proof_statement(
         }
     }
     Ok(advanced)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn verify_loop_initialization_pure_proof(
+    loop_index: usize,
+    proof: &Proof,
+    clause: &StructuralClause,
+    context: &ExecutionProofContext,
+    invariant_checks: &[CLoopInvariantCheck],
+    environment: &ExecutionProofEnvironment<'_>,
+) -> Result<(), ClickError> {
+    let claim_label = format!(
+        "{}.loop({loop_index}).initialize",
+        environment.function_block.signature().name()
+    );
+    let mut program_point_states = ProgramPointStates::new();
+    program_point_states.insert(
+        ProgramPointRef {
+            region: CodeRegionRef::Loop(loop_index),
+            kind: ProgramPointKind::Entry,
+        },
+        context.state.clone(),
+    );
+    let mut available = context.pure_facts.clone();
+    for (invariant_index, item) in clause
+        .items()
+        .iter()
+        .filter(|item| item.kind() == StructuralItemKind::Invariant)
+        .enumerate()
+    {
+        let proposition = item
+            .proposition()
+            .expect("invariant region proof item should contain a proposition");
+        let fact = prove_pure_proposition_at_current_point(
+            proposition,
+            proof,
+            "initialize",
+            environment.theorem_environment,
+            &claim_label,
+            invariant_index,
+            &available,
+            environment.parsed_function.parameters(),
+            environment.arguments,
+            environment.initial_state,
+            &context.state,
+            &program_point_states,
+            environment.predicate_environment,
+            environment.click_function_environment,
+        )?;
+        let fact = index_current_predicates(&fact, context.state.memory()).unwrap_or(fact);
+        if !available.contains(&fact) {
+            available.push(fact);
+        }
+    }
+    let assumptions = assumptions_from_propositions(&available);
+    c_loop_invariants_hold_at_entry(&context.state, invariant_checks, &assumptions)
+        .map_err(|message| ClickError::new(format!("`{claim_label}`: {message}")))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2186,6 +2273,7 @@ fn apply_theorem_at_current_point(
         ))
     })?;
     let array_refs = array_refs_for_parameters(parameters, &values, state.memory());
+    let (values, array_refs) = contract_environment_at_state(&values, &array_refs, state);
     let context = TheoremApplicationContext {
         values: &values,
         array_refs: &array_refs,
@@ -2194,7 +2282,7 @@ fn apply_theorem_at_current_point(
         result: None,
         program_point_states,
     };
-    apply_theorem_applications_to_available(
+    let mut available = apply_theorem_applications_to_available(
         theorem_environment,
         &[(step_index, application.clone())],
         claim_label,
@@ -2204,7 +2292,67 @@ fn apply_theorem_at_current_point(
         predicate_environment,
         click_function_environment,
         unfolded_predicates,
-    )
+    )?;
+    let indexed_predicates = available
+        .iter()
+        .filter_map(|proposition| {
+            index_current_predicates(proposition, state.memory())
+                .filter(|indexed| indexed != proposition && !available.contains(indexed))
+        })
+        .collect::<Vec<_>>();
+    available.extend(indexed_predicates);
+    Ok(available)
+}
+
+fn index_current_predicates(proposition: &Proposition, memory: &CMemory) -> Option<Proposition> {
+    match proposition {
+        Proposition::Predicate { name, arguments }
+            if !matches!(arguments.first(), Some(Term::CMemory(_))) =>
+        {
+            let mut arguments = arguments.clone();
+            arguments.insert(0, Term::CMemory(memory.clone()));
+            Some(Proposition::Predicate {
+                name: name.clone(),
+                arguments,
+            })
+        }
+        Proposition::And(left, right) => Some(Proposition::And(
+            Box::new(index_current_predicates(left, memory).unwrap_or_else(|| (**left).clone())),
+            Box::new(index_current_predicates(right, memory).unwrap_or_else(|| (**right).clone())),
+        )),
+        Proposition::Or(left, right) => Some(Proposition::Or(
+            Box::new(index_current_predicates(left, memory).unwrap_or_else(|| (**left).clone())),
+            Box::new(index_current_predicates(right, memory).unwrap_or_else(|| (**right).clone())),
+        )),
+        Proposition::Not(body) => Some(Proposition::Not(Box::new(
+            index_current_predicates(body, memory).unwrap_or_else(|| (**body).clone()),
+        ))),
+        Proposition::Implies(left, right) => Some(Proposition::Implies(
+            Box::new(index_current_predicates(left, memory).unwrap_or_else(|| (**left).clone())),
+            Box::new(index_current_predicates(right, memory).unwrap_or_else(|| (**right).clone())),
+        )),
+        Proposition::ForAll { var, sort, body } => Some(Proposition::ForAll {
+            var: *var,
+            sort: sort.clone(),
+            body: Box::new(
+                index_current_predicates(body, memory).unwrap_or_else(|| (**body).clone()),
+            ),
+        }),
+        Proposition::Exists {
+            name,
+            var,
+            sort,
+            body,
+        } => Some(Proposition::Exists {
+            name: name.clone(),
+            var: *var,
+            sort: sort.clone(),
+            body: Box::new(
+                index_current_predicates(body, memory).unwrap_or_else(|| (**body).clone()),
+            ),
+        }),
+        _ => None,
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2296,7 +2444,42 @@ fn prove_have_at_current_point(
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<Proposition, ClickError> {
-    let (proof_cases, tactic_simp) = match &have.proof {
+    prove_pure_proposition_at_current_point(
+        &have.proposition,
+        &have.proof,
+        "have",
+        theorem_environment,
+        claim_label,
+        outer_step_index,
+        outer_available,
+        parameters,
+        arguments,
+        pre_state,
+        state,
+        program_point_states,
+        predicate_environment,
+        click_function_environment,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn prove_pure_proposition_at_current_point(
+    proposition: &ClickProposition,
+    proof: &Proof,
+    proof_name: &str,
+    theorem_environment: &TheoremEnvironment,
+    claim_label: &str,
+    outer_step_index: usize,
+    outer_available: &[Proposition],
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    pre_state: &CState,
+    state: &CState,
+    program_point_states: &ProgramPointStates,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+) -> Result<Proposition, ClickError> {
+    let (proof_cases, tactic_simp) = match proof {
         Proof::Steps(steps) => (expand_proof_if_cases(steps, claim_label)?, false),
         Proof::Tactic(Tactic::Auto | Tactic::Simp) => (
             vec![ExpandedProofCase {
@@ -2308,7 +2491,7 @@ fn prove_have_at_current_point(
         ),
         Proof::Tactic(Tactic::Frame) => {
             return Err(ClickError::new(format!(
-                "`{claim_label}` proof step {outer_step_index}: `frame` cannot prove a local `have` fact"
+                "`{claim_label}` {proof_name} proof {outer_step_index}: `frame` is not available in a pure proof"
             )));
         }
     };
@@ -2317,16 +2500,17 @@ fn prove_have_at_current_point(
         .any(|proof_case| !proof_case.advance_checks.is_empty())
     {
         return Err(ClickError::new(format!(
-            "`{claim_label}` proof step {outer_step_index}: `advance` cannot prove a local `have` fact"
+            "`{claim_label}` {proof_name} proof {outer_step_index}: `advance` is not available in a pure proof"
         )));
     }
 
     let mut proven_fact = None;
     for proof_case in proof_cases {
-        let fact = prove_have_case_at_current_point(
-            have,
+        let fact = prove_pure_proposition_case_at_current_point(
+            proposition,
             &proof_case,
             tactic_simp,
+            proof_name,
             theorem_environment,
             claim_label,
             outer_step_index,
@@ -2350,16 +2534,17 @@ fn prove_have_at_current_point(
     }
     proven_fact.ok_or_else(|| {
         ClickError::new(format!(
-            "`{claim_label}` proof step {outer_step_index}: `have` has no proof cases"
+            "`{claim_label}` {proof_name} proof {outer_step_index} has no proof cases"
         ))
     })
 }
 
 #[allow(clippy::too_many_arguments)]
-fn prove_have_case_at_current_point(
-    have: &ProofHave,
+fn prove_pure_proposition_case_at_current_point(
+    proposition: &ClickProposition,
     proof_case: &ExpandedProofCase,
     tactic_simp: bool,
+    proof_name: &str,
     theorem_environment: &TheoremEnvironment,
     claim_label: &str,
     outer_step_index: usize,
@@ -2395,7 +2580,7 @@ fn prove_have_case_at_current_point(
             ProofStep::UnfoldPredicate(name) => {
                 if predicate_environment.get(name).is_none() {
                     return Err(ClickError::new(format!(
-                        "`{claim_label}` proof step {outer_step_index}, `have` step {inner_step_index}: unknown predicate `{name}`"
+                        "`{claim_label}` {proof_name} proof {outer_step_index}, step {inner_step_index}: unknown predicate `{name}`"
                     )));
                 }
                 if !unfolded_predicates.contains(name) {
@@ -2408,7 +2593,7 @@ fn prove_have_case_at_current_point(
                     &available,
                 )
                 .map_err(|message| ClickError::new(format!(
-                    "`{claim_label}` proof step {outer_step_index}, `have` step {inner_step_index}: {message}"
+                    "`{claim_label}` {proof_name} proof {outer_step_index}, step {inner_step_index}: {message}"
                 )))?;
             }
             ProofStep::ApplyTheorem(application) => {
@@ -2451,7 +2636,7 @@ fn prove_have_case_at_current_point(
             ProofStep::If(_) => unreachable!("proof-level if steps are expanded before replay"),
             _ => {
                 return Err(ClickError::new(format!(
-                    "`{claim_label}` proof step {outer_step_index}, `have` step {inner_step_index}: `{}` cannot prove a local pure fact",
+                    "`{claim_label}` {proof_name} proof {outer_step_index}, step {inner_step_index}: `{}` is not available in a pure proof",
                     proof_step_name(step)
                 )));
             }
@@ -2473,7 +2658,7 @@ fn prove_have_case_at_current_point(
     )?;
 
     let fact = lower_current_proposition(
-        &have.proposition,
+        proposition,
         &available,
         parameters,
         arguments,
@@ -2485,7 +2670,7 @@ fn prove_have_case_at_current_point(
     )
     .map_err(|message| {
         ClickError::new(format!(
-            "`{claim_label}` proof step {outer_step_index}: could not lower `have` fact: {message}"
+            "`{claim_label}` {proof_name} proof {outer_step_index}: could not lower pure goal: {message}"
         ))
     })?;
     let assumptions = assumptions_from_propositions(&available);
@@ -2498,7 +2683,7 @@ fn prove_have_case_at_current_point(
     )
     .map_err(|message| {
         ClickError::new(format!(
-            "`{claim_label}` proof step {outer_step_index}: could not unfold `have` fact: {message}"
+            "`{claim_label}` {proof_name} proof {outer_step_index}: could not unfold pure goal: {message}"
         ))
     })?;
     if assumptions.proves(&goal)
@@ -2506,17 +2691,23 @@ fn prove_have_case_at_current_point(
     {
         return Ok(fact);
     }
-    Err(ClickError::new(format!(
-        "`{claim_label}` proof step {outer_step_index}: `have` failed: {}",
-        describe_missing_pure_fact(
-            &goal,
-            &available,
-            state.resources().facts(),
-            parameters,
-            arguments,
-            &[]
-        )
-    )))
+    let failure = describe_missing_pure_fact(
+        &goal,
+        &available,
+        state.resources().facts(),
+        parameters,
+        arguments,
+        &[],
+    );
+    if proof_name == "have" {
+        Err(ClickError::new(format!(
+            "`{claim_label}` proof step {outer_step_index}: `have` failed: {failure}"
+        )))
+    } else {
+        Err(ClickError::new(format!(
+            "`{claim_label}` {proof_name} proof {outer_step_index} failed: {failure}"
+        )))
+    }
 }
 
 #[allow(clippy::too_many_arguments)]

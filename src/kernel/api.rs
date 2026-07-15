@@ -881,10 +881,13 @@ pub fn prove_symbolic_c_statement_verification_paths_with_environment_and_loop_r
     symbolic_c_statement_execution_with_loop_rule(state, statement, assumptions, paths)
 }
 
-pub(crate) fn prove_symbolic_c_loop_exit_after_preservation_proof(
+pub(crate) fn prove_symbolic_c_loop_exit_with_proven_phases(
     state: CState,
     statement: CStatement,
     assumptions: Assumptions,
+    environment: CFunctionEnvironment,
+    initialization_proven: bool,
+    preservation_proven: bool,
 ) -> (SymbolicCExecution, Option<CVerifiedLoopRule>) {
     let CStatement::While {
         condition,
@@ -904,7 +907,7 @@ pub(crate) fn prove_symbolic_c_loop_exit_after_preservation_proof(
     };
     let mut budget = ExecutionBudget::default();
     let mut variables = VerificationVariableGenerator::new(1_000_000);
-    let paths = match execute_c_while_exit_paths_after_preservation_proof(
+    let paths = match execute_c_while_exit_paths_with_proven_phases(
         &state,
         condition,
         invariant,
@@ -912,6 +915,9 @@ pub(crate) fn prove_symbolic_c_loop_exit_after_preservation_proof(
         effect_checks,
         body,
         &assumptions,
+        &environment,
+        initialization_proven,
+        preservation_proven,
         &mut budget,
         &mut variables,
     ) {

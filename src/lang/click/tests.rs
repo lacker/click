@@ -3077,7 +3077,8 @@ fn loop_initialize_rejects_execution_steps() {
 
     assert!(
         error.message().contains("`initialize`")
-            && error.message().contains("cannot execute C statements"),
+            && error.message().contains("is a pure proof")
+            && error.message().contains("execute_step"),
         "{}",
         error.message()
     );
