@@ -67,8 +67,9 @@ Common steps include:
 - `execute_rest();`: execute symbolically from the current execution point to
   function exit. From function entry, this executes the whole C function.
 - `symbolic_execute();`: legacy spelling for `execute_rest();`.
-- `execute_until(statement(N));`: execute a straight-line prefix up to a
-  statement entry point.
+- `execute_until(statement(N));`: advance from the current execution point to
+  a forward, reachable statement entry point. An unresolved branch still
+  requires explicit arm selection.
 - `unfold(name);`: open a named predicate.
 - `unfold(resource);`: expose one body layer of an owned composite resource.
 - `fold(resource);`: rebuild one owned composite resource from its body.

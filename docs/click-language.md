@@ -408,6 +408,11 @@ require explicit arm selection and joining before a unique exit snapshot exists.
 `advance(loop_label.exit)` can use that exit as a checked abstract interface for
 the proof that follows.
 
+`execute_until(statement(N))` starts at the current execution point, so it can
+follow earlier `execute_step`, explicit branch-entry, or `advance` steps. The
+target must be forward and reachable on that selected path; it cannot be used
+to rewind execution or enter an unselected branch.
+
 ## Pure Click Functions
 
 Click functions are specification-level value definitions, not executable C

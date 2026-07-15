@@ -75,9 +75,10 @@ Current proof steps:
 - `symbolic_execute();`: legacy spelling for `execute_rest();`.
 - `execute_until(statement(N));`: execute the current deterministic prefix up
   to the entry of statement region `N`. It can cross verified loops, but an
-  unresolved `if` still requires explicit branch entry. This first slice only
-  supports pausing from function entry and requires each source step to produce
-  exactly one normal path.
+  unresolved `if` still requires explicit branch entry. It composes with prior
+  execution steps, selected branches, and `advance` joins. The target must be
+  forward and reachable on the current execution path, and each source step
+  must produce exactly one normal successor.
 - `bounded_execute();`: use deterministic bounded execution for concrete-loop
   fallback proofs.
 - `loop_vc(loop(N));`: check the generated verification conditions for loop

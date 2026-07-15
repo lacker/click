@@ -4266,9 +4266,6 @@ fn record_current_statement_entry(
     step_index: usize,
     step_name: &str,
 ) -> Result<(), ClickError> {
-    if replay.frontier.inside_branch() {
-        return Ok(());
-    }
     let current_state = match &replay.frontier.point {
         ProofExecutionPoint::FunctionEntry => c_function_entry_state(state, function, arguments)
             .ok_or_else(|| {
@@ -4456,11 +4453,6 @@ fn execute_until_statement(
     claim_label: &str,
     step_index: usize,
 ) -> Result<(), ClickError> {
-    if !replay.is_at_function_entry() {
-        return Err(ClickError::new(format!(
-            "`{claim_label}` proof step {step_index}: `execute_until` is currently supported only from function entry"
-        )));
-    }
     if replay.source_layout.statement(statement_index).is_none() {
         return Err(ClickError::new(format!(
             "`{claim_label}` proof step {step_index}: function has no source statement({statement_index}); it contains {} statement regions",
@@ -4468,18 +4460,17 @@ fn execute_until_statement(
         )));
     }
 
-    let execution_start_state = state.clone();
-    let callee_state = c_function_entry_state(&execution_start_state, function, arguments)
-        .ok_or_else(|| {
-            ClickError::new(format!(
-                "`{claim_label}` proof step {step_index}: `execute_until` could not bind function arguments"
-            ))
-        })?;
-    replay.frontier.execution_start_state = Some(execution_start_state);
-    replay.frontier.point = ProofExecutionPoint::StatementEntry {
-        remaining: function.body().clone(),
-    };
-    *state = callee_state;
+    if replay.is_at_function_exit() {
+        return Err(ClickError::new(format!(
+            "`{claim_label}` proof step {step_index}: `execute_until(statement({statement_index}))` cannot run after execution already reached function exit"
+        )));
+    }
+    if statement_index < replay.frontier.next_statement_index {
+        return Err(ClickError::new(format!(
+            "`{claim_label}` proof step {step_index}: `execute_until(statement({statement_index}))` cannot move backward from statement({})",
+            replay.frontier.next_statement_index
+        )));
+    }
 
     while replay.frontier.next_statement_index != statement_index {
         let region_start = replay.frontier.next_statement_index;
@@ -4498,9 +4489,15 @@ fn execute_until_statement(
             step_index,
             "execute_until",
         )?;
+        if replay.is_at_function_exit() {
+            return Err(ClickError::new(format!(
+                "`{claim_label}` proof step {step_index}: `execute_until(statement({statement_index}))` reached function exit before its target"
+            )));
+        }
         if replay.frontier.next_statement_index > statement_index {
             return Err(ClickError::new(format!(
-                "`{claim_label}` proof step {step_index}: `execute_until(statement({statement_index}))` cannot stop inside the compound source region beginning at statement({region_start})"
+                "`{claim_label}` proof step {step_index}: `execute_until(statement({statement_index}))` target is not reachable from the current execution path; advancing statement({region_start}) moved the frontier to statement({})",
+                replay.frontier.next_statement_index
             )));
         }
     }
