@@ -20,9 +20,9 @@ verifying "copy_first.c";
 
 int32 copy_first(int32 dst[], int32 src[]) {
     requires loadable(src[0..1]);
-    requires first_cell_copy_access(dst, src);
+    consumes first_cell_copy_access(dst, src);
 
-    ensures first_cell_copy_access(dst, src) by {
+    produces first_cell_copy_access(dst, src) by {
         unfold(first_cell_copy_access(dst, src));
         symbolic_execute();
         fold(first_cell_copy_access(dst, src));

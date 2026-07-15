@@ -25,12 +25,12 @@ verifying "consume_two.c";
 verifying "call_same.c";
 
 int32 consume_two(int32 first, int32 second) {
-    requires can_complete(first);
-    requires can_complete(second);
+    consumes can_complete(first);
+    consumes can_complete(second);
 }
 
 int32 call_same(int32 cb) {
-    requires can_complete(cb);
+    consumes can_complete(cb);
 
     ensures result == 0 by auto;
 }

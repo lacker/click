@@ -20,7 +20,7 @@ verifying "fill3_memory.c";
 
 int32 fill3_memory(int32* p) {
     requires loadable(p, 12);
-    requires write(p[0..3]);
+    consumes p[0..3];
     ensures first: p[0] == 0 by auto;
     ensures second: p[1] == 1 by auto;
     ensures third: p[2] == 2 by auto;

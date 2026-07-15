@@ -8,8 +8,8 @@ permissions must not be copied freely.
 Click currently has two first-layer memory permissions:
 
 ```click
-requires read(p[0..1]);
-requires write(p[0..1]);
+views p[0..1];
+consumes p[0..1];
 ```
 
 These clauses create resource facts in the verifier's resource context. External C
@@ -73,7 +73,7 @@ For an external read, `read(...)` is normally enough:
 
 ```click
 int32 first(int32 p[]) {
-    requires read(p[0..1]);
+    views p[0..1];
 
     ensures result == p[0] by auto;
 }
@@ -96,9 +96,7 @@ stable: they produce the same symbolic value.
 
 ```click
 int32 peek(int32 p[]) {
-    requires read(p[0..1]);
-
-    ensures read(p[0..1]) by auto;
+    views p[0..1];
 }
 ```
 
@@ -108,23 +106,21 @@ still keep its write permission afterward.
 
 ## Write Permission
 
-`write(...)` permits both loads and stores, so `write(...)` can satisfy an
-`ensures read(...)` guarantee. Stores through a write resource update the
-symbolic memory state; later reads of the same cell see the written value unless
-a later write changes it again.
+An owned memory resource permits both loads and stores and entails its viewed
+core. Stores update the symbolic memory state; later reads of the same cell see
+the written value unless a later write changes it again.
 
 ```click
 int32 set_one(int32 p[]) {
-    requires write(p[0..1]);
+    consumes p[0..1];
 
-    ensures write(p[0..1]) by auto;
+    produces p[0..1] by auto;
 }
 ```
 
-Write resources are linear across function calls. A callee only receives write
-permission if its contract declares `requires write(...)`. The caller loses
-that write resource for the duration of the call. If the callee does not return
-it with `ensures write(...)`, the caller cannot use or prove it afterward.
+Owned memory resources are linear across function calls. `owns` transfers the
+resource to the callee and returns it; `consumes` transfers it without returning
+it. The caller cannot use a consumed resource afterward.
 
 This is the main difference between a permission and an ordinary proposition.
 Ordinary facts can be used repeatedly. A write resource can be transferred.
@@ -135,13 +131,13 @@ Function calls use the callee's resource summary:
 
 ```click
 int32 helper(int32 p[]) {
-    requires write(p[0..1]);
-    ensures write(p[0..1]) by auto;
+    consumes p[0..1];
+    produces p[0..1] by auto;
 }
 
 int32 caller(int32 p[]) {
-    requires write(p[0..1]);
-    ensures write(p[0..1]) by auto;
+    consumes p[0..1];
+    produces p[0..1] by auto;
 }
 ```
 
@@ -161,16 +157,15 @@ Then a contract can require and return instances of that resource:
 
 ```click
 int32 borrow_fd(int32 fd) {
-    requires open_fd(fd);
+    consumes open_fd(fd);
 
-    ensures open_fd(fd) by auto;
+    produces open_fd(fd) by auto;
 }
 ```
 
-A token resource is transferred by function calls. If a callee requires
-`open_fd(fd)` and returns it with `ensures open_fd(fd)`, the caller gets the
-token back. If the callee requires it and does not return it, the caller loses
-the token.
+A token resource is transferred by function calls. If a callee `owns
+open_fd(fd)`, the caller gets the token back. If the callee `consumes
+open_fd(fd)`, the caller loses the token.
 
 Token resources currently have exact-match behavior only. They do not split,
 rejoin, imply other resources, authorize C statements, or define custom algebra
@@ -180,7 +175,7 @@ are checked against the types declared in the resource definition.
 
 Token resources are strict tokens. A resource context cannot contain the
 same token resource twice: duplicate clauses such as two
-`requires open_fd(fd);` entries are rejected, and a call cannot satisfy two
+`consumes open_fd(fd);` entries are rejected, and a call cannot satisfy two
 callee resource parameters with the same token.
 
 A function spec may exist only to consume a resource:
@@ -189,7 +184,7 @@ A function spec may exist only to consume a resource:
 resource can_complete(cb: int32);
 
 int32 complete(int32 cb) {
-    requires can_complete(cb);
+    consumes can_complete(cb);
 }
 ```
 
@@ -219,7 +214,7 @@ non-consuming view step:
 
 ```click
 int32 return_fd(int32 fd) {
-    requires live_fd(fd);
+    consumes live_fd(fd);
 
     ensures result >= 0 by {
         observe(live_fd(fd));
@@ -228,7 +223,7 @@ int32 return_fd(int32 fd) {
         simp();
     }
 
-    ensures live_fd(fd) by auto;
+    produces live_fd(fd) by auto;
 }
 ```
 
@@ -253,9 +248,9 @@ resource called(flag: int32*) {
 }
 
 int32 complete_once(int32 flag[]) {
-    requires uncalled(flag);
+    consumes uncalled(flag);
 
-    ensures called(flag) by {
+    produces called(flag) by {
         unfold(uncalled(flag));
         symbolic_execute();
         fold(called(flag));
@@ -281,9 +276,9 @@ function boundary:
 
 ```click
 int32 init_once(int32 flag[]) {
-    requires write(flag[0..1]);
+    consumes flag[0..1];
 
-    ensures uncalled(flag) by {
+    produces uncalled(flag) by {
         symbolic_execute();
         fold(uncalled(flag));
     }
@@ -359,13 +354,13 @@ A caller can pass a subrange of a larger write resource:
 
 ```click
 int32 helper(int32 p[]) {
-    requires write(p[0..1]);
-    ensures write(p[0..1]) by auto;
+    consumes p[0..1];
+    produces p[0..1] by auto;
 }
 
 int32 caller(int32 p[]) {
-    requires write(p[0..2]);
-    ensures write(p[0..2]) by auto;
+    consumes p[0..2];
+    produces p[0..2] by auto;
 }
 ```
 

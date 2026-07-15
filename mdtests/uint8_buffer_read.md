@@ -13,7 +13,7 @@ uint8 read_first_byte(uint8 p[]) {
 verifying "uint8_buffer_read.c";
 
 uint8 read_first_byte(uint8 p[]) {
-    requires read(p[0..1]);
+    views p[0..1];
     ensures returns_first: result == p[0] by auto;
 }
 ```

@@ -10,5 +10,5 @@ theorem resource_conclusion_is_not_pure(p: int32*) {
 ```
 
 ```expect
-fail: pure theorem `resource_conclusion_is_not_pure` currently supports proposition `ensures` clauses only
+fail: `ensures` accepts pure propositions only; use `owns` or `produces` for owned output
 ```

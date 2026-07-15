@@ -66,8 +66,8 @@ Requirements are also where simple C safety facts often live. For example,
 Some requirements provide resource facts rather than pure facts:
 
 ```click
-requires read(p[0..1]);
-requires write(p[0..1]);
+views p[0..1];
+consumes p[0..1];
 ```
 
 These give the verifier permission to check external memory accesses.

@@ -19,9 +19,9 @@ resource uncalled(flag: int32*) {
 verifying "init_bad.c";
 
 int32 init_bad(int32 flag[]) {
-    requires write(flag[0..1]);
+    consumes flag[0..1];
 
-    ensures uncalled(flag) by {
+    produces uncalled(flag) by {
         symbolic_execute();
         fold(uncalled(flag));
     }

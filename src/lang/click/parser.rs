@@ -852,9 +852,12 @@ impl Parser {
         };
         let requirement = match (self.peek_ident(), self.peek_next()) {
             (Some("loadable"), Some(Token::LParen)) => self.parse_loadable_requirement()?,
-            (Some("read") | Some("write"), Some(Token::LParen)) => {
-                Requirement::Resource(self.parse_resource_clause()?)
-            }
+            (Some("read"), Some(Token::LParen)) => return Err(self.error(
+                "`requires` accepts pure propositions only; use `views` for read access",
+            )),
+            (Some("write"), Some(Token::LParen)) => return Err(self.error(
+                "`requires` accepts pure propositions only; use `owns` or `consumes` for owned access",
+            )),
             _ => {
                 let proposition = self.parse_proposition()?;
                 self.expect(Token::Semicolon)?;
@@ -1238,10 +1241,20 @@ impl Parser {
     }
 
     fn parse_ensure_condition(&mut self) -> Result<Ensure, ClickError> {
-        if matches!(self.peek_ident(), Some("read" | "write"))
-            && self.peek_next() == Some(&Token::LParen)
-        {
-            return Ok(Ensure::Resource(self.parse_resource_clause()?));
+        if self.peek_next() == Some(&Token::LParen) {
+            match self.peek_ident() {
+                Some("read") => {
+                    return Err(self.error(
+                        "`ensures` accepts pure propositions only; use `views` to retain read access",
+                    ));
+                }
+                Some("write") => {
+                    return Err(self.error(
+                        "`ensures` accepts pure propositions only; use `owns` or `produces` for owned output",
+                    ));
+                }
+                _ => {}
+            }
         }
         Ok(Ensure::Proposition(self.parse_proposition()?))
     }

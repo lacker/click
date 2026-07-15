@@ -21,10 +21,9 @@ int32 read_same_twice(int32 p[]) {
 verifying "read_same_twice.c";
 
 int32 read_same_twice(int32 p[]) {
-    requires read(p[0..1]);
+    views p[0..1];
 
     ensures result == 1 by auto;
-    ensures read(p[0..1]) by auto;
 }
 ```
 

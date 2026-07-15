@@ -20,7 +20,7 @@ resource bad_bundle(fd: int32) {
 verifying "zero.c";
 
 int32 zero(int32 fd) {
-    requires bad_bundle(fd);
+    consumes bad_bundle(fd);
 }
 ```
 

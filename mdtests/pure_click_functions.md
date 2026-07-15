@@ -104,7 +104,7 @@ int32 increment_value(int32 x) {
 
 int32 read_first_with_function(int32 p[1]) {
     requires loadable(p[0..1]);
-    requires read(p[0..1]);
+    views p[0..1];
     ensures current_value: result == head(p) by auto;
     ensures old_value: result == old(head(p)) by auto;
 }
@@ -115,7 +115,7 @@ int32 branch_indicator(int32 x, int32 y) {
 
 int32 count_three_matches(int32 p[3], int32 x) {
     requires loadable(p[0..3]);
-    requires read(p[0..3]);
+    views p[0..3];
     ensures result_value: result == count3(p, x) by auto;
     ensures stdlib_count_value: result == count(p, 0, 3, x) by auto;
 }

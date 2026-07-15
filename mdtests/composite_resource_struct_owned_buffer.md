@@ -27,9 +27,9 @@ verifying "set_owned_first.c";
 
 int32 set_owned_first(struct owner* owner, int32 data[]) {
     requires separate(memory(owner[0..1]), memory(data[0..1]));
-    requires owned_one_cell(owner, data);
+    consumes owned_one_cell(owner, data);
 
-    ensures owned_one_cell(owner, data) by {
+    produces owned_one_cell(owner, data) by {
         unfold(owned_one_cell(owner, data));
         symbolic_execute();
         fold(owned_one_cell(owner, data));

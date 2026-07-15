@@ -32,7 +32,7 @@ resource nested_owned_buffer(owner: struct owner*) {
 verifying "observe_nested_separate_contains.c";
 
 int32 observe_nested_separate_contains(struct owner* owner) {
-    requires nested_owned_buffer(owner);
+    consumes nested_owned_buffer(owner);
 
     ensures separate(memory(owner[0..3]), memory((owner->data)[0..owner->cap])) by {
         observe(nested_owned_buffer(owner));

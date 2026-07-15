@@ -19,9 +19,9 @@ resource zero_flag(flag: int32*) {
 verifying "write_flag_observed.c";
 
 int32 write_flag_observed(int32* flag) {
-    requires zero_flag(flag);
+    consumes zero_flag(flag);
 
-    ensures zero_flag(flag) by {
+    produces zero_flag(flag) by {
         observe(zero_flag(flag));
         symbolic_execute();
     }

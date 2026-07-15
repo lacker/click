@@ -20,7 +20,7 @@ verifying "fill3.c";
 
 int32 fill3(int32* p) {
     requires loadable(p, 12);
-    requires write(p[0..3]);
+    consumes p[0..3];
     ensures returns_second: result == 2 by auto;
 }
 ```

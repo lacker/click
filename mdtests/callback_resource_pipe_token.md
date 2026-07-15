@@ -36,19 +36,19 @@ verifying "complete_primary_and_secondary.c";
 verifying "pipe_callback.c";
 
 int32 complete(int32 cb) {
-    requires can_complete(cb);
+    consumes can_complete(cb);
 }
 
 int32 complete_primary_and_secondary(int32 primary, int32 secondary) {
-    requires can_complete(primary);
-    requires can_complete(secondary);
+    consumes can_complete(primary);
+    consumes can_complete(secondary);
 
-    ensures can_complete(secondary) by auto;
+    produces can_complete(secondary) by auto;
 }
 
 int32 pipe_callback(int32 primary, int32 secondary) {
-    requires can_complete(primary);
-    requires can_complete(secondary);
+    consumes can_complete(primary);
+    consumes can_complete(secondary);
 
     ensures result == 0 by auto;
 }

@@ -31,8 +31,8 @@ int32 advance_owned_selected_pointer(
     int32 choose_left,
     int32 value
 ) {
-    requires write(left[0..1]);
-    requires write(right[0..1]);
+    consumes left[0..1];
+    consumes right[0..1];
 
     ensures result == value by {
         execute_step();

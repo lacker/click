@@ -56,9 +56,9 @@ int32 buffer_len(struct owner* owner) {
 }
 
 int32 len_then_clear(struct owner* owner) {
-    requires owned_buffer(owner);
+    consumes owned_buffer(owner);
 
-    ensures owned_buffer(owner) by {
+    produces owned_buffer(owner) by {
         observe(owned_buffer(owner));
         execute_until(statement(2));
         unfold(owned_buffer(owner));

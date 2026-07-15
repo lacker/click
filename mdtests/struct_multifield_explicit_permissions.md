@@ -22,10 +22,10 @@ verifying "write_second.c";
 
 int32 write_second(struct pair* p) {
     requires loadable(p[0..2]);
-    requires write(p[0..2]);
+    consumes p[0..2];
 
     ensures result == 2 by auto;
-    ensures write(p[0..2]) by auto;
+    produces p[0..2] by auto;
 }
 ```
 

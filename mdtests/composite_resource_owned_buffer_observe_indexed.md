@@ -33,7 +33,7 @@ resource owned_buffer(owner: struct owner*) {
 verifying "buffer_get.c";
 
 int32 buffer_get(struct owner* owner, int32 index) {
-    requires owned_buffer(owner);
+    consumes owned_buffer(owner);
     requires 0 <= index;
     requires index < owner->len;
     requires index < owner->cap;

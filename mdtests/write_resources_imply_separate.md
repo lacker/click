@@ -14,8 +14,8 @@ int32 write_dst_read_src_from_write(int32* dst, int32* src) {
 verifying "write_dst_read_src_from_write.c";
 
 int32 write_dst_read_src_from_write(int32* dst, int32* src) {
-    requires write(dst[0..1]);
-    requires write(src[0..1]);
+    consumes dst[0..1];
+    consumes src[0..1];
 
     ensures src[0] == old(src[0]) by auto;
 }

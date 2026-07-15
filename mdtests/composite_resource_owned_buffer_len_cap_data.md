@@ -49,9 +49,9 @@ resource owned_buffer_with_room(owner: struct owner*) {
 verifying "push_one.c";
 
 int32 push_one(struct owner* owner, int32 value) {
-    requires owned_buffer_with_room(owner);
+    consumes owned_buffer_with_room(owner);
 
-    ensures owned_buffer(owner) by {
+    produces owned_buffer(owner) by {
         unfold(owned_buffer_with_room(owner));
         symbolic_execute();
         fold(owned_buffer(owner));

@@ -14,9 +14,8 @@ verifying "read_uncovered_byte.c";
 
 uint8 read_uncovered_byte(uint8 p[]) {
     requires loadable(p[0..2]);
-    requires read(p[0..1]);
+    views p[0..1];
 
-    ensures read(p[0..1]) by auto;
 }
 ```
 

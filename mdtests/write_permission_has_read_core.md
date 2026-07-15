@@ -21,11 +21,10 @@ int32 write_read_same_twice(int32 p[]) {
 verifying "write_read_same_twice.c";
 
 int32 write_read_same_twice(int32 p[]) {
-    requires write(p[0..1]);
+    consumes p[0..1];
 
     ensures result == 1 by auto;
-    ensures read(p[0..1]) by auto;
-    ensures write(p[0..1]) by auto;
+    produces p[0..1] by auto;
 }
 ```
 

@@ -22,10 +22,10 @@ resource live_fd(fd: int32) {
 verifying "return_fd.c";
 
 int32 return_fd(int32 fd) {
-    requires live_fd(fd);
+    consumes live_fd(fd);
 
     ensures result >= 0 by auto;
-    ensures live_fd(fd) by auto;
+    produces live_fd(fd) by auto;
 }
 ```
 

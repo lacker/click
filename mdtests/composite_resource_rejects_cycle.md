@@ -21,7 +21,7 @@ resource right_token(fd: int32) {
 verifying "zero.c";
 
 int32 zero(int32 fd) {
-    requires left_token(fd);
+    consumes left_token(fd);
 }
 ```
 

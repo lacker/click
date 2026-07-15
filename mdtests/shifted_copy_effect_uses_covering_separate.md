@@ -25,8 +25,8 @@ int32 shifted_copy_effect_uses_covering_separate(int32 dst[], int32 src[], int32
     requires n <= 2147483647;
     requires loadable(dst[0..n]);
     requires loadable(src[0..n]);
-    requires write(dst[0..n]);
-    requires read(src[0..n]);
+    consumes dst[0..n];
+    views src[0..n];
     requires separate(memory(dst[0..n]), memory(src[0..n]));
     for loop(0) {
         invariant i >= 1;

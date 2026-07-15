@@ -22,8 +22,8 @@ int32 write_i_read_j(int32 p[], int32 i, int32 j, int32 n) {
     requires j >= 0;
     requires j < n;
     requires loadable(p[0..n]);
-    requires write(p[i..i + 1]);
-    requires read(p[j..j + 1]);
+    consumes p[i..i + 1];
+    views p[j..j + 1];
     requires separate(memory(p[i..i + 1]), memory(p[j..j + 1]));
     mutable p[i..i + 1] by frame;
     ensures keeps_j: result == old(p[j]) by auto;

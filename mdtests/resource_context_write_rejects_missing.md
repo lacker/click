@@ -14,7 +14,7 @@ int32 write_first_without_resource(int32 p[]) {
 verifying "write_first_without_resource.c";
 
 int32 write_first_without_resource(int32 p[]) {
-    requires write(p[1..2]);
+    consumes p[1..2];
 
     ensures writes_first: p[0] == 1 by auto;
 }

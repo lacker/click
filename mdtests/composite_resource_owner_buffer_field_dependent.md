@@ -31,7 +31,7 @@ resource owned_buffer(owner: struct owner*) {
 verifying "set_owned_first.c";
 
 int32 set_owned_first(struct owner* owner) {
-    requires owned_buffer(owner);
+    consumes owned_buffer(owner);
 
     ensures result == 1 by {
         unfold(owned_buffer(owner));

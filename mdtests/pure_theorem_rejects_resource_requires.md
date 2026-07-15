@@ -12,5 +12,5 @@ theorem resource_requirement_is_not_pure(p: int32*) {
 ```
 
 ```expect
-fail: pure theorem `resource_requirement_is_not_pure` currently supports proposition `requires` clauses only
+fail: `requires` accepts pure propositions only; use `owns` or `consumes` for owned access
 ```

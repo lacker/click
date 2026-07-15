@@ -45,7 +45,7 @@ verifying "statement_at_local_snapshots.c";
 verifying "statement_at_local_array_snapshots.c";
 
 int32 set_first_to_seven(int32* p) {
-    requires write(p[0..1]);
+    consumes p[0..1];
 
     ensures entry_is_old: at(statement(0).entry, p[0]) == old(p[0]) by {
         execute_rest();
@@ -64,7 +64,7 @@ int32 set_first_to_seven(int32* p) {
 }
 
 int32 set_first_twice(int32* p) {
-    requires write(p[0..1]);
+    consumes p[0..1];
 
     ensures prefix_exit: at(statement(0).exit, p[0]) == 3 by {
         execute_until(statement(1));

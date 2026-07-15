@@ -25,7 +25,7 @@ int32 fill_n_loop_mutable_segment(int32 p[], int32 n) {
     requires n >= 0;
     requires n <= 2147483647;
     requires loadable(p[0..n]);
-    requires write(p[0..n]);
+    consumes p[0..n];
     for loop(0) {
         invariant i >= 0;
         invariant i <= n;

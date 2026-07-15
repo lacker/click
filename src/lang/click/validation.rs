@@ -156,14 +156,10 @@ fn expand_declared_resource_requirement(
         Requirement::Proposition(ClickProposition::PredicateCall { name, arguments })
             if resource_definitions.contains_key(&name) =>
         {
-            let info = declared_resource_info(&name, arguments.len(), resource_definitions)?;
-            Ok(Requirement::Resource(ResourceClause::Declared {
-                access: ResourceAccessMode::Own,
-                kind: info.kind,
-                name,
-                arguments,
-                parameter_types: info.parameter_types,
-            }))
+            declared_resource_info(&name, arguments.len(), resource_definitions)?;
+            Err(ClickError::new(format!(
+                "`requires` accepts pure propositions only; use `owns {name}(...)`, `views {name}(...)`, or `consumes {name}(...)`"
+            )))
         }
         Requirement::Resource(resource) => Ok(Requirement::Resource(
             expand_declared_resource_clause(resource, resource_definitions)?,
@@ -183,14 +179,10 @@ fn expand_declared_resource_ensure_clause(
         Ensure::Proposition(ClickProposition::PredicateCall { name, arguments })
             if resource_definitions.contains_key(&name) =>
         {
-            let info = declared_resource_info(&name, arguments.len(), resource_definitions)?;
-            Ensure::Resource(ResourceClause::Declared {
-                access: ResourceAccessMode::Own,
-                kind: info.kind,
-                name,
-                arguments,
-                parameter_types: info.parameter_types,
-            })
+            declared_resource_info(&name, arguments.len(), resource_definitions)?;
+            return Err(ClickError::new(format!(
+                "`ensures` accepts pure propositions only; use `owns {name}(...)` or `produces {name}(...)`"
+            )));
         }
         Ensure::Proposition(proposition) => Ensure::Proposition(
             expand_declared_resource_proposition(proposition, resource_definitions)?,

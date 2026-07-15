@@ -34,7 +34,7 @@ predicate all_le_range(int32 p[], int32 lo, int32 hi, int32 x) {
 
 int32 bubble_pass3(int32 p[3]) {
     requires loadable(p[0..3]);
-    requires write(p[0..3]);
+    consumes p[0..3];
     for loop(0) {
         invariant j >= 0 and j <= 2;
         invariant all_le_range(p, 0, j, p[j]);

@@ -35,9 +35,9 @@ resource owned_buffer(owner: struct owner*) {
 verifying "len_then_clear_step.c";
 
 int32 len_then_clear_step(struct owner* owner) {
-    requires owned_buffer(owner);
+    consumes owned_buffer(owner);
 
-    ensures owned_buffer(owner) by {
+    produces owned_buffer(owner) by {
         observe(owned_buffer(owner));
         execute_step();
         execute_step();

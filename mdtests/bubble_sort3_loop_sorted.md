@@ -44,7 +44,7 @@ predicate sorted_range(int32 p[], int32 lo, int32 hi) {
 
 int32 bubble_sort3_loop(int32 p[3]) {
     requires loadable(p[0..3]);
-    requires write(p[0..3]);
+    consumes p[0..3];
     ensures sorted: sorted(p, 3) by {
         bounded_execute();
         unfold(sorted);

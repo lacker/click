@@ -13,8 +13,8 @@ int32 duplicate_write(int32* p) {
 verifying "duplicate_write.c";
 
 int32 duplicate_write(int32* p) {
-    requires write(p[0..1]);
-    requires write(p[0..1]);
+    consumes p[0..1];
+    consumes p[0..1];
 
     ensures result == old(p[0]) by auto;
 }

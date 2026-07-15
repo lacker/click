@@ -26,11 +26,11 @@ verifying "complete.c";
 verifying "complete_twice.c";
 
 int32 complete(int32 cb) {
-    requires can_complete(cb);
+    consumes can_complete(cb);
 }
 
 int32 complete_twice(int32 cb) {
-    requires can_complete(cb);
+    consumes can_complete(cb);
 
     ensures result == 0 by auto;
 }

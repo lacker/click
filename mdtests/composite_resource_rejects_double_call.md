@@ -29,11 +29,11 @@ verifying "consume_uncalled.c";
 verifying "call_twice.c";
 
 int32 consume_uncalled(int32 flag[]) {
-    requires uncalled(flag);
+    consumes uncalled(flag);
 }
 
 int32 call_twice(int32 flag[]) {
-    requires uncalled(flag);
+    consumes uncalled(flag);
 
     ensures result == 0 by auto;
 }

@@ -39,7 +39,7 @@ verifying "byte_slice_facts.c";
 
 int32 count_byte3(uint8 p[], uint8 x) {
     requires loadable(p[0..3]);
-    requires read(p[0..3]);
+    views p[0..3];
     ensures stdlib_byte_count_value: result == byte_count(p, 0, 3, x) by auto;
 }
 

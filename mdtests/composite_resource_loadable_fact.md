@@ -18,7 +18,7 @@ resource readable_slice(data: int32*, len: int32) {
 verifying "slice_get.c";
 
 int32 slice_get(int32* data, int32 index, int32 len) {
-    requires readable_slice(data, len);
+    consumes readable_slice(data, len);
     requires 0 <= index;
     requires index < len;
 

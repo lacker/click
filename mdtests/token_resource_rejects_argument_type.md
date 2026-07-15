@@ -15,7 +15,7 @@ resource can_complete(cb: int32);
 verifying "use_pointer.c";
 
 int32 use_pointer(int32* p) {
-    requires can_complete(p);
+    consumes can_complete(p);
 
     ensures result == 0 by auto;
 }

@@ -22,9 +22,9 @@ verifying "clobber_dst_packaged.c";
 int32 clobber_dst_packaged(int32* dst, int32* src) {
     requires loadable(dst[0..1]);
     requires loadable(src[0..1]);
-    requires separated_first_cells(dst, src);
+    consumes separated_first_cells(dst, src);
 
-    ensures separated_first_cells(dst, src) by {
+    produces separated_first_cells(dst, src) by {
         unfold(separated_first_cells(dst, src));
         symbolic_execute();
         fold(separated_first_cells(dst, src));

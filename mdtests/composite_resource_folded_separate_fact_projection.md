@@ -19,12 +19,12 @@ resource separated_first_cells(dst: int32*, src: int32*) {
 verifying "write_dst_read_src.c";
 
 int32 write_dst_read_src(int32* dst, int32* src) {
-    requires write(dst[0..1]);
-    requires read(src[0..1]);
-    requires separated_first_cells(dst, src);
+    consumes dst[0..1];
+    views src[0..1];
+    consumes separated_first_cells(dst, src);
 
     ensures src[0] == old(src[0]) by auto;
-    ensures separated_first_cells(dst, src) by auto;
+    produces separated_first_cells(dst, src) by auto;
 }
 ```
 

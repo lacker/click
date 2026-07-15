@@ -15,8 +15,8 @@ resource can_complete(cb: int32);
 verifying "use_once.c";
 
 int32 use_once(int32 cb) {
-    requires can_complete(cb);
-    requires can_complete(cb);
+    consumes can_complete(cb);
+    consumes can_complete(cb);
 
     ensures result == 0 by auto;
 }

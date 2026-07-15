@@ -18,8 +18,8 @@ verifying "pointer_params_may_alias_without_separate.c";
 int32 clobber_dst(int32* dst, int32* src) {
     requires loadable(dst[0..1]);
     requires loadable(src[0..1]);
-    requires write(dst[0..1]);
-    requires read(src[0..1]);
+    consumes dst[0..1];
+    views src[0..1];
 
     ensures source_unchanged: src[0] == old(src[0]) by auto;
 }

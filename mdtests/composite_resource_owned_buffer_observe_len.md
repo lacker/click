@@ -30,7 +30,7 @@ resource owned_buffer(owner: struct owner*) {
 verifying "buffer_len.c";
 
 int32 buffer_len(struct owner* owner) {
-    requires owned_buffer(owner);
+    consumes owned_buffer(owner);
 
     ensures result <= owner->cap by {
         observe(owned_buffer(owner));
@@ -38,7 +38,7 @@ int32 buffer_len(struct owner* owner) {
         simp();
     }
 
-    ensures owned_buffer(owner) by {
+    produces owned_buffer(owner) by {
         observe(owned_buffer(owner));
         symbolic_execute();
     }

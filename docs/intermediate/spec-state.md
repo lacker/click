@@ -54,16 +54,15 @@ Click already has a few spec-only mechanisms:
 - `let ... where` introduces immutable witnesses in proposition clauses.
 - `choose` introduces proof-local names from existential requirements.
 - `witness` supplies proof-local values for existential goals.
-- `read(p[lo..hi])` and `write(p[lo..hi])` introduce first resource facts for
-  external memory accesses.
+- `views p[lo..hi]` and `owns p[lo..hi]` introduce resource facts for external
+  memory accesses.
 
 These are useful, but they are not the same as first-class mutable spec state.
 
-Across a function call, `read(...)` resources are copyable and `write(...)`
-resources follow the callee's contract: `requires write(...)` receives the
-permission, and a matching `ensures` returns it. Click can split a covered
-subrange out of a larger linear range and rejoin adjacent returned ranges. More
-general abstract permission predicates remain future work.
+Across a function call, viewed resources are copyable and owned resources
+follow the callee's resource verbs. `owns` receives and returns ownership;
+`consumes` receives it; `produces` returns it. Click can split a covered
+subrange out of a larger owned range and rejoin adjacent returned ranges.
 
 ## The Design Constraint
 

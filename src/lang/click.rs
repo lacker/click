@@ -1137,70 +1137,79 @@ pub fn verify_c0_sources(
         let verification_function_environment = function_environment
             .clone()
             .with_verified_loop_rules(verified_loop_rules);
-        for claim in function_claims(&function_block) {
-            let claim_label = function_claim_label(function_block.signature.name(), &claim);
-            match claim.proof() {
-                Proof::Tactic(Tactic::Auto) => {
-                    let theorems = prove_claim_by_auto(
-                        source_path,
-                        &function_block,
-                        parsed_function,
-                        &claim,
-                        &claim_label,
-                        &verification_function_environment,
-                        &predicate_environment,
-                        &click_function_environment,
-                        &resource_environment,
-                        &theorem_environment,
-                    )?;
-                    verified.extend(theorems);
-                }
-                Proof::Tactic(Tactic::Frame) => {
-                    let theorems = prove_claim_by_frame(
-                        source_path,
-                        &function_block,
-                        parsed_function,
-                        &claim,
-                        &claim_label,
-                        &verification_function_environment,
-                        &predicate_environment,
-                        &click_function_environment,
-                        &resource_environment,
-                        &theorem_environment,
-                    )?;
-                    verified.extend(theorems);
-                }
-                Proof::Tactic(Tactic::Simp) => {
-                    let theorems = prove_claim_by_simp(
-                        source_path,
-                        &function_block,
-                        parsed_function,
-                        &claim,
-                        &claim_label,
-                        &verification_function_environment,
-                        &predicate_environment,
-                        &click_function_environment,
-                        &resource_environment,
-                        &theorem_environment,
-                    )?;
-                    verified.extend(theorems);
-                }
-                Proof::Steps(steps) => {
-                    let theorems = prove_claim_by_steps(
-                        source_path,
-                        &function_block,
-                        parsed_function,
-                        &claim,
-                        &claim_label,
-                        &verification_function_environment,
-                        &predicate_environment,
-                        &click_function_environment,
-                        &resource_environment,
-                        &theorem_environment,
-                        steps,
-                    )?;
-                    verified.extend(theorems);
-                }
+        let implicit_safety_clause = EnsureClause {
+            name: None,
+            ensure: Ensure::Proposition(ClickProposition::Comparison {
+                left: ContractExpression::CFragment(CExpression::Value(int32(0))),
+                operator: ComparisonOperator::Equal,
+                right: ContractExpression::CFragment(CExpression::Value(int32(0))),
+            }),
+            proof: Proof::Tactic(Tactic::Auto),
+        };
+        let mut claims = function_claims(&function_block);
+        let has_explicit_claims = !claims.is_empty();
+        if !has_explicit_claims {
+            claims.push(FunctionClaimRef::Ensure(0, &implicit_safety_clause));
+        }
+        for claim in claims {
+            let claim_label = if has_explicit_claims {
+                function_claim_label(function_block.signature.name(), &claim)
+            } else {
+                format!("{}.body_safety", function_block.signature.name())
+            };
+            let theorems = match claim.proof() {
+                Proof::Tactic(Tactic::Auto) => prove_claim_by_auto(
+                    source_path,
+                    &function_block,
+                    parsed_function,
+                    &claim,
+                    &claim_label,
+                    &verification_function_environment,
+                    &predicate_environment,
+                    &click_function_environment,
+                    &resource_environment,
+                    &theorem_environment,
+                )?,
+                Proof::Tactic(Tactic::Frame) => prove_claim_by_frame(
+                    source_path,
+                    &function_block,
+                    parsed_function,
+                    &claim,
+                    &claim_label,
+                    &verification_function_environment,
+                    &predicate_environment,
+                    &click_function_environment,
+                    &resource_environment,
+                    &theorem_environment,
+                )?,
+                Proof::Tactic(Tactic::Simp) => prove_claim_by_simp(
+                    source_path,
+                    &function_block,
+                    parsed_function,
+                    &claim,
+                    &claim_label,
+                    &verification_function_environment,
+                    &predicate_environment,
+                    &click_function_environment,
+                    &resource_environment,
+                    &theorem_environment,
+                )?,
+                Proof::Steps(steps) => prove_claim_by_steps(
+                    source_path,
+                    &function_block,
+                    parsed_function,
+                    &claim,
+                    &claim_label,
+                    &verification_function_environment,
+                    &predicate_environment,
+                    &click_function_environment,
+                    &resource_environment,
+                    &theorem_environment,
+                    steps,
+                )?,
+            };
+            if has_explicit_claims {
+                verified.extend(theorems);
             }
         }
     }

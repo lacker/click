@@ -32,9 +32,9 @@ resource owned_buffer(owner: struct owner*) {
 verifying "buffer_clear.c";
 
 int32 buffer_clear(struct owner* owner) {
-    requires owned_buffer(owner);
+    consumes owned_buffer(owner);
 
-    ensures owned_buffer(owner) by {
+    produces owned_buffer(owner) by {
         unfold(owned_buffer(owner));
         symbolic_execute();
         fold(owned_buffer(owner));

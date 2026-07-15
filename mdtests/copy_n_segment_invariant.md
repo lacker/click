@@ -26,8 +26,8 @@ int32 copy_n_segment_invariant(int32 dst[], int32 src[], int32 n) {
     requires n <= 2147483647;
     requires loadable(dst[0..n]);
     requires loadable(src[0..n]);
-    requires write(dst[0..n]);
-    requires read(src[0..n]);
+    consumes dst[0..n];
+    views src[0..n];
     requires separate(memory(dst[0..n]), memory(src[0..n]));
     for loop(0) {
         invariant i >= 0;

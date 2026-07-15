@@ -14,9 +14,8 @@ int32 read_first(int32 p[]) {
 verifying "read_first.c";
 
 int32 read_first(int32 p[]) {
-    requires read(p[0..1]);
+    views p[0..1];
 
-    ensures read(p[0..1]) by auto;
 }
 ```
 

@@ -16,7 +16,7 @@ the contract needs:
 
 ```click
 int32 first(int32 p[]) {
-    requires read(p[0..1]);
+    views p[0..1];
     ensures result == p[0] by auto;
 }
 ```
@@ -60,7 +60,7 @@ to know the index is inside the range:
 requires 0 <= k;
 requires k < n;
 requires loadable(p[0..n]);
-requires read(p[0..n]);
+views p[0..n];
 ensures result == p[k] by auto;
 ```
 
@@ -83,13 +83,13 @@ loadability and permission requirements still matter.
 For struct fields, prefer field resources:
 
 ```click
-requires read(obj->ref_count);
-requires write(obj->data);
+views obj->ref_count;
+consumes obj->data;
 ```
 
 Those resources imply loadability for the covered fields. Explicit ranges remain
 useful when a proof needs a broader footprint than one field:
 
 ```click
-requires write(obj[0..3]);
+consumes obj[0..3];
 ```

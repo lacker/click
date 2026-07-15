@@ -37,18 +37,18 @@ verifying "init_once.c";
 verifying "complete_once.c";
 
 int32 init_once(int32 flag[]) {
-    requires write(flag[0..1]);
+    consumes flag[0..1];
 
-    ensures uncalled(flag) by {
+    produces uncalled(flag) by {
         symbolic_execute();
         fold(uncalled(flag));
     }
 }
 
 int32 complete_once(int32 flag[]) {
-    requires uncalled(flag);
+    consumes uncalled(flag);
 
-    ensures called(flag) by {
+    produces called(flag) by {
         unfold(uncalled(flag));
         symbolic_execute();
         fold(called(flag));

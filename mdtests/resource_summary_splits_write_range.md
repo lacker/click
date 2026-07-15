@@ -25,17 +25,17 @@ verifying "write_first.c";
 verifying "write_first_then_second.c";
 
 int32 write_first(int32 p[]) {
-    requires write(p[0..1]);
+    consumes p[0..1];
 
     ensures writes_first: p[0] == 1 by auto;
-    ensures write(p[0..1]) by auto;
+    produces p[0..1] by auto;
 }
 
 int32 write_first_then_second(int32 p[]) {
-    requires write(p[0..2]);
+    consumes p[0..2];
 
     ensures writes_both: p[0] == 1 and p[1] == 2 by auto;
-    ensures write(p[0..2]) by auto;
+    produces p[0..2] by auto;
 }
 ```
 

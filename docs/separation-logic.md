@@ -72,9 +72,9 @@ resource facts.
 At the Click surface, a contract writes separate resource clauses:
 
 ```click
-requires write(p[0..1]);
-requires read(q[0..1]);
-requires owner_buffer(owner);
+consumes p[0..1];
+views q[0..1];
+consumes owner_buffer(owner);
 ```
 
 Internally, those clauses should be understood as resource facts composed

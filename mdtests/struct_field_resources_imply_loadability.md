@@ -20,13 +20,12 @@ int32 set_second(struct pair* p, int32 x) {
 verifying "set_second.c";
 
 int32 set_second(struct pair* p, int32 x) {
-    requires read(p->first);
-    requires write(p->second);
+    views p->first;
+    consumes p->second;
 
     ensures result == old(p->first) by auto;
     ensures p->second == x by auto;
-    ensures read(p->first) by auto;
-    ensures write(p->second) by auto;
+    produces p->second by auto;
 }
 ```
 

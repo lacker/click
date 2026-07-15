@@ -38,7 +38,7 @@ const FILL3_CLICK: &str = r#"
 
         int32 fill3(int32* p) {
             requires loadable(p, 12);
-            requires write(p[0..3]);
+            consumes p[0..3];
             ensures returns_second: result == 2 by auto;
         }
     "#;
@@ -656,9 +656,7 @@ fn parses_resource_observe_unfold_and_fold_steps() {
             verifying "identity.c";
 
             int32 identity(int32* flag) {
-                requires uncalled(flag);
-
-                ensures uncalled(flag) by {
+                owns uncalled(flag) by {
                     observe(uncalled(flag));
                     unfold(uncalled(flag));
                     symbolic_execute();
@@ -1547,7 +1545,7 @@ fn unfolds_predicate_goal_to_prove_compare_swap_sorted() {
 
             int32 compare_swap2(int32* p) {
                 requires loadable(p, 8);
-                requires write(p[0..2]);
+                consumes p[0..2];
                 ensures sorted: sorted_pair(p) by {
                     symbolic_execute();
                     unfold(sorted_pair);
@@ -1706,7 +1704,7 @@ fn verifies_mutable_effect_with_bounded_frame_steps() {
 
             int32 write_second(int32* p) {
                 requires loadable(p, 8);
-                requires write(p[1..2]);
+                consumes p[1..2];
                 mutable p[1..2] by {
                     bounded_execute();
                     frame();
@@ -1771,7 +1769,7 @@ fn auto_certificate_replays_for_bounded_execution() {
 
             int32 fill3_array_loop(int32 p[3]) {
                 requires loadable(p, 12);
-                requires write(p[0..3]);
+                consumes p[0..3];
                 for loop(0) {
                     invariant i >= 0;
                     invariant i <= 3;
@@ -1796,7 +1794,7 @@ fn auto_certificate_replays_for_bounded_execution() {
 
             int32 fill3_array_loop(int32 p[3]) {
                 requires loadable(p, 12);
-                requires write(p[0..3]);
+                consumes p[0..3];
                 for loop(0) {
                     invariant i >= 0;
                     invariant i <= 3;
@@ -1942,7 +1940,7 @@ fn verifies_old_memory_postcondition_for_unmodified_cell() {
 
             int32 write_second(int32* p) {
                 requires loadable(p, 8);
-                requires write(p[1..2]);
+                consumes p[1..2];
                 ensures writes_second: p[1] == 9 by auto;
                 ensures keeps_first: p[0] == old(p[0]) by auto;
             }
@@ -1975,7 +1973,7 @@ fn verifies_quantified_old_memory_postcondition() {
 
             int32 write_second(int32* p) {
                 requires loadable(p, 8);
-                requires write(p[1..2]);
+                consumes p[1..2];
                 ensures keeps_first_cell: forall (int32 k) {
                     0 <= k and k < 1 implies p[k] == old(p[k])
                 } by auto;
@@ -2007,8 +2005,8 @@ fn separate_requirement_proves_symbolic_unwritten_read() {
                 requires j >= 0;
                 requires j < n;
                 requires loadable(p[0..n]);
-                requires write(p[i..i + 1]);
-                requires read(p[j..j + 1]);
+                consumes p[i..i + 1];
+                views p[j..j + 1];
                 requires separate(memory(p[i..i + 1]), memory(p[j..j + 1]));
                 mutable p[i..i + 1] by frame;
                 ensures keeps_j: result == old(p[j]) by auto;
@@ -2034,7 +2032,7 @@ fn quantified_old_memory_rejects_overwritten_cell() {
 
             int32 write_second(int32* p) {
                 requires loadable(p, 8);
-                requires write(p[1..2]);
+                consumes p[1..2];
                 ensures keeps_second_cell: forall (int32 k) {
                     1 <= k and k < 2 implies p[k] == old(p[k])
                 } by auto;
@@ -2066,7 +2064,7 @@ fn verifies_mutable_segment_effect() {
 
             int32 write_second(int32* p) {
                 requires loadable(p, 8);
-                requires write(p[1..2]);
+                consumes p[1..2];
                 mutable p[1..2] by frame;
                 mutable p[0..2] by frame;
                 ensures returns_written: result == 9 by auto;
@@ -2098,7 +2096,7 @@ fn verifies_shifted_loadable_and_mutable_segment() {
 
             int32 write_second(int32* p) {
                 requires loadable((p + 1)[0..1]);
-                requires write((p + 1)[0..1]);
+                consumes (p + 1)[0..1];
                 mutable (p + 1)[0..1] by frame;
                 ensures returns_written: result == 9 by auto;
             }
@@ -2152,7 +2150,7 @@ fn mutable_segment_rejects_write_outside_segment() {
 
             int32 write_second(int32* p) {
                 requires loadable(p, 8);
-                requires write(p[1..2]);
+                consumes p[1..2];
                 mutable p[0..1] by auto;
                 ensures returns_written: result == 9 by auto;
             }
@@ -2196,7 +2194,7 @@ fn immutable_rejects_external_memory_write() {
 
             int32 write_second(int32* p) {
                 requires loadable(p, 8);
-                requires write(p[1..2]);
+                consumes p[1..2];
                 immutable by auto;
                 ensures returns_written: result == 9 by auto;
             }
@@ -2256,7 +2254,7 @@ fn old_memory_postcondition_fails_for_overwritten_cell() {
 
             int32 write_second(int32* p) {
                 requires loadable(p, 8);
-                requires write(p[1..2]);
+                consumes p[1..2];
                 ensures keeps_second: p[1] == old(p[1]) by auto;
             }
         "#;
@@ -2328,7 +2326,7 @@ fn verifies_old_memory_loop_invariant() {
             int32 fill_tail(int32 p[], int32 n) {
                 requires n >= 1 and n <= 2147483647;
                 requires loadable(p, n * 4);
-                requires write(p[0..n]);
+                consumes p[0..n];
                 for loop(0) {
                     invariant i >= 1 and i <= n;
                     invariant p[0] == old(p[0]);
@@ -2362,7 +2360,7 @@ fn verifies_old_memory_loop_invariant_with_segment_bounds() {
             int32 fill_tail(int32 p[], int32 n) {
                 requires n >= 1 and n <= 2147483647;
                 requires loadable(p[0..n]);
-                requires write(p[0..n]);
+                consumes p[0..n];
                 for loop(0) {
                     invariant i >= 1 and i <= n;
                     invariant forall (int32 k) {
@@ -2402,7 +2400,7 @@ fn verifies_symbolic_segment_loadable() {
                 requires n >= 0;
                 requires n <= 2147483647;
                 requires loadable(p[0..n]);
-                requires write(p[0..n]);
+                consumes p[0..n];
                 for loop(0) {
                     invariant i >= 0;
                     invariant i <= n;
@@ -2432,7 +2430,7 @@ fn verifies_loadable_segment_proposition_for_indexed_read() {
                 requires 0 <= index;
                 requires index < n;
                 requires loadable(p[0..n]);
-                requires read(p[0..n]);
+                views p[0..n];
 
                 ensures returns_loaded_value: result == p[index] by auto;
             }
@@ -2464,7 +2462,7 @@ fn verifies_symbolic_loop_mutable_segment() {
                 requires n >= 0;
                 requires n <= 2147483647;
                 requires loadable(p[0..n]);
-                requires write(p[0..n]);
+                consumes p[0..n];
                 for loop(0) {
                     invariant i >= 0;
                     invariant i <= n;
@@ -2501,7 +2499,7 @@ fn verifies_loop_level_mutable_segment() {
                 requires n >= 0;
                 requires n <= 2147483647;
                 requires loadable(p[0..n]);
-                requires write(p[0..n]);
+                consumes p[0..n];
                 for loop(0) {
                     invariant i >= 0;
                     invariant i <= n;
@@ -2538,7 +2536,7 @@ fn verifies_loop_level_iteration_relative_mutable_segment() {
                 requires n >= 0;
                 requires n <= 2147483647;
                 requires loadable(p[0..n]);
-                requires write(p[0..n]);
+                consumes p[0..n];
                 for loop(0) {
                     invariant i >= 0;
                     invariant i <= n;
@@ -2577,7 +2575,7 @@ fn loop_whole_mutable_rejects_loop_modified_local_in_segment() {
                 requires n >= 0;
                 requires n <= 2147483647;
                 requires loadable(p[0..n]);
-                requires write(p[0..n]);
+                consumes p[0..n];
                 for loop(0) {
                     invariant i >= 0;
                     invariant i <= n;
@@ -2619,7 +2617,7 @@ fn verifies_loop_level_growing_prefix_mutable_segment() {
                 requires n >= 0;
                 requires n <= 2147483647;
                 requires loadable(p[0..n]);
-                requires write(p[0..n]);
+                consumes p[0..n];
                 for loop(0) {
                     invariant i >= 0;
                     invariant i <= n;
@@ -2658,7 +2656,7 @@ fn verifies_loop_level_shifted_suffix_mutable_segment() {
                 requires n >= 1;
                 requires n <= 2147483647;
                 requires loadable(p[0..n]);
-                requires write(p[0..n]);
+                consumes p[0..n];
                 for loop(0) {
                     invariant i >= 1;
                     invariant i <= n;
@@ -2697,8 +2695,8 @@ fn verifies_loop_level_multi_segment_mutable_footprint() {
                 requires n <= 2147483647;
                 requires loadable(p[0..n]);
                 requires loadable(q[0..n]);
-                requires write(p[0..n]);
-                requires write(q[0..n]);
+                consumes p[0..n];
+                consumes q[0..n];
                 for loop(0) {
                     invariant i >= 0;
                     invariant i <= n;
@@ -2737,7 +2735,7 @@ fn loop_level_mutable_segment_rejects_write_outside_segment() {
                 requires n >= 0;
                 requires n <= 2147483647;
                 requires loadable(p[0..n]);
-                requires write(p[0..n]);
+                consumes p[0..n];
                 for loop(0) {
                     invariant i >= 0;
                     invariant i <= n;
@@ -2797,7 +2795,7 @@ fn loop_level_immutable_rejects_external_memory_write() {
                 requires n >= 0;
                 requires n <= 2147483647;
                 requires loadable(p[0..n]);
-                requires write(p[0..n]);
+                consumes p[0..n];
                 for loop(0) {
                     invariant i >= 0;
                     invariant i <= n;
@@ -2911,7 +2909,7 @@ fn function_mutable_uses_loop_effect_summary() {
                 requires n >= 0;
                 requires n <= 2147483647;
                 requires loadable(p[0..n]);
-                requires write(p[0..n]);
+                consumes p[0..n];
                 for loop(0) {
                     invariant i >= 0;
                     invariant i <= n;
@@ -2950,7 +2948,7 @@ fn function_mutable_rejects_loop_effect_outside_function_bound() {
                 requires n >= 0;
                 requires n <= 2147483647;
                 requires loadable(p[0..n]);
-                requires write(p[0..n]);
+                consumes p[0..n];
                 for loop(0) {
                     invariant i >= 0;
                     invariant i <= n;
@@ -2996,7 +2994,7 @@ fn function_mutable_accepts_shifted_loop_effect_subset() {
                 requires n >= 1;
                 requires n <= 2147483647;
                 requires loadable(p[0..n]);
-                requires write(p[0..n]);
+                consumes p[0..n];
                 for loop(0) {
                     invariant i >= 1;
                     invariant i <= n;
@@ -3035,7 +3033,7 @@ fn function_immutable_rejects_writing_loop_effect_summary() {
                 requires n >= 0;
                 requires n <= 2147483647;
                 requires loadable(p[0..n]);
-                requires write(p[0..n]);
+                consumes p[0..n];
                 for loop(0) {
                     invariant i >= 0;
                     invariant i <= n;
@@ -3288,8 +3286,8 @@ fn verifies_symbolic_copy_segment_invariant() {
                 requires n <= 2147483647;
                 requires loadable(dst[0..n]);
                 requires loadable(src[0..n]);
-                requires write(dst[0..n]);
-                requires read(src[0..n]);
+                consumes dst[0..n];
+                views src[0..n];
                 requires separate(memory(dst[0..n]), memory(src[0..n]));
                 for loop(0) {
                     invariant i >= 0;
@@ -3342,8 +3340,8 @@ fn auto_certificate_replays_for_loop_frame_claim() {
                 requires n <= 2147483647;
                 requires loadable(dst[0..n]);
                 requires loadable(src[0..n]);
-                requires write(dst[0..n]);
-                requires read(src[0..n]);
+                consumes dst[0..n];
+                views src[0..n];
                 requires separate(memory(dst[0..n]), memory(src[0..n]));
                 for loop(0) {
                     invariant i >= 0;
@@ -3391,8 +3389,8 @@ fn auto_certificate_replays_for_loop_frame_claim() {
                 requires n <= 2147483647;
                 requires loadable(dst[0..n]);
                 requires loadable(src[0..n]);
-                requires write(dst[0..n]);
-                requires read(src[0..n]);
+                consumes dst[0..n];
+                views src[0..n];
                 requires separate(memory(dst[0..n]), memory(src[0..n]));
                 for loop(0) {
                     invariant i >= 0;
@@ -3655,9 +3653,8 @@ fn struct_name_signature_mismatch_reports_direct_error() {
         verifying "get_value.c";
 
         int32 get_value(struct expected* p) {
-            requires read(p->value);
+            views p->value;
             ensures result == old(p->value) by auto;
-            ensures read(p->value) by auto;
         }
     "#;
 

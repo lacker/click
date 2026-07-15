@@ -44,26 +44,26 @@ verifying "select_right.c";
 verifying "select_ready.c";
 
 int32 select_left(int32 key) {
-    requires left_path(key);
-    requires ready_permit(key);
+    consumes left_path(key);
+    consumes ready_permit(key);
 
-    ensures ready_permit(key) by auto;
+    produces ready_permit(key) by auto;
     ensures result == key by auto;
 }
 
 int32 select_right(int32 key) {
-    requires right_path(key);
-    requires ready_permit(key);
+    consumes right_path(key);
+    consumes ready_permit(key);
 
-    ensures ready_permit(key) by auto;
+    produces ready_permit(key) by auto;
     ensures result == key by auto;
 }
 
 int32 select_ready(int32 key, int32 choose_left) {
     requires key >= 0;
-    requires left_path(key);
-    requires right_path(key);
-    requires ready_permit(key);
+    consumes left_path(key);
+    consumes right_path(key);
+    consumes ready_permit(key);
 
     ensures result >= 0 by {
         execute_step();

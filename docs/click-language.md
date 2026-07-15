@@ -169,8 +169,8 @@ requires loadable(p[0..n]);
 requires loadable((p + 1)[0..1]);
 requires loadable(p[0..n]);
 requires separate(memory(dst[0..n]), memory(src[0..n]));
-requires read(p[0..1]);
-requires write(p[0..1]);
+views p[0..1];
+consumes p[0..1];
 ```
 
 Requirement labels use the same `label:` spelling as `ensures` labels. Labels
@@ -192,30 +192,30 @@ package it as a named predicate and unfold it at proof sites when needed.
 
 ## Read And Write Resources
 
-`read(base[start..end])` and `write(base[start..end])` are the first
-resource-context permissions. They are not classical predicates: they are
-carried in the verifier's resource context rather than copied as ordinary proof
-facts.
+Memory resources have viewed and owned resource elements. `views
+base[start..end]` supplies persistent read access; `owns`, `consumes`, and
+`produces` supply write access with the transfer behavior described below.
+These are resource facts, not classical predicates, and are carried in the
+verifier's resource context rather than copied as pure facts.
 
 ```click
 int32 write_next(int32 p[], int32 x) {
-    requires write(p[0..1]);
+    consumes p[0..1];
     requires x < 2147483647;
 
     ensures p[0] == x + 1 by auto;
-    ensures write(p[0..1]) by auto;
+    produces p[0..1] by auto;
 }
 ```
 
-Permission checking is mandatory for external memory. External loads require
-covering `read(...)` or `write(...)`, and external stores require covering
-`write(...)`. Resource ranges use the element width of the pointer expression,
+Permission checking is mandatory for external memory. External loads require a
+covering viewed or owned memory resource, and external stores require a covering
+owned memory resource. Resource ranges use the element width of the pointer expression,
 so `int32 p[]` ranges count four-byte cells and `uint8 bytes[]` ranges count
 bytes. Local stack accesses do not require resources. A function with no
 resource context has no permission to access external memory.
-In practice, top-level verification gets a resource context from
-`requires read(...)` and `requires write(...)` clauses, while function calls
-use the callee's resource summary.
+Top-level verification gets its resource context from the function's resource
+verbs, while function calls use the callee's resource summary.
 
 These permissions are currently one built-in resource family: memory resources.
 The family defines how resources entail, split, rejoin, transfer, and consume
@@ -228,11 +228,10 @@ Click also supports exact-match token resources:
 resource open_fd(fd: int32);
 ```
 
-After declaration, `requires open_fd(fd);` and
-`ensures open_fd(fd) by auto;` use the same resource context. A callee that
-requires a token resource consumes it unless the callee also returns it
-with a matching resource `ensures`. Token resource arguments are type checked,
-and duplicate identical resource tokens in one resource context are rejected.
+After declaration, `owns open_fd(fd)`, `views open_fd(fd)`, `consumes
+open_fd(fd)`, and `produces open_fd(fd)` use the same resource context. Token
+resource arguments are type checked, and duplicate identical owned resource
+elements in one resource context are rejected.
 
 Composite resources are declared resources with a body:
 
@@ -241,7 +240,7 @@ resource socket_open(fd: int32);
 
 resource uncalled(flag: int32*) {
     contains socket_open(7);
-    contains write(flag[0..1]);
+    owns flag[0..1];
     fact flag[0] == 0;
 }
 ```
@@ -263,11 +262,11 @@ A function block may be resource-only when it consumes a resource:
 
 ```click
 int32 complete(int32 cb) {
-    requires can_complete(cb);
+    consumes can_complete(cb);
 }
 ```
 
-Resource clauses can also be written with resource verbs:
+Resource facts are written with resource verbs:
 
 ```click
 int32 update(int32* p) {
@@ -290,25 +289,22 @@ int32 open(int32 fd) {
 `owns` means the function starts and ends with the owned resource. `views`
 means the function can rely on the viewed/core resource without consuming it.
 `consumes` requires an owned resource and does not return it. `produces`
-returns an owned resource. The older `requires ...;` and
-`ensures ... by ...;` forms are still accepted.
+returns an owned resource. `requires` and `ensures` accept pure propositions
+only.
 
-`write(...)` implies `read(...)`: a write resource permits both loads and
-stores, and can satisfy an `ensures read(...)` guarantee. `read(...)` is
-copyable across calls. A callee can declare `requires read(...)` without
-consuming the caller's read or write permission. `write(...)` is transferred
-linearly: a callee must declare `requires write(...)` to receive write
-permission and `ensures write(...)` to return it. Allocation lifecycle and
-deallocation authority are intentionally outside this first-layer resource
-surface.
+An owned memory resource implies its viewed core: ownership permits both loads
+and stores, while a view permits loads and is copyable across calls. A callee
+using `views` does not consume the caller's viewed or owned element. Owned
+elements are transferred by `owns`, `consumes`, and `produces`. Allocation
+lifecycle and deallocation authority are intentionally outside this first-layer
+resource surface.
 
-A call can pass a covered subrange, such as passing `write(p[0..1])` from a
-caller that has `write(p[0..2])`; Click keeps the residue and rejoins adjacent
-returned ranges. The same applies to symbolic ranges when the current facts
-prove the subrange is covered. `read(...)` and `write(...)` also make the
-covered range loadable for symbolic execution, so ordinary external reads and
-writes do not need a separate `loadable(...)` requirement for the same
-range.
+A call can pass a covered subrange, such as consuming `p[0..1]` from a caller
+that owns `p[0..2]`; Click keeps the residue and rejoins adjacent returned
+ranges. The same applies to symbolic ranges when the current facts prove the
+subrange is covered. Viewed and owned memory elements also make the covered
+range loadable for symbolic execution, so ordinary external reads and writes
+do not need a separate `loadable(...)` requirement for the same range.
 
 This is intentionally not the full permission system. There are no fractions,
 ownership predicates, explicit resource algebra proof steps, C heap allocation,

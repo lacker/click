@@ -25,17 +25,17 @@ verifying "write_first_cell.c";
 verifying "write_first_then_second_cell.c";
 
 int32 write_first_cell(int32 p[]) {
-    requires write(p[0..1]);
+    consumes p[0..1];
 
     ensures writes_first: p[0] == 1 by auto;
-    ensures write(p[0..1]) by auto;
+    produces p[0..1] by auto;
 }
 
 int32 write_first_then_second_cell(int32 p[]) {
-    requires write(p[0..2]);
+    consumes p[0..2];
 
     ensures writes_both: p[0] == 1 and p[1] == 2 by auto;
-    ensures write(p[0..2]) by auto;
+    produces p[0..2] by auto;
 }
 ```
 

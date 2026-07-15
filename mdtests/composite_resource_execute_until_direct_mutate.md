@@ -34,9 +34,9 @@ resource owned_buffer(owner: struct owner*) {
 verifying "len_then_clear_direct.c";
 
 int32 len_then_clear_direct(struct owner* owner) {
-    requires owned_buffer(owner);
+    consumes owned_buffer(owner);
 
-    ensures owned_buffer(owner) by {
+    produces owned_buffer(owner) by {
         observe(owned_buffer(owner));
         execute_until(statement(2));
         unfold(owned_buffer(owner));

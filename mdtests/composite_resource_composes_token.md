@@ -33,17 +33,17 @@ verifying "init_server.c";
 verifying "use_server.c";
 
 int32 init_server(int32 fd, int32 state[]) {
-    requires socket_open(fd);
-    requires write(state[0..1]);
+    consumes socket_open(fd);
+    consumes state[0..1];
 
-    ensures live_server(fd, state) by {
+    produces live_server(fd, state) by {
         symbolic_execute();
         fold(live_server(fd, state));
     }
 }
 
 int32 use_server(int32 fd, int32 state[]) {
-    requires live_server(fd, state);
+    consumes live_server(fd, state);
 
     ensures result == fd by {
         unfold(live_server(fd, state));
