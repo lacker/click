@@ -48,6 +48,8 @@ Larger example projects live directly under `examples/`. They contain ordinary
   `mdtests/c_division_overflow.md`: division/remainder undefined behavior.
 - `mdtests/c_bitwise.md`: `int32` bitwise operators in C fragments and pure
   Click expressions, plus `uint8` promotion through bitwise expressions.
+- `mdtests/xor_swap.md`: symbolic XOR normalization proves the three-step
+  scalar `^=` swap against function-entry values.
 - `mdtests/c_shifts.md`: signed `int32` shifts in C fragments and pure Click
   expressions, including arithmetic right shift.
 - `mdtests/c_shift_negative_count.md`, `mdtests/c_shift_large_count.md`,
@@ -55,7 +57,7 @@ Larger example projects live directly under `examples/`. They contain ordinary
   shift undefined behavior.
 - `mdtests/c_shift_uint8_promoted.md`: `uint8` promotion through shifts.
 - `mdtests/c_statement_update_sugar.md`: standalone `++`, `--`, `+=`, `-=`,
-  and `*=` statement sugar.
+  and `*=` statement sugar; `mdtests/xor_swap.md` exercises `^=`.
 - `mdtests/c_statement_update_rejects_expression.md`: update expressions remain
   unsupported inside larger expressions.
 

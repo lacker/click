@@ -41,6 +41,18 @@ fn write_context(
 }
 
 #[test]
+fn bitwise_xor_normalizes_swap_identities() {
+    let x = Bitvector32Term::Variable(Variable(1));
+    let y = Bitvector32Term::Variable(Variable(2));
+    let x_xor_y = Bitvector32Term::bitwise_xor(x.clone(), y.clone());
+    let recovered_x = Bitvector32Term::bitwise_xor(y.clone(), x_xor_y.clone());
+    let recovered_y = Bitvector32Term::bitwise_xor(x_xor_y, x.clone());
+
+    assert_eq!(recovered_x, x);
+    assert_eq!(recovered_y, y);
+}
+
+#[test]
 fn join_state_forgets_changed_scalars_and_memory() {
     let stable_x = int32(Bitvector32Term::Variable(Variable(7)));
     let pointer = Pointer {

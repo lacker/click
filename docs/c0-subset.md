@@ -33,7 +33,7 @@ Supported C0 surface includes:
 - C logical `&&`, `||`, and unary `!` with short-circuit C scalar truthiness
 - assignment and sequencing
 - statement update sugar: `x++`, `x--`, `x += expr`, `x -= expr`, and
-  `x *= expr`
+  `x *= expr`, and `x ^= expr`
 - `if` / `else` using C scalar truthiness
 - `while`
 - assignment-style `for (init; condition; step)` loops lowered to `while`

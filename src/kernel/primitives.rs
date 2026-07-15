@@ -1103,13 +1103,44 @@ impl Bitvector32Term {
     }
 
     pub(super) fn bitwise_xor(left: Self, right: Self) -> Self {
-        match (&left, &right) {
-            (Self::Constant(left), Self::Constant(right)) => Self::Constant(*left ^ *right),
-            (_, Self::Constant(0)) => left,
-            (Self::Constant(0), _) => right,
-            _ if left == right => Self::Constant(0),
-            _ => Self::BitwiseXor(Box::new(left), Box::new(right)),
+        fn flatten(term: Bitvector32Term, constant: &mut u32, terms: &mut Vec<Bitvector32Term>) {
+            match term {
+                Bitvector32Term::Constant(value) => *constant ^= value,
+                Bitvector32Term::BitwiseXor(left, right) => {
+                    flatten(*left, constant, terms);
+                    flatten(*right, constant, terms);
+                }
+                term => terms.push(term),
+            }
         }
+
+        let mut constant = 0;
+        let mut terms = Vec::new();
+        flatten(left, &mut constant, &mut terms);
+        flatten(right, &mut constant, &mut terms);
+        terms.sort();
+
+        let mut normalized = Vec::new();
+        let mut index = 0;
+        while index < terms.len() {
+            let mut end = index + 1;
+            while end < terms.len() && terms[end] == terms[index] {
+                end += 1;
+            }
+            if (end - index) % 2 == 1 {
+                normalized.push(terms[index].clone());
+            }
+            index = end;
+        }
+        if constant != 0 {
+            normalized.push(Self::Constant(constant));
+            normalized.sort();
+        }
+
+        normalized
+            .into_iter()
+            .reduce(|left, right| Self::BitwiseXor(Box::new(left), Box::new(right)))
+            .unwrap_or(Self::Constant(0))
     }
 
     pub(super) fn bitwise_not(value: Self) -> Self {

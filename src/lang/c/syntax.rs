@@ -428,6 +428,7 @@ enum Token {
     PipePipe,
     Star,
     StarEqual,
+    CaretEqual,
     Slash,
     Percent,
     Amp,
@@ -447,6 +448,7 @@ impl Token {
                 | Self::PlusEqual
                 | Self::MinusEqual
                 | Self::StarEqual
+                | Self::CaretEqual
         )
     }
 }
@@ -932,6 +934,10 @@ impl Parser {
                 Box::new(C0Expression::Variable(name.clone())),
                 Box::new(self.parse_expression()?),
             ),
+            Token::CaretEqual => C0Expression::BitwiseXor(
+                Box::new(C0Expression::Variable(name.clone())),
+                Box::new(self.parse_expression()?),
+            ),
             token => {
                 return Err(C0SyntaxError::new(format!(
                     "expected scalar update operator in {context}, got {token:?}"
@@ -1385,6 +1391,7 @@ fn tokenize(source: &str) -> Result<Vec<Token>, C0SyntaxError> {
                 ('-', '-') => Some(Token::MinusMinus),
                 ('-', '=') => Some(Token::MinusEqual),
                 ('*', '=') => Some(Token::StarEqual),
+                ('^', '=') => Some(Token::CaretEqual),
                 _ => None,
             };
             if let Some(token) = token {

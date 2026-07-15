@@ -8,6 +8,7 @@ statements and lower to ordinary assignments:
 - `i += expr;`
 - `i -= expr;`
 - `i *= expr;`
+- `i ^= expr;`
 
 They do not introduce C expression side effects.
 
