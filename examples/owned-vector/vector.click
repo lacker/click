@@ -6,7 +6,6 @@ resource empty_vector(owner: struct vector*) {
     fact owner->len == 0;
     fact 1 <= owner->cap;
     fact separate(memory(owner[0..4]), memory((owner->data)[0..owner->cap]));
-    fact separate(memory(owner[0..4]), memory((owner->data)[0..1]));
 }
 
 resource vector(owner: struct vector*) {
@@ -17,13 +16,12 @@ resource vector(owner: struct vector*) {
     fact 1 <= owner->len;
     fact owner->len <= owner->cap;
     fact separate(memory(owner[0..4]), memory((owner->data)[0..owner->cap]));
-    fact separate(memory(owner[0..4]), memory((owner->data)[0..1]));
 }
 
 verifying "vector_init.c";
 verifying "vector_len.c";
 verifying "vector_get.c";
-verifying "vector_set_first.c";
+verifying "vector_set.c";
 verifying "vector_push.c";
 verifying "vector_clear.c";
 verifying "vector_pipeline.c";
@@ -55,8 +53,9 @@ int32 vector_get(struct vector* owner, int32 index) {
     ensures result == (owner->data)[index] by auto;
 }
 
-int32 vector_set_first(struct vector* owner, int32 value) {
-    requires 0 < owner->len;
+int32 vector_set(struct vector* owner, int32 index, int32 value) {
+    requires 0 <= index;
+    requires index < owner->len;
 
     owns vector(owner) by {
         unfold(vector(owner));

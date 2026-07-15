@@ -44,8 +44,8 @@ empty-to-nonempty and nonempty-to-empty state transitions, and a multi-step
 pipeline.
 
 The project README records the current limits that the larger example exposes,
-including symbolic-index mutation and modular calls that consume memory-backed
-composite resources.
+including modular calls that consume memory-backed composite resources and
+duplicated execution scripts for separate postconditions.
 
 ## How To Read An Example Project
 

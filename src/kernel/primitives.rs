@@ -1018,14 +1018,10 @@ impl Bitvector32Term {
             (Self::Constant(left), Self::Constant(right)) => {
                 Self::Constant(left.wrapping_add(*right))
             }
-            (Self::Constant(constant), Self::Subtract(base, subtrahend))
-                if subtrahend.as_ref() == &Self::Constant(*constant) =>
-            {
+            (_, Self::Subtract(base, subtrahend)) if subtrahend.as_ref() == &left => {
                 base.as_ref().clone()
             }
-            (Self::Subtract(base, subtrahend), Self::Constant(constant))
-                if subtrahend.as_ref() == &Self::Constant(*constant) =>
-            {
+            (Self::Subtract(base, subtrahend), _) if subtrahend.as_ref() == &right => {
                 base.as_ref().clone()
             }
             (_, Self::Constant(0)) => left,

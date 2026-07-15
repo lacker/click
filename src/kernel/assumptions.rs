@@ -2342,7 +2342,7 @@ impl Assumptions {
         }
 
         if byte_width == 4 {
-            if let Some(index) = pointer.element_index_from_base(base) {
+            if let Some(index) = self.pointer_element_index_from_base(pointer, base) {
                 if let Some(element_count) = int32_element_count_from_bytes(bytes) {
                     if self.decide(&ConditionTerm::signed_greater_equal(
                         index.clone(),
@@ -2407,6 +2407,42 @@ impl Assumptions {
         )
     }
 
+    fn pointer_element_index_from_base(
+        &self,
+        pointer: &Pointer,
+        base: &Pointer,
+    ) -> Option<Bitvector32Term> {
+        if pointer.block != base.block {
+            return None;
+        }
+        if self.decide(&ConditionTerm::pointer_offset_equal(
+            pointer.offset.clone(),
+            base.offset.clone(),
+        )) == Some(true)
+        {
+            return Some(Bitvector32Term::Constant(0));
+        }
+
+        if let PointerOffsetTerm::Add(left, right) = &pointer.offset {
+            if self.decide(&ConditionTerm::pointer_offset_equal(
+                left.as_ref().clone(),
+                base.offset.clone(),
+            )) == Some(true)
+            {
+                return int32_element_index_from_offset(right);
+            }
+            if self.decide(&ConditionTerm::pointer_offset_equal(
+                right.as_ref().clone(),
+                base.offset.clone(),
+            )) == Some(true)
+            {
+                return int32_element_index_from_offset(left);
+            }
+        }
+
+        pointer.element_index_from_base(base)
+    }
+
     pub(super) fn pointer_in_range(
         &self,
         pointer: &Pointer,
@@ -2414,7 +2450,20 @@ impl Assumptions {
         start: &Bitvector32Term,
         end: &Bitvector32Term,
     ) -> bool {
-        let Some(index) = pointer.element_index_from_base(base) else {
+        let range_base = base.offset_by_int32_elements(start.clone());
+        if let Some(index) = self.pointer_element_index_from_base(pointer, &range_base) {
+            let range_length = Bitvector32Term::subtract(end.clone(), start.clone());
+            if self.decide(&ConditionTerm::signed_less_equal(
+                Bitvector32Term::Constant(0),
+                index.clone(),
+            )) == Some(true)
+                && self.decide(&ConditionTerm::signed_less_than(index, range_length)) == Some(true)
+            {
+                return true;
+            }
+        }
+
+        let Some(index) = self.pointer_element_index_from_base(pointer, base) else {
             return false;
         };
         self.decide(&ConditionTerm::signed_less_equal(
@@ -2519,6 +2568,15 @@ impl Assumptions {
         let (CResource::Memory(parent), CResource::Memory(child)) = (parent, child) else {
             return false;
         };
+        if Bitvector32Term::subtract(child.end.clone(), child.start.clone()).as_const() == Some(1) {
+            let child_pointer = child.base.offset_by_int32_elements(child.start.clone());
+            return self.pointer_in_range(
+                &child_pointer,
+                parent.base(),
+                parent.start(),
+                parent.end(),
+            );
+        }
         self.range_covered_by_fact_range(child, parent.base(), parent.start(), parent.end())
     }
 
@@ -2609,7 +2667,7 @@ impl Assumptions {
         if target.base.block != base.block {
             return None;
         }
-        let base_delta = base.element_index_from_base(&target.base)?;
+        let base_delta = self.pointer_element_index_from_base(base, &target.base)?;
         let start = Bitvector32Term::add(base_delta.clone(), start.clone());
         let end = Bitvector32Term::add(base_delta, end.clone());
         Some((
@@ -2626,7 +2684,25 @@ impl Assumptions {
         start: &Bitvector32Term,
         end: &Bitvector32Term,
     ) -> bool {
-        if let Some(index) = pointer.element_index_from_base(base) {
+        if byte_width % 4 == 0 {
+            let range_base = base.offset_by_int32_elements(start.clone());
+            if let Some(index) = self.pointer_element_index_from_base(pointer, &range_base) {
+                let range_length = Bitvector32Term::subtract(end.clone(), start.clone());
+                let access_length = Bitvector32Term::Constant(byte_width / 4);
+                let access_end = Bitvector32Term::add(index.clone(), access_length);
+                if self.decide(&ConditionTerm::signed_less_equal(
+                    Bitvector32Term::Constant(0),
+                    index,
+                )) == Some(true)
+                    && self.decide(&ConditionTerm::signed_less_equal(access_end, range_length))
+                        == Some(true)
+                {
+                    return true;
+                }
+            }
+        }
+
+        if let Some(index) = self.pointer_element_index_from_base(pointer, base) {
             if byte_width == 4 {
                 return self.decide(&ConditionTerm::signed_less_equal(
                     start.clone(),
@@ -2678,7 +2754,7 @@ impl Assumptions {
             return true;
         }
 
-        if let Some(index) = pointer.element_index_from_base(&range.base) {
+        if let Some(index) = self.pointer_element_index_from_base(pointer, &range.base) {
             if self.decide(&ConditionTerm::signed_less_than(
                 index.clone(),
                 range.start.clone(),
@@ -2724,7 +2800,24 @@ impl Assumptions {
         start: &Bitvector32Term,
         end: &Bitvector32Term,
     ) -> bool {
-        let Some(base_delta) = range.base.element_index_from_base(base) else {
+        let fact_base = base.offset_by_int32_elements(start.clone());
+        let range_base = range.base.offset_by_int32_elements(range.start.clone());
+        if let Some(base_delta) = self.pointer_element_index_from_base(&range_base, &fact_base) {
+            let range_length = Bitvector32Term::subtract(range.end.clone(), range.start.clone());
+            let fact_length = Bitvector32Term::subtract(end.clone(), start.clone());
+            let range_end = Bitvector32Term::add(base_delta.clone(), range_length);
+            if self.decide(&ConditionTerm::signed_less_equal(
+                Bitvector32Term::Constant(0),
+                base_delta,
+            )) == Some(true)
+                && self.decide(&ConditionTerm::signed_less_equal(range_end, fact_length))
+                    == Some(true)
+            {
+                return true;
+            }
+        }
+
+        let Some(base_delta) = self.pointer_element_index_from_base(&range.base, base) else {
             return false;
         };
         let range_start = Bitvector32Term::add(base_delta.clone(), range.start.clone());

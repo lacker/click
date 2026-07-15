@@ -1,10 +1,10 @@
 # composite resource symbolic index mutation frame
 
-This records the current gap in preserving separate vector metadata across a
-write through a symbolic backing-array index. The index bounds place the write
-inside the backing resource, while `separate` keeps that write disjoint from the
-owner fields. Refolding should eventually succeed without re-proving the
-unchanged metadata facts.
+This checks that a write through a symbolic backing-array index preserves
+separate vector metadata. The index bounds place the write inside the backing
+resource, while `separate` keeps that write disjoint from the owner fields, so
+the same composite resource can be refolded without re-proving its unchanged
+metadata facts.
 
 ```c filename=vector_set.c
 struct vector {
@@ -54,5 +54,5 @@ int32 vector_set(struct vector* owner, int32 index, int32 value) {
 ```
 
 ```expect
-fail: `fold(vector(owner))` fact failed
+pass
 ```

@@ -32,7 +32,8 @@ so folding either resource tests dependent composite-resource definitions.
   vector.
 - `vector_len` reads metadata through `views vector(owner)`.
 - `vector_get` performs an indexed backing-array read through a viewed vector.
-- `vector_set_first` mutates the first element while preserving ownership.
+- `vector_set` mutates an arbitrary in-bounds element while preserving
+  ownership and vector metadata.
 - `vector_push` transitions an empty vector to a nonempty vector.
 - `vector_clear` transitions a nonempty vector back to an empty vector.
 - `vector_pipeline` performs both transitions inline and calls `vector_get`
@@ -47,11 +48,8 @@ The caller supplies the backing array, capacity is at least one, and the example
 does not allocate, free, resize, or handle a full vector. Those operations need
 resource-algebra features beyond composite resources.
 
-The example also exposes three current proof-system limitations:
+The example also exposes two current proof-system limitations:
 
-- A write through an arbitrary symbolic index does not yet preserve unrelated
-  vector-field facts strongly enough to refold `vector(owner)`. The mutating API
-  therefore uses the fixed index zero; indexed viewed reads do work.
 - An opaque call that consumes a memory-backed composite resource does not yet
   project its owned children into the callee's execution context. The pipeline
   expresses mutating transitions inline, while viewed calls are modular.

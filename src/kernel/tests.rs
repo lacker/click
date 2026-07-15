@@ -2905,6 +2905,129 @@ fn disjoint_range_proves_mutable_frame_cell_distinct() {
 }
 
 #[test]
+fn disjoint_ranges_frame_metadata_across_symbolic_index_store() {
+    let owner = Pointer {
+        block: "arg-memory".into(),
+        offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(83)), 4),
+    };
+    let data = Pointer {
+        block: "arg-memory".into(),
+        offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(84)), 4),
+    };
+    let index = Bitvector32Term::Variable(Variable(85));
+    let capacity = Bitvector32Term::Variable(Variable(86));
+    let metadata_cell = owner.clone();
+    let written_cell = data.offset_by_int32_elements(index.clone());
+    let before_memory = CMemory::new();
+    let after_memory = before_memory.clone().store(written_cell.clone(), int32(7));
+    let assumptions = Assumptions::new()
+        .assume_condition(
+            ConditionTerm::signed_less_equal(Bitvector32Term::Constant(0), index.clone()),
+            true,
+        )
+        .assume_condition(
+            ConditionTerm::signed_less_than(index, capacity.clone()),
+            true,
+        )
+        .assume_proposition(Proposition::CMemoryDisjoint {
+            left_base: owner,
+            left_start: Bitvector32Term::Constant(0),
+            left_end: Bitvector32Term::Constant(4),
+            right_base: data,
+            right_start: Bitvector32Term::Constant(0),
+            right_end: capacity,
+        })
+        .assume_proposition(Proposition::CMemoryMutatesOnly {
+            before: before_memory.clone(),
+            after: after_memory.clone(),
+            pointers: vec![written_cell],
+        });
+
+    assert!(assumptions.proves(&Proposition::ConditionIs(
+        ConditionTerm::equal(
+            Bitvector32Term::MemoryLoad(Box::new(after_memory), Box::new(metadata_cell.clone()),),
+            Bitvector32Term::MemoryLoad(Box::new(before_memory), Box::new(metadata_cell)),
+        ),
+        true,
+    )));
+}
+
+#[test]
+fn equivalent_field_derived_bases_frame_symbolic_index_store() {
+    let owner = Pointer {
+        block: "arg-memory".into(),
+        offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(87)), 4),
+    };
+    let owner_data_cell = owner.offset_by_int32_elements(Bitvector32Term::Constant(2));
+    let base_memory = CMemory::new();
+    let execution_memory = base_memory
+        .clone()
+        .with_block("local:data", 8)
+        .store(CMemory::local_pointer("data"), int32(0));
+    let resource_data = Pointer {
+        block: "arg-memory".into(),
+        offset: PointerOffsetTerm::scale_int32(
+            Bitvector32Term::MemoryLoad(
+                Box::new(base_memory.clone()),
+                Box::new(owner_data_cell.clone()),
+            ),
+            4,
+        ),
+    };
+    let execution_data = Pointer {
+        block: "arg-memory".into(),
+        offset: PointerOffsetTerm::scale_int32(
+            Bitvector32Term::MemoryLoad(
+                Box::new(execution_memory.clone()),
+                Box::new(owner_data_cell),
+            ),
+            4,
+        ),
+    };
+    let index = Bitvector32Term::Variable(Variable(88));
+    let capacity = Bitvector32Term::Variable(Variable(89));
+    let metadata_cell = owner.clone();
+    let written_cell = execution_data.offset_by_int32_elements(index.clone());
+    let after_memory = execution_memory
+        .clone()
+        .store(written_cell.clone(), int32(7));
+    let assumptions = Assumptions::new()
+        .assume_condition(
+            ConditionTerm::signed_less_equal(Bitvector32Term::Constant(0), index.clone()),
+            true,
+        )
+        .assume_condition(
+            ConditionTerm::signed_less_than(index, capacity.clone()),
+            true,
+        )
+        .assume_proposition(Proposition::CResourceSeparate {
+            left: CResource::Memory(CMemoryRange::new(
+                owner,
+                Bitvector32Term::Constant(0),
+                Bitvector32Term::Constant(4),
+            )),
+            right: CResource::Memory(CMemoryRange::new(
+                resource_data,
+                Bitvector32Term::Constant(0),
+                capacity,
+            )),
+        })
+        .assume_proposition(Proposition::CMemoryMutatesOnly {
+            before: execution_memory.clone(),
+            after: after_memory.clone(),
+            pointers: vec![written_cell],
+        });
+
+    assert!(assumptions.proves(&Proposition::ConditionIs(
+        ConditionTerm::equal(
+            Bitvector32Term::MemoryLoad(Box::new(after_memory), Box::new(metadata_cell.clone()),),
+            Bitvector32Term::MemoryLoad(Box::new(execution_memory), Box::new(metadata_cell)),
+        ),
+        true,
+    )));
+}
+
+#[test]
 fn covering_disjoint_fact_handles_shifted_mutable_range() {
     let n = Variable(83);
     let k = Variable(84);
