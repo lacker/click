@@ -62,6 +62,23 @@ either this grouped form or per-claim `by` clauses; the two forms cannot be
 mixed. Structural region clauses, including loop proofs, retain their own
 proof blocks.
 
+Goal-specific pure reasoning can be isolated with `have`, including after the
+function reaches its return frontier:
+
+```click
+execute_rest();
+have exists (int32 k) { k == result } by {
+    witness(k = result);
+    simp();
+}
+simp();
+```
+
+The scoped proof may use `choose` and `witness`. Its established proposition is
+added to every completed execution path, so later `simp()` can use it to close
+the matching postcondition without applying those existential steps to other
+contract claims.
+
 ## Pure Theorems
 
 Pure theorem declarations prove Click propositions without attaching the proof

@@ -1496,11 +1496,17 @@ struct ProofStepReplayState {
     loop_vcs: BTreeSet<usize>,
     frames: BTreeSet<Option<CodeRegionRef>>,
     unfolded_predicates: Vec<String>,
-    theorem_applications: Vec<(usize, TheoremApplication)>,
+    deferred_pure_steps: Vec<DeferredPureStep>,
     resource_folds: Vec<ResourceClause>,
     case_assumptions: Vec<(usize, ClickProposition, bool)>,
     simp: bool,
     region_proof: bool,
+}
+
+#[derive(Clone)]
+enum DeferredPureStep {
+    Apply(usize, TheoremApplication),
+    Have(usize, ProofHave),
 }
 
 #[derive(Clone, Default)]
@@ -2138,7 +2144,7 @@ fn verify_loop_initialization_pure_proof(
         let proposition = item
             .proposition()
             .expect("invariant region proof item should contain a proposition");
-        let fact = prove_pure_proposition_at_current_point(
+        let fact = prove_pure_proposition_at_point(
             proposition,
             proof,
             "initialize",
@@ -2150,9 +2156,12 @@ fn verify_loop_initialization_pure_proof(
             environment.arguments,
             environment.initial_state,
             &context.state,
+            None,
             &program_point_states,
             environment.predicate_environment,
             environment.click_function_environment,
+            environment.function_block.requires(),
+            None,
         )?;
         if !available.contains(&fact) {
             available.push(fact);
@@ -2352,29 +2361,57 @@ fn fold_composite_resource_at_current_point(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn lower_current_proposition(
+fn lower_point_proposition(
     proposition: &ClickProposition,
     available: &[Proposition],
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
     pre_state: &CState,
     state: &CState,
+    result: Option<&CValue>,
     program_point_states: &ProgramPointStates,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<Proposition, String> {
     let values = parameter_values(parameters, arguments).map_err(|error| error.message)?;
     let array_refs = array_refs_for_parameters(parameters, &values, state.memory());
-    let (mut values, array_refs) = contract_environment_at_state(&values, &array_refs, state);
+    let (values, array_refs) = contract_environment_at_state(&values, &array_refs, state);
+    lower_point_proposition_with_values(
+        proposition,
+        available,
+        values,
+        &array_refs,
+        pre_state,
+        state,
+        result,
+        program_point_states,
+        predicate_environment,
+        click_function_environment,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn lower_point_proposition_with_values(
+    proposition: &ClickProposition,
+    available: &[Proposition],
+    mut values: BTreeMap<String, CValue>,
+    array_refs: &ClickArrayRefs,
+    pre_state: &CState,
+    state: &CState,
+    result: Option<&CValue>,
+    program_point_states: &ProgramPointStates,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+) -> Result<Proposition, String> {
     let assumptions = assumptions_from_propositions(available);
     let mut next_variable = 2_000_000;
     let mut active_functions = BTreeSet::new();
     lower_outcome_proposition_with_environment(
         &mut values,
-        &array_refs,
+        array_refs,
         pre_state,
         state,
-        None,
+        result,
         &assumptions,
         proposition,
         &mut next_variable,
@@ -2399,8 +2436,46 @@ fn prove_have_at_current_point(
     program_point_states: &ProgramPointStates,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
+    original_requirements: &[Requirement],
 ) -> Result<Proposition, ClickError> {
-    prove_pure_proposition_at_current_point(
+    prove_have_at_point(
+        have,
+        theorem_environment,
+        claim_label,
+        outer_step_index,
+        outer_available,
+        parameters,
+        arguments,
+        pre_state,
+        state,
+        None,
+        program_point_states,
+        predicate_environment,
+        click_function_environment,
+        original_requirements,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn prove_have_at_point(
+    have: &ProofHave,
+    theorem_environment: &TheoremEnvironment,
+    claim_label: &str,
+    outer_step_index: usize,
+    outer_available: &[Proposition],
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    pre_state: &CState,
+    state: &CState,
+    result: Option<&CValue>,
+    program_point_states: &ProgramPointStates,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    original_requirements: &[Requirement],
+    path_index: Option<usize>,
+) -> Result<Proposition, ClickError> {
+    prove_pure_proposition_at_point(
         &have.proposition,
         &have.proof,
         "have",
@@ -2412,14 +2487,17 @@ fn prove_have_at_current_point(
         arguments,
         pre_state,
         state,
+        result,
         program_point_states,
         predicate_environment,
         click_function_environment,
+        original_requirements,
+        path_index,
     )
 }
 
 #[allow(clippy::too_many_arguments)]
-fn prove_pure_proposition_at_current_point(
+fn prove_pure_proposition_at_point(
     proposition: &ClickProposition,
     proof: &Proof,
     proof_name: &str,
@@ -2431,9 +2509,12 @@ fn prove_pure_proposition_at_current_point(
     arguments: &[CExpression],
     pre_state: &CState,
     state: &CState,
+    result: Option<&CValue>,
     program_point_states: &ProgramPointStates,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
+    original_requirements: &[Requirement],
+    path_index: Option<usize>,
 ) -> Result<Proposition, ClickError> {
     let (proof_cases, tactic_simp) = match proof {
         Proof::Steps(steps) => (expand_proof_if_cases(steps, claim_label)?, false),
@@ -2462,7 +2543,7 @@ fn prove_pure_proposition_at_current_point(
 
     let mut proven_fact = None;
     for proof_case in proof_cases {
-        let fact = prove_pure_proposition_case_at_current_point(
+        let fact = prove_pure_proposition_case_at_point(
             proposition,
             &proof_case,
             tactic_simp,
@@ -2475,9 +2556,12 @@ fn prove_pure_proposition_at_current_point(
             arguments,
             pre_state,
             state,
+            result,
             program_point_states,
             predicate_environment,
             click_function_environment,
+            original_requirements,
+            path_index,
         )?;
         if let Some(expected) = &proven_fact
             && expected != &fact
@@ -2496,7 +2580,7 @@ fn prove_pure_proposition_at_current_point(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn prove_pure_proposition_case_at_current_point(
+fn prove_pure_proposition_case_at_point(
     proposition: &ClickProposition,
     proof_case: &ExpandedProofCase,
     tactic_simp: bool,
@@ -2509,13 +2593,28 @@ fn prove_pure_proposition_case_at_current_point(
     arguments: &[CExpression],
     pre_state: &CState,
     state: &CState,
+    result: Option<&CValue>,
     program_point_states: &ProgramPointStates,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
+    original_requirements: &[Requirement],
+    path_index: Option<usize>,
 ) -> Result<Proposition, ClickError> {
     let mut available = outer_available.to_vec();
     let mut unfolded_predicates = Vec::new();
     let mut use_simp = tactic_simp;
+    let parameter_values = parameter_values(parameters, arguments).map_err(|error| {
+        ClickError::new(format!(
+            "`{claim_label}` {proof_name} proof {outer_step_index}: {}",
+            error.message
+        ))
+    })?;
+    let array_refs = array_refs_for_parameters(parameters, &parameter_values, state.memory());
+    let (mut values, array_refs) =
+        contract_environment_at_state(&parameter_values, &array_refs, state);
+    let mut fact = None;
+    let mut goal = None;
+    let mut next_choice_variable = 3_000_000;
 
     for (inner_step_index, step) in proof_case.steps.iter().enumerate() {
         add_have_case_assumptions(
@@ -2528,6 +2627,7 @@ fn prove_pure_proposition_case_at_current_point(
             arguments,
             pre_state,
             state,
+            result,
             program_point_states,
             predicate_environment,
             click_function_environment,
@@ -2553,24 +2653,28 @@ fn prove_pure_proposition_case_at_current_point(
                 )))?;
             }
             ProofStep::ApplyTheorem(application) => {
-                available = apply_theorem_at_current_point(
-                    theorem_environment,
-                    application,
-                    claim_label,
-                    inner_step_index,
-                    available,
-                    parameters,
-                    arguments,
+                let application_context = TheoremApplicationContext {
+                    values: &values,
+                    array_refs: &array_refs,
                     pre_state,
-                    state,
+                    post_state: state,
+                    result,
                     program_point_states,
+                };
+                available = apply_theorem_applications_to_available(
+                    theorem_environment,
+                    &[(inner_step_index, application.clone())],
+                    claim_label,
+                    path_index,
+                    available,
+                    &application_context,
                     predicate_environment,
                     click_function_environment,
                     &unfolded_predicates,
                 )?;
             }
             ProofStep::Have(inner_have) => {
-                let fact = prove_have_at_current_point(
+                let inner_fact = prove_have_at_point(
                     inner_have,
                     theorem_environment,
                     claim_label,
@@ -2580,13 +2684,90 @@ fn prove_pure_proposition_case_at_current_point(
                     arguments,
                     pre_state,
                     state,
+                    result,
                     program_point_states,
                     predicate_environment,
                     click_function_environment,
+                    original_requirements,
+                    path_index,
                 )?;
-                if !available.contains(&fact) {
-                    available.push(fact);
+                if !available.contains(&inner_fact) {
+                    available.push(inner_fact);
                 }
+            }
+            ProofStep::Choose(choice) => {
+                apply_choose_step(
+                    choice,
+                    claim_label,
+                    path_index.unwrap_or(0),
+                    inner_step_index,
+                    &mut available,
+                    &mut values,
+                    original_requirements,
+                    &mut next_choice_variable,
+                    predicate_environment,
+                    click_function_environment,
+                    &unfolded_predicates,
+                )?;
+            }
+            ProofStep::Witness(witness) => {
+                if goal.is_none() {
+                    let lowered = lower_point_proposition_with_values(
+                        proposition,
+                        &available,
+                        values.clone(),
+                        &array_refs,
+                        pre_state,
+                        state,
+                        result,
+                        program_point_states,
+                        predicate_environment,
+                        click_function_environment,
+                    )
+                    .map_err(|message| {
+                        ClickError::new(format!(
+                            "`{claim_label}` {proof_name} proof {outer_step_index}: could not lower pure goal: {message}"
+                        ))
+                    })?;
+                    fact = Some(lowered.clone());
+                    goal = Some(lowered);
+                }
+                let assumptions = assumptions_from_propositions(&available);
+                let unfolded_goal = unfold_predicates_in_proposition(
+                    predicate_environment,
+                    click_function_environment,
+                    &unfolded_predicates,
+                    goal.as_ref().expect("witness goal should be initialized"),
+                    &assumptions,
+                )
+                .map_err(|message| {
+                    ClickError::new(format!(
+                        "`{claim_label}` {proof_name} proof {outer_step_index}: could not unfold pure goal: {message}"
+                    ))
+                })?;
+                let witness_value = evaluate_witness_step_value(
+                    witness,
+                    claim_label,
+                    path_index.unwrap_or(0),
+                    inner_step_index,
+                    &values,
+                    &array_refs,
+                    pre_state,
+                    state,
+                    result,
+                    &assumptions,
+                    predicate_environment,
+                    click_function_environment,
+                    program_point_states,
+                )?;
+                goal = Some(apply_witness_step(
+                    witness,
+                    witness_value,
+                    unfolded_goal,
+                    claim_label,
+                    path_index.unwrap_or(0),
+                    inner_step_index,
+                )?);
             }
             ProofStep::Simp => use_simp = true,
             ProofStep::If(_) => unreachable!("proof-level if steps are expanded before replay"),
@@ -2608,33 +2789,38 @@ fn prove_pure_proposition_case_at_current_point(
         arguments,
         pre_state,
         state,
+        result,
         program_point_states,
         predicate_environment,
         click_function_environment,
     )?;
 
-    let fact = lower_current_proposition(
-        proposition,
-        &available,
-        parameters,
-        arguments,
-        pre_state,
-        state,
-        program_point_states,
-        predicate_environment,
-        click_function_environment,
-    )
-    .map_err(|message| {
-        ClickError::new(format!(
-            "`{claim_label}` {proof_name} proof {outer_step_index}: could not lower pure goal: {message}"
-        ))
-    })?;
+    let fact = match fact {
+        Some(fact) => fact,
+        None => lower_point_proposition_with_values(
+            proposition,
+            &available,
+            values,
+            &array_refs,
+            pre_state,
+            state,
+            result,
+            program_point_states,
+            predicate_environment,
+            click_function_environment,
+        )
+        .map_err(|message| {
+            ClickError::new(format!(
+                "`{claim_label}` {proof_name} proof {outer_step_index}: could not lower pure goal: {message}"
+            ))
+        })?,
+    };
     let assumptions = assumptions_from_propositions(&available);
     let goal = unfold_predicates_in_proposition(
         predicate_environment,
         click_function_environment,
         &unfolded_predicates,
-        &fact,
+        goal.as_ref().unwrap_or(&fact),
         &assumptions,
     )
     .map_err(|message| {
@@ -2677,6 +2863,7 @@ fn add_have_case_assumptions(
     arguments: &[CExpression],
     pre_state: &CState,
     state: &CState,
+    result: Option<&CValue>,
     program_point_states: &ProgramPointStates,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
@@ -2686,13 +2873,14 @@ fn add_have_case_assumptions(
         .iter()
         .filter(|assumption| assumption.step_index == inner_step_index)
     {
-        let proposition = lower_current_proposition(
+        let proposition = lower_point_proposition(
             &case_assumption.proposition,
             available,
             parameters,
             arguments,
             pre_state,
             state,
+            result,
             program_point_states,
             predicate_environment,
             click_function_environment,
@@ -3168,8 +3356,8 @@ fn replay_linear_steps(
                 }
                 if replay.is_at_function_exit() {
                     replay
-                        .theorem_applications
-                        .push((step_index, application.clone()));
+                        .deferred_pure_steps
+                        .push(DeferredPureStep::Apply(step_index, application.clone()));
                 } else {
                     requirement_pure_facts = apply_theorem_at_current_point(
                         theorem_environment,
@@ -3212,9 +3400,10 @@ fn replay_linear_steps(
             }
             ProofStep::Have(have) => {
                 if replay.is_at_function_exit() {
-                    return Err(ClickError::new(format!(
-                        "`{claim_label}` proof step {step_index}: `have` must run before execution reaches function exit"
-                    )));
+                    replay
+                        .deferred_pure_steps
+                        .push(DeferredPureStep::Have(step_index, have.clone()));
+                    continue;
                 }
                 let fact = prove_have_at_current_point(
                     have,
@@ -3229,6 +3418,7 @@ fn replay_linear_steps(
                     &replay.program_point_states,
                     predicate_environment,
                     click_function_environment,
+                    function_block.requires(),
                 )?;
                 if !requirement_pure_facts.contains(&fact) {
                     requirement_pure_facts.push(fact);
@@ -3464,13 +3654,14 @@ fn introduce_proof_case_assumption(
             .push((step_index, condition.clone(), value));
         return Ok(());
     }
-    let proposition = lower_current_proposition(
+    let proposition = lower_point_proposition(
         condition,
         &context.pure_facts,
         parameters,
         arguments,
         context.replay.execution_start_state(&context.state),
         &context.state,
+        None,
         &context.replay.program_point_states,
         predicate_environment,
         click_function_environment,
@@ -3548,7 +3739,7 @@ fn finish_proof_replay(
             arguments,
             &pure_facts,
             &replay.unfolded_predicates,
-            &replay.theorem_applications,
+            &replay.deferred_pure_steps,
             &replay.resource_folds,
             &replay.case_assumptions,
             &replay.program_point_states,
@@ -3640,13 +3831,14 @@ fn apply_advance_interface(
     for assertion in assertions {
         match assertion {
             ProofAssertion::Fact(surface_fact) => {
-                let fact = lower_current_proposition(
+                let fact = lower_point_proposition(
                         surface_fact,
                         &concrete_facts,
                         parameters,
                         arguments,
                         replay.execution_start_state(state),
                         state,
+                        None,
                         &replay.program_point_states,
                         predicate_environment,
                         click_function_environment,
@@ -3750,13 +3942,14 @@ fn apply_advance_interface(
 
     for assertion in assertions {
         if let ProofAssertion::Fact(surface_fact) = assertion {
-            let fact = lower_current_proposition(
+            let fact = lower_point_proposition(
                     surface_fact,
                     &exported_pure_facts,
                     parameters,
                     arguments,
                     &entry_state,
                     &abstract_state,
+                    None,
                     &replay.program_point_states,
                     predicate_environment,
                     click_function_environment,
@@ -6234,7 +6427,7 @@ fn prove_claim_from_steps_execution(
     arguments: &[CExpression],
     requirement_pure_facts: &[Proposition],
     unfolded_predicates: &[String],
-    theorem_applications: &[(usize, TheoremApplication)],
+    deferred_pure_steps: &[DeferredPureStep],
     resource_folds: &[ResourceClause],
     case_assumptions: &[(usize, ClickProposition, bool)],
     program_point_states: &ProgramPointStates,
@@ -6353,14 +6546,14 @@ fn prove_claim_from_steps_execution(
             claim_label,
             path_index,
         )?;
-        if !theorem_applications.is_empty() {
+        if !deferred_pure_steps.is_empty() {
             let CFunctionOutcome::Return {
                 value: result,
                 state: post_state,
             } = &outcome
             else {
                 return Err(ClickError::new(format!(
-                    "`proof steps` failed for `{claim_label}` path {path_index}: theorem application requires a return outcome, got {}\n  execution pure facts: {}",
+                    "`proof steps` failed for `{claim_label}` path {path_index}: post-execution pure proof requires a return outcome, got {}\n  execution pure facts: {}",
                     describe_function_outcome(&outcome, parameters, arguments),
                     describe_execution_pure_facts(path.facts())
                 )));
@@ -6372,25 +6565,53 @@ fn prove_claim_from_steps_execution(
                 ))
             })?;
             let array_refs = array_refs_for_parameters(parameters, &values, post_state.memory());
-            let application_context = TheoremApplicationContext {
-                values: &values,
-                array_refs: &array_refs,
-                pre_state: state,
-                post_state,
-                result: Some(result),
-                program_point_states,
-            };
-            path_requirements = apply_theorem_applications_to_available(
-                theorem_environment,
-                theorem_applications,
-                claim_label,
-                Some(path_index),
-                path_requirements,
-                &application_context,
-                predicate_environment,
-                click_function_environment,
-                unfolded_predicates,
-            )?;
+            for deferred_step in deferred_pure_steps {
+                match deferred_step {
+                    DeferredPureStep::Apply(step_index, application) => {
+                        let application_context = TheoremApplicationContext {
+                            values: &values,
+                            array_refs: &array_refs,
+                            pre_state: state,
+                            post_state,
+                            result: Some(result),
+                            program_point_states,
+                        };
+                        path_requirements = apply_theorem_applications_to_available(
+                            theorem_environment,
+                            &[(*step_index, application.clone())],
+                            claim_label,
+                            Some(path_index),
+                            path_requirements,
+                            &application_context,
+                            predicate_environment,
+                            click_function_environment,
+                            unfolded_predicates,
+                        )?;
+                    }
+                    DeferredPureStep::Have(step_index, have) => {
+                        let fact = prove_have_at_point(
+                            have,
+                            theorem_environment,
+                            claim_label,
+                            *step_index,
+                            &path_requirements,
+                            parameters,
+                            arguments,
+                            state,
+                            post_state,
+                            Some(result),
+                            program_point_states,
+                            predicate_environment,
+                            click_function_environment,
+                            function_block.requires(),
+                            Some(path_index),
+                        )?;
+                        if !path_requirements.contains(&fact) {
+                            path_requirements.push(fact);
+                        }
+                    }
+                }
+            }
         }
         let mut checking_requirements = path_requirements.clone();
         let has_existence_steps = replay_steps

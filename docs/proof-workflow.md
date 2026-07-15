@@ -122,9 +122,12 @@ Current proof steps:
   derived facts. This step never changes the resource context.
 - `have proposition by { ... }`: run a scoped pure proof and add its proposition
   to the current pure facts. The nested proof accepts
-  `unfold`, `apply`, `simp`, nested `have`, and proof-level `if` case analysis;
-  it cannot execute C or transform resources. Both `if` branches prove the
-  local proposition, after which the surrounding proof continues.
+  `unfold`, `apply`, `choose`, `witness`, `simp`, nested `have`, and proof-level
+  `if` case analysis; it cannot execute C or transform resources. Both `if`
+  branches prove the local proposition, after which the surrounding proof
+  continues. After execution reaches function exit, Click proves the `have`
+  proposition independently on every completed execution path and adds the
+  resulting fact to that path's pure facts.
 - `if proposition { ... } else { ... }`: prove the current claim twice, once
   with the proposition added to the pure facts and once with its negation
   added. Each branch has its own proof script and must finish the current
