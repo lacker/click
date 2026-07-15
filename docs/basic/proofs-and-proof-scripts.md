@@ -82,6 +82,11 @@ Common steps include:
 
 The end of the `by { ... }` block checks the claim.
 
+For proofs that refer to a region more than once, attach a stable label with a
+structural clause such as `for statement(4) as update { ... }`, then write
+`execute_until(update)` and `at(update.entry, expression)`. Numeric statement
+IDs are global source-preorder IDs and remain useful for declaring the label.
+
 Existential proofs also use:
 
 - `witness(k = expr);`: prove an existential by giving a value.

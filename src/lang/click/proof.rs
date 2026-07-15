@@ -3776,11 +3776,11 @@ fn execute_selected_branch_step_from_execution_point(
         )));
     };
 
-    replay.program_point_states.insert(
-        ProgramPointRef {
-            region: CodeRegionRef::Statement(statement_index),
-            kind: ProgramPointKind::Entry,
-        },
+    record_statement_program_point_state(
+        replay,
+        function_block,
+        statement_index,
+        ProgramPointKind::Entry,
         current_state.clone(),
     );
     if let Some(assertion_prefix) = assertion_prefix {
@@ -3975,6 +3975,36 @@ fn record_loop_program_point_state(
     }
 }
 
+fn record_statement_program_point_state(
+    replay: &mut ProofStepReplayState,
+    function_block: &FunctionBlock,
+    statement_index: usize,
+    kind: ProgramPointKind,
+    state: CState,
+) {
+    replay.program_point_states.insert(
+        ProgramPointRef {
+            region: CodeRegionRef::Statement(statement_index),
+            kind,
+        },
+        state.clone(),
+    );
+    for label in function_block
+        .structural_clauses()
+        .iter()
+        .filter(|clause| clause.region() == &CodeRegion::Statement(statement_index))
+        .filter_map(StructuralClause::label)
+    {
+        replay.program_point_states.insert(
+            ProgramPointRef {
+                region: CodeRegionRef::Label(label.to_string()),
+                kind,
+            },
+            state.clone(),
+        );
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn execute_step_from_execution_point(
     replay: &mut ProofStepReplayState,
@@ -4070,11 +4100,11 @@ fn execute_step_from_execution_point(
         )));
     }
 
-    replay.program_point_states.insert(
-        ProgramPointRef {
-            region: CodeRegionRef::Statement(statement_index),
-            kind: ProgramPointKind::Entry,
-        },
+    record_statement_program_point_state(
+        replay,
+        function_block,
+        statement_index,
+        ProgramPointKind::Entry,
         current_state.clone(),
     );
     if let Some(loop_index) = loop_index {
@@ -4115,11 +4145,11 @@ fn execute_step_from_execution_point(
         }
         CStatementOutcome::UndefinedBehavior(_) | CStatementOutcome::RuntimeError(_) => None,
     } {
-        replay.program_point_states.insert(
-            ProgramPointRef {
-                region: CodeRegionRef::Statement(statement_index),
-                kind: ProgramPointKind::Exit,
-            },
+        record_statement_program_point_state(
+            replay,
+            function_block,
+            statement_index,
+            ProgramPointKind::Exit,
             statement_exit_state,
         );
         if let Some(loop_index) = loop_index {
@@ -4144,7 +4174,9 @@ fn execute_step_from_execution_point(
             let remaining = if let Some(remaining) = remaining {
                 replay.frontier.next_statement_index = source_region.continuation_node;
                 remaining
-            } else if let Some(remaining) = resume_after_completed_branch(replay, &next_state) {
+            } else if let Some(remaining) =
+                resume_after_completed_branch(replay, function_block, &next_state)
+            {
                 remaining
             } else {
                 return Err(ClickError::new(format!(
@@ -4162,7 +4194,7 @@ fn execute_step_from_execution_point(
                 ..
             } = &outcome
             {
-                record_completed_branch_exits(replay, return_state);
+                record_completed_branch_exits(replay, function_block, return_state);
             }
             let return_assumptions = assumptions_from_propositions(&successor_pure_facts);
             let (outcome, obligations) = c_function_outcome_from_statement_outcome(
@@ -4222,15 +4254,16 @@ fn execute_step_from_execution_point(
 
 fn resume_after_completed_branch(
     replay: &mut ProofStepReplayState,
+    function_block: &FunctionBlock,
     state: &CState,
 ) -> Option<CStatement> {
     while let Some(continuation) = replay.frontier.continuations.pop() {
         if let Some(statement_index) = continuation.enclosing_statement_index {
-            replay.program_point_states.insert(
-                ProgramPointRef {
-                    region: CodeRegionRef::Statement(statement_index),
-                    kind: ProgramPointKind::Exit,
-                },
+            record_statement_program_point_state(
+                replay,
+                function_block,
+                statement_index,
+                ProgramPointKind::Exit,
                 state.clone(),
             );
         }
@@ -4242,14 +4275,18 @@ fn resume_after_completed_branch(
     None
 }
 
-fn record_completed_branch_exits(replay: &mut ProofStepReplayState, state: &CState) {
+fn record_completed_branch_exits(
+    replay: &mut ProofStepReplayState,
+    function_block: &FunctionBlock,
+    state: &CState,
+) {
     while let Some(continuation) = replay.frontier.continuations.pop() {
         if let Some(statement_index) = continuation.enclosing_statement_index {
-            replay.program_point_states.insert(
-                ProgramPointRef {
-                    region: CodeRegionRef::Statement(statement_index),
-                    kind: ProgramPointKind::Exit,
-                },
+            record_statement_program_point_state(
+                replay,
+                function_block,
+                statement_index,
+                ProgramPointKind::Exit,
                 state.clone(),
             );
         }
@@ -4260,6 +4297,7 @@ fn record_completed_branch_exits(replay: &mut ProofStepReplayState, state: &CSta
 fn record_current_statement_entry(
     replay: &mut ProofStepReplayState,
     state: &CState,
+    function_block: &FunctionBlock,
     function: &CFunction,
     arguments: &[CExpression],
     claim_label: &str,
@@ -4276,11 +4314,11 @@ fn record_current_statement_entry(
         ProofExecutionPoint::StatementEntry { .. } => state.clone(),
         ProofExecutionPoint::FunctionExit { .. } => return Ok(()),
     };
-    replay.program_point_states.insert(
-        ProgramPointRef {
-            region: CodeRegionRef::Statement(replay.frontier.next_statement_index),
-            kind: ProgramPointKind::Entry,
-        },
+    record_statement_program_point_state(
+        replay,
+        function_block,
+        replay.frontier.next_statement_index,
+        ProgramPointKind::Entry,
         current_state,
     );
     Ok(())
@@ -4353,6 +4391,7 @@ fn execute_rest_from_execution_point(
         record_current_statement_entry(
             replay,
             state,
+            function_block,
             function,
             arguments,
             claim_label,
@@ -4504,6 +4543,7 @@ fn execute_until_statement(
     record_current_statement_entry(
         replay,
         state,
+        function_block,
         function,
         arguments,
         claim_label,

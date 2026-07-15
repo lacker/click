@@ -139,6 +139,11 @@ Statement IDs are global within a function and follow source preorder. An
 sequence does not receive a separate ID. The same IDs name execution targets,
 annotations, and `at(statement(N).entry|exit, ...)` snapshots.
 
+A structural clause may give a statement or loop a stable name with
+`for statement(N) as label` or `for loop(N) as label`. Prefer that label in
+proof scripts: `execute_until(label)`, `advance(label.exit)`, and
+`at(label.entry, expression)` all resolve to the same code region.
+
 `apply(...)` instantiates a verified theorem, proves that theorem's proposition
 `requires` clauses from the current proof context, and adds its proposition
 `ensures` clauses as derived facts. It does not change the current resource

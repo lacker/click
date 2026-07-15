@@ -300,7 +300,23 @@ for loop(0) {
 
 `statement(N)` selects the Nth source statement code region in structural
 order. `loop(N)` selects the Nth `while` loop code region. A code region may
-also be labeled with `as name` and used in proof steps such as `frame(name)`.
+also be labeled with `as name`. Labels are the preferred proof-facing spelling
+for execution targets and snapshots because they remain meaningful when nearby
+source statements change:
+
+```click
+for statement(4) as update {
+    assert y >= 0 by auto;
+}
+
+execute_until(update);
+have at(update.entry, y) >= 0 by simp;
+```
+
+The same label can be used by `advance(update.exit)`, `at(update.entry, ...)`,
+`at(update.exit, ...)`, and region tactics such as `frame(update)` when the
+region kind is accepted. Numeric `statement(N)` and `loop(N)` references remain
+the way labels are attached and are useful for short proofs.
 
 A code region is a static source construct with extent, such as a function,
 loop, statement, or block. A program point is a proof-relevant boundary or
