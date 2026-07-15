@@ -14,7 +14,7 @@ Larger example projects live directly under `examples/`. They contain ordinary
 - `mdtests/result_expression.md`: result expression support.
 - `mdtests/default_prover.md`: omitted proof clauses use `auto`.
 - `mdtests/simp_postconditions.md`: deterministic `simp` postconditions.
-- `mdtests/proof_step_execute_rest.md`: explicit `execute_rest()` proof step,
+- `mdtests/proof_step_execute_rest.md`: explicit execution-proof step `execute_rest()`,
   the clearer name for whole-function symbolic execution from the current proof
   execution point.
 
@@ -29,8 +29,8 @@ Larger example projects live directly under `examples/`. They contain ordinary
   execution proof steps.
 - `mdtests/pure_theorem_rejects_observe_step.md`: theorem proofs reject
   resource fact-observation proof steps.
-- `mdtests/theorem_apply_in_function_proof.md`: C function proof script applying
-  a pure theorem after symbolic execution.
+- `mdtests/theorem_apply_in_function_proof.md`: execution proof applying a pure
+  theorem after symbolic execution.
 - `mdtests/theorem_apply_requires_precondition.md`: theorem application fails
   when the applied theorem's requirements are not available.
 

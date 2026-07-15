@@ -1,7 +1,7 @@
 # pure theorem rejects C execution steps
 
-This checks that pure theorem proofs do not accidentally use proof steps that
-only make sense for C function claims.
+This checks that a pure proof cannot use execution proof steps, which only make
+sense when a C function claim supplies an execution frontier.
 
 ```click
 theorem reflexive(x: int32) {
@@ -13,5 +13,5 @@ theorem reflexive(x: int32) {
 ```
 
 ```expect
-fail: proof step `symbolic_execute` cannot prove pure theorem
+fail: proof step `symbolic_execute` is not available in the pure proof
 ```

@@ -1,6 +1,6 @@
 # count_to_three checks structural loop invariants
 
-This checks `.click` structural proof blocks: `for loop(0)` attaches spec
+This checks `.click` region proof blocks: `for loop(0)` attaches spec
 checks to the first `while` loop code region.
 
 ```c filename=count_to_three.c

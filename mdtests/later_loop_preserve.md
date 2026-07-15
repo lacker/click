@@ -1,7 +1,7 @@
 # preservation proof at a later loop
 
-Structural proof traversal advances across the first loop with its abstract
-loop rule before entering the preservation proof for the second loop.
+Execution-proof traversal advances across the first loop with its abstract loop
+rule before entering the preservation proof for the second loop.
 
 ```c filename=later_loop_preserve.c
 int32 later_loop_preserve() {

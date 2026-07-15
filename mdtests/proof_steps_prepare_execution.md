@@ -1,7 +1,7 @@
 # proof steps prepare execution
 
-These checks require deterministic pure proof steps to update the current proof
-context before the following C statement is executed.
+These checks require deterministic pure proof steps inside an execution proof
+to update its current facts before the following C statement is executed.
 
 ```c filename=proof_steps_prepare_execution.c
 int32 increment_unfold(int32 x) {

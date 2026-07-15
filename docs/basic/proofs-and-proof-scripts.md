@@ -3,6 +3,12 @@
 A Click contract says what should be true. A proof clause says how Click should
 prove it.
 
+Click distinguishes **pure proofs** from **execution proofs**. A pure proof
+derives propositions from facts at one program point. An execution proof moves
+forward through a code region, relating its entry state and resources to its
+exit state and resources. A function proof is an execution proof; a pure
+theorem proof has no C execution frontier.
+
 The simplest proof clause is:
 
 ```click
@@ -31,8 +37,8 @@ predicate.
 
 Use `frame` for `immutable` and `mutable` effect clauses.
 
-Pure theorem declarations currently support `auto`, `simp`, and proof-step
-scripts made from `unfold(name);`, `apply(theorem(args));`, and `simp();`.
+Pure proofs for theorem declarations currently support `auto`, `simp`, and
+proof-step scripts made from `unfold(name);`, `apply(theorem(args));`, and `simp();`.
 They do not run C execution steps because there is no C function body attached
 to the theorem, and they do not run resource steps because theorem application
 does not change the resource context.
@@ -49,7 +55,10 @@ ensures result == x by {
 ```
 
 Proof steps are meant to be stable and replayable. They are less magical than
-`auto`: the script records a specific proof path.
+`auto`: the script records a specific proof path. Execution steps advance the
+execution frontier. Pure steps such as `apply` and `simp` derive facts without
+advancing it; resource steps can transform resource facts at the current
+frontier.
 
 Common steps include:
 

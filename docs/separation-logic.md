@@ -196,23 +196,23 @@ implementation has these frontier points:
 rest of the function.
 
 Condition edges and statement execution produce shared certified transitions.
-The ordinary execution tactics and structural-region traversal consume those
-same transitions, so they cannot disagree about successor states, generated
+The ordinary execution tactics and region execution-proof traversal consume
+those same transitions, so they cannot disagree about successor states, generated
 facts, or missing prerequisites. Whether the frontier is inside a branch is
 derived from its continuation stack rather than maintained as an independent
 flag.
 
-Structural loop verification packages its abstract exit transitions as an
+The loop preservation execution proof packages its abstract exit transitions as an
 opaque kernel `VerifiedLoopRule`. The symbolic values in its entry state stand
 for arbitrary values constrained by the rule's required assumptions. Later
 execution may strengthen those assumptions, but it must apply the registered
 rule when crossing an annotated loop. A missing or incompatible rule is a
 proof failure, not a request to run automatic loop verification again.
 
-`observe(...)`, resource and predicate `unfold(...)`, `fold(...)`,
-`apply(...)`, and `have ... by { ... }` can update the proof context at the
-current pre-exit execution point. This lets deterministic proof steps prepare
-facts and resources before the next C statement. At function exit, operations
+`apply(...)` and `have ... by { ... }` perform pure proofs at the current
+execution point. `observe(...)`, resource `unfold(...)`, and `fold(...)` perform
+resource reasoning there. None advances execution. This lets deterministic
+proof steps prepare facts and resources before the next C statement. At function exit, operations
 whose meaning depends on `result` or the post-state are checked separately for
 each completed execution path.
 

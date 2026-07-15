@@ -14,5 +14,5 @@ theorem observe_step_is_not_pure(x: int32) {
 ```
 
 ```expect
-fail: proof step `observe` cannot prove pure theorem `observe_step_is_not_pure`
+fail: proof step `observe` is not available in the pure proof for theorem `observe_step_is_not_pure`
 ```

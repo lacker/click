@@ -232,7 +232,7 @@ fn verify_theorem_ensure(
             })
         }
         Proof::Tactic(Tactic::Frame) => Err(ClickError::new(format!(
-            "`frame` cannot prove pure theorem `{claim_label}`"
+            "`frame` is not available in the pure proof for theorem `{claim_label}`"
         ))),
         Proof::Steps(steps) => {
             if steps.is_empty() {
@@ -294,7 +294,7 @@ fn verify_theorem_ensure(
                         }
                         _ => {
                             return Err(ClickError::new(format!(
-                                "`{claim_label}` proof step {step_index}: `{}` cannot prove a pure theorem",
+                                "`{claim_label}` pure proof step {step_index}: `{}` is not available in a pure proof",
                                 proof_step_name(step)
                             )));
                         }
@@ -346,8 +346,8 @@ struct ProofAdvanceCheck {
     assertions: Vec<ProofAssertion>,
 }
 
-// Pure theorem and local `have` proofs still use flat logical cases. Function
-// execution proofs use `InternalProofNode`, where `advance` has join semantics.
+// Pure proofs and point-local `have` proofs use flat logical cases. Execution
+// proofs use `InternalProofNode`, where `advance` has region-join semantics.
 fn expand_proof_if_cases(
     steps: &[ProofStep],
     claim_label: &str,
@@ -1580,7 +1580,7 @@ enum ProofStepExecutionMode {
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(super) fn verify_structural_loop_proofs(
+pub(super) fn verify_loop_execution_proofs(
     function_block: &FunctionBlock,
     parsed_function: &syntax::C0Function,
     function_environment: &CFunctionEnvironment,
@@ -1618,7 +1618,7 @@ pub(super) fn verify_structural_loop_proofs(
 
     let entry_state = c_function_entry_state(&initial_state, &function, &arguments)
         .ok_or_else(|| ClickError::new(format!("`{label}` could not bind function arguments")))?;
-    let environment = StructuralProofEnvironment {
+    let environment = ExecutionProofEnvironment {
         function_block,
         parsed_function,
         function_environment,
@@ -1631,9 +1631,9 @@ pub(super) fn verify_structural_loop_proofs(
     };
     let mut next_loop_index = 0;
     let mut verified_loop_rules = Vec::new();
-    verify_structural_proofs_forward(
+    verify_execution_proofs_forward(
         function.body(),
-        vec![StructuralProofContext {
+        vec![ExecutionProofContext {
             state: entry_state,
             pure_facts: requirement_facts,
         }],
@@ -1654,7 +1654,7 @@ fn explicit_loop_preservation_steps(clause: &StructuralClause) -> Option<&[Proof
     .then_some(steps)
 }
 
-struct StructuralProofEnvironment<'a> {
+struct ExecutionProofEnvironment<'a> {
     function_block: &'a FunctionBlock,
     parsed_function: &'a syntax::C0Function,
     function_environment: &'a CFunctionEnvironment,
@@ -1667,7 +1667,7 @@ struct StructuralProofEnvironment<'a> {
 }
 
 #[derive(Clone)]
-struct StructuralProofContext {
+struct ExecutionProofContext {
     state: CState,
     pure_facts: Vec<Proposition>,
 }
@@ -1809,23 +1809,23 @@ fn certified_statement_transitions(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn verify_structural_proofs_forward(
+fn verify_execution_proofs_forward(
     statement: &CStatement,
-    contexts: Vec<StructuralProofContext>,
+    contexts: Vec<ExecutionProofContext>,
     next_loop_index: &mut usize,
-    environment: &StructuralProofEnvironment<'_>,
+    environment: &ExecutionProofEnvironment<'_>,
     verified_loop_rules: &mut Vec<CVerifiedLoopRule>,
-) -> Result<Vec<StructuralProofContext>, ClickError> {
+) -> Result<Vec<ExecutionProofContext>, ClickError> {
     match statement {
         CStatement::Seq(first, second) => {
-            let contexts = verify_structural_proofs_forward(
+            let contexts = verify_execution_proofs_forward(
                 first,
                 contexts,
                 next_loop_index,
                 environment,
                 verified_loop_rules,
             )?;
-            verify_structural_proofs_forward(
+            verify_execution_proofs_forward(
                 second,
                 contexts,
                 next_loop_index,
@@ -1839,15 +1839,15 @@ fn verify_structural_proofs_forward(
             else_branch,
         } => {
             let (then_contexts, else_contexts) =
-                split_structural_branch_contexts(condition, contexts)?;
-            let mut joined = verify_structural_proofs_forward(
+                split_execution_proof_branch_contexts(condition, contexts)?;
+            let mut joined = verify_execution_proofs_forward(
                 then_branch,
                 then_contexts,
                 next_loop_index,
                 environment,
                 verified_loop_rules,
             )?;
-            joined.extend(verify_structural_proofs_forward(
+            joined.extend(verify_execution_proofs_forward(
                 else_branch,
                 else_contexts,
                 next_loop_index,
@@ -1912,7 +1912,7 @@ fn verify_structural_proofs_forward(
                             environment,
                         )?;
                     }
-                    iteration_contexts.push(StructuralProofContext {
+                    iteration_contexts.push(ExecutionProofContext {
                         state: preservation.state().clone(),
                         pure_facts,
                     });
@@ -1921,7 +1921,7 @@ fn verify_structural_proofs_forward(
 
             // Nested loop regions are encountered from the arbitrary iteration
             // frontier, exactly where the outer induction hypothesis applies.
-            let _ = verify_structural_proofs_forward(
+            let _ = verify_execution_proofs_forward(
                 body,
                 iteration_contexts,
                 next_loop_index,
@@ -1929,7 +1929,7 @@ fn verify_structural_proofs_forward(
                 verified_loop_rules,
             )?;
 
-            advance_structural_statement(
+            advance_execution_proof_statement(
                 statement,
                 contexts,
                 loop_index,
@@ -1938,7 +1938,7 @@ fn verify_structural_proofs_forward(
             )
         }
         CStatement::Return(_) => Ok(Vec::new()),
-        _ => advance_structural_statement(
+        _ => advance_execution_proof_statement(
             statement,
             contexts,
             *next_loop_index,
@@ -1948,10 +1948,10 @@ fn verify_structural_proofs_forward(
     }
 }
 
-fn split_structural_branch_contexts(
+fn split_execution_proof_branch_contexts(
     condition: &CExpression,
-    contexts: Vec<StructuralProofContext>,
-) -> Result<(Vec<StructuralProofContext>, Vec<StructuralProofContext>), ClickError> {
+    contexts: Vec<ExecutionProofContext>,
+) -> Result<(Vec<ExecutionProofContext>, Vec<ExecutionProofContext>), ClickError> {
     let mut then_contexts = Vec::new();
     let mut else_contexts = Vec::new();
     for context in contexts {
@@ -1959,9 +1959,9 @@ fn split_structural_branch_contexts(
             &context.state,
             &context.pure_facts,
             condition,
-            "structural proof traversal",
+            "execution proof traversal",
         )? {
-            let next = StructuralProofContext {
+            let next = ExecutionProofContext {
                 state: context.state.clone(),
                 pure_facts: transition.pure_facts,
             };
@@ -1975,16 +1975,16 @@ fn split_structural_branch_contexts(
     Ok((then_contexts, else_contexts))
 }
 
-fn advance_structural_statement(
+fn advance_execution_proof_statement(
     statement: &CStatement,
-    contexts: Vec<StructuralProofContext>,
+    contexts: Vec<ExecutionProofContext>,
     region_index: usize,
-    environment: &StructuralProofEnvironment<'_>,
+    environment: &ExecutionProofEnvironment<'_>,
     verified_loop_rules: &mut Vec<CVerifiedLoopRule>,
-) -> Result<Vec<StructuralProofContext>, ClickError> {
+) -> Result<Vec<ExecutionProofContext>, ClickError> {
     let mut advanced = Vec::new();
     for context in contexts {
-        let label = format!("structural proof traversal at region {region_index}");
+        let label = format!("execution proof traversal at region {region_index}");
         let (transitions, loop_rule) = certified_statement_transitions(
             &context.state,
             &context.pure_facts,
@@ -1999,19 +1999,19 @@ fn advance_structural_statement(
         }
         for transition in transitions {
             match transition.outcome {
-                CStatementOutcome::Normal(state) => advanced.push(StructuralProofContext {
+                CStatementOutcome::Normal(state) => advanced.push(ExecutionProofContext {
                     state,
                     pure_facts: transition.pure_facts,
                 }),
                 CStatementOutcome::Return { .. } => {}
                 CStatementOutcome::UndefinedBehavior(kind) => {
                     return Err(ClickError::new(format!(
-                        "structural proof traversal produced undefined behavior: {kind:?}"
+                        "execution proof traversal produced undefined behavior: {kind:?}"
                     )));
                 }
                 CStatementOutcome::RuntimeError(error) => {
                     return Err(ClickError::new(format!(
-                        "structural proof traversal produced runtime error: {error:?}"
+                        "execution proof traversal produced runtime error: {error:?}"
                     )));
                 }
             }
@@ -2028,7 +2028,7 @@ fn verify_one_loop_preservation_proof(
     pure_facts: &[Proposition],
     invariant_checks: &[CLoopInvariantCheck],
     body: &CStatement,
-    environment: &StructuralProofEnvironment<'_>,
+    environment: &ExecutionProofEnvironment<'_>,
 ) -> Result<(), ClickError> {
     let claim_label = format!(
         "{}.loop({loop_index}).preserve",

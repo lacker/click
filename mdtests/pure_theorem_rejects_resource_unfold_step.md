@@ -14,5 +14,5 @@ theorem resource_unfold_step_is_not_pure(x: int32) {
 ```
 
 ```expect
-fail: proof step `unfold` cannot prove pure theorem `resource_unfold_step_is_not_pure`
+fail: proof step `unfold` is not available in the pure proof for theorem `resource_unfold_step_is_not_pure`
 ```

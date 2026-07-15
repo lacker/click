@@ -59,7 +59,7 @@ clauses. A theorem-only `.click` file does not need a `verifying "file.c";`
 declaration.
 
 Theorems are intentionally pure. They do not support resource `requires`,
-resource `ensures`, effects, structural proof blocks, `old(...)`, `at(...)`, or
+resource `ensures`, effects, region proof blocks, `old(...)`, `at(...)`, or
 `result`. Pure theorem proof scripts currently support `unfold(name);`,
 `apply(theorem(args));`, and `simp();`; C execution and resource proof steps are
 rejected. Applying a theorem never consumes, creates, returns, opens, or closes
@@ -442,7 +442,7 @@ int32 bounded_increment(int32 x) {
 
 Contract-level lets are immutable lexical abbreviations. They are visible to
 later clauses in the same function block, including `requires`, `ensures`,
-`mutable`, and structural proof blocks. A contract-level let cannot reuse a C
+`mutable`, and region proof blocks. A contract-level let cannot reuse a C
 parameter name or an earlier contract-level let name. Explicit type annotations
 are checked when the binding is evaluated.
 

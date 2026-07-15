@@ -505,7 +505,7 @@ fn omitted_effect_proof_uses_default_prover() {
 }
 
 #[test]
-fn omitted_structural_proofs_use_default_prover() {
+fn omitted_region_proofs_use_default_prover() {
     let source = r#"
             verifying "count.c";
 
@@ -521,7 +521,7 @@ fn omitted_structural_proofs_use_default_prover() {
                 ensures result == 3;
             }
         "#;
-    let file = parse(source).expect("structural proof clauses may be omitted");
+    let file = parse(source).expect("region proof clauses may be omitted");
     let function = &file.function_blocks()[0];
     let items = function.structural_clauses()[0].items();
 

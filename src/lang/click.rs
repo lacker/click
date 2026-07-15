@@ -1123,8 +1123,8 @@ pub fn verify_c0_sources(
                 ))
             })?;
         check_signature(&function_block.signature, parsed_function, source_path)?;
-        validate_structural_clauses(&function_block, parsed_function)?;
-        let verified_loop_rules = verify_structural_loop_proofs(
+        validate_region_proof_clauses(&function_block, parsed_function)?;
+        let verified_loop_rules = verify_loop_execution_proofs(
             &function_block,
             parsed_function,
             &function_environment,
@@ -1571,17 +1571,17 @@ fn describe_parameter_type(c_type: C0Type, struct_name: Option<&str>) -> String 
     }
 }
 
-fn validate_structural_clauses(
+fn validate_region_proof_clauses(
     function_block: &FunctionBlock,
     parsed_function: &syntax::C0Function,
 ) -> Result<(), ClickError> {
     let loop_count = count_loops(parsed_function.body());
     let statement_count = count_statements(parsed_function.body());
-    for structural_clause in function_block.structural_clauses() {
-        match structural_clause.region() {
+    for region_proof_clause in function_block.structural_clauses() {
+        match region_proof_clause.region() {
             CodeRegion::Function => {
                 return Err(ClickError::new(
-                    "`for function` structural proof blocks are not supported",
+                    "`for function` region proof blocks are not supported",
                 ));
             }
             CodeRegion::Loop(index) if *index >= loop_count => {
@@ -1597,14 +1597,14 @@ fn validate_structural_clauses(
                 )));
             }
             CodeRegion::Statement(_) => {
-                if structural_clause.initialize_proof().is_some()
-                    || structural_clause.preserve_proof().is_some()
+                if region_proof_clause.initialize_proof().is_some()
+                    || region_proof_clause.preserve_proof().is_some()
                 {
                     return Err(ClickError::new(
                         "`initialize` and `preserve` are only supported at loop code regions",
                     ));
                 }
-                for item in structural_clause.items() {
+                for item in region_proof_clause.items() {
                     if item.kind() == StructuralItemKind::Invariant {
                         return Err(ClickError::new(
                             "`invariant` is only supported at loop code regions",
@@ -1612,7 +1612,7 @@ fn validate_structural_clauses(
                     }
                     if item.is_effect_kind() {
                         return Err(ClickError::new(
-                            "`immutable` and `mutable` are only supported at loop code regions inside structural proof blocks",
+                            "`immutable` and `mutable` are only supported at loop code regions inside region proof blocks",
                         ));
                     }
                 }
@@ -1621,8 +1621,8 @@ fn validate_structural_clauses(
         }
 
         for (phase, proof) in [
-            ("initialize", structural_clause.initialize_proof()),
-            ("preserve", structural_clause.preserve_proof()),
+            ("initialize", region_proof_clause.initialize_proof()),
+            ("preserve", region_proof_clause.preserve_proof()),
         ] {
             let Some(proof) = proof else {
                 continue;
@@ -1634,14 +1634,14 @@ fn validate_structural_clauses(
             }
         }
 
-        validate_loop_phase_proof("initialize", structural_clause.initialize_proof())?;
-        validate_loop_phase_proof("preserve", structural_clause.preserve_proof())?;
+        validate_loop_phase_proof("initialize", region_proof_clause.initialize_proof())?;
+        validate_loop_phase_proof("preserve", region_proof_clause.preserve_proof())?;
 
-        for item in structural_clause.items() {
+        for item in region_proof_clause.items() {
             if item.is_effect_kind() {
                 if !item.proof().is_auto_or_frame_tactic() {
                     return Err(ClickError::new(
-                        "`immutable` and `mutable` structural clauses must use the default prover, `by auto;`, or `by frame;`",
+                        "`immutable` and `mutable` region proof clauses must use the default prover, `by auto;`, or `by frame;`",
                     ));
                 }
             } else if item.kind() == StructuralItemKind::Invariant {

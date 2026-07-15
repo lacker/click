@@ -14,5 +14,5 @@ theorem fold_step_is_not_pure(x: int32) {
 ```
 
 ```expect
-fail: proof step `fold` cannot prove pure theorem `fold_step_is_not_pure`
+fail: proof step `fold` is not available in the pure proof for theorem `fold_step_is_not_pure`
 ```

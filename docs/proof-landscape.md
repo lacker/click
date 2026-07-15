@@ -17,6 +17,12 @@ will have exactly the names used here.
   a tactic call that can later be expanded into proof steps.
 - A **tactic** is a heuristic program that tries to generate a proof. Tactics may
   search; proof steps should be stable and replayable.
+- A **pure proof** derives a proposition from facts at one execution point. It
+  has no execution frontier and cannot execute C or transform resources.
+- An **execution proof** establishes a pre/post relationship for a code region.
+  It advances an execution frontier carrying symbolic state, pure facts, and
+  resource facts. It may use pure and resource reasoning between execution
+  steps.
 
 The current `.click` language exposes function-level `requires` clauses and
 per-guarantee `ensures ... by auto;` clauses, backed by native C symbolic
@@ -73,7 +79,7 @@ arrays, byte buffers, and Click proposition syntax with `and`, `or`, `not`,
 `implies`, `forall`, `exists`, `.all`, and `.any`.
 `auto` can prove quantified array-segment postconditions, unchanged-memory
 cases, frame facts outside loop write footprints, and several stdlib
-fold/permutation facts. Structural proof blocks support executable `assert`
+fold/permutation facts. Region execution proofs support executable `assert`
 propositions and loop `invariant` clauses, including memory-changing invariants
 and invariants that unfold stdlib definitions such as `permutation`.
 

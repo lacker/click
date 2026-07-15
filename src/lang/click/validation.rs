@@ -2079,7 +2079,7 @@ fn validate_pure_theorem_proof(theorem_name: &str, proof: &Proof) -> Result<(), 
     match proof {
         Proof::Tactic(Tactic::Auto | Tactic::Simp) => Ok(()),
         Proof::Tactic(Tactic::Frame) => Err(ClickError::new(format!(
-            "`frame` cannot prove pure theorem `{theorem_name}`"
+            "`frame` is not available in the pure proof for theorem `{theorem_name}`"
         ))),
         Proof::Steps(steps) => validate_pure_theorem_steps(theorem_name, steps),
     }
@@ -2095,7 +2095,7 @@ fn validate_pure_theorem_steps(theorem_name: &str, steps: &[ProofStep]) -> Resul
             }
             ProofStep::Advance(_) => {
                 return Err(ClickError::new(format!(
-                    "proof step `advance` cannot prove pure theorem `{theorem_name}`"
+                    "execution proof step `advance` is not available in the pure proof for theorem `{theorem_name}`"
                 )));
             }
             ProofStep::SymbolicExecute
@@ -2114,7 +2114,7 @@ fn validate_pure_theorem_steps(theorem_name: &str, steps: &[ProofStep]) -> Resul
             | ProofStep::Witness(_)
             | ProofStep::Choose(_) => {
                 return Err(ClickError::new(format!(
-                    "proof step `{}` cannot prove pure theorem `{theorem_name}`",
+                    "proof step `{}` is not available in the pure proof for theorem `{theorem_name}`",
                     proof_step_name(step)
                 )));
             }

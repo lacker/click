@@ -2,6 +2,25 @@
 
 Click proofs live in `by` clauses.
 
+## Proof Kinds
+
+A **pure proof** derives a proposition from facts at one execution point. It
+does not execute C, move between program points, or transform resource facts.
+Pure theorem proofs and the nested proof inside `have ... by { ... }` are pure
+proofs.
+
+An **execution proof** establishes a relationship between the entry and exit of
+a code region. It owns an execution frontier consisting of the current program
+point, symbolic C state, pure facts, resource facts, and pending control-flow
+continuations. Execution steps move that frontier forward. Pure reasoning and
+resource reasoning may occur between execution steps without moving it.
+
+A function-contract proof is therefore an execution proof even when some of
+its individual steps are pure. Loop initialization is a pure proof at the loop
+entry; loop preservation is an execution proof of one arbitrary iteration.
+Together they justify the loop rule used by the execution proof of the
+enclosing function region.
+
 ## Tactics
 
 Currently accepted tactics:
@@ -68,12 +87,12 @@ Current proof steps:
   immediate body facts.
 - `fold(resource);`: consume one immediate composite body and rebuild the owned
   composite resource fact.
-- `apply(theorem_name(args...));`: instantiate a verified pure theorem from the
-  standard library or current file, prove its requirements from the current
-  proof context, and add its conclusions as derived facts. This step never
-  changes the resource context.
-- `have proposition by { ... }`: prove a pure proposition in a scoped nested
-  proof and add it to the current pure facts. The nested proof accepts
+- `apply(theorem_name(args...));`: perform a pure proof step by instantiating a
+  verified pure theorem from the standard library or current file, prove its
+  requirements from the current proof context, and add its conclusions as
+  derived facts. This step never changes the resource context.
+- `have proposition by { ... }`: run a scoped pure proof and add its proposition
+  to the current pure facts. The nested proof accepts
   `unfold`, `apply`, `simp`, nested `have`, and proof-level `if` case analysis;
   it cannot execute C or transform resources. Both `if` branches prove the
   local proposition, after which the surrounding proof continues.
@@ -143,10 +162,10 @@ execute_step();
 `statement(N).entry` means immediately before statement region `N` executes.
 `statement(N).exit` means immediately after it completes. Every nested case
 must reach exactly that point and establish every assertion. `advance` is the
-execution-changing counterpart to `have`: `have` proves one pure fact without
-moving the execution point, while `advance` proves a postcondition for a scoped
-piece of execution. Facts and resources needed by the continuation must be
-listed explicitly. Deterministic consequences of listed resources, such as
+execution-proof counterpart to `have`: `have` runs a pure proof without moving
+the execution point, while `advance` proves a postcondition for a scoped code
+  region and advances to its exit. Facts and resources needed by the
+  continuation must be listed explicitly. Deterministic consequences of listed resources, such as
 memory loadability and the view of an owned resource, remain available.
 
 Snapshots created inside the scoped execution are not exported. The function
@@ -179,7 +198,7 @@ are interpreted separately for each completed path.
 Some successful `auto` proofs record replayable proof-step certificates when the
 current proof-step language can express the argument.
 
-The proof-script implementation tracks an execution frontier: the current
+An execution proof tracks an execution frontier: the current
 execution point together with its enclosing continuation stack. Proof scripts can
 start at function entry, advance by one straight-line statement with
 `execute_step();`, enter a selected C branch, join branch-local proofs at an
@@ -188,8 +207,8 @@ entry with `execute_until(statement(N));`, and execute to function exit with
 `execute_rest();`. Resource steps such as `observe`, `unfold`, and `fold` can
 happen between those execution steps.
 
-Ordinary statement steps, explicit branch entry, and structural traversal use
-the same certified condition and statement transitions. `advance` composes
+Ordinary statement steps, explicit branch entry, and region execution-proof
+traversal use the same certified condition and statement transitions. `advance` composes
 those transitions inside its body and then replaces the reached branch-local
 frontiers with the declared abstract interface. `execute_rest()` is the batch
 form that continues from the same frontier to function exit.
@@ -240,9 +259,10 @@ ensures again: bytes_contains(p, 0, n, 'x') by {
 }
 ```
 
-## Structural Blocks
+## Region Execution Proofs
 
-Structural proof blocks attach facts to code regions:
+Region proof blocks attach specifications and smaller execution proofs to code
+regions:
 
 ```click
 for statement(2) {
@@ -319,11 +339,11 @@ runs in a fresh arbitrary-iteration context and must reach the loop back edge
 on every proof branch. It can use ordinary proof steps, including `have`,
 resource operations, proof-level `if`, and branch execution.
 
-Structural proof traversal advances forward through the function. When it
+Execution-proof traversal advances forward through the function. When it
 encounters a loop, it checks initialization at the current frontier, checks
 preservation in a scoped arbitrary-iteration frontier, and advances the
-enclosing proof with the loop's abstract exit rule. Later and nested loops are
-therefore checked in their actual enclosing proof context; Click does not
+enclosing execution proof with the loop's abstract exit rule. Later and nested
+loops are therefore checked in their actual enclosing proof context; Click does not
 reconstruct their entry states by executing the function prefix again.
 
 That abstract exit produces an opaque kernel `VerifiedLoopRule` over the

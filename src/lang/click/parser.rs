@@ -617,7 +617,7 @@ impl Parser {
                     );
                 }
                 Some("for") => {
-                    let clause = self.parse_structural_clause()?;
+                    let clause = self.parse_region_proof_clause()?;
                     if let Some(label) = clause.label() {
                         if matches!(label, "function" | "loop" | "statement") {
                             return Err(self.error(format!(
@@ -1009,9 +1009,9 @@ impl Parser {
         }
     }
 
-    fn parse_structural_clause(&mut self) -> Result<StructuralClause, ClickError> {
+    fn parse_region_proof_clause(&mut self) -> Result<StructuralClause, ClickError> {
         self.expect_ident_spelling("for")?;
-        let region = self.parse_structural_code_region()?;
+        let region = self.parse_region_proof_code_region()?;
         let label = if self.peek_ident() == Some("as") {
             self.position += 1;
             Some(self.expect_ident("code region label")?)
@@ -1039,11 +1039,11 @@ impl Parser {
                 preserve_proof = Some(self.parse_by_clause()?);
                 continue;
             }
-            items.extend(self.parse_structural_items()?);
+            items.extend(self.parse_region_proof_items()?);
         }
         self.expect(Token::RBrace)?;
         if items.is_empty() {
-            return Err(self.error("structural proof block must contain at least one item"));
+            return Err(self.error("region proof block must contain at least one item"));
         }
         Ok(StructuralClause {
             region,
@@ -1054,7 +1054,7 @@ impl Parser {
         })
     }
 
-    fn parse_structural_code_region(&mut self) -> Result<CodeRegion, ClickError> {
+    fn parse_region_proof_code_region(&mut self) -> Result<CodeRegion, ClickError> {
         match self.next() {
             Some(Token::Ident(kind)) if kind == "loop" => {
                 self.expect(Token::LParen)?;
@@ -1078,7 +1078,7 @@ impl Parser {
         }
     }
 
-    fn parse_structural_items(&mut self) -> Result<Vec<StructuralItem>, ClickError> {
+    fn parse_region_proof_items(&mut self) -> Result<Vec<StructuralItem>, ClickError> {
         match self.next() {
             Some(Token::Ident(kind)) if kind == "invariant" || kind == "assert" => {
                 let item_kind = if kind == "invariant" {
