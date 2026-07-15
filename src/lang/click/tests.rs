@@ -634,6 +634,41 @@ fn grouped_function_proof_checks_every_claim() {
 }
 
 #[test]
+fn grouped_function_certificates_share_finalized_specification() {
+    let c_source = r#"
+            int32 set(int32 p[], int32 value) {
+                p[0] = value;
+                return value;
+            }
+        "#;
+    let click_source = r#"
+            verifying "set.c";
+
+            int32 set(int32 p[], int32 value) {
+                consumes p[0..1];
+                mutable p[0..1];
+                produces p[0..1];
+                ensures result == value;
+                ensures p[0] == value;
+            } by {
+                execute_rest();
+                frame();
+                simp();
+            }
+        "#;
+    let verified = verify_c0_sources(click_source, &[("set.c", c_source)])
+        .expect("grouped function should verify");
+    let specifications = verified
+        .iter()
+        .filter(|theorem| theorem.function_block.signature().name() == "set")
+        .map(|theorem| &theorem.specification)
+        .collect::<Vec<_>>();
+
+    assert_eq!(specifications.len(), 4);
+    assert!(specifications.windows(2).all(|pair| pair[0] == pair[1]));
+}
+
+#[test]
 fn omitted_region_proofs_use_default_prover() {
     let source = r#"
             verifying "count.c";

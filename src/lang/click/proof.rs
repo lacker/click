@@ -1497,16 +1497,27 @@ struct ProofStepReplayState {
     frames: BTreeSet<Option<CodeRegionRef>>,
     unfolded_predicates: Vec<String>,
     deferred_pure_steps: Vec<DeferredPureStep>,
+    grouped_post_steps: Vec<(usize, GroupedPostStep)>,
     resource_folds: Vec<ResourceClause>,
     case_assumptions: Vec<(usize, ClickProposition, bool)>,
     simp: bool,
     region_proof: bool,
+    grouped_proof: bool,
 }
 
 #[derive(Clone)]
 enum DeferredPureStep {
     Apply(usize, TheoremApplication),
     Have(usize, ProofHave),
+}
+
+#[derive(Clone)]
+enum GroupedPostStep {
+    Fold(ResourceClause),
+    Apply(TheoremApplication),
+    Have(ProofHave),
+    Frame,
+    Simp,
 }
 
 #[derive(Clone, Default)]
@@ -3035,6 +3046,7 @@ pub(super) fn prove_claims_by_grouped_steps(
             pure_facts,
             replay: ProofStepReplayState {
                 source_layout: SourceExecutionLayout::new(parsed_function.body()),
+                grouped_proof: true,
                 ..ProofStepReplayState::default()
             },
             branch_path: Vec::new(),
@@ -3054,37 +3066,377 @@ pub(super) fn prove_claims_by_grouped_steps(
 
     let mut verified = Vec::new();
     for context in contexts {
-        for claim in claims {
-            let claim_label = function_claim_label(function_block.signature().name(), claim);
-            let mut claim_context = context.clone();
-            if matches!(claim, FunctionClaimRef::Effect(_, _)) {
-                // A grouped proof closes effect goals with its validated frame steps.
-                // `simp` applies to the ensure goals that share this execution replay.
-                claim_context.replay.simp = false;
-            }
-            for theorem in finish_proof_replay(
-                claim_context,
-                source_path,
-                function_block,
-                parsed_function,
-                claim,
-                &claim_label,
-                function_environment,
-                predicate_environment,
-                click_function_environment,
-                resource_environment,
-                theorem_environment,
-                &function,
-                &arguments,
-                steps,
-            )? {
-                if !verified.contains(&theorem) {
-                    verified.push(theorem);
-                }
+        for theorem in finish_grouped_proof_replay(
+            context,
+            source_path,
+            function_block,
+            parsed_function,
+            claims,
+            function_environment,
+            predicate_environment,
+            click_function_environment,
+            resource_environment,
+            theorem_environment,
+            &function,
+            &arguments,
+            steps,
+        )? {
+            if !verified.contains(&theorem) {
+                verified.push(theorem);
             }
         }
     }
     Ok(verified)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn finish_grouped_proof_replay(
+    context: ProofReplayContext,
+    source_path: &str,
+    function_block: &FunctionBlock,
+    parsed_function: &syntax::C0Function,
+    claims: &[FunctionClaimRef<'_>],
+    function_environment: &CExecutionEnvironment,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    resource_environment: &ResourceEnvironment,
+    theorem_environment: &TheoremEnvironment,
+    function: &CFunction,
+    arguments: &[CExpression],
+    certificate_steps: &[ProofStep],
+) -> Result<Vec<VerifiedCTheorem>, ClickError> {
+    let ProofReplayContext {
+        state,
+        pure_facts,
+        replay,
+        branch_path,
+    } = context;
+    let proof_label = format!("{}.contract", function_block.signature().name());
+    let result = (|| {
+        let execution = replay.execution().ok_or_else(|| {
+            ClickError::new(format!(
+                "`{proof_label}` grouped proof must reach function exit with `execute_step()`, `execute_rest()`, or `bounded_execute()`"
+            ))
+        })?;
+        if let Some(limit) = execution.limit() {
+            return Err(ClickError::new(format!(
+                "grouped proof hit execution limit {limit:?} for `{proof_label}`"
+            )));
+        }
+        if execution.paths().is_empty() {
+            return Err(ClickError::new(format!(
+                "grouped proof could not prove any complete execution path for `{proof_label}`"
+            )));
+        }
+        let execution_mode = replay
+            .execution_mode()
+            .expect("grouped proof execution should have an execution mode");
+        let pre_state = replay.execution_start_state(&state);
+        let mut verified = Vec::new();
+
+        for (path_index, path) in execution.paths().iter().enumerate() {
+            if !path.obligations().is_empty() {
+                return Err(ClickError::new(format!(
+                    "grouped proof failed for `{proof_label}` path {path_index}: {}",
+                    describe_missing_proof_obligations(
+                        path.obligations(),
+                        &pure_facts,
+                        pre_state.resources().facts(),
+                        parsed_function.parameters(),
+                        arguments,
+                        path.facts()
+                    )
+                )));
+            }
+            let mut outcome = match implication_body(path.theorem().proposition()) {
+                Proposition::CFunctionExecutes { outcome, .. } => outcome.clone(),
+                proposition => {
+                    return Err(ClickError::new(format!(
+                        "grouped proof failed for `{proof_label}` path {path_index}: unexpected theorem body {proposition:?}"
+                    )));
+                }
+            };
+            let mut path_requirements = pure_facts.clone();
+            path_requirements.extend(path.facts().iter().map(|fact| fact.proposition().clone()));
+
+            if !replay.case_assumptions.is_empty() {
+                let CFunctionOutcome::Return {
+                    value: result,
+                    state: post_state,
+                } = &outcome
+                else {
+                    return Err(ClickError::new(format!(
+                        "grouped proof failed for `{proof_label}` path {path_index}: proof-level `if` requires a return outcome"
+                    )));
+                };
+                for (step_index, condition, value) in &replay.case_assumptions {
+                    let condition = lower_outcome_proposition_with_program_points(
+                        parsed_function.parameters(),
+                        arguments,
+                        pre_state,
+                        post_state,
+                        result,
+                        &path_requirements,
+                        condition,
+                        predicate_environment,
+                        click_function_environment,
+                        &replay.program_point_states,
+                    )
+                    .map_err(|message| {
+                        ClickError::new(format!(
+                            "`{proof_label}` path {path_index}, proof step {step_index}: could not lower `if` condition: {message}"
+                        ))
+                    })?;
+                    path_requirements.push(if *value {
+                        condition
+                    } else {
+                        Proposition::Not(Box::new(condition))
+                    });
+                }
+            }
+            path_requirements = unfold_available_predicate_facts(
+                predicate_environment,
+                click_function_environment,
+                &replay.unfolded_predicates,
+                &path_requirements,
+            )
+            .map_err(|message| {
+                ClickError::new(format!(
+                    "grouped proof failed for `{proof_label}` path {path_index}: {message}"
+                ))
+            })?;
+            path_requirements = project_outcome_resource_facts(
+                resource_environment,
+                parsed_function.parameters(),
+                arguments,
+                pre_state,
+                &outcome,
+                &path_requirements,
+                predicate_environment,
+                click_function_environment,
+                &proof_label,
+                path_index,
+            )?;
+
+            let mut closed_claims = vec![false; claims.len()];
+            for (step_index, post_step) in &replay.grouped_post_steps {
+                match post_step {
+                    GroupedPostStep::Fold(resource) => {
+                        outcome = fold_composite_resources_on_outcome(
+                            resource_environment,
+                            std::slice::from_ref(resource),
+                            &proof_label,
+                            path_index,
+                            path.facts(),
+                            &path_requirements,
+                            parsed_function.parameters(),
+                            arguments,
+                            pre_state,
+                            outcome,
+                            predicate_environment,
+                            click_function_environment,
+                            &replay.unfolded_predicates,
+                        )?;
+                        path_requirements = project_outcome_resource_facts(
+                            resource_environment,
+                            parsed_function.parameters(),
+                            arguments,
+                            pre_state,
+                            &outcome,
+                            &path_requirements,
+                            predicate_environment,
+                            click_function_environment,
+                            &proof_label,
+                            path_index,
+                        )?;
+                    }
+                    GroupedPostStep::Apply(application) => {
+                        let CFunctionOutcome::Return {
+                            value: result,
+                            state: post_state,
+                        } = &outcome
+                        else {
+                            return Err(ClickError::new(format!(
+                                "`{proof_label}` path {path_index}, proof step {step_index}: theorem application requires a return outcome"
+                            )));
+                        };
+                        let values = parameter_values(parsed_function.parameters(), arguments)
+                            .map_err(|error| ClickError::new(error.message))?;
+                        let array_refs = array_refs_for_parameters(
+                            parsed_function.parameters(),
+                            &values,
+                            post_state.memory(),
+                        );
+                        let application_context = TheoremApplicationContext {
+                            values: &values,
+                            array_refs: &array_refs,
+                            pre_state,
+                            post_state,
+                            result: Some(result),
+                            program_point_states: &replay.program_point_states,
+                        };
+                        path_requirements = apply_theorem_applications_to_available(
+                            theorem_environment,
+                            &[(*step_index, application.clone())],
+                            &proof_label,
+                            Some(path_index),
+                            path_requirements,
+                            &application_context,
+                            predicate_environment,
+                            click_function_environment,
+                            &replay.unfolded_predicates,
+                        )?;
+                    }
+                    GroupedPostStep::Have(have) => {
+                        let CFunctionOutcome::Return {
+                            value: result,
+                            state: post_state,
+                        } = &outcome
+                        else {
+                            return Err(ClickError::new(format!(
+                                "`{proof_label}` path {path_index}, proof step {step_index}: `have` requires a return outcome"
+                            )));
+                        };
+                        let fact = prove_have_at_point(
+                            have,
+                            theorem_environment,
+                            &proof_label,
+                            *step_index,
+                            &path_requirements,
+                            parsed_function.parameters(),
+                            arguments,
+                            pre_state,
+                            post_state,
+                            Some(result),
+                            &replay.program_point_states,
+                            predicate_environment,
+                            click_function_environment,
+                            function_block.requires(),
+                            Some(path_index),
+                        )?;
+                        if !path_requirements.contains(&fact) {
+                            path_requirements.push(fact);
+                        }
+                    }
+                    GroupedPostStep::Frame => {
+                        for (claim_index, claim) in claims.iter().enumerate() {
+                            if !matches!(claim, FunctionClaimRef::Effect(_, _)) {
+                                continue;
+                            }
+                            let claim_label =
+                                function_claim_label(function_block.signature().name(), claim);
+                            check_function_claim(
+                                &claim_label,
+                                path_index,
+                                path.facts(),
+                                &path_requirements,
+                                claim,
+                                parsed_function.parameters(),
+                                arguments,
+                                pre_state,
+                                &outcome,
+                                predicate_environment,
+                                click_function_environment,
+                                &replay.program_point_states,
+                                &replay.unfolded_predicates,
+                            )?;
+                            closed_claims[claim_index] = true;
+                        }
+                    }
+                    GroupedPostStep::Simp => {
+                        for (claim_index, claim) in claims.iter().enumerate() {
+                            if closed_claims[claim_index]
+                                || !matches!(claim, FunctionClaimRef::Ensure(_, _))
+                            {
+                                continue;
+                            }
+                            let claim_label =
+                                function_claim_label(function_block.signature().name(), claim);
+                            if check_function_claim_by_simp(
+                                &claim_label,
+                                path_index,
+                                path.facts(),
+                                &path_requirements,
+                                claim,
+                                parsed_function.parameters(),
+                                arguments,
+                                pre_state,
+                                &outcome,
+                                predicate_environment,
+                                click_function_environment,
+                                &replay.program_point_states,
+                                &replay.unfolded_predicates,
+                            )
+                            .is_ok()
+                            {
+                                closed_claims[claim_index] = true;
+                            }
+                        }
+                    }
+                }
+            }
+
+            if let Some((claim_index, claim)) = claims
+                .iter()
+                .enumerate()
+                .find(|(claim_index, _)| !closed_claims[*claim_index])
+            {
+                let claim_label = function_claim_label(function_block.signature().name(), claim);
+                let closer = match claim {
+                    FunctionClaimRef::Effect(_, _) => "`frame()`",
+                    FunctionClaimRef::Ensure(_, _) => "`simp()`",
+                };
+                return Err(ClickError::new(format!(
+                    "`{proof_label}` path {path_index} left `{claim_label}` unproved; use {closer} after establishing the facts and resources it needs (claim index {claim_index})"
+                )));
+            }
+
+            let specification = c_function_specification(
+                pre_state.clone(),
+                arguments.to_vec(),
+                path_requirements,
+                outcome,
+            );
+            let theorem = match execution_mode {
+                ProofStepExecutionMode::Verification => {
+                    prove_c_function_satisfies_specification_from_symbolic_path(
+                        function.clone(),
+                        specification.clone(),
+                        Assumptions::new(),
+                        path.facts(),
+                        path.obligations(),
+                    )
+                }
+                ProofStepExecutionMode::Bounded => {
+                    prove_c_function_satisfies_specification_with_environment(
+                        function.clone(),
+                        specification.clone(),
+                        Assumptions::new(),
+                        function_environment.clone(),
+                        CExecutionSemantics::APPLY_VERIFIED_RULES,
+                    )
+                    .ok_or_else(|| {
+                        ClickError::new(format!(
+                            "grouped proof failed to package `{proof_label}` path {path_index}"
+                        ))
+                    })?
+                }
+            };
+            for claim in claims {
+                verified.push(VerifiedCTheorem {
+                    source_path: source_path.to_string(),
+                    function_block: function_block.clone(),
+                    claim: claim.verified_claim(),
+                    proof_kind: ProofKind::ProofSteps,
+                    proof_steps: Some(certificate_steps.to_vec()),
+                    specification: specification.clone(),
+                    theorem: theorem.clone(),
+                });
+            }
+        }
+        Ok(verified)
+    })();
+    result.map_err(|error| add_proof_branch_path(error, &branch_path))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -3278,6 +3630,32 @@ fn replay_linear_steps(
                         resolve_code_region_ref(function_block, region_ref, claim_label, step_index)
                     })
                     .transpose()?;
+                if replay.grouped_proof
+                    && replay.is_at_function_exit()
+                    && matches!(code_region, None | Some(CodeRegion::Function))
+                {
+                    let Some(effect_claim) = claims
+                        .iter()
+                        .find(|claim| matches!(claim, FunctionClaimRef::Effect(_, _)))
+                    else {
+                        return Err(ClickError::new(format!(
+                            "`{claim_label}` proof step {step_index}: `frame()` has no effect claim to prove"
+                        )));
+                    };
+                    validate_frame_code_region(
+                        function_block,
+                        parsed_function,
+                        code_region,
+                        effect_claim,
+                        claim_label,
+                        step_index,
+                    )?;
+                    replay
+                        .grouped_post_steps
+                        .push((step_index, GroupedPostStep::Frame));
+                    replay.frames.insert(region_ref.clone());
+                    continue;
+                }
                 let effect_claims = claims
                     .iter()
                     .filter(|claim| matches!(claim, FunctionClaimRef::Effect(_, _)))
@@ -3355,9 +3733,15 @@ fn replay_linear_steps(
                     )));
                 }
                 if replay.is_at_function_exit() {
-                    replay
-                        .deferred_pure_steps
-                        .push(DeferredPureStep::Apply(step_index, application.clone()));
+                    if replay.grouped_proof {
+                        replay
+                            .grouped_post_steps
+                            .push((step_index, GroupedPostStep::Apply(application.clone())));
+                    } else {
+                        replay
+                            .deferred_pure_steps
+                            .push(DeferredPureStep::Apply(step_index, application.clone()));
+                    }
                 } else {
                     requirement_pure_facts = apply_theorem_at_current_point(
                         theorem_environment,
@@ -3379,7 +3763,13 @@ fn replay_linear_steps(
             }
             ProofStep::FoldResource(resource) => {
                 if replay.is_at_function_exit() {
-                    replay.resource_folds.push(resource.clone());
+                    if replay.grouped_proof {
+                        replay
+                            .grouped_post_steps
+                            .push((step_index, GroupedPostStep::Fold(resource.clone())));
+                    } else {
+                        replay.resource_folds.push(resource.clone());
+                    }
                 } else {
                     let pre_state = replay.execution_start_state(&state).clone();
                     state = fold_composite_resource_at_current_point(
@@ -3400,9 +3790,15 @@ fn replay_linear_steps(
             }
             ProofStep::Have(have) => {
                 if replay.is_at_function_exit() {
-                    replay
-                        .deferred_pure_steps
-                        .push(DeferredPureStep::Have(step_index, have.clone()));
+                    if replay.grouped_proof {
+                        replay
+                            .grouped_post_steps
+                            .push((step_index, GroupedPostStep::Have(have.clone())));
+                    } else {
+                        replay
+                            .deferred_pure_steps
+                            .push(DeferredPureStep::Have(step_index, have.clone()));
+                    }
                     continue;
                 }
                 let fact = prove_have_at_current_point(
@@ -3438,7 +3834,13 @@ fn replay_linear_steps(
                 if !replay.region_proof {
                     require_step_execution(&replay, claim_label, step_index, "simp")?;
                 }
-                replay.simp = true;
+                if replay.grouped_proof && replay.is_at_function_exit() {
+                    replay
+                        .grouped_post_steps
+                        .push((step_index, GroupedPostStep::Simp));
+                } else {
+                    replay.simp = true;
+                }
             }
         }
     }

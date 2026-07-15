@@ -45,6 +45,13 @@ resource reasoning closes postconditions. Per-claim proof clauses remain
 available for independent proofs, but cannot be mixed with a grouped proof in
 the same function.
 
+After execution reaches the return frontier, grouped proof steps retain source
+order. `fold`, `apply`, and `have` transform the current finalized path;
+`frame()` closes the effect goals then provable, and `simp()` closes the
+postconditions then provable. A later fact or fold does not retroactively affect
+an earlier closing step. Each symbolic path is finalized once, and every
+contract certificate is packaged from that same finalized specification.
+
 ## Tactics
 
 Currently accepted tactics:

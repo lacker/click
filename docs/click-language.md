@@ -79,6 +79,12 @@ added to every completed execution path, so later `simp()` can use it to close
 the matching postcondition without applying those existential steps to other
 contract claims.
 
+Post-execution grouped steps run in source order. `fold`, `apply`, and `have`
+update each symbolic path once; `frame()` closes its effect claims and `simp()`
+closes the postconditions currently provable. Facts established after a closing
+step do not retroactively affect it. All certificates for one symbolic path use
+the same finalized specification.
+
 ## Pure Theorems
 
 Pure theorem declarations prove Click propositions without attaching the proof
