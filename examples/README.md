@@ -10,3 +10,9 @@ sidecar against the C files in the same directory.
 
 Most fixtures should stay small. Keep everything directly under `examples/`
 unless there is a concrete reason to add hierarchy.
+
+Current projects:
+
+- `jsonc-refcount/` verifies field-level reads and writes on a small object.
+- `owned-vector/` verifies composite-resource state transitions over vector
+  metadata and dependent backing storage.

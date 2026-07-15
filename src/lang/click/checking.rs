@@ -5434,7 +5434,12 @@ pub(super) fn evaluate_contract_memory_load_from_memory(
 pub(super) fn c_value_matches_kernel_type(value: &CValue, c_type: CType) -> bool {
     matches!(
         (value, c_type),
-        (CValue::Int32(_), CType::Int32) | (CValue::UInt8(_), CType::UInt8)
+        (CValue::Int32(_), CType::Int32)
+            | (CValue::UInt8(_), CType::UInt8)
+            | (
+                CValue::Pointer(_),
+                CType::Int32Pointer | CType::UInt8Pointer
+            )
     )
 }
 

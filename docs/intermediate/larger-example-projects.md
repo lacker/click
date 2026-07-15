@@ -6,9 +6,9 @@ Small proof patterns live in `mdtests/`. Larger verification examples live in
 An example project should look like a tiny library verification effort: ordinary
 C files, sidecar specs, and local documentation explaining the proof boundary.
 
-## Current Example
+## Current Examples
 
-The current project fixture is:
+The current project fixtures are:
 
 ```text
 examples/jsonc-refcount/
@@ -30,6 +30,22 @@ This fixture's proof scope is intentionally narrow:
 
 This gives Click a realistic shape to verify without pretending it already has
 heap allocation or ownership transfer.
+
+### Owned Vector
+
+```text
+examples/owned-vector/
+```
+
+This fixture defines `empty_vector(owner)` and `vector(owner)` composite
+resources over vector metadata and a dependent backing array. It verifies raw
+memory adoption, viewed length and indexed reads, mutation of the first element,
+empty-to-nonempty and nonempty-to-empty state transitions, and a multi-step
+pipeline.
+
+The project README records the current limits that the larger example exposes,
+including symbolic-index mutation and modular calls that consume memory-backed
+composite resources.
 
 ## How To Read An Example Project
 

@@ -363,6 +363,9 @@ sequence:
 - `examples/jsonc-refcount/`: first library-shaped example project. It has
   ordinary C files and sidecar specs for a getter, setter, and increment helper
   over a one-field json-c-shaped object.
+- `examples/owned-vector/`: composite-resource example over vector metadata and
+  dependent backing storage, including viewed reads and resource-state
+  transitions.
 
 ## Library-Shaped Mdtests
 
