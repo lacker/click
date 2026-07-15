@@ -251,6 +251,12 @@ pub(super) fn describe_runtime_error(
             "missing resource fact `{}`",
             describe_resource_fact(resource, parameters, arguments)
         ),
+        crate::kernel::CRuntimeError::MissingVerifiedFunctionRule(name) => format!(
+            "cannot execute call to `{name}` opaquely: no verified function rule is available"
+        ),
+        crate::kernel::CRuntimeError::FunctionContract(message) => {
+            format!("function contract could not be applied: {message}")
+        }
         crate::kernel::CRuntimeError::DuplicateResource { resource } => format!(
             "duplicate resource fact `{}`",
             describe_resource_fact(resource, parameters, arguments)

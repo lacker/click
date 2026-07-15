@@ -36,8 +36,8 @@ so folding either resource tests dependent composite-resource definitions.
   ownership and vector metadata.
 - `vector_push` transitions an empty vector to a nonempty vector.
 - `vector_clear` transitions a nonempty vector back to an empty vector.
-- `vector_pipeline` performs both transitions inline and calls `vector_get`
-  through viewed composite resources between mutations.
+- `vector_pipeline` calls every operation through its verified contract. Each
+  call advances as one execution step without unfolding the callee body.
 
 The integration test in `tests/examples.rs` verifies every C file against
 `vector.click`.
@@ -48,13 +48,9 @@ The caller supplies the backing array, capacity is at least one, and the example
 does not allocate, free, resize, or handle a full vector. Those operations need
 resource-algebra features beyond composite resources.
 
-The example also exposes two current proof-system limitations:
+The example still exposes one proof-system limitation: proving a produced
+resource and a pure result repeats much of the same execution proof.
 
-- An opaque call that consumes a memory-backed composite resource does not yet
-  project its owned children into the callee's execution context. The pipeline
-  expresses mutating transitions inline, while viewed calls are modular.
-- Proving a produced resource and a pure result currently repeats much of the
-  same execution proof.
-
-These restrictions are documented here because this project is intended to
-identify the next integration work while keeping every checked example valid.
+The contracts intentionally state precise mutation footprints and memory
+postconditions. The pipeline can therefore rely on a setter's result without
+seeing its implementation, while unrelated vector metadata remains framed.

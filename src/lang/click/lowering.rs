@@ -33,6 +33,14 @@ pub(super) fn annotated_function(
     let body = lowerer.lower_statement(parsed_function.body())?;
     let (resource_requires, resource_ensures) =
         function_resource_summary(function_block, resource_environment)?;
+    let (contract_requires, contract_ensures, contract_mutable, opaque_contract_supported) =
+        function_contract_summary(
+            function_block,
+            parsed_function,
+            predicate_environment,
+            click_function_environment,
+            resource_environment,
+        )?;
     Ok(c_function(
         parsed_function.return_type().to_kernel_type(),
         parsed_function.name().to_string(),
@@ -43,7 +51,183 @@ pub(super) fn annotated_function(
             .collect(),
         body,
     )
-    .with_resource_summary(resource_requires, resource_ensures))
+    .with_resource_summary(resource_requires, resource_ensures)
+    .with_contract(
+        contract_requires,
+        contract_ensures,
+        contract_mutable,
+        opaque_contract_supported,
+    ))
+}
+
+pub(super) fn function_contract_summary(
+    function_block: &FunctionBlock,
+    parsed_function: &syntax::C0Function,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    resource_environment: &ResourceEnvironment,
+) -> Result<
+    (
+        Vec<SpecProposition>,
+        Vec<SpecProposition>,
+        Vec<CMemorySegment>,
+        bool,
+    ),
+    ClickError,
+> {
+    let entry_state = CState::new();
+    let mut lowerer = AnnotationLowerer {
+        structural_clauses: function_block.structural_clauses(),
+        predicate_environment,
+        click_function_environment,
+        entry_state: &entry_state,
+        entry_values: BTreeMap::new(),
+        parameter_array_element_types: parsed_function
+            .parameters()
+            .iter()
+            .filter_map(|parameter| {
+                Some((
+                    parameter.name().to_string(),
+                    click_array_element_type(parameter.c_type())?,
+                ))
+            })
+            .collect(),
+        quantified_values: BTreeMap::new(),
+        loop_index: 0,
+        statement_index: 0,
+        next_quantifier_variable: 3_100_000,
+    };
+    let context = SpecElaborationContext::for_function_contract();
+    let mut opaque_contract_supported = true;
+    let mut requires = Vec::new();
+    for proposition in function_block
+        .requires()
+        .iter()
+        .filter_map(Requirement::proposition)
+    {
+        if !proposition_supported_in_opaque_contract(proposition) {
+            opaque_contract_supported = false;
+            continue;
+        }
+        match lowerer.click_proposition_to_spec_proposition(proposition, &context) {
+            Ok(proposition) => requires.push(proposition),
+            Err(_) => opaque_contract_supported = false,
+        }
+    }
+    let mut ensures = Vec::new();
+    for proposition in function_block
+        .ensures()
+        .iter()
+        .filter_map(|clause| match clause.ensure() {
+            Ensure::Proposition(proposition) => Some(proposition),
+            Ensure::Resource(_) => None,
+        })
+    {
+        if !proposition_supported_in_opaque_contract(proposition) {
+            opaque_contract_supported = false;
+            continue;
+        }
+        match lowerer.click_proposition_to_spec_proposition(proposition, &context) {
+            Ok(proposition) => ensures.push(proposition),
+            Err(_) => opaque_contract_supported = false,
+        }
+    }
+
+    let mut mutable = Vec::new();
+    if function_block.effects().is_empty() {
+        for requirement in function_block.requires() {
+            if let Requirement::Resource(resource) = requirement.inner() {
+                collect_owned_resource_memory_segments(
+                    resource,
+                    resource_environment,
+                    &mut mutable,
+                )?;
+            }
+        }
+    }
+    for effect in function_block.effects() {
+        match effect.effect() {
+            Effect::Immutable => {}
+            Effect::Mutable(segments) => {
+                mutable.extend(segments.iter().map(|segment| {
+                    CMemorySegment::new(
+                        segment.base.clone(),
+                        segment.start.clone(),
+                        segment.end.clone(),
+                    )
+                }));
+            }
+        }
+    }
+    Ok((requires, ensures, mutable, opaque_contract_supported))
+}
+
+fn proposition_supported_in_opaque_contract(proposition: &ClickProposition) -> bool {
+    match proposition {
+        ClickProposition::Separate { .. }
+        | ClickProposition::Contains { .. }
+        | ClickProposition::Loadable { .. } => false,
+        ClickProposition::And(left, right)
+        | ClickProposition::Or(left, right)
+        | ClickProposition::Implies(left, right) => {
+            proposition_supported_in_opaque_contract(left)
+                && proposition_supported_in_opaque_contract(right)
+        }
+        ClickProposition::Not(body)
+        | ClickProposition::ForAll { body, .. }
+        | ClickProposition::Exists { body, .. }
+        | ClickProposition::RangeAll { body, .. }
+        | ClickProposition::RangeAny { body, .. } => proposition_supported_in_opaque_contract(body),
+        ClickProposition::Comparison { .. } | ClickProposition::PredicateCall { .. } => true,
+    }
+}
+
+fn collect_owned_resource_memory_segments(
+    resource: &ResourceClause,
+    resource_environment: &ResourceEnvironment,
+    output: &mut Vec<CMemorySegment>,
+) -> Result<(), ClickError> {
+    match resource {
+        ResourceClause::Read(_) => Ok(()),
+        ResourceClause::Write(segment) => {
+            output.push(CMemorySegment::new(
+                segment.base.clone(),
+                segment.start.clone(),
+                segment.end.clone(),
+            ));
+            Ok(())
+        }
+        ResourceClause::Declared {
+            access: ResourceAccessMode::View,
+            ..
+        } => Ok(()),
+        ResourceClause::Declared {
+            access: ResourceAccessMode::Own,
+            kind: ResourceKind::Token,
+            ..
+        } => Ok(()),
+        ResourceClause::Declared {
+            access: ResourceAccessMode::Own,
+            kind: ResourceKind::Composite,
+            name,
+            arguments,
+            ..
+        } => {
+            let definition = resource_environment
+                .get(name)
+                .ok_or_else(|| ClickError::new(format!("unknown composite resource `{name}`")))?;
+            let Some(body) = definition.composite_body() else {
+                return Ok(());
+            };
+            let substitutions = resource_argument_contract_substitutions(definition, arguments)?;
+            for contained in body.contains() {
+                let contained = substitute_resource_clause_for_summary(contained, &substitutions)
+                    .map_err(ClickError::new)?;
+                collect_owned_resource_memory_segments(&contained, resource_environment, output)?;
+            }
+            Ok(())
+        }
+    }
 }
 
 struct AnnotationLowerer<'a> {
@@ -691,6 +875,19 @@ impl AnnotationLowerer<'_> {
                     value_type: element_type,
                 })
             }
+            CExpression::TypedLoad {
+                pointer,
+                value_type,
+            } => Ok(SpecExpression::MemoryLoad {
+                memory: environment.current_memory.clone(),
+                pointer: Box::new(self.lower_c_fragment_to_spec(pointer, environment)?),
+                value_type: *value_type,
+            }),
+            CExpression::Load(pointer) => Ok(SpecExpression::MemoryLoad {
+                memory: environment.current_memory.clone(),
+                pointer: Box::new(self.lower_c_fragment_to_spec(pointer, environment)?),
+                value_type: CType::Int32,
+            }),
             expression => Ok(SpecExpression::CExpression(expression.clone())),
         }
     }

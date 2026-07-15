@@ -1227,7 +1227,7 @@ pub(super) fn collect_spec_memory_bitvector_variables(
     variables: &mut BTreeSet<Variable>,
 ) {
     match memory {
-        SpecMemory::Current => {}
+        SpecMemory::Current | SpecMemory::FunctionEntry => {}
         SpecMemory::LoopEntry => {}
         SpecMemory::Fixed(memory) => collect_memory_bitvector_variables(memory, variables),
     }
@@ -1446,6 +1446,17 @@ pub(super) fn collect_c_function_bitvector_variables(
     }
     for resource in function.resource_ensures() {
         collect_resource_spec_bitvector_variables(resource, variables);
+    }
+    for proposition in function.contract_requires() {
+        collect_spec_proposition_bitvector_variables(proposition, variables);
+    }
+    for proposition in function.contract_ensures() {
+        collect_spec_proposition_bitvector_variables(proposition, variables);
+    }
+    for segment in function.contract_mutable() {
+        collect_c_expression_bitvector_variables(&segment.base, variables);
+        collect_c_expression_bitvector_variables(&segment.start, variables);
+        collect_c_expression_bitvector_variables(&segment.end, variables);
     }
     collect_c_statement_bitvector_variables(function.body(), variables);
 }
@@ -2188,6 +2199,7 @@ pub(super) fn substitute_bitvector_variable_in_spec_memory(
 ) -> SpecMemory {
     match memory {
         SpecMemory::Current => SpecMemory::Current,
+        SpecMemory::FunctionEntry => SpecMemory::FunctionEntry,
         SpecMemory::LoopEntry => SpecMemory::LoopEntry,
         SpecMemory::Fixed(memory) => {
             SpecMemory::Fixed(substitute_bitvector_variable_in_memory(memory, from, to))
@@ -2631,6 +2643,30 @@ pub(super) fn substitute_bitvector_variable_in_c_function(
             .iter()
             .map(|resource| substitute_bitvector_variable_in_resource_spec(resource, from, to))
             .collect(),
+        contract_requires: function
+            .contract_requires
+            .iter()
+            .map(|proposition| {
+                substitute_bitvector_variable_in_spec_proposition(proposition, from, to)
+            })
+            .collect(),
+        contract_ensures: function
+            .contract_ensures
+            .iter()
+            .map(|proposition| {
+                substitute_bitvector_variable_in_spec_proposition(proposition, from, to)
+            })
+            .collect(),
+        contract_mutable: function
+            .contract_mutable
+            .iter()
+            .map(|segment| CMemorySegment {
+                base: substitute_bitvector_variable_in_c_expression(&segment.base, from, to),
+                start: substitute_bitvector_variable_in_c_expression(&segment.start, from, to),
+                end: substitute_bitvector_variable_in_c_expression(&segment.end, from, to),
+            })
+            .collect(),
+        opaque_contract_supported: function.opaque_contract_supported,
     }
 }
 

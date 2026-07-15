@@ -207,6 +207,7 @@ pub enum CComparisonOperator {
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum SpecMemory {
     Current,
+    FunctionEntry,
     LoopEntry,
     Fixed(CMemory),
 }
@@ -382,6 +383,10 @@ pub struct CFunction {
     pub(super) body: CStatement,
     pub(super) resource_requires: Vec<CResourceSpec>,
     pub(super) resource_ensures: Vec<CResourceSpec>,
+    pub(super) contract_requires: Vec<SpecProposition>,
+    pub(super) contract_ensures: Vec<SpecProposition>,
+    pub(super) contract_mutable: Vec<CMemorySegment>,
+    pub(super) opaque_contract_supported: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -395,8 +400,15 @@ pub struct CFunctionSpecification {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct CFunctionEnvironment {
     pub(super) functions: BTreeMap<String, CFunction>,
+    pub(super) verified_function_rules: BTreeMap<String, CVerifiedFunctionRule>,
+    pub(super) require_verified_function_rules: bool,
     pub(super) verified_loop_rules: Vec<CVerifiedLoopRule>,
     pub(super) require_verified_loop_rules: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CVerifiedFunctionRule {
+    pub(super) function: CFunction,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -428,6 +440,8 @@ pub enum CRuntimeError {
     MissingResource {
         resource: CResourceFact,
     },
+    MissingVerifiedFunctionRule(String),
+    FunctionContract(String),
     DuplicateResource {
         resource: CResourceFact,
     },
@@ -1602,6 +1616,10 @@ impl CFunction {
             body,
             resource_requires: Vec::new(),
             resource_ensures: Vec::new(),
+            contract_requires: Vec::new(),
+            contract_ensures: Vec::new(),
+            contract_mutable: Vec::new(),
+            opaque_contract_supported: true,
         }
     }
 
@@ -1612,6 +1630,20 @@ impl CFunction {
     ) -> Self {
         self.resource_requires = requires;
         self.resource_ensures = ensures;
+        self
+    }
+
+    pub fn with_contract(
+        mut self,
+        requires: Vec<SpecProposition>,
+        ensures: Vec<SpecProposition>,
+        mutable: Vec<CMemorySegment>,
+        opaque_supported: bool,
+    ) -> Self {
+        self.contract_requires = requires;
+        self.contract_ensures = ensures;
+        self.contract_mutable = mutable;
+        self.opaque_contract_supported = opaque_supported;
         self
     }
 
@@ -1637,6 +1669,22 @@ impl CFunction {
 
     pub fn resource_ensures(&self) -> &[CResourceSpec] {
         &self.resource_ensures
+    }
+
+    pub fn contract_requires(&self) -> &[SpecProposition] {
+        &self.contract_requires
+    }
+
+    pub fn contract_ensures(&self) -> &[SpecProposition] {
+        &self.contract_ensures
+    }
+
+    pub fn contract_mutable(&self) -> &[CMemorySegment] {
+        &self.contract_mutable
+    }
+
+    pub fn opaque_contract_supported(&self) -> bool {
+        self.opaque_contract_supported
     }
 }
 
@@ -1768,6 +1816,25 @@ impl CFunctionEnvironment {
 
     pub fn get_function(&self, name: &str) -> Option<&CFunction> {
         self.functions.get(name)
+    }
+
+    pub fn requiring_verified_function_rules(mut self) -> Self {
+        self.require_verified_function_rules = true;
+        self
+    }
+
+    pub fn with_verified_function_rule(mut self, rule: CVerifiedFunctionRule) -> Self {
+        self.verified_function_rules
+            .insert(rule.function.name().to_string(), rule);
+        self
+    }
+
+    pub(super) fn requires_verified_function_rules(&self) -> bool {
+        self.require_verified_function_rules
+    }
+
+    pub(super) fn get_verified_function_rule(&self, name: &str) -> Option<&CVerifiedFunctionRule> {
+        self.verified_function_rules.get(name)
     }
 
     pub fn with_verified_loop_rules(
@@ -1939,6 +2006,21 @@ impl CMemory {
             .retain(|pointer, _| preserved_blocks.contains(&pointer.block));
         self.blocks
             .insert(format!("havoc:{}", variable.0).into(), CBlock::new(0));
+        self
+    }
+
+    pub(super) fn with_call_memory_havoc(
+        mut self,
+        variable: Variable,
+        mutable_ranges: &[CMemoryRange],
+        assumptions: &Assumptions,
+    ) -> Self {
+        self.cells.retain(|pointer, _| {
+            pointer.block.starts_with("local:")
+                || assumptions.ranges_proven_disjoint_from_pointer(mutable_ranges, pointer)
+        });
+        self.blocks
+            .insert(format!("call-havoc:{}", variable.0).into(), CBlock::new(0));
         self
     }
 

@@ -273,8 +273,17 @@ sequence:
   `observe`, `unfold`, and `fold`.
 - `mdtests/composite_resource_view_then_mutate.md`: caller observes an owned
   composite before a view-only helper call, then unfolds before a later owned
-  mutation. The callee's `views` composite requirement projects its immediate
-  contained views at entry.
+  mutation. The helper call transfers the folded view through its verified
+  contract without exposing contained resources to the caller.
+- `mdtests/opaque_function_contract_call.md`: a mutating helper call executes
+  as one step and exposes only its verified resource and memory postconditions.
+- `mdtests/opaque_call_requires_verified_rule.md`: expected-fail coverage for a
+  caller that appears before its callee's verified rule is available.
+- `mdtests/opaque_call_rejects_weak_postcondition.md`: expected-fail coverage
+  showing that an opaque caller cannot use an implementation write omitted
+  from the callee contract.
+- `mdtests/opaque_call_old_entry_state.md`: a callee's `old(...)` postcondition
+  is instantiated at the call-entry memory snapshot.
 - `mdtests/composite_resource_observe_nested_separate_contains.md`: explicit
   chained observation exposes `contains(...)` and `separate(...)` facts for a
   nested composite resource.

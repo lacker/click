@@ -126,7 +126,7 @@ Ordinary facts can be used repeatedly. An owned resource can be transferred.
 
 ## Function Calls
 
-Function calls use the callee's resource summary:
+Function calls use the callee's verified contract as an opaque summary:
 
 ```click
 int32 helper(int32 p[]) {
@@ -141,8 +141,28 @@ int32 caller(int32 p[]) {
 ```
 
 The caller must have a resource that covers every callee resource requirement.
-An unannotated callee receives no external memory permission, even if the caller
-has permissions in its own context.
+`execute_step()` checks the pure and resource preconditions, advances across the
+entire call, transfers the declared resources, applies the memory effect, and
+adds the pure postconditions. It does not execute the callee body. The callee
+must therefore have been verified earlier in the file; otherwise Click reports
+that no verified function rule is available.
+
+Postconditions are the caller's only knowledge of changes made by an opaque
+call. For example, a setter must state `ensures p[index] == value` if callers
+need that fact. A true implementation detail that is absent from the contract
+is deliberately unavailable. `old(...)` in a callee postcondition refers to
+the state at that call's entry.
+
+An unannotated callee receives no external memory permission, even if the
+caller has permissions in its own context. Explicit `mutable` clauses provide
+the precise abstract write footprint. Without one, an owned input resource is
+used as a conservative mutable footprint.
+
+Opaque summary lowering currently supports comparison, logical, quantified,
+and predicate-call propositions, including `old(...)`. A contract containing a
+surface `separate(...)`, `contains(...)`, `loadable(...)`, or a non-entry
+`at(...)` snapshot can still be verified directly, but it does not yet produce
+an opaque call rule; attempting to call it reports the missing rule.
 
 ## Token Resources
 

@@ -37,6 +37,7 @@ verifying "pipe_callback.c";
 
 int32 complete(int32 cb) {
     consumes can_complete(cb);
+    ensures result == 0 by auto;
 }
 
 int32 complete_primary_and_secondary(int32 primary, int32 secondary) {
@@ -44,6 +45,7 @@ int32 complete_primary_and_secondary(int32 primary, int32 secondary) {
     consumes can_complete(secondary);
 
     produces can_complete(secondary) by auto;
+    ensures result == 0 by auto;
 }
 
 int32 pipe_callback(int32 primary, int32 secondary) {

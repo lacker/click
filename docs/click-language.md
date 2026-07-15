@@ -215,7 +215,8 @@ so `int32 p[]` ranges count four-byte cells and `uint8 bytes[]` ranges count
 bytes. Local stack accesses do not require resources. A function with no
 resource context has no permission to access external memory.
 Top-level verification gets its resource context from the function's resource
-verbs, while function calls use the callee's resource summary.
+verbs, while function calls apply the callee's verified contract as one opaque
+execution step.
 
 These permissions are currently one built-in resource family: memory resources.
 The family defines how resources entail, split, rejoin, transfer, and consume

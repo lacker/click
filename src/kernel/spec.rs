@@ -665,6 +665,10 @@ pub(super) fn evaluate_spec_expression_paths_with_loop_entry(
                 };
                 let memory = match memory {
                     SpecMemory::Current => state.memory(),
+                    SpecMemory::FunctionEntry => match loop_entry_state {
+                        Some(entry_state) => entry_state.memory(),
+                        None => continue,
+                    },
                     SpecMemory::LoopEntry => match loop_entry_state {
                         Some(loop_entry_state) => loop_entry_state.memory(),
                         None => continue,

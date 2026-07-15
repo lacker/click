@@ -11,15 +11,13 @@ int32 vector_pipeline(
     int32 first,
     int32 replacement
 ) {
-    int32* current;
     int32 observed;
+    int32 ignored;
     observed = vector_init(owner, data, capacity);
-    current = owner->data;
-    current[0] = first;
-    owner->len = 1;
+    observed = vector_push(owner, first);
     observed = vector_get(owner, 0);
-    current[0] = replacement;
+    observed = vector_set(owner, 0, replacement);
     observed = vector_get(owner, 0);
-    owner->len = 0;
+    ignored = vector_clear(owner);
     return observed;
 }

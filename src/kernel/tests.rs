@@ -4004,3 +4004,69 @@ fn missing_memory_load_is_native_undefined_behavior() {
         }
     );
 }
+
+#[test]
+fn verified_function_rule_applies_contract_without_executing_body() {
+    let helper = c_function(
+        CType::Int32,
+        "opaque_helper",
+        vec![c_parameter("x", CType::Int32)],
+        c_return(c_int32_literal(99)),
+    )
+    .with_contract(
+        Vec::new(),
+        vec![SpecProposition::Comparison {
+            left: SpecExpression::CExpression(c_variable("result")),
+            operator: CComparisonOperator::Equal,
+            right: SpecExpression::CExpression(c_variable("x")),
+        }],
+        Vec::new(),
+        true,
+    );
+    let environment = CFunctionEnvironment::new()
+        .with_function(helper.clone())
+        .with_verified_function_rule(CVerifiedFunctionRule { function: helper })
+        .requiring_verified_function_rules();
+    let statement = c_seq(
+        c_call_assign("result", "opaque_helper", vec![c_int32_literal(5)]),
+        c_return(c_variable("result")),
+    );
+    let execution = prove_symbolic_c_execution_paths_with_environment(
+        CState::new(),
+        statement,
+        Assumptions::new(),
+        environment,
+    );
+    let path = execution
+        .paths()
+        .first()
+        .expect("opaque call should produce one path");
+    let mut proposition = path.theorem().proposition();
+    while let Proposition::Implies(_, body) = proposition {
+        proposition = body;
+    }
+    let Proposition::CStatementExecutes {
+        outcome: CStatementOutcome::Return { value, .. },
+        ..
+    } = proposition
+    else {
+        panic!("opaque call should return normally")
+    };
+    assert!(*value != int32(99));
+    let propositions = path
+        .facts()
+        .iter()
+        .map(|fact| fact.proposition().clone())
+        .collect::<Vec<_>>();
+    let assumptions = assumptions_with_propositions(&Assumptions::new(), &propositions);
+    let CValue::Int32(result) = value else {
+        panic!("opaque helper should return int32")
+    };
+    assert!(assumptions.proves(&Proposition::ConditionIs(
+        ConditionTerm::Bitvector32Equal(
+            Box::new(result.clone()),
+            Box::new(Bitvector32Term::Constant(5)),
+        ),
+        true,
+    )));
+}

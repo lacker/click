@@ -3,6 +3,7 @@ use super::prelude::*;
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct CFunctionResourceTransfer {
     callee_resources: ResourceContext,
+    caller_resources_after_requirements: ResourceContext,
     return_resources: ResourceContext,
 }
 
@@ -186,6 +187,18 @@ pub(super) fn execute_c_function_call_paths(
     environment: &CFunctionEnvironment,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<CFunctionPath>> {
+    if let Some(rule) = environment.get_verified_function_rule(function.name()) {
+        return execute_verified_function_rule(caller_state, rule, arguments, assumptions, budget);
+    }
+    if environment.requires_verified_function_rules() {
+        return Ok(vec![CFunctionPath {
+            outcome: CFunctionOutcome::RuntimeError(CRuntimeError::MissingVerifiedFunctionRule(
+                function.name().to_string(),
+            )),
+            facts: Vec::new(),
+            obligations: Vec::new(),
+        }]);
+    }
     budget.consume_function_call()?;
     if arguments.len() != function.parameters.len() {
         return Ok(vec![CFunctionPath {
@@ -282,6 +295,249 @@ pub(super) fn execute_c_function_call_paths(
 
     budget.consume_paths(paths.len())?;
     Ok(paths)
+}
+
+fn execute_verified_function_rule(
+    caller_state: &CState,
+    rule: &CVerifiedFunctionRule,
+    arguments: &[CExpression],
+    assumptions: &Assumptions,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<CFunctionPath>> {
+    let function = &rule.function;
+    budget.consume_function_call()?;
+    let mut paths = Vec::new();
+    for arguments_path in evaluate_c_arguments_paths(caller_state, arguments, assumptions, budget)?
+    {
+        if let Some(outcome) = arguments_path.outcome {
+            paths.push(CFunctionPath {
+                outcome,
+                facts: arguments_path.facts,
+                obligations: arguments_path.obligations,
+            });
+            continue;
+        }
+        let Some(mut entry_state) =
+            bind_c_function_arguments(caller_state, function, &arguments_path.values)
+        else {
+            paths.push(CFunctionPath {
+                outcome: CFunctionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+                facts: arguments_path.facts,
+                obligations: arguments_path.obligations,
+            });
+            continue;
+        };
+        let path_assumptions = assumptions_with_path_context(
+            assumptions,
+            &arguments_path.facts,
+            &arguments_path.obligations,
+        );
+        let transfer = match prepare_function_resource_transfer(
+            caller_state,
+            &entry_state,
+            function,
+            &path_assumptions,
+            budget,
+        )? {
+            Ok(transfer) => transfer,
+            Err(error) => {
+                paths.push(CFunctionPath {
+                    outcome: CFunctionOutcome::RuntimeError(error),
+                    facts: arguments_path.facts,
+                    obligations: arguments_path.obligations,
+                });
+                continue;
+            }
+        };
+        entry_state.resources = transfer.callee_resources;
+        let entry_contract_state =
+            with_contract_argument_views(&entry_state, &arguments_path.values);
+
+        let mut obligations = arguments_path.obligations;
+        let mut facts = arguments_path.facts;
+        for requirement in function.contract_requires() {
+            let requirement_paths = lower_spec_proposition_at_state_with_loop_entry(
+                &entry_contract_state,
+                requirement,
+                Some(&entry_contract_state),
+                &path_assumptions,
+                budget,
+            )?;
+            let Some(requirement_path) = requirement_paths.into_iter().next() else {
+                obligations.push(
+                    ProofObligation::verification_condition(false_equals_true_proposition())
+                        .with_context(format!("{} precondition", function.name())),
+                );
+                continue;
+            };
+            obligations.extend(requirement_path.obligations);
+            obligations.push(
+                ProofObligation::verification_condition(requirement_path.proposition)
+                    .with_context(format!("{} precondition", function.name())),
+            );
+            facts.extend(requirement_path.facts);
+        }
+
+        let effective_assumptions =
+            assumptions_with_path_context(assumptions, &facts, &obligations);
+        let footprint_state = entry_contract_state.clone();
+        let mut mutable_ranges = Vec::new();
+        let mut footprint_error = None;
+        for segment in function.contract_mutable() {
+            match evaluate_loop_effect_segment(
+                &footprint_state,
+                segment,
+                &effective_assumptions,
+                budget,
+            )? {
+                Ok(segment) => {
+                    mutable_ranges.push(CMemoryRange::new(segment.base, segment.start, segment.end))
+                }
+                Err(message) => {
+                    footprint_error = Some(message);
+                    break;
+                }
+            }
+        }
+        if let Some(message) = footprint_error {
+            paths.push(CFunctionPath {
+                outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(format!(
+                    "could not evaluate mutable footprint: {message}"
+                ))),
+                facts,
+                obligations,
+            });
+            continue;
+        }
+
+        let nonce = entry_state
+            .memory
+            .blocks
+            .keys()
+            .filter(|block| block.starts_with("call-havoc:"))
+            .count() as u64;
+        let memory = if mutable_ranges.is_empty() {
+            entry_state.memory.clone()
+        } else {
+            entry_state.memory.clone().with_call_memory_havoc(
+                Variable(8_000_000 + nonce),
+                &mutable_ranges,
+                &effective_assumptions,
+            )
+        };
+        if !mutable_ranges.is_empty() {
+            facts.push(ExecutionPureFact::new(Proposition::CMemoryEffectSummary {
+                before: entry_state.memory.clone(),
+                after: memory.clone(),
+                mutable_ranges: mutable_ranges.clone(),
+            }));
+        }
+        let result = symbolic_call_result(function.return_type(), Variable(8_100_000 + nonce));
+        let mut post_state = entry_state.clone().with_memory(memory);
+        post_state
+            .locals
+            .set_typed("result".to_string(), result.clone(), function.return_type());
+        post_state.resources = transfer.return_resources.clone();
+        let output_resource_state =
+            with_contract_argument_views(&post_state, &arguments_path.values);
+
+        let ensured_resources = match evaluate_function_resource_context(
+            &output_resource_state,
+            function.resource_ensures(),
+            &effective_assumptions,
+            budget,
+        )? {
+            Ok(resources) => resources,
+            Err(error) => {
+                paths.push(CFunctionPath {
+                    outcome: CFunctionOutcome::RuntimeError(error),
+                    facts,
+                    obligations,
+                });
+                continue;
+            }
+        };
+        let return_resources = match transfer
+            .caller_resources_after_requirements
+            .try_compose_with_facts(
+                ensured_resources.facts().iter().cloned(),
+                &effective_assumptions,
+            ) {
+            Ok(resources) => resources,
+            Err(error) => {
+                paths.push(CFunctionPath {
+                    outcome: CFunctionOutcome::RuntimeError(resource_context_runtime_error(error)),
+                    facts,
+                    obligations,
+                });
+                continue;
+            }
+        };
+        post_state.resources = return_resources.clone();
+        let post_contract_state = with_contract_argument_views(&post_state, &arguments_path.values);
+
+        for ensure in function.contract_ensures() {
+            let ensure_paths = lower_spec_proposition_at_state_with_loop_entry(
+                &post_contract_state,
+                ensure,
+                Some(&entry_contract_state),
+                &effective_assumptions,
+                budget,
+            )?;
+            for ensure_path in ensure_paths.into_iter().take(1) {
+                facts.extend(ensure_path.facts);
+                facts.push(ExecutionPureFact::new(ensure_path.proposition));
+            }
+        }
+
+        let mut return_state = caller_state.clone();
+        return_state.memory = post_state.memory;
+        return_state.resources = return_resources;
+        paths.push(CFunctionPath {
+            outcome: CFunctionOutcome::Return {
+                value: result,
+                state: return_state,
+            },
+            facts,
+            obligations,
+        });
+    }
+    budget.consume_paths(paths.len())?;
+    Ok(paths)
+}
+
+fn with_contract_argument_views(state: &CState, values: &[CValue]) -> CState {
+    let mut state = state.clone();
+    for value in values {
+        if let CValue::Pointer(pointer) = value {
+            state.resources = state
+                .resources
+                .unchecked_with_fact(CResourceFact::view_memory(CMemoryRange::new(
+                    pointer.clone(),
+                    Bitvector32Term::Constant(0),
+                    Bitvector32Term::Constant(i32::MAX as u32),
+                )));
+        }
+    }
+    state
+}
+
+fn symbolic_call_result(c_type: CType, variable: Variable) -> CValue {
+    match c_type {
+        CType::Int32 => CValue::Int32(Bitvector32Term::Variable(variable)),
+        CType::UInt8 => CValue::UInt8(Bitvector32Term::Variable(variable)),
+        CType::Int32Pointer => CValue::Pointer(Pointer {
+            block: format!("call-result:{}", variable.0).into(),
+            offset: PointerOffsetTerm::Constant(0),
+        }),
+        CType::UInt8Pointer => CValue::Pointer(Pointer {
+            block: format!("call-result:{}", variable.0).into(),
+            offset: PointerOffsetTerm::Constant(0),
+        }),
+        CType::Int32Array(_) | CType::UInt8Array(_) => {
+            unreachable!("C functions cannot return array values")
+        }
+    }
 }
 
 pub(super) fn add_memory_store_obligation(
@@ -438,6 +694,7 @@ fn prepare_function_resource_transfer(
         };
         return_resources = resources;
     }
+    let caller_resources_after_requirements = return_resources.clone();
     return_resources = match return_resources
         .try_compose_with_facts(ensured_resources.facts().iter().cloned(), assumptions)
     {
@@ -447,6 +704,7 @@ fn prepare_function_resource_transfer(
 
     Ok(Ok(CFunctionResourceTransfer {
         callee_resources: required_resources,
+        caller_resources_after_requirements,
         return_resources,
     }))
 }

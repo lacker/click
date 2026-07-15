@@ -43,9 +43,10 @@ memory adoption, viewed length and indexed reads, mutation of the first element,
 empty-to-nonempty and nonempty-to-empty state transitions, and a multi-step
 pipeline.
 
-The project README records the current limits that the larger example exposes,
-including modular calls that consume memory-backed composite resources and
-duplicated execution scripts for separate postconditions.
+The pipeline uses verified opaque call summaries for all operations, including
+calls that consume and produce memory-backed composite resources. The project
+README records the remaining duplicated execution scripts for separate
+postconditions.
 
 ## How To Read An Example Project
 

@@ -19,8 +19,9 @@ use crate::kernel::{
     c_function_entry_state, c_function_outcome_from_statement_outcome, c_function_specification,
     c_if, c_labeled_assert, c_loop_effects_hold_at_back_edge, c_loop_invariants_hold_at_back_edge,
     c_loop_invariants_hold_at_entry, c_loop_preservation_contexts, c_pointer_value, c_seq,
-    c_while_with_invariant_and_effect_checks, certify_c_function_execution_paths_from_outcomes,
-    int32, prove_c_function_satisfies_specification_from_symbolic_path,
+    c_verified_function_rule, c_while_with_invariant_and_effect_checks,
+    certify_c_function_execution_paths_from_outcomes, int32,
+    prove_c_function_satisfies_specification_from_symbolic_path,
     prove_c_function_satisfies_specification_with_environment,
     prove_symbolic_c_condition_evaluation, prove_symbolic_c_execution_paths_with_environment,
     prove_symbolic_c_function_execution_paths_with_environment,
@@ -372,6 +373,7 @@ struct SpecElaborationContext {
     array_refs: BTreeMap<String, SpecArrayRef>,
     current_memory: SpecMemory,
     current_loop_entry: Option<usize>,
+    function_contract: bool,
 }
 
 impl Default for SpecElaborationContext {
@@ -381,6 +383,7 @@ impl Default for SpecElaborationContext {
             array_refs: BTreeMap::new(),
             current_memory: SpecMemory::Current,
             current_loop_entry: None,
+            function_contract: false,
         }
     }
 }
@@ -400,11 +403,27 @@ impl SpecElaborationContext {
         }
     }
 
+    fn for_function_contract() -> Self {
+        Self {
+            function_contract: true,
+            ..Self::default()
+        }
+    }
+
     fn old_state(
         &self,
         entry_values: &BTreeMap<String, CValue>,
         entry_memory: &CMemory,
     ) -> Result<Self, String> {
+        if self.function_contract {
+            return Ok(Self {
+                values: self.values.clone(),
+                array_refs: BTreeMap::new(),
+                current_memory: SpecMemory::FunctionEntry,
+                current_loop_entry: None,
+                function_contract: true,
+            });
+        }
         let mut values = entry_values
             .iter()
             .map(|(name, value)| (name.clone(), SpecExpression::Value(value.clone())))
@@ -424,6 +443,7 @@ impl SpecElaborationContext {
             array_refs: BTreeMap::new(),
             current_memory: SpecMemory::Fixed(entry_memory.clone()),
             current_loop_entry: None,
+            function_contract: false,
         })
     }
 }
@@ -1101,11 +1121,14 @@ pub fn verify_c0_sources(
     let predicate_environment = PredicateEnvironment::new(&predicate_definitions);
     let click_function_environment = ClickFunctionEnvironment::new(&click_function_definitions);
     let resource_environment = ResourceEnvironment::new(&resource_definitions);
-    let function_environment = build_function_environment(
+    let mut function_environment = build_function_environment(
         &parsed_sources,
         file.function_blocks(),
+        &predicate_environment,
+        &click_function_environment,
         &resource_environment,
-    )?;
+    )?
+    .requiring_verified_function_rules();
     let _verified_theorems = verify_theorem_definitions(
         &theorem_definitions,
         &predicate_environment,
@@ -1151,6 +1174,7 @@ pub fn verify_c0_sources(
         if !has_explicit_claims {
             claims.push(FunctionClaimRef::Ensure(0, &implicit_safety_clause));
         }
+        let mut function_verified = Vec::new();
         for claim in claims {
             let claim_label = if has_explicit_claims {
                 function_claim_label(function_block.signature.name(), &claim)
@@ -1208,9 +1232,28 @@ pub fn verify_c0_sources(
                     steps,
                 )?,
             };
+            function_verified.extend(theorems.iter().cloned());
             if has_explicit_claims {
                 verified.extend(theorems);
             }
+        }
+        let contract_function = function_environment
+            .get_function(function_block.signature.name())
+            .cloned()
+            .expect("verified source should be present in the function environment");
+        let proof_objects = function_verified
+            .iter()
+            .map(|verified| verified.theorem.clone())
+            .collect::<Vec<_>>();
+        if contract_function.opaque_contract_supported() {
+            let rule =
+                c_verified_function_rule(contract_function, &proof_objects).ok_or_else(|| {
+                    ClickError::new(format!(
+                        "could not package verified contract for `{}`",
+                        function_block.signature.name()
+                    ))
+                })?;
+            function_environment = function_environment.with_verified_function_rule(rule);
         }
     }
 
@@ -1282,6 +1325,8 @@ fn parse_verified_sources<'a>(
 fn build_function_environment(
     parsed_sources: &BTreeMap<String, (String, syntax::C0Function)>,
     function_blocks: &[FunctionBlock],
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
     resource_environment: &ResourceEnvironment,
 ) -> Result<CFunctionEnvironment, ClickError> {
     let mut environment = CFunctionEnvironment::new();
@@ -1293,9 +1338,23 @@ fn build_function_environment(
             Some(function_block) => {
                 let (resource_requires, resource_ensures) =
                     function_resource_summary(function_block, resource_environment)?;
+                let (contract_requires, contract_ensures, contract_mutable, opaque_supported) =
+                    function_contract_summary(
+                        function_block,
+                        function,
+                        predicate_environment,
+                        click_function_environment,
+                        resource_environment,
+                    )?;
                 function
                     .to_kernel_function()
                     .with_resource_summary(resource_requires, resource_ensures)
+                    .with_contract(
+                        contract_requires,
+                        contract_ensures,
+                        contract_mutable,
+                        opaque_supported,
+                    )
             }
             None => function.to_kernel_function(),
         };
@@ -1328,34 +1387,10 @@ fn function_resource_summary(
 
 fn append_entry_resource_specs(
     resource: &ResourceClause,
-    resource_environment: &ResourceEnvironment,
+    _resource_environment: &ResourceEnvironment,
     specs: &mut Vec<CResourceSpec>,
 ) -> Result<(), ClickError> {
     specs.push(resource_clause_to_resource_spec(resource)?);
-    let ResourceClause::Declared {
-        access: ResourceAccessMode::View,
-        kind: ResourceKind::Composite,
-        name,
-        arguments,
-        ..
-    } = resource
-    else {
-        return Ok(());
-    };
-    let Some(definition) = resource_environment.get(name) else {
-        return Ok(());
-    };
-    let Some(composite_body) = definition.composite_body() else {
-        return Ok(());
-    };
-    let substitutions = resource_argument_contract_substitutions(definition, arguments)?;
-    for contained in composite_body.contains() {
-        let contained = substitute_resource_clause_for_summary(contained, &substitutions)
-            .map_err(ClickError::new)?;
-        specs.push(resource_clause_to_resource_spec(
-            &resource_clause_view_core(&contained),
-        )?);
-    }
     Ok(())
 }
 
@@ -1421,27 +1456,6 @@ fn substitute_contract_segment(
         start: substitute_c_fragment(&segment.start, substitutions)?,
         end: substitute_c_fragment(&segment.end, substitutions)?,
     })
-}
-
-fn resource_clause_view_core(resource: &ResourceClause) -> ResourceClause {
-    match resource {
-        ResourceClause::Read(segment) | ResourceClause::Write(segment) => {
-            ResourceClause::Read(segment.clone())
-        }
-        ResourceClause::Declared {
-            kind,
-            name,
-            arguments,
-            parameter_types,
-            ..
-        } => ResourceClause::Declared {
-            access: ResourceAccessMode::View,
-            kind: *kind,
-            name: name.clone(),
-            arguments: arguments.clone(),
-            parameter_types: parameter_types.clone(),
-        },
-    }
 }
 
 fn resource_clause_to_resource_spec(
