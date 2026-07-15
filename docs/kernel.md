@@ -91,6 +91,19 @@ proof machinery.
 Budget exhaustion is represented as `ExecutionLimit`. It is a proof/executor
 failure, not C undefined behavior.
 
+Function-call behavior is an explicit input to kernel execution:
+
+- `CCallSemantics::ExecuteBodies` evaluates callee bodies and ignores verified
+  function rules. Low-level C evaluator tests use this mode.
+- `CCallSemantics::ApplyVerifiedRules` applies opaque verified function rules
+  and never evaluates callee bodies. Click execution proofs use this mode.
+
+`CFunctionEnvironment` contains the function definitions and verified rules
+available to an execution; it does not select between these semantics. In
+particular, rule lookup is not a fallback mechanism. Applying verified rules
+without a matching rule is an error, while body execution behaves the same
+whether or not a matching rule is present.
+
 ## Assumption Reasoning
 
 `Assumptions::proves` is the main deterministic proposition checker. It handles

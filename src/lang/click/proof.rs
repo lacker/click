@@ -1140,6 +1140,7 @@ pub(super) fn prove_claim_by_auto(
         arguments.clone(),
         assumptions.clone(),
         function_environment.clone(),
+        CCallSemantics::ApplyVerifiedRules,
     );
     if let Some(error) = execution_obligation_error(
         &vc_execution,
@@ -1191,6 +1192,7 @@ pub(super) fn prove_claim_by_auto(
         arguments.clone(),
         assumptions,
         function_environment.clone(),
+        CCallSemantics::ApplyVerifiedRules,
     );
     if let Some(error) = execution_obligation_error(
         &execution,
@@ -1281,6 +1283,7 @@ pub(super) fn prove_claim_by_frame(
         arguments.clone(),
         assumptions,
         function_environment.clone(),
+        CCallSemantics::ApplyVerifiedRules,
     );
     if let Some(error) = execution_obligation_error_for_tactic(
         "frame",
@@ -1381,6 +1384,7 @@ pub(super) fn prove_claim_by_simp(
         arguments.clone(),
         assumptions,
         function_environment.clone(),
+        CCallSemantics::ApplyVerifiedRules,
     );
     if let Some(limit) = execution.limit() {
         return Err(ClickError::new(format!(
@@ -1461,6 +1465,7 @@ pub(super) fn prove_claim_by_simp(
             specification.clone(),
             Assumptions::new(),
             function_environment.clone(),
+            CCallSemantics::ApplyVerifiedRules,
         )
         .ok_or_else(|| {
             ClickError::new(format!(
@@ -1772,6 +1777,7 @@ fn certified_statement_transitions(
             statement.clone(),
             assumptions,
             function_environment.clone(),
+            CCallSemantics::ApplyVerifiedRules,
         );
     certified_transitions_from_execution(execution, loop_rule, pure_facts, context_label)
 }
@@ -3008,6 +3014,7 @@ fn replay_linear_steps(
                         arguments.to_vec(),
                         assumptions.clone(),
                         function_environment.clone(),
+                        CCallSemantics::ApplyVerifiedRules,
                     ),
                 )?;
             }
@@ -4416,6 +4423,7 @@ fn execute_rest_from_execution_point(
                     arguments.to_vec(),
                     assumptions.clone(),
                     function_environment.clone(),
+                    CCallSemantics::ApplyVerifiedRules,
                 ),
             )?;
         }
@@ -4426,6 +4434,7 @@ fn execute_rest_from_execution_point(
                 remaining,
                 assumptions.clone(),
                 function_environment.clone(),
+                CCallSemantics::ApplyVerifiedRules,
             );
             let Some(execution_start_state) = replay.frontier.execution_start_state.clone() else {
                 return Err(ClickError::new(format!(
@@ -6397,6 +6406,7 @@ fn prove_claim_from_steps_execution(
                     specification.clone(),
                     Assumptions::new(),
                     function_environment.clone(),
+                    CCallSemantics::ApplyVerifiedRules,
                 )
                 .ok_or_else(|| {
                     ClickError::new(format!(
@@ -6759,6 +6769,7 @@ fn prove_claim_from_execution(
                     specification.clone(),
                     Assumptions::new(),
                     (*environment).clone(),
+                    CCallSemantics::ApplyVerifiedRules,
                 )
                 .ok_or_else(|| {
                     ClickError::new(format!(

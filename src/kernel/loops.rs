@@ -7,6 +7,7 @@ pub(super) fn execute_c_call_assign_paths(
     arguments: &[CExpression],
     assumptions: &Assumptions,
     environment: &CFunctionEnvironment,
+    call_semantics: CCallSemantics,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<CStatementExecutionPath>> {
     let Some(function) = environment.get_function(function_name) else {
@@ -25,6 +26,7 @@ pub(super) fn execute_c_call_assign_paths(
         arguments,
         assumptions,
         environment,
+        call_semantics,
         budget,
     )?
     .into_iter()
@@ -68,6 +70,7 @@ pub(super) fn execute_c_statement_paths_with_prefix(
     statement: &CStatement,
     assumptions: &Assumptions,
     environment: &CFunctionEnvironment,
+    call_semantics: CCallSemantics,
     prefix_facts: &[ExecutionPureFact],
     prefix_obligations: &[ProofObligation],
     budget: &mut ExecutionBudget,
@@ -79,6 +82,7 @@ pub(super) fn execute_c_statement_paths_with_prefix(
         statement,
         &effective_assumptions,
         environment,
+        call_semantics,
         budget,
     )?
     .into_iter()
@@ -106,6 +110,7 @@ pub(super) fn execute_c_statement_verification_paths(
     statement: &CStatement,
     assumptions: &Assumptions,
     environment: &CFunctionEnvironment,
+    call_semantics: CCallSemantics,
     budget: &mut ExecutionBudget,
     variables: &mut VerificationVariableGenerator,
 ) -> ExecutionResult<Vec<CStatementExecutionPath>> {
@@ -136,6 +141,7 @@ pub(super) fn execute_c_statement_verification_paths(
                 first,
                 assumptions,
                 environment,
+                call_semantics,
                 budget,
                 variables,
             )? {
@@ -146,6 +152,7 @@ pub(super) fn execute_c_statement_verification_paths(
                             second,
                             assumptions,
                             environment,
+                            call_semantics,
                             &first_path.facts,
                             &first_path.obligations,
                             budget,
@@ -192,6 +199,7 @@ pub(super) fn execute_c_statement_verification_paths(
                                 branch,
                                 assumptions,
                                 environment,
+                                call_semantics,
                                 &truthiness_path.facts,
                                 &truthiness_path.obligations,
                                 budget,
@@ -233,11 +241,19 @@ pub(super) fn execute_c_statement_verification_paths(
                 body,
                 assumptions,
                 environment,
+                call_semantics,
                 budget,
                 variables,
             )?
         }
-        _ => execute_c_statement_paths(state, statement, assumptions, environment, budget)?,
+        _ => execute_c_statement_paths(
+            state,
+            statement,
+            assumptions,
+            environment,
+            call_semantics,
+            budget,
+        )?,
     };
     budget.consume_paths(paths.len())?;
     Ok(paths)
@@ -248,6 +264,7 @@ pub(super) fn execute_c_statement_verification_paths_with_prefix(
     statement: &CStatement,
     assumptions: &Assumptions,
     environment: &CFunctionEnvironment,
+    call_semantics: CCallSemantics,
     prefix_facts: &[ExecutionPureFact],
     prefix_obligations: &[ProofObligation],
     budget: &mut ExecutionBudget,
@@ -260,6 +277,7 @@ pub(super) fn execute_c_statement_verification_paths_with_prefix(
         statement,
         &effective_assumptions,
         environment,
+        call_semantics,
         budget,
         variables,
     )?
@@ -292,6 +310,7 @@ pub(super) fn execute_c_while_verification_paths(
     body: &CStatement,
     assumptions: &Assumptions,
     environment: &CFunctionEnvironment,
+    call_semantics: CCallSemantics,
     budget: &mut ExecutionBudget,
     variables: &mut VerificationVariableGenerator,
 ) -> ExecutionResult<Vec<CStatementExecutionPath>> {
@@ -304,6 +323,7 @@ pub(super) fn execute_c_while_verification_paths(
         body,
         assumptions,
         Some(environment),
+        call_semantics,
         false,
         budget,
         variables,
@@ -319,6 +339,7 @@ pub(super) fn execute_c_while_exit_paths_with_proven_phases(
     body: &CStatement,
     assumptions: &Assumptions,
     environment: &CFunctionEnvironment,
+    call_semantics: CCallSemantics,
     initialization_proven: bool,
     preservation_proven: bool,
     budget: &mut ExecutionBudget,
@@ -333,6 +354,7 @@ pub(super) fn execute_c_while_exit_paths_with_proven_phases(
         body,
         assumptions,
         (!preservation_proven).then_some(environment),
+        call_semantics,
         initialization_proven,
         budget,
         variables,
@@ -349,6 +371,7 @@ fn execute_c_while_exit_paths(
     body: &CStatement,
     assumptions: &Assumptions,
     preservation_environment: Option<&CFunctionEnvironment>,
+    call_semantics: CCallSemantics,
     initialization_proven: bool,
     budget: &mut ExecutionBudget,
     variables: &mut VerificationVariableGenerator,
@@ -392,6 +415,7 @@ fn execute_c_while_exit_paths(
             body,
             assumptions,
             environment,
+            call_semantics,
             budget,
             variables,
         )?
@@ -539,6 +563,7 @@ pub(super) fn collect_loop_preservation_summary(
     body: &CStatement,
     assumptions: &Assumptions,
     environment: &CFunctionEnvironment,
+    call_semantics: CCallSemantics,
     budget: &mut ExecutionBudget,
     variables: &mut VerificationVariableGenerator,
 ) -> ExecutionResult<LoopPreservationSummary> {
@@ -569,6 +594,7 @@ pub(super) fn collect_loop_preservation_summary(
                 body,
                 assumptions,
                 environment,
+                call_semantics,
                 &condition_facts,
                 &condition_obligations,
                 budget,

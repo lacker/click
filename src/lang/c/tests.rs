@@ -1090,6 +1090,7 @@ fn c0_syntax_local_array_decays_to_pointer_argument() {
         Vec::new(),
         Default::default(),
         environment,
+        crate::kernel::CCallSemantics::ExecuteBodies,
     )
     .expect("local array should decay to pointer argument");
 
@@ -1387,6 +1388,7 @@ fn c0_syntax_targets_kernel_known_function_call_assignment() {
         Vec::new(),
         Default::default(),
         environment,
+        crate::kernel::CCallSemantics::ExecuteBodies,
     )
     .expect("known C0 function call should execute");
 

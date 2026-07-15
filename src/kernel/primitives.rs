@@ -447,9 +447,14 @@ pub struct CFunctionSpecification {
 pub struct CFunctionEnvironment {
     pub(super) functions: BTreeMap<String, CFunction>,
     pub(super) verified_function_rules: BTreeMap<String, CVerifiedFunctionRule>,
-    pub(super) require_verified_function_rules: bool,
     pub(super) verified_loop_rules: Vec<CVerifiedLoopRule>,
     pub(super) require_verified_loop_rules: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CCallSemantics {
+    ExecuteBodies,
+    ApplyVerifiedRules,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1899,19 +1904,10 @@ impl CFunctionEnvironment {
         self.functions.get(name)
     }
 
-    pub fn requiring_verified_function_rules(mut self) -> Self {
-        self.require_verified_function_rules = true;
-        self
-    }
-
     pub fn with_verified_function_rule(mut self, rule: CVerifiedFunctionRule) -> Self {
         self.verified_function_rules
             .insert(rule.function.name().to_string(), rule);
         self
-    }
-
-    pub(super) fn requires_verified_function_rules(&self) -> bool {
-        self.require_verified_function_rules
     }
 
     pub(super) fn get_verified_function_rule(&self, name: &str) -> Option<&CVerifiedFunctionRule> {

@@ -217,6 +217,13 @@ abstract result and memory havoc, including immutable calls. Rules accumulate
 in verification order, so an unresolved callee is a direct error rather than
 an invitation to inline its body.
 
+This is an explicit execution mode, not behavior inferred from which entries
+happen to be present in the function environment. Click selects
+`CCallSemantics::ApplyVerifiedRules`, so a missing rule fails the proof and
+never falls back to body execution. The kernel's low-level evaluator can
+instead select `CCallSemantics::ExecuteBodies`; that mode ignores verified
+rules even when they are available.
+
 Each loop-rule premise can be automatic or explicit. Explicit `initialize` is a
 pure proof of the invariants at the actual loop entry. Explicit `preserve` is an
 execution proof that advances through one arbitrary iteration and checks every

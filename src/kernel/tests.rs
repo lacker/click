@@ -572,6 +572,7 @@ fn function_call_does_not_inherit_undeclared_resources() {
         arguments.clone(),
         Assumptions::new(),
         CFunctionEnvironment::new().with_function(helper),
+        CCallSemantics::ExecuteBodies,
     )
     .expect("call should report missing callee permission");
 
@@ -856,6 +857,7 @@ fn call_assign_uses_function_environment() {
         statement.clone(),
         Assumptions::new(),
         environment,
+        CCallSemantics::ExecuteBodies,
     )
     .expect("known function call should execute");
 
@@ -896,6 +898,7 @@ fn verified_loop_rule_is_required_and_accepts_stronger_assumptions() {
             statement.clone(),
             assumptions.clone(),
             CFunctionEnvironment::new(),
+            CCallSemantics::ExecuteBodies,
         );
     let loop_rule = loop_rule.expect("loop verification should produce a rule");
 
@@ -906,6 +909,7 @@ fn verified_loop_rule_is_required_and_accepts_stronger_assumptions() {
             .clone()
             .assume_condition(ConditionTerm::Constant(true), true),
         CFunctionEnvironment::new().with_verified_loop_rules([loop_rule.clone()]),
+        CCallSemantics::ExecuteBodies,
     );
     assert_eq!(reused.paths().len(), certified.paths().len());
 
@@ -914,6 +918,7 @@ fn verified_loop_rule_is_required_and_accepts_stronger_assumptions() {
         statement,
         assumptions,
         CFunctionEnvironment::new().with_verified_loop_rules([loop_rule]),
+        CCallSemantics::ExecuteBodies,
     );
     assert!(mismatched.paths().is_empty());
 }
@@ -941,6 +946,7 @@ fn loop_exit_rule_with_proven_preservation_does_not_reverify_the_body() {
         statement.clone(),
         assumptions.clone(),
         CFunctionEnvironment::new(),
+        CCallSemantics::ExecuteBodies,
     );
     assert!(
         automatic
@@ -1019,6 +1025,7 @@ fn unknown_call_assign_is_runtime_error() {
         statement.clone(),
         Assumptions::new(),
         CFunctionEnvironment::new(),
+        CCallSemantics::ExecuteBodies,
     )
     .expect("unknown function should produce a single runtime-error path");
 
@@ -4028,17 +4035,17 @@ fn verified_function_rule_applies_contract_without_executing_body() {
     );
     let environment = CFunctionEnvironment::new()
         .with_function(helper.clone())
-        .with_verified_function_rule(CVerifiedFunctionRule { function: helper })
-        .requiring_verified_function_rules();
+        .with_verified_function_rule(CVerifiedFunctionRule { function: helper });
     let statement = c_seq(
         c_call_assign("result", "opaque_helper", vec![c_int32_literal(5)]),
         c_return(c_variable("result")),
     );
     let execution = prove_symbolic_c_execution_paths_with_environment(
         CState::new(),
-        statement,
+        statement.clone(),
         Assumptions::new(),
-        environment,
+        environment.clone(),
+        CCallSemantics::ApplyVerifiedRules,
     );
     let path = execution
         .paths()
@@ -4072,6 +4079,25 @@ fn verified_function_rule_applies_contract_without_executing_body() {
         ),
         true,
     )));
+
+    let body_execution = prove_symbolic_c_execution_paths_with_environment(
+        CState::new(),
+        statement,
+        Assumptions::new(),
+        environment,
+        CCallSemantics::ExecuteBodies,
+    );
+    let mut proposition = body_execution.paths()[0].theorem().proposition();
+    while let Proposition::Implies(_, body) = proposition {
+        proposition = body;
+    }
+    assert!(matches!(
+        proposition,
+        Proposition::CStatementExecutes {
+            outcome: CStatementOutcome::Return { value, .. },
+            ..
+        } if *value == int32(99)
+    ));
 }
 
 #[test]
@@ -4097,8 +4123,7 @@ fn verified_immutable_calls_allocate_distinct_results() {
     );
     let environment = CFunctionEnvironment::new()
         .with_function(helper.clone())
-        .with_verified_function_rule(CVerifiedFunctionRule { function: helper })
-        .requiring_verified_function_rules();
+        .with_verified_function_rule(CVerifiedFunctionRule { function: helper });
     let statement = c_seq(
         c_call_assign("first", "opaque_identity", vec![c_int32_literal(5)]),
         c_seq(
@@ -4111,6 +4136,7 @@ fn verified_immutable_calls_allocate_distinct_results() {
         statement,
         Assumptions::new(),
         environment,
+        CCallSemantics::ApplyVerifiedRules,
     );
     let path = execution.paths().first().expect("calls should execute");
     let mut proposition = path.theorem().proposition();

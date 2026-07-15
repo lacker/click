@@ -13,6 +13,7 @@ pub(super) fn execute_c_function_paths(
     arguments: &[CExpression],
     assumptions: &Assumptions,
     environment: &CFunctionEnvironment,
+    call_semantics: CCallSemantics,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<CFunctionPath>> {
     budget.consume_function_call()?;
@@ -58,6 +59,7 @@ pub(super) fn execute_c_function_paths(
             function.body(),
             &body_assumptions,
             environment,
+            call_semantics,
             budget,
         )? {
             let Some((facts, obligations)) = merge_execution_pure_facts_and_obligations(
@@ -98,6 +100,7 @@ pub(super) fn execute_c_function_verification_paths(
     arguments: &[CExpression],
     assumptions: &Assumptions,
     environment: &CFunctionEnvironment,
+    call_semantics: CCallSemantics,
     budget: &mut ExecutionBudget,
     variables: &mut VerificationVariableGenerator,
 ) -> ExecutionResult<Vec<CFunctionPath>> {
@@ -144,6 +147,7 @@ pub(super) fn execute_c_function_verification_paths(
             function.body(),
             &body_assumptions,
             environment,
+            call_semantics,
             budget,
             variables,
         )? {
@@ -185,22 +189,32 @@ pub(super) fn execute_c_function_call_paths(
     arguments: &[CExpression],
     assumptions: &Assumptions,
     environment: &CFunctionEnvironment,
+    call_semantics: CCallSemantics,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<CFunctionPath>> {
-    if let Some(rule) = environment.get_verified_function_rule(function.name()) {
-        return execute_verified_function_rule(caller_state, rule, arguments, assumptions, budget);
-    }
-    if environment.requires_verified_function_rules() {
-        let error = if function.opaque_contract_supported() {
-            CRuntimeError::MissingVerifiedFunctionRule(function.name().to_string())
-        } else {
-            CRuntimeError::UnsupportedOpaqueFunctionContract(function.name().to_string())
-        };
-        return Ok(vec![CFunctionPath {
-            outcome: CFunctionOutcome::RuntimeError(error),
-            facts: Vec::new(),
-            obligations: Vec::new(),
-        }]);
+    match call_semantics {
+        CCallSemantics::ExecuteBodies => {}
+        CCallSemantics::ApplyVerifiedRules => {
+            let Some(rule) = environment.get_verified_function_rule(function.name()) else {
+                let error = if function.opaque_contract_supported() {
+                    CRuntimeError::MissingVerifiedFunctionRule(function.name().to_string())
+                } else {
+                    CRuntimeError::UnsupportedOpaqueFunctionContract(function.name().to_string())
+                };
+                return Ok(vec![CFunctionPath {
+                    outcome: CFunctionOutcome::RuntimeError(error),
+                    facts: Vec::new(),
+                    obligations: Vec::new(),
+                }]);
+            };
+            return execute_verified_function_rule(
+                caller_state,
+                rule,
+                arguments,
+                assumptions,
+                budget,
+            );
+        }
     }
     budget.consume_function_call()?;
     if arguments.len() != function.parameters.len() {
@@ -266,6 +280,7 @@ pub(super) fn execute_c_function_call_paths(
             function.body(),
             &body_assumptions,
             environment,
+            call_semantics,
             budget,
         )? {
             let Some((facts, obligations)) = merge_execution_pure_facts_and_obligations(

@@ -8,8 +8,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use crate::kernel::{
-    Assumptions, Bitvector32Term, CComparisonOperator, CConditionOutcome, CExpression,
-    CExpressionOutcome, CFunction, CFunctionContractClaim, CFunctionContractClaimKey,
+    Assumptions, Bitvector32Term, CCallSemantics, CComparisonOperator, CConditionOutcome,
+    CExpression, CExpressionOutcome, CFunction, CFunctionContractClaim, CFunctionContractClaimKey,
     CFunctionEnvironment, CFunctionOutcome, CFunctionSpecification, CLoopEffect, CLoopEffectCheck,
     CLoopEffectSpan, CLoopInvariantCheck, CMemory, CMemoryRange, CMemorySegment, CResource,
     CResourceAccessMode, CResourceFact, CResourceSpec, CState, CStatement, CStatementOutcome,
@@ -1128,8 +1128,7 @@ pub fn verify_c0_sources(
         &predicate_environment,
         &click_function_environment,
         &resource_environment,
-    )?
-    .requiring_verified_function_rules();
+    )?;
     let _verified_theorems = verify_theorem_definitions(
         &theorem_definitions,
         &predicate_environment,
