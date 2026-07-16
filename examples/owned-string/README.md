@@ -26,9 +26,11 @@ terminator fact and permits the proof to fold `owned_string(owner)` again
 without manually re-proving the predicate. Push and pop move the terminator and
 therefore establish the new predicate explicitly.
 
+Push declares only the metadata length and the two cells beginning at the old
+end as mutable. Its field-derived backing pointer remains identifiable after
+the metadata write. `owned_string_push_preserves_first` calls push through its
+verified contract and proves that an earlier cell is unchanged, demonstrating
+that the precise footprint is useful to modular callers.
+
 The caller supplies the backing storage. Allocation, deallocation, resizing,
 and encoding validation are outside this example's scope.
-
-One current proof-system boundary remains visible. Push and pop conservatively
-declare the whole backing range mutable because precise field-derived effect
-bases do not yet transport across the metadata write.

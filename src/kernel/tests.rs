@@ -2823,6 +2823,44 @@ fn mutable_frame_proves_unwritten_load_equal_across_stack_locals() {
 }
 
 #[test]
+fn mutable_frame_transports_load_across_certified_effect_chain() {
+    let preserved = Pointer {
+        block: "arg-memory".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let first_write = Pointer {
+        block: "arg-memory".into(),
+        offset: PointerOffsetTerm::Constant(4),
+    };
+    let second_write = Pointer {
+        block: "arg-memory".into(),
+        offset: PointerOffsetTerm::Constant(8),
+    };
+    let before = CMemory::new();
+    let middle = before.clone().store(first_write.clone(), int32(1));
+    let after = middle.clone().store(second_write.clone(), int32(2));
+    let assumptions = Assumptions::new()
+        .assume_proposition(Proposition::CMemoryMutatesOnly {
+            before: before.clone(),
+            after: middle.clone(),
+            pointers: vec![first_write],
+        })
+        .assume_proposition(Proposition::CMemoryMutatesOnly {
+            before: middle,
+            after: after.clone(),
+            pointers: vec![second_write],
+        });
+
+    assert!(assumptions.proves(&Proposition::ConditionIs(
+        ConditionTerm::equal(
+            Bitvector32Term::MemoryLoad(Box::new(after), Box::new(preserved.clone())),
+            Bitvector32Term::MemoryLoad(Box::new(before), Box::new(preserved)),
+        ),
+        true,
+    )));
+}
+
+#[test]
 fn unrelated_external_cell_store_preserves_memory_load_with_stack_temporary() {
     let old_memory = CMemory::new();
     let p0 = Pointer {

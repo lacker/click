@@ -1302,59 +1302,96 @@ impl Assumptions {
             return true;
         }
 
+        if self.memory_snapshots_directly_proven_equal_for_load(
+            left_memory,
+            right_memory,
+            left_pointer,
+        ) || self.memory_snapshots_proven_equal_for_load(left_memory, right_memory, left_pointer)
+        {
+            return true;
+        }
+
+        false
+    }
+
+    fn memory_snapshots_directly_proven_equal_for_load(
+        &self,
+        left: &CMemory,
+        right: &CMemory,
+        pointer: &Pointer,
+    ) -> bool {
         self.prop_facts.iter().any(|proposition| match proposition {
             Proposition::CMemoryMutatesOnly {
                 before,
                 after,
                 pointers,
             } => {
-                let matches_order =
-                    memories_match_for_pointer_load(before, right_memory.as_ref(), left_pointer)
-                        && memories_match_for_pointer_load(
-                            after,
-                            left_memory.as_ref(),
-                            left_pointer,
-                        );
-                let matches_reverse =
-                    memories_match_for_pointer_load(before, left_memory.as_ref(), left_pointer)
-                        && memories_match_for_pointer_load(
-                            after,
-                            right_memory.as_ref(),
-                            left_pointer,
-                        );
-                (matches_order || matches_reverse)
+                let matches = memories_match_for_pointer_load(before, left, pointer)
+                    && memories_match_for_pointer_load(after, right, pointer)
+                    || memories_match_for_pointer_load(before, right, pointer)
+                        && memories_match_for_pointer_load(after, left, pointer);
+                matches
                     && pointers
                         .iter()
-                        .all(|pointer| pointers_proven_distinct(pointer, left_pointer, self))
+                        .all(|write| pointers_proven_distinct(write, pointer, self))
             }
             Proposition::CMemoryEffectSummary {
                 before,
                 after,
                 mutable_ranges,
             } => {
-                let matches_order = memory_matches_effect_summary_endpoint(
-                    before,
-                    right_memory.as_ref(),
-                    left_pointer,
-                ) && memory_matches_effect_summary_endpoint(
-                    after,
-                    left_memory.as_ref(),
-                    left_pointer,
-                );
-                let matches_reverse = memory_matches_effect_summary_endpoint(
-                    before,
-                    left_memory.as_ref(),
-                    left_pointer,
-                ) && memory_matches_effect_summary_endpoint(
-                    after,
-                    right_memory.as_ref(),
-                    left_pointer,
-                );
-                (matches_order || matches_reverse)
-                    && self.ranges_proven_disjoint_from_pointer(mutable_ranges, left_pointer)
+                let matches = memory_matches_effect_summary_endpoint(before, left, pointer)
+                    && memory_matches_effect_summary_endpoint(after, right, pointer)
+                    || memory_matches_effect_summary_endpoint(before, right, pointer)
+                        && memory_matches_effect_summary_endpoint(after, left, pointer);
+                matches && self.ranges_proven_disjoint_from_pointer(mutable_ranges, pointer)
             }
             _ => false,
         })
+    }
+
+    fn memory_snapshots_proven_equal_for_load(
+        &self,
+        left: &CMemory,
+        right: &CMemory,
+        pointer: &Pointer,
+    ) -> bool {
+        let mut pending = vec![left.clone()];
+        let mut visited = BTreeSet::new();
+
+        while let Some(current) = pending.pop() {
+            if !visited.insert(current.clone()) {
+                continue;
+            }
+            if memories_match_for_pointer_load(&current, right, pointer)
+                || memories_match_for_pointer_load_under_assumptions(&current, right, pointer, self)
+            {
+                return true;
+            }
+
+            for proposition in &self.prop_facts {
+                match proposition {
+                    Proposition::CMemoryMutatesOnly {
+                        before,
+                        after,
+                        pointers,
+                    } if pointers
+                        .iter()
+                        .all(|write| pointers_proven_distinct(write, pointer, self)) =>
+                    {
+                        if memories_match_for_pointer_load(before, &current, pointer) {
+                            pending.push(after.clone());
+                        }
+                        if memories_match_for_pointer_load(after, &current, pointer) {
+                            pending.push(before.clone());
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        false
     }
 
     pub(super) fn resolve_memory_load_term(
@@ -2440,6 +2477,25 @@ impl Assumptions {
             }
         }
 
+        if let PointerOffsetTerm::Add(left, right) = &base.offset {
+            if self.decide(&ConditionTerm::pointer_offset_equal(
+                pointer.offset.clone(),
+                left.as_ref().clone(),
+            )) == Some(true)
+            {
+                return int32_element_index_from_offset(right)
+                    .map(|index| Bitvector32Term::subtract(Bitvector32Term::Constant(0), index));
+            }
+            if self.decide(&ConditionTerm::pointer_offset_equal(
+                pointer.offset.clone(),
+                right.as_ref().clone(),
+            )) == Some(true)
+            {
+                return int32_element_index_from_offset(left)
+                    .map(|index| Bitvector32Term::subtract(Bitvector32Term::Constant(0), index));
+            }
+        }
+
         pointer.element_index_from_base(base)
     }
 
@@ -2752,6 +2808,34 @@ impl Assumptions {
     ) -> bool {
         if range.base.blocks_proven_distinct(pointer) {
             return true;
+        }
+
+        if let PointerOffsetTerm::Add(left, right) = &range.base.offset {
+            let forward_offset = if self.decide(&ConditionTerm::pointer_offset_equal(
+                pointer.offset.clone(),
+                left.as_ref().clone(),
+            )) == Some(true)
+            {
+                int32_element_index_from_offset(right)
+            } else if self.decide(&ConditionTerm::pointer_offset_equal(
+                pointer.offset.clone(),
+                right.as_ref().clone(),
+            )) == Some(true)
+            {
+                int32_element_index_from_offset(left)
+            } else {
+                None
+            };
+            if let Some(forward_offset) = forward_offset {
+                let range_start = Bitvector32Term::add(forward_offset, range.start.clone());
+                if self.decide(&ConditionTerm::signed_less_than(
+                    Bitvector32Term::Constant(0),
+                    range_start,
+                )) == Some(true)
+                {
+                    return true;
+                }
+            }
         }
 
         if let Some(index) = self.pointer_element_index_from_base(pointer, &range.base) {

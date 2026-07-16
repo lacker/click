@@ -37,6 +37,127 @@ pub(crate) fn c_memory_load_is_unchanged(
     })
 }
 
+pub(crate) fn c_pointer_offsets_proven_equal_for_effect(
+    left: &PointerOffsetTerm,
+    right: &PointerOffsetTerm,
+    assumptions: &Assumptions,
+) -> bool {
+    let left = normalize_exact_memory_loads_in_pointer_offset(left, assumptions, 0);
+    let right = normalize_exact_memory_loads_in_pointer_offset(right, assumptions, 0);
+    left == right
+        || assumptions.proves(&Proposition::ConditionIs(
+            ConditionTerm::PointerOffsetEqual(Box::new(left), Box::new(right)),
+            true,
+        ))
+}
+
+fn normalize_exact_memory_loads_in_pointer_offset(
+    offset: &PointerOffsetTerm,
+    assumptions: &Assumptions,
+    depth: usize,
+) -> PointerOffsetTerm {
+    if depth >= 64 {
+        return offset.clone();
+    }
+    match offset {
+        PointerOffsetTerm::Constant(_) | PointerOffsetTerm::Variable(_) => offset.clone(),
+        PointerOffsetTerm::Add(left, right) => PointerOffsetTerm::add(
+            normalize_exact_memory_loads_in_pointer_offset(left, assumptions, depth + 1),
+            normalize_exact_memory_loads_in_pointer_offset(right, assumptions, depth + 1),
+        ),
+        PointerOffsetTerm::Int32Scaled { value, byte_width } => PointerOffsetTerm::scale_int32(
+            normalize_exact_memory_loads_in_bitvector(value, assumptions, depth + 1),
+            *byte_width,
+        ),
+    }
+}
+
+fn normalize_exact_memory_loads_in_bitvector(
+    term: &Bitvector32Term,
+    assumptions: &Assumptions,
+    depth: usize,
+) -> Bitvector32Term {
+    if depth >= 64 {
+        return term.clone();
+    }
+    let binary = |left: &Bitvector32Term, right: &Bitvector32Term| {
+        (
+            normalize_exact_memory_loads_in_bitvector(left, assumptions, depth + 1),
+            normalize_exact_memory_loads_in_bitvector(right, assumptions, depth + 1),
+        )
+    };
+    match term {
+        Bitvector32Term::Constant(_) | Bitvector32Term::Variable(_) => term.clone(),
+        Bitvector32Term::Add(left, right) => {
+            let (left, right) = binary(left, right);
+            Bitvector32Term::add(left, right)
+        }
+        Bitvector32Term::Subtract(left, right) => {
+            let (left, right) = binary(left, right);
+            Bitvector32Term::subtract(left, right)
+        }
+        Bitvector32Term::Multiply(left, right) => {
+            let (left, right) = binary(left, right);
+            Bitvector32Term::multiply(left, right)
+        }
+        Bitvector32Term::Divide(left, right) => {
+            let (left, right) = binary(left, right);
+            Bitvector32Term::divide(left, right)
+        }
+        Bitvector32Term::Remainder(left, right) => {
+            let (left, right) = binary(left, right);
+            Bitvector32Term::remainder(left, right)
+        }
+        Bitvector32Term::ShiftLeft(left, right) => {
+            let (left, right) = binary(left, right);
+            Bitvector32Term::shift_left(left, right)
+        }
+        Bitvector32Term::ArithmeticShiftRight(left, right) => {
+            let (left, right) = binary(left, right);
+            Bitvector32Term::arithmetic_shift_right(left, right)
+        }
+        Bitvector32Term::BitwiseAnd(left, right) => {
+            let (left, right) = binary(left, right);
+            Bitvector32Term::bitwise_and(left, right)
+        }
+        Bitvector32Term::BitwiseOr(left, right) => {
+            let (left, right) = binary(left, right);
+            Bitvector32Term::bitwise_or(left, right)
+        }
+        Bitvector32Term::BitwiseXor(left, right) => {
+            let (left, right) = binary(left, right);
+            Bitvector32Term::bitwise_xor(left, right)
+        }
+        Bitvector32Term::BitwiseNot(value) => Bitvector32Term::bitwise_not(
+            normalize_exact_memory_loads_in_bitvector(value, assumptions, depth + 1),
+        ),
+        Bitvector32Term::If {
+            condition,
+            then_term,
+            else_term,
+        } => Bitvector32Term::If {
+            condition: condition.clone(),
+            then_term: Box::new(normalize_exact_memory_loads_in_bitvector(
+                then_term,
+                assumptions,
+                depth + 1,
+            )),
+            else_term: Box::new(normalize_exact_memory_loads_in_bitvector(
+                else_term,
+                assumptions,
+                depth + 1,
+            )),
+        },
+        Bitvector32Term::RangeFold { .. } => term.clone(),
+        Bitvector32Term::MemoryLoad(_, _) => {
+            let Some(value) = assumptions.resolve_memory_load_term(term) else {
+                return term.clone();
+            };
+            normalize_exact_memory_loads_in_bitvector(&value, assumptions, depth + 1)
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct CLoopPreservationContext {
     state: CState,

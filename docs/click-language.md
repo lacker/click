@@ -630,7 +630,11 @@ mutable dst[0..n], counter[0..1] by frame;
 
 `immutable` proves there are no externally visible memory writes. `mutable`
 states an upper bound on externally visible writes. It does not claim every
-listed cell changes.
+listed cell changes. Function-level segment expressions are evaluated at
+function entry, so a shifted segment such as `(owner->data + owner->len)[0..2]`
+continues to denote the old two-cell tail after `owner->len` changes. Footprint
+matching uses proven pointer equalities, including unchanged field loads across
+a finite chain of certified memory effects.
 
 Loop-level and step-level effects are described in [proof-workflow.md](proof-workflow.md)
 and [memory-model.md](memory-model.md).

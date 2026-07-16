@@ -45,6 +45,12 @@ mutable dst[0..n] by frame;
 `mutable` says a region is allowed to change. It is an effect summary, not a
 postcondition about the final values.
 
+Function-level ranges are fixed at function entry. For a push operation,
+`mutable (owner->data + owner->len)[0..2]` denotes two cells at the old end even
+if the function later updates `owner->len`. Click transports unchanged field
+loads across certified writes when matching the executed stores to that
+footprint.
+
 ## Old-Memory Postconditions
 
 You can also state preservation directly:

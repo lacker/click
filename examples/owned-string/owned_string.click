@@ -21,6 +21,7 @@ verifying "owned_string_len.c";
 verifying "owned_string_get.c";
 verifying "owned_string_set.c";
 verifying "owned_string_push.c";
+verifying "owned_string_push_preserves_first.c";
 verifying "owned_string_pop.c";
 verifying "owned_string_clear.c";
 verifying "owned_string_pipeline.c";
@@ -91,9 +92,11 @@ int32 owned_string_set(
 int32 owned_string_push(struct owned_string* owner, int32 value) {
     requires owner->len + 1 < owner->cap;
     owns owned_string(owner);
-    mutable owner[0..1], (owner->data)[0..owner->cap];
+    mutable owner[0..1], (owner->data + owner->len)[0..2];
     ensures result == old(owner->len) + 1;
     ensures owner->len == old(owner->len) + 1;
+    ensures owner->cap == old(owner->cap);
+    ensures owner->data == old(owner->data);
     ensures (owner->data)[old(owner->len)] == value;
     ensures (owner->data)[owner->len] == 0;
 } by {
@@ -104,6 +107,25 @@ int32 owned_string_push(struct owned_string* owner, int32 value) {
         simp();
     }
     fold(owned_string(owner));
+    frame();
+    simp();
+}
+
+int32 owned_string_push_preserves_first(
+    struct owned_string* owner,
+    int32 data[],
+    int32 value
+) {
+    requires 1 <= owner->len;
+    requires owner->len + 1 < owner->cap;
+    requires owner->data == data;
+    owns owned_string(owner);
+    mutable owner[0..1], (owner->data + owner->len)[0..2];
+
+    ensures result == old(owner->len) + 1;
+    ensures data[0] == old(data[0]);
+} by {
+    execute_rest();
     frame();
     simp();
 }

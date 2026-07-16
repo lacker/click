@@ -2745,7 +2745,6 @@ pub(super) fn prove_mutation_footprint(
             })
             .collect::<Result<Vec<_>, _>>()?,
     };
-    let assumptions = assumptions_from_propositions(available_pure_facts);
     let mut effect_facts = execution_pure_facts.to_vec();
     effect_facts.extend(
         available_pure_facts
@@ -2760,6 +2759,9 @@ pub(super) fn prove_mutation_footprint(
             .cloned()
             .map(ExecutionPureFact::new),
     );
+    let mut effect_reasoning_facts = available_pure_facts.to_vec();
+    effect_reasoning_facts.extend(effect_facts.iter().map(|fact| fact.proposition().clone()));
+    let assumptions = assumptions_from_propositions(&effect_reasoning_facts);
     let mut writes = memory_effect_write_pointers(&effect_facts);
     writes.retain(is_effect_relevant_pointer);
 
@@ -2933,7 +2935,7 @@ pub(super) fn segment_contains_pointer(
     pointer: &Pointer,
     assumptions: &Assumptions,
 ) -> bool {
-    let Some(index) = pointer_element_index_from_base(pointer, &segment.base) else {
+    let Some(index) = pointer_element_index_from_base(pointer, &segment.base, assumptions) else {
         return false;
     };
     assumptions.proves(&Proposition::ConditionIs(
@@ -2950,7 +2952,9 @@ pub(super) fn segment_contains_range(
     range: &CMemoryRange,
     assumptions: &Assumptions,
 ) -> bool {
-    let Some(base_index) = pointer_element_index_from_base(range.base(), &segment.base) else {
+    let Some(base_index) =
+        pointer_element_index_from_base(range.base(), &segment.base, assumptions)
+    else {
         return false;
     };
     let range_start = bitvector32_add(base_index.clone(), range.start().clone());
@@ -2968,12 +2972,13 @@ pub(super) fn segment_contains_range(
 pub(super) fn pointer_element_index_from_base(
     pointer: &Pointer,
     base: &Pointer,
+    assumptions: &Assumptions,
 ) -> Option<Bitvector32Term> {
     if pointer.block != base.block {
         return None;
     }
 
-    if pointer.offset == base.offset {
+    if pointer_offsets_equal_for_effect(&pointer.offset, &base.offset, assumptions) {
         return Some(Bitvector32Term::Constant(0));
     }
 
@@ -2982,10 +2987,14 @@ pub(super) fn pointer_element_index_from_base(
     }
 
     match &pointer.offset {
-        PointerOffsetTerm::Add(left, right) if left.as_ref() == &base.offset => {
+        PointerOffsetTerm::Add(left, right)
+            if pointer_offsets_equal_for_effect(left, &base.offset, assumptions) =>
+        {
             int32_element_index_from_pointer_offset(right)
         }
-        PointerOffsetTerm::Add(left, right) if right.as_ref() == &base.offset => {
+        PointerOffsetTerm::Add(left, right)
+            if pointer_offsets_equal_for_effect(right, &base.offset, assumptions) =>
+        {
             int32_element_index_from_pointer_offset(left)
         }
         _ => {
@@ -2999,6 +3008,14 @@ pub(super) fn pointer_element_index_from_base(
             }
         }
     }
+}
+
+fn pointer_offsets_equal_for_effect(
+    left: &PointerOffsetTerm,
+    right: &PointerOffsetTerm,
+    assumptions: &Assumptions,
+) -> bool {
+    c_pointer_offsets_proven_equal_for_effect(left, right, assumptions)
 }
 
 pub(super) fn int32_element_index_from_pointer_offset(
