@@ -1,0 +1,80 @@
+# field-dependent vector storage across loop snapshots
+
+This checks that an owned composite resource whose backing range depends on
+owner fields can be used directly through an abstract loop iteration. The loop
+mutates only the backing array, so the separate owner metadata and its dependent
+backing-range identity remain stable.
+
+```c filename=composite_resource_vector_fill_loop_snapshot.c
+struct vector {
+    int32 len;
+    int32 cap;
+    int32* data;
+};
+
+int32 composite_resource_vector_fill_loop_snapshot(
+    struct vector* owner,
+    int32 value
+) {
+    int32 i;
+    i = 0;
+    while (i < owner->len) {
+        owner->data[i] = value;
+        i = i + 1;
+    }
+    return owner->len;
+}
+```
+
+```click
+resource vector(owner: struct vector*) {
+    owns owner->len;
+    owns owner->cap;
+    owns owner->data;
+    owns (owner->data)[0..owner->cap];
+    fact 0 <= owner->len;
+    fact owner->len <= owner->cap;
+    fact separate(memory(owner[0..4]), memory((owner->data)[0..owner->cap]));
+}
+
+verifying "composite_resource_vector_fill_loop_snapshot.c";
+
+int32 composite_resource_vector_fill_loop_snapshot(
+    struct vector* owner,
+    int32 value
+) {
+    owns vector(owner);
+    mutable (owner->data)[0..owner->len];
+
+    for loop(0) as fill_cells {
+        invariant i >= 0 and i <= owner->len;
+        invariant forall (int32 k) {
+            0 <= k and k < i implies (owner->data)[k] == value
+        };
+        mutable (owner->data)[0..owner->len] by frame;
+
+        initialize by simp;
+        preserve by {
+            unfold(vector(owner));
+            have i < owner->cap by simp;
+            execute_step();
+            execute_step();
+            simp();
+        }
+    }
+
+    ensures result == owner->len;
+    ensures forall (int32 k) {
+        0 <= k and k < owner->len implies (owner->data)[k] == value
+    };
+} by {
+    execute_rest();
+    loop_vc(fill_cells);
+    frame();
+    simp();
+}
+```
+
+```expect
+pass
+```

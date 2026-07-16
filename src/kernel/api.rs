@@ -41,31 +41,32 @@ pub fn c_loop_preservation_contexts(
 ) -> Result<Vec<CLoopPreservationContext>, String> {
     let mut budget = ExecutionBudget::default();
     let mut variables = VerificationVariableGenerator::new(variable_start);
-    let top_state = havoc_loop_modified_locals(loop_entry_state, body, &mut variables);
-    let whole_loop_effect_summaries = collect_whole_loop_effect_summaries(
+    let (top_state, whole_loop_effect_summaries) = prepare_loop_top_state(
         loop_entry_state,
-        &top_state,
         effect_checks,
-        statement_may_write_memory(body),
+        body,
         assumptions,
         &mut budget,
+        &mut variables,
     )
     .map_err(|error| format!("could not prepare loop effects: {error:?}"))?;
+    let whole_loop_effect_facts = whole_loop_effect_summaries
+        .iter()
+        .cloned()
+        .map(ExecutionPureFact::new)
+        .collect::<Vec<_>>();
     let mut contexts = Vec::new();
-    for (mut invariant_facts, invariant_obligations) in assume_invariant_checks(
+    for (invariant_facts, invariant_obligations) in assume_invariant_checks(
         &top_state,
         loop_entry_state,
         invariant_checks,
         assumptions,
-        &[],
+        &whole_loop_effect_facts,
         &[],
         &mut budget,
     )
     .map_err(|error| format!("could not assume loop invariants: {error:?}"))?
     {
-        for summary in &whole_loop_effect_summaries {
-            let _ = add_path_fact(&mut invariant_facts, assumptions, summary.clone());
-        }
         for (facts, obligations) in assume_condition_truthiness(
             &top_state,
             condition,

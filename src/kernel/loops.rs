@@ -395,15 +395,8 @@ fn execute_c_while_exit_paths(
             budget,
         )?
     };
-    let top_state = havoc_loop_modified_locals(state, body, variables);
-    let whole_loop_effect_summaries = collect_whole_loop_effect_summaries(
-        state,
-        &top_state,
-        effect_checks,
-        statement_may_write_memory(body),
-        assumptions,
-        budget,
-    )?;
+    let (top_state, whole_loop_effect_summaries) =
+        prepare_loop_top_state(state, effect_checks, body, assumptions, budget, variables)?;
     let preservation_obligations = if let Some(environment) = preservation_environment {
         collect_loop_preservation_summary(
             state,
@@ -430,18 +423,24 @@ fn execute_c_while_exit_paths(
         assumptions,
         &preservation_obligations,
     );
+    let whole_loop_effect_facts = whole_loop_effect_summaries
+        .iter()
+        .cloned()
+        .map(ExecutionPureFact::new)
+        .collect::<Vec<_>>();
 
     let mut paths = Vec::new();
-    for (invariant_facts, invariant_obligations) in assume_invariant_checks(
+    let invariant_contexts = assume_invariant_checks(
         &top_state,
         state,
         invariant_checks,
         assumptions,
-        &[],
+        &whole_loop_effect_facts,
         &base_obligations,
         budget,
-    )? {
-        for (mut facts, mut obligations) in assume_condition_truthiness(
+    )?;
+    for (invariant_facts, invariant_obligations) in invariant_contexts {
+        let condition_contexts = assume_condition_truthiness(
             &top_state,
             condition,
             assumptions,
@@ -449,10 +448,8 @@ fn execute_c_while_exit_paths(
             &invariant_obligations,
             false,
             budget,
-        )? {
-            for summary in &whole_loop_effect_summaries {
-                let _ = add_path_fact(&mut facts, assumptions, summary.clone());
-            }
+        )?;
+        for (facts, mut obligations) in condition_contexts {
             append_required_proof_obligations(
                 &mut obligations,
                 assumptions,
@@ -568,18 +565,20 @@ pub(super) fn collect_loop_preservation_summary(
     variables: &mut VerificationVariableGenerator,
 ) -> ExecutionResult<LoopPreservationSummary> {
     let mut obligations = Vec::new();
-    for (mut invariant_facts, invariant_obligations) in assume_invariant_checks(
+    let whole_loop_effect_facts = whole_loop_effect_summaries
+        .iter()
+        .cloned()
+        .map(ExecutionPureFact::new)
+        .collect::<Vec<_>>();
+    for (invariant_facts, invariant_obligations) in assume_invariant_checks(
         top_state,
         loop_entry_state,
         invariant_checks,
         assumptions,
-        &[],
+        &whole_loop_effect_facts,
         &[],
         budget,
     )? {
-        for summary in whole_loop_effect_summaries {
-            let _ = add_path_fact(&mut invariant_facts, assumptions, summary.clone());
-        }
         for (condition_facts, condition_obligations) in assume_condition_truthiness(
             top_state,
             condition,
@@ -720,6 +719,62 @@ pub(super) fn collect_whole_loop_effect_summaries(
         });
     }
     Ok(summaries)
+}
+
+pub(super) fn prepare_loop_top_state(
+    entry_state: &CState,
+    effect_checks: &[CLoopEffectCheck],
+    body: &CStatement,
+    assumptions: &Assumptions,
+    budget: &mut ExecutionBudget,
+    variables: &mut VerificationVariableGenerator,
+) -> ExecutionResult<(CState, Vec<Proposition>)> {
+    let mut top_state = havoc_loop_modified_locals(entry_state, body, variables);
+    let include_mutable_summaries = statement_may_write_memory(body);
+    let mut summaries = collect_whole_loop_effect_summaries(
+        entry_state,
+        &top_state,
+        effect_checks,
+        include_mutable_summaries,
+        assumptions,
+        budget,
+    )?;
+
+    // Whole-loop effects are part of the induction hypothesis at the abstract
+    // head and are checked independently at every back edge.
+    let mut framed_memory = top_state.memory().clone();
+    if !summaries.is_empty() {
+        framed_memory
+            .blocks
+            .extend(entry_state.memory().blocks.clone());
+    }
+    for (pointer, value) in &entry_state.memory().cells {
+        if pointer.block.starts_with("local:") {
+            continue;
+        }
+        let is_stable = summaries.iter().any(|summary| {
+            let Proposition::CMemoryEffectSummary { mutable_ranges, .. } = summary else {
+                return false;
+            };
+            assumptions.ranges_proven_disjoint_from_pointer(mutable_ranges, pointer)
+        });
+        if is_stable {
+            framed_memory.cells.insert(pointer.clone(), value.clone());
+        }
+    }
+
+    if framed_memory != *top_state.memory() {
+        top_state = top_state.with_memory(framed_memory);
+        summaries = collect_whole_loop_effect_summaries(
+            entry_state,
+            &top_state,
+            effect_checks,
+            include_mutable_summaries,
+            assumptions,
+            budget,
+        )?;
+    }
+    Ok((top_state, summaries))
 }
 
 pub(super) fn collect_loop_effect_check_obligations(

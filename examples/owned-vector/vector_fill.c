@@ -4,12 +4,12 @@ struct vector {
     int32* data;
 };
 
-int32 vector_fill(int32 data[], int32 length, int32 value) {
+int32 vector_fill(struct vector* owner, int32 value) {
     int32 i;
     i = 0;
-    while (i < length) {
-        data[i] = value;
+    while (i < owner->len) {
+        owner->data[i] = value;
         i = i + 1;
     }
-    return length;
+    return owner->len;
 }

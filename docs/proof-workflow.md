@@ -467,6 +467,14 @@ Whole-loop mutable segments must use stable names such as parameters. They
 cannot depend on locals modified by the loop. Use `step` effects for
 iteration-relative footprints.
 
+A whole-loop segment may depend on fields reached through a stable owner, such
+as `(owner->data)[0..owner->len]`. Structural loop setup projects the immediate
+core of a held composite resource, so an owned `vector(owner)` can justify
+reading those fields without redundant `views` clauses. The verified effect
+summary then preserves field values outside the mutable backing range in the
+arbitrary loop-head state. The preservation proof must still establish the
+effect at every back edge.
+
 Loop effect summaries are reusable. For example, if a loop mutates only
 `dst[0..n]` and requirements prove
 `separate(memory(dst[0..n]), memory(src[0..n]))`, `auto` can

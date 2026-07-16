@@ -1291,6 +1291,9 @@ impl AnnotationLowerer<'_> {
                 .cloned()
                 .map(CExpression::Value)
                 .unwrap_or_else(|| CExpression::Variable(name.clone()))),
+            CExpression::AddressOf(expression) => Ok(CExpression::AddressOf(Box::new(
+                self.lower_current_invariant_c_expression(expression)?,
+            ))),
             CExpression::Add(left, right) => Ok(CExpression::Add(
                 Box::new(self.lower_current_invariant_c_expression(left)?),
                 Box::new(self.lower_current_invariant_c_expression(right)?),
@@ -1334,6 +1337,16 @@ impl AnnotationLowerer<'_> {
             CExpression::BitwiseNot(expression) => Ok(CExpression::BitwiseNot(Box::new(
                 self.lower_current_invariant_c_expression(expression)?,
             ))),
+            CExpression::Load(pointer) => Ok(CExpression::Load(Box::new(
+                self.lower_current_invariant_c_expression(pointer)?,
+            ))),
+            CExpression::TypedLoad {
+                pointer,
+                value_type,
+            } => Ok(CExpression::TypedLoad {
+                pointer: Box::new(self.lower_current_invariant_c_expression(pointer)?),
+                value_type: *value_type,
+            }),
             CExpression::Index(base, index) => Ok(CExpression::Index(
                 Box::new(self.lower_current_invariant_c_expression(base)?),
                 Box::new(self.lower_current_invariant_c_expression(index)?),

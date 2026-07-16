@@ -18,11 +18,6 @@ resource vector(owner: struct vector*) {
     fact separate(memory(owner[0..4]), memory((owner->data)[0..owner->cap]));
 }
 
-resource vector_elements(data: int32*, length: int32) {
-    owns data[0..length];
-    fact 0 <= length;
-}
-
 verifying "vector_init.c";
 verifying "vector_len.c";
 verifying "vector_get.c";
@@ -83,27 +78,29 @@ int32 vector_set(struct vector* owner, int32 index, int32 value) {
     simp();
 }
 
-int32 vector_fill(int32 data[], int32 length, int32 value) {
-    owns vector_elements(data, length);
-    mutable data[0..length];
+int32 vector_fill(struct vector* owner, int32 value) {
+    owns vector(owner);
+    mutable (owner->data)[0..owner->len];
 
     for loop(0) as fill_cells {
-        invariant i >= 0 and i <= length;
+        invariant i >= 0 and i <= owner->len;
         invariant forall (int32 k) {
-            0 <= k and k < i implies data[k] == value
+            0 <= k and k < i implies (owner->data)[k] == value
         };
+        mutable (owner->data)[0..owner->len] by frame;
         initialize by simp;
         preserve by {
-            unfold(vector_elements(data, length));
+            unfold(vector(owner));
+            have i < owner->cap by simp;
             execute_step();
             execute_step();
             simp();
         }
     }
 
-    ensures result == length;
+    ensures result == owner->len;
     ensures forall (int32 k) {
-        0 <= k and k < length implies data[k] == value
+        0 <= k and k < owner->len implies (owner->data)[k] == value
     };
 } by {
     execute_rest();

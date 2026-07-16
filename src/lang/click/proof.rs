@@ -1083,13 +1083,18 @@ fn initial_claim_context(
         &requirement_pure_facts,
     )
     .map_err(|message| ClickError::new(format!("`{claim_label}` setup failed: {message}")))?;
-    state = project_initial_view_composite_resources(
+    let include_owned_composite_cores = function_block
+        .structural_clauses()
+        .iter()
+        .any(|clause| matches!(clause.region(), CodeRegion::Loop(_)));
+    state = project_initial_composite_resource_cores(
         resource_environment,
         parsed_function.parameters(),
         &arguments,
         state,
         &requirement_pure_facts,
         claim_label,
+        include_owned_composite_cores,
     )?;
     requirement_pure_facts = project_initial_resource_facts(
         resource_environment,
@@ -5731,22 +5736,23 @@ fn materialize_folded_composite_resource_memory(
     Ok(memory)
 }
 
-fn project_initial_view_composite_resources(
+fn project_initial_composite_resource_cores(
     resource_environment: &ResourceEnvironment,
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
     mut state: CState,
     available_pure_facts: &[Proposition],
     claim_label: &str,
+    include_owned: bool,
 ) -> Result<CState, ClickError> {
     let assumptions = assumptions_from_propositions(available_pure_facts);
     for resource in state.resources().facts().to_vec() {
-        let CResourceFact::View(CResource::Composite {
-            name,
-            arguments: resource_arguments,
-        }) = resource
-        else {
-            continue;
+        let (name, resource_arguments) = match resource {
+            CResourceFact::View(CResource::Composite { name, arguments }) => (name, arguments),
+            CResourceFact::Own(CResource::Composite { name, arguments }) if include_owned => {
+                (name, arguments)
+            }
+            _ => continue,
         };
         let Some(definition) = resource_environment.get(&name) else {
             continue;
@@ -5757,7 +5763,7 @@ fn project_initial_view_composite_resources(
         let substitutions =
             resource_value_substitutions(definition, &resource_arguments).map_err(|message| {
                 ClickError::new(format!(
-                    "`{claim_label}` setup failed: could not project view resource `{name}`: {message}"
+                    "`{claim_label}` setup failed: could not project composite resource core `{name}`: {message}"
                 ))
             })?;
         let (memory, contained_resources) = instantiate_composite_resource_body_resources(
@@ -5770,7 +5776,7 @@ fn project_initial_view_composite_resources(
         )
         .map_err(|message| {
             ClickError::new(format!(
-                "`{claim_label}` setup failed: could not project view resource `{name}`: {message}"
+                "`{claim_label}` setup failed: could not project composite resource core `{name}`: {message}"
             ))
         })?;
         let viewed_contained_resources = contained_resources
@@ -5784,7 +5790,7 @@ fn project_initial_view_composite_resources(
             .try_compose_with_facts(viewed_contained_resources, &assumptions)
             .map_err(|error| {
                 ClickError::new(format!(
-                    "`{claim_label}` setup failed: observing view resource `{name}` produced {}",
+                    "`{claim_label}` setup failed: projecting composite resource core `{name}` produced {}",
                     describe_resource_context_validity_error(error, parameters, arguments)
                 ))
             })?;

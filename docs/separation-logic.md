@@ -255,6 +255,12 @@ automatically: the view remains available, and immediate contained resource
 facts are available through their views. This is entry setup, not a general
 recursive execution heuristic.
 
+Functions with structural loop proofs also project the immediate core of held
+owned composites during proof setup. Loop invariants and effect footprints may
+therefore read dependent metadata needed to describe the owned backing range.
+This projection is one step and duplicable; it does not unfold or consume the
+owned composite.
+
 `execute_rest()` is now best understood as legacy spelling for
 `execute_rest()`: advance the current execution point to function exit.
 

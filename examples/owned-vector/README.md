@@ -34,8 +34,8 @@ so folding either resource tests dependent composite-resource definitions.
 - `vector_get` performs an indexed backing-array read through a viewed vector.
 - `vector_set` mutates an arbitrary in-bounds element while preserving
   ownership and vector metadata.
-- `vector_fill` uses a composite element resource and an explicit loop
-  preservation proof to initialize a whole range.
+- `vector_fill` uses `vector(owner)` directly and an explicit loop preservation
+  proof to initialize its field-dependent backing range.
 - `vector_replace_if` calls verified vector operations on both sides of a
   branch, then exports a common resource-and-fact interface with `advance`.
 - `vector_push` transitions an empty vector to a nonempty vector.
@@ -51,9 +51,7 @@ The integration test in `tests/examples.rs` verifies every C file against
 
 The caller supplies the backing array, capacity is at least one, and the example
 does not allocate, free, resize, or handle a full vector. Those operations need
-resource-algebra features beyond composite resources. `vector_fill` accepts its
-element range directly because dependent ranges reached through mutable owner
-fields do not yet transport cleanly through abstract loop snapshots.
+resource-algebra features beyond composite resources.
 
 Functions with several effects, produced resources, and pure postconditions
 use one trailing grouped proof. Click executes each function body once and
