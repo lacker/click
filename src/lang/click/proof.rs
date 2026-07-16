@@ -4210,6 +4210,12 @@ fn execute_internal_proof(
                 function,
                 arguments,
             )?;
+            let mut stable_join_locals = parameter_values(parsed_function.parameters(), arguments)?;
+            stable_join_locals.retain(|name, value| {
+                body_contexts
+                    .iter()
+                    .all(|context| context.state.locals().get(name) == Some(value))
+            });
             let mut joined_context: Option<ProofReplayContext> = None;
             for mut branch_context in body_contexts {
                 let result = apply_advance_interface(
@@ -4225,22 +4231,16 @@ fn execute_internal_proof(
                     arguments,
                     predicate_environment,
                     click_function_environment,
+                    resource_environment,
                     claim_label,
+                    &stable_join_locals,
                 );
                 if let Err(error) = result {
                     return Err(add_proof_branch_path(error, &branch_context.branch_path));
                 }
-                if let Some(canonical) = &joined_context {
-                    if canonical.state != branch_context.state
-                        || canonical.pure_facts != branch_context.pure_facts
-                    {
-                        let error = ClickError::new(format!(
-                            "`{claim_label}` proof step {index}: `advance` branches produced different abstract interfaces"
-                        ));
-                        return Err(add_proof_branch_path(error, &branch_context.branch_path));
-                    }
-                    branch_context.branch_path.clear();
-                } else {
+                // Every branch has established the same declared interface against
+                // the shared abstraction. Its remaining branch-local state is hidden.
+                if joined_context.is_none() {
                     branch_context.branch_path.clear();
                     joined_context = Some(branch_context);
                 }
@@ -4337,7 +4337,9 @@ fn apply_advance_interface(
     arguments: &[CExpression],
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
+    resource_environment: &ResourceEnvironment,
     claim_label: &str,
+    stable_join_locals: &BTreeMap<String, CValue>,
 ) -> Result<(), ClickError> {
     let region = resolve_code_region_ref(function_block, &target.region, claim_label, step_index)?;
     let at_target = !replay.frontier.inside_branch()
@@ -4400,6 +4402,7 @@ fn apply_advance_interface(
     }
 
     let mut concrete_facts = available_pure_facts.clone();
+    let mut established_interface_resources = Vec::new();
     for assertion in assertions {
         match assertion {
             ProofAssertion::Fact(surface_fact) => {
@@ -4419,9 +4422,9 @@ fn apply_advance_interface(
                         ClickError::new(format!(
                             "`{claim_label}` proof step {step_index}: could not lower `advance` fact: {message}"
                         ))
-                    })?;
+                })?;
                 let assumptions = assumptions_from_propositions(&concrete_facts);
-                if !assumptions.proves(&fact) {
+                if !concrete_facts.contains(&fact) && !assumptions.proves(&fact) {
                     return Err(ClickError::new(format!(
                         "`{claim_label}` proof step {step_index}: `advance` did not establish fact: {}",
                         describe_missing_pure_fact(
@@ -4442,7 +4445,14 @@ fn apply_advance_interface(
                 let expected =
                     lower_resource_clause_at_state(resource, parameters, arguments, state)?;
                 let assumptions = assumptions_from_propositions(&concrete_facts);
-                if !state.resources().satisfies_fact(&expected, &assumptions) {
+                let is_observed_core = resource_is_direct_observed_core(
+                    resource,
+                    &established_interface_resources,
+                    resource_environment,
+                    claim_label,
+                    step_index,
+                )?;
+                if !is_observed_core && !state.resources().satisfies_fact(&expected, &assumptions) {
                     return Err(ClickError::new(format!(
                         "`{claim_label}` proof step {step_index}: `advance` did not establish resource fact: {}",
                         describe_missing_resource_fact(
@@ -4455,12 +4465,12 @@ fn apply_advance_interface(
                         )
                     )));
                 }
+                established_interface_resources.push(resource.clone());
             }
         }
     }
 
     let entry_state = replay.execution_start_state(state).clone();
-    let stable_entry_locals = parameter_values(parameters, arguments)?;
     let variable_start = (join_id as u64)
         .checked_mul(1_000_000)
         .and_then(|offset| 10_000_000_000u64.checked_add(offset))
@@ -4469,12 +4479,8 @@ fn apply_advance_interface(
                 "`{claim_label}` proof step {step_index}: too many nested `advance` joins"
             ))
         })?;
-    let mut abstract_state = abstract_c_state_for_join(
-            state,
-            &stable_entry_locals,
-            variable_start,
-        )
-        .map_err(|message| {
+    let mut abstract_state =
+        abstract_c_state_for_join(state, stable_join_locals, variable_start).map_err(|message| {
             ClickError::new(format!(
                 "`{claim_label}` proof step {step_index}: could not abstract `advance` target state: {message}"
             ))
@@ -4504,6 +4510,47 @@ fn apply_advance_interface(
                 &abstract_state,
                 &mut exported_pure_facts,
             );
+            if let ResourceClause::Declared {
+                kind: ResourceKind::Composite,
+                name,
+                ..
+            } = resource
+            {
+                let definition = resource_environment.get(name).ok_or_else(|| {
+                    ClickError::new(format!(
+                        "`{claim_label}` proof step {step_index}: unknown resource `{name}`"
+                    ))
+                })?;
+                let CResource::Composite {
+                    arguments: resource_arguments,
+                    ..
+                } = exported_resources
+                    .facts()
+                    .last()
+                    .expect("exported composite resource was just appended")
+                    .resource()
+                else {
+                    unreachable!("composite resource clause lowered to another resource family")
+                };
+                let (memory, _) = apply_composite_observation_law(
+                    definition,
+                    resource_arguments,
+                    parameters,
+                    arguments,
+                    &entry_state,
+                    abstract_state.memory().clone(),
+                    &CValue::Int32(Bitvector32Term::Constant(0)),
+                    &mut exported_pure_facts,
+                    predicate_environment,
+                    click_function_environment,
+                )
+                .map_err(|message| {
+                    ClickError::new(format!(
+                        "`{claim_label}` proof step {step_index}: could not project `advance` resource `{name}`: {message}"
+                    ))
+                })?;
+                abstract_state = abstract_state.with_memory(memory);
+            }
         }
     }
     abstract_state = abstract_state.with_resource_context(exported_resources.clone());
@@ -4551,6 +4598,62 @@ fn apply_advance_interface(
     *state = abstract_state;
     *available_pure_facts = exported_pure_facts;
     Ok(())
+}
+
+fn resource_is_direct_observed_core(
+    required: &ResourceClause,
+    established: &[ResourceClause],
+    resource_environment: &ResourceEnvironment,
+    claim_label: &str,
+    step_index: usize,
+) -> Result<bool, ClickError> {
+    for parent in established {
+        let ResourceClause::Declared {
+            kind: ResourceKind::Composite,
+            name,
+            ..
+        } = parent
+        else {
+            continue;
+        };
+        let Some(definition) = resource_environment.get(name) else {
+            continue;
+        };
+        let Some(body) = definition.composite_body() else {
+            continue;
+        };
+        let substitutions =
+            resource_argument_substitutions(definition, parent, claim_label, step_index)?;
+        for child in body.contains() {
+            let child = instantiate_resource_clause(child, &substitutions).map_err(|message| {
+                ClickError::new(format!(
+                    "`{claim_label}` proof step {step_index}: could not instantiate observed child of `{name}`: {message}"
+                ))
+            })?;
+            let core = match child {
+                ResourceClause::Read(segment) | ResourceClause::Write(segment) => {
+                    ResourceClause::Read(segment)
+                }
+                ResourceClause::Declared {
+                    kind,
+                    name,
+                    arguments,
+                    parameter_types,
+                    ..
+                } => ResourceClause::Declared {
+                    access: ResourceAccessMode::View,
+                    kind,
+                    name,
+                    arguments,
+                    parameter_types,
+                },
+            };
+            if &core == required {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -5896,23 +5999,17 @@ fn observe_composite_resource(
             describe_resource_clause(resource)
         ))
     })?;
-    let assumptions = assumptions_from_propositions(available_pure_facts);
     let viewed_contained_resources = contained_resources
         .facts()
         .iter()
         .filter_map(CResourceFact::core)
         .collect::<Vec<_>>();
+    // Holding the folded composite certifies its instantiated body. Observation
+    // only adds the body's duplicable cores, so it must not revalidate ownership.
     let resources = state
         .resources()
         .clone()
-        .try_compose_with_facts(viewed_contained_resources, &assumptions)
-        .map_err(|error| {
-            ClickError::new(format!(
-                "`{claim_label}` proof step {step_index}: `observe({})` produced {}",
-                describe_resource_clause(resource),
-                describe_resource_context_validity_error(error, parameters, arguments)
-            ))
-        })?;
+        .unchecked_with_facts(viewed_contained_resources);
     Ok(state.with_memory(memory).with_resource_context(resources))
 }
 
@@ -6025,13 +6122,7 @@ fn append_composite_definition_observable_facts(
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<(), String> {
-    append_resource_context_observable_facts(
-        definition.name(),
-        contained_resources,
-        parameters,
-        arguments,
-        propositions,
-    )?;
+    append_resource_context_observable_facts(contained_resources, propositions);
 
     append_composite_resource_relation_facts(parent_resource, contained_resources, propositions);
 
@@ -6221,25 +6312,16 @@ fn append_composite_resource_declared_facts(
 }
 
 fn append_resource_context_observable_facts(
-    name: &str,
     resources: &ResourceContext,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
     propositions: &mut Vec<Proposition>,
-) -> Result<(), String> {
+) {
     let assumptions = assumptions_from_propositions(propositions);
-    let facts = resources.observable_facts(&assumptions).map_err(|error| {
-        format!(
-            "composite resource `{name}` body has {}",
-            describe_resource_context_validity_error(error, parameters, arguments)
-        )
-    })?;
+    let facts = resources.observable_facts_assuming_valid(&assumptions);
     for proposition in facts {
         if !propositions.contains(&proposition) {
             propositions.push(proposition);
         }
     }
-    Ok(())
 }
 
 fn describe_resource_context_validity_error(

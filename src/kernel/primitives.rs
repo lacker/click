@@ -2386,6 +2386,15 @@ impl ResourceContext {
         if let Some(error) = self.validity_error(assumptions) {
             return Err(error);
         }
+        Ok(self.observable_facts_assuming_valid(assumptions))
+    }
+
+    /// Projects facts from a resource composition whose validity has already
+    /// been established by an enclosing resource law.
+    pub(crate) fn observable_facts_assuming_valid(
+        &self,
+        assumptions: &Assumptions,
+    ) -> Vec<Proposition> {
         let mut propositions = Vec::new();
         for family in ResourceFamily::ALL {
             let facts = self
@@ -2397,7 +2406,7 @@ impl ResourceContext {
                 .extend(resource_family_algebra(family).observable_facts(&facts, assumptions));
         }
         propositions.extend(self.cross_family_separate_facts());
-        Ok(propositions)
+        propositions
     }
 
     fn cross_family_separate_facts(&self) -> Vec<Proposition> {

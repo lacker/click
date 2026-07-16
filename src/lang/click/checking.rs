@@ -571,6 +571,9 @@ pub(super) fn prove_ensure_proposition_by_simp(
             )
         ))
     })?;
+    if available_pure_facts.contains(&proposition) {
+        return Ok(());
+    }
     let assumptions = assumptions_from_propositions(available_pure_facts);
     proposition = unfold_predicates_in_proposition(
         predicate_environment,

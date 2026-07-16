@@ -60,6 +60,7 @@ int32 vector_get(struct vector* owner, int32 index) {
     requires 0 <= index;
     requires index < owner->len;
     views vector(owner);
+    immutable;
 
     ensures result == (owner->data)[index] by auto;
 }
