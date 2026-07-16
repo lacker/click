@@ -47,6 +47,7 @@ int32 vector_init(struct vector* owner, int32 data[], int32 capacity) {
 
 int32 vector_len(struct vector* owner) {
     views vector(owner);
+    immutable;
 
     ensures result == owner->len by auto;
 }
