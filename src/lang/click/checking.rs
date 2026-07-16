@@ -1,6 +1,7 @@
 use super::diagnostics::*;
 use super::proof::FunctionClaimRef;
 use super::*;
+use crate::kernel::memory_effect_write_pointers;
 
 pub(super) fn check_function_claim(
     claim_label: &str,
@@ -2455,7 +2456,7 @@ pub(super) fn prove_effect_clause(
     pre_state: &CState,
     outcome: &CFunctionOutcome,
 ) -> Result<(), ClickError> {
-    let CFunctionOutcome::Return { value: _, state } = outcome else {
+    let CFunctionOutcome::Return { .. } = outcome else {
         return Err(ClickError::new(format!(
             "`{claim_label}` failed on path {path_index}: {}\n{}",
             describe_function_outcome(outcome, parameters, arguments),
@@ -2476,7 +2477,6 @@ pub(super) fn prove_effect_clause(
         parameters,
         arguments,
         pre_state,
-        state,
         effect,
     )
 }
@@ -2717,7 +2717,6 @@ pub(super) fn prove_mutation_footprint(
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
     pre_state: &CState,
-    post_state: &CState,
     effect: &Effect,
 ) -> Result<(), ClickError> {
     let segments = match effect {
@@ -2747,22 +2746,21 @@ pub(super) fn prove_mutation_footprint(
             .collect::<Result<Vec<_>, _>>()?,
     };
     let assumptions = assumptions_from_propositions(available_pure_facts);
-    let mut writes = post_state
-        .memory()
-        .differing_cell_pointers(pre_state.memory())
-        .into_iter()
-        .filter(is_effect_relevant_pointer)
-        .collect::<BTreeSet<_>>();
-    writes.extend(
-        execution_pure_facts
+    let mut effect_facts = execution_pure_facts.to_vec();
+    effect_facts.extend(
+        available_pure_facts
             .iter()
-            .filter_map(|fact| match fact.proposition() {
-                Proposition::CMemoryMutatesOnly { pointers, .. } => Some(pointers.as_slice()),
-                _ => None,
+            .filter(|proposition| {
+                matches!(
+                    proposition,
+                    Proposition::CMemoryMutatesOnly { .. }
+                        | Proposition::CMemoryEffectSummary { .. }
+                )
             })
-            .flatten()
-            .cloned(),
+            .cloned()
+            .map(ExecutionPureFact::new),
     );
+    let mut writes = memory_effect_write_pointers(&effect_facts);
     writes.retain(is_effect_relevant_pointer);
 
     for pointer in &writes {
@@ -2780,7 +2778,7 @@ pub(super) fn prove_mutation_footprint(
         }
     }
 
-    let effect_summary_ranges = execution_pure_facts
+    let effect_summary_ranges = effect_facts
         .iter()
         .filter_map(|fact| match fact.proposition() {
             Proposition::CMemoryEffectSummary { mutable_ranges, .. } => {

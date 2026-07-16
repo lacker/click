@@ -913,6 +913,7 @@ pub struct SymbolicCExecution {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SymbolicCExecutionPath {
     pub(super) facts: Vec<ExecutionPureFact>,
+    pub(super) effect_facts: Vec<ExecutionPureFact>,
     pub(super) obligations: Vec<ProofObligation>,
     pub(super) theorem: Theorem,
 }

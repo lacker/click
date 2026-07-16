@@ -1447,7 +1447,7 @@ pub(super) fn prove_claim_by_simp(
         check_function_claim_by_simp(
             claim_label,
             path_index,
-            path.facts(),
+            &path.execution_facts(),
             &path_requirements,
             claim,
             parsed_function.parameters(),
@@ -1503,6 +1503,7 @@ struct ProofStepReplayState {
     unfolded_predicates: Vec<String>,
     post_execution_steps: Vec<(usize, PostExecutionStep)>,
     case_assumptions: Vec<(usize, ClickProposition, bool)>,
+    effect_facts: Vec<ExecutionPureFact>,
     region_proof: bool,
     ordered_finalization: bool,
     grouped_contract: bool,
@@ -1862,7 +1863,7 @@ fn certified_transitions_from_execution(
             };
             Ok(CertifiedStatementTransition {
                 outcome: outcome.clone(),
-                execution_facts: path.facts().to_vec(),
+                execution_facts: path.execution_facts(),
                 obligations: path.obligations().to_vec(),
                 pure_facts: successor_facts,
             })
@@ -3437,7 +3438,7 @@ fn finish_ordered_proof_replay(
                             check_function_claim(
                                 &claim_label,
                                 path_index,
-                                path.facts(),
+                                &path.execution_facts(),
                                 &path_requirements,
                                 claim,
                                 parsed_function.parameters(),
@@ -3465,7 +3466,7 @@ fn finish_ordered_proof_replay(
                                 check_function_claim_by_simp(
                                     &claim_label,
                                     path_index,
-                                    path.facts(),
+                                    &path.execution_facts(),
                                     &path_requirements,
                                     claim,
                                     parsed_function.parameters(),
@@ -3482,7 +3483,7 @@ fn finish_ordered_proof_replay(
                                 check_function_claim_with_existence_steps(
                                     &claim_label,
                                     path_index,
-                                    path.facts(),
+                                    &path.execution_facts(),
                                     &mut available,
                                     claim,
                                     parsed_function.parameters(),
@@ -3524,7 +3525,7 @@ fn finish_ordered_proof_replay(
                         check_function_claim_with_existence_steps(
                             &claim_label,
                             path_index,
-                            path.facts(),
+                            &path.execution_facts(),
                             &mut available,
                             claim,
                             parsed_function.parameters(),
@@ -3543,7 +3544,7 @@ fn finish_ordered_proof_replay(
                         check_function_claim(
                             &claim_label,
                             path_index,
-                            path.facts(),
+                            &path.execution_facts(),
                             &path_requirements,
                             claim,
                             parsed_function.parameters(),
@@ -4245,7 +4246,12 @@ fn execute_internal_proof(
                 }
                 // Every branch has established the same declared interface against
                 // the shared abstraction. Its remaining branch-local state is hidden.
-                if joined_context.is_none() {
+                if let Some(joined) = &mut joined_context {
+                    append_execution_effect_facts(
+                        &mut joined.replay.effect_facts,
+                        &branch_context.replay.effect_facts,
+                    );
+                } else {
                     branch_context.branch_path.clear();
                     joined_context = Some(branch_context);
                 }
@@ -4474,7 +4480,6 @@ fn apply_advance_interface(
             }
         }
     }
-
     let entry_state = replay.execution_start_state(state).clone();
     let variable_start = (join_id as u64)
         .checked_mul(1_000_000)
@@ -4603,6 +4608,24 @@ fn apply_advance_interface(
     *state = abstract_state;
     *available_pure_facts = exported_pure_facts;
     Ok(())
+}
+
+fn append_execution_effect_facts(
+    target: &mut Vec<ExecutionPureFact>,
+    source: &[ExecutionPureFact],
+) {
+    for fact in source {
+        if is_memory_effect_proposition(fact.proposition()) && !target.contains(fact) {
+            target.push(fact.clone());
+        }
+    }
+}
+
+fn is_memory_effect_proposition(proposition: &Proposition) -> bool {
+    matches!(
+        proposition,
+        Proposition::CMemoryMutatesOnly { .. } | Proposition::CMemoryEffectSummary { .. }
+    )
 }
 
 fn resource_is_direct_observed_core(
@@ -5081,6 +5104,7 @@ fn execute_step_from_execution_point(
         .next()
         .expect("one statement transition was required");
     let execution_pure_facts = transition.execution_facts;
+    append_execution_effect_facts(&mut replay.effect_facts, &execution_pure_facts);
     let transition_obligations = transition.obligations;
     let successor_pure_facts = transition.pure_facts;
     let outcome = transition.outcome;
@@ -5149,12 +5173,14 @@ fn execute_step_from_execution_point(
                 transition_obligations,
                 &return_assumptions,
             );
+            let mut completed_execution_facts = execution_pure_facts;
+            append_execution_effect_facts(&mut completed_execution_facts, &replay.effect_facts);
             let completed = certify_c_function_execution_paths_from_outcomes(
                 execution_start_state.clone(),
                 function.clone(),
                 arguments.to_vec(),
                 assumptions.clone(),
-                vec![(outcome, execution_pure_facts, obligations)],
+                vec![(outcome, completed_execution_facts, obligations)],
             );
             let replay_state = execution_start_state.clone();
             set_replay_execution(
@@ -7051,7 +7077,7 @@ fn validate_function_frame_step(
         check_function_claim(
             claim_label,
             path_index,
-            path.facts(),
+            &path.execution_facts(),
             &path_requirements,
             claim,
             parameters,
@@ -7370,7 +7396,7 @@ fn prove_claim_from_execution(
         check_function_claim(
             claim_label,
             path_index,
-            path.facts(),
+            &path.execution_facts(),
             &path_requirements,
             claim,
             parameters,

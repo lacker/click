@@ -119,7 +119,7 @@ int32 vector_replace_if(
     requires 0 <= index;
     requires index < owner->len;
     owns vector(owner);
-    mutable owner[0..4], (owner->data)[index..index + 1];
+    mutable (owner->data)[index..index + 1];
 
     for statement(3) as choose_replacement {
         assert replace == replace by auto;

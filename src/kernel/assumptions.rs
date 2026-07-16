@@ -3019,6 +3019,16 @@ impl SymbolicCExecutionPath {
         &self.facts
     }
 
+    pub fn execution_facts(&self) -> Vec<ExecutionPureFact> {
+        let mut facts = self.facts.clone();
+        for fact in &self.effect_facts {
+            if !facts.contains(fact) {
+                facts.push(fact.clone());
+            }
+        }
+        facts
+    }
+
     pub fn obligations(&self) -> &[ProofObligation] {
         &self.obligations
     }

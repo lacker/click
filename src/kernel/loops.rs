@@ -807,7 +807,17 @@ pub(super) fn collect_loop_effect_check_obligations(
             .flatten()
             .cloned(),
     );
-    writes.retain(is_loop_effect_relevant_pointer);
+    let effect_summary_ranges = facts
+        .iter()
+        .filter_map(|fact| match fact.proposition() {
+            Proposition::CMemoryEffectSummary { mutable_ranges, .. } => {
+                Some(mutable_ranges.as_slice())
+            }
+            _ => None,
+        })
+        .flatten()
+        .filter(|range| is_loop_effect_relevant_pointer(range.base()))
+        .collect::<Vec<_>>();
 
     let mut obligations = Vec::new();
     for check in effect_checks {
@@ -857,6 +867,23 @@ pub(super) fn collect_loop_effect_check_obligations(
                         check,
                         format!(
                             "write to {pointer:?} is outside the mutable footprint; external writes: {writes:?}; declared effect: {:?}; evaluated segments: {segments:?}",
+                            check.effect()
+                        ),
+                    ),
+                );
+            }
+        }
+
+        for range in &effect_summary_ranges {
+            if !segments.iter().any(|segment| {
+                loop_effect_segment_contains_range(segment, range, &effective_assumptions)
+            }) {
+                push_false_loop_effect_obligation(
+                    &mut obligations,
+                    loop_effect_failure_context(
+                        check,
+                        format!(
+                            "effect summary range {range:?} is outside the mutable footprint; declared effect: {:?}; evaluated segments: {segments:?}",
                             check.effect()
                         ),
                     ),
@@ -970,6 +997,25 @@ pub(super) fn loop_effect_segment_contains_pointer(
         true,
     )) && assumptions.proves(&Proposition::ConditionIs(
         ConditionTerm::signed_less_than(index, segment.end.clone()),
+        true,
+    ))
+}
+
+pub(super) fn loop_effect_segment_contains_range(
+    segment: &EvaluatedMemorySegment,
+    range: &CMemoryRange,
+    assumptions: &Assumptions,
+) -> bool {
+    let Some(base_index) = range.base().element_index_from_base(&segment.base) else {
+        return false;
+    };
+    let range_start = Bitvector32Term::add(base_index.clone(), range.start().clone());
+    let range_end = Bitvector32Term::add(base_index, range.end().clone());
+    assumptions.proves(&Proposition::ConditionIs(
+        ConditionTerm::signed_less_equal(segment.start.clone(), range_start),
+        true,
+    )) && assumptions.proves(&Proposition::ConditionIs(
+        ConditionTerm::signed_less_equal(range_end, segment.end.clone()),
         true,
     ))
 }

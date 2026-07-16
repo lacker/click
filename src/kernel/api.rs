@@ -824,6 +824,7 @@ pub fn prove_symbolic_c_execution_paths_with_environment_and_budget(
     let paths = paths
         .into_iter()
         .map(|path| {
+            let effect_facts = memory_effect_execution_facts(&path.facts);
             let facts = public_execution_pure_facts(&path.facts);
             let proposition = Proposition::CStatementExecutes {
                 state: state.clone(),
@@ -838,6 +839,7 @@ pub fn prove_symbolic_c_execution_paths_with_environment_and_budget(
             ));
             SymbolicCExecutionPath {
                 facts,
+                effect_facts,
                 obligations: path.obligations,
                 theorem,
             }
@@ -966,6 +968,7 @@ fn symbolic_c_statement_execution_with_loop_rule(
     let paths = paths
         .into_iter()
         .map(|path| {
+            let effect_facts = memory_effect_execution_facts(&path.facts);
             let facts = public_execution_pure_facts(&path.facts);
             let proposition = Proposition::CStatementExecutes {
                 state: state.clone(),
@@ -980,6 +983,7 @@ fn symbolic_c_statement_execution_with_loop_rule(
             ));
             SymbolicCExecutionPath {
                 facts,
+                effect_facts,
                 obligations: path.obligations,
                 theorem,
             }
@@ -1151,6 +1155,7 @@ pub fn prove_symbolic_c_function_execution_paths_with_environment_and_budget(
     let paths = paths
         .into_iter()
         .map(|path| {
+            let effect_facts = memory_effect_execution_facts(&path.facts);
             let facts = public_execution_pure_facts(&path.facts);
             let proposition = Proposition::CFunctionExecutes {
                 state: state.clone(),
@@ -1166,6 +1171,7 @@ pub fn prove_symbolic_c_function_execution_paths_with_environment_and_budget(
             ));
             SymbolicCExecutionPath {
                 facts,
+                effect_facts,
                 obligations: path.obligations,
                 theorem,
             }
@@ -1225,6 +1231,7 @@ pub fn prove_symbolic_c_function_verification_paths_with_environment_and_budget(
     let paths = paths
         .into_iter()
         .map(|path| {
+            let effect_facts = memory_effect_execution_facts(&path.facts);
             let facts = public_execution_pure_facts(&path.facts);
             let proposition = Proposition::CFunctionExecutes {
                 state: state.clone(),
@@ -1240,6 +1247,7 @@ pub fn prove_symbolic_c_function_verification_paths_with_environment_and_budget(
             ));
             SymbolicCExecutionPath {
                 facts,
+                effect_facts,
                 obligations: path.obligations,
                 theorem,
             }
@@ -1263,6 +1271,7 @@ pub fn certify_c_function_execution_paths_from_outcomes(
     let paths = paths
         .into_iter()
         .map(|(outcome, facts, obligations)| {
+            let effect_facts = memory_effect_execution_facts(&facts);
             let facts = public_execution_pure_facts(&facts);
             let proposition = Proposition::CFunctionExecutes {
                 state: state.clone(),
@@ -1278,6 +1287,7 @@ pub fn certify_c_function_execution_paths_from_outcomes(
             ));
             SymbolicCExecutionPath {
                 facts,
+                effect_facts,
                 obligations,
                 theorem,
             }

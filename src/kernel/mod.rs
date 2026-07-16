@@ -16,6 +16,7 @@ mod spec;
 
 pub use api::*;
 pub use primitives::*;
+pub(crate) use reasoning::memory_effect_write_pointers;
 
 mod prelude {
     pub(super) use super::api::*;

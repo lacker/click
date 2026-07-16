@@ -138,6 +138,20 @@ pub(super) fn memory_matches_effect_summary_endpoint(
     expected == actual || memories_match_for_pointer_load(expected, actual, pointer)
 }
 
+pub(crate) fn memory_effect_write_pointers(facts: &[ExecutionPureFact]) -> BTreeSet<Pointer> {
+    // Concrete stores certify exact pointers. Abstract calls and loops certify
+    // ranges separately through CMemoryEffectSummary; comparing endpoint
+    // memories would mistake join abstraction and call havoc for writes.
+    let mut writes = BTreeSet::new();
+    for fact in facts {
+        if let Proposition::CMemoryMutatesOnly { pointers, .. } = fact.proposition() {
+            writes.extend(pointers.iter().cloned());
+        }
+    }
+
+    writes
+}
+
 pub(super) fn condition_as_order_fact(
     condition: &ConditionTerm,
     value: bool,
@@ -3175,6 +3189,19 @@ pub(super) fn public_execution_pure_facts(facts: &[ExecutionPureFact]) -> Vec<Ex
     facts
         .iter()
         .filter(|fact| fact.is_public())
+        .cloned()
+        .collect()
+}
+
+pub(super) fn memory_effect_execution_facts(facts: &[ExecutionPureFact]) -> Vec<ExecutionPureFact> {
+    facts
+        .iter()
+        .filter(|fact| {
+            matches!(
+                fact.proposition(),
+                Proposition::CMemoryMutatesOnly { .. } | Proposition::CMemoryEffectSummary { .. }
+            )
+        })
         .cloned()
         .collect()
 }
