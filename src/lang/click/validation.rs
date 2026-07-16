@@ -1,5 +1,8 @@
 use super::diagnostics::*;
-use super::proof::{pure_theorem_array_refs, pure_theorem_parameter_values};
+use super::proof::{
+    instantiate_composite_resource_body_resources, pure_theorem_array_refs,
+    pure_theorem_parameter_values,
+};
 use super::*;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -910,6 +913,7 @@ fn validate_resource_definition(
             &format!("composite resource `{}` body", definition.name()),
         )?;
     }
+    let mut prior_facts = Vec::new();
     for fact in composite_body.facts() {
         if proposition_contains_old_expression(fact) {
             return Err(ClickError::new(format!(
@@ -939,11 +943,13 @@ fn validate_resource_definition(
             definition,
             composite_body,
             fact,
+            &prior_facts,
             predicate_definitions,
             click_function_definitions,
             predicate_environment,
             click_function_environment,
         )?;
+        prior_facts.push(fact);
     }
     Ok(())
 }
@@ -971,6 +977,7 @@ fn validate_resource_fact_memory_ownership(
     definition: &ResourceDefinition,
     composite_body: &CompositeResourceBody,
     fact: &ClickProposition,
+    prior_facts: &[&ClickProposition],
     predicate_definitions: &BTreeMap<&str, &PredicateDefinition>,
     click_function_definitions: &BTreeMap<&str, &ClickFunctionDefinition>,
     predicate_environment: &PredicateEnvironment,
@@ -988,16 +995,78 @@ fn validate_resource_fact_memory_ownership(
         &mut reads,
         definition.name(),
     )?;
-    let memory = CMemory::new();
     let values = pure_theorem_parameter_values(definition.parameters());
+    let arguments = definition
+        .parameters()
+        .iter()
+        .map(|parameter| {
+            CExpression::Value(
+                values
+                    .get(parameter.name())
+                    .expect("resource parameter value should exist")
+                    .clone(),
+            )
+        })
+        .collect::<Vec<_>>();
+    let substitutions = definition
+        .parameters()
+        .iter()
+        .map(|parameter| {
+            (
+                parameter.name().to_string(),
+                ContractExpression::CFragment(CExpression::Variable(parameter.name().to_string())),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    let validation_parameters = definition
+        .parameters()
+        .iter()
+        .map(|parameter| {
+            syntax::C0Parameter::new(
+                parameter.c_type(),
+                parameter.name().to_string(),
+                parameter.struct_name().map(str::to_string),
+            )
+        })
+        .collect::<Vec<_>>();
+    let (memory, _) = instantiate_composite_resource_body_resources(
+        definition.name(),
+        composite_body,
+        &substitutions,
+        &validation_parameters,
+        &arguments,
+        CMemory::new(),
+    )
+    .map_err(|message| {
+        ClickError::new(format!(
+            "resource `{}` could not materialize contained memory while validating facts: {message}",
+            definition.name()
+        ))
+    })?;
     let array_refs = pure_theorem_array_refs(definition.parameters(), &values, &memory);
     let mut scalar_assumptions = Vec::new();
+    for body_fact in prior_facts {
+        collect_resource_fact_scalar_assumptions_from_proposition(
+            body_fact,
+            predicate_definitions,
+            &values,
+            &array_refs,
+            &memory,
+            predicate_environment,
+            click_function_environment,
+            &mut Vec::new(),
+            &mut scalar_assumptions,
+            definition.name(),
+        )?;
+    }
+    let empty_memory = CMemory::new();
+    let empty_array_refs = pure_theorem_array_refs(definition.parameters(), &values, &empty_memory);
     collect_resource_fact_scalar_assumptions_from_proposition(
         fact,
         predicate_definitions,
         &values,
-        &array_refs,
-        &memory,
+        &empty_array_refs,
+        &empty_memory,
         predicate_environment,
         click_function_environment,
         &mut Vec::new(),

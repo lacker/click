@@ -378,6 +378,8 @@ sequence:
 - `examples/owned-vector/`: composite-resource example over vector metadata and
   dependent backing storage, including viewed reads and resource-state
   transitions.
+- `examples/owned-string/`: composite-resource example over string metadata and
+  sentinel-terminated storage, including content-invariant preservation.
 
 ## Library-Shaped Mdtests
 

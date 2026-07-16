@@ -6400,7 +6400,7 @@ fn materialize_composite_resource_memory(
 /// Instantiates the resource-state side of a composite definition. The result
 /// is provisional until the caller composes it with assumptions and checks
 /// validity through `ResourceContext`.
-fn instantiate_composite_resource_body_resources(
+pub(super) fn instantiate_composite_resource_body_resources(
     name: &str,
     composite_body: &CompositeResourceBody,
     substitutions: &BTreeMap<String, ContractExpression>,

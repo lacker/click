@@ -180,6 +180,14 @@ impl C0StructField {
 }
 
 impl C0Parameter {
+    pub(crate) fn new(c_type: C0Type, name: String, struct_name: Option<String>) -> Self {
+        Self {
+            c_type,
+            name,
+            struct_name,
+        }
+    }
+
     pub fn name(&self) -> &str {
         &self.name
     }
