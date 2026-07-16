@@ -218,6 +218,16 @@ fn expand_declared_resource_structural_clause(
         .into_iter()
         .map(|item| expand_declared_resource_structural_item(item, resource_definitions))
         .collect::<Result<Vec<_>, _>>()?;
+    clause.initialize_proof = clause
+        .initialize_proof
+        .take()
+        .map(|proof| expand_declared_resource_proof(proof, resource_definitions))
+        .transpose()?;
+    clause.preserve_proof = clause
+        .preserve_proof
+        .take()
+        .map(|proof| expand_declared_resource_proof(proof, resource_definitions))
+        .transpose()?;
     Ok(clause)
 }
 

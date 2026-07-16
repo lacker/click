@@ -18,10 +18,17 @@ resource vector(owner: struct vector*) {
     fact separate(memory(owner[0..4]), memory((owner->data)[0..owner->cap]));
 }
 
+resource vector_elements(data: int32*, length: int32) {
+    owns data[0..length];
+    fact 0 <= length;
+}
+
 verifying "vector_init.c";
 verifying "vector_len.c";
 verifying "vector_get.c";
 verifying "vector_set.c";
+verifying "vector_fill.c";
+verifying "vector_replace_if.c";
 verifying "vector_push.c";
 verifying "vector_clear.c";
 verifying "vector_pipeline.c";
@@ -65,10 +72,83 @@ int32 vector_set(struct vector* owner, int32 index, int32 value) {
     ensures result == value;
     ensures (owner->data)[index] == value;
     ensures owner->len == old(owner->len);
+    ensures owner->cap == old(owner->cap);
+    ensures owner->data == old(owner->data);
 } by {
     unfold(vector(owner));
     execute_rest();
     fold(vector(owner));
+    frame();
+    simp();
+}
+
+int32 vector_fill(int32 data[], int32 length, int32 value) {
+    owns vector_elements(data, length);
+    mutable data[0..length];
+
+    for loop(0) as fill_cells {
+        invariant i >= 0 and i <= length;
+        invariant forall (int32 k) {
+            0 <= k and k < i implies data[k] == value
+        };
+        initialize by simp;
+        preserve by {
+            unfold(vector_elements(data, length));
+            execute_step();
+            execute_step();
+            simp();
+        }
+    }
+
+    ensures result == length;
+    ensures forall (int32 k) {
+        0 <= k and k < length implies data[k] == value
+    };
+} by {
+    execute_rest();
+    loop_vc(fill_cells);
+    frame();
+    simp();
+}
+
+int32 vector_replace_if(
+    struct vector* owner,
+    int32 index,
+    int32 replacement,
+    int32 replace
+) {
+    requires 0 <= index;
+    requires index < owner->len;
+    owns vector(owner);
+    mutable owner[0..4], (owner->data)[index..index + 1];
+
+    for statement(3) as choose_replacement {
+        assert replace == replace by auto;
+    }
+
+    ensures replace != 0 implies result == replacement;
+} by {
+    execute_until(choose_replacement);
+    advance(choose_replacement.exit)
+    ensuring {
+        fact replace != 0 implies selected == replacement;
+        fact not (replace != 0) implies selected == original;
+        owns vector(owner);
+    }
+    by {
+        if replace != 0 {
+            execute_then_step();
+            execute_step();
+            have replace != 0 implies selected == replacement by simp;
+            have not (replace != 0) implies selected == original by simp;
+        } else {
+            execute_else_step();
+            execute_step();
+            have replace != 0 implies selected == replacement by simp;
+            have not (replace != 0) implies selected == original by simp;
+        }
+    }
+    execute_rest();
     frame();
     simp();
 }
@@ -116,18 +196,15 @@ int32 vector_pipeline(
     consumes owner[0..4];
     consumes data[0..capacity];
 
+    for statement(6) as read_replacement {
+        assert owner->len == 1 by auto;
+    }
+
     produces empty_vector(owner);
     ensures result == replacement;
 } by {
-    execute_step();
-    execute_step();
-    execute_step();
-    execute_step();
-    execute_step();
-    execute_step();
+    execute_until(read_replacement);
     observe(vector(owner));
-    execute_step();
-    execute_step();
-    execute_step();
+    execute_rest();
     simp();
 }

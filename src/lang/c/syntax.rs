@@ -763,14 +763,14 @@ impl Parser {
                 })
             }
             Some(Token::Ident(_)) if self.peek_next() == Some(&Token::Arrow) => {
-                let (pointer, value_type) = self.parse_field_lvalue_pointer()?;
+                let (pointer, value_type) = self.parse_postfix_lvalue_pointer()?;
                 self.expect(Token::Equal)?;
                 let value = self.parse_expression()?;
                 self.expect(Token::Semicolon)?;
                 Ok(C0Statement::Store {
                     pointer,
                     value,
-                    value_type: Some(value_type),
+                    value_type,
                 })
             }
             Some(Token::Ident(_)) if self.peek_next().is_some_and(Token::is_scalar_update) => {
@@ -1197,11 +1197,19 @@ impl Parser {
         }
     }
 
-    fn parse_field_lvalue_pointer(&mut self) -> Result<(C0Expression, C0Type), C0SyntaxError> {
-        let base = self.parse_primary()?;
-        self.expect(Token::Arrow)?;
-        let field_name = self.expect_ident("field name")?;
-        self.resolve_field_access(&base, &field_name)
+    fn parse_postfix_lvalue_pointer(
+        &mut self,
+    ) -> Result<(C0Expression, Option<C0Type>), C0SyntaxError> {
+        match self.parse_postfix()? {
+            C0Expression::Field {
+                pointer,
+                field_type,
+            } => Ok((*pointer, Some(field_type))),
+            C0Expression::Index(base, index) => Ok((C0Expression::Add(base, index), None)),
+            expression => Err(C0SyntaxError::new(format!(
+                "expected field or indexed assignment target, got {expression:?}"
+            ))),
+        }
     }
 
     fn resolve_field_access(

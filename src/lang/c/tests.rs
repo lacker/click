@@ -372,6 +372,26 @@ fn c0_syntax_targets_kernel_struct_field_store() {
 }
 
 #[test]
+fn c0_syntax_accepts_indexed_store_through_struct_pointer_field() {
+    syntax::parse_function(
+        r#"
+        struct vector {
+            int32 len;
+            int32 cap;
+            int32* data;
+        };
+
+        int32 set_at(struct vector* owner, int32 index, int32 value) {
+            owner->data[index] = value;
+            return owner->data[index];
+        }
+        "#,
+    )
+    .expect("indexed store through pointer field should parse")
+    .to_kernel_function();
+}
+
+#[test]
 fn c0_syntax_targets_kernel_multifield_struct_offset_load() {
     let function = syntax::parse_function(
         r#"

@@ -1992,15 +1992,17 @@ fn verify_execution_proofs_forward(
                 }
             }
 
-            // Nested loop regions are encountered from the arbitrary iteration
-            // frontier, exactly where the outer induction hypothesis applies.
-            let _ = verify_execution_proofs_forward(
-                body,
-                iteration_contexts,
-                next_loop_index,
-                environment,
-                verified_loop_rules,
-            )?;
+            if kernel_statement_contains_loop(body) {
+                // Nested loop regions are encountered from the arbitrary iteration
+                // frontier, exactly where the outer induction hypothesis applies.
+                let _ = verify_execution_proofs_forward(
+                    body,
+                    iteration_contexts,
+                    next_loop_index,
+                    environment,
+                    verified_loop_rules,
+                )?;
+            }
 
             advance_execution_proof_statement(
                 statement,
@@ -2026,6 +2028,30 @@ fn verify_execution_proofs_forward(
             LoopPreservationSource::Automatic,
             false,
         ),
+    }
+}
+
+fn kernel_statement_contains_loop(statement: &CStatement) -> bool {
+    match statement {
+        CStatement::While { .. } => true,
+        CStatement::Seq(first, second) => {
+            kernel_statement_contains_loop(first) || kernel_statement_contains_loop(second)
+        }
+        CStatement::If {
+            then_branch,
+            else_branch,
+            ..
+        } => {
+            kernel_statement_contains_loop(then_branch)
+                || kernel_statement_contains_loop(else_branch)
+        }
+        CStatement::Declare { .. }
+        | CStatement::Assign { .. }
+        | CStatement::CallAssign { .. }
+        | CStatement::Return(_)
+        | CStatement::Store { .. }
+        | CStatement::TypedStore { .. }
+        | CStatement::Assert { .. } => false,
     }
 }
 

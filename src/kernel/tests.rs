@@ -2613,6 +2613,43 @@ fn additive_upper_bound_covers_incremented_pointer_access() {
 }
 
 #[test]
+fn relative_dependent_range_is_covered_by_owned_range() {
+    let owner = Bitvector32Term::Variable(Variable(75));
+    let backing = Bitvector32Term::Variable(Variable(76));
+    let index = Bitvector32Term::Variable(Variable(77));
+    let length = Bitvector32Term::Variable(Variable(78));
+    let capacity = Bitvector32Term::Variable(Variable(79));
+    let base = Pointer {
+        block: "owner".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let backing_start = Bitvector32Term::subtract(backing.clone(), owner.clone());
+    let indexed_start =
+        Bitvector32Term::subtract(Bitvector32Term::add(backing, index.clone()), owner);
+    let available = CResourceFact::own_memory(CMemoryRange::new(
+        base.clone(),
+        backing_start.clone(),
+        Bitvector32Term::add(backing_start, capacity.clone()),
+    ));
+    let required = CResourceFact::own_memory(CMemoryRange::new(
+        base,
+        indexed_start.clone(),
+        Bitvector32Term::add(indexed_start, Bitvector32Term::Constant(1)),
+    ));
+    let assumptions = Assumptions::new()
+        .assume_condition(
+            ConditionTerm::signed_greater_equal(index.clone(), Bitvector32Term::Constant(0)),
+            true,
+        )
+        .assume_condition(ConditionTerm::signed_less_than(index, length.clone()), true)
+        .assume_condition(ConditionTerm::signed_less_equal(length, capacity), true);
+    let resources = ResourceContext::new().unchecked_with_fact(available);
+
+    assert!(resources.satisfies_fact(&required, &assumptions));
+    assert!(resources.without_fact(&required, &assumptions).is_some());
+}
+
+#[test]
 fn negative_equality_fact_decides_equality_false() {
     let x = Bitvector32Term::Variable(Variable(79));
     let assumptions = Assumptions::new().assume_condition(

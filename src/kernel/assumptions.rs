@@ -2800,6 +2800,30 @@ impl Assumptions {
         start: &Bitvector32Term,
         end: &Bitvector32Term,
     ) -> bool {
+        if &range.base == base {
+            let base_delta = relative_range_offset(range.start(), start);
+            let range_length =
+                Bitvector32Term::subtract(range.end().clone(), range.start().clone());
+            let fact_length = Bitvector32Term::subtract(end.clone(), start.clone());
+            let end_is_covered = if range_length == Bitvector32Term::Constant(1) {
+                self.decide(&ConditionTerm::signed_less_than(
+                    base_delta.clone(),
+                    fact_length.clone(),
+                )) == Some(true)
+            } else {
+                let range_end = Bitvector32Term::add(base_delta.clone(), range_length);
+                self.decide(&ConditionTerm::signed_less_equal(range_end, fact_length)) == Some(true)
+            };
+            if self.decide(&ConditionTerm::signed_less_equal(
+                Bitvector32Term::Constant(0),
+                base_delta,
+            )) == Some(true)
+                && end_is_covered
+            {
+                return true;
+            }
+        }
+
         let fact_base = base.offset_by_int32_elements(start.clone());
         let range_base = range.base.offset_by_int32_elements(range.start.clone());
         if let Some(base_delta) = self.pointer_element_index_from_base(&range_base, &fact_base) {
@@ -2828,6 +2852,18 @@ impl Assumptions {
             range_start,
         )) == Some(true)
             && self.decide(&ConditionTerm::signed_less_equal(range_end, end.clone())) == Some(true)
+    }
+}
+
+fn relative_range_offset(value: &Bitvector32Term, origin: &Bitvector32Term) -> Bitvector32Term {
+    match (value, origin) {
+        (
+            Bitvector32Term::Subtract(value, value_origin),
+            Bitvector32Term::Subtract(origin, origin_origin),
+        ) if value_origin == origin_origin => {
+            Bitvector32Term::subtract(value.as_ref().clone(), origin.as_ref().clone())
+        }
+        _ => Bitvector32Term::subtract(value.clone(), origin.clone()),
     }
 }
 
