@@ -19,6 +19,7 @@ resource owned_string(owner: struct owned_string*) {
 verifying "owned_string_init.c";
 verifying "owned_string_len.c";
 verifying "owned_string_get.c";
+verifying "owned_string_set.c";
 verifying "owned_string_push.c";
 verifying "owned_string_pop.c";
 verifying "owned_string_clear.c";
@@ -64,6 +65,27 @@ int32 owned_string_get(struct owned_string* owner, int32 index) {
     immutable;
 
     ensures result == (owner->data)[index] by auto;
+}
+
+int32 owned_string_set(
+    struct owned_string* owner,
+    int32 index,
+    int32 value
+) {
+    requires 0 <= index;
+    requires index < owner->len;
+    owns owned_string(owner);
+    mutable (owner->data)[index..index + 1];
+
+    ensures result == value;
+    ensures (owner->data)[index] == value;
+} by {
+    unfold(owned_string(owner));
+    execute_step();
+    fold(owned_string(owner));
+    execute_step();
+    frame();
+    simp();
 }
 
 int32 owned_string_push(struct owned_string* owner, int32 value) {

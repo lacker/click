@@ -8,6 +8,35 @@ pub fn uint8(bits: impl Into<Bitvector32Term>) -> CValue {
     CValue::UInt8(bits.into())
 }
 
+pub(crate) fn c_memory_load_is_unchanged(
+    before: &CMemory,
+    after: &CMemory,
+    pointer: &Pointer,
+    assumptions: &Assumptions,
+) -> bool {
+    if memories_match_for_pointer_load(before, after, pointer) {
+        return true;
+    }
+    // Predicate framing is deliberately bounded: use exact certified writes
+    // and direct address cancellation, without invoking general alias search.
+    assumptions.prop_facts.iter().any(|proposition| {
+        let Proposition::CMemoryMutatesOnly {
+            before: effect_before,
+            after: effect_after,
+            pointers,
+        } = proposition
+        else {
+            return false;
+        };
+        effect_before == before
+            && effect_after == after
+            && pointers.iter().all(|write| {
+                write.blocks_proven_distinct(pointer)
+                    || pointer_offsets_with_common_base_proven_distinct(write, pointer, assumptions)
+            })
+    })
+}
+
 #[derive(Clone, Debug)]
 pub struct CLoopPreservationContext {
     state: CState,

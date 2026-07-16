@@ -19,15 +19,16 @@ memory fact behind a one-step predicate makes observation finite while still
 letting mutators unfold and re-establish the concrete terminator condition.
 
 The verified operations cover initialization, viewed length and element reads,
-push, singleton pop, clear, and a pipeline of modular calls. Push and pop move
-the terminator while preserving the same composite resource.
+indexed replacement, push, singleton pop, clear, and a pipeline of modular
+calls. Indexed replacement demonstrates automatic frame transport for the
+`terminated(data, len)` predicate: writing an earlier element preserves the
+terminator fact and permits the proof to fold `owned_string(owner)` again
+without manually re-proving the predicate. Push and pop move the terminator and
+therefore establish the new predicate explicitly.
 
 The caller supplies the backing storage. Allocation, deallocation, resizing,
 and encoding validation are outside this example's scope.
 
-Two current proof-system boundaries remain visible. Push and pop conservatively
+One current proof-system boundary remains visible. Push and pop conservatively
 declare the whole backing range mutable because precise field-derived effect
-bases do not yet transport across the metadata write. An indexed replacement
-operation is omitted because preserving the snapshot-indexed `terminated` fact
-across a provably disjoint symbolic store currently enters recursive alias
-reasoning instead of framing the fact directly.
+bases do not yet transport across the metadata write.

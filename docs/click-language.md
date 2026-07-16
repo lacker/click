@@ -609,6 +609,15 @@ Like pure Click functions, predicate array parameters are Click array refs.
 A predicate can compare two arrays from different memory states when its caller
 passes arguments such as `p` and `old(p)`.
 
+Statement execution deterministically frames memory-dependent predicate facts
+when it can prove the framed instance. Click substitutes the statement's
+post-state memory into the predicate's array-ref arguments, unfolds the known
+instance once, and checks that every explicit memory load in its body is
+unchanged by the statement's certified exact writes. A store separate from
+every cell used by the predicate therefore preserves the predicate
+automatically; an overlapping store does not. This is bounded theorem
+application, not heuristic predicate search or recursive unfolding.
+
 ## Effects
 
 Function-level effects are separate from postconditions:

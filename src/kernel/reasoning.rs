@@ -46,6 +46,7 @@ pub(super) fn pointers_proven_distinct(
     assumptions: &Assumptions,
 ) -> bool {
     left.blocks_proven_distinct(right)
+        || pointer_offsets_with_common_base_proven_distinct(left, right, assumptions)
         || left.block == right.block
             && assumptions.decide(&ConditionTerm::pointer_offset_equal(
                 left.offset.clone(),
@@ -54,6 +55,46 @@ pub(super) fn pointers_proven_distinct(
         || assumptions.decide(&ConditionTerm::pointer_equal(left.clone(), right.clone()))
             == Some(false)
         || assumptions.pointers_proven_disjoint_by_range(left, right)
+}
+
+pub(super) fn pointer_offsets_with_common_base_proven_distinct(
+    left: &Pointer,
+    right: &Pointer,
+    assumptions: &Assumptions,
+) -> bool {
+    if left.block != right.block {
+        return false;
+    }
+    let (
+        PointerOffsetTerm::Add(left_base, left_index),
+        PointerOffsetTerm::Add(right_base, right_index),
+    ) = (&left.offset, &right.offset)
+    else {
+        return false;
+    };
+    // Cancel a structurally identical additive base before comparing indices.
+    // This also avoids expanding memory-derived bases during alias checks.
+    let index_pair = if left_base == right_base {
+        Some((left_index.as_ref(), right_index.as_ref()))
+    } else if left_base == right_index {
+        Some((left_index.as_ref(), right_base.as_ref()))
+    } else if left_index == right_base {
+        Some((left_base.as_ref(), right_index.as_ref()))
+    } else if left_index == right_index {
+        Some((left_base.as_ref(), right_base.as_ref()))
+    } else {
+        None
+    };
+    let Some((left_index, right_index)) = index_pair else {
+        return false;
+    };
+    let (Some(left_index), Some(right_index)) = (
+        int32_element_index_from_offset(left_index),
+        int32_element_index_from_offset(right_index),
+    ) else {
+        return false;
+    };
+    assumptions.decide(&ConditionTerm::equal(left_index, right_index)) == Some(false)
 }
 
 pub(super) fn pointers_proven_equal(

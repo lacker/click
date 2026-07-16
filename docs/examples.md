@@ -327,6 +327,10 @@ sequence:
 ## Predicates And Pure Click Functions
 
 - `mdtests/sorted_predicate.md`: named predicate and `unfold`.
+- `mdtests/memory_predicate_explicit_frame.md`: explicit and automatic frame
+  transport of a memory-dependent predicate across a separate store.
+- `mdtests/memory_predicate_frame_rejects_overlap.md`: automatic predicate
+  framing rejects a write to the predicate's supporting cell.
 - `mdtests/sorted_pair_unfold_requirement.md`: unfolding predicate requirement.
 - `mdtests/opaque_predicate_requirement.md`: exact opaque predicate reuse.
 - `mdtests/click_proposition_logic.md`: proposition syntax.
