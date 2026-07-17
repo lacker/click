@@ -202,16 +202,29 @@ impl Assumptions {
                 return true;
             }
             for (condition, value) in &self.condition_facts {
-                let (ConditionTerm::Bitvector32Equal(fact_left, fact_right), true) =
-                    (condition, value)
-                else {
+                if !*value {
                     continue;
-                };
-                if fact_left.as_ref() == &term {
-                    stack.push(fact_right.as_ref().clone());
                 }
-                if fact_right.as_ref() == &term {
-                    stack.push(fact_left.as_ref().clone());
+                let (fact_left, fact_right) = match condition {
+                    ConditionTerm::Bitvector32Equal(fact_left, fact_right) => {
+                        (fact_left.as_ref().clone(), fact_right.as_ref().clone())
+                    }
+                    ConditionTerm::PointerOffsetEqual(fact_left, fact_right) => {
+                        let (Some(fact_left), Some(fact_right)) = (
+                            int32_element_index_from_offset(fact_left),
+                            int32_element_index_from_offset(fact_right),
+                        ) else {
+                            continue;
+                        };
+                        (fact_left, fact_right)
+                    }
+                    _ => continue,
+                };
+                if fact_left == term {
+                    stack.push(fact_right.clone());
+                }
+                if fact_right == term {
+                    stack.push(fact_left);
                 }
             }
         }
@@ -2060,6 +2073,23 @@ impl Assumptions {
                         && self.bitvector_terms_equal_for_transport(fact_right, target_right)
             }
             (
+                ConditionTerm::PointerOffsetEqual(fact_left, fact_right),
+                ConditionTerm::PointerOffsetEqual(target_left, target_right),
+            ) => {
+                let fact_left = fact_left.as_ref();
+                let fact_right = fact_right.as_ref();
+                let target_left = target_left.as_ref();
+                let target_right = target_right.as_ref();
+                fact_right == target_right
+                    && self.pointer_offset_terms_equal_for_transport(fact_left, target_left)
+                    || fact_right == target_left
+                        && self.pointer_offset_terms_equal_for_transport(fact_left, target_right)
+                    || fact_left == target_right
+                        && self.pointer_offset_terms_equal_for_transport(fact_right, target_left)
+                    || fact_left == target_left
+                        && self.pointer_offset_terms_equal_for_transport(fact_right, target_right)
+            }
+            (
                 ConditionTerm::Bitvector32SignedLessThan(fact_left, fact_right),
                 ConditionTerm::Bitvector32SignedLessThan(target_left, target_right),
             )
@@ -2168,6 +2198,36 @@ impl Assumptions {
             }
             (Bitvector32Term::BitwiseNot(left), Bitvector32Term::BitwiseNot(right)) => {
                 self.bitvector_terms_equal_for_transport(left, right)
+            }
+            _ => false,
+        }
+    }
+
+    fn pointer_offset_terms_equal_for_transport(
+        &self,
+        left: &PointerOffsetTerm,
+        right: &PointerOffsetTerm,
+    ) -> bool {
+        if left == right {
+            return true;
+        }
+
+        match (left, right) {
+            (
+                PointerOffsetTerm::Int32Scaled {
+                    value: left,
+                    byte_width: left_width,
+                },
+                PointerOffsetTerm::Int32Scaled {
+                    value: right,
+                    byte_width: right_width,
+                },
+            ) => left_width == right_width && self.bitvector_terms_equal_for_transport(left, right),
+            (PointerOffsetTerm::Add(left_a, left_b), PointerOffsetTerm::Add(right_a, right_b)) => {
+                self.pointer_offset_terms_equal_for_transport(left_a, right_a)
+                    && self.pointer_offset_terms_equal_for_transport(left_b, right_b)
+                    || self.pointer_offset_terms_equal_for_transport(left_a, right_b)
+                        && self.pointer_offset_terms_equal_for_transport(left_b, right_a)
             }
             _ => false,
         }
@@ -2759,6 +2819,9 @@ impl Assumptions {
         let (CResource::Memory(parent), CResource::Memory(child)) = (parent, child) else {
             return false;
         };
+        if self.memory_ranges_proven_equal(parent, child) {
+            return true;
+        }
         if Bitvector32Term::subtract(child.end.clone(), child.start.clone()).as_const() == Some(1) {
             let child_pointer = child.base.offset_by_int32_elements(child.start.clone());
             return self.pointer_in_range(
@@ -2769,6 +2832,116 @@ impl Assumptions {
             );
         }
         self.range_covered_by_fact_range(child, parent.base(), parent.start(), parent.end())
+    }
+
+    fn memory_ranges_proven_equal(&self, left: &CMemoryRange, right: &CMemoryRange) -> bool {
+        let left_length = memory_range_length_term(left);
+        let right_length = memory_range_length_term(right);
+        self.pointers_proven_equal_for_resource_transport(left.base(), right.base())
+            && self.bitvector_terms_equal_for_resource_transport(left.start(), right.start())
+            && self.bitvector_terms_equal_for_resource_transport(&left_length, &right_length)
+    }
+
+    fn pointers_proven_equal_for_resource_transport(
+        &self,
+        left: &Pointer,
+        right: &Pointer,
+    ) -> bool {
+        if pointers_proven_equal(left, right, self) {
+            return true;
+        }
+        if left.block != right.block {
+            return false;
+        }
+        let (Some(left), Some(right)) = (
+            int32_element_index_from_offset(&left.offset),
+            int32_element_index_from_offset(&right.offset),
+        ) else {
+            return false;
+        };
+        self.bitvector_terms_equal_for_resource_transport(&left, &right)
+    }
+
+    fn bitvector_terms_equal_for_resource_transport(
+        &self,
+        left: &Bitvector32Term,
+        right: &Bitvector32Term,
+    ) -> bool {
+        if self.bitvector_terms_equal_for_transport(left, right)
+            || self.bitvector_terms_equal_from_facts_for_resource_transport(left, right)
+        {
+            return true;
+        }
+
+        match (left, right) {
+            (Bitvector32Term::Add(left_a, left_b), Bitvector32Term::Add(right_a, right_b))
+            | (
+                Bitvector32Term::Subtract(left_a, left_b),
+                Bitvector32Term::Subtract(right_a, right_b),
+            )
+            | (
+                Bitvector32Term::Multiply(left_a, left_b),
+                Bitvector32Term::Multiply(right_a, right_b),
+            ) => {
+                self.bitvector_terms_equal_for_resource_transport(left_a, right_a)
+                    && self.bitvector_terms_equal_for_resource_transport(left_b, right_b)
+            }
+            _ => false,
+        }
+    }
+
+    fn bitvector_terms_equal_from_facts_for_resource_transport(
+        &self,
+        left: &Bitvector32Term,
+        right: &Bitvector32Term,
+    ) -> bool {
+        // Snapshot-aware endpoints belong only to bounded fact transport. Adding
+        // them to the global equality graph makes memory resolution recursive.
+        let mut seen = BTreeSet::new();
+        let mut stack = vec![left.clone()];
+        while let Some(term) = stack.pop() {
+            if !seen.insert(term.clone()) {
+                continue;
+            }
+            if self.resource_fact_endpoint_matches(&term, right) {
+                return true;
+            }
+            for (condition, value) in &self.condition_facts {
+                if !*value {
+                    continue;
+                }
+                let (fact_left, fact_right) = match condition {
+                    ConditionTerm::Bitvector32Equal(fact_left, fact_right) => {
+                        (fact_left.as_ref().clone(), fact_right.as_ref().clone())
+                    }
+                    ConditionTerm::PointerOffsetEqual(fact_left, fact_right) => {
+                        let (Some(fact_left), Some(fact_right)) = (
+                            int32_element_index_from_offset(fact_left),
+                            int32_element_index_from_offset(fact_right),
+                        ) else {
+                            continue;
+                        };
+                        (fact_left, fact_right)
+                    }
+                    _ => continue,
+                };
+                if self.resource_fact_endpoint_matches(&fact_left, &term) {
+                    stack.push(fact_right.clone());
+                }
+                if self.resource_fact_endpoint_matches(&fact_right, &term) {
+                    stack.push(fact_left);
+                }
+            }
+        }
+        false
+    }
+
+    fn resource_fact_endpoint_matches(
+        &self,
+        left: &Bitvector32Term,
+        right: &Bitvector32Term,
+    ) -> bool {
+        left == right || memory_load_terms_equal_for_fact_transport(left, right, self)
     }
 
     fn range_covered_by_resource_separate_ranges(
@@ -3124,6 +3297,18 @@ fn range_intervals_cover_target(target: &CMemoryRange, mut intervals: Vec<(i64, 
     false
 }
 
+fn memory_range_length_term(range: &CMemoryRange) -> Bitvector32Term {
+    match range.end() {
+        Bitvector32Term::Add(base, length) if base.as_ref() == range.start() => {
+            length.as_ref().clone()
+        }
+        Bitvector32Term::Add(length, base) if base.as_ref() == range.start() => {
+            length.as_ref().clone()
+        }
+        end => Bitvector32Term::subtract(end.clone(), range.start().clone()),
+    }
+}
+
 fn pointer_in_memory_range_shallow(pointer: &Pointer, range: &CMemoryRange) -> bool {
     pointer_in_range_shallow(pointer, range.base(), range.start(), range.end())
 }
@@ -3137,14 +3322,59 @@ fn pointer_in_range_shallow(
     let Some(index) = pointer.element_index_from_base(base) else {
         return false;
     };
-    let (Some(index), Some(start), Some(end)) = (
+    if let (Some(index), Some(start), Some(end)) = (
         signed_bitvector_constant(&index),
         signed_bitvector_constant(start),
         signed_bitvector_constant(end),
+    ) {
+        return start <= index && index < end;
+    }
+
+    let (Some(offset), Some(length)) = (
+        affine_bitvector_difference_constant(&index, start),
+        affine_bitvector_difference_constant(end, start),
     ) else {
         return false;
     };
-    start <= index && index < end
+    0 <= offset && offset < length
+}
+
+fn affine_bitvector_difference_constant(
+    left: &Bitvector32Term,
+    right: &Bitvector32Term,
+) -> Option<i64> {
+    let mut terms = BTreeMap::new();
+    let mut constant = 0i64;
+    collect_affine_bitvector_terms(left, 1, &mut terms, &mut constant)?;
+    collect_affine_bitvector_terms(right, -1, &mut terms, &mut constant)?;
+    terms.retain(|_, coefficient| *coefficient != 0);
+    terms.is_empty().then_some(constant)
+}
+
+fn collect_affine_bitvector_terms(
+    term: &Bitvector32Term,
+    coefficient: i64,
+    terms: &mut BTreeMap<Bitvector32Term, i64>,
+    constant: &mut i64,
+) -> Option<()> {
+    match term {
+        Bitvector32Term::Constant(value) => {
+            *constant = constant.checked_add(coefficient.checked_mul(i64::from(*value as i32))?)?;
+        }
+        Bitvector32Term::Add(left, right) => {
+            collect_affine_bitvector_terms(left, coefficient, terms, constant)?;
+            collect_affine_bitvector_terms(right, coefficient, terms, constant)?;
+        }
+        Bitvector32Term::Subtract(left, right) => {
+            collect_affine_bitvector_terms(left, coefficient, terms, constant)?;
+            collect_affine_bitvector_terms(right, coefficient.checked_neg()?, terms, constant)?;
+        }
+        atom => {
+            let current = terms.entry(atom.clone()).or_default();
+            *current = current.checked_add(coefficient)?;
+        }
+    }
+    Some(())
 }
 
 impl ProofObligation {

@@ -284,6 +284,8 @@ sequence:
   from the callee contract.
 - `mdtests/opaque_call_old_entry_state.md`: a callee's `old(...)` postcondition
   is instantiated at the call-entry memory snapshot.
+- `mdtests/modular_pointer_postcondition.md`: a pointer-valued postcondition
+  becomes an explicit caller pure fact after a verified modular call.
 - `mdtests/opaque_resource_proposition_contract.md`: `separate(...)`,
   `contains(...)`, and `loadable(...)` cross an opaque call as ordinary
   state-indexed propositions.

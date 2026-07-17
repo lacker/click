@@ -328,6 +328,38 @@ fn resource_separation_covers_larger_memory_range() {
 }
 
 #[test]
+fn resource_separation_transports_across_equal_memory_ranges() {
+    let target = Pointer::symbolic(Variable(20_100));
+    let original_data = Pointer::symbolic(Variable(20_101));
+    let equal_data = Pointer::symbolic(Variable(20_102));
+    let original_length = Bitvector32Term::Variable(Variable(20_103));
+    let equal_length = Bitvector32Term::Variable(Variable(20_104));
+    let target_resource = CResource::Memory(memory_range(target, 0, 4));
+    let original_resource = CResource::Memory(memory_range(
+        original_data.clone(),
+        0,
+        original_length.clone(),
+    ));
+    let equal_resource =
+        CResource::Memory(memory_range(equal_data.clone(), 0, equal_length.clone()));
+    let assumptions = Assumptions::new()
+        .assume_proposition(Proposition::CResourceSeparate {
+            left: target_resource.clone(),
+            right: original_resource,
+        })
+        .assume_condition(
+            ConditionTerm::pointer_equal(original_data, equal_data),
+            true,
+        )
+        .assume_condition(ConditionTerm::equal(original_length, equal_length), true);
+
+    assert!(assumptions.proves(&Proposition::CResourceSeparate {
+        left: target_resource,
+        right: equal_resource,
+    }));
+}
+
+#[test]
 fn resource_contains_projects_separation_to_children() {
     let base = Pointer {
         block: "p".into(),
@@ -1864,6 +1896,38 @@ fn pointer_equality_returns_c_int32_zero_or_one() {
             }
         );
     }
+}
+
+#[test]
+fn spec_pointer_equality_lowers_to_a_pure_fact() {
+    let left = Pointer::symbolic(Variable(22_100));
+    let right = Pointer::symbolic(Variable(22_101));
+    let equality = ConditionTerm::pointer_equal(left.clone(), right.clone());
+
+    assert_eq!(
+        c_value_comparison_proposition(
+            &CValue::Pointer(left.clone()),
+            CComparisonOperator::Equal,
+            &CValue::Pointer(right.clone()),
+        ),
+        Some(Proposition::ConditionIs(equality.clone(), true)),
+    );
+    assert_eq!(
+        c_value_comparison_proposition(
+            &CValue::Pointer(left.clone()),
+            CComparisonOperator::NotEqual,
+            &CValue::Pointer(right),
+        ),
+        Some(Proposition::ConditionIs(equality, false)),
+    );
+    assert_eq!(
+        c_value_comparison_proposition(
+            &CValue::Pointer(left),
+            CComparisonOperator::LessThan,
+            &CValue::Int32(Bitvector32Term::Constant(0)),
+        ),
+        None,
+    );
 }
 
 #[test]
@@ -3581,6 +3645,25 @@ fn memory_resolution_alias_check_uses_explicit_separation() {
         &left_base.offset_by_int32_elements(Bitvector32Term::Constant(1)),
         &right_base.offset_by_int32_elements(Bitvector32Term::Constant(2)),
         &assumptions,
+    ));
+
+    let right_start = Bitvector32Term::subtract(
+        Bitvector32Term::Variable(Variable(91)),
+        Bitvector32Term::Variable(Variable(90)),
+    );
+    let normalized_assumptions =
+        Assumptions::new().assume_proposition(Proposition::CResourceSeparate {
+            left: CResource::Memory(memory_range(left_base.clone(), 0, 4)),
+            right: CResource::Memory(memory_range(
+                left_base.clone(),
+                right_start.clone(),
+                Bitvector32Term::add(right_start, Bitvector32Term::Constant(4)),
+            )),
+        });
+    assert!(pointers_proven_distinct_for_memory_resolution(
+        &left_base.offset_by_int32_elements(Bitvector32Term::Constant(1)),
+        &right_base.offset_by_int32_elements(Bitvector32Term::Constant(2)),
+        &normalized_assumptions,
     ));
 }
 

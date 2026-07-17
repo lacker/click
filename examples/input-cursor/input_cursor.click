@@ -128,6 +128,13 @@ int32 input_cursor_shared_pipeline(
     ensures right->pos == 0;
     ensures result == data[0];
 } by {
+    execute_until(statement(4));
+    have separate(
+        memory(right[0..4]),
+        memory((left->data)[0..left->len])
+    ) by {
+        simp();
+    }
     execute_rest();
     frame();
     simp();

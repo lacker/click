@@ -23,10 +23,11 @@ explicit two-step observation chain: first expose the cursor's direct children,
 then observe `readable_input` to obtain the backing-memory view. Cloning views
 the source cursor while producing independently owned target metadata.
 
-`input_cursor_shared_pipeline` initializes two cursors over the same input,
-advances only the left cursor, and proves that the right cursor still reads the
-original first element through verified function contracts. Its mutable
-footprint contains only the two cursor structs; the shared input remains viewed.
+`input_cursor_shared_pipeline` initializes one cursor, clones it into the
+second cursor, advances only the left cursor, and proves that the right cursor
+still reads the original first element through verified function contracts.
+Its mutable footprint contains only the two cursor structs; the shared input
+remains viewed.
 
 The caller supplies both cursor structs and the backing array. Allocation,
 deallocation, and ownership of the backing array are outside this example's

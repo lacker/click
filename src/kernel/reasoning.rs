@@ -270,6 +270,28 @@ fn bitvector_terms_equal_for_memory_resolution(
     }
 }
 
+pub(super) fn memory_load_terms_equal_for_fact_transport(
+    left: &Bitvector32Term,
+    right: &Bitvector32Term,
+    assumptions: &Assumptions,
+) -> bool {
+    let (
+        Bitvector32Term::MemoryLoad(left_memory, left_pointer),
+        Bitvector32Term::MemoryLoad(right_memory, right_pointer),
+    ) = (left, right)
+    else {
+        return false;
+    };
+    pointers_proven_equal_for_memory_resolution(left_pointer, right_pointer, assumptions)
+        && memory_snapshots_match_for_resolution(
+            left_memory,
+            right_memory,
+            left_pointer,
+            assumptions,
+            0,
+        )
+}
+
 fn memory_snapshots_match_for_resolution(
     left: &CMemory,
     right: &CMemory,

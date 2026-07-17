@@ -1583,6 +1583,29 @@ pub(super) fn c_value_comparison_proposition(
     operator: CComparisonOperator,
     right: &CValue,
 ) -> Option<Proposition> {
+    let pointer_condition = match (left, right) {
+        (CValue::Pointer(left), CValue::Pointer(right)) => {
+            Some(pointer_equality_condition(left.clone(), right.clone()))
+        }
+        (CValue::Pointer(pointer), CValue::Int32(bits))
+        | (CValue::Int32(bits), CValue::Pointer(pointer))
+            if bits.as_const() == Some(0) =>
+        {
+            Some(pointer_is_null_condition(pointer.clone()))
+        }
+        _ => None,
+    };
+    if let Some(condition) = pointer_condition {
+        return match operator {
+            CComparisonOperator::Equal => Some(Proposition::ConditionIs(condition, true)),
+            CComparisonOperator::NotEqual => Some(Proposition::ConditionIs(condition, false)),
+            CComparisonOperator::LessThan
+            | CComparisonOperator::LessEqual
+            | CComparisonOperator::GreaterThan
+            | CComparisonOperator::GreaterEqual => None,
+        };
+    }
+
     let left = c_value_int32_term(left)?;
     let right = c_value_int32_term(right)?;
     let (condition, value) = match operator {
