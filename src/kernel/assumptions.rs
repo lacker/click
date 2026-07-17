@@ -1456,6 +1456,24 @@ impl Assumptions {
 
     pub(super) fn decide_from_overflow_facts(&self, condition: &ConditionTerm) -> Option<bool> {
         match condition {
+            ConditionTerm::Bitvector32SignedSubtractOverflows(left, right) => {
+                let left = left.as_ref().clone();
+                let right = right.as_ref().clone();
+                let zero = Bitvector32Term::Constant(0);
+                let ordered_nonnegative = self.has_condition_fact(
+                    ConditionTerm::signed_greater_equal(right.clone(), zero.clone()),
+                    true,
+                ) && self.has_condition_fact(
+                    ConditionTerm::signed_greater_equal(left.clone(), right.clone()),
+                    true,
+                );
+                let positive_minus_one = right == Bitvector32Term::Constant(1)
+                    && (self.has_condition_fact(
+                        ConditionTerm::signed_greater_than(left.clone(), zero.clone()),
+                        true,
+                    ) || self.has_lower_bound_above(&left, &zero));
+                (ordered_nonnegative || positive_minus_one).then_some(false)
+            }
             ConditionTerm::Bitvector32SignedAddOverflows(left, right)
                 if right.as_ref() == &Bitvector32Term::Constant(1) =>
             {
@@ -1465,17 +1483,6 @@ impl Assumptions {
                     ConditionTerm::signed_less_than(left.clone(), int_max.clone()),
                     true,
                 ) || self.has_upper_bound_below(&left, &int_max))
-                .then_some(false)
-            }
-            ConditionTerm::Bitvector32SignedSubtractOverflows(left, right)
-                if right.as_ref() == &Bitvector32Term::Constant(1) =>
-            {
-                let zero = Bitvector32Term::Constant(0);
-                let left = left.as_ref().clone();
-                (self.has_condition_fact(
-                    ConditionTerm::signed_greater_than(left.clone(), zero.clone()),
-                    true,
-                ) || self.has_lower_bound_above(&left, &zero))
                 .then_some(false)
             }
             ConditionTerm::Bitvector32SignedMultiplyOverflows(left, right)

@@ -10,6 +10,20 @@ C files, sidecar specs, and local documentation explaining the proof boundary.
 
 The current project fixtures are:
 
+### Input Cursor
+
+```text
+examples/input-cursor/
+```
+
+This fixture defines a viewed `readable_input(data, len)` resource and an
+`input_cursor(owner)` resource that owns cursor metadata while viewing the
+nested input resource. Two cursor resources can therefore share one input and
+advance independently. The example exercises explicit observation through
+both composite layers and modular calls with precise metadata effects.
+
+### JSON-C Reference Count
+
 ```text
 examples/jsonc-refcount/
 ```

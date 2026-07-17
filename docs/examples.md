@@ -376,6 +376,8 @@ sequence:
 
 ## Example Projects
 
+- `examples/input-cursor/`: nested composite resources with independently
+  mutable cursors sharing one viewed backing input.
 - `examples/jsonc-refcount/`: first library-shaped example project. It has
   ordinary C files and sidecar specs for a getter, setter, and increment helper
   over a one-field json-c-shaped object.

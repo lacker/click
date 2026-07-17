@@ -1752,6 +1752,26 @@ fn int32_subtraction_is_native() {
 }
 
 #[test]
+fn nonnegative_ordered_subtraction_does_not_overflow() {
+    let position = Bitvector32Term::Variable(Variable(24));
+    let length = Bitvector32Term::Variable(Variable(25));
+    let assumptions = Assumptions::new()
+        .assume_condition(
+            ConditionTerm::signed_greater_equal(position.clone(), Bitvector32Term::Constant(0)),
+            true,
+        )
+        .assume_condition(
+            ConditionTerm::signed_greater_equal(length.clone(), position.clone()),
+            true,
+        );
+
+    assert_eq!(
+        assumptions.decide(&ConditionTerm::signed_subtract_overflows(length, position)),
+        Some(false)
+    );
+}
+
+#[test]
 fn signed_subtract_overflow_is_native_undefined_behavior() {
     let state = CState::new();
     let theorem = prove_c_expression_evaluation(

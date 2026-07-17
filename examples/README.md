@@ -13,6 +13,8 @@ unless there is a concrete reason to add hierarchy.
 
 Current projects:
 
+- `input-cursor/` verifies independently mutable cursors over a shared viewed
+  input resource.
 - `jsonc-refcount/` verifies field-level reads and writes on a small object.
 - `owned-string/` verifies a length-tracked string with a trailing terminator
   whose composite resource ties metadata to a mutable backing-memory content
