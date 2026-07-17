@@ -389,6 +389,9 @@ sequence:
 - `examples/owned-string/`: composite-resource example over string metadata and
   storage with a trailing terminator, including content-invariant preservation
   and a precise field-derived push footprint used by a modular caller.
+- `examples/owned-split-buffer/`: composite resource with two adjacent sibling
+  ranges, independent left/right mutation, and ownership repartitioning when
+  their shared boundary moves.
 
 ## Library-Shaped Mdtests
 

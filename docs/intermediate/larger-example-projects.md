@@ -62,6 +62,20 @@ calls that consume and produce memory-backed composite resources. The project
 uses one grouped execution proof per function so effects, produced resources,
 and pure postconditions are checked from one chronological proof state.
 
+### Owned Split Buffer
+
+```text
+examples/owned-split-buffer/
+```
+
+This fixture packages metadata and two adjacent sibling ranges as one
+`owned_split_buffer(owner)` composite resource. Its setters mutate the left and
+right partitions independently. Its boundary operation changes only metadata
+while transferring one cell from the right resource to the left resource, so
+folding must recombine and repartition ownership without changing backing
+memory. A modular pipeline then reads that transferred cell through the newly
+expanded left partition.
+
 ## How To Read An Example Project
 
 Read it in this order:

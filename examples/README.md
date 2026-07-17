@@ -19,5 +19,7 @@ Current projects:
 - `owned-string/` verifies a length-tracked string with a trailing terminator
   whose composite resource ties metadata to a mutable backing-memory content
   invariant.
+- `owned-split-buffer/` verifies two adjacent, dynamically sized owned
+  partitions and transfers an element between them by moving their boundary.
 - `owned-vector/` verifies composite-resource state transitions over vector
   metadata and dependent backing storage.
