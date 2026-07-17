@@ -76,6 +76,19 @@ folding must recombine and repartition ownership without changing backing
 memory. A modular pipeline then reads that transferred cell through the newly
 expanded left partition.
 
+### Owned Segmented Buffer
+
+```text
+examples/owned-segmented-buffer/
+```
+
+This fixture defines an `owned_segment(data, len)` composite resource and an
+outer `owned_segmented_buffer(owner)` that contains two segment resources. It
+exercises explicit observation and unfolding through nested owned composites,
+mutation of one child while framing the other, and swapping the child-resource
+parameters by changing only the outer metadata. A modular pipeline composes
+initialization, both child mutations, and a nested first-child read.
+
 ## How To Read An Example Project
 
 Read it in this order:

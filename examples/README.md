@@ -21,5 +21,8 @@ Current projects:
   invariant.
 - `owned-split-buffer/` verifies two adjacent, dynamically sized owned
   partitions and transfers an element between them by moving their boundary.
+- `owned-segmented-buffer/` verifies an outer composite that contains two
+  independently owned inner segment resources, including child mutation and
+  metadata-only child permutation.
 - `owned-vector/` verifies composite-resource state transitions over vector
   metadata and dependent backing storage.

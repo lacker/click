@@ -394,6 +394,9 @@ sequence:
 - `examples/owned-split-buffer/`: composite resource with two adjacent sibling
   ranges, independent left/right mutation, and ownership repartitioning when
   their shared boundary moves.
+- `examples/owned-segmented-buffer/`: nested owned composite resources with
+  independent child mutation, logical concatenation reads, and metadata-only
+  permutation of the two child resources.
 
 ## Library-Shaped Mdtests
 
