@@ -383,8 +383,8 @@ sequence:
   dependent backing storage, including viewed reads and resource-state
   transitions.
 - `examples/owned-string/`: composite-resource example over string metadata and
-  sentinel-terminated storage, including content-invariant preservation and a
-  precise field-derived push footprint used by a modular caller.
+  storage with a trailing terminator, including content-invariant preservation
+  and a precise field-derived push footprint used by a modular caller.
 
 ## Library-Shaped Mdtests
 

@@ -4,7 +4,7 @@ struct vector {
     int32* data;
 };
 
-int32 vector_push(struct vector* owner, int32 value) {
+int32 vector_push_first(struct vector* owner, int32 value) {
     int32 index;
     int32* data;
     int32 result;

@@ -8,7 +8,7 @@ resource empty_vector(owner: struct vector*) {
     fact separate(memory(owner[0..4]), memory((owner->data)[0..owner->cap]));
 }
 
-resource vector(owner: struct vector*) {
+resource nonempty_vector(owner: struct vector*) {
     owns owner->len;
     owns owner->cap;
     owns owner->data;
@@ -24,7 +24,7 @@ verifying "vector_get.c";
 verifying "vector_set.c";
 verifying "vector_fill.c";
 verifying "vector_replace_if.c";
-verifying "vector_push.c";
+verifying "vector_push_first.c";
 verifying "vector_clear.c";
 verifying "vector_pipeline.c";
 
@@ -46,7 +46,7 @@ int32 vector_init(struct vector* owner, int32 data[], int32 capacity) {
 }
 
 int32 vector_len(struct vector* owner) {
-    views vector(owner);
+    views nonempty_vector(owner);
     immutable;
 
     ensures result == owner->len by auto;
@@ -55,7 +55,7 @@ int32 vector_len(struct vector* owner) {
 int32 vector_get(struct vector* owner, int32 index) {
     requires 0 <= index;
     requires index < owner->len;
-    views vector(owner);
+    views nonempty_vector(owner);
     immutable;
 
     ensures result == (owner->data)[index] by auto;
@@ -65,22 +65,22 @@ int32 vector_set(struct vector* owner, int32 index, int32 value) {
     requires 0 <= index;
     requires index < owner->len;
     mutable (owner->data)[index..index + 1];
-    owns vector(owner);
+    owns nonempty_vector(owner);
     ensures result == value;
     ensures (owner->data)[index] == value;
     ensures owner->len == old(owner->len);
     ensures owner->cap == old(owner->cap);
     ensures owner->data == old(owner->data);
 } by {
-    unfold(vector(owner));
+    unfold(nonempty_vector(owner));
     execute_rest();
-    fold(vector(owner));
+    fold(nonempty_vector(owner));
     frame();
     simp();
 }
 
 int32 vector_fill(struct vector* owner, int32 value) {
-    owns vector(owner);
+    owns nonempty_vector(owner);
     mutable (owner->data)[0..owner->len];
 
     for loop(0) as fill_cells {
@@ -91,7 +91,7 @@ int32 vector_fill(struct vector* owner, int32 value) {
         mutable (owner->data)[0..owner->len] by frame;
         initialize by simp;
         preserve by {
-            unfold(vector(owner));
+            unfold(nonempty_vector(owner));
             have i < owner->cap by simp;
             execute_step();
             execute_step();
@@ -118,7 +118,7 @@ int32 vector_replace_if(
 ) {
     requires 0 <= index;
     requires index < owner->len;
-    owns vector(owner);
+    owns nonempty_vector(owner);
     mutable (owner->data)[index..index + 1];
 
     for statement(3) as choose_replacement {
@@ -132,7 +132,7 @@ int32 vector_replace_if(
     ensuring {
         fact replace != 0 implies selected == replacement;
         fact not (replace != 0) implies selected == original;
-        owns vector(owner);
+        owns nonempty_vector(owner);
     }
     by {
         if replace != 0 {
@@ -152,10 +152,10 @@ int32 vector_replace_if(
     simp();
 }
 
-int32 vector_push(struct vector* owner, int32 value) {
+int32 vector_push_first(struct vector* owner, int32 value) {
     consumes empty_vector(owner);
     mutable owner[0..1], (owner->data)[0..1];
-    produces vector(owner);
+    produces nonempty_vector(owner);
     ensures result == 1;
     ensures owner->len == 1;
     ensures (owner->data)[0] == value;
@@ -164,20 +164,20 @@ int32 vector_push(struct vector* owner, int32 value) {
     have owner->len < owner->cap by simp;
     execute_until(statement(8));
     have owner->len == 1 by simp;
-    fold(vector(owner));
+    fold(nonempty_vector(owner));
     execute_rest();
     frame();
     simp();
 }
 
 int32 vector_clear(struct vector* owner) {
-    consumes vector(owner);
+    consumes nonempty_vector(owner);
     mutable_field(owner->len);
     produces empty_vector(owner);
     ensures result == 0;
     ensures owner->len == 0;
 } by {
-    unfold(vector(owner));
+    unfold(nonempty_vector(owner));
     execute_rest();
     fold(empty_vector(owner));
     frame();
@@ -203,7 +203,7 @@ int32 vector_pipeline(
     ensures result == replacement;
 } by {
     execute_until(read_replacement);
-    observe(vector(owner));
+    observe(nonempty_vector(owner));
     execute_rest();
     simp();
 }

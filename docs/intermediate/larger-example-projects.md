@@ -37,16 +37,16 @@ heap allocation or ownership transfer.
 examples/owned-vector/
 ```
 
-This fixture defines `empty_vector(owner)` and `vector(owner)` composite
-resources over vector metadata and a dependent backing array. It verifies raw
-memory adoption, viewed length and indexed reads, mutation of the first element,
-empty-to-nonempty and nonempty-to-empty state transitions, and a multi-step
-pipeline.
+This fixture defines `empty_vector(owner)` and `nonempty_vector(owner)`
+composite resources over vector metadata and a dependent backing array. It
+verifies raw memory adoption, viewed length and indexed reads, indexed
+mutation, empty-to-nonempty and nonempty-to-empty state transitions, and a
+multi-step pipeline.
 
 The pipeline uses verified opaque call summaries for all operations, including
 calls that consume and produce memory-backed composite resources. The project
 uses one grouped execution proof per function so effects, produced resources,
-and pure postconditions share one execution replay.
+and pure postconditions are checked from one chronological proof state.
 
 ## How To Read An Example Project
 

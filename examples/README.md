@@ -14,7 +14,8 @@ unless there is a concrete reason to add hierarchy.
 Current projects:
 
 - `jsonc-refcount/` verifies field-level reads and writes on a small object.
-- `owned-string/` verifies a sentinel-terminated string whose composite
-  resource ties metadata to a mutable backing-memory content invariant.
+- `owned-string/` verifies a length-tracked string with a trailing terminator
+  whose composite resource ties metadata to a mutable backing-memory content
+  invariant.
 - `owned-vector/` verifies composite-resource state transitions over vector
   metadata and dependent backing storage.

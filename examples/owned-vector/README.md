@@ -19,7 +19,7 @@ The Click sidecar defines two resource states:
 
 - `empty_vector(owner)` owns the metadata and backing array and establishes
   `owner->len == 0` and `1 <= owner->cap`.
-- `vector(owner)` owns the same memory and establishes
+- `nonempty_vector(owner)` owns the same memory and establishes
   `1 <= owner->len <= owner->cap`.
 
 Both resources record that the metadata and backing-array footprints are
@@ -30,15 +30,15 @@ so folding either resource tests dependent composite-resource definitions.
 
 - `vector_init` adopts raw metadata and backing memory and produces an empty
   vector.
-- `vector_len` reads metadata through `views vector(owner)`.
+- `vector_len` reads metadata through `views nonempty_vector(owner)`.
 - `vector_get` performs an indexed backing-array read through a viewed vector.
 - `vector_set` mutates an arbitrary in-bounds element while preserving
   ownership and vector metadata.
-- `vector_fill` uses `vector(owner)` directly and an explicit loop preservation
-  proof to initialize its field-dependent backing range.
+- `vector_fill` uses `nonempty_vector(owner)` directly and an explicit loop
+  preservation proof to initialize its field-dependent backing range.
 - `vector_replace_if` calls verified vector operations on both sides of a
   branch, then exports a common resource-and-fact interface with `advance`.
-- `vector_push` transitions an empty vector to a nonempty vector.
+- `vector_push_first` transitions an empty vector to a nonempty vector.
 - `vector_clear` transitions a nonempty vector back to an empty vector.
 - `vector_pipeline` composes the mutating and indexed operations through their
   verified contracts. A named checkpoint exposes the vector view needed by the
