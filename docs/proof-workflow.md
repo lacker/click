@@ -77,7 +77,9 @@ so grouped proofs do not depend on proof search.
 `simp` is deterministic local normalization. It is useful for straight-line
 postconditions and unfolded predicate goals. It simplifies logical connectives,
 constant/reflexive integer comparisons, small arithmetic forms, concrete folds,
-and several kernel equality patterns.
+and several kernel equality patterns. For order goals, it also rewrites through
+known equalities, evaluates equality-linked constant arithmetic, and uses the
+discrete relationship between strict and non-strict integer bounds.
 
 `frame` proves `immutable` and `mutable` effect clauses. It rejects ordinary
 postconditions.

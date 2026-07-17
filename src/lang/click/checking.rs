@@ -2220,16 +2220,18 @@ pub(super) fn simp_term(term: &Term) -> Term {
 }
 
 pub(super) fn simp_condition(condition: &ConditionTerm, assumptions: &Assumptions) -> Option<bool> {
-    simp_condition_without_assumptions(condition).or_else(|| {
-        assumptions
-            .proves(&Proposition::ConditionIs(condition.clone(), true))
-            .then_some(true)
-            .or_else(|| {
-                assumptions
-                    .proves(&Proposition::ConditionIs(condition.clone(), false))
-                    .then_some(false)
-            })
-    })
+    simp_condition_without_assumptions(condition)
+        .or_else(|| assumptions.decide_condition_for_simp(condition))
+        .or_else(|| {
+            assumptions
+                .proves(&Proposition::ConditionIs(condition.clone(), true))
+                .then_some(true)
+                .or_else(|| {
+                    assumptions
+                        .proves(&Proposition::ConditionIs(condition.clone(), false))
+                        .then_some(false)
+                })
+        })
 }
 
 pub(super) fn simp_condition_without_assumptions(condition: &ConditionTerm) -> Option<bool> {

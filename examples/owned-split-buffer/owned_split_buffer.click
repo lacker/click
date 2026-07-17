@@ -126,26 +126,14 @@ int32 owned_split_buffer_pipeline(
     ensures result == right_value;
 } by {
     execute_until(statement(4));
-    have 1 < length by {
-        simp();
-    }
-    have owner->len == length by {
-        simp();
-    }
     have 1 < owner->len by {
         simp();
     }
     execute_until(statement(5));
-    have owner->split == 1 by {
-        simp();
-    }
     have owner->split < owner->len by {
         simp();
     }
     execute_until(statement(6));
-    have owner->split == 2 by {
-        simp();
-    }
     have 1 < owner->split by {
         simp();
     }

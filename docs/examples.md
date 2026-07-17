@@ -14,6 +14,8 @@ Larger example projects live directly under `examples/`. They contain ordinary
 - `mdtests/result_expression.md`: result expression support.
 - `mdtests/default_prover.md`: omitted proof clauses use `auto`.
 - `mdtests/simp_postconditions.md`: deterministic `simp` postconditions.
+- `mdtests/simp_equality_order_transport.md`: deterministic equality rewriting,
+  discrete integer-bound normalization, and equality-linked arithmetic.
 - `mdtests/proof_step_execute_rest.md`: explicit execution-proof step `execute_rest()`,
   the clearer name for whole-function symbolic execution from the current proof
   execution point.

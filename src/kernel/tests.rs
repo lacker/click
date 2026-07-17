@@ -2793,6 +2793,52 @@ fn equality_transports_signed_order_facts_in_both_directions() {
 }
 
 #[test]
+fn simp_combines_equality_with_discrete_integer_bounds() {
+    let length = Bitvector32Term::Variable(Variable(87_100));
+    let owner_length = Bitvector32Term::Variable(Variable(87_101));
+    let assumptions = Assumptions::new()
+        .assume_condition(
+            ConditionTerm::signed_less_equal(Bitvector32Term::Constant(2), length.clone()),
+            true,
+        )
+        .assume_condition(ConditionTerm::equal(owner_length.clone(), length), true);
+
+    assert_eq!(
+        assumptions.decide_condition_for_simp(&ConditionTerm::signed_less_than(
+            Bitvector32Term::Constant(1),
+            owner_length,
+        )),
+        Some(true)
+    );
+}
+
+#[test]
+fn simp_evaluates_equality_arithmetic_chains() {
+    let old_split = Bitvector32Term::Variable(Variable(87_102));
+    let split = Bitvector32Term::Variable(Variable(87_103));
+    let assumptions = Assumptions::new()
+        .assume_condition(
+            ConditionTerm::equal(old_split.clone(), Bitvector32Term::Constant(1)),
+            true,
+        )
+        .assume_condition(
+            ConditionTerm::equal(
+                split.clone(),
+                Bitvector32Term::add(old_split, Bitvector32Term::Constant(1)),
+            ),
+            true,
+        );
+
+    assert_eq!(
+        assumptions.decide_condition_for_simp(&ConditionTerm::signed_less_than(
+            Bitvector32Term::Constant(1),
+            split,
+        )),
+        Some(true)
+    );
+}
+
+#[test]
 fn equality_transport_reaches_chains_and_arithmetic_terms() {
     let x = Bitvector32Term::Variable(Variable(88));
     let y = Bitvector32Term::Variable(Variable(89));

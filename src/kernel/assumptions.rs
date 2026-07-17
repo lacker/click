@@ -1,5 +1,35 @@
 use super::prelude::*;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SignedConstantResolution {
+    Unknown,
+    Known(i64),
+    Ambiguous,
+}
+
+impl SignedConstantResolution {
+    fn merge(self, other: Self) -> Self {
+        match (self, other) {
+            (Self::Ambiguous, _) | (_, Self::Ambiguous) => Self::Ambiguous,
+            (Self::Unknown, resolution) | (resolution, Self::Unknown) => resolution,
+            (Self::Known(left), Self::Known(right)) if left == right => Self::Known(left),
+            (Self::Known(_), Self::Known(_)) => Self::Ambiguous,
+        }
+    }
+
+    fn from_term(term: Bitvector32Term) -> Self {
+        signed_bitvector_constant(&term).map_or(Self::Unknown, Self::Known)
+    }
+
+    fn map(self, operation: impl FnOnce(i64) -> Bitvector32Term) -> Self {
+        match self {
+            Self::Known(value) => Self::from_term(operation(value)),
+            Self::Unknown => Self::Unknown,
+            Self::Ambiguous => Self::Ambiguous,
+        }
+    }
+}
+
 #[cfg(test)]
 impl Proposition {
     pub(super) fn peel_implications(&self) -> &Self {
@@ -488,6 +518,149 @@ impl Assumptions {
         None
     }
 
+    fn signed_constant_after_equality_normalization(&self, term: &Bitvector32Term) -> Option<i64> {
+        match self.signed_constant_after_equality_normalization_inner(term, &mut BTreeSet::new()) {
+            SignedConstantResolution::Known(value) => Some(value),
+            SignedConstantResolution::Unknown | SignedConstantResolution::Ambiguous => None,
+        }
+    }
+
+    fn signed_constant_after_equality_normalization_inner(
+        &self,
+        term: &Bitvector32Term,
+        resolving: &mut BTreeSet<Bitvector32Term>,
+    ) -> SignedConstantResolution {
+        if let Some(value) = signed_bitvector_constant(term) {
+            return SignedConstantResolution::Known(value);
+        }
+        if !resolving.insert(term.clone()) {
+            return SignedConstantResolution::Unknown;
+        }
+
+        let mut result = match term {
+            Bitvector32Term::Add(left, right) => self.signed_binary_constant_known_equal(
+                left,
+                right,
+                resolving,
+                Bitvector32Term::add,
+            ),
+            Bitvector32Term::Subtract(left, right) => self.signed_binary_constant_known_equal(
+                left,
+                right,
+                resolving,
+                Bitvector32Term::subtract,
+            ),
+            Bitvector32Term::Multiply(left, right) => self.signed_binary_constant_known_equal(
+                left,
+                right,
+                resolving,
+                Bitvector32Term::multiply,
+            ),
+            Bitvector32Term::Divide(left, right) => self.signed_binary_constant_known_equal(
+                left,
+                right,
+                resolving,
+                Bitvector32Term::divide,
+            ),
+            Bitvector32Term::Remainder(left, right) => self.signed_binary_constant_known_equal(
+                left,
+                right,
+                resolving,
+                Bitvector32Term::remainder,
+            ),
+            Bitvector32Term::ShiftLeft(left, right) => self.signed_binary_constant_known_equal(
+                left,
+                right,
+                resolving,
+                Bitvector32Term::shift_left,
+            ),
+            Bitvector32Term::ArithmeticShiftRight(left, right) => self
+                .signed_binary_constant_known_equal(
+                    left,
+                    right,
+                    resolving,
+                    Bitvector32Term::arithmetic_shift_right,
+                ),
+            Bitvector32Term::BitwiseAnd(left, right) => self.signed_binary_constant_known_equal(
+                left,
+                right,
+                resolving,
+                Bitvector32Term::bitwise_and,
+            ),
+            Bitvector32Term::BitwiseOr(left, right) => self.signed_binary_constant_known_equal(
+                left,
+                right,
+                resolving,
+                Bitvector32Term::bitwise_or,
+            ),
+            Bitvector32Term::BitwiseXor(left, right) => self.signed_binary_constant_known_equal(
+                left,
+                right,
+                resolving,
+                Bitvector32Term::bitwise_xor,
+            ),
+            Bitvector32Term::BitwiseNot(value) => self
+                .signed_constant_after_equality_normalization_inner(value, resolving)
+                .map(|value| {
+                    Bitvector32Term::bitwise_not(Bitvector32Term::Constant(value as i32 as u32))
+                }),
+            Bitvector32Term::If {
+                condition,
+                then_term,
+                else_term,
+            } => match self.decide(condition) {
+                Some(condition) => self.signed_constant_after_equality_normalization_inner(
+                    if condition { then_term } else { else_term },
+                    resolving,
+                ),
+                None => SignedConstantResolution::Unknown,
+            },
+            _ => SignedConstantResolution::Unknown,
+        };
+
+        for (condition, value) in &self.condition_facts {
+            let (ConditionTerm::Bitvector32Equal(left, right), true) = (condition, value) else {
+                continue;
+            };
+            if self.bitvector_terms_proven_equal(term, left) {
+                result = result.merge(
+                    self.signed_constant_after_equality_normalization_inner(right, resolving),
+                );
+            }
+            if self.bitvector_terms_proven_equal(term, right) {
+                result = result.merge(
+                    self.signed_constant_after_equality_normalization_inner(left, resolving),
+                );
+            }
+        }
+
+        resolving.remove(term);
+        result
+    }
+
+    fn signed_binary_constant_known_equal(
+        &self,
+        left: &Bitvector32Term,
+        right: &Bitvector32Term,
+        resolving: &mut BTreeSet<Bitvector32Term>,
+        operation: fn(Bitvector32Term, Bitvector32Term) -> Bitvector32Term,
+    ) -> SignedConstantResolution {
+        let left = self.signed_constant_after_equality_normalization_inner(left, resolving);
+        let right = self.signed_constant_after_equality_normalization_inner(right, resolving);
+        match (left, right) {
+            (SignedConstantResolution::Ambiguous, _) | (_, SignedConstantResolution::Ambiguous) => {
+                SignedConstantResolution::Ambiguous
+            }
+            (SignedConstantResolution::Known(left), SignedConstantResolution::Known(right)) => {
+                SignedConstantResolution::from_term(operation(
+                    Bitvector32Term::Constant(left as i32 as u32),
+                    Bitvector32Term::Constant(right as i32 as u32),
+                ))
+            }
+            _ => SignedConstantResolution::Unknown,
+        }
+    }
+
     pub(super) fn decide_signed_comparison_from_equal_constants(
         &self,
         left: &Bitvector32Term,
@@ -884,6 +1057,84 @@ impl Assumptions {
             }
         }
         false
+    }
+
+    pub(crate) fn decide_condition_for_simp(&self, condition: &ConditionTerm) -> Option<bool> {
+        if let Some(value) = self.decide(condition) {
+            return Some(value);
+        }
+
+        // This stronger normalization is tactic-local. Using it in `decide`
+        // would change symbolic execution paths and loop certificates.
+        let (left, right, strict) = condition_as_order_fact(condition, true)?;
+        self.has_order_path_for_simp(&left, &right, strict)
+            .then_some(true)
+    }
+
+    fn has_order_path_for_simp(
+        &self,
+        left: &Bitvector32Term,
+        right: &Bitvector32Term,
+        require_strict: bool,
+    ) -> bool {
+        let order_facts = self.condition_order_facts();
+        let mut stack = vec![(left.clone(), false)];
+        let mut seen = BTreeSet::new();
+        while let Some((current, strict_so_far)) = stack.pop() {
+            if !seen.insert((current.clone(), strict_so_far)) {
+                continue;
+            }
+            if let Some(connection_strict) = self.order_path_connection_for_simp(&current, right) {
+                if !require_strict || strict_so_far || connection_strict {
+                    return true;
+                }
+            }
+            for (edge_left, edge_right, edge_strict) in &order_facts {
+                if let Some(connection_strict) =
+                    self.order_path_connection_for_simp(&current, edge_left)
+                {
+                    stack.push((
+                        edge_right.clone(),
+                        strict_so_far || connection_strict || *edge_strict,
+                    ));
+                }
+            }
+        }
+        false
+    }
+
+    fn order_path_connection_for_simp(
+        &self,
+        left: &Bitvector32Term,
+        right: &Bitvector32Term,
+    ) -> Option<bool> {
+        if self.bitvector_terms_equal_for_simp(left, right) {
+            return Some(false);
+        }
+        let left = self.signed_constant_after_equality_normalization(left)?;
+        let right = self.signed_constant_after_equality_normalization(right)?;
+        (left <= right).then_some(left < right)
+    }
+
+    fn bitvector_terms_equal_for_simp(
+        &self,
+        left: &Bitvector32Term,
+        right: &Bitvector32Term,
+    ) -> bool {
+        if self.bitvector_terms_equal_for_transport(left, right) {
+            return true;
+        }
+
+        self.condition_facts.iter().any(|(condition, value)| {
+            let (ConditionTerm::Bitvector32Equal(fact_left, fact_right), true) = (condition, value)
+            else {
+                return false;
+            };
+            self.bitvector_terms_equal_for_transport(left, fact_left)
+                && self.bitvector_terms_equal_for_transport(right, fact_right)
+                || self.bitvector_terms_equal_for_transport(left, fact_right)
+                    && self.bitvector_terms_equal_for_transport(right, fact_left)
+        })
     }
 
     pub(super) fn condition_order_facts(&self) -> Vec<(Bitvector32Term, Bitvector32Term, bool)> {
