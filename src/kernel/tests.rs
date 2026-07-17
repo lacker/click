@@ -2781,6 +2781,23 @@ fn singleton_integer_range_forces_equality() {
 }
 
 #[test]
+fn safe_positive_subtraction_is_below_its_base() {
+    let x = Bitvector32Term::Variable(Variable(87));
+    let assumptions = Assumptions::new().assume_condition(
+        ConditionTerm::signed_greater_equal(x.clone(), Bitvector32Term::Constant(1)),
+        true,
+    );
+
+    assert_eq!(
+        assumptions.decide(&ConditionTerm::signed_less_than(
+            Bitvector32Term::subtract(x.clone(), Bitvector32Term::Constant(1)),
+            x,
+        )),
+        Some(true)
+    );
+}
+
+#[test]
 fn mutable_frame_proves_unwritten_load_equal_across_stack_locals() {
     let i = Variable(74);
     let i_bits = Bitvector32Term::Variable(i);

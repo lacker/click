@@ -5,7 +5,11 @@ struct owned_string {
 };
 
 int32 owned_string_pop(struct owned_string* owner) {
-    owner->len = 0;
-    owner->data[0] = 0;
-    return 0;
+    int32 index;
+    int32 value;
+    index = owner->len - 1;
+    value = owner->data[index];
+    owner->data[index] = 0;
+    owner->len = index;
+    return value;
 }

@@ -374,12 +374,17 @@ fn execute_verified_function_rule(
 
         let mut obligations = arguments_path.obligations;
         let mut facts = arguments_path.facts;
+        let mut established_requirements = Vec::new();
         for requirement in function.contract_requires() {
+            let requirement_assumptions =
+                assumptions_with_path_context(&path_assumptions, &facts, &obligations);
+            let requirement_assumptions =
+                assumptions_with_propositions(&requirement_assumptions, &established_requirements);
             let requirement_paths = lower_spec_proposition_at_state_with_loop_entry(
                 &entry_contract_state,
                 requirement,
                 Some(&entry_contract_state),
-                &path_assumptions,
+                &requirement_assumptions,
                 budget,
             )?;
             let Some(requirement_path) = requirement_paths.into_iter().next() else {
@@ -390,6 +395,7 @@ fn execute_verified_function_rule(
                 continue;
             };
             obligations.extend(requirement_path.obligations);
+            established_requirements.push(requirement_path.proposition.clone());
             obligations.push(
                 ProofObligation::verification_condition(requirement_path.proposition)
                     .with_context(format!("{} precondition", function.name())),
@@ -399,6 +405,8 @@ fn execute_verified_function_rule(
 
         let effective_assumptions =
             assumptions_with_path_context(assumptions, &facts, &obligations);
+        let effective_assumptions =
+            assumptions_with_propositions(&effective_assumptions, &established_requirements);
         let footprint_state = entry_contract_state.clone();
         let mut mutable_ranges = Vec::new();
         let mut footprint_error = None;

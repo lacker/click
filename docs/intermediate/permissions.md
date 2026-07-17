@@ -155,6 +155,12 @@ need that fact. A true implementation detail that is absent from the contract
 is deliberately unavailable. `old(...)` in a callee postcondition refers to
 the state at that call's entry.
 
+An opaque call first creates proof obligations for the callee's `requires`
+clauses. Those requirements are then available as established assumptions while
+Click evaluates the remaining resource, effect, and postcondition clauses of
+that same contract. A requirement such as `1 <= n` can therefore justify a
+later footprint rooted at `p + (n - 1)`.
+
 An unannotated callee receives no external memory permission, even if the
 caller has permissions in its own context. Explicit `mutable` clauses provide
 the precise abstract write footprint. Without one, an owned input resource is

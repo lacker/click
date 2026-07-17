@@ -6,7 +6,6 @@ struct owned_string {
 
 int32 owned_string_push_preserves_first(
     struct owned_string* owner,
-    int32 data[],
     int32 value
 ) {
     int32 result;

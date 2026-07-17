@@ -19,7 +19,7 @@ memory fact behind a one-step predicate makes observation finite while still
 letting mutators unfold and re-establish the concrete terminator condition.
 
 The verified operations cover initialization, viewed length and element reads,
-indexed replacement, push, singleton pop, clear, and a pipeline of modular
+indexed replacement, push, general pop, clear, and a pipeline of modular
 calls. Indexed replacement demonstrates automatic frame transport for the
 `terminated(data, len)` predicate: writing an earlier element preserves the
 terminator fact and permits the proof to fold `owned_string(owner)` again
@@ -30,7 +30,10 @@ Push declares only the metadata length and the two cells beginning at the old
 end as mutable. Its field-derived backing pointer remains identifiable after
 the metadata write. `owned_string_push_preserves_first` calls push through its
 verified contract and proves that an earlier cell is unchanged, demonstrating
-that the precise footprint is useful to modular callers.
+that the precise footprint is useful to modular callers. Its contract-level
+`data` binding captures the entry backing pointer without adding a proof-only C
+parameter. Pop similarly mutates only the metadata length and the old final
+content cell.
 
 The caller supplies the backing storage. Allocation, deallocation, resizing,
 and encoding validation are outside this example's scope.

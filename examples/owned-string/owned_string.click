@@ -113,12 +113,12 @@ int32 owned_string_push(struct owned_string* owner, int32 value) {
 
 int32 owned_string_push_preserves_first(
     struct owned_string* owner,
-    int32 data[],
     int32 value
 ) {
+    let data = old(owner->data);
+
     requires 1 <= owner->len;
     requires owner->len + 1 < owner->cap;
-    requires owner->data == data;
     owns owned_string(owner);
     mutable owner[0..1], (owner->data + owner->len)[0..2];
 
@@ -131,14 +131,22 @@ int32 owned_string_push_preserves_first(
 }
 
 int32 owned_string_pop(struct owned_string* owner) {
-    requires owner->len == 1;
+    requires 1 <= owner->len;
     owns owned_string(owner);
-    mutable owner[0..1], (owner->data)[0..owner->cap];
-    ensures result == 0;
-    ensures owner->len == 0;
+    mutable owner[0..1], (owner->data + (owner->len - 1))[0..1];
+    ensures result == old((owner->data)[owner->len - 1]);
+    ensures owner->len == old(owner->len) - 1;
+    ensures owner->cap == old(owner->cap);
+    ensures owner->data == old(owner->data);
     ensures (owner->data)[owner->len] == 0;
 } by {
     unfold(owned_string(owner));
+    have 0 <= owner->len - 1 by {
+        simp();
+    }
+    have owner->len - 1 < owner->len by {
+        simp();
+    }
     execute_rest();
     have terminated(owner->data, owner->len) by {
         unfold(terminated);

@@ -513,6 +513,10 @@ later clauses in the same function block, including `requires`, `ensures`,
 parameter name or an earlier contract-level let name. Explicit type annotations
 are checked when the binding is evaluated.
 
+Use `old(...)` in the binding when the abbreviation must capture an entry-state
+value. For example, `let data = old(owner->data);` gives later postconditions a
+stable backing pointer even if the current `owner` metadata changes.
+
 Proposition clauses may also use witness lets:
 
 ```click

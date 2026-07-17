@@ -577,6 +577,7 @@ impl Assumptions {
                     || self.has_lower_bound_above(&right, &left)
                     || self.has_add_const_lower_bound_above(&right, &left)
                     || self.positive_offset_is_proven_above(&left, &right)
+                    || self.positive_subtraction_is_proven_below(&left, &right)
                 {
                     Some(true)
                 } else if self.has_condition_fact(
@@ -1248,6 +1249,23 @@ impl Assumptions {
         self.decide(&ConditionTerm::signed_add_overflows(
             base.clone(),
             Bitvector32Term::Constant(addend),
+        )) == Some(false)
+    }
+
+    pub(super) fn positive_subtraction_is_proven_below(
+        &self,
+        term: &Bitvector32Term,
+        base: &Bitvector32Term,
+    ) -> bool {
+        let Some((term_base, subtrahend)) = term.subtract_const_parts() else {
+            return false;
+        };
+        if &term_base != base || signed_u32_constant(subtrahend).is_none_or(|value| value <= 0) {
+            return false;
+        }
+        self.decide(&ConditionTerm::signed_subtract_overflows(
+            base.clone(),
+            Bitvector32Term::Constant(subtrahend),
         )) == Some(false)
     }
 
