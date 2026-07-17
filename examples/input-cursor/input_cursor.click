@@ -20,6 +20,7 @@ verifying "input_cursor_init.c";
 verifying "input_cursor_remaining.c";
 verifying "input_cursor_peek.c";
 verifying "input_cursor_take.c";
+verifying "input_cursor_clone.c";
 verifying "input_cursor_shared_pipeline.c";
 
 int32 input_cursor_init(
@@ -79,6 +80,31 @@ int32 input_cursor_take(struct input_cursor* owner) {
     observe(readable_input(owner->data, owner->len));
     execute_rest();
     fold(input_cursor(owner));
+    frame();
+    simp();
+}
+
+int32 input_cursor_clone(
+    struct input_cursor* target,
+    struct input_cursor* source
+) {
+    requires separate(memory(target[0..4]), memory(source[0..4]));
+    requires separate(
+        memory(target[0..4]),
+        memory((source->data)[0..source->len])
+    );
+    consumes target[0..4];
+    views input_cursor(source);
+    mutable target[0..4];
+    produces input_cursor(target);
+    ensures result == source->pos;
+    ensures target->pos == source->pos;
+    ensures target->len == source->len;
+    ensures target->data == source->data;
+} by {
+    observe(input_cursor(source));
+    execute_rest();
+    fold(input_cursor(target));
     frame();
     simp();
 }

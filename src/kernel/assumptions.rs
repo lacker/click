@@ -105,6 +105,84 @@ impl Assumptions {
             })
     }
 
+    pub(super) fn exact_condition_value(&self, condition: &ConditionTerm) -> Option<bool> {
+        self.condition_facts
+            .get(condition)
+            .copied()
+            .or_else(|| match condition {
+                ConditionTerm::Bitvector32Equal(left, right) => self
+                    .condition_facts
+                    .get(&ConditionTerm::equal(
+                        right.as_ref().clone(),
+                        left.as_ref().clone(),
+                    ))
+                    .copied(),
+                ConditionTerm::PointerOffsetEqual(left, right) => self
+                    .condition_facts
+                    .get(&ConditionTerm::pointer_offset_equal(
+                        right.as_ref().clone(),
+                        left.as_ref().clone(),
+                    ))
+                    .copied(),
+                ConditionTerm::PointerEqual(left, right) => self
+                    .condition_facts
+                    .get(&ConditionTerm::pointer_equal(
+                        right.as_ref().clone(),
+                        left.as_ref().clone(),
+                    ))
+                    .copied(),
+                _ => None,
+            })
+    }
+
+    pub(super) fn decide_bitvector_equality_shallow(
+        &self,
+        left: &Bitvector32Term,
+        right: &Bitvector32Term,
+    ) -> Option<bool> {
+        if left == right || self.bitvector_terms_equal_from_facts(left, right) {
+            return Some(true);
+        }
+        if let Some(value) =
+            self.exact_condition_value(&ConditionTerm::equal(left.clone(), right.clone()))
+        {
+            return Some(value);
+        }
+        match (
+            self.bitvector_constant_from_direct_equalities(left),
+            self.bitvector_constant_from_direct_equalities(right),
+        ) {
+            (Some(left), Some(right)) => Some(left == right),
+            _ => None,
+        }
+    }
+
+    fn bitvector_constant_from_direct_equalities(&self, term: &Bitvector32Term) -> Option<u32> {
+        let mut pending = vec![term.clone()];
+        let mut visited = BTreeSet::new();
+        while let Some(current) = pending.pop() {
+            if !visited.insert(current.clone()) {
+                continue;
+            }
+            if let Some(value) = current.as_const() {
+                return Some(value);
+            }
+            for (condition, value) in &self.condition_facts {
+                let (ConditionTerm::Bitvector32Equal(left, right), true) = (condition, value)
+                else {
+                    continue;
+                };
+                if left.as_ref() == &current {
+                    pending.push(right.as_ref().clone());
+                }
+                if right.as_ref() == &current {
+                    pending.push(left.as_ref().clone());
+                }
+            }
+        }
+        None
+    }
+
     pub(super) fn bitvector_terms_equal_from_facts(
         &self,
         left: &Bitvector32Term,
@@ -1436,10 +1514,10 @@ impl Assumptions {
 
         let mut unresolved_alias = false;
         for (cell_pointer, value) in &memory.cells {
-            if pointers_proven_distinct(cell_pointer, pointer, self) {
+            if pointers_proven_distinct_for_memory_resolution(cell_pointer, pointer, self) {
                 continue;
             }
-            if pointers_proven_equal(cell_pointer, pointer, self) {
+            if pointers_proven_equal_for_memory_resolution(cell_pointer, pointer, self) {
                 return Some(value.clone());
             }
             unresolved_alias = true;
@@ -2469,6 +2547,38 @@ impl Assumptions {
         )
     }
 
+    pub(super) fn pointers_proven_disjoint_by_explicit_range_shallow(
+        &self,
+        left: &Pointer,
+        right: &Pointer,
+    ) -> bool {
+        self.prop_facts.iter().any(|proposition| match proposition {
+            Proposition::CMemoryDisjoint {
+                left_base,
+                left_start,
+                left_end,
+                right_base,
+                right_start,
+                right_end,
+            } => {
+                pointer_in_range_shallow(left, left_base, left_start, left_end)
+                    && pointer_in_range_shallow(right, right_base, right_start, right_end)
+                    || pointer_in_range_shallow(right, left_base, left_start, left_end)
+                        && pointer_in_range_shallow(left, right_base, right_start, right_end)
+            }
+            Proposition::CResourceSeparate {
+                left: CResource::Memory(left_range),
+                right: CResource::Memory(right_range),
+            } => {
+                pointer_in_memory_range_shallow(left, left_range)
+                    && pointer_in_memory_range_shallow(right, right_range)
+                    || pointer_in_memory_range_shallow(right, left_range)
+                        && pointer_in_memory_range_shallow(left, right_range)
+            }
+            _ => false,
+        })
+    }
+
     fn pointer_element_index_from_base(
         &self,
         pointer: &Pointer,
@@ -3012,6 +3122,29 @@ fn range_intervals_cover_target(target: &CMemoryRange, mut intervals: Vec<(i64, 
         }
     }
     false
+}
+
+fn pointer_in_memory_range_shallow(pointer: &Pointer, range: &CMemoryRange) -> bool {
+    pointer_in_range_shallow(pointer, range.base(), range.start(), range.end())
+}
+
+fn pointer_in_range_shallow(
+    pointer: &Pointer,
+    base: &Pointer,
+    start: &Bitvector32Term,
+    end: &Bitvector32Term,
+) -> bool {
+    let Some(index) = pointer.element_index_from_base(base) else {
+        return false;
+    };
+    let (Some(index), Some(start), Some(end)) = (
+        signed_bitvector_constant(&index),
+        signed_bitvector_constant(start),
+        signed_bitvector_constant(end),
+    ) else {
+        return false;
+    };
+    start <= index && index < end
 }
 
 impl ProofObligation {

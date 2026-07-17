@@ -1,5 +1,7 @@
 use super::prelude::*;
 
+const MEMORY_RESOLUTION_ALIAS_DEPTH_LIMIT: usize = 64;
+
 pub(super) fn condition_contexts_for_truthiness(
     state: &CState,
     condition: &CExpression,
@@ -55,6 +57,255 @@ pub(super) fn pointers_proven_distinct(
         || assumptions.decide(&ConditionTerm::pointer_equal(left.clone(), right.clone()))
             == Some(false)
         || assumptions.pointers_proven_disjoint_by_range(left, right)
+}
+
+/// Alias check used while resolving a symbolic memory load. This deliberately
+/// avoids general equality transport because that transport may itself resolve
+/// memory loads.
+pub(super) fn pointers_proven_distinct_for_memory_resolution(
+    left: &Pointer,
+    right: &Pointer,
+    assumptions: &Assumptions,
+) -> bool {
+    pointers_proven_distinct_for_memory_resolution_with_depth(left, right, assumptions, 0)
+}
+
+fn pointers_proven_distinct_for_memory_resolution_with_depth(
+    left: &Pointer,
+    right: &Pointer,
+    assumptions: &Assumptions,
+    depth: usize,
+) -> bool {
+    left.blocks_proven_distinct(right)
+        || assumptions.pointers_proven_disjoint_by_explicit_range_shallow(left, right)
+        || pointer_offsets_with_common_base_proven_distinct_for_memory_resolution(
+            left,
+            right,
+            assumptions,
+            depth + 1,
+        )
+        || left.block == right.block
+            && pointer_offsets_equal_for_memory_resolution(
+                &left.offset,
+                &right.offset,
+                assumptions,
+                depth + 1,
+            ) == Some(false)
+        || assumptions
+            .exact_condition_value(&ConditionTerm::pointer_equal(left.clone(), right.clone()))
+            == Some(false)
+}
+
+fn pointer_offsets_with_common_base_proven_distinct_for_memory_resolution(
+    left: &Pointer,
+    right: &Pointer,
+    assumptions: &Assumptions,
+    depth: usize,
+) -> bool {
+    if depth > MEMORY_RESOLUTION_ALIAS_DEPTH_LIMIT || left.block != right.block {
+        return false;
+    }
+    let (
+        PointerOffsetTerm::Add(left_base, left_index),
+        PointerOffsetTerm::Add(right_base, right_index),
+    ) = (&left.offset, &right.offset)
+    else {
+        return false;
+    };
+    let index_pair = if left_base == right_base {
+        Some((left_index.as_ref(), right_index.as_ref()))
+    } else if left_base == right_index {
+        Some((left_index.as_ref(), right_base.as_ref()))
+    } else if left_index == right_base {
+        Some((left_base.as_ref(), right_index.as_ref()))
+    } else if left_index == right_index {
+        Some((left_base.as_ref(), right_base.as_ref()))
+    } else {
+        None
+    };
+    let Some((left_index, right_index)) = index_pair else {
+        return false;
+    };
+    let (Some(left_index), Some(right_index)) = (
+        int32_element_index_from_offset(left_index),
+        int32_element_index_from_offset(right_index),
+    ) else {
+        return false;
+    };
+
+    assumptions.decide_bitvector_equality_shallow(&left_index, &right_index) == Some(false)
+}
+
+pub(super) fn pointers_proven_equal_for_memory_resolution(
+    left: &Pointer,
+    right: &Pointer,
+    assumptions: &Assumptions,
+) -> bool {
+    pointers_proven_equal_for_memory_resolution_with_depth(left, right, assumptions, 0)
+}
+
+fn pointers_proven_equal_for_memory_resolution_with_depth(
+    left: &Pointer,
+    right: &Pointer,
+    assumptions: &Assumptions,
+    depth: usize,
+) -> bool {
+    left == right
+        || left.block == right.block
+            && pointer_offsets_equal_for_memory_resolution(
+                &left.offset,
+                &right.offset,
+                assumptions,
+                depth + 1,
+            ) == Some(true)
+        || assumptions
+            .exact_condition_value(&ConditionTerm::pointer_equal(left.clone(), right.clone()))
+            == Some(true)
+}
+
+fn pointer_offsets_equal_for_memory_resolution(
+    left: &PointerOffsetTerm,
+    right: &PointerOffsetTerm,
+    assumptions: &Assumptions,
+    depth: usize,
+) -> Option<bool> {
+    if depth > MEMORY_RESOLUTION_ALIAS_DEPTH_LIMIT {
+        return None;
+    }
+    if left == right {
+        return Some(true);
+    }
+    if let Some(value) = assumptions.exact_condition_value(&ConditionTerm::pointer_offset_equal(
+        left.clone(),
+        right.clone(),
+    )) {
+        return Some(value);
+    }
+    if let (Some(left), Some(right)) = (
+        int32_element_index_from_offset(left),
+        int32_element_index_from_offset(right),
+    ) {
+        if bitvector_terms_equal_for_memory_resolution(&left, &right, assumptions, depth + 1) {
+            return Some(true);
+        }
+        return assumptions.decide_bitvector_equality_shallow(&left, &right);
+    }
+    match (left.as_const(), right.as_const()) {
+        (Some(left), Some(right)) => Some(left == right),
+        _ => None,
+    }
+}
+
+fn bitvector_terms_equal_for_memory_resolution(
+    left: &Bitvector32Term,
+    right: &Bitvector32Term,
+    assumptions: &Assumptions,
+    depth: usize,
+) -> bool {
+    if left == right || assumptions.bitvector_terms_equal_from_facts(left, right) {
+        return true;
+    }
+    if depth > MEMORY_RESOLUTION_ALIAS_DEPTH_LIMIT {
+        return false;
+    }
+    if let Some((left, right)) = bitvector_equality_after_additive_cancellation(left, right) {
+        return bitvector_terms_equal_for_memory_resolution(&left, &right, assumptions, depth + 1);
+    }
+    let zero = Bitvector32Term::Constant(0);
+    if let Bitvector32Term::Add(base, addend) = left {
+        if (bitvector_terms_equal_for_memory_resolution(base, right, assumptions, depth + 1)
+            && bitvector_terms_equal_for_memory_resolution(addend, &zero, assumptions, depth + 1))
+            || (bitvector_terms_equal_for_memory_resolution(addend, right, assumptions, depth + 1)
+                && bitvector_terms_equal_for_memory_resolution(base, &zero, assumptions, depth + 1))
+        {
+            return true;
+        }
+    }
+    if let Bitvector32Term::Add(base, addend) = right {
+        if (bitvector_terms_equal_for_memory_resolution(left, base, assumptions, depth + 1)
+            && bitvector_terms_equal_for_memory_resolution(addend, &zero, assumptions, depth + 1))
+            || (bitvector_terms_equal_for_memory_resolution(left, addend, assumptions, depth + 1)
+                && bitvector_terms_equal_for_memory_resolution(base, &zero, assumptions, depth + 1))
+        {
+            return true;
+        }
+    }
+
+    match (left, right) {
+        (Bitvector32Term::Add(left_a, left_b), Bitvector32Term::Add(right_a, right_b))
+        | (
+            Bitvector32Term::Subtract(left_a, left_b),
+            Bitvector32Term::Subtract(right_a, right_b),
+        )
+        | (
+            Bitvector32Term::Multiply(left_a, left_b),
+            Bitvector32Term::Multiply(right_a, right_b),
+        ) => {
+            bitvector_terms_equal_for_memory_resolution(left_a, right_a, assumptions, depth + 1)
+                && bitvector_terms_equal_for_memory_resolution(
+                    left_b,
+                    right_b,
+                    assumptions,
+                    depth + 1,
+                )
+        }
+        (
+            Bitvector32Term::MemoryLoad(left_memory, left_pointer),
+            Bitvector32Term::MemoryLoad(right_memory, right_pointer),
+        ) => {
+            pointers_proven_equal_for_memory_resolution_with_depth(
+                left_pointer,
+                right_pointer,
+                assumptions,
+                depth + 1,
+            ) && memory_snapshots_match_for_resolution(
+                left_memory,
+                right_memory,
+                left_pointer,
+                assumptions,
+                depth + 1,
+            )
+        }
+        _ => false,
+    }
+}
+
+fn memory_snapshots_match_for_resolution(
+    left: &CMemory,
+    right: &CMemory,
+    pointer: &Pointer,
+    assumptions: &Assumptions,
+    depth: usize,
+) -> bool {
+    if memories_match_for_pointer_load(left, right, pointer) {
+        return true;
+    }
+    if depth > MEMORY_RESOLUTION_ALIAS_DEPTH_LIMIT || pointer.block.starts_with("local:") {
+        return false;
+    }
+    if !left
+        .blocks
+        .iter()
+        .filter(|(block, _)| !block.starts_with("local:"))
+        .eq(right
+            .blocks
+            .iter()
+            .filter(|(block, _)| !block.starts_with("local:")))
+    {
+        return false;
+    }
+
+    left.differing_cell_pointers(right)
+        .into_iter()
+        .filter(|cell_pointer| !cell_pointer.block.starts_with("local:"))
+        .all(|cell_pointer| {
+            pointers_proven_distinct_for_memory_resolution_with_depth(
+                &cell_pointer,
+                pointer,
+                assumptions,
+                depth + 1,
+            )
+        })
 }
 
 pub(super) fn pointer_offsets_with_common_base_proven_distinct(

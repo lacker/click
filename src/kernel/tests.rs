@@ -3563,6 +3563,70 @@ fn symbolic_store_invalidates_only_possible_aliasing_cells() {
 }
 
 #[test]
+fn memory_resolution_alias_check_uses_explicit_separation() {
+    let left_base = Pointer {
+        block: "arg-memory".into(),
+        offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(90)), 4),
+    };
+    let right_base = Pointer {
+        block: "arg-memory".into(),
+        offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(91)), 4),
+    };
+    let assumptions = Assumptions::new().assume_proposition(Proposition::CResourceSeparate {
+        left: CResource::Memory(memory_range(left_base.clone(), 0, 4)),
+        right: CResource::Memory(memory_range(right_base.clone(), 0, 4)),
+    });
+
+    assert!(pointers_proven_distinct_for_memory_resolution(
+        &left_base.offset_by_int32_elements(Bitvector32Term::Constant(1)),
+        &right_base.offset_by_int32_elements(Bitvector32Term::Constant(2)),
+        &assumptions,
+    ));
+}
+
+#[test]
+fn memory_resolution_alias_check_transports_unchanged_field_loads() {
+    let owner = Pointer {
+        block: "arg-memory".into(),
+        offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(92)), 4),
+    };
+    let len_cell = owner.offset_by_int32_elements(Bitvector32Term::Constant(1));
+    let data_cell = owner.offset_by_int32_elements(Bitvector32Term::Constant(2));
+    let before = CMemory::new();
+    let after = before.clone().store(len_cell, int32(7));
+    let data_before =
+        Bitvector32Term::MemoryLoad(Box::new(before.clone()), Box::new(data_cell.clone()));
+    let data_after = Bitvector32Term::MemoryLoad(Box::new(after), Box::new(data_cell));
+    let zero_index = Bitvector32Term::MemoryLoad(Box::new(before), Box::new(owner.clone()));
+    let left = Pointer {
+        block: "arg-memory".into(),
+        offset: PointerOffsetTerm::add(
+            PointerOffsetTerm::scale_int32(data_before, 4),
+            PointerOffsetTerm::scale_int32(zero_index.clone(), 4),
+        ),
+    };
+    let right = Pointer {
+        block: "arg-memory".into(),
+        offset: PointerOffsetTerm::scale_int32(data_after, 4),
+    };
+    let assumptions = Assumptions::new().assume_condition(
+        ConditionTerm::equal(zero_index, Bitvector32Term::Constant(0)),
+        true,
+    );
+
+    assert!(pointers_proven_distinct_for_memory_resolution(
+        &owner.offset_by_int32_elements(Bitvector32Term::Constant(1)),
+        &owner.offset_by_int32_elements(Bitvector32Term::Constant(2)),
+        &assumptions,
+    ));
+    assert!(pointers_proven_equal_for_memory_resolution(
+        &left,
+        &right,
+        &assumptions,
+    ));
+}
+
+#[test]
 fn assumptions_resolve_materialized_symbolic_memory_load_aliases() {
     let k = Variable(75);
     let k_bits = Bitvector32Term::Variable(k);
