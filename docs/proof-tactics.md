@@ -21,9 +21,11 @@ features should not add more fuzzy tactics.
 
 | Tactic | One operation |
 | --- | --- |
+| `step()` | Advance one C statement when every execution prerequisite is exact or context-free; do not transport facts automatically. |
 | `assumption()` | Close a pure goal only when that exact fact is present. |
 | `normalize()` | Close a goal by context-free computation and structural normalization. |
 | `rewrite(equality)` | Rewrite the current pure goal once using an exact available equality. |
+| `transport(source, target)` | Apply one certified frame-transport rule from an exact source fact to the explicitly stated target fact. |
 | `apply(theorem(args))` | Instantiate one theorem, require each premise exactly or by context-free normalization, and add its conclusions. |
 | `unfold(predicate)` | Unfold one explicitly named predicate in matching facts and goals. |
 | `unfold(resource)` | Replace one owned composite resource element with one body layer. |
@@ -60,7 +62,7 @@ certificate. Until that exists, smart tactics remain part of stored proofs.
 
 | Tactic | Boundary still to clarify |
 | --- | --- |
-| `execute_step()` | Executes one source statement but may also discharge evaluator obligations and perform implicit fact handling. |
+| `execute_step()` | Orchestrates contextual prerequisite proving and automatic transport; some generated prerequisites are not yet expressible in surface Click. |
 | `execute_then_step()` / `execute_else_step()` | Select one C branch while proving its condition through current execution machinery. |
 | `bounded_execute()` | Combines bounded program execution with obligation handling. |
 | `loop_vc(loop(N))` | Checks a collection of generated loop obligations. |
@@ -70,6 +72,27 @@ certificate. Until that exists, smart tactics remain part of stored proofs.
 The intended cleanup direction is to identify the deterministic kernel rule or
 rules inside each fuzzy command, expose those as simple tactics, and retain the
 existing spelling only when useful as smart automation.
+
+## Statement Execution
+
+`step()` and `execute_step()` advance the same execution frontier by one C
+statement. Their proof behavior differs:
+
+- `step()` accepts an execution prerequisite only when the exact proposition is
+  already a pure fact or it normalizes to true without context. It carries old
+  snapshot facts as old facts and performs no automatic frame transport.
+- `transport(source, target)` explicitly moves one atomic condition fact to the
+  current snapshot when a certified effect fact proves that its referenced
+  memory was framed.
+- `execute_step()` is the current convenience command. It invokes contextual
+  prerequisite reasoning and attempts bounded automatic transport for eligible
+  atomic facts.
+
+The remaining gap is surface expressibility. For example, `step()` can report
+the exact kernel proposition that an addition does not overflow, but Click
+cannot yet state that proposition directly. Until a surface predicate such as
+`defined(expression)` and its explicit theorems exist, `execute_step()` remains
+fuzzy rather than smart.
 
 ## Macros And Control Flow
 
@@ -83,5 +106,6 @@ Some proof forms are neither individual tactics nor search:
   contain simple, smart, fuzzy, or macro commands.
 
 The Rust AST enforces this inventory through `SimpleTactic`, `SmartTactic`,
-`FuzzyTactic`, `DeterministicProofMacro`, `ProofControlFlow`, and
-`ProofStep::class()`. Any new proof command must be classified explicitly.
+`SmartProofStep`, `FuzzyTactic`, `DeterministicProofMacro`,
+`ProofControlFlow`, and `ProofStep::class()`. Any new proof command must be
+classified explicitly.

@@ -1673,6 +1673,10 @@ impl Parser {
             }));
         }
         let step = match name.as_str() {
+            "step" => {
+                self.expect_empty_step_args(&name)?;
+                ProofStep::Step
+            }
             "symbolic_execute" => {
                 self.expect_empty_step_args(&name)?;
                 ProofStep::ExecuteRest
@@ -1774,6 +1778,14 @@ impl Parser {
                 let equality = self.parse_proposition()?;
                 self.expect(Token::RParen)?;
                 ProofStep::Rewrite(equality)
+            }
+            "transport" => {
+                self.expect(Token::LParen)?;
+                let source = self.parse_proposition()?;
+                self.expect(Token::Comma)?;
+                let target = self.parse_proposition()?;
+                self.expect(Token::RParen)?;
+                ProofStep::Transport { source, target }
             }
             "simp" => {
                 self.expect_empty_step_args(&name)?;

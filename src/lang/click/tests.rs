@@ -985,6 +985,146 @@ fn parses_execute_step_proof_step() {
 }
 
 #[test]
+fn simple_step_supports_explicit_fact_transport() {
+    let c_source = r#"
+            int32 set_second_return_first(int32 p[2]) {
+                p[1] = 9;
+                return p[0];
+            }
+        "#;
+    let click_source = r#"
+            verifying "transport.c";
+
+            predicate first_is_seven(int32 p[]) {
+                p[0] == 7
+            }
+
+            int32 set_second_return_first(int32 p[2]) {
+                requires first_is_seven(p);
+                consumes p[0..2];
+                mutable p[1..2];
+                produces p[0..2];
+                ensures result == 7;
+            } by {
+                unfold(first_is_seven);
+                step();
+                transport(old(p[0]) == 7, p[0] == 7);
+                step();
+                frame();
+                simp();
+            }
+        "#;
+
+    verify_c0_sources(click_source, &[("transport.c", c_source)])
+        .expect("explicit fact transport should verify");
+}
+
+#[test]
+fn simple_statement_transition_does_not_transport_facts_automatically() {
+    let base_memory = CMemory::new();
+    let first = Pointer {
+        block: "arg-memory".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let second = Pointer {
+        block: "arg-memory".into(),
+        offset: PointerOffsetTerm::Constant(4),
+    };
+    let first_value =
+        Bitvector32Term::MemoryLoad(Box::new(base_memory.clone()), Box::new(first.clone()));
+    let before_memory = base_memory
+        .clone()
+        .store(first.clone(), int32(first_value.clone()))
+        .store(
+            second.clone(),
+            int32(Bitvector32Term::MemoryLoad(
+                Box::new(base_memory.clone()),
+                Box::new(second.clone()),
+            )),
+        );
+    let state = CState::new()
+        .with_memory(before_memory)
+        .with_resource_context(ResourceContext::new().unchecked_with_fact(
+            CResourceFact::own_memory(CMemoryRange::new(
+                first.clone(),
+                Bitvector32Term::Constant(0),
+                Bitvector32Term::Constant(2),
+            )),
+        ));
+    let fact = Proposition::ConditionIs(
+        ConditionTerm::Bitvector32Equal(
+            Box::new(first_value),
+            Box::new(Bitvector32Term::Constant(7)),
+        ),
+        true,
+    );
+    let statement = CStatement::Store {
+        pointer: CExpression::Value(CValue::Pointer(second)),
+        value: CExpression::Value(int32(9)),
+    };
+    let mut next_opaque_call = 0;
+    let (transitions, _) = certified_statement_transitions(
+        &state,
+        std::slice::from_ref(&fact),
+        &statement,
+        &CExecutionEnvironment::new(),
+        CExecutionSemantics::APPLY_VERIFIED_RULES,
+        "simple transition test",
+        &mut next_opaque_call,
+        StatementPrerequisitePolicy::Exact,
+        StatementFactTransportPolicy::None,
+    )
+    .expect("simple transition should execute");
+    let [transition] = transitions.as_slice() else {
+        panic!("expected one transition")
+    };
+
+    assert!(transition.pure_facts.contains(&fact));
+    let CStatementOutcome::Normal(post_state) = &transition.outcome else {
+        panic!("expected a normal transition")
+    };
+    let transported = Proposition::ConditionIs(
+        ConditionTerm::Bitvector32Equal(
+            Box::new(Bitvector32Term::MemoryLoad(
+                Box::new(post_state.memory().clone()),
+                Box::new(first),
+            )),
+            Box::new(Bitvector32Term::Constant(7)),
+        ),
+        true,
+    );
+    assert!(!transition.pure_facts.contains(&transported));
+}
+
+#[test]
+fn simple_step_does_not_contextually_prove_execution_prerequisites() {
+    let c_source = r#"
+            int32 increment(int32 x) {
+                return x + 1;
+            }
+        "#;
+    let click_source = r#"
+            verifying "increment.c";
+
+            int32 increment(int32 x) {
+                requires x < 2147483647;
+                ensures result > x;
+            } by {
+                step();
+                simp();
+            }
+        "#;
+
+    let error = verify_c0_sources(click_source, &[("increment.c", c_source)])
+        .expect_err("simple step must preserve the overflow prerequisite");
+    assert!(
+        error.message().contains("missing exact prerequisite"),
+        "{}",
+        error.message()
+    );
+}
+
+#[test]
 fn parses_explicit_branch_execution_steps() {
     let source = FILL3_CLICK.replace(
         "by auto;",
@@ -1142,11 +1282,15 @@ fn parses_and_classifies_simple_and_smart_tactics() {
     ));
     assert!(matches!(
         ProofStep::Simp.class(),
-        ProofStepClass::Smart(SmartTactic::Simp)
+        ProofStepClass::Smart(SmartProofStep::Simp)
     ));
     assert!(matches!(
         ProofStep::ExecuteStep.class(),
         ProofStepClass::Fuzzy(FuzzyTactic::ExecuteStep)
+    ));
+    assert!(matches!(
+        ProofStep::Step.class(),
+        ProofStepClass::Simple(SimpleTactic::StatementTransition)
     ));
     assert!(matches!(
         ProofStep::ExecuteRest.class(),

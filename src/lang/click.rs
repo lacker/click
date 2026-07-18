@@ -507,6 +507,7 @@ pub enum Proof {
 /// it contains a smart or fuzzy command.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ProofStep {
+    Step,
     ExecuteStep,
     ExecuteThenStep,
     ExecuteElseStep,
@@ -528,11 +529,16 @@ pub enum ProofStep {
     Assumption,
     Normalize,
     Rewrite(ClickProposition),
+    Transport {
+        source: ClickProposition,
+        target: ClickProposition,
+    },
     Simp,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SimpleTactic {
+    StatementTransition,
     UnfoldPredicate,
     UnfoldResource,
     ObserveResource,
@@ -542,6 +548,7 @@ pub enum SimpleTactic {
     Assumption,
     Normalize,
     Rewrite,
+    FactTransport,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -553,6 +560,11 @@ pub enum FuzzyTactic {
     LoopVc,
     Frame,
     FoldResource,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SmartProofStep {
+    Simp,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -571,7 +583,7 @@ pub enum ProofControlFlow {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ProofStepClass {
     Simple(SimpleTactic),
-    Smart(SmartTactic),
+    Smart(SmartProofStep),
     Fuzzy(FuzzyTactic),
     Macro(DeterministicProofMacro),
     ControlFlow(ProofControlFlow),
@@ -580,6 +592,7 @@ pub enum ProofStepClass {
 impl ProofStep {
     pub fn class(&self) -> ProofStepClass {
         match self {
+            Self::Step => ProofStepClass::Simple(SimpleTactic::StatementTransition),
             Self::UnfoldPredicate(_) => ProofStepClass::Simple(SimpleTactic::UnfoldPredicate),
             Self::UnfoldResource(_) => ProofStepClass::Simple(SimpleTactic::UnfoldResource),
             Self::ObserveResource(_) => ProofStepClass::Simple(SimpleTactic::ObserveResource),
@@ -589,7 +602,8 @@ impl ProofStep {
             Self::Assumption => ProofStepClass::Simple(SimpleTactic::Assumption),
             Self::Normalize => ProofStepClass::Simple(SimpleTactic::Normalize),
             Self::Rewrite(_) => ProofStepClass::Simple(SimpleTactic::Rewrite),
-            Self::Simp => ProofStepClass::Smart(SmartTactic::Simp),
+            Self::Transport { .. } => ProofStepClass::Simple(SimpleTactic::FactTransport),
+            Self::Simp => ProofStepClass::Smart(SmartProofStep::Simp),
             Self::ExecuteStep => ProofStepClass::Fuzzy(FuzzyTactic::ExecuteStep),
             Self::ExecuteThenStep => ProofStepClass::Fuzzy(FuzzyTactic::ExecuteThenStep),
             Self::ExecuteElseStep => ProofStepClass::Fuzzy(FuzzyTactic::ExecuteElseStep),

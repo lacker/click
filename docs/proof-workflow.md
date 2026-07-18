@@ -101,6 +101,9 @@ by {
 
 Current proof steps:
 
+- `step();`: advance one C statement using only exact or context-free execution
+  prerequisites. It does not automatically transport memory-dependent facts to
+  the new snapshot; use `transport(source, target)` explicitly.
 - `execute_step();`: execute one C statement from the current execution point.
   Straight-line statements use their certified transition. An annotated loop
   uses its previously verified abstract loop rule and records the loop entry
@@ -171,6 +174,9 @@ Current proof steps:
 - `normalize();`: close a pure goal by context-free computation.
 - `rewrite(equality);`: rewrite a pure goal once using an exact available int32
   equality whose left side is a variable.
+- `transport(source, target);`: require an exact source fact and apply one
+  certified atomic frame-transport rule to establish the stated target fact at
+  the current statement frontier.
 - `simp();`: request smart contextual simplification when the proof block is
   checked.
 

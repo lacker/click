@@ -2181,7 +2181,8 @@ fn validate_pure_theorem_steps(theorem_name: &str, steps: &[ProofStep]) -> Resul
                     "execution proof step `advance` is not available in the pure proof for theorem `{theorem_name}`"
                 )));
             }
-            ProofStep::ExecuteStep
+            ProofStep::Step
+            | ProofStep::ExecuteStep
             | ProofStep::ExecuteThenStep
             | ProofStep::ExecuteElseStep
             | ProofStep::ExecuteRest
@@ -2190,6 +2191,7 @@ fn validate_pure_theorem_steps(theorem_name: &str, steps: &[ProofStep]) -> Resul
             | ProofStep::LoopVc(_)
             | ProofStep::Frame(_)
             | ProofStep::ObserveResource(_)
+            | ProofStep::Transport { .. }
             | ProofStep::UnfoldResource(_)
             | ProofStep::FoldResource(_)
             | ProofStep::Have(_)
@@ -2207,6 +2209,7 @@ fn validate_pure_theorem_steps(theorem_name: &str, steps: &[ProofStep]) -> Resul
 
 pub(super) fn proof_step_name(step: &ProofStep) -> &'static str {
     match step {
+        ProofStep::Step => "step",
         ProofStep::ExecuteStep => "execute_step",
         ProofStep::ExecuteThenStep => "execute_then_step",
         ProofStep::ExecuteElseStep => "execute_else_step",
@@ -2227,6 +2230,7 @@ pub(super) fn proof_step_name(step: &ProofStep) -> &'static str {
         ProofStep::Assumption => "assumption",
         ProofStep::Normalize => "normalize",
         ProofStep::Rewrite(_) => "rewrite",
+        ProofStep::Transport { .. } => "transport",
         ProofStep::Simp => "simp",
     }
 }

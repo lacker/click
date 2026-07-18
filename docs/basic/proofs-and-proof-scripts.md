@@ -65,8 +65,12 @@ command.
 
 Common steps include:
 
+- `step();`: perform one simple C statement transition using exact execution
+  prerequisites and without automatic fact transport.
 - `execute_step();`: execute one supported straight-line C statement from the
-  current execution point.
+  current execution point using contextual prerequisite and automatic
+  transport reasoning. It remains classified as fuzzy until every generated
+  prerequisite is expressible in surface Click.
 - `execute_rest();`: execute symbolically from the current execution point to
   function exit. From function entry, this executes the whole C function.
 - `symbolic_execute();`: deprecated source alias for `execute_rest();`; both
@@ -86,6 +90,8 @@ Common steps include:
 - `normalize();`: close the current pure goal by context-free normalization.
 - `rewrite(equality);`: perform one explicit equality substitution in the
   current pure goal.
+- `transport(source, target);`: apply one explicit frame-transport theorem
+  between memory snapshots.
 - `frame();`: prove an effect claim.
 
 The end of the `by { ... }` block checks the claim.

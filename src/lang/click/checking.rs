@@ -2225,6 +2225,56 @@ pub(super) fn rewrite_proposition_by_exact_equality(
     Ok(rewritten)
 }
 
+pub(super) fn normalize_direct_atomic_memory_loads(proposition: &Proposition) -> Proposition {
+    let Proposition::ConditionIs(condition, value) = proposition else {
+        return proposition.clone();
+    };
+    let binary = |left: &Bitvector32Term, right: &Bitvector32Term| {
+        (
+            normalize_direct_atomic_memory_load(left),
+            normalize_direct_atomic_memory_load(right),
+        )
+    };
+    let condition = match condition {
+        ConditionTerm::Bitvector32SignedLessThan(left, right) => {
+            let (left, right) = binary(left, right);
+            ConditionTerm::Bitvector32SignedLessThan(Box::new(left), Box::new(right))
+        }
+        ConditionTerm::Bitvector32SignedLessEqual(left, right) => {
+            let (left, right) = binary(left, right);
+            ConditionTerm::Bitvector32SignedLessEqual(Box::new(left), Box::new(right))
+        }
+        ConditionTerm::Bitvector32SignedGreaterThan(left, right) => {
+            let (left, right) = binary(left, right);
+            ConditionTerm::Bitvector32SignedGreaterThan(Box::new(left), Box::new(right))
+        }
+        ConditionTerm::Bitvector32SignedGreaterEqual(left, right) => {
+            let (left, right) = binary(left, right);
+            ConditionTerm::Bitvector32SignedGreaterEqual(Box::new(left), Box::new(right))
+        }
+        ConditionTerm::Bitvector32Equal(left, right) => {
+            let (left, right) = binary(left, right);
+            ConditionTerm::Bitvector32Equal(Box::new(left), Box::new(right))
+        }
+        _ => return proposition.clone(),
+    };
+    Proposition::ConditionIs(condition, *value)
+}
+
+fn normalize_direct_atomic_memory_load(term: &Bitvector32Term) -> Bitvector32Term {
+    let Bitvector32Term::MemoryLoad(memory, pointer) = term else {
+        return term.clone();
+    };
+    match memory.load(pointer) {
+        CExpressionOutcome::Value(CValue::Int32(value) | CValue::UInt8(value))
+            if &value != term =>
+        {
+            value
+        }
+        _ => term.clone(),
+    }
+}
+
 pub(super) fn simp_proposition(
     proposition: &Proposition,
     assumptions: &Assumptions,

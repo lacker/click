@@ -1831,11 +1831,23 @@ struct CertifiedConditionTransition {
 }
 
 #[derive(Clone)]
-struct CertifiedStatementTransition {
-    outcome: CStatementOutcome,
-    execution_facts: Vec<ExecutionPureFact>,
-    obligations: Vec<ProofObligation>,
-    pure_facts: Vec<Proposition>,
+pub(super) struct CertifiedStatementTransition {
+    pub(super) outcome: CStatementOutcome,
+    pub(super) execution_facts: Vec<ExecutionPureFact>,
+    pub(super) obligations: Vec<ProofObligation>,
+    pub(super) pure_facts: Vec<Proposition>,
+}
+
+#[derive(Clone, Copy)]
+pub(super) enum StatementPrerequisitePolicy {
+    Exact,
+    Contextual,
+}
+
+#[derive(Clone, Copy)]
+pub(super) enum StatementFactTransportPolicy {
+    None,
+    Automatic,
 }
 
 #[derive(Clone, Copy)]
@@ -1907,7 +1919,7 @@ fn certified_condition_transitions(
         .collect()
 }
 
-fn certified_statement_transitions(
+pub(super) fn certified_statement_transitions(
     state: &CState,
     pure_facts: &[Proposition],
     statement: &CStatement,
@@ -1915,8 +1927,13 @@ fn certified_statement_transitions(
     execution_semantics: CExecutionSemantics,
     context_label: &str,
     next_opaque_call: &mut u64,
+    prerequisite_policy: StatementPrerequisitePolicy,
+    fact_transport_policy: StatementFactTransportPolicy,
 ) -> Result<(Vec<CertifiedStatementTransition>, Option<CVerifiedLoopRule>), ClickError> {
-    let assumptions = assumptions_from_propositions(pure_facts);
+    let assumptions = match prerequisite_policy {
+        StatementPrerequisitePolicy::Exact => Assumptions::new(),
+        StatementPrerequisitePolicy::Contextual => assumptions_from_propositions(pure_facts),
+    };
     let mut budget = ExecutionBudget::default().with_next_opaque_call(*next_opaque_call);
     let (execution, loop_rule) =
         prove_symbolic_c_statement_verification_paths_with_environment_and_loop_rule_using_budget(
@@ -1928,7 +1945,14 @@ fn certified_statement_transitions(
             &mut budget,
         );
     *next_opaque_call = budget.next_opaque_call();
-    certified_transitions_from_execution(execution, loop_rule, pure_facts, context_label)
+    certified_transitions_from_execution(
+        execution,
+        loop_rule,
+        pure_facts,
+        context_label,
+        prerequisite_policy,
+        fact_transport_policy,
+    )
 }
 
 fn certified_loop_exit_transitions_with_proven_phases(
@@ -1953,7 +1977,14 @@ fn certified_loop_exit_transitions_with_proven_phases(
         &mut budget,
     );
     *next_opaque_call = budget.next_opaque_call();
-    certified_transitions_from_execution(execution, loop_rule, pure_facts, context_label)
+    certified_transitions_from_execution(
+        execution,
+        loop_rule,
+        pure_facts,
+        context_label,
+        StatementPrerequisitePolicy::Contextual,
+        StatementFactTransportPolicy::Automatic,
+    )
 }
 
 fn certified_transitions_from_execution(
@@ -1961,6 +1992,8 @@ fn certified_transitions_from_execution(
     loop_rule: Option<CVerifiedLoopRule>,
     pure_facts: &[Proposition],
     context_label: &str,
+    prerequisite_policy: StatementPrerequisitePolicy,
+    fact_transport_policy: StatementFactTransportPolicy,
 ) -> Result<(Vec<CertifiedStatementTransition>, Option<CVerifiedLoopRule>), ClickError> {
     if let Some(limit) = execution.limit() {
         return Err(ClickError::new(format!(
@@ -1982,13 +2015,24 @@ fn certified_transitions_from_execution(
             );
             let transport_assumptions = assumptions_from_propositions(&transport_facts);
             let prerequisite_assumptions = assumptions_from_propositions(&successor_facts);
-            if let Some(obligation) = path
-                .obligations()
-                .iter()
-                .find(|obligation| !prerequisite_assumptions.proves(obligation.proposition()))
-            {
+            if let Some(obligation) = path.obligations().iter().find(|obligation| {
+                let proposition = obligation.proposition();
+                match prerequisite_policy {
+                    StatementPrerequisitePolicy::Exact => {
+                        !pure_facts.contains(proposition)
+                            && !matches!(normalize_proposition(proposition), SimpProposition::True)
+                    }
+                    StatementPrerequisitePolicy::Contextual => {
+                        !prerequisite_assumptions.proves(proposition)
+                    }
+                }
+            }) {
+                let requirement = match prerequisite_policy {
+                    StatementPrerequisitePolicy::Exact => "exact prerequisite",
+                    StatementPrerequisitePolicy::Contextual => "prerequisite",
+                };
                 return Err(ClickError::new(format!(
-                    "{context_label} is missing prerequisite{}: {:?}",
+                    "{context_label} is missing {requirement}{}: {:?}",
                     obligation
                         .context()
                         .map(|context| format!(" ({context})"))
@@ -2003,7 +2047,10 @@ fn certified_transitions_from_execution(
                     "{context_label} saw an unexpected execution theorem"
                 )));
             };
-            if let CStatementOutcome::Normal(post_state)
+            if matches!(
+                fact_transport_policy,
+                StatementFactTransportPolicy::Automatic
+            ) && let CStatementOutcome::Normal(post_state)
             | CStatementOutcome::Return {
                 state: post_state, ..
             } = outcome
@@ -2283,6 +2330,8 @@ fn advance_execution_proof_statement(
                 CExecutionSemantics::APPLY_CALL_RULES_AND_VERIFY_LOOPS,
                 &label,
                 &mut context.next_opaque_call,
+                StatementPrerequisitePolicy::Contextual,
+                StatementFactTransportPolicy::Automatic,
             )?,
             _ => certified_loop_exit_transitions_with_proven_phases(
                 &context.state,
@@ -4171,7 +4220,107 @@ fn replay_linear_steps(
                 )?;
                 assumptions = assumptions_from_propositions(&requirement_pure_facts);
             }
-            ProofStep::ExecuteStep => {
+            ProofStep::Transport { source, target } => {
+                if replay.is_at_function_entry() || replay.is_at_function_exit() {
+                    return Err(ClickError::new(format!(
+                        "`{claim_label}` proof step {step_index}: `transport` requires a current statement frontier after at least one execution step"
+                    )));
+                }
+                let pre_state = replay.execution_start_state(&state);
+                let source = lower_point_proposition(
+                    source,
+                    &requirement_pure_facts,
+                    parsed_function.parameters(),
+                    arguments,
+                    pre_state,
+                    &state,
+                    None,
+                    &replay.program_point_states,
+                    predicate_environment,
+                    click_function_environment,
+                )
+                .map_err(|message| {
+                    ClickError::new(format!(
+                        "`{claim_label}` proof step {step_index}: could not lower `transport` source: {message}"
+                    ))
+                })?;
+                if !requirement_pure_facts.contains(&source) {
+                    return Err(ClickError::new(format!(
+                        "`{claim_label}` proof step {step_index}: `transport` requires an exact source fact: {}",
+                        describe_missing_pure_fact(
+                            &source,
+                            &requirement_pure_facts,
+                            state.resources().facts(),
+                            parsed_function.parameters(),
+                            arguments,
+                            &replay.effect_facts,
+                        )
+                    )));
+                }
+                let target = lower_point_proposition(
+                    target,
+                    &requirement_pure_facts,
+                    parsed_function.parameters(),
+                    arguments,
+                    pre_state,
+                    &state,
+                    None,
+                    &replay.program_point_states,
+                    predicate_environment,
+                    click_function_environment,
+                )
+                .map_err(|message| {
+                    ClickError::new(format!(
+                        "`{claim_label}` proof step {step_index}: could not lower `transport` target: {message}"
+                    ))
+                })?;
+                let mut transport_facts = requirement_pure_facts.clone();
+                transport_facts.extend(
+                    replay
+                        .effect_facts
+                        .iter()
+                        .map(|fact| fact.proposition().clone()),
+                );
+                let transport_assumptions = assumptions_from_propositions(&transport_facts);
+                let theorem = prove_c_condition_fact_transport(
+                    &source,
+                    state.memory(),
+                    &transport_assumptions,
+                )
+                .ok_or_else(|| {
+                    ClickError::new(format!(
+                        "`{claim_label}` proof step {step_index}: no certified frame transport applies to the exact source fact\n  source: {source:?}\n  current memory: {:?}\n  effect facts: {:?}",
+                        state.memory(), replay.effect_facts
+                    ))
+                })?;
+                let Proposition::Implies(_, conclusion) = theorem.proposition() else {
+                    unreachable!("condition transport must produce an implication")
+                };
+                let transported = normalize_direct_atomic_memory_loads(conclusion);
+                let requested = normalize_direct_atomic_memory_loads(&target);
+                if transported != requested {
+                    return Err(ClickError::new(format!(
+                        "`{claim_label}` proof step {step_index}: transported fact does not equal the requested target\n  transported: {:?}\n  requested: {:?}",
+                        transported, requested
+                    )));
+                }
+                if !requirement_pure_facts.contains(&target) {
+                    requirement_pure_facts.push(target);
+                }
+                assumptions = assumptions_from_propositions(&requirement_pure_facts);
+            }
+            ProofStep::Step | ProofStep::ExecuteStep => {
+                let (prerequisite_policy, fact_transport_policy) = match step {
+                    ProofStep::Step => (
+                        StatementPrerequisitePolicy::Exact,
+                        StatementFactTransportPolicy::None,
+                    ),
+                    ProofStep::ExecuteStep => (
+                        StatementPrerequisitePolicy::Contextual,
+                        StatementFactTransportPolicy::Automatic,
+                    ),
+                    _ => unreachable!(),
+                };
                 execute_step_from_execution_point(
                     &mut replay,
                     &mut state,
@@ -4184,7 +4333,9 @@ fn replay_linear_steps(
                     function_environment,
                     claim_label,
                     step_index,
-                    "execute_step",
+                    proof_step_name(step),
+                    prerequisite_policy,
+                    fact_transport_policy,
                 )?;
                 assumptions = assumptions_from_propositions(&requirement_pure_facts);
             }
@@ -5257,6 +5408,8 @@ fn execute_selected_branch_step_from_execution_point(
             CExecutionSemantics::APPLY_VERIFIED_RULES,
             &transition_label,
             &mut replay.next_opaque_call,
+            StatementPrerequisitePolicy::Contextual,
+            StatementFactTransportPolicy::Automatic,
         )?;
         let [transition] = transitions.as_slice() else {
             return Err(ClickError::new(format!(
@@ -5485,6 +5638,8 @@ fn execute_step_from_execution_point(
     claim_label: &str,
     step_index: usize,
     step_name: &str,
+    prerequisite_policy: StatementPrerequisitePolicy,
+    fact_transport_policy: StatementFactTransportPolicy,
 ) -> Result<(), ClickError> {
     let statement_index = replay.frontier.next_statement_index;
     let source_region = replay.source_layout.statement(statement_index).ok_or_else(|| {
@@ -5592,8 +5747,31 @@ fn execute_step_from_execution_point(
         CExecutionSemantics::APPLY_VERIFIED_RULES,
         &transition_label,
         &mut replay.next_opaque_call,
+        prerequisite_policy,
+        fact_transport_policy,
     )?;
     if transitions.len() != 1 {
+        if matches!(prerequisite_policy, StatementPrerequisitePolicy::Exact) {
+            let safe = transitions
+                .iter()
+                .filter(|transition| {
+                    matches!(
+                        transition.outcome,
+                        CStatementOutcome::Normal(_) | CStatementOutcome::Return { .. }
+                    )
+                })
+                .collect::<Vec<_>>();
+            if let [safe] = safe.as_slice()
+                && let Some(required) = safe
+                    .pure_facts
+                    .iter()
+                    .find(|fact| !available_pure_facts.contains(fact))
+            {
+                return Err(ClickError::new(format!(
+                    "`{claim_label}` proof step {step_index}: `{step_name}` is missing exact prerequisite needed to select the safe statement transition: {required:?}"
+                )));
+            }
+        }
         return Err(ClickError::new(format!(
             "`{claim_label}` proof step {step_index}: `{step_name}` requires exactly one statement successor, got {}",
             transitions.len()
@@ -5856,6 +6034,8 @@ fn execute_rest_from_execution_point(
                 claim_label,
                 step_index,
                 step_name,
+                StatementPrerequisitePolicy::Contextual,
+                StatementFactTransportPolicy::Automatic,
             )?;
         }
     }
@@ -6003,6 +6183,8 @@ fn execute_until_statement(
             claim_label,
             step_index,
             "execute_until",
+            StatementPrerequisitePolicy::Contextual,
+            StatementFactTransportPolicy::Automatic,
         )?;
         if replay.is_at_function_exit() {
             return Err(ClickError::new(format!(

@@ -28,7 +28,8 @@ pub(crate) fn c_memory_load_is_unchanged(
                 after: effect_after,
                 pointers,
             } => {
-                effect_before == before
+                (effect_before == before
+                    || memory_materializes_atomic_load(effect_before, before, pointer))
                     && effect_after == after
                     && pointers.iter().all(|write| {
                         write.blocks_proven_distinct(pointer)
@@ -37,6 +38,14 @@ pub(crate) fn c_memory_load_is_unchanged(
                                 pointer,
                                 assumptions,
                             )
+                            || pointers_proven_distinct_for_memory_resolution(
+                                write,
+                                pointer,
+                                assumptions,
+                            )
+                            || pointer_byte_offset_from_base(write, pointer)
+                                .and_then(|offset| offset.as_const())
+                                .is_some_and(|offset| offset != 0)
                     })
             }
             Proposition::CMemoryEffectSummary {
@@ -54,6 +63,19 @@ pub(crate) fn c_memory_load_is_unchanged(
             }
             _ => false,
         })
+}
+
+fn memory_materializes_atomic_load(
+    materialized: &CMemory,
+    symbolic: &CMemory,
+    pointer: &Pointer,
+) -> bool {
+    let expected =
+        Bitvector32Term::MemoryLoad(Box::new(symbolic.clone()), Box::new(pointer.clone()));
+    matches!(
+        materialized.known_value(pointer),
+        Some(CValue::Int32(value) | CValue::UInt8(value)) if value == expected
+    )
 }
 
 /// Certifies the narrow frame rule used by execution proofs for ordinary C

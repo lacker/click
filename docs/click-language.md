@@ -160,6 +160,13 @@ explicitly enter a selected arm of the next C `if`. Each step proves the
 corresponding truth value of the C condition from current pure facts and moves
 the execution point to the start of the arm without executing its body.
 
+For straight-line execution, `step()` is the simple form: it accepts only exact
+or context-free execution prerequisites and does not automatically transport
+facts between memory snapshots. `execute_step()` is the automated convenience
+form, but remains fuzzy because some kernel execution prerequisites cannot yet
+be stated directly in Click. An explicit `transport(source, target)` applies
+one certified frame-transport rule between two stated atomic facts.
+
 When both proof cases should continue through common code, `advance` gives the
 branch-local execution a shared, explicit postcondition:
 
