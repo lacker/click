@@ -1311,59 +1311,28 @@ pub(super) fn prove_claim_by_auto(
         }
         Err(error) => Some(error),
     };
-    let execution = prove_symbolic_c_function_execution_paths_with_environment(
-        state.clone(),
-        function.clone(),
-        arguments.clone(),
-        assumptions,
-        function_environment.clone(),
-        CExecutionSemantics::APPLY_VERIFIED_RULES,
-    );
-    if let Some(error) = execution_obligation_error(
-        &execution,
-        claim_label,
-        &requirement_pure_facts,
-        state.resources().facts(),
-        parsed_function.parameters(),
-        &arguments,
-    ) {
-        if let Some(loop_verification_error) = loop_verification_error {
-            return Err(loop_verification_error);
+    let mut bounded_error = None;
+    for steps in bounded_execution_proof_step_candidates(claim) {
+        match prove_claim_by_steps(
+            source_path,
+            function_block,
+            parsed_function,
+            claim,
+            claim_label,
+            function_environment,
+            predicate_environment,
+            click_function_environment,
+            resource_environment,
+            theorem_environment,
+            &steps,
+        ) {
+            Ok(theorems) => return Ok(theorems),
+            Err(error) => bounded_error = Some(error),
         }
-        return Err(error);
     }
-    let theorems = prove_claim_from_execution(
-        &execution,
-        AutoExecutionKind::BoundedExecution {
-            environment: function_environment,
-        },
-        source_path,
-        function_block,
-        claim,
-        claim_label,
-        parsed_function.parameters(),
-        &function,
-        &state,
-        &arguments,
-        &requirement_pure_facts,
-        predicate_environment,
-        click_function_environment,
-        resource_environment,
-    )?;
-    let proof_steps = certified_proof_steps(
-        source_path,
-        function_block,
-        parsed_function,
-        claim,
-        claim_label,
-        function_environment,
-        predicate_environment,
-        click_function_environment,
-        resource_environment,
-        theorem_environment,
-        bounded_execution_proof_step_candidates(claim),
-    );
-    Ok(with_proof_steps(theorems, proof_steps))
+    Err(loop_verification_error
+        .or(bounded_error)
+        .expect("auto should attempt at least one bounded execution proof"))
 }
 
 pub(super) fn prove_claim_by_frame(
@@ -1649,14 +1618,20 @@ struct ExecutionFrontier {
     point: ProofExecutionPoint,
     execution_start_state: Option<CState>,
     next_statement_index: usize,
-    continuations: Vec<ProofBranchContinuation>,
+    continuations: Vec<ProofExecutionContinuation>,
 }
 
 #[derive(Clone)]
-struct ProofBranchContinuation {
+struct ProofExecutionContinuation {
     remaining: Option<CStatement>,
     next_statement_index: usize,
-    enclosing_statement_index: Option<usize>,
+    kind: ProofExecutionContinuationKind,
+}
+
+#[derive(Clone, Copy)]
+enum ProofExecutionContinuationKind {
+    Branch { statement_index: usize },
+    LoopIteration,
 }
 
 #[derive(Clone, Default)]
@@ -1668,7 +1643,6 @@ enum ProofExecutionPoint {
     },
     FunctionExit {
         execution: crate::kernel::SymbolicCExecution,
-        mode: ProofStepExecutionMode,
     },
 }
 
@@ -1699,13 +1673,6 @@ impl ProofStepReplayState {
         }
     }
 
-    fn execution_mode(&self) -> Option<ProofStepExecutionMode> {
-        match self.frontier.point {
-            ProofExecutionPoint::FunctionEntry | ProofExecutionPoint::StatementEntry { .. } => None,
-            ProofExecutionPoint::FunctionExit { mode, .. } => Some(mode),
-        }
-    }
-
     fn execution_start_state<'a>(&'a self, current_state: &'a CState) -> &'a CState {
         self.frontier
             .execution_start_state
@@ -1716,14 +1683,13 @@ impl ProofStepReplayState {
 
 impl ExecutionFrontier {
     fn inside_branch(&self) -> bool {
-        !self.continuations.is_empty()
+        self.continuations.iter().any(|continuation| {
+            matches!(
+                continuation.kind,
+                ProofExecutionContinuationKind::Branch { .. }
+            )
+        })
     }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum ProofStepExecutionMode {
-    Verification,
-    Bounded,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1847,6 +1813,18 @@ pub(super) enum StatementPrerequisitePolicy {
 pub(super) enum StatementFactTransportPolicy {
     None,
     Automatic,
+}
+
+#[derive(Clone, Copy)]
+enum LoopStepPolicy {
+    EnterBody,
+    ApplyVerifiedRule,
+}
+
+#[derive(Clone, Copy)]
+enum BranchStepPolicy {
+    RequireProven,
+    Explore,
 }
 
 fn exact_fact_is_available(required: &Proposition, available: &[Proposition]) -> bool {
@@ -3402,7 +3380,6 @@ pub(super) fn prove_claim_by_steps(
             parsed_function,
             &proof_claims,
             false,
-            function_environment,
             predicate_environment,
             click_function_environment,
             resource_environment,
@@ -3496,7 +3473,6 @@ pub(super) fn prove_claims_by_grouped_steps(
             parsed_function,
             claims,
             true,
-            function_environment,
             predicate_environment,
             click_function_environment,
             resource_environment,
@@ -3566,7 +3542,6 @@ fn finish_ordered_proof_replay(
     parsed_function: &syntax::C0Function,
     claims: &[FunctionClaimRef<'_>],
     require_explicit_closers: bool,
-    function_environment: &CExecutionEnvironment,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
     resource_environment: &ResourceEnvironment,
@@ -3602,9 +3577,6 @@ fn finish_ordered_proof_replay(
                 "execution proof could not prove any complete execution path for `{proof_label}`"
             )));
         }
-        let execution_mode = replay
-            .execution_mode()
-            .expect("execution proof should have an execution mode");
         let pre_state = replay.execution_start_state(&state);
         let mut verified = Vec::new();
 
@@ -4171,31 +4143,13 @@ fn finish_ordered_proof_replay(
                 path_requirements,
                 outcome,
             );
-            let theorem = match execution_mode {
-                ProofStepExecutionMode::Verification => {
-                    prove_c_function_satisfies_specification_from_symbolic_path(
-                        function.clone(),
-                        specification.clone(),
-                        Assumptions::new(),
-                        path.facts(),
-                        path.obligations(),
-                    )
-                }
-                ProofStepExecutionMode::Bounded => {
-                    prove_c_function_satisfies_specification_with_environment(
-                        function.clone(),
-                        specification.clone(),
-                        Assumptions::new(),
-                        function_environment.clone(),
-                        CExecutionSemantics::APPLY_VERIFIED_RULES,
-                    )
-                    .ok_or_else(|| {
-                        ClickError::new(format!(
-                            "execution proof failed to package `{proof_label}` path {path_index}"
-                        ))
-                    })?
-                }
-            };
+            let theorem = prove_c_function_satisfies_specification_from_symbolic_path(
+                function.clone(),
+                specification.clone(),
+                Assumptions::new(),
+                path.facts(),
+                path.obligations(),
+            );
             for claim in claims {
                 verified.push(VerifiedCTheorem {
                     source_path: source_path.to_string(),
@@ -4397,11 +4351,12 @@ fn replay_linear_steps(
                     proof_step_name(step),
                     prerequisite_policy,
                     fact_transport_policy,
+                    LoopStepPolicy::EnterBody,
                 )?;
                 assumptions = assumptions_from_propositions(&requirement_pure_facts);
             }
             ProofStep::ExecuteThenStep | ProofStep::ExecuteElseStep => {
-                execute_branch_step_from_execution_point(
+                let entered = execute_branch_step_from_execution_point(
                     &mut replay,
                     &mut state,
                     &mut requirement_pure_facts,
@@ -4415,7 +4370,9 @@ fn replay_linear_steps(
                     Some(matches!(step, ProofStep::ExecuteThenStep)),
                     StatementPrerequisitePolicy::Contextual,
                     StatementFactTransportPolicy::Automatic,
+                    BranchStepPolicy::RequireProven,
                 )?;
+                debug_assert!(entered);
                 assumptions = assumptions_from_propositions(&requirement_pure_facts);
             }
             ProofStep::ExecuteRest => {
@@ -4459,27 +4416,19 @@ fn replay_linear_steps(
                 assumptions = assumptions_from_propositions(&requirement_pure_facts);
             }
             ProofStep::BoundedExecute => {
-                if !replay.is_at_function_entry() {
-                    return Err(ClickError::new(format!(
-                        "`{claim_label}` proof step {step_index}: `bounded_execute` is only supported from function entry"
-                    )));
-                }
-                set_replay_execution(
+                bounded_execute_from_execution_point(
                     &mut replay,
-                    ProofStepExecutionMode::Bounded,
+                    &mut state,
+                    &mut requirement_pure_facts,
+                    function_block,
+                    &function,
+                    parsed_function.parameters(),
+                    &arguments,
+                    function_environment,
                     claim_label,
                     step_index,
-                    "bounded_execute",
-                    state.clone(),
-                    prove_symbolic_c_function_execution_paths_with_environment(
-                        state.clone(),
-                        function.clone(),
-                        arguments.to_vec(),
-                        assumptions.clone(),
-                        function_environment.clone(),
-                        CExecutionSemantics::APPLY_VERIFIED_RULES,
-                    ),
                 )?;
+                assumptions = assumptions_from_propositions(&requirement_pure_facts);
             }
             ProofStep::Frame(region_ref) => {
                 require_step_execution(&replay, claim_label, step_index, "frame")?;
@@ -4561,12 +4510,7 @@ fn replay_linear_steps(
                                 &requirement_pure_facts,
                             )?;
                         }
-                        Some(CodeRegion::Loop(_)) => require_verification_execution(
-                            &replay,
-                            claim_label,
-                            step_index,
-                            "frame",
-                        )?,
+                        Some(CodeRegion::Loop(_)) => {}
                         Some(CodeRegion::Statement(_)) => {}
                     }
                 }
@@ -5392,7 +5336,8 @@ fn execute_branch_step_from_execution_point(
     requested_branch: Option<bool>,
     prerequisite_policy: StatementPrerequisitePolicy,
     fact_transport_policy: StatementFactTransportPolicy,
-) -> Result<(), ClickError> {
+    branch_step_policy: BranchStepPolicy,
+) -> Result<bool, ClickError> {
     let step_name = match requested_branch {
         Some(true) => "execute_then_step",
         Some(false) => "execute_else_step",
@@ -5481,7 +5426,9 @@ fn execute_branch_step_from_execution_point(
         &transition_label,
         prerequisite_policy,
     )?;
-    if condition_transitions.len() != 1 {
+    if matches!(branch_step_policy, BranchStepPolicy::RequireProven)
+        && condition_transitions.len() != 1
+    {
         let expected = requested_branch.map_or("one exact truth value", |take_then| {
             if take_then { "true" } else { "false" }
         });
@@ -5498,10 +5445,22 @@ fn execute_branch_step_from_execution_point(
             )
         )));
     }
-    let condition_transition = condition_transitions
-        .into_iter()
-        .next()
-        .expect("one condition transition was required");
+    let condition_transition = match branch_step_policy {
+        BranchStepPolicy::RequireProven => condition_transitions
+            .into_iter()
+            .next()
+            .expect("one condition transition was required"),
+        BranchStepPolicy::Explore => {
+            let requested_branch = requested_branch.expect("branch exploration selects an arm");
+            let Some(transition) = condition_transitions
+                .into_iter()
+                .find(|transition| transition.is_true == requested_branch)
+            else {
+                return Ok(false);
+            };
+            transition
+        }
+    };
     let selected_then = condition_transition.is_true;
     if requested_branch.is_some_and(|take_then| selected_then != take_then) {
         let actual = if selected_then { "then" } else { "else" };
@@ -5521,11 +5480,14 @@ fn execute_branch_step_from_execution_point(
     } else {
         *else_branch
     };
-    replay.frontier.continuations.push(ProofBranchContinuation {
-        remaining,
-        next_statement_index: source_region.continuation_node,
-        enclosing_statement_index: Some(statement_index),
-    });
+    replay
+        .frontier
+        .continuations
+        .push(ProofExecutionContinuation {
+            remaining,
+            next_statement_index: source_region.continuation_node,
+            kind: ProofExecutionContinuationKind::Branch { statement_index },
+        });
     replay.frontier.next_statement_index = if selected_then {
         then_statement_index
     } else {
@@ -5536,6 +5498,161 @@ fn execute_branch_step_from_execution_point(
         remaining: selected_branch,
     };
     *state = current_state;
+    Ok(true)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn execute_concrete_loop_head_step(
+    replay: &mut ProofStepReplayState,
+    state: &mut CState,
+    available_pure_facts: &mut Vec<Proposition>,
+    function_block: &FunctionBlock,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    function_environment: &CExecutionEnvironment,
+    claim_label: &str,
+    step_index: usize,
+    step_name: &str,
+    prerequisite_policy: StatementPrerequisitePolicy,
+    fact_transport_policy: StatementFactTransportPolicy,
+    statement_index: usize,
+    loop_index: usize,
+    continuation_node: usize,
+    execution_start_state: CState,
+    mut current_state: CState,
+    assertion_prefix: Option<CStatement>,
+    loop_statement: CStatement,
+    remaining: Option<CStatement>,
+) -> Result<(), ClickError> {
+    let CStatement::While {
+        condition, body, ..
+    } = loop_statement.clone()
+    else {
+        unreachable!("concrete loop stepping requires a while statement");
+    };
+
+    record_statement_program_point_state(
+        replay,
+        function_block,
+        statement_index,
+        ProgramPointKind::Entry,
+        current_state.clone(),
+    );
+    record_loop_program_point_state(
+        replay,
+        function_block,
+        loop_index,
+        ProgramPointKind::Entry,
+        current_state.clone(),
+    );
+
+    if let Some(assertion_prefix) = assertion_prefix {
+        let transition_label = format!("`{claim_label}` proof step {step_index}: `{step_name}`");
+        let (transitions, _) = certified_statement_transitions(
+            &current_state,
+            available_pure_facts,
+            &assertion_prefix,
+            function_environment,
+            CExecutionSemantics::APPLY_VERIFIED_RULES,
+            &transition_label,
+            &mut replay.next_opaque_call,
+            prerequisite_policy,
+            fact_transport_policy,
+        )?;
+        let [transition] = transitions.as_slice() else {
+            return Err(ClickError::new(format!(
+                "`{claim_label}` proof step {step_index}: `{step_name}` loop assertion prefix requires exactly one successor, got {}",
+                transitions.len()
+            )));
+        };
+        let CStatementOutcome::Normal(next_state) = &transition.outcome else {
+            return Err(ClickError::new(format!(
+                "`{claim_label}` proof step {step_index}: `{step_name}` loop assertion prefix did not complete normally"
+            )));
+        };
+        append_execution_effect_facts(&mut replay.effect_facts, &transition.execution_facts);
+        current_state = next_state.clone();
+        *available_pure_facts = transition.pure_facts.clone();
+    }
+
+    let current_resources = current_state.resources().facts().to_vec();
+    let transition_label = format!("`{claim_label}` proof step {step_index}: `{step_name}`");
+    let condition_transitions = certified_condition_transitions(
+        &current_state,
+        available_pure_facts,
+        &condition,
+        &transition_label,
+        prerequisite_policy,
+    )?;
+    if condition_transitions.len() != 1 {
+        return Err(ClickError::new(format!(
+            "`{claim_label}` proof step {step_index}: `{step_name}` could not prove one exact truth value for loop({loop_index}) condition `{}`; got {} feasible condition paths\n{}",
+            describe_c_expression(&condition),
+            condition_transitions.len(),
+            describe_proof_context(
+                available_pure_facts,
+                &current_resources,
+                parameters,
+                arguments,
+                &[]
+            )
+        )));
+    }
+    let condition_transition = condition_transitions
+        .into_iter()
+        .next()
+        .expect("one condition transition was required");
+    *available_pure_facts = condition_transition.pure_facts;
+    replay.frontier.execution_start_state = Some(execution_start_state);
+    *state = current_state.clone();
+
+    if condition_transition.is_true {
+        let loop_head = match remaining {
+            Some(remaining) => c_seq(loop_statement, remaining),
+            None => loop_statement,
+        };
+        replay
+            .frontier
+            .continuations
+            .push(ProofExecutionContinuation {
+                remaining: Some(loop_head),
+                next_statement_index: statement_index,
+                kind: ProofExecutionContinuationKind::LoopIteration,
+            });
+        replay.frontier.next_statement_index = replay
+            .source_layout
+            .loop_body_entry(loop_index)
+            .expect("source loop should have a body entry");
+        replay.frontier.point = ProofExecutionPoint::StatementEntry { remaining: *body };
+        return Ok(());
+    }
+
+    record_statement_program_point_state(
+        replay,
+        function_block,
+        statement_index,
+        ProgramPointKind::Exit,
+        current_state.clone(),
+    );
+    record_loop_program_point_state(
+        replay,
+        function_block,
+        loop_index,
+        ProgramPointKind::Exit,
+        current_state.clone(),
+    );
+    let next = if let Some(remaining) = remaining {
+        replay.frontier.next_statement_index = continuation_node;
+        Some(remaining)
+    } else {
+        resume_after_completed_region(replay, function_block, &current_state)
+    };
+    let Some(remaining) = next else {
+        return Err(ClickError::new(format!(
+            "`{claim_label}` proof step {step_index}: `{step_name}` reached the end of the function without a return"
+        )));
+    };
+    replay.frontier.point = ProofExecutionPoint::StatementEntry { remaining };
     Ok(())
 }
 
@@ -5694,6 +5811,7 @@ fn execute_step_from_execution_point(
     step_name: &str,
     prerequisite_policy: StatementPrerequisitePolicy,
     fact_transport_policy: StatementFactTransportPolicy,
+    loop_step_policy: LoopStepPolicy,
 ) -> Result<(), ClickError> {
     let statement_index = replay.frontier.next_statement_index;
     let source_region = replay.source_layout.statement(statement_index).ok_or_else(|| {
@@ -5702,7 +5820,7 @@ fn execute_step_from_execution_point(
         ))
     })?;
     if matches!(source_region.kind, SourceStatementKind::If { .. }) {
-        return execute_branch_step_from_execution_point(
+        let entered = execute_branch_step_from_execution_point(
             replay,
             state,
             available_pure_facts,
@@ -5716,7 +5834,10 @@ fn execute_step_from_execution_point(
             None,
             prerequisite_policy,
             fact_transport_policy,
-        );
+            BranchStepPolicy::RequireProven,
+        )?;
+        debug_assert!(entered);
+        return Ok(());
     }
     let loop_index = match source_region.kind {
         SourceStatementKind::Loop { loop_index } => Some(loop_index),
@@ -5724,73 +5845,51 @@ fn execute_step_from_execution_point(
     };
     let assertion_prefix_count =
         source_assertion_prefix_count(function_block, statement_index, loop_index);
-    let execution_point = &replay.frontier.point;
-    let (execution_start_state, current_state, step_statement, remaining) = match execution_point {
-        ProofExecutionPoint::FunctionEntry => {
-            let execution_start_state = state.clone();
-            let current_state = c_function_entry_state(&execution_start_state, function, arguments)
-                .ok_or_else(|| {
-                    ClickError::new(format!(
-                        "`{claim_label}` proof step {step_index}: `{step_name}` could not bind function arguments"
-                    ))
-                })?;
-            let (step_statement, remaining) = match split_next_execution_step(
-                function.body(),
-                assertion_prefix_count,
-            ) {
-                Ok(split) => split,
-                Err(message) => {
-                    return Err(ClickError::new(format!(
-                        "`{claim_label}` proof step {step_index}: `{step_name}` failed: {message}"
-                    )));
-                }
-            };
-            (
-                execution_start_state,
-                current_state,
-                step_statement,
-                remaining,
-            )
-        }
-        ProofExecutionPoint::StatementEntry { remaining } => {
-            let execution_start_state = replay
-                .frontier
-                .execution_start_state
-                .clone()
-                .ok_or_else(|| {
-                ClickError::new(format!(
-                    "`{claim_label}` proof step {step_index}: `{step_name}` has no execution start state"
-                ))
-            })?;
-            let (step_statement, remaining) = match split_next_execution_step(
-                remaining,
-                assertion_prefix_count,
-            ) {
-                Ok(split) => split,
-                Err(message) => {
-                    return Err(ClickError::new(format!(
-                        "`{claim_label}` proof step {step_index}: `{step_name}` failed: {message}"
-                    )));
-                }
-            };
-            (
-                execution_start_state,
-                state.clone(),
-                step_statement,
-                remaining,
-            )
-        }
-        ProofExecutionPoint::FunctionExit { .. } => {
-            return Err(ClickError::new(format!(
-                "`{claim_label}` proof step {step_index}: `{step_name}` cannot run after execution already reached function exit"
-            )));
-        }
-    };
-    if matches!(step_statement, CStatement::While { .. }) && loop_index.is_none() {
+    let (execution_start_state, current_state, assertion_prefix, source_statement, remaining) =
+        next_top_level_statement_from_execution_point(
+            replay,
+            state,
+            function,
+            arguments,
+            assertion_prefix_count,
+            claim_label,
+            step_index,
+            step_name,
+        )?;
+    if matches!(source_statement, CStatement::While { .. }) && loop_index.is_none() {
         return Err(ClickError::new(format!(
             "`{claim_label}` proof step {step_index}: `{step_name}` could not resolve the source loop at statement({statement_index})"
         )));
     }
+    if let (Some(loop_index), CStatement::While { .. }) = (loop_index, &source_statement)
+        && matches!(loop_step_policy, LoopStepPolicy::EnterBody)
+    {
+        return execute_concrete_loop_head_step(
+            replay,
+            state,
+            available_pure_facts,
+            function_block,
+            parameters,
+            arguments,
+            function_environment,
+            claim_label,
+            step_index,
+            step_name,
+            prerequisite_policy,
+            fact_transport_policy,
+            statement_index,
+            loop_index,
+            source_region.continuation_node,
+            execution_start_state,
+            current_state,
+            assertion_prefix,
+            source_statement,
+            remaining,
+        );
+    }
+    let step_statement = assertion_prefix
+        .map(|prefix| c_seq(prefix, source_statement.clone()))
+        .unwrap_or(source_statement);
 
     record_statement_program_point_state(
         replay,
@@ -5843,6 +5942,45 @@ fn execute_step_from_execution_point(
                 )));
             }
         }
+        if let Some(kind) = transitions
+            .iter()
+            .find_map(|transition| match &transition.outcome {
+                CStatementOutcome::UndefinedBehavior(kind) => Some(kind.clone()),
+                _ => None,
+            })
+        {
+            let outcome = CFunctionOutcome::UndefinedBehavior(kind);
+            return Err(ClickError::new(format!(
+                "`{claim_label}` proof step {step_index}: `{step_name}` produced {}\n{}",
+                describe_function_outcome(&outcome, parameters, arguments),
+                describe_proof_context(
+                    available_pure_facts,
+                    &current_resources,
+                    parameters,
+                    arguments,
+                    &[]
+                )
+            )));
+        }
+        if let Some(error) = transitions
+            .iter()
+            .find_map(|transition| match &transition.outcome {
+                CStatementOutcome::RuntimeError(error) => Some(error),
+                _ => None,
+            })
+        {
+            return Err(ClickError::new(format!(
+                "`{claim_label}` proof step {step_index}: `{step_name}` produced runtime error: {}\n{}",
+                describe_runtime_error(error, parameters, arguments),
+                describe_proof_context(
+                    available_pure_facts,
+                    &current_resources,
+                    parameters,
+                    arguments,
+                    &[]
+                )
+            )));
+        }
         return Err(ClickError::new(format!(
             "`{claim_label}` proof step {step_index}: `{step_name}` requires exactly one statement successor, got {}",
             transitions.len()
@@ -5893,7 +6031,7 @@ fn execute_step_from_execution_point(
                 replay.frontier.next_statement_index = source_region.continuation_node;
                 remaining
             } else if let Some(remaining) =
-                resume_after_completed_branch(replay, function_block, &next_state)
+                resume_after_completed_region(replay, function_block, &next_state)
             {
                 remaining
             } else {
@@ -5912,7 +6050,7 @@ fn execute_step_from_execution_point(
                 ..
             } = &outcome
             {
-                record_completed_branch_exits(replay, function_block, return_state);
+                record_completed_continuation_exits(replay, function_block, return_state);
             }
             let return_assumptions = assumptions_from_propositions(&successor_pure_facts);
             let (outcome, obligations) = c_function_outcome_from_statement_outcome(
@@ -5934,7 +6072,6 @@ fn execute_step_from_execution_point(
             let replay_state = execution_start_state.clone();
             set_replay_execution(
                 replay,
-                ProofStepExecutionMode::Verification,
                 claim_label,
                 step_index,
                 step_name,
@@ -5945,8 +6082,10 @@ fn execute_step_from_execution_point(
             *state = replay_state;
         }
         CStatementOutcome::UndefinedBehavior(kind) => {
+            let outcome = CFunctionOutcome::UndefinedBehavior(kind);
             return Err(ClickError::new(format!(
-                "`{claim_label}` proof step {step_index}: `{step_name}` produced undefined behavior: {kind:?}\n{}",
+                "`{claim_label}` proof step {step_index}: `{step_name}` produced {}\n{}",
+                describe_function_outcome(&outcome, parameters, arguments),
                 describe_proof_context(
                     available_pure_facts,
                     &current_resources,
@@ -5973,13 +6112,13 @@ fn execute_step_from_execution_point(
     Ok(())
 }
 
-fn resume_after_completed_branch(
+fn resume_after_completed_region(
     replay: &mut ProofStepReplayState,
     function_block: &FunctionBlock,
     state: &CState,
 ) -> Option<CStatement> {
     while let Some(continuation) = replay.frontier.continuations.pop() {
-        if let Some(statement_index) = continuation.enclosing_statement_index {
+        if let ProofExecutionContinuationKind::Branch { statement_index } = continuation.kind {
             record_statement_program_point_state(
                 replay,
                 function_block,
@@ -5996,13 +6135,13 @@ fn resume_after_completed_branch(
     None
 }
 
-fn record_completed_branch_exits(
+fn record_completed_continuation_exits(
     replay: &mut ProofStepReplayState,
     function_block: &FunctionBlock,
     state: &CState,
 ) {
     while let Some(continuation) = replay.frontier.continuations.pop() {
-        if let Some(statement_index) = continuation.enclosing_statement_index {
+        if let ProofExecutionContinuationKind::Branch { statement_index } = continuation.kind {
             record_statement_program_point_state(
                 replay,
                 function_block,
@@ -6042,6 +6181,209 @@ fn record_current_statement_entry(
         ProgramPointKind::Entry,
         current_state,
     );
+    Ok(())
+}
+
+const BOUNDED_EXECUTE_STEP_LIMIT: usize = 10_000;
+
+#[derive(Clone)]
+struct BoundedProofFrontier {
+    replay: ProofStepReplayState,
+    state: CState,
+    pure_facts: Vec<Proposition>,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn bounded_execute_from_execution_point(
+    replay: &mut ProofStepReplayState,
+    state: &mut CState,
+    available_pure_facts: &mut Vec<Proposition>,
+    function_block: &FunctionBlock,
+    function: &CFunction,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    function_environment: &CExecutionEnvironment,
+    claim_label: &str,
+    step_index: usize,
+) -> Result<(), ClickError> {
+    let mut pending = vec![BoundedProofFrontier {
+        replay: replay.clone(),
+        state: state.clone(),
+        pure_facts: available_pure_facts.clone(),
+    }];
+    let mut completed = Vec::new();
+    let mut executed_steps = 0;
+
+    while let Some(mut frontier) = pending.pop() {
+        if frontier.replay.is_at_function_exit() {
+            completed.push(frontier);
+            continue;
+        }
+        if executed_steps == BOUNDED_EXECUTE_STEP_LIMIT {
+            return Err(ClickError::new(format!(
+                "`{claim_label}` proof step {step_index}: `bounded_execute` exhausted its {BOUNDED_EXECUTE_STEP_LIMIT}-step budget at statement({})",
+                frontier.replay.frontier.next_statement_index
+            )));
+        }
+        executed_steps += 1;
+
+        let source_region = frontier
+            .replay
+            .source_layout
+            .statement(frontier.replay.frontier.next_statement_index)
+            .ok_or_else(|| {
+                ClickError::new(format!(
+                    "`{claim_label}` proof step {step_index}: `bounded_execute` could not resolve source statement({})",
+                    frontier.replay.frontier.next_statement_index
+                ))
+            })?;
+        if matches!(source_region.kind, SourceStatementKind::If { .. }) {
+            for take_then in [false, true] {
+                let mut branch = frontier.clone();
+                let entered = execute_branch_step_from_execution_point(
+                    &mut branch.replay,
+                    &mut branch.state,
+                    &mut branch.pure_facts,
+                    function_block,
+                    function,
+                    parameters,
+                    arguments,
+                    function_environment,
+                    claim_label,
+                    step_index,
+                    Some(take_then),
+                    StatementPrerequisitePolicy::Contextual,
+                    StatementFactTransportPolicy::Automatic,
+                    BranchStepPolicy::Explore,
+                )?;
+                if entered {
+                    pending.push(branch);
+                }
+            }
+            continue;
+        }
+
+        let assumptions = assumptions_from_propositions(&frontier.pure_facts);
+        execute_step_from_execution_point(
+            &mut frontier.replay,
+            &mut frontier.state,
+            &mut frontier.pure_facts,
+            function_block,
+            function,
+            parameters,
+            arguments,
+            &assumptions,
+            function_environment,
+            claim_label,
+            step_index,
+            "bounded_execute",
+            StatementPrerequisitePolicy::Contextual,
+            StatementFactTransportPolicy::Automatic,
+            LoopStepPolicy::EnterBody,
+        )
+        .map_err(|error| {
+            ClickError::new(format!(
+                "`{claim_label}` proof step {step_index}: `bounded_execute` failed after {executed_steps} small steps: {}",
+                error.message()
+            ))
+        })?;
+        pending.push(frontier);
+    }
+
+    merge_bounded_execution_frontiers(
+        replay,
+        state,
+        available_pure_facts,
+        function,
+        arguments,
+        completed,
+        claim_label,
+        step_index,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn merge_bounded_execution_frontiers(
+    replay: &mut ProofStepReplayState,
+    state: &mut CState,
+    available_pure_facts: &mut Vec<Proposition>,
+    function: &CFunction,
+    arguments: &[CExpression],
+    mut completed: Vec<BoundedProofFrontier>,
+    claim_label: &str,
+    step_index: usize,
+) -> Result<(), ClickError> {
+    if completed.is_empty() {
+        return Err(ClickError::new(format!(
+            "`{claim_label}` proof step {step_index}: `bounded_execute` produced no complete execution paths"
+        )));
+    }
+
+    let execution_start_state = completed[0]
+        .replay
+        .frontier
+        .execution_start_state
+        .clone()
+        .ok_or_else(|| {
+            ClickError::new(format!(
+                "`{claim_label}` proof step {step_index}: `bounded_execute` has no execution start state"
+            ))
+        })?;
+    let mut common_pure_facts = completed[0].pure_facts.clone();
+    common_pure_facts.retain(|fact| {
+        completed
+            .iter()
+            .skip(1)
+            .all(|frontier| frontier.pure_facts.contains(fact))
+    });
+    let mut common_program_points = completed[0].replay.program_point_states.clone();
+    common_program_points.retain(|point, point_state| {
+        completed
+            .iter()
+            .skip(1)
+            .all(|frontier| frontier.replay.program_point_states.get(point) == Some(point_state))
+    });
+
+    let mut paths = Vec::new();
+    for frontier in &completed {
+        let execution = frontier
+            .replay
+            .execution()
+            .expect("completed bounded frontier should have an execution");
+        for path in execution.paths() {
+            let Proposition::CFunctionExecutes { outcome, .. } =
+                implication_body(path.theorem().proposition())
+            else {
+                return Err(ClickError::new(format!(
+                    "`{claim_label}` proof step {step_index}: `bounded_execute` saw an unexpected completed theorem"
+                )));
+            };
+            let mut facts = path.execution_facts();
+            for fact in &frontier.pure_facts {
+                let fact = ExecutionPureFact::new(fact.clone());
+                if !facts.contains(&fact) {
+                    facts.push(fact);
+                }
+            }
+            paths.push((outcome.clone(), facts, path.obligations().to_vec()));
+        }
+    }
+    let execution = certify_c_function_execution_paths_from_outcomes(
+        execution_start_state.clone(),
+        function.clone(),
+        arguments.to_vec(),
+        Assumptions::new(),
+        paths,
+    );
+
+    let mut merged = completed.remove(0);
+    merged.replay.program_point_states = common_program_points;
+    merged.replay.frontier.point = ProofExecutionPoint::FunctionExit { execution };
+    merged.state = execution_start_state;
+    merged.pure_facts = common_pure_facts;
+    *replay = merged.replay;
+    *state = merged.state;
+    *available_pure_facts = merged.pure_facts;
     Ok(())
 }
 
@@ -6107,6 +6449,7 @@ fn execute_rest_from_execution_point(
                 step_name,
                 StatementPrerequisitePolicy::Contextual,
                 StatementFactTransportPolicy::Automatic,
+                LoopStepPolicy::ApplyVerifiedRule,
             )?;
         }
     }
@@ -6128,7 +6471,6 @@ fn execute_rest_from_execution_point(
         ProofExecutionPoint::FunctionEntry => {
             set_replay_execution(
                 replay,
-                ProofStepExecutionMode::Verification,
                 claim_label,
                 step_index,
                 step_name,
@@ -6144,7 +6486,7 @@ fn execute_rest_from_execution_point(
             )?;
         }
         ProofExecutionPoint::StatementEntry { remaining, .. } => {
-            let remaining = remaining_with_branch_continuations(replay, remaining);
+            let remaining = remaining_with_execution_continuations(replay, remaining);
             let execution = prove_symbolic_c_execution_paths_with_environment(
                 state.clone(),
                 remaining,
@@ -6171,7 +6513,6 @@ fn execute_rest_from_execution_point(
             let replay_state = execution_start_state.clone();
             set_replay_execution(
                 replay,
-                ProofStepExecutionMode::Verification,
                 claim_label,
                 step_index,
                 step_name,
@@ -6189,7 +6530,7 @@ fn execute_rest_from_execution_point(
     Ok(())
 }
 
-fn remaining_with_branch_continuations(
+fn remaining_with_execution_continuations(
     replay: &ProofStepReplayState,
     current: &CStatement,
 ) -> CStatement {
@@ -6256,6 +6597,7 @@ fn execute_until_statement(
             "execute_until",
             StatementPrerequisitePolicy::Contextual,
             StatementFactTransportPolicy::Automatic,
+            LoopStepPolicy::ApplyVerifiedRule,
         )?;
         if replay.is_at_function_exit() {
             return Err(ClickError::new(format!(
@@ -6420,20 +6762,19 @@ fn sequence_from_statements(statements: &[CStatement]) -> Option<CStatement> {
 
 fn set_replay_execution(
     replay: &mut ProofStepReplayState,
-    mode: ProofStepExecutionMode,
     claim_label: &str,
     step_index: usize,
     step_name: &str,
     execution_start_state: CState,
     execution: crate::kernel::SymbolicCExecution,
 ) -> Result<(), ClickError> {
-    if let Some(existing) = replay.execution_mode() {
+    if replay.is_at_function_exit() {
         return Err(ClickError::new(format!(
-            "`{claim_label}` proof step {step_index}: `{step_name}` cannot run after {existing:?} execution already reached function exit"
+            "`{claim_label}` proof step {step_index}: `{step_name}` cannot run after execution already reached function exit"
         )));
     }
     replay.frontier.execution_start_state = Some(execution_start_state);
-    replay.frontier.point = ProofExecutionPoint::FunctionExit { execution, mode };
+    replay.frontier.point = ProofExecutionPoint::FunctionExit { execution };
     Ok(())
 }
 
@@ -6446,20 +6787,6 @@ fn require_step_execution(
     if !replay.is_at_function_exit() {
         return Err(ClickError::new(format!(
             "`{claim_label}` proof step {step_index}: `{step_name}` requires execution to reach function exit first"
-        )));
-    }
-    Ok(())
-}
-
-fn require_verification_execution(
-    replay: &ProofStepReplayState,
-    claim_label: &str,
-    step_index: usize,
-    step_name: &str,
-) -> Result<(), ClickError> {
-    if replay.execution_mode() != Some(ProofStepExecutionMode::Verification) {
-        return Err(ClickError::new(format!(
-            "`{claim_label}` proof step {step_index}: `{step_name}` requires verification execution rather than bounded execution"
         )));
     }
     Ok(())
@@ -7864,27 +8191,23 @@ fn check_effect_claim_exact(
     )
 }
 
-enum AutoExecutionKind<'a> {
+enum AutoExecutionKind {
     Frame,
     LoopVerification,
-    BoundedExecution {
-        environment: &'a CExecutionEnvironment,
-    },
 }
 
-impl AutoExecutionKind<'_> {
+impl AutoExecutionKind {
     fn proof_kind(&self) -> ProofKind {
         match self {
             Self::Frame => ProofKind::Frame,
             Self::LoopVerification => ProofKind::LoopVerification,
-            Self::BoundedExecution { .. } => ProofKind::BoundedExecution,
         }
     }
 
     fn tactic_name(&self) -> &'static str {
         match self {
             Self::Frame => "frame",
-            Self::LoopVerification | Self::BoundedExecution { .. } => "auto",
+            Self::LoopVerification => "auto",
         }
     }
 }
@@ -8092,7 +8415,7 @@ fn execution_obligation_error_for_tactic(
 
 fn prove_claim_from_execution(
     execution: &crate::kernel::SymbolicCExecution,
-    execution_kind: AutoExecutionKind<'_>,
+    execution_kind: AutoExecutionKind,
     source_path: &str,
     function_block: &FunctionBlock,
     claim: &FunctionClaimRef<'_>,
@@ -8162,7 +8485,6 @@ fn prove_claim_from_execution(
             &program_point_states,
             &[],
         )?;
-        let path_requirements_description = describe_pure_facts(&path_requirements);
         let specification = c_function_specification(
             state.clone(),
             arguments.to_vec(),
@@ -8178,22 +8500,6 @@ fn prove_claim_from_execution(
                     path.facts(),
                     path.obligations(),
                 )
-            }
-            AutoExecutionKind::BoundedExecution { environment } => {
-                prove_c_function_satisfies_specification_with_environment(
-                    function.clone(),
-                    specification.clone(),
-                    Assumptions::new(),
-                    (*environment).clone(),
-                    CExecutionSemantics::APPLY_VERIFIED_RULES,
-                )
-                .ok_or_else(|| {
-                    ClickError::new(format!(
-                        "`auto` failed for `{claim_label}` path {path_index}: execution did not satisfy the packaged specification\n  pure facts: {}\n  execution pure facts: {}",
-                        path_requirements_description,
-                        describe_execution_pure_facts(path.facts())
-                    ))
-                })?
             }
         };
 

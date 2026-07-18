@@ -1,8 +1,10 @@
 # loop exit snapshots in execution proofs
 
-This checks that a verified loop advances as one execution step and records its
-unique exit state. The proof derives the loop result from the invariant and the
-false exit condition, then carries that fact through the return.
+This checks that modular execution across a verified loop records its unique
+exit state. The proof derives the loop result from the invariant and the false
+exit condition, then carries that fact through the return. Individual
+`execute_step()` calls enter loop iterations; `execute_until(...)` deliberately
+applies the verified abstract loop rule.
 
 ```c filename=loop_exit_snapshot.c
 int32 count_from_to(int32 i, int32 n) {
@@ -26,7 +28,7 @@ int32 count_from_to(int32 i, int32 n) {
     }
 
     ensures result == n and at(count.exit, i) == n by {
-        execute_step();
+        execute_until(statement(2));
         have at(count.exit, i) == n by {
             simp();
         }
@@ -54,7 +56,7 @@ int32 count_from_to(int32 i, int32 n) {
             fact i == n;
         }
         by {
-            execute_step();
+            execute_until(statement(2));
         }
         execute_step();
         simp();

@@ -58,10 +58,8 @@ ensures result == x by {
 
 An explicit script records a specific proof path, but not every current command
 is simple. `assumption`, `normalize`, `rewrite`, and exact-premise `apply` are
-simple tactics. `auto` and `simp` are smart tactics. Some execution and resource
-commands remain fuzzy while their implicit reasoning is split into simple
-rules. The [proof tactics reference](../proof-tactics.md) classifies every
-command.
+simple tactics. `auto`, `simp`, and `bounded_execute` are smart tactics. The
+[proof tactics reference](../proof-tactics.md) classifies every command.
 
 Common steps include:
 
@@ -123,6 +121,6 @@ Then read the proof clause:
 - `by auto` means the proof is automated.
 - `by simp` means the result should follow by simplification.
 - `by { ... }` means the author wrote an explicit proof script; consult its
-  commands to see whether it is simple, smart, or still fuzzy.
+  commands to see whether it is simple or smart.
 
 The full proof-step reference is in the proof workflow page.

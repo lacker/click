@@ -8,20 +8,11 @@ design boundary, not a performance hint.
 - A **smart tactic** may search, invoke solvers, or orchestrate several proof
   operations. In principle, a successful smart tactic should be replaceable by
   a certificate made from simple tactics.
-- A **fuzzy tactic** is a current command whose implementation still combines
-  deterministic work with implicit proving or broad execution. It is supported,
-  but its long-term boundary has not been made precise enough to call it simple
-  or smart.
-
-Fuzzy does not mean unsound. It marks implementation and language-design work
-that remains to be split into explicit rules and optional automation. New proof
-features should not add more fuzzy tactics.
-
 ## Simple Tactics
 
 | Tactic | One operation |
 | --- | --- |
-| `step()` | Advance one C statement when every execution prerequisite is exact or context-free; do not transport facts automatically. |
+| `step()` | Advance one small C transition when every execution prerequisite is exact or context-free; do not transport facts automatically. |
 | `assumption()` | Close a pure goal only when that exact fact is present. |
 | `normalize()` | Close a goal by context-free computation and structural normalization. |
 | `rewrite(equality)` | Rewrite the current pure goal once using an exact available equality. |
@@ -52,8 +43,9 @@ using the context.
 | omitted `by` / `by auto;` | Orchestrate execution and proposition proving. |
 | `by simp;` / `simp()` | Use the current simplifier, equalities, bounds, and supported solver rules. |
 | `by frame;` | Prove an effect claim using frame reasoning. |
-| `execute_step()` | Advance one statement while contextually proving prerequisites and automatically transporting supported framed facts. |
+| `execute_step()` | Advance one small C transition while contextually proving prerequisites and automatically transporting supported framed facts. |
 | `execute_then_step()` / `execute_else_step()` | Select a requested C branch using contextual condition reasoning. |
+| `bounded_execute()` | Repeatedly apply contextual one-step execution until function exit or a fixed step budget. |
 
 `simp()` remains smart even though its algorithm is deterministic: it performs
 nontrivial contextual reasoning rather than one fixed kernel rule. Determinism
@@ -62,33 +54,29 @@ alone does not make a tactic simple.
 Click does not yet expose a command that expands a smart tactic into its simple
 certificate. Until that exists, smart tactics remain part of stored proofs.
 
-## Fuzzy Tactics
-
-| Tactic | Boundary still to clarify |
-| --- | --- |
-| `bounded_execute()` | Combines bounded program execution with obligation handling. |
-
-The intended cleanup direction is to identify the deterministic kernel rule or
-rules inside each fuzzy command, expose those as simple tactics, and retain the
-existing spelling only when useful as smart automation.
-
 ## Statement Execution
 
-`step()` and `execute_step()` advance the same execution frontier by one C
-statement. Their proof behavior differs:
+`step()` and `execute_step()` advance the same execution frontier by one small C
+transition. Their proof behavior differs:
 
 - `step()` accepts an execution prerequisite only when the exact proposition is
   already a pure fact or it normalizes to true without context. It carries old
   snapshot facts as old facts and performs no automatic frame transport. When
   the next statement is an `if`, an exact condition fact selects and enters one
-  arm without executing that arm's body.
+  arm without executing that arm's body. At a loop head, it evaluates the
+  condition once and either enters one iteration or advances past the loop.
 - `transport(source, target)` explicitly moves one atomic condition fact to the
   current snapshot when a certified effect fact proves that its referenced
   memory was framed.
 - `execute_step()` is smart automation. It invokes contextual
   prerequisite reasoning and attempts bounded automatic transport for eligible
   atomic facts. At an `if`, it uses the same contextual reasoning to select a
-  uniquely determined arm.
+  uniquely determined arm. It uses the same one-condition loop transition as
+  `step()`.
+- `bounded_execute()` repeatedly performs contextual one-step transitions and
+  explores finite symbolic branch alternatives, subject to a fixed proof-step
+  budget. It is smart orchestration over the ordinary execution frontier, not
+  a separate execution semantics.
 
 `fold(resource)` never invokes `simp`. Establish each declared body fact first,
 for example with `have fact by { simp(); }`; `fold` then checks those exact facts
@@ -116,9 +104,8 @@ Some proof forms are neither individual tactics nor search:
   be expandable into smaller execution steps.
 - `have`, proof-level `if`, and `advance ... ensuring ... by` structure proof
   goals and scopes. They are proof control flow. Their nested scripts may
-  contain simple, smart, fuzzy, or macro commands.
+  contain simple, smart, or macro commands.
 
 The Rust AST enforces this inventory through `SimpleTactic`, `SmartTactic`,
-`SmartProofStep`, `FuzzyTactic`, `DeterministicProofMacro`,
-`ProofControlFlow`, and `ProofStep::class()`. Any new proof command must be
-classified explicitly.
+`SmartProofStep`, `DeterministicProofMacro`, `ProofControlFlow`, and
+`ProofStep::class()`. Any new proof command must be classified explicitly.

@@ -69,10 +69,10 @@ by frame;
 
 Omitting a proof clause uses `auto`.
 
-For an individual claim, `auto` is the broad orchestration tactic. It chooses
-between verification execution and bounded execution, then records the proof
-steps that succeeded. Grouped `auto` has the fixed expansion described above,
-so grouped proofs do not depend on proof search.
+For an individual claim, `auto` is the broad orchestration tactic. It first
+tries verification execution, then may try the smart `bounded_execute()` proof
+script and records the proof steps that succeeded. Grouped `auto` has the fixed
+expansion described above, so grouped proofs do not depend on proof search.
 
 `simp` is a smart contextual simplifier. It is useful for straight-line
 postconditions and unfolded predicate goals. It simplifies logical connectives,
@@ -85,7 +85,7 @@ discrete relationship between strict and non-strict integer bounds.
 contextual range reasoning. It rejects ordinary postconditions. The explicit
 proof step `frame()` instead requires exact range bounds.
 
-The exhaustive simple/smart/fuzzy classification is in the
+The exhaustive simple/smart classification is in the
 [proof tactics reference](proof-tactics.md).
 
 ## Proof-Step Scripts
@@ -102,15 +102,14 @@ by {
 
 Current proof steps:
 
-- `step();`: advance one C statement using only exact or context-free execution
+- `step();`: advance one small C transition using only exact or context-free execution
   prerequisites. It does not automatically transport memory-dependent facts to
   the new snapshot; use `transport(source, target)` explicitly. At a C `if`, an
-  exact condition fact selects and enters one arm.
-- `execute_step();`: execute one C statement from the current execution point.
-  Straight-line statements use their certified transition. An annotated loop
-  uses its previously verified abstract loop rule and records the loop entry
-  and exit snapshots. The step uses the facts and resources already in the
-  proof environment; project or prove needed facts before running it.
+  exact condition fact selects and enters one arm. At a loop head, it evaluates
+  the condition once and enters one iteration or advances past the loop.
+- `execute_step();`: execute one small C transition from the current execution
+  point with contextual prerequisite reasoning and automatic supported fact
+  transport. It uses the same branch and loop-head transitions as `step()`.
 - `execute_then_step();`: require the next C statement to be an `if`,
   contextually prove its condition, and move the execution point to the
   beginning of its then arm without executing the arm body.
@@ -118,7 +117,7 @@ Current proof steps:
   proves the C condition false and moves to the beginning of that arm.
 - `execute_rest();`: build symbolic verification paths from the current
   execution point to function exit. From function entry, this executes the
-  whole C0 function.
+  whole C0 function. It applies verified abstract loop rules where available.
 - `symbolic_execute();`: deprecated source alias for `execute_rest();`; both
   spellings parse to the same proof step.
 - `execute_until(statement(N));`: execute the current deterministic prefix up
@@ -127,8 +126,8 @@ Current proof steps:
   execution steps, selected branches, and `advance` joins. The target must be
   forward and reachable on the current execution path, and each source step
   must produce exactly one normal successor.
-- `bounded_execute();`: use deterministic bounded execution for concrete-loop
-  fallback proofs.
+- `bounded_execute();`: repeatedly apply contextual one-step execution for
+  concrete-loop proofs, stopping at function exit or a fixed step budget.
 - `frame();`: check the current function-level certified write summary against
   its declared effect using exact available range bounds.
 - `frame(loop(N));`: perform the same exact check for loop code region `N` and

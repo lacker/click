@@ -504,10 +504,9 @@ pub enum Proof {
 
 /// A command in an explicit `.click` proof script.
 ///
-/// Commands are classified by [`ProofStep::class`]. Some historical commands
-/// remain fuzzy while they are split into deterministic rules and smart
-/// search. A `Proof::Steps` certificate is not considered fully expanded while
-/// it contains a smart or fuzzy command.
+/// Commands are classified by [`ProofStep::class`]. A `Proof::Steps`
+/// certificate is not considered fully expanded while it contains a smart
+/// command.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ProofStep {
     Step,
@@ -556,15 +555,11 @@ pub enum SimpleTactic {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum FuzzyTactic {
-    BoundedExecute,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SmartProofStep {
     ExecuteStep,
     ExecuteThenStep,
     ExecuteElseStep,
+    BoundedExecute,
     Simp,
 }
 
@@ -585,7 +580,6 @@ pub enum ProofControlFlow {
 pub enum ProofStepClass {
     Simple(SimpleTactic),
     Smart(SmartProofStep),
-    Fuzzy(FuzzyTactic),
     Macro(DeterministicProofMacro),
     ControlFlow(ProofControlFlow),
 }
@@ -609,8 +603,8 @@ impl ProofStep {
             Self::ExecuteStep => ProofStepClass::Smart(SmartProofStep::ExecuteStep),
             Self::ExecuteThenStep => ProofStepClass::Smart(SmartProofStep::ExecuteThenStep),
             Self::ExecuteElseStep => ProofStepClass::Smart(SmartProofStep::ExecuteElseStep),
+            Self::BoundedExecute => ProofStepClass::Smart(SmartProofStep::BoundedExecute),
             Self::Simp => ProofStepClass::Smart(SmartProofStep::Simp),
-            Self::BoundedExecute => ProofStepClass::Fuzzy(FuzzyTactic::BoundedExecute),
             Self::ExecuteRest => ProofStepClass::Macro(DeterministicProofMacro::ExecuteRest),
             Self::ExecuteUntil(_) => ProofStepClass::Macro(DeterministicProofMacro::ExecuteUntil),
             Self::Have(_) => ProofStepClass::ControlFlow(ProofControlFlow::Have),
@@ -823,7 +817,6 @@ pub enum ProofKind {
     Simp,
     ProofSteps,
     LoopVerification,
-    BoundedExecution,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

@@ -17,8 +17,6 @@ will have exactly the names used here.
   a tactic call that can later be expanded into proof steps.
 - A **smart tactic** may search or orchestrate several rules. Logically it
   should be replaceable by a sequence of simple tactics.
-- A **fuzzy tactic** is an existing command that still mixes deterministic work
-  with implicit proving. It is a migration category, not a soundness category.
 - A **pure proof** derives a proposition from facts at one execution point. It
   has no execution frontier and cannot execute C or transform resources.
 - An **execution proof** establishes a pre/post relationship for a code region.
@@ -61,7 +59,7 @@ new proof workflow concepts too early.
 | C undefined behavior | CBMC, Frama-C/WP, UBSan-style checks | undefined behavior-aware C execution | `auto`, `execute_rest()` diagnostics | `mdtests/overflow.md`, `mdtests/increment_requires_no_overflow.md`, `mdtests/increment_without_requires.md`, `mdtests/c_division_by_zero.md`, `mdtests/c_division_overflow.md`, `mdtests/c_shift_large_count.md`, `mdtests/c_shift_left_overflow.md` |
 | Pointer loadability | C verifiers, separation logic | loadability and range axioms | `auto`, `execute_rest()` | `mdtests/pointer_range.md`, `mdtests/pointer_range_missing_requires.md`, `mdtests/fill_n_symbolic_pointer_loop.md` |
 | Memory postconditions | ACSL/Dafny/F* function contracts | final-state memory evaluation | `auto`, `simp()` | `mdtests/fill3_memory_postconditions.md`, `mdtests/fill3_bad_memory_postcondition.md`, `mdtests/copy3_array_demo.md` |
-| Bounded loops | bounded model checking, symbolic execution | budgeted loop execution | `auto`, `bounded_execute()` | `mdtests/bounded_loop.md`, `mdtests/fill3.md`, `mdtests/fill3_array_loop.md` |
+| Bounded loops | bounded model checking, symbolic execution | budgeted repetition of ordinary execution steps | `auto`, `bounded_execute()` | `mdtests/bounded_loop.md`, `mdtests/fill3.md`, `mdtests/fill3_array_loop.md` |
 | Function calls | modular verification, inlining, call summaries | function environment and specification satisfaction | `auto`, `execute_rest()` | `mdtests/function_call.md` |
 | Loop invariants | Dafny/F*/Why3/Frama-C | loop verification-condition generation for scalar locals, pointer safety, memory-changing invariants, and loop frames | `for loop(N) { invariant ...; initialize by ...; preserve by ...; }` | `mdtests/count_to_three_loop_invariants.md`, `mdtests/count_to_n_loop_invariant.md`, `mdtests/fill_n_symbolic_pointer_loop.md`, `mdtests/fill_n_segment_invariant.md`, `mdtests/copy_n_segment_invariant.md`, `mdtests/loop_stdlib_permutation_invariant.md` |
 | Assertions and facts | Lean/Dafny/F* proof scripts | spec assertion checking | `for statement(N) { assert ... by auto; }`, later `have`, `exact` | `mdtests/count_to_three_loop_invariants.md`, `mdtests/count_to_three_bad_assert.md` |

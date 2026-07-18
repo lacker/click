@@ -2204,7 +2204,7 @@ fn auto_certificate_replays_for_bounded_execution() {
     let expected_steps = [ProofStep::BoundedExecute, ProofStep::Simp];
 
     assert_eq!(auto_verified.len(), 1);
-    assert_eq!(auto_verified[0].proof_kind(), ProofKind::BoundedExecution);
+    assert_eq!(auto_verified[0].proof_kind(), ProofKind::ProofSteps);
     assert_eq!(
         auto_verified[0].proof_steps(),
         Some(expected_steps.as_slice())
@@ -3952,9 +3952,84 @@ fn symbolic_increment_without_numeric_requirement_fails() {
     assert!(
         error
             .message()
-            .contains("failed for `increment.increments` path"),
+            .contains("undefined behavior: signed overflow"),
         "{}",
         error.message()
+    );
+}
+
+#[test]
+fn step_and_execute_step_advance_one_concrete_loop_transition() {
+    let c_source = r#"
+            int32 count_two() {
+                int32 i;
+                i = 0;
+                while (i < 2) {
+                    i = i + 1;
+                }
+                return i;
+            }
+        "#;
+    let click_source = r#"
+            verifying "count_two.c";
+
+            int32 count_two() {
+                ensures returns_two: result == 2 by {
+                    step();
+                    execute_step();
+                    step();
+                    execute_step();
+                    step();
+                    execute_step();
+                    step();
+                    execute_step();
+                    simp();
+                }
+            }
+        "#;
+
+    let verified = verify_c0_sources(click_source, &[("count_two.c", c_source)])
+        .expect("small steps should traverse concrete loop heads and iterations");
+
+    assert_eq!(verified.len(), 1);
+    assert_eq!(verified[0].proof_kind(), ProofKind::ProofSteps);
+}
+
+#[test]
+fn bounded_execute_resumes_and_explores_symbolic_branches() {
+    let c_source = r#"
+            int32 choose_after_init(int32 x) {
+                int32 y;
+                y = 0;
+                if (x > 0) {
+                    y = 1;
+                } else {
+                    y = 2;
+                }
+                return y;
+            }
+        "#;
+    let click_source = r#"
+            verifying "choose_after_init.c";
+
+            int32 choose_after_init(int32 x) {
+                ensures result == 1 or result == 2 by {
+                    step();
+                    step();
+                    bounded_execute();
+                    simp();
+                }
+            }
+        "#;
+
+    let verified = verify_c0_sources(click_source, &[("choose_after_init.c", c_source)])
+        .expect("bounded execution should resume and prove every symbolic branch");
+
+    assert_eq!(verified.len(), 2);
+    assert!(
+        verified
+            .iter()
+            .all(|theorem| theorem.proof_kind() == ProofKind::ProofSteps)
     );
 }
 
