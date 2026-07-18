@@ -1,5 +1,13 @@
 use super::prelude::*;
 
+type ValidShiftCountEvaluator = fn(
+    Bitvector32Term,
+    Bitvector32Term,
+    Vec<ExecutionPureFact>,
+    Vec<ProofObligation>,
+    &Assumptions,
+) -> Vec<CExpressionPath>;
+
 pub(super) fn evaluate_c_expression(
     state: &CState,
     expression: &CExpression,
@@ -1462,13 +1470,7 @@ fn apply_c_int32_with_valid_shift_count(
     facts: Vec<ExecutionPureFact>,
     obligations: Vec<ProofObligation>,
     assumptions: &Assumptions,
-    apply_valid_count: fn(
-        Bitvector32Term,
-        Bitvector32Term,
-        Vec<ExecutionPureFact>,
-        Vec<ProofObligation>,
-        &Assumptions,
-    ) -> Vec<CExpressionPath>,
+    apply_valid_count: ValidShiftCountEvaluator,
 ) -> Vec<CExpressionPath> {
     let negative_count =
         ConditionTerm::signed_less_than(right.clone(), Bitvector32Term::Constant(0));
@@ -1528,13 +1530,7 @@ fn apply_c_int32_with_nonnegative_shift_count(
     facts: Vec<ExecutionPureFact>,
     obligations: Vec<ProofObligation>,
     assumptions: &Assumptions,
-    apply_valid_count: fn(
-        Bitvector32Term,
-        Bitvector32Term,
-        Vec<ExecutionPureFact>,
-        Vec<ProofObligation>,
-        &Assumptions,
-    ) -> Vec<CExpressionPath>,
+    apply_valid_count: ValidShiftCountEvaluator,
 ) -> Vec<CExpressionPath> {
     let too_large_count =
         ConditionTerm::signed_greater_equal(right.clone(), Bitvector32Term::Constant(32));
@@ -2500,10 +2496,10 @@ pub(super) fn write_c_lvalue_paths(
             {
                 return Vec::new();
             }
-            if let Some(name) = local_name_from_pointer(&pointer) {
-                if let Some(c_type) = state.locals.scalar_object_type(name) {
-                    state.locals.set_typed(name.to_string(), value, c_type);
-                }
+            if let Some(name) = local_name_from_pointer(&pointer)
+                && let Some(c_type) = state.locals.scalar_object_type(name)
+            {
+                state.locals.set_typed(name.to_string(), value, c_type);
             }
             vec![CStatementExecutionPath {
                 outcome: CStatementOutcome::Normal(state),
@@ -2955,7 +2951,7 @@ pub(super) fn declare_local(state: &CState, name: &str, c_type: CType) -> CState
             let pointer = CMemory::local_pointer(name);
             state.memory = state
                 .memory
-                .with_block(pointer.block, length.checked_mul(4).unwrap_or(u32::MAX));
+                .with_block(pointer.block, length.saturating_mul(4));
             state
                 .locals
                 .set_array_object(name.to_string(), CType::Int32, length);

@@ -1553,7 +1553,7 @@ impl CType {
             Self::UInt8 => 1,
             Self::Int32Pointer => C_POINTER_BYTE_WIDTH,
             Self::UInt8Pointer => C_POINTER_BYTE_WIDTH,
-            Self::Int32Array(length) => length.checked_mul(4).unwrap_or(u32::MAX),
+            Self::Int32Array(length) => length.saturating_mul(4),
             Self::UInt8Array(length) => length,
         }
     }

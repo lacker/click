@@ -1241,10 +1241,10 @@ pub(super) fn address_escaped_scalar_locals(state: &CState, body: &CStatement) -
     collect_address_taken_locals(body, &mut escaped);
 
     let record_pointer = |value: &CValue, escaped: &mut BTreeSet<String>| {
-        if let CValue::Pointer(pointer) = value {
-            if let Some(name) = local_name_from_pointer(pointer) {
-                escaped.insert(name.to_string());
-            }
+        if let CValue::Pointer(pointer) = value
+            && let Some(name) = local_name_from_pointer(pointer)
+        {
+            escaped.insert(name.to_string());
         }
     };
     for name in state.locals.bindings.keys() {

@@ -1,5 +1,13 @@
 use super::*;
 
+type FunctionContractSummary = (
+    Vec<SpecProposition>,
+    Vec<SpecProposition>,
+    Vec<CMemorySegment>,
+    Vec<CFunctionContractClaim>,
+    bool,
+);
+
 pub(super) fn annotated_function(
     function_block: &FunctionBlock,
     parsed_function: &syntax::C0Function,
@@ -74,16 +82,7 @@ pub(super) fn function_contract_summary(
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
     resource_environment: &ResourceEnvironment,
-) -> Result<
-    (
-        Vec<SpecProposition>,
-        Vec<SpecProposition>,
-        Vec<CMemorySegment>,
-        Vec<CFunctionContractClaim>,
-        bool,
-    ),
-    ClickError,
-> {
+) -> Result<FunctionContractSummary, ClickError> {
     let entry_state = CState::new();
     let mut lowerer = AnnotationLowerer {
         structural_clauses: function_block.structural_clauses(),
@@ -3295,12 +3294,11 @@ pub(super) fn initial_call_state(
         if let Some((name, bytes)) = concrete_loadable_block(requirement, parameters, &arguments)? {
             loadable_ranges.insert(name, bytes);
         }
-        if let Requirement::Resource(resource) = requirement.inner() {
-            if let Some((name, bytes)) =
+        if let Requirement::Resource(resource) = requirement.inner()
+            && let Some((name, bytes)) =
                 concrete_access_resource_block(resource, parameters, &arguments)?
-            {
-                loadable_ranges.insert(name, bytes);
-            }
+        {
+            loadable_ranges.insert(name, bytes);
         }
     }
 
@@ -3902,12 +3900,11 @@ pub(super) fn loadable_base_and_bytes(
                 })?;
             if let (Bitvector32Term::Constant(start), Bitvector32Term::Constant(end)) =
                 (&segment.start, &segment.end)
+                && end < start
             {
-                if end < start {
-                    return Err(ClickError::new(format!(
-                        "`loadable` segment has an end before its start: {start}..{end}"
-                    )));
-                }
+                return Err(ClickError::new(format!(
+                    "`loadable` segment has an end before its start: {start}..{end}"
+                )));
             }
             let element_count = bitvector32_subtract(segment.end.clone(), segment.start.clone());
             let element_width = contract_segment_element_width(parameters, &segment.source);
@@ -3931,12 +3928,11 @@ pub(super) fn loadable_segment_prop(
 ) -> Result<Proposition, ClickError> {
     if let (Bitvector32Term::Constant(start), Bitvector32Term::Constant(end)) =
         (&segment.start, &segment.end)
+        && end < start
     {
-        if end < start {
-            return Err(ClickError::new(format!(
-                "`loadable` segment has an end before its start: {start}..{end}"
-            )));
-        }
+        return Err(ClickError::new(format!(
+            "`loadable` segment has an end before its start: {start}..{end}"
+        )));
     }
     let element_count = bitvector32_subtract(segment.end.clone(), segment.start.clone());
     let bytes = bitvector32_multiply(element_count, Bitvector32Term::Constant(element_width));

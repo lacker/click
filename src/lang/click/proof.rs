@@ -2,6 +2,14 @@ use super::diagnostics::*;
 use super::validation::proof_step_name;
 use super::*;
 
+type NextTopLevelStatement = (
+    CState,
+    CState,
+    Option<CStatement>,
+    CStatement,
+    Option<CStatement>,
+);
+
 pub(super) fn verify_theorem_definitions(
     theorem_definitions: &[TheoremDefinition],
     predicate_environment: &PredicateEnvironment,
@@ -4205,7 +4213,7 @@ fn replay_linear_steps(
                     resource_environment,
                     resource,
                     parsed_function.parameters(),
-                    &arguments,
+                    arguments,
                     state,
                     &mut requirement_pure_facts,
                     predicate_environment,
@@ -4225,7 +4233,7 @@ fn replay_linear_steps(
                     resource_environment,
                     resource,
                     parsed_function.parameters(),
-                    &arguments,
+                    arguments,
                     state,
                     &mut requirement_pure_facts,
                     predicate_environment,
@@ -4405,9 +4413,9 @@ fn replay_linear_steps(
                     &mut state,
                     &mut requirement_pure_facts,
                     function_block,
-                    &function,
+                    function,
                     parsed_function.parameters(),
-                    &arguments,
+                    arguments,
                     function_environment,
                     statement_index,
                     claim_label,
@@ -4421,9 +4429,9 @@ fn replay_linear_steps(
                     &mut state,
                     &mut requirement_pure_facts,
                     function_block,
-                    &function,
+                    function,
                     parsed_function.parameters(),
-                    &arguments,
+                    arguments,
                     function_environment,
                     claim_label,
                     step_index,
@@ -4505,7 +4513,7 @@ fn replay_linear_steps(
                                 claim_label,
                                 step_index,
                                 parsed_function.parameters(),
-                                &arguments,
+                                arguments,
                                 &state,
                                 &requirement_pure_facts,
                             )?;
@@ -4569,7 +4577,7 @@ fn replay_linear_steps(
                         step_index,
                         requirement_pure_facts,
                         parsed_function.parameters(),
-                        &arguments,
+                        arguments,
                         replay.execution_start_state(&state),
                         &state,
                         &replay.program_point_states,
@@ -4600,7 +4608,7 @@ fn replay_linear_steps(
                         step_index,
                         &requirement_pure_facts,
                         parsed_function.parameters(),
-                        &arguments,
+                        arguments,
                         &pre_state,
                         state,
                         predicate_environment,
@@ -4636,7 +4644,7 @@ fn replay_linear_steps(
                     step_index,
                     &have_facts,
                     parsed_function.parameters(),
-                    &arguments,
+                    arguments,
                     replay.execution_start_state(&state),
                     &state,
                     &replay.program_point_states,
@@ -5666,16 +5674,7 @@ fn next_top_level_statement_from_execution_point(
     claim_label: &str,
     step_index: usize,
     step_name: &str,
-) -> Result<
-    (
-        CState,
-        CState,
-        Option<CStatement>,
-        CStatement,
-        Option<CStatement>,
-    ),
-    ClickError,
-> {
+) -> Result<NextTopLevelStatement, ClickError> {
     match &replay.frontier.point {
         ProofExecutionPoint::FunctionEntry => {
             let execution_start_state = state.clone();
@@ -6753,11 +6752,7 @@ fn flatten_top_level_sequence(
 
 fn sequence_from_statements(statements: &[CStatement]) -> Option<CStatement> {
     let (first, rest) = statements.split_first()?;
-    Some(
-        rest.iter()
-            .cloned()
-            .fold(first.clone(), |acc, statement| c_seq(acc, statement)),
-    )
+    Some(rest.iter().cloned().fold(first.clone(), c_seq))
 }
 
 fn set_replay_execution(
@@ -7098,7 +7093,7 @@ fn observe_composite_resource(
     };
     let (memory, contained_resources) = apply_composite_observation_law(
         definition,
-        &resource_arguments,
+        resource_arguments,
         parameters,
         arguments,
         &state,
@@ -8449,7 +8444,7 @@ fn prove_claim_from_execution(
             proposition => {
                 return Err(ClickError::new(format!(
                     "`{tactic_name}` failed for `{claim_label}` path {path_index}: unexpected theorem body {proposition:?}\n  pure facts: {}\n  execution pure facts: {}",
-                    describe_pure_facts(&requirement_pure_facts),
+                    describe_pure_facts(requirement_pure_facts),
                     describe_execution_pure_facts(path.facts())
                 )));
             }

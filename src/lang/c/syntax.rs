@@ -392,7 +392,7 @@ fn offset_field_pointer(
     if offset_bytes == 0 {
         return Ok(base);
     }
-    if offset_bytes % 4 != 0 {
+    if !offset_bytes.is_multiple_of(4) {
         return Err(C0SyntaxError::new(
             "struct field offsets must be int32-aligned in this C0 slice",
         ));
@@ -866,9 +866,9 @@ impl Parser {
 
     fn parse_for_initializer(&mut self) -> Result<C0Statement, C0SyntaxError> {
         let Some(Token::Ident(name)) = self.next() else {
-            return Err(C0SyntaxError::new(format!(
-                "expected assignment target in for-loop initializer"
-            )));
+            return Err(C0SyntaxError::new(
+                "expected assignment target in for-loop initializer".to_string(),
+            ));
         };
         if name == "int32" || name == "uint8" {
             return Err(C0SyntaxError::new(

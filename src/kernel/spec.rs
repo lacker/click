@@ -1,5 +1,8 @@
 use super::prelude::*;
 
+type EvaluatedSpecResource = (CResource, Vec<ExecutionPureFact>, Vec<ProofObligation>);
+type SpecResourceBuilder = Box<dyn Fn(Vec<CValue>) -> Option<CResource>>;
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct SpecPropositionPath {
     pub(super) proposition: Proposition,
@@ -375,11 +378,8 @@ fn evaluate_spec_resource_at_state(
     loop_entry_state: Option<&CState>,
     assumptions: &Assumptions,
     budget: &mut ExecutionBudget,
-) -> ExecutionResult<Vec<(CResource, Vec<ExecutionPureFact>, Vec<ProofObligation>)>> {
-    let (expressions, build): (
-        Vec<SpecExpression>,
-        Box<dyn Fn(Vec<CValue>) -> Option<CResource>>,
-    ) = match resource {
+) -> ExecutionResult<Vec<EvaluatedSpecResource>> {
+    let (expressions, build): (Vec<SpecExpression>, SpecResourceBuilder) = match resource {
         SpecResource::Memory { base, start, end } => (
             vec![base.clone(), start.clone(), end.clone()],
             Box::new(|values| match values.as_slice() {

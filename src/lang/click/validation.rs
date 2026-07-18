@@ -11,15 +11,14 @@ struct DeclaredResourceInfo {
     kind: ResourceKind,
 }
 
-fn standard_library_definitions() -> Result<
-    (
-        Vec<PredicateDefinition>,
-        Vec<ClickFunctionDefinition>,
-        Vec<ResourceDefinition>,
-        Vec<TheoremDefinition>,
-    ),
-    ClickError,
-> {
+type StandardLibraryDefinitions = (
+    Vec<PredicateDefinition>,
+    Vec<ClickFunctionDefinition>,
+    Vec<ResourceDefinition>,
+    Vec<TheoremDefinition>,
+);
+
+fn standard_library_definitions() -> Result<StandardLibraryDefinitions, ClickError> {
     let file = expand_declared_resource_clauses(parser::parse_file_items(CLICK_STANDARD_LIBRARY)?)?;
     if !file.verifying_sources().is_empty() || !file.function_blocks().is_empty() {
         return Err(ClickError::new(
@@ -744,13 +743,13 @@ pub(super) fn validate_click_definitions(file: &ClickFile) -> Result<(), ClickEr
 
         let mut requirement_labels = BTreeSet::new();
         for requirement in function.requires() {
-            if let Some(label) = requirement.label() {
-                if !requirement_labels.insert(label.to_string()) {
-                    return Err(ClickError::new(format!(
-                        "duplicate requirement label `{label}` in `{}`",
-                        function.signature().name()
-                    )));
-                }
+            if let Some(label) = requirement.label()
+                && !requirement_labels.insert(label.to_string())
+            {
+                return Err(ClickError::new(format!(
+                    "duplicate requirement label `{label}` in `{}`",
+                    function.signature().name()
+                )));
             }
             if let Some(proposition) = requirement.proposition() {
                 validate_predicate_calls_in_proposition(
@@ -827,13 +826,13 @@ fn validate_theorem_definition(
     let variables = theorem_type_environment(theorem);
     let mut requirement_labels = BTreeSet::new();
     for requirement in theorem.requires() {
-        if let Some(label) = requirement.label() {
-            if !requirement_labels.insert(label.to_string()) {
-                return Err(ClickError::new(format!(
-                    "duplicate requirement label `{label}` in theorem `{}`",
-                    theorem.name()
-                )));
-            }
+        if let Some(label) = requirement.label()
+            && !requirement_labels.insert(label.to_string())
+        {
+            return Err(ClickError::new(format!(
+                "duplicate requirement label `{label}` in theorem `{}`",
+                theorem.name()
+            )));
         }
         let Some(proposition) = requirement.proposition() else {
             return Err(ClickError::new(format!(
@@ -2155,14 +2154,14 @@ fn validate_resource_subject_expression_types(
             for (index, argument) in arguments.iter().enumerate() {
                 let actual =
                     infer_contract_expression_type(argument, variables, click_functions, context)?;
-                if let (Some(actual), Some(expected)) = (actual, parameter_types.get(index)) {
-                    if !click_types_compatible(actual, *expected) {
-                        return Err(ClickError::new(format!(
-                            "resource `{name}` argument {index} expects {}, got {} in {context}",
-                            describe_c0_type(*expected),
-                            describe_c0_type(actual)
-                        )));
-                    }
+                if let (Some(actual), Some(expected)) = (actual, parameter_types.get(index))
+                    && !click_types_compatible(actual, *expected)
+                {
+                    return Err(ClickError::new(format!(
+                        "resource `{name}` argument {index} expects {}, got {} in {context}",
+                        describe_c0_type(*expected),
+                        describe_c0_type(actual)
+                    )));
                 }
             }
             Ok(())
@@ -2266,7 +2265,7 @@ fn reject_duplicate_owned_declared_resource_clauses<'a>(
         ) {
             continue;
         }
-        if seen.iter().any(|candidate| *candidate == resource) {
+        if seen.contains(&resource) {
             return Err(ClickError::new(format!(
                 "duplicate resource fact `{}` in {context}",
                 describe_resource_clause(resource)
@@ -2427,14 +2426,14 @@ fn infer_contract_expression_type(
         } => {
             let value_type =
                 infer_contract_expression_type(value, variables, click_functions, context)?;
-            if let (Some(expected), Some(actual)) = (*c_type, value_type) {
-                if !click_types_compatible(actual, expected) {
-                    return Err(ClickError::new(format!(
-                        "let binding `{name}` expects {}, got {} in {context}",
-                        describe_c0_type(expected),
-                        describe_c0_type(actual)
-                    )));
-                }
+            if let (Some(expected), Some(actual)) = (*c_type, value_type)
+                && !click_types_compatible(actual, expected)
+            {
+                return Err(ClickError::new(format!(
+                    "let binding `{name}` expects {}, got {} in {context}",
+                    describe_c0_type(expected),
+                    describe_c0_type(actual)
+                )));
             }
             let mut body_variables = variables.clone();
             if let Some(binding_type) = c_type.or(value_type) {

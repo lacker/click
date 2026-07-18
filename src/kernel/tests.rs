@@ -4623,7 +4623,7 @@ fn verified_function_rule_requires_every_contract_claim_certificate() {
     )
     .expect("first claim should certify");
 
-    assert!(c_verified_function_rule(function.clone(), &[first.clone()]).is_none());
+    assert!(c_verified_function_rule(function.clone(), std::slice::from_ref(&first)).is_none());
 
     let second = c_verified_function_contract_claim(
         &function,

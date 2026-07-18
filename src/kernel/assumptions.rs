@@ -46,11 +46,10 @@ impl Assumptions {
     }
 
     pub fn assume_condition(mut self, condition: ConditionTerm, value: bool) -> Self {
-        if let ConditionTerm::Bitvector32Equal(left, right) = &condition {
-            if let Some((left, right)) = bitvector_equality_after_additive_cancellation(left, right)
-            {
-                self = self.assume_condition(ConditionTerm::equal(left, right), value);
-            }
+        if let ConditionTerm::Bitvector32Equal(left, right) = &condition
+            && let Some((left, right)) = bitvector_equality_after_additive_cancellation(left, right)
+        {
+            self = self.assume_condition(ConditionTerm::equal(left, right), value);
         }
         self.condition_facts.insert(condition, value);
         self
@@ -503,15 +502,15 @@ impl Assumptions {
             let (ConditionTerm::Bitvector32Equal(left, right), true) = (condition, value) else {
                 continue;
             };
-            if self.bitvector_terms_proven_equal(term, left) {
-                if let Some(value) = signed_bitvector_constant(right) {
-                    return Some(value);
-                }
+            if self.bitvector_terms_proven_equal(term, left)
+                && let Some(value) = signed_bitvector_constant(right)
+            {
+                return Some(value);
             }
-            if self.bitvector_terms_proven_equal(term, right) {
-                if let Some(value) = signed_bitvector_constant(left) {
-                    return Some(value);
-                }
+            if self.bitvector_terms_proven_equal(term, right)
+                && let Some(value) = signed_bitvector_constant(left)
+            {
+                return Some(value);
             }
         }
 
@@ -760,21 +759,19 @@ impl Assumptions {
                     || bitvector_same_base_nonzero_const_offset(&left, &right)
                 {
                     Some(false)
-                } else if self.has_condition_fact(
+                } else if (self.has_condition_fact(
                     ConditionTerm::signed_less_equal(left.clone(), right.clone()),
                     true,
                 ) && self.has_condition_fact(
                     ConditionTerm::signed_less_than(left.clone(), right.clone()),
                     false,
-                ) {
-                    Some(true)
-                } else if self.has_condition_fact(
+                )) || (self.has_condition_fact(
                     ConditionTerm::signed_greater_equal(left.clone(), right.clone()),
                     true,
                 ) && self.has_condition_fact(
                     ConditionTerm::signed_greater_than(left.clone(), right.clone()),
                     false,
-                ) {
+                )) {
                     Some(true)
                 } else if self.decide(&ConditionTerm::signed_less_than(
                     left.clone(),
@@ -1084,10 +1081,10 @@ impl Assumptions {
             if !seen.insert((current.clone(), strict_so_far)) {
                 continue;
             }
-            if let Some(connection_strict) = self.order_path_connection_for_simp(&current, right) {
-                if !require_strict || strict_so_far || connection_strict {
-                    return true;
-                }
+            if let Some(connection_strict) = self.order_path_connection_for_simp(&current, right)
+                && (!require_strict || strict_so_far || connection_strict)
+            {
+                return true;
             }
             for (edge_left, edge_right, edge_strict) in &order_facts {
                 if let Some(connection_strict) =
@@ -1904,9 +1901,7 @@ impl Assumptions {
                 if left.as_ref().is_subtract_one()
                     && right.as_ref() == &Bitvector32Term::Constant(0) =>
             {
-                let Some(left_before_sub) = left.as_ref().subtract_one_base() else {
-                    return None;
-                };
+                let left_before_sub = left.as_ref().subtract_one_base()?;
                 let zero = Bitvector32Term::Constant(0);
                 (self.has_condition_fact(
                     ConditionTerm::signed_greater_than(left_before_sub.clone(), zero.clone()),
@@ -2707,10 +2702,10 @@ impl Assumptions {
         {
             return true;
         }
-        if let Some(byte_width) = bytes.as_const() {
-            if self.proves_access_from_memory_block(memory, base, byte_width) {
-                return true;
-            }
+        if let Some(byte_width) = bytes.as_const()
+            && self.proves_access_from_memory_block(memory, base, byte_width)
+        {
+            return true;
         }
 
         self.prop_facts.iter().any(|proposition| {
@@ -2739,10 +2734,10 @@ impl Assumptions {
             return true;
         }
 
-        if let Some(byte_width) = bytes.as_const() {
-            if self.proves_loadable_cell_from_region(range_base, range_bytes, base, byte_width) {
-                return true;
-            }
+        if let Some(byte_width) = bytes.as_const()
+            && self.proves_loadable_cell_from_region(range_base, range_bytes, base, byte_width)
+        {
+            return true;
         }
 
         if let Some(byte_offset) = pointer_byte_offset_from_base(base, range_base) {
@@ -2792,20 +2787,16 @@ impl Assumptions {
             return false;
         }
 
-        if byte_width == 4 {
-            if let Some(index) = self.pointer_element_index_from_base(pointer, base) {
-                if let Some(element_count) = int32_element_count_from_bytes(bytes) {
-                    if self.decide(&ConditionTerm::signed_greater_equal(
-                        index.clone(),
-                        Bitvector32Term::Constant(0),
-                    )) == Some(true)
-                        && self.decide(&ConditionTerm::signed_less_than(index, element_count))
-                            == Some(true)
-                    {
-                        return true;
-                    }
-                }
-            }
+        if byte_width == 4
+            && let Some(index) = self.pointer_element_index_from_base(pointer, base)
+            && let Some(element_count) = int32_element_count_from_bytes(bytes)
+            && self.decide(&ConditionTerm::signed_greater_equal(
+                index.clone(),
+                Bitvector32Term::Constant(0),
+            )) == Some(true)
+            && self.decide(&ConditionTerm::signed_less_than(index, element_count)) == Some(true)
+        {
+            return true;
         }
 
         if let Some(byte_offset) = pointer_byte_offset_from_base(pointer, base) {
@@ -3198,30 +3189,28 @@ impl Assumptions {
                 continue;
             };
 
-            if self.proves_resource_contains(right, &CResource::Memory(other.clone())) {
-                if let CResource::Memory(left) = left {
-                    if let Some(interval) = self.fact_range_interval_on_target(
-                        target,
-                        left.base(),
-                        left.start(),
-                        left.end(),
-                    ) {
-                        intervals.push(interval);
-                    }
-                }
+            if self.proves_resource_contains(right, &CResource::Memory(other.clone()))
+                && let CResource::Memory(left) = left
+                && let Some(interval) = self.fact_range_interval_on_target(
+                    target,
+                    left.base(),
+                    left.start(),
+                    left.end(),
+                )
+            {
+                intervals.push(interval);
             }
 
-            if self.proves_resource_contains(left, &CResource::Memory(other.clone())) {
-                if let CResource::Memory(right) = right {
-                    if let Some(interval) = self.fact_range_interval_on_target(
-                        target,
-                        right.base(),
-                        right.start(),
-                        right.end(),
-                    ) {
-                        intervals.push(interval);
-                    }
-                }
+            if self.proves_resource_contains(left, &CResource::Memory(other.clone()))
+                && let CResource::Memory(right) = right
+                && let Some(interval) = self.fact_range_interval_on_target(
+                    target,
+                    right.base(),
+                    right.start(),
+                    right.end(),
+                )
+            {
+                intervals.push(interval);
             }
         }
         range_intervals_cover_target(target, intervals)
@@ -3246,19 +3235,17 @@ impl Assumptions {
                 continue;
             };
 
-            if self.range_covered_by_fact_range(other, right_base, right_start, right_end) {
-                if let Some(interval) =
+            if self.range_covered_by_fact_range(other, right_base, right_start, right_end)
+                && let Some(interval) =
                     self.fact_range_interval_on_target(target, left_base, left_start, left_end)
-                {
-                    intervals.push(interval);
-                }
+            {
+                intervals.push(interval);
             }
-            if self.range_covered_by_fact_range(other, left_base, left_start, left_end) {
-                if let Some(interval) =
+            if self.range_covered_by_fact_range(other, left_base, left_start, left_end)
+                && let Some(interval) =
                     self.fact_range_interval_on_target(target, right_base, right_start, right_end)
-                {
-                    intervals.push(interval);
-                }
+            {
+                intervals.push(interval);
             }
         }
         range_intervals_cover_target(target, intervals)
@@ -3291,7 +3278,7 @@ impl Assumptions {
         start: &Bitvector32Term,
         end: &Bitvector32Term,
     ) -> bool {
-        if byte_width % 4 == 0 {
+        if byte_width.is_multiple_of(4) {
             let range_base = base.offset_by_int32_elements(start.clone());
             if let Some(index) = self.pointer_element_index_from_base(pointer, &range_base) {
                 let range_length = Bitvector32Term::subtract(end.clone(), start.clone());
@@ -3318,7 +3305,7 @@ impl Assumptions {
                     && self.decide(&ConditionTerm::signed_less_than(index, end.clone()))
                         == Some(true);
             }
-            if byte_width > 4 && byte_width % 4 == 0 {
+            if byte_width > 4 && byte_width.is_multiple_of(4) {
                 let element_width = Bitvector32Term::Constant(byte_width / 4);
                 let access_end = Bitvector32Term::add(index.clone(), element_width);
                 return self.decide(&ConditionTerm::signed_less_equal(start.clone(), index))
@@ -3389,16 +3376,15 @@ impl Assumptions {
             }
         }
 
-        if let Some(index) = self.pointer_element_index_from_base(pointer, &range.base) {
-            if self.decide(&ConditionTerm::signed_less_than(
+        if let Some(index) = self.pointer_element_index_from_base(pointer, &range.base)
+            && (self.decide(&ConditionTerm::signed_less_than(
                 index.clone(),
                 range.start.clone(),
             )) == Some(true)
                 || self.decide(&ConditionTerm::signed_less_equal(range.end.clone(), index))
-                    == Some(true)
-            {
-                return true;
-            }
+                    == Some(true))
+        {
+            return true;
         }
 
         self.prop_facts.iter().any(|proposition| {

@@ -212,23 +212,31 @@ fn bitvector_terms_equal_for_memory_resolution(
         return bitvector_terms_equal_for_memory_resolution(&left, &right, assumptions, depth + 1);
     }
     let zero = Bitvector32Term::Constant(0);
-    if let Bitvector32Term::Add(base, addend) = left {
-        if (bitvector_terms_equal_for_memory_resolution(base, right, assumptions, depth + 1)
+    if let Bitvector32Term::Add(base, addend) = left
+        && ((bitvector_terms_equal_for_memory_resolution(base, right, assumptions, depth + 1)
             && bitvector_terms_equal_for_memory_resolution(addend, &zero, assumptions, depth + 1))
             || (bitvector_terms_equal_for_memory_resolution(addend, right, assumptions, depth + 1)
-                && bitvector_terms_equal_for_memory_resolution(base, &zero, assumptions, depth + 1))
-        {
-            return true;
-        }
+                && bitvector_terms_equal_for_memory_resolution(
+                    base,
+                    &zero,
+                    assumptions,
+                    depth + 1,
+                )))
+    {
+        return true;
     }
-    if let Bitvector32Term::Add(base, addend) = right {
-        if (bitvector_terms_equal_for_memory_resolution(left, base, assumptions, depth + 1)
+    if let Bitvector32Term::Add(base, addend) = right
+        && ((bitvector_terms_equal_for_memory_resolution(left, base, assumptions, depth + 1)
             && bitvector_terms_equal_for_memory_resolution(addend, &zero, assumptions, depth + 1))
             || (bitvector_terms_equal_for_memory_resolution(left, addend, assumptions, depth + 1)
-                && bitvector_terms_equal_for_memory_resolution(base, &zero, assumptions, depth + 1))
-        {
-            return true;
-        }
+                && bitvector_terms_equal_for_memory_resolution(
+                    base,
+                    &zero,
+                    assumptions,
+                    depth + 1,
+                )))
+    {
+        return true;
     }
 
     match (left, right) {
@@ -747,21 +755,19 @@ pub(super) fn finite_integer_range_exhausted(
     let mut ranges: BTreeMap<Variable, IntegerRangeFacts> = BTreeMap::new();
 
     for (left, right, strict) in order_facts {
-        match (bitvector_variable(left), signed_bitvector_constant(right)) {
-            (Some(variable), Some(bound)) => {
-                let upper = if *strict { bound - 1 } else { bound };
-                let range = ranges.entry(variable).or_default();
-                range.upper = Some(range.upper.map_or(upper, |current| current.min(upper)));
-            }
-            _ => {}
+        if let (Some(variable), Some(bound)) =
+            (bitvector_variable(left), signed_bitvector_constant(right))
+        {
+            let upper = if *strict { bound - 1 } else { bound };
+            let range = ranges.entry(variable).or_default();
+            range.upper = Some(range.upper.map_or(upper, |current| current.min(upper)));
         }
-        match (signed_bitvector_constant(left), bitvector_variable(right)) {
-            (Some(bound), Some(variable)) => {
-                let lower = if *strict { bound + 1 } else { bound };
-                let range = ranges.entry(variable).or_default();
-                range.lower = Some(range.lower.map_or(lower, |current| current.max(lower)));
-            }
-            _ => {}
+        if let (Some(bound), Some(variable)) =
+            (signed_bitvector_constant(left), bitvector_variable(right))
+        {
+            let lower = if *strict { bound + 1 } else { bound };
+            let range = ranges.entry(variable).or_default();
+            range.lower = Some(range.lower.map_or(lower, |current| current.max(lower)));
         }
     }
 

@@ -1426,21 +1426,21 @@ fn parse_c_struct_layouts(
             ))
         })?;
         for (name, layout) in function.structs() {
-            if let Some(previous) = layouts.insert(name.clone(), layout.clone()) {
-                if previous != *layout {
-                    return Err(ClickError::new(format!(
-                        "conflicting declarations for struct `{name}`"
-                    )));
-                }
+            if let Some(previous) = layouts.insert(name.clone(), layout.clone())
+                && previous != *layout
+            {
+                return Err(ClickError::new(format!(
+                    "conflicting declarations for struct `{name}`"
+                )));
             }
         }
     }
     Ok(layouts)
 }
 
-fn parse_verified_sources<'a>(
+fn parse_verified_sources(
     file: &ClickFile,
-    c_sources: &'a BTreeMap<&str, &str>,
+    c_sources: &BTreeMap<&str, &str>,
 ) -> Result<BTreeMap<String, (String, syntax::C0Function)>, ClickError> {
     if file.verifying_sources.is_empty() {
         if file.function_blocks().is_empty() {
