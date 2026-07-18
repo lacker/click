@@ -307,6 +307,7 @@ pub enum SpecProposition {
         end: SpecExpression,
         element_width: u32,
     },
+    Defined(SpecExpression),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]

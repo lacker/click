@@ -1114,7 +1114,9 @@ fn collect_resource_fact_scalar_assumptions_from_proposition(
     resource_name: &str,
 ) -> Result<(), ClickError> {
     match proposition {
-        ClickProposition::Comparison { .. } | ClickProposition::Loadable { .. } => {
+        ClickProposition::Comparison { .. }
+        | ClickProposition::Loadable { .. }
+        | ClickProposition::Defined { .. } => {
             let source = describe_click_proposition(proposition);
             let mut lowerer = KernelPropositionLowerer::new(
                 values.clone(),
@@ -1273,6 +1275,17 @@ fn collect_resource_fact_reads_from_proposition(
         ClickProposition::Loadable { segment } => {
             collect_resource_fact_reads_from_contract_segment(
                 segment,
+                predicate_definitions,
+                click_function_definitions,
+                visited_predicates,
+                visited_functions,
+                reads,
+                resource_name,
+            )
+        }
+        ClickProposition::Defined { expression } => {
+            collect_resource_fact_reads_from_contract_expression(
+                expression,
                 predicate_definitions,
                 click_function_definitions,
                 visited_predicates,
@@ -2087,6 +2100,11 @@ fn validate_proposition_expression_types(
         ClickProposition::Loadable { segment } => {
             validate_contract_segment_expression_types(segment, variables, click_functions, context)
         }
+        ClickProposition::Defined { expression } => {
+            let _ =
+                infer_contract_expression_type(expression, variables, click_functions, context)?;
+            Ok(())
+        }
         ClickProposition::And(left, right)
         | ClickProposition::Or(left, right)
         | ClickProposition::Implies(left, right) => {
@@ -2698,6 +2716,9 @@ fn validate_predicate_calls_in_proposition(
         ClickProposition::Loadable { segment } => {
             validate_contract_segment_calls(segment, click_functions, context)
         }
+        ClickProposition::Defined { expression } => {
+            validate_contract_expression_calls(expression, click_functions, context)
+        }
         ClickProposition::And(left, right)
         | ClickProposition::Or(left, right)
         | ClickProposition::Implies(left, right) => {
@@ -2893,6 +2914,9 @@ fn validate_if_condition_proposition(
         ClickProposition::Loadable { segment } => {
             validate_contract_segment_calls(segment, click_functions, context)
         }
+        ClickProposition::Defined { expression } => {
+            validate_contract_expression_calls(expression, click_functions, context)
+        }
         ClickProposition::And(left, right)
         | ClickProposition::Or(left, right)
         | ClickProposition::Implies(left, right) => {
@@ -2998,6 +3022,7 @@ fn proposition_contains_old_expression(proposition: &ClickProposition) -> bool {
                 || resource_subject_contains_old_expression(child)
         }
         ClickProposition::Loadable { segment } => contract_segment_contains_old_expression(segment),
+        ClickProposition::Defined { expression } => contains_old_expression(expression),
         ClickProposition::And(left, right)
         | ClickProposition::Or(left, right)
         | ClickProposition::Implies(left, right) => {
@@ -3099,6 +3124,7 @@ fn proposition_contains_at_expression(proposition: &ClickProposition) -> bool {
                 || resource_subject_contains_at_expression(child)
         }
         ClickProposition::Loadable { segment } => contract_segment_contains_at_expression(segment),
+        ClickProposition::Defined { expression } => contains_at_expression(expression),
         ClickProposition::And(left, right)
         | ClickProposition::Or(left, right)
         | ClickProposition::Implies(left, right) => {
@@ -3223,6 +3249,9 @@ fn collect_click_function_calls_in_proposition(
         }
         ClickProposition::Loadable { segment } => {
             collect_click_function_calls_in_segment(segment, calls);
+        }
+        ClickProposition::Defined { expression } => {
+            collect_click_function_calls(expression, calls);
         }
         ClickProposition::And(left, right)
         | ClickProposition::Or(left, right)

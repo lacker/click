@@ -780,6 +780,9 @@ pub(super) fn describe_click_proposition(proposition: &ClickProposition) -> Stri
         ClickProposition::Loadable { segment } => {
             format!("loadable({})", describe_contract_segment(segment))
         }
+        ClickProposition::Defined { expression } => {
+            format!("defined({})", describe_contract_expression(expression))
+        }
         ClickProposition::And(left, right) => describe_binary_click_proposition(left, "&&", right),
         ClickProposition::Or(left, right) => describe_binary_click_proposition(left, "||", right),
         ClickProposition::Not(proposition) => {

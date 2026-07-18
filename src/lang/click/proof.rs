@@ -1850,6 +1850,40 @@ pub(super) enum StatementFactTransportPolicy {
     Automatic,
 }
 
+fn exact_fact_is_available(required: &Proposition, available: &[Proposition]) -> bool {
+    available
+        .iter()
+        .any(|fact| exact_fact_contains_conjunct(fact, required))
+}
+
+fn exact_fact_contains_conjunct(fact: &Proposition, required: &Proposition) -> bool {
+    fact == required
+        || matches!(fact, Proposition::And(left, right)
+            if exact_fact_contains_conjunct(left, required)
+                || exact_fact_contains_conjunct(right, required))
+}
+
+fn exact_facts_directly_conflict(left: &Proposition, right: &Proposition) -> bool {
+    match (left, right) {
+        (Proposition::And(first, second), _) => {
+            exact_facts_directly_conflict(first, right)
+                || exact_facts_directly_conflict(second, right)
+        }
+        (_, Proposition::And(first, second)) => {
+            exact_facts_directly_conflict(left, first)
+                || exact_facts_directly_conflict(left, second)
+        }
+        (
+            Proposition::ConditionIs(left_condition, left_value),
+            Proposition::ConditionIs(right_condition, right_value),
+        ) => left_condition == right_condition && left_value != right_value,
+        (Proposition::Not(body), proposition) | (proposition, Proposition::Not(body)) => {
+            body.as_ref() == proposition
+        }
+        _ => false,
+    }
+}
+
 #[derive(Clone, Copy)]
 enum LoopPreservationSource {
     Automatic,
@@ -2003,6 +2037,14 @@ fn certified_transitions_from_execution(
     let transitions = execution
         .paths()
         .iter()
+        .filter(|path| {
+            !matches!(prerequisite_policy, StatementPrerequisitePolicy::Exact)
+                || !path.facts().iter().any(|path_fact| {
+                    pure_facts.iter().any(|available| {
+                        exact_facts_directly_conflict(available, path_fact.proposition())
+                    })
+                })
+        })
         .map(|path| {
             let mut successor_facts = pure_facts.to_vec();
             successor_facts.extend(path.facts().iter().map(|fact| fact.proposition().clone()));
@@ -2019,7 +2061,7 @@ fn certified_transitions_from_execution(
                 let proposition = obligation.proposition();
                 match prerequisite_policy {
                     StatementPrerequisitePolicy::Exact => {
-                        !pure_facts.contains(proposition)
+                        !exact_fact_is_available(proposition, pure_facts)
                             && !matches!(normalize_proposition(proposition), SimpProposition::True)
                     }
                     StatementPrerequisitePolicy::Contextual => {
@@ -5765,7 +5807,7 @@ fn execute_step_from_execution_point(
                 && let Some(required) = safe
                     .pure_facts
                     .iter()
-                    .find(|fact| !available_pure_facts.contains(fact))
+                    .find(|fact| !exact_fact_is_available(fact, available_pure_facts))
             {
                 return Err(ClickError::new(format!(
                     "`{claim_label}` proof step {step_index}: `{step_name}` is missing exact prerequisite needed to select the safe statement transition: {required:?}"

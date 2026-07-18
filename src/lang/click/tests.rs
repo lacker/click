@@ -1286,7 +1286,7 @@ fn parses_and_classifies_simple_and_smart_tactics() {
     ));
     assert!(matches!(
         ProofStep::ExecuteStep.class(),
-        ProofStepClass::Fuzzy(FuzzyTactic::ExecuteStep)
+        ProofStepClass::Smart(SmartProofStep::ExecuteStep)
     ));
     assert!(matches!(
         ProofStep::Step.class(),
@@ -1296,6 +1296,56 @@ fn parses_and_classifies_simple_and_smart_tactics() {
         ProofStep::ExecuteRest.class(),
         ProofStepClass::Macro(DeterministicProofMacro::ExecuteRest)
     ));
+}
+
+#[test]
+fn defined_fact_makes_simple_statement_step_explicit() {
+    let c_source = r#"
+            int32 increment(int32 x) {
+                return x + 1;
+            }
+        "#;
+    let click_source = r#"
+            verifying "increment.c";
+
+            theorem increment_is_defined(x: int32) {
+                requires x < 2147483647;
+                ensures defined(x + 1) by {
+                    simp();
+                }
+            }
+
+            int32 increment(int32 x) {
+                requires x < 2147483647;
+                ensures result == x + 1;
+            } by {
+                apply(increment_is_defined(x));
+                step();
+                simp();
+            }
+        "#;
+
+    verify_c0_sources(click_source, &[("increment.c", c_source)])
+        .expect("an explicit definedness theorem should satisfy simple step");
+}
+
+#[test]
+fn defined_rejects_concrete_undefined_expression() {
+    let click_source = r#"
+            theorem overflow_is_defined() {
+                ensures defined(2147483647 + 1) by {
+                    normalize();
+                }
+            }
+        "#;
+
+    let error = verify_c0_sources(click_source, &[])
+        .expect_err("a concretely overflowing expression is not defined");
+    assert!(
+        error.message().contains("goal did not normalize to true"),
+        "{}",
+        error.message()
+    );
 }
 
 #[test]

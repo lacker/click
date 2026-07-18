@@ -850,6 +850,45 @@ pub fn proposition_and_all(mut propositions: Vec<Proposition>) -> Proposition {
         .fold(first, |right, left| proposition_and(left, right))
 }
 
+/// Expands C expression definedness into the exact pure proposition under
+/// which evaluation reaches a value rather than undefined behavior.
+pub fn c_expression_definedness_proposition(
+    state: &CState,
+    expression: &CExpression,
+) -> Result<Proposition, ExecutionLimit> {
+    let paths = evaluate_c_expression_paths(
+        state,
+        expression,
+        &Assumptions::new(),
+        &mut ExecutionBudget::default(),
+    )?;
+    let mut normal_paths = paths.into_iter().filter_map(|path| {
+        if !matches!(path.outcome, CExpressionOutcome::Value(_)) {
+            return None;
+        }
+        Some(proposition_and_all(
+            path.facts
+                .into_iter()
+                .map(|fact| fact.proposition().clone())
+                .chain(
+                    path.obligations
+                        .into_iter()
+                        .map(|obligation| obligation.proposition().clone()),
+                )
+                .collect(),
+        ))
+    });
+    let Some(first) = normal_paths.next() else {
+        return Ok(Proposition::ConditionIs(
+            ConditionTerm::Constant(false),
+            true,
+        ));
+    };
+    Ok(normal_paths.fold(first, |left, right| {
+        Proposition::Or(Box::new(left), Box::new(right))
+    }))
+}
+
 pub fn substitute_int32_variable_in_proposition(
     proposition: &Proposition,
     variable: Variable,

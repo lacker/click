@@ -202,7 +202,8 @@ fn proposition_supported_in_opaque_contract(proposition: &ClickProposition) -> b
     match proposition {
         ClickProposition::Separate { .. }
         | ClickProposition::Contains { .. }
-        | ClickProposition::Loadable { .. } => true,
+        | ClickProposition::Loadable { .. }
+        | ClickProposition::Defined { .. } => true,
         ClickProposition::And(left, right)
         | ClickProposition::Or(left, right)
         | ClickProposition::Implies(left, right) => {
@@ -465,6 +466,9 @@ impl AnnotationLowerer<'_> {
                     element_width: self.contract_segment_element_width(segment),
                 })
             }
+            ClickProposition::Defined { expression } => Ok(SpecProposition::Defined(
+                self.lower_contract_expression_to_spec(expression, environment)?,
+            )),
             ClickProposition::And(left, right) => Ok(SpecProposition::And(
                 Box::new(self.click_proposition_to_spec_proposition(left, environment)?),
                 Box::new(self.click_proposition_to_spec_proposition(right, environment)?),
@@ -1538,6 +1542,9 @@ pub(super) fn unfold_click_predicates_in_proposition_with_active(
         ClickProposition::Loadable { segment } => Ok(ClickProposition::Loadable {
             segment: segment.clone(),
         }),
+        ClickProposition::Defined { expression } => Ok(ClickProposition::Defined {
+            expression: expression.clone(),
+        }),
         ClickProposition::And(left, right) => Ok(ClickProposition::And(
             Box::new(unfold_click_predicates_in_proposition_with_active(
                 predicate_environment,
@@ -1695,6 +1702,9 @@ pub(super) fn substitute_click_proposition(
         }),
         ClickProposition::Loadable { segment } => Ok(ClickProposition::Loadable {
             segment: substitute_contract_segment(segment, substitutions)?,
+        }),
+        ClickProposition::Defined { expression } => Ok(ClickProposition::Defined {
+            expression: substitute_contract_expression(expression, substitutions)?,
         }),
         ClickProposition::And(left, right) => Ok(ClickProposition::And(
             Box::new(substitute_click_proposition(left, substitutions)?),
@@ -2138,6 +2148,9 @@ pub(super) fn apply_contract_let_expressions_to_proposition(
         ClickProposition::Loadable { segment } => Ok(ClickProposition::Loadable {
             segment: apply_contract_lets_to_segment(segment, bindings)?,
         }),
+        ClickProposition::Defined { expression } => Ok(ClickProposition::Defined {
+            expression: apply_contract_lets_to_expression(expression, bindings)?,
+        }),
         ClickProposition::And(left, right) => Ok(ClickProposition::And(
             Box::new(apply_contract_let_expressions_to_proposition(
                 *left, bindings,
@@ -2402,6 +2415,9 @@ pub(super) fn collect_click_proposition_referenced_names(
         }
         ClickProposition::Loadable { segment } => {
             names.extend(contract_segment_referenced_names(segment));
+        }
+        ClickProposition::Defined { expression } => {
+            collect_contract_expression_referenced_names(expression, names);
         }
         ClickProposition::And(left, right)
         | ClickProposition::Or(left, right)
@@ -2893,6 +2909,7 @@ pub(super) fn click_proposition_to_c_expression(
         | ClickProposition::Separate { .. }
         | ClickProposition::Contains { .. }
         | ClickProposition::Loadable { .. }
+        | ClickProposition::Defined { .. }
         | ClickProposition::PredicateCall { .. } => None,
     }
 }
@@ -4171,6 +4188,22 @@ impl KernelPropositionLowerer {
                 )
                 .unwrap_or(4);
                 loadable_segment_prop(&self.memory, segment, element_width)
+            }
+            ClickProposition::Defined { expression } => {
+                let expression = contract_expression_to_c_fragment(expression).ok_or_else(|| {
+                    ClickError::new(
+                        "`defined(...)` currently requires an expression without `old`, `at`, folds, lets, or Click function calls",
+                    )
+                })?;
+                let state = self.values.iter().fold(
+                    CState::new().with_memory(self.memory.clone()),
+                    |state, (name, value)| state.with_local(name.clone(), value.clone()),
+                );
+                c_expression_definedness_proposition(&state, &expression).map_err(|limit| {
+                    ClickError::new(format!(
+                        "`defined(...)` elaboration hit execution limit {limit:?}"
+                    ))
+                })
             }
             ClickProposition::And(left, right) => Ok(Proposition::And(
                 Box::new(self.lower_requirement_proposition(left)?),

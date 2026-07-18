@@ -1691,6 +1691,9 @@ pub(super) fn collect_spec_proposition_bitvector_variables(
             collect_spec_expression_bitvector_variables(start, variables);
             collect_spec_expression_bitvector_variables(end, variables);
         }
+        SpecProposition::Defined(expression) => {
+            collect_spec_expression_bitvector_variables(expression, variables);
+        }
     }
 }
 

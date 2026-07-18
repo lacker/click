@@ -69,8 +69,8 @@ Common steps include:
   prerequisites and without automatic fact transport.
 - `execute_step();`: execute one supported straight-line C statement from the
   current execution point using contextual prerequisite and automatic
-  transport reasoning. It remains classified as fuzzy until every generated
-  prerequisite is expressible in surface Click.
+  transport reasoning. It is smart automation over the explicit statement and
+  fact-transport rules.
 - `execute_rest();`: execute symbolically from the current execution point to
   function exit. From function entry, this executes the whole C function.
 - `symbolic_execute();`: deprecated source alias for `execute_rest();`; both
@@ -78,6 +78,7 @@ Common steps include:
 - `execute_until(statement(N));`: advance from the current execution point to
   a forward, reachable statement entry point. An unresolved branch still
   requires explicit arm selection.
+
 - `unfold(name);`: open a named predicate.
 - `unfold(resource);`: expose one body layer of an owned composite resource.
 - `fold(resource);`: rebuild one owned composite resource from its body.
@@ -93,6 +94,10 @@ Common steps include:
 - `transport(source, target);`: apply one explicit frame-transport theorem
   between memory snapshots.
 - `frame();`: prove an effect claim.
+
+Use `defined(expression)` to state expression safety explicitly. For example,
+a theorem can derive `defined(x + 1)` from `x < 2147483647`; after applying that
+theorem, `step()` can execute `return x + 1` without contextual search.
 
 The end of the `by { ... }` block checks the claim.
 

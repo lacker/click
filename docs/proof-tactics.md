@@ -50,6 +50,7 @@ using the context.
 | omitted `by` / `by auto;` | Orchestrate execution and proposition proving. |
 | `by simp;` / `simp()` | Use the current simplifier, equalities, bounds, and supported solver rules. |
 | `by frame;` | Prove an effect claim using frame reasoning. |
+| `execute_step()` | Advance one statement while contextually proving prerequisites and automatically transporting supported framed facts. |
 
 `simp()` remains smart even though its algorithm is deterministic: it performs
 nontrivial contextual reasoning rather than one fixed kernel rule. Determinism
@@ -62,7 +63,6 @@ certificate. Until that exists, smart tactics remain part of stored proofs.
 
 | Tactic | Boundary still to clarify |
 | --- | --- |
-| `execute_step()` | Orchestrates contextual prerequisite proving and automatic transport; some generated prerequisites are not yet expressible in surface Click. |
 | `execute_then_step()` / `execute_else_step()` | Select one C branch while proving its condition through current execution machinery. |
 | `bounded_execute()` | Combines bounded program execution with obligation handling. |
 | `loop_vc(loop(N))` | Checks a collection of generated loop obligations. |
@@ -84,15 +84,20 @@ statement. Their proof behavior differs:
 - `transport(source, target)` explicitly moves one atomic condition fact to the
   current snapshot when a certified effect fact proves that its referenced
   memory was framed.
-- `execute_step()` is the current convenience command. It invokes contextual
+- `execute_step()` is smart automation. It invokes contextual
   prerequisite reasoning and attempts bounded automatic transport for eligible
   atomic facts.
 
-The remaining gap is surface expressibility. For example, `step()` can report
-the exact kernel proposition that an addition does not overflow, but Click
-cannot yet state that proposition directly. Until a surface predicate such as
-`defined(expression)` and its explicit theorems exist, `execute_step()` remains
-fuzzy rather than smart.
+`defined(expression)` is the surface form for a C expression's safety domain.
+It expands deterministically, using the kernel C evaluator, to the finite pure
+proposition under which evaluation reaches a value instead of undefined
+behavior. For example, `defined(x + 1)` expands to the exact signed-addition
+no-overflow fact expected by `step()`.
+
+The intended explicit pattern is to prove or apply a theorem concluding
+`defined(expression)`, then call `step()`. `execute_step()` searches for the
+same prerequisite from the current context and is therefore a smart shorthand
+for that longer proof.
 
 ## Macros And Control Flow
 

@@ -17,9 +17,9 @@ use crate::kernel::{
     ExecutionPureFact, Pointer, PointerOffsetTerm, ProofObligation, Proposition, ResourceContext,
     ResourceContextValidityError, Sort, SpecExpression, SpecMemory, SpecPredicateArgument,
     SpecProposition, SpecResource, SymbolicCExecution, Term, Theorem, Variable,
-    abstract_c_state_for_join, c_function, c_function_entry_state,
-    c_function_outcome_from_statement_outcome, c_function_specification, c_if, c_labeled_assert,
-    c_loop_effects_hold_at_back_edge, c_loop_invariants_hold_at_back_edge,
+    abstract_c_state_for_join, c_expression_definedness_proposition, c_function,
+    c_function_entry_state, c_function_outcome_from_statement_outcome, c_function_specification,
+    c_if, c_labeled_assert, c_loop_effects_hold_at_back_edge, c_loop_invariants_hold_at_back_edge,
     c_loop_invariants_hold_at_entry, c_loop_preservation_contexts,
     c_pointer_offsets_proven_equal_for_effect, c_pointer_value, c_seq,
     c_verified_function_contract_claim, c_verified_function_rule,
@@ -276,6 +276,9 @@ pub enum ClickProposition {
     },
     Loadable {
         segment: ContractSegment,
+    },
+    Defined {
+        expression: ContractExpression,
     },
     And(Box<ClickProposition>, Box<ClickProposition>),
     Or(Box<ClickProposition>, Box<ClickProposition>),
@@ -553,7 +556,6 @@ pub enum SimpleTactic {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FuzzyTactic {
-    ExecuteStep,
     ExecuteThenStep,
     ExecuteElseStep,
     BoundedExecute,
@@ -564,6 +566,7 @@ pub enum FuzzyTactic {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SmartProofStep {
+    ExecuteStep,
     Simp,
 }
 
@@ -603,8 +606,8 @@ impl ProofStep {
             Self::Normalize => ProofStepClass::Simple(SimpleTactic::Normalize),
             Self::Rewrite(_) => ProofStepClass::Simple(SimpleTactic::Rewrite),
             Self::Transport { .. } => ProofStepClass::Simple(SimpleTactic::FactTransport),
+            Self::ExecuteStep => ProofStepClass::Smart(SmartProofStep::ExecuteStep),
             Self::Simp => ProofStepClass::Smart(SmartProofStep::Simp),
-            Self::ExecuteStep => ProofStepClass::Fuzzy(FuzzyTactic::ExecuteStep),
             Self::ExecuteThenStep => ProofStepClass::Fuzzy(FuzzyTactic::ExecuteThenStep),
             Self::ExecuteElseStep => ProofStepClass::Fuzzy(FuzzyTactic::ExecuteElseStep),
             Self::BoundedExecute => ProofStepClass::Fuzzy(FuzzyTactic::BoundedExecute),

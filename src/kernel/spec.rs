@@ -277,6 +277,41 @@ pub(super) fn lower_spec_proposition_at_state_with_loop_entry(
             assumptions,
             budget,
         ),
+        SpecProposition::Defined(expression) => {
+            let paths = evaluate_spec_expression_paths_with_loop_entry(
+                state,
+                expression,
+                loop_entry_state,
+                &Assumptions::new(),
+                budget,
+            )?;
+            let mut normal_paths = paths.into_iter().map(|path| {
+                proposition_and_all(
+                    path.facts
+                        .into_iter()
+                        .map(|fact| fact.proposition().clone())
+                        .chain(
+                            path.obligations
+                                .into_iter()
+                                .map(|obligation| obligation.proposition().clone()),
+                        )
+                        .collect(),
+                )
+            });
+            let proposition = normal_paths.next().map_or_else(
+                || Proposition::ConditionIs(ConditionTerm::Constant(false), true),
+                |first| {
+                    normal_paths.fold(first, |left, right| {
+                        Proposition::Or(Box::new(left), Box::new(right))
+                    })
+                },
+            );
+            Ok(vec![SpecPropositionPath {
+                proposition,
+                facts: Vec::new(),
+                obligations: Vec::new(),
+            }])
+        }
     }
 }
 

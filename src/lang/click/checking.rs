@@ -1043,6 +1043,18 @@ pub(super) fn lower_predicate_body_proposition_with_environment(
                     .unwrap_or(4);
             loadable_segment_prop(memory, segment, element_width).map_err(|error| error.message)
         }
+        ClickProposition::Defined { expression } => {
+            let expression = contract_expression_to_c_fragment(expression).ok_or_else(|| {
+                "`defined(...)` currently requires an expression without `old`, `at`, folds, lets, or Click function calls".to_string()
+            })?;
+            let state = values.iter().fold(
+                CState::new().with_memory(memory.clone()),
+                |state, (name, value)| state.with_local(name.clone(), value.clone()),
+            );
+            c_expression_definedness_proposition(&state, &expression).map_err(|limit| {
+                format!("`defined(...)` elaboration hit execution limit {limit:?}")
+            })
+        }
         ClickProposition::And(left, right) => Ok(Proposition::And(
             Box::new(lower_predicate_body_proposition_with_environment(
                 values,
@@ -3489,6 +3501,21 @@ pub(super) fn lower_outcome_proposition_with_environment(
                     .unwrap_or(4);
             loadable_segment_prop(post_state.memory(), segment, element_width)
                 .map_err(|error| error.message)
+        }
+        ClickProposition::Defined { expression } => {
+            let expression = contract_expression_to_c_fragment(expression).ok_or_else(|| {
+                "`defined(...)` currently requires an expression without `old`, `at`, folds, lets, or Click function calls".to_string()
+            })?;
+            let mut state = post_state.clone();
+            for (name, value) in values.iter() {
+                state = state.with_local(name.clone(), value.clone());
+            }
+            if let Some(result) = result {
+                state = state.with_local("result", result.clone());
+            }
+            c_expression_definedness_proposition(&state, &expression).map_err(|limit| {
+                format!("`defined(...)` elaboration hit execution limit {limit:?}")
+            })
         }
         ClickProposition::And(left, right) => Ok(Proposition::And(
             Box::new(lower_outcome_proposition_with_environment(

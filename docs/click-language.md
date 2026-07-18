@@ -230,6 +230,7 @@ requires loadable(p[0..n]);
 requires loadable((p + 1)[0..1]);
 requires loadable(p[0..n]);
 requires separate(memory(dst[0..n]), memory(src[0..n]));
+requires defined(x + 1);
 views p[0..1];
 consumes p[0..1];
 ```
@@ -246,6 +247,13 @@ syntax is Click contract syntax, not C fragment syntax.
 `loadable(base[start..end])` is the proposition form of memory loadability
 for a segment. Use it when the fact needs to appear where Click expects a
 proposition, such as a composite resource `fact`.
+
+`defined(expression)` is a pure proposition stating that evaluating the C0
+expression reaches a value rather than undefined behavior. Click elaborates it
+with the kernel's C expression semantics, so signed overflow, division, shifts,
+and memory-load obligations share the same rules as execution. It currently
+accepts C0 expression fragments; `old`, `at`, folds, lets, and Click function
+calls inside `defined(...)` are not yet supported.
 
 `requires` can also use Click propositions, but direct memory reads in
 requirements are intentionally limited. If a precondition needs memory reads,

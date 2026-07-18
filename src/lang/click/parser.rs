@@ -1412,6 +1412,14 @@ impl Parser {
             return Ok(ClickProposition::Loadable { segment });
         }
 
+        if self.peek_ident() == Some("defined") && self.peek_next() == Some(&Token::LParen) {
+            self.position += 1;
+            self.expect(Token::LParen)?;
+            let expression = self.parse_contract_expression()?;
+            self.expect(Token::RParen)?;
+            return Ok(ClickProposition::Defined { expression });
+        }
+
         if matches!(self.peek(), Some(Token::Ident(_)))
             && self.peek_ident() != Some("old")
             && self.peek_ident() != Some("at")
