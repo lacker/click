@@ -57,6 +57,7 @@ int32 owned_split_buffer_set_left(
     unfold(owned_split_buffer(owner));
     execute_rest();
     fold(owned_split_buffer(owner));
+    have index < index + 1 by { simp(); }
     frame();
     simp();
 }
@@ -76,6 +77,7 @@ int32 owned_split_buffer_set_right(
     unfold(owned_split_buffer(owner));
     execute_rest();
     fold(owned_split_buffer(owner));
+    have index < index + 1 by { simp(); }
     frame();
     simp();
 }
@@ -91,6 +93,14 @@ int32 owned_split_buffer_move_right(struct owned_split_buffer* owner) {
 } by {
     unfold(owned_split_buffer(owner));
     execute_rest();
+    have 0 <= owner->split by { simp(); }
+    have owner->split <= owner->len by { simp(); }
+    have separate(
+        memory(owner[0..4]),
+        memory((owner->data)[0..owner->len])
+    ) by {
+        simp();
+    }
     fold(owned_split_buffer(owner));
     frame();
     simp();

@@ -71,6 +71,14 @@ int32 buffer_push(struct buffer* owner, int32 value) {
 } by {
     unfold(owned_buffer(owner));
     execute_rest();
+    have 0 <= owner->len by { simp(); }
+    have owner->len < owner->cap by { simp(); }
+    have separate(
+        memory(owner[0..4]),
+        memory((owner->data)[0..owner->cap])
+    ) by {
+        simp();
+    }
     fold(owned_buffer(owner));
     frame();
     simp();

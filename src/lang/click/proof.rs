@@ -1895,8 +1895,12 @@ fn certified_condition_transitions(
     pure_facts: &[Proposition],
     condition: &CExpression,
     context_label: &str,
+    prerequisite_policy: StatementPrerequisitePolicy,
 ) -> Result<Vec<CertifiedConditionTransition>, ClickError> {
-    let assumptions = assumptions_from_propositions(pure_facts);
+    let assumptions = match prerequisite_policy {
+        StatementPrerequisitePolicy::Exact => Assumptions::new(),
+        StatementPrerequisitePolicy::Contextual => assumptions_from_propositions(pure_facts),
+    };
     let evaluation =
         prove_symbolic_c_condition_evaluation(state.clone(), condition.clone(), assumptions);
     if let Some(limit) = evaluation.limit() {
@@ -1907,14 +1911,34 @@ fn certified_condition_transitions(
     evaluation
         .paths()
         .iter()
+        .filter(|path| {
+            !matches!(prerequisite_policy, StatementPrerequisitePolicy::Exact)
+                || !path.facts().iter().any(|path_fact| {
+                    pure_facts.iter().any(|available| {
+                        exact_facts_directly_conflict(available, path_fact.proposition())
+                    })
+                })
+        })
         .map(|path| {
             let mut successor_facts = pure_facts.to_vec();
             successor_facts.extend(path.facts().iter().map(|fact| fact.proposition().clone()));
-            let successor_assumptions = assumptions_from_propositions(&successor_facts);
             if let Some(obligation) = path
                 .obligations()
                 .iter()
-                .find(|obligation| !successor_assumptions.proves(obligation.proposition()))
+                .find(|obligation| match prerequisite_policy {
+                    StatementPrerequisitePolicy::Exact => {
+                        !exact_fact_is_available(obligation.proposition(), pure_facts)
+                            && !matches!(
+                                normalize_proposition(obligation.proposition()),
+                                SimpProposition::True
+                            )
+                    }
+                    StatementPrerequisitePolicy::Contextual => {
+                        let successor_assumptions =
+                            assumptions_from_propositions(&successor_facts);
+                        !successor_assumptions.proves(obligation.proposition())
+                    }
+                })
             {
                 return Err(ClickError::new(format!(
                     "{context_label} is missing condition prerequisite{}: {:?}",
@@ -2331,6 +2355,7 @@ fn split_execution_proof_branch_contexts(
             &context.pure_facts,
             condition,
             "execution proof traversal",
+            StatementPrerequisitePolicy::Contextual,
         )? {
             let next = ExecutionProofContext {
                 state: context.state.clone(),
@@ -3970,7 +3995,7 @@ fn finish_ordered_proof_replay(
                             }
                             let claim_label =
                                 function_claim_label(function_block.signature().name(), claim);
-                            check_function_claim(
+                            check_effect_claim_exact(
                                 &claim_label,
                                 path_index,
                                 &path.execution_facts(),
@@ -3980,10 +4005,6 @@ fn finish_ordered_proof_replay(
                                 arguments,
                                 pre_state,
                                 &outcome,
-                                predicate_environment,
-                                click_function_environment,
-                                &replay.program_point_states,
-                                &unfolded_predicates,
                             )?;
                             closed_claims[claim_index] = true;
                         }
@@ -4382,7 +4403,7 @@ fn replay_linear_steps(
                 assumptions = assumptions_from_propositions(&requirement_pure_facts);
             }
             ProofStep::ExecuteThenStep | ProofStep::ExecuteElseStep => {
-                execute_selected_branch_step_from_execution_point(
+                execute_branch_step_from_execution_point(
                     &mut replay,
                     &mut state,
                     &mut requirement_pure_facts,
@@ -4393,7 +4414,9 @@ fn replay_linear_steps(
                     function_environment,
                     claim_label,
                     step_index,
-                    matches!(step, ProofStep::ExecuteThenStep),
+                    Some(matches!(step, ProofStep::ExecuteThenStep)),
+                    StatementPrerequisitePolicy::Contextual,
+                    StatementFactTransportPolicy::Automatic,
                 )?;
                 assumptions = assumptions_from_propositions(&requirement_pure_facts);
             }
@@ -5376,7 +5399,7 @@ fn resource_is_direct_observed_core(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn execute_selected_branch_step_from_execution_point(
+fn execute_branch_step_from_execution_point(
     replay: &mut ProofStepReplayState,
     state: &mut CState,
     available_pure_facts: &mut Vec<Proposition>,
@@ -5387,12 +5410,15 @@ fn execute_selected_branch_step_from_execution_point(
     function_environment: &CExecutionEnvironment,
     claim_label: &str,
     step_index: usize,
-    take_then: bool,
+    requested_branch: Option<bool>,
+    prerequisite_policy: StatementPrerequisitePolicy,
+    fact_transport_policy: StatementFactTransportPolicy,
 ) -> Result<(), ClickError> {
-    let step_name = if take_then {
-        "execute_then_step"
-    } else {
-        "execute_else_step"
+    let step_name = match requested_branch {
+        Some(true) => "execute_then_step",
+        Some(false) => "execute_else_step",
+        None if matches!(prerequisite_policy, StatementPrerequisitePolicy::Exact) => "step",
+        None => "execute_step",
     };
     let statement_index = replay.frontier.next_statement_index;
     let source_region = replay.source_layout.statement(statement_index).ok_or_else(|| {
@@ -5450,8 +5476,8 @@ fn execute_selected_branch_step_from_execution_point(
             CExecutionSemantics::APPLY_VERIFIED_RULES,
             &transition_label,
             &mut replay.next_opaque_call,
-            StatementPrerequisitePolicy::Contextual,
-            StatementFactTransportPolicy::Automatic,
+            prerequisite_policy,
+            fact_transport_policy,
         )?;
         let [transition] = transitions.as_slice() else {
             return Err(ClickError::new(format!(
@@ -5474,9 +5500,12 @@ fn execute_selected_branch_step_from_execution_point(
         available_pure_facts,
         &condition,
         &transition_label,
+        prerequisite_policy,
     )?;
     if condition_transitions.len() != 1 {
-        let expected = if take_then { "true" } else { "false" };
+        let expected = requested_branch.map_or("one exact truth value", |take_then| {
+            if take_then { "true" } else { "false" }
+        });
         return Err(ClickError::new(format!(
             "`{claim_label}` proof step {step_index}: `{step_name}` could not prove that the next C `if` condition `{}` is {expected}; got {} feasible condition paths\n{}",
             describe_c_expression(&condition),
@@ -5495,16 +5524,20 @@ fn execute_selected_branch_step_from_execution_point(
         .next()
         .expect("one condition transition was required");
     let selected_then = condition_transition.is_true;
-    if selected_then != take_then {
+    if requested_branch.is_some_and(|take_then| selected_then != take_then) {
         let actual = if selected_then { "then" } else { "else" };
         return Err(ClickError::new(format!(
             "`{claim_label}` proof step {step_index}: `{step_name}` requested the {} branch, but current pure facts prove the {actual} branch",
-            if take_then { "then" } else { "else" }
+            if requested_branch == Some(true) {
+                "then"
+            } else {
+                "else"
+            }
         )));
     }
 
     *available_pure_facts = condition_transition.pure_facts;
-    let selected_branch = if take_then {
+    let selected_branch = if selected_then {
         *then_branch
     } else {
         *else_branch
@@ -5514,7 +5547,7 @@ fn execute_selected_branch_step_from_execution_point(
         next_statement_index: source_region.continuation_node,
         enclosing_statement_index: Some(statement_index),
     });
-    replay.frontier.next_statement_index = if take_then {
+    replay.frontier.next_statement_index = if selected_then {
         then_statement_index
     } else {
         else_statement_index
@@ -5689,6 +5722,23 @@ fn execute_step_from_execution_point(
             "`{claim_label}` proof step {step_index}: `{step_name}` could not resolve source statement({statement_index})"
         ))
     })?;
+    if matches!(source_region.kind, SourceStatementKind::If { .. }) {
+        return execute_branch_step_from_execution_point(
+            replay,
+            state,
+            available_pure_facts,
+            function_block,
+            function,
+            parameters,
+            arguments,
+            function_environment,
+            claim_label,
+            step_index,
+            None,
+            prerequisite_policy,
+            fact_transport_policy,
+        );
+    }
     let loop_index = match source_region.kind {
         SourceStatementKind::Loop { loop_index } => Some(loop_index),
         SourceStatementKind::Plain | SourceStatementKind::If { .. } => None,
@@ -7372,10 +7422,7 @@ fn fold_composite_resources_on_outcome(
                     ))
                 })?;
             let program_point_states = ProgramPointStates::new();
-            prove_ensure_proposition_by_simp(
-                claim_label,
-                path_index,
-                execution_pure_facts,
+            let required = lower_ensure_proposition_goal(
                 available_pure_facts,
                 &fact,
                 parameters,
@@ -7387,13 +7434,32 @@ fn fold_composite_resources_on_outcome(
                 &program_point_states,
                 unfolded_predicates,
             )
-            .map_err(|error| {
+            .map_err(|message| {
                 ClickError::new(format!(
-                    "`{claim_label}` path {path_index}: `fold({})` fact failed: {}",
-                    describe_resource_clause(resource),
-                    error.message()
+                    "`{claim_label}` path {path_index}: could not lower exact `fold({})` fact: {message}",
+                    describe_resource_clause(resource)
                 ))
             })?;
+            if !exact_fact_is_available(&required, available_pure_facts)
+                && !matches!(normalize_proposition(&required), SimpProposition::True)
+            {
+                let resources = match &outcome {
+                    CFunctionOutcome::Return { state, .. } => state.resources().facts(),
+                    _ => pre_state.resources().facts(),
+                };
+                return Err(ClickError::new(format!(
+                    "`{claim_label}` path {path_index}: `fold({})` requires an exact body fact: {}",
+                    describe_resource_clause(resource),
+                    describe_missing_pure_fact(
+                        &required,
+                        available_pure_facts,
+                        resources,
+                        parameters,
+                        arguments,
+                        execution_pure_facts,
+                    )
+                )));
+            }
         }
 
         let CFunctionOutcome::Return { value, state } = outcome else {
@@ -7800,8 +7866,7 @@ fn validate_function_frame_step(
         };
         let mut path_requirements = requirement_pure_facts.to_vec();
         path_requirements.extend(path.facts().iter().map(|fact| fact.proposition().clone()));
-        let program_point_states = ProgramPointStates::new();
-        check_function_claim(
+        check_effect_claim_exact(
             claim_label,
             path_index,
             &path.execution_facts(),
@@ -7811,14 +7876,40 @@ fn validate_function_frame_step(
             arguments,
             state,
             &outcome,
-            &PredicateEnvironment::new(&[]),
-            &ClickFunctionEnvironment::new(&[]),
-            &program_point_states,
-            &[],
         )?;
     }
 
     Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn check_effect_claim_exact(
+    claim_label: &str,
+    path_index: usize,
+    execution_pure_facts: &[ExecutionPureFact],
+    available_pure_facts: &[Proposition],
+    claim: &FunctionClaimRef<'_>,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    pre_state: &CState,
+    outcome: &CFunctionOutcome,
+) -> Result<(), ClickError> {
+    let FunctionClaimRef::Effect(_, effect_clause) = claim else {
+        return Err(ClickError::new(format!(
+            "`frame()` requires an effect claim for `{claim_label}`"
+        )));
+    };
+    prove_effect_clause_exact(
+        claim_label,
+        path_index,
+        execution_pure_facts,
+        available_pure_facts,
+        effect_clause.effect(),
+        parameters,
+        arguments,
+        pre_state,
+        outcome,
+    )
 }
 
 enum AutoExecutionKind<'a> {

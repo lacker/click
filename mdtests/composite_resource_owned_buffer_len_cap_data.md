@@ -54,12 +54,22 @@ int32 push_one(struct owner* owner, int32 value) {
     produces owned_buffer(owner) by {
         unfold(owned_buffer_with_room(owner));
         execute_rest();
+        have 0 <= owner->len by { simp(); }
+        have owner->len <= owner->cap by { simp(); }
+        have separate(memory(owner[0..3]), memory((owner->data)[0..owner->cap])) by {
+            simp();
+        }
         fold(owned_buffer(owner));
     }
 
     ensures result <= owner->cap by {
         unfold(owned_buffer_with_room(owner));
         execute_rest();
+        have 0 <= owner->len by { simp(); }
+        have owner->len <= owner->cap by { simp(); }
+        have separate(memory(owner[0..3]), memory((owner->data)[0..owner->cap])) by {
+            simp();
+        }
         fold(owned_buffer(owner));
         simp();
     }

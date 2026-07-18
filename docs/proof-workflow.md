@@ -81,8 +81,9 @@ and several kernel equality patterns. For order goals, it also rewrites through
 known equalities, evaluates equality-linked constant arithmetic, and uses the
 discrete relationship between strict and non-strict integer bounds.
 
-`frame` proves `immutable` and `mutable` effect clauses. It rejects ordinary
-postconditions.
+`by frame` smartly proves `immutable` and `mutable` effect clauses using
+contextual range reasoning. It rejects ordinary postconditions. The explicit
+proof step `frame()` instead requires exact range bounds.
 
 The exhaustive simple/smart/fuzzy classification is in the
 [proof tactics reference](proof-tactics.md).
@@ -103,14 +104,15 @@ Current proof steps:
 
 - `step();`: advance one C statement using only exact or context-free execution
   prerequisites. It does not automatically transport memory-dependent facts to
-  the new snapshot; use `transport(source, target)` explicitly.
+  the new snapshot; use `transport(source, target)` explicitly. At a C `if`, an
+  exact condition fact selects and enters one arm.
 - `execute_step();`: execute one C statement from the current execution point.
   Straight-line statements use their certified transition. An annotated loop
   uses its previously verified abstract loop rule and records the loop entry
   and exit snapshots. The step uses the facts and resources already in the
   proof environment; project or prove needed facts before running it.
-- `execute_then_step();`: require the next C statement to be an `if`, prove its
-  condition from the current pure facts, and move the execution point to the
+- `execute_then_step();`: require the next C statement to be an `if`,
+  contextually prove its condition, and move the execution point to the
   beginning of its then arm without executing the arm body.
 - `execute_else_step();`: the corresponding operation for the else arm; it
   proves the C condition false and moves to the beginning of that arm.
@@ -129,14 +131,18 @@ Current proof steps:
   fallback proofs.
 - `loop_vc(loop(N));`: check the generated verification conditions for loop
   code region `N`.
-- `frame();`: prove the current function-level effect claim.
-- `frame(loop(N));`: prove the effect summary for loop code region `N` and
-  expose it for later postcondition reasoning.
+- `frame();`: check the current function-level certified write summary against
+  its declared effect using exact available range bounds.
+- `frame(loop(N));`: perform the same exact check for loop code region `N` and
+  expose its summary for later postcondition reasoning. Contract clauses may
+  instead use smart contextual `by frame`.
 - `unfold(name);`: unfold matching predicate facts and goals.
 - `unfold(resource);`: consume one owned composite resource fact and expose its
   immediate body facts.
-- `fold(resource);`: consume one immediate composite body and rebuild the owned
-  composite resource fact.
+- `fold(resource);`: require every declared pure body fact exactly (or by
+  context-free normalization), consume one immediate composite body, and
+  rebuild the owned composite resource fact. Establish derived facts with
+  `have` before folding.
 - `apply(theorem_name(args...));`: instantiate one verified pure theorem from
   the standard library or current file. Every requirement must be an exact
   current fact or normalize to true without context; the step does not search
@@ -258,9 +264,9 @@ theorem int32_sign_split(x: int32) {
 
 `unfold(predicate)`, `apply(theorem)`, `have`, and `fold(resource)` update the
 current proof context immediately. They can therefore prepare the exact pure
-fact or resource fact required by the following `execute_step()`. Applications
-after function exit remain path-local, so `result` and post-state expressions
-are interpreted separately for each completed path.
+fact or resource fact required by the following `step()` or `fold(resource)`.
+Applications after function exit remain path-local, so `result` and post-state
+expressions are interpreted separately for each completed path.
 
 Some successful `auto` proofs record replayable proof-step certificates when the
 current proof-step language can express the argument.

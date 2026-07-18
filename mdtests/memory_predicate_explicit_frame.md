@@ -49,6 +49,7 @@ int32 set_before_terminator(
         simp();
     }
     execute_step();
+    have index < index + 1 by { simp(); }
     frame();
     simp();
 }

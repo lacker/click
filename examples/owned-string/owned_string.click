@@ -48,6 +48,14 @@ int32 owned_string_init(
         unfold(terminated_at);
         simp();
     }
+    have 0 <= owner->len by { simp(); }
+    have owner->len < owner->cap by { simp(); }
+    have separate(
+        memory(owner[0..4]),
+        memory((owner->data)[0..owner->cap])
+    ) by {
+        simp();
+    }
     fold(owned_string(owner));
     frame();
     simp();
@@ -89,8 +97,18 @@ int32 owned_string_set(
         unfold(terminated_at);
         simp();
     }
+    have (owner->data)[owner->len] == 0 by { simp(); }
+    have 0 <= owner->len by { simp(); }
+    have owner->len < owner->cap by { simp(); }
+    have separate(
+        memory(owner[0..4]),
+        memory((owner->data)[0..owner->cap])
+    ) by {
+        simp();
+    }
     fold(owned_string(owner));
     execute_step();
+    have index < index + 1 by { simp(); }
     frame();
     simp();
 }
@@ -110,6 +128,14 @@ int32 owned_string_push(struct owned_string* owner, int32 value) {
     execute_rest();
     have terminated_at(owner->data, owner->len) by {
         unfold(terminated_at);
+        simp();
+    }
+    have 0 <= owner->len by { simp(); }
+    have owner->len < owner->cap by { simp(); }
+    have separate(
+        memory(owner[0..4]),
+        memory((owner->data)[0..owner->cap])
+    ) by {
         simp();
     }
     fold(owned_string(owner));
@@ -158,6 +184,14 @@ int32 owned_string_pop(struct owned_string* owner) {
         unfold(terminated_at);
         simp();
     }
+    have 0 <= owner->len by { simp(); }
+    have owner->len < owner->cap by { simp(); }
+    have separate(
+        memory(owner[0..4]),
+        memory((owner->data)[0..owner->cap])
+    ) by {
+        simp();
+    }
     fold(owned_string(owner));
     frame();
     simp();
@@ -189,6 +223,14 @@ int32 owned_string_clear(struct owned_string* owner) {
     execute_rest();
     have terminated_at(owner->data, owner->len) by {
         unfold(terminated_at);
+        simp();
+    }
+    have 0 <= owner->len by { simp(); }
+    have owner->len < owner->cap by { simp(); }
+    have separate(
+        memory(owner[0..4]),
+        memory((owner->data)[0..owner->cap])
+    ) by {
         simp();
     }
     fold(owned_string(owner));

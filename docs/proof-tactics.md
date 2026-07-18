@@ -29,7 +29,9 @@ features should not add more fuzzy tactics.
 | `apply(theorem(args))` | Instantiate one theorem, require each premise exactly or by context-free normalization, and add its conclusions. |
 | `unfold(predicate)` | Unfold one explicitly named predicate in matching facts and goals. |
 | `unfold(resource)` | Replace one owned composite resource element with one body layer. |
+| `fold(resource)` | Require the declared pure body facts exactly, consume one immediate body layer, and produce the owned composite resource element. |
 | `observe(resource)` | Project one view layer from a held composite resource element. |
+| `frame()` / `frame(region)` | Check one certified write summary against the declared effect segments using exact bounds. |
 | `choose(...)` | Eliminate one named existential fact using the selected binder. |
 | `witness(...)` | Introduce one explicit witness for the current existential goal. |
 
@@ -51,6 +53,7 @@ using the context.
 | `by simp;` / `simp()` | Use the current simplifier, equalities, bounds, and supported solver rules. |
 | `by frame;` | Prove an effect claim using frame reasoning. |
 | `execute_step()` | Advance one statement while contextually proving prerequisites and automatically transporting supported framed facts. |
+| `execute_then_step()` / `execute_else_step()` | Select a requested C branch using contextual condition reasoning. |
 
 `simp()` remains smart even though its algorithm is deterministic: it performs
 nontrivial contextual reasoning rather than one fixed kernel rule. Determinism
@@ -63,11 +66,8 @@ certificate. Until that exists, smart tactics remain part of stored proofs.
 
 | Tactic | Boundary still to clarify |
 | --- | --- |
-| `execute_then_step()` / `execute_else_step()` | Select one C branch while proving its condition through current execution machinery. |
 | `bounded_execute()` | Combines bounded program execution with obligation handling. |
 | `loop_vc(loop(N))` | Checks a collection of generated loop obligations. |
-| `frame()` / `frame(region)` | Combines effect-summary selection and frame proving. |
-| `fold(resource)` | Finds and consumes the body facts needed to rebuild a composite resource element. |
 
 The intended cleanup direction is to identify the deterministic kernel rule or
 rules inside each fuzzy command, expose those as simple tactics, and retain the
@@ -80,13 +80,22 @@ statement. Their proof behavior differs:
 
 - `step()` accepts an execution prerequisite only when the exact proposition is
   already a pure fact or it normalizes to true without context. It carries old
-  snapshot facts as old facts and performs no automatic frame transport.
+  snapshot facts as old facts and performs no automatic frame transport. When
+  the next statement is an `if`, an exact condition fact selects and enters one
+  arm without executing that arm's body.
 - `transport(source, target)` explicitly moves one atomic condition fact to the
   current snapshot when a certified effect fact proves that its referenced
   memory was framed.
 - `execute_step()` is smart automation. It invokes contextual
   prerequisite reasoning and attempts bounded automatic transport for eligible
-  atomic facts.
+  atomic facts. At an `if`, it uses the same contextual reasoning to select a
+  uniquely determined arm.
+
+`fold(resource)` never invokes `simp`. Establish each declared body fact first,
+for example with `have fact by { simp(); }`; `fold` then checks those exact facts
+and consumes the immediate body resources. Likewise, explicit `frame()` does
+not infer symbolic range bounds. State those bounds before calling it. The
+contract shorthand `by frame;` remains the smart, contextual form.
 
 `defined(expression)` is the surface form for a C expression's safety domain.
 It expands deterministically, using the kernel C evaluator, to the finite pure

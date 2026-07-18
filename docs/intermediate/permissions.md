@@ -296,9 +296,11 @@ int32 complete_once(int32 flag[]) {
 
 `unfold(uncalled(flag))` consumes the folded `uncalled(flag)` resource and adds
 the contained owned memory resource for `flag[0..1]` to the proof state. The C
-execution can then mutate the flag. `fold(called(flag))` proves the `called`
-body's fact, consumes the contained owned resource, and adds the folded `called(flag)`
-resource. The end of the `by { ... }` block checks the overall claim.
+execution can then mutate the flag. The execution establishes the `called`
+body's exact fact; `fold(called(flag))` checks it, consumes the contained owned
+resource, and adds the folded `called(flag)` resource. If a body fact needs
+derivation, state it first with `have ... by { ... }`; `fold` itself does not
+invoke `simp`. The end of the `by { ... }` block checks the overall claim.
 
 `fold` also builds a composite resource from lower-level resources at a
 function boundary:
@@ -319,8 +321,8 @@ Together, the three resource proof steps are deliberately local:
 - `observe(resource);` exposes one immediate view layer and consumes nothing.
 - `unfold(resource);` consumes one owned composite resource and exposes its
   immediate body.
-- `fold(resource);` consumes one immediate body and produces the owned
-  composite resource.
+- `fold(resource);` checks exact declared body facts, consumes one immediate
+  body, and produces the owned composite resource.
 
 These steps are bounded by design. A proof that needs facts inside a nested
 composite resource should name the path with repeated `observe(...)` steps

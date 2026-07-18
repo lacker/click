@@ -1,4 +1,4 @@
-# execute until requires explicit branch selection
+# execute until requires a determined branch
 
 ```c filename=execute_until_unresolved_branch.c
 int32 execute_until_unresolved_branch(int32 flag) {
@@ -24,5 +24,5 @@ int32 execute_until_unresolved_branch(int32 flag) {
 ```
 
 ```expect
-fail: next statement is an `if`; use `execute_then_step()` or `execute_else_step()`
+fail: could not prove that the next C `if` condition `flag` is one exact truth value
 ```

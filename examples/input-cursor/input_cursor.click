@@ -79,6 +79,14 @@ int32 input_cursor_take(struct input_cursor* owner) {
     unfold(input_cursor(owner));
     observe(readable_input(owner->data, owner->len));
     execute_rest();
+    have 0 <= owner->pos by { simp(); }
+    have owner->pos <= owner->len by { simp(); }
+    have separate(
+        memory(owner[0..4]),
+        memory((owner->data)[0..owner->len])
+    ) by {
+        simp();
+    }
     fold(input_cursor(owner));
     frame();
     simp();

@@ -75,6 +75,7 @@ int32 vector_set(struct vector* owner, int32 index, int32 value) {
     unfold(nonempty_vector(owner));
     execute_rest();
     fold(nonempty_vector(owner));
+    have index < index + 1 by { simp(); }
     frame();
     simp();
 }
@@ -132,6 +133,7 @@ int32 vector_replace_if(
     ensuring {
         fact replace != 0 implies selected == replacement;
         fact not (replace != 0) implies selected == original;
+        fact index < index + 1;
         owns nonempty_vector(owner);
     }
     by {
@@ -140,14 +142,17 @@ int32 vector_replace_if(
             execute_step();
             have replace != 0 implies selected == replacement by simp;
             have not (replace != 0) implies selected == original by simp;
+            have index < index + 1 by simp;
         } else {
             execute_else_step();
             execute_step();
             have replace != 0 implies selected == replacement by simp;
             have not (replace != 0) implies selected == original by simp;
+            have index < index + 1 by simp;
         }
     }
     execute_rest();
+    have index < index + 1 by { simp(); }
     frame();
     simp();
 }
@@ -162,8 +167,15 @@ int32 vector_push_first(struct vector* owner, int32 value) {
 } by {
     unfold(empty_vector(owner));
     have owner->len < owner->cap by simp;
+    have 0 <= owner->len by simp;
+    have owner->len < 1 by simp;
     execute_until(statement(8));
     have owner->len == 1 by simp;
+    have 1 <= owner->len by simp;
+    have owner->len <= owner->cap by simp;
+    have separate(memory(owner[0..4]), memory((owner->data)[0..owner->cap])) by {
+        simp();
+    }
     fold(nonempty_vector(owner));
     execute_rest();
     frame();
@@ -179,6 +191,11 @@ int32 vector_clear(struct vector* owner) {
 } by {
     unfold(nonempty_vector(owner));
     execute_rest();
+    have owner->len == 0 by simp;
+    have 1 <= owner->cap by simp;
+    have separate(memory(owner[0..4]), memory((owner->data)[0..owner->cap])) by {
+        simp();
+    }
     fold(empty_vector(owner));
     frame();
     simp();

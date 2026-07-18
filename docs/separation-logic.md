@@ -376,8 +376,9 @@ Composite resources add a definitional layer:
 
 - `unfold(resource)` consumes one owned composite resource fact and exposes its
   immediate body resource facts and pure facts.
-- `fold(resource)` proves the declared pure facts, consumes one immediate body,
-  and returns the owned composite resource fact.
+- `fold(resource)` requires the declared pure facts as exact current facts (or
+  context-free truths), consumes one immediate body, and returns the owned
+  composite resource fact. Deriving those facts is a separate proof step.
 - `observe(resource)` projects one view step without consuming the resource
   fact. It exposes immediate pure facts and viewed immediate contained resource
   facts, but not owned contained permissions.

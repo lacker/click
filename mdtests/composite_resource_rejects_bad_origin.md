@@ -29,5 +29,5 @@ int32 init_bad(int32 flag[]) {
 ```
 
 ```expect
-fail: `fold(uncalled(flag))` fact failed
+fail: `fold(uncalled(flag))` requires an exact body fact
 ```

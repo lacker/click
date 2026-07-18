@@ -2675,7 +2675,7 @@ pub(super) fn prove_effect_clause(
             )
         )));
     };
-    prove_mutation_footprint(
+    prove_mutation_footprint_with_policy(
         claim_label,
         path_index,
         execution_pure_facts,
@@ -2684,6 +2684,37 @@ pub(super) fn prove_effect_clause(
         arguments,
         pre_state,
         effect,
+        FootprintProofPolicy::Contextual,
+    )
+}
+
+pub(super) fn prove_effect_clause_exact(
+    claim_label: &str,
+    path_index: usize,
+    execution_pure_facts: &[crate::kernel::ExecutionPureFact],
+    available_pure_facts: &[Proposition],
+    effect: &Effect,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    pre_state: &CState,
+    outcome: &CFunctionOutcome,
+) -> Result<(), ClickError> {
+    let CFunctionOutcome::Return { .. } = outcome else {
+        return Err(ClickError::new(format!(
+            "`{claim_label}` failed on path {path_index}: {}",
+            describe_function_outcome(outcome, parameters, arguments)
+        )));
+    };
+    prove_mutation_footprint_with_policy(
+        claim_label,
+        path_index,
+        execution_pure_facts,
+        available_pure_facts,
+        parameters,
+        arguments,
+        pre_state,
+        effect,
+        FootprintProofPolicy::Exact,
     )
 }
 
@@ -2915,7 +2946,14 @@ pub(super) fn prove_ensure_proposition(
     Ok(())
 }
 
-pub(super) fn prove_mutation_footprint(
+#[derive(Clone, Copy)]
+enum FootprintProofPolicy {
+    Exact,
+    Contextual,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn prove_mutation_footprint_with_policy(
     claim_label: &str,
     path_index: usize,
     execution_pure_facts: &[crate::kernel::ExecutionPureFact],
@@ -2924,6 +2962,7 @@ pub(super) fn prove_mutation_footprint(
     arguments: &[CExpression],
     pre_state: &CState,
     effect: &Effect,
+    policy: FootprintProofPolicy,
 ) -> Result<(), ClickError> {
     let segments = match effect {
         Effect::Immutable => Vec::new(),
@@ -2972,10 +3011,14 @@ pub(super) fn prove_mutation_footprint(
     writes.retain(is_effect_relevant_pointer);
 
     for pointer in &writes {
-        if !segments
-            .iter()
-            .any(|segment| segment_contains_pointer(segment, pointer, &assumptions))
-        {
+        if !segments.iter().any(|segment| match policy {
+            FootprintProofPolicy::Exact => {
+                segment_contains_pointer_exact(segment, pointer, available_pure_facts)
+            }
+            FootprintProofPolicy::Contextual => {
+                segment_contains_pointer(segment, pointer, &assumptions)
+            }
+        }) {
             return Err(ClickError::new(format!(
                 "`{claim_label}` failed on path {path_index}: write to `{}` is outside the mutable footprint\n  mutable segments: {}\n  evaluated segments: {}\n  execution pure facts: {}",
                 describe_pointer(pointer, parameters, arguments),
@@ -2998,10 +3041,14 @@ pub(super) fn prove_mutation_footprint(
         .filter(|range| is_effect_relevant_pointer(range.base()));
 
     for range in effect_summary_ranges {
-        if !segments
-            .iter()
-            .any(|segment| segment_contains_range(segment, range, &assumptions))
-        {
+        if !segments.iter().any(|segment| match policy {
+            FootprintProofPolicy::Exact => {
+                segment_contains_range_exact(segment, range, available_pure_facts)
+            }
+            FootprintProofPolicy::Contextual => {
+                segment_contains_range(segment, range, &assumptions)
+            }
+        }) {
             return Err(ClickError::new(format!(
                 "`{claim_label}` failed on path {path_index}: effect summary range `{}` is outside the mutable footprint\n  mutable segments: {}\n  evaluated segments: {}\n  execution pure facts: {}",
                 describe_memory_range(range, parameters, arguments),
@@ -3013,6 +3060,62 @@ pub(super) fn prove_mutation_footprint(
     }
 
     Ok(())
+}
+
+fn exact_proposition_is_available_or_true(
+    required: &Proposition,
+    available: &[Proposition],
+) -> bool {
+    fn contains(fact: &Proposition, required: &Proposition) -> bool {
+        fact == required
+            || matches!(fact, Proposition::And(left, right)
+                if contains(left, required) || contains(right, required))
+    }
+
+    available.iter().any(|fact| contains(fact, required))
+        || matches!(normalize_proposition(required), SimpProposition::True)
+}
+
+fn segment_contains_pointer_exact(
+    segment: &EvaluatedContractSegment,
+    pointer: &Pointer,
+    available: &[Proposition],
+) -> bool {
+    let Some(index) = pointer_element_index_from_base(pointer, &segment.base, &Assumptions::new())
+    else {
+        return false;
+    };
+    exact_proposition_is_available_or_true(
+        &Proposition::ConditionIs(
+            signed_less_equal(segment.start.clone(), index.clone()),
+            true,
+        ),
+        available,
+    ) && exact_proposition_is_available_or_true(
+        &Proposition::ConditionIs(signed_less_than(index, segment.end.clone()), true),
+        available,
+    )
+}
+
+fn segment_contains_range_exact(
+    segment: &EvaluatedContractSegment,
+    range: &CMemoryRange,
+    available: &[Proposition],
+) -> bool {
+    let Some(base_index) =
+        pointer_element_index_from_base(range.base(), &segment.base, &Assumptions::new())
+    else {
+        return false;
+    };
+    let range_start = bitvector32_add(base_index.clone(), range.start().clone());
+    let range_end = bitvector32_add(base_index, range.end().clone());
+    exact_proposition_is_available_or_true(
+        &Proposition::ConditionIs(signed_less_equal(segment.start.clone(), range_start), true),
+        available,
+    ) && exact_proposition_is_available_or_true(
+        &Proposition::ConditionIs(signed_less_equal(range_end, segment.end.clone()), true),
+        available,
+    )
 }
 
 pub(super) fn is_effect_relevant_pointer(pointer: &Pointer) -> bool {

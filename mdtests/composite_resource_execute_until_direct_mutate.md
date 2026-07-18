@@ -41,6 +41,12 @@ int32 len_then_clear_direct(struct owner* owner) {
         execute_until(statement(2));
         unfold(owned_buffer(owner));
         execute_rest();
+        have 0 <= owner->len by { simp(); }
+        have owner->len <= owner->cap by { simp(); }
+        have 0 <= owner->cap by { simp(); }
+        have separate(memory(owner[0..3]), memory((owner->data)[0..owner->cap])) by {
+            simp();
+        }
         fold(owned_buffer(owner));
     }
 }

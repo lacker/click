@@ -67,10 +67,10 @@ Common steps include:
 
 - `step();`: perform one simple C statement transition using exact execution
   prerequisites and without automatic fact transport.
-- `execute_step();`: execute one supported straight-line C statement from the
-  current execution point using contextual prerequisite and automatic
-  transport reasoning. It is smart automation over the explicit statement and
-  fact-transport rules.
+- `execute_step();`: execute one supported C statement from the current
+  execution point using contextual prerequisite and automatic transport
+  reasoning. At an `if`, it enters a uniquely determined arm. It is smart
+  automation over the explicit statement and fact-transport rules.
 - `execute_rest();`: execute symbolically from the current execution point to
   function exit. From function entry, this executes the whole C function.
 - `symbolic_execute();`: deprecated source alias for `execute_rest();`; both
@@ -81,7 +81,8 @@ Common steps include:
 
 - `unfold(name);`: open a named predicate.
 - `unfold(resource);`: expose one body layer of an owned composite resource.
-- `fold(resource);`: rebuild one owned composite resource from its body.
+- `fold(resource);`: rebuild one owned composite resource after its pure body
+  facts have been established exactly.
 - `apply(theorem(args));`: use a verified stdlib or current-file theorem as a
   derived fact. Its premises must be exact available facts or normalize to true.
 - `observe(resource);`: expose one view layer of a held composite resource
@@ -93,7 +94,8 @@ Common steps include:
   current pure goal.
 - `transport(source, target);`: apply one explicit frame-transport theorem
   between memory snapshots.
-- `frame();`: prove an effect claim.
+- `frame();`: check a certified write summary against an effect claim using
+  exact available range bounds. `by frame` is the smart contextual form.
 
 Use `defined(expression)` to state expression safety explicitly. For example,
 a theorem can derive `defined(x + 1)` from `x < 2147483647`; after applying that

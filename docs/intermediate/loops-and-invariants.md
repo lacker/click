@@ -97,10 +97,11 @@ memory the loop may write.
 ## Loop Proof Steps
 
 An explicit preservation proof starts at an arbitrary loop-head visit and must
-traverse exactly one complete iteration. Straight-line bodies use one
-`execute_step()` per statement. Bodies with conditionals can use proof-level
-`if`, `execute_then_step()`, and `execute_else_step()`. Initialization is
-non-executing because its execution point is already the first loop entry.
+traverse exactly one complete iteration. Straight-line bodies use one `step()`
+or `execute_step()` per statement. In a proof-level `if`, `step()` enters a C
+branch from an exact condition fact; `execute_step()`, `execute_then_step()`,
+and `execute_else_step()` provide contextual branch reasoning. Initialization
+is non-executing because its execution point is already the first loop entry.
 
 Some loop proofs call loop-specific steps:
 
@@ -113,8 +114,11 @@ by {
 `loop_vc(loop(N))` checks the generated verification conditions for loop code
 region `N`.
 
-`frame(loop(N))` proves a loop effect summary and exposes it for later proof
-steps. Labeled code regions can be used in the same positions.
+`frame(loop(N))` checks a loop's certified write summary against its declared
+effect using exact available bounds, then exposes the summary for later proof
+steps. Labeled code regions can be used in the same positions. A loop effect
+clause may use contextual `by frame` when those bounds should be derived
+automatically.
 
 Most beginner code avoids these details. Intermediate Click needs them whenever
 the loop summary is the central part of the proof.

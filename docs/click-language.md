@@ -155,16 +155,17 @@ theorem int32_sign_split(x: int32) {
 
 The same construct can appear before or after C execution in a function proof.
 It splits proof reasoning only; it does not itself execute a C `if` statement.
-Inside those proof cases, `execute_then_step()` and `execute_else_step()`
-explicitly enter a selected arm of the next C `if`. Each step proves the
-corresponding truth value of the C condition from current pure facts and moves
+Inside those proof cases, `step()` enters the uniquely selected arm when its
+condition truth value is already an exact pure fact. `execute_step()` performs
+the same transition with contextual condition reasoning.
+`execute_then_step()` and `execute_else_step()` remain useful smart forms when
+the proof should also assert which arm it expects to enter. Each command moves
 the execution point to the start of the arm without executing its body.
 
 For straight-line execution, `step()` is the simple form: it accepts only exact
 or context-free execution prerequisites and does not automatically transport
-facts between memory snapshots. `execute_step()` is the automated convenience
-form, but remains fuzzy because some kernel execution prerequisites cannot yet
-be stated directly in Click. An explicit `transport(source, target)` applies
+facts between memory snapshots. `execute_step()` is the smart automated
+convenience form. An explicit `transport(source, target)` applies
 one certified frame-transport rule between two stated atomic facts.
 
 When both proof cases should continue through common code, `advance` gives the
@@ -324,9 +325,12 @@ keeping owned permissions hidden. `unfold(uncalled(flag));` consumes the
 abstract token resource fact and exposes its contained resource facts for
 mutation. Composite bodies can bundle built-in memory resources and other
 declared resources. Declared `fact` clauses are pure facts.
-`fold(uncalled(flag));` proves the pure facts in the current state, consumes
-the contained resource facts, and returns the abstract token resource fact. The
-end of the `by { ... }` block checks the overall claim.
+Before `fold(uncalled(flag));`, the declared pure body facts must be exact facts
+in the current proof context (or normalize to true without context). `fold`
+then consumes the contained resource facts and returns the abstract token
+resource fact. It does not invoke `simp`; use an explicit `have` first when a
+body fact needs derivation. The end of the `by { ... }` block checks the overall
+claim.
 
 A function block may be resource-only when it consumes a resource:
 

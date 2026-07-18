@@ -552,21 +552,21 @@ pub enum SimpleTactic {
     Normalize,
     Rewrite,
     FactTransport,
+    FoldResource,
+    Frame,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FuzzyTactic {
-    ExecuteThenStep,
-    ExecuteElseStep,
     BoundedExecute,
     LoopVc,
-    Frame,
-    FoldResource,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SmartProofStep {
     ExecuteStep,
+    ExecuteThenStep,
+    ExecuteElseStep,
     Simp,
 }
 
@@ -606,14 +606,14 @@ impl ProofStep {
             Self::Normalize => ProofStepClass::Simple(SimpleTactic::Normalize),
             Self::Rewrite(_) => ProofStepClass::Simple(SimpleTactic::Rewrite),
             Self::Transport { .. } => ProofStepClass::Simple(SimpleTactic::FactTransport),
+            Self::FoldResource(_) => ProofStepClass::Simple(SimpleTactic::FoldResource),
+            Self::Frame(_) => ProofStepClass::Simple(SimpleTactic::Frame),
             Self::ExecuteStep => ProofStepClass::Smart(SmartProofStep::ExecuteStep),
+            Self::ExecuteThenStep => ProofStepClass::Smart(SmartProofStep::ExecuteThenStep),
+            Self::ExecuteElseStep => ProofStepClass::Smart(SmartProofStep::ExecuteElseStep),
             Self::Simp => ProofStepClass::Smart(SmartProofStep::Simp),
-            Self::ExecuteThenStep => ProofStepClass::Fuzzy(FuzzyTactic::ExecuteThenStep),
-            Self::ExecuteElseStep => ProofStepClass::Fuzzy(FuzzyTactic::ExecuteElseStep),
             Self::BoundedExecute => ProofStepClass::Fuzzy(FuzzyTactic::BoundedExecute),
             Self::LoopVc(_) => ProofStepClass::Fuzzy(FuzzyTactic::LoopVc),
-            Self::Frame(_) => ProofStepClass::Fuzzy(FuzzyTactic::Frame),
-            Self::FoldResource(_) => ProofStepClass::Fuzzy(FuzzyTactic::FoldResource),
             Self::ExecuteRest => ProofStepClass::Macro(DeterministicProofMacro::ExecuteRest),
             Self::ExecuteUntil(_) => ProofStepClass::Macro(DeterministicProofMacro::ExecuteUntil),
             Self::Have(_) => ProofStepClass::ControlFlow(ProofControlFlow::Have),

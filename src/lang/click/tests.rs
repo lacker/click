@@ -1293,6 +1293,29 @@ fn parses_and_classifies_simple_and_smart_tactics() {
         ProofStepClass::Simple(SimpleTactic::StatementTransition)
     ));
     assert!(matches!(
+        ProofStep::FoldResource(ResourceClause::Declared {
+            access: ResourceAccessMode::Own,
+            kind: ResourceKind::Composite,
+            name: "cell".to_string(),
+            arguments: vec![],
+            parameter_types: vec![],
+        })
+        .class(),
+        ProofStepClass::Simple(SimpleTactic::FoldResource)
+    ));
+    assert!(matches!(
+        ProofStep::Frame(None).class(),
+        ProofStepClass::Simple(SimpleTactic::Frame)
+    ));
+    assert!(matches!(
+        ProofStep::ExecuteThenStep.class(),
+        ProofStepClass::Smart(SmartProofStep::ExecuteThenStep)
+    ));
+    assert!(matches!(
+        ProofStep::ExecuteElseStep.class(),
+        ProofStepClass::Smart(SmartProofStep::ExecuteElseStep)
+    ));
+    assert!(matches!(
         ProofStep::ExecuteRest.class(),
         ProofStepClass::Macro(DeterministicProofMacro::ExecuteRest)
     ));
