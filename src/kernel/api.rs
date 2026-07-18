@@ -19,22 +19,158 @@ pub(crate) fn c_memory_load_is_unchanged(
     }
     // Predicate framing is deliberately bounded: use exact certified writes
     // and direct address cancellation, without invoking general alias search.
-    assumptions.prop_facts.iter().any(|proposition| {
-        let Proposition::CMemoryMutatesOnly {
-            before: effect_before,
-            after: effect_after,
-            pointers,
-        } = proposition
-        else {
-            return false;
-        };
-        effect_before == before
-            && effect_after == after
-            && pointers.iter().all(|write| {
-                write.blocks_proven_distinct(pointer)
-                    || pointer_offsets_with_common_base_proven_distinct(write, pointer, assumptions)
-            })
+    assumptions
+        .prop_facts
+        .iter()
+        .any(|proposition| match proposition {
+            Proposition::CMemoryMutatesOnly {
+                before: effect_before,
+                after: effect_after,
+                pointers,
+            } => {
+                effect_before == before
+                    && effect_after == after
+                    && pointers.iter().all(|write| {
+                        write.blocks_proven_distinct(pointer)
+                            || pointer_offsets_with_common_base_proven_distinct(
+                                write,
+                                pointer,
+                                assumptions,
+                            )
+                    })
+            }
+            Proposition::CMemoryEffectSummary {
+                before: effect_before,
+                after: effect_after,
+                mutable_ranges,
+            } => {
+                let before_matches =
+                    memory_matches_effect_summary_endpoint(effect_before, before, pointer);
+                let after_matches =
+                    memory_matches_effect_summary_endpoint(effect_after, after, pointer);
+                let framed =
+                    assumptions.ranges_proven_disjoint_from_pointer(mutable_ranges, pointer);
+                before_matches && after_matches && framed
+            }
+            _ => false,
+        })
+}
+
+/// Certifies the narrow frame rule used by execution proofs for ordinary C
+/// conditions. Address-dependent loads and other proposition forms must be
+/// re-established explicitly.
+pub(crate) fn prove_c_condition_fact_transport(
+    fact: &Proposition,
+    after: &CMemory,
+    assumptions: &Assumptions,
+) -> Option<Theorem> {
+    let Proposition::ConditionIs(condition, value) = fact else {
+        return None;
+    };
+    let transported = transport_framed_atomic_condition(condition, after, assumptions)?;
+    if &transported == condition {
+        return None;
+    }
+    let conclusion = Proposition::ConditionIs(transported, *value);
+    Some(Theorem::new(Proposition::Implies(
+        Box::new(fact.clone()),
+        Box::new(conclusion),
+    )))
+}
+
+fn transport_framed_atomic_condition(
+    condition: &ConditionTerm,
+    after: &CMemory,
+    assumptions: &Assumptions,
+) -> Option<ConditionTerm> {
+    let binary = |left: &Bitvector32Term, right: &Bitvector32Term| {
+        Some((
+            transport_framed_atomic_bitvector(left, after, assumptions)?,
+            transport_framed_atomic_bitvector(right, after, assumptions)?,
+        ))
+    };
+    Some(match condition {
+        ConditionTerm::Bitvector32SignedLessThan(left, right) => {
+            let (left, right) = binary(left, right)?;
+            ConditionTerm::signed_less_than(left, right)
+        }
+        ConditionTerm::Bitvector32SignedLessEqual(left, right) => {
+            let (left, right) = binary(left, right)?;
+            ConditionTerm::signed_less_equal(left, right)
+        }
+        ConditionTerm::Bitvector32SignedGreaterThan(left, right) => {
+            let (left, right) = binary(left, right)?;
+            ConditionTerm::signed_greater_than(left, right)
+        }
+        ConditionTerm::Bitvector32SignedGreaterEqual(left, right) => {
+            let (left, right) = binary(left, right)?;
+            ConditionTerm::signed_greater_equal(left, right)
+        }
+        ConditionTerm::Bitvector32Equal(left, right) => {
+            let (left, right) = binary(left, right)?;
+            ConditionTerm::equal(left, right)
+        }
+        ConditionTerm::Constant(_)
+        | ConditionTerm::Variable(_)
+        | ConditionTerm::Bitvector32SignedAddOverflows(_, _)
+        | ConditionTerm::Bitvector32SignedSubtractOverflows(_, _)
+        | ConditionTerm::Bitvector32SignedMultiplyOverflows(_, _)
+        | ConditionTerm::Bitvector32SignedDivideOverflows(_, _)
+        | ConditionTerm::Bitvector32SignedShiftLeftOverflows(_, _)
+        | ConditionTerm::PointerOffsetEqual(_, _)
+        | ConditionTerm::PointerEqual(_, _) => return None,
     })
+}
+
+fn transport_framed_atomic_bitvector(
+    term: &Bitvector32Term,
+    after: &CMemory,
+    assumptions: &Assumptions,
+) -> Option<Bitvector32Term> {
+    Some(match term {
+        Bitvector32Term::Constant(_) | Bitvector32Term::Variable(_) => term.clone(),
+        Bitvector32Term::MemoryLoad(memory, pointer) => {
+            if !pointer_offset_is_snapshot_independent(&pointer.offset) {
+                return None;
+            }
+            if memories_match_for_pointer_load(memory, after, pointer)
+                || c_memory_load_is_unchanged(memory, after, pointer, assumptions)
+            {
+                Bitvector32Term::MemoryLoad(Box::new(after.clone()), pointer.clone())
+            } else {
+                term.clone()
+            }
+        }
+        Bitvector32Term::Add(_, _)
+        | Bitvector32Term::Subtract(_, _)
+        | Bitvector32Term::Multiply(_, _)
+        | Bitvector32Term::Divide(_, _)
+        | Bitvector32Term::Remainder(_, _)
+        | Bitvector32Term::ShiftLeft(_, _)
+        | Bitvector32Term::ArithmeticShiftRight(_, _)
+        | Bitvector32Term::BitwiseAnd(_, _)
+        | Bitvector32Term::BitwiseOr(_, _)
+        | Bitvector32Term::BitwiseXor(_, _)
+        | Bitvector32Term::BitwiseNot(_)
+        | Bitvector32Term::If { .. }
+        | Bitvector32Term::RangeFold { .. } => return None,
+    })
+}
+
+fn pointer_offset_is_snapshot_independent(offset: &PointerOffsetTerm) -> bool {
+    match offset {
+        PointerOffsetTerm::Constant(_) | PointerOffsetTerm::Variable(_) => true,
+        PointerOffsetTerm::Add(left, right) => {
+            pointer_offset_is_snapshot_independent(left)
+                && pointer_offset_is_snapshot_independent(right)
+        }
+        PointerOffsetTerm::Int32Scaled { value, .. } => {
+            matches!(
+                value.as_ref(),
+                Bitvector32Term::Constant(_) | Bitvector32Term::Variable(_)
+            )
+        }
+    }
 }
 
 pub(crate) fn c_pointer_offsets_proven_equal_for_effect(
@@ -1024,6 +1160,24 @@ pub fn prove_symbolic_c_statement_verification_paths_with_environment_and_loop_r
     execution_semantics: CExecutionSemantics,
 ) -> (SymbolicCExecution, Option<CVerifiedLoopRule>) {
     let mut budget = ExecutionBudget::default();
+    prove_symbolic_c_statement_verification_paths_with_environment_and_loop_rule_using_budget(
+        state,
+        statement,
+        assumptions,
+        environment,
+        execution_semantics,
+        &mut budget,
+    )
+}
+
+pub(crate) fn prove_symbolic_c_statement_verification_paths_with_environment_and_loop_rule_using_budget(
+    state: CState,
+    statement: CStatement,
+    assumptions: Assumptions,
+    environment: CExecutionEnvironment,
+    execution_semantics: CExecutionSemantics,
+    budget: &mut ExecutionBudget,
+) -> (SymbolicCExecution, Option<CVerifiedLoopRule>) {
     let mut variables = VerificationVariableGenerator::new(1_000_000);
     let paths = match execute_c_statement_verification_paths(
         &state,
@@ -1031,7 +1185,7 @@ pub fn prove_symbolic_c_statement_verification_paths_with_environment_and_loop_r
         &assumptions,
         &environment,
         execution_semantics,
-        &mut budget,
+        budget,
         &mut variables,
     ) {
         Ok(paths) => paths,
@@ -1048,6 +1202,7 @@ pub fn prove_symbolic_c_statement_verification_paths_with_environment_and_loop_r
     symbolic_c_statement_execution_with_loop_rule(state, statement, assumptions, paths)
 }
 
+#[cfg(test)]
 pub(crate) fn prove_symbolic_c_loop_exit_with_proven_phases(
     state: CState,
     statement: CStatement,
@@ -1055,6 +1210,27 @@ pub(crate) fn prove_symbolic_c_loop_exit_with_proven_phases(
     environment: CExecutionEnvironment,
     initialization_proven: bool,
     preservation_proven: bool,
+) -> (SymbolicCExecution, Option<CVerifiedLoopRule>) {
+    let mut budget = ExecutionBudget::default();
+    prove_symbolic_c_loop_exit_with_proven_phases_using_budget(
+        state,
+        statement,
+        assumptions,
+        environment,
+        initialization_proven,
+        preservation_proven,
+        &mut budget,
+    )
+}
+
+pub(crate) fn prove_symbolic_c_loop_exit_with_proven_phases_using_budget(
+    state: CState,
+    statement: CStatement,
+    assumptions: Assumptions,
+    environment: CExecutionEnvironment,
+    initialization_proven: bool,
+    preservation_proven: bool,
+    budget: &mut ExecutionBudget,
 ) -> (SymbolicCExecution, Option<CVerifiedLoopRule>) {
     let CStatement::While {
         condition,
@@ -1072,7 +1248,6 @@ pub(crate) fn prove_symbolic_c_loop_exit_with_proven_phases(
             None,
         );
     };
-    let mut budget = ExecutionBudget::default();
     let mut variables = VerificationVariableGenerator::new(1_000_000);
     let paths = match execute_c_while_exit_paths_with_proven_phases(
         &state,
@@ -1086,7 +1261,7 @@ pub(crate) fn prove_symbolic_c_loop_exit_with_proven_phases(
         CExecutionSemantics::APPLY_VERIFIED_RULES,
         initialization_proven,
         preservation_proven,
-        &mut budget,
+        budget,
         &mut variables,
     ) {
         Ok(paths) => paths,

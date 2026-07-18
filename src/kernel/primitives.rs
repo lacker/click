@@ -3101,6 +3101,15 @@ impl ExecutionBudget {
         self
     }
 
+    pub(crate) fn with_next_opaque_call(mut self, next_opaque_call: u64) -> Self {
+        self.next_opaque_call = next_opaque_call;
+        self
+    }
+
+    pub(crate) fn next_opaque_call(&self) -> u64 {
+        self.next_opaque_call
+    }
+
     pub(super) fn consume_expression_step(&mut self) -> ExecutionResult<()> {
         consume_budget(&mut self.expression_steps, ExecutionLimit::ExpressionSteps)
     }

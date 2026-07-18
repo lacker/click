@@ -1507,6 +1507,7 @@ struct ProofStepReplayState {
     region_proof: bool,
     ordered_finalization: bool,
     grouped_contract: bool,
+    next_opaque_call: u64,
 }
 
 #[derive(Clone)]
@@ -1661,6 +1662,7 @@ pub(super) fn verify_loop_execution_proofs(
         vec![ExecutionProofContext {
             state: entry_state,
             pure_facts: requirement_facts,
+            next_opaque_call: 0,
         }],
         &mut next_loop_index,
         &environment,
@@ -1696,6 +1698,7 @@ struct ExecutionProofEnvironment<'a> {
 struct ExecutionProofContext {
     state: CState,
     pure_facts: Vec<Proposition>,
+    next_opaque_call: u64,
 }
 
 #[derive(Clone)]
@@ -1786,29 +1789,23 @@ fn certified_statement_transitions(
     pure_facts: &[Proposition],
     statement: &CStatement,
     function_environment: &CExecutionEnvironment,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
     execution_semantics: CExecutionSemantics,
     context_label: &str,
+    next_opaque_call: &mut u64,
 ) -> Result<(Vec<CertifiedStatementTransition>, Option<CVerifiedLoopRule>), ClickError> {
     let assumptions = assumptions_from_propositions(pure_facts);
+    let mut budget = ExecutionBudget::default().with_next_opaque_call(*next_opaque_call);
     let (execution, loop_rule) =
-        prove_symbolic_c_statement_verification_paths_with_environment_and_loop_rule(
+        prove_symbolic_c_statement_verification_paths_with_environment_and_loop_rule_using_budget(
             state.clone(),
             statement.clone(),
             assumptions,
             function_environment.clone(),
             execution_semantics,
+            &mut budget,
         );
-    certified_transitions_from_execution(
-        execution,
-        loop_rule,
-        state,
-        pure_facts,
-        predicate_environment,
-        click_function_environment,
-        context_label,
-    )
+    *next_opaque_call = budget.next_opaque_call();
+    certified_transitions_from_execution(execution, loop_rule, pure_facts, context_label)
 }
 
 fn certified_loop_exit_transitions_with_proven_phases(
@@ -1816,39 +1813,30 @@ fn certified_loop_exit_transitions_with_proven_phases(
     pure_facts: &[Proposition],
     statement: &CStatement,
     function_environment: &CExecutionEnvironment,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
     context_label: &str,
     initialization_proven: bool,
     preservation_proven: bool,
+    next_opaque_call: &mut u64,
 ) -> Result<(Vec<CertifiedStatementTransition>, Option<CVerifiedLoopRule>), ClickError> {
     let assumptions = assumptions_from_propositions(pure_facts);
-    let (execution, loop_rule) = prove_symbolic_c_loop_exit_with_proven_phases(
+    let mut budget = ExecutionBudget::default().with_next_opaque_call(*next_opaque_call);
+    let (execution, loop_rule) = prove_symbolic_c_loop_exit_with_proven_phases_using_budget(
         state.clone(),
         statement.clone(),
         assumptions,
         function_environment.clone(),
         initialization_proven,
         preservation_proven,
+        &mut budget,
     );
-    certified_transitions_from_execution(
-        execution,
-        loop_rule,
-        state,
-        pure_facts,
-        predicate_environment,
-        click_function_environment,
-        context_label,
-    )
+    *next_opaque_call = budget.next_opaque_call();
+    certified_transitions_from_execution(execution, loop_rule, pure_facts, context_label)
 }
 
 fn certified_transitions_from_execution(
     execution: SymbolicCExecution,
     loop_rule: Option<CVerifiedLoopRule>,
-    state: &CState,
     pure_facts: &[Proposition],
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
     context_label: &str,
 ) -> Result<(Vec<CertifiedStatementTransition>, Option<CVerifiedLoopRule>), ClickError> {
     if let Some(limit) = execution.limit() {
@@ -1863,20 +1851,18 @@ fn certified_transitions_from_execution(
             let mut successor_facts = pure_facts.to_vec();
             successor_facts.extend(path.facts().iter().map(|fact| fact.proposition().clone()));
             let execution_facts = path.execution_facts();
-            transport_memory_predicate_facts(
-                state,
-                implication_body(path.theorem().proposition()),
-                pure_facts,
-                &execution_facts,
-                &mut successor_facts,
-                predicate_environment,
-                click_function_environment,
-            )?;
-            let successor_assumptions = assumptions_from_propositions(&successor_facts);
+            let mut transport_facts = successor_facts.clone();
+            transport_facts.extend(
+                execution_facts
+                    .iter()
+                    .map(|fact| fact.proposition().clone()),
+            );
+            let transport_assumptions = assumptions_from_propositions(&transport_facts);
+            let prerequisite_assumptions = assumptions_from_propositions(&successor_facts);
             if let Some(obligation) = path
                 .obligations()
                 .iter()
-                .find(|obligation| !successor_assumptions.proves(obligation.proposition()))
+                .find(|obligation| !prerequisite_assumptions.proves(obligation.proposition()))
             {
                 return Err(ClickError::new(format!(
                     "{context_label} is missing prerequisite{}: {:?}",
@@ -1894,6 +1880,32 @@ fn certified_transitions_from_execution(
                     "{context_label} saw an unexpected execution theorem"
                 )));
             };
+            if let CStatementOutcome::Normal(post_state)
+            | CStatementOutcome::Return {
+                state: post_state, ..
+            } = outcome
+            {
+                let mut transported_facts = Vec::new();
+                for fact in successor_facts.clone() {
+                    let Some(theorem) = prove_c_condition_fact_transport(
+                        &fact,
+                        post_state.memory(),
+                        &transport_assumptions,
+                    ) else {
+                        continue;
+                    };
+                    let Proposition::Implies(_, conclusion) = theorem.proposition() else {
+                        unreachable!("condition transport must produce an implication")
+                    };
+                    transported_facts.push((fact, conclusion.as_ref().clone()));
+                }
+                for (before, after) in transported_facts {
+                    successor_facts.retain(|fact| fact != &before);
+                    if !successor_facts.contains(&after) {
+                        successor_facts.push(after);
+                    }
+                }
+            }
             Ok(CertifiedStatementTransition {
                 outcome: outcome.clone(),
                 execution_facts,
@@ -1903,223 +1915,6 @@ fn certified_transitions_from_execution(
         })
         .collect::<Result<Vec<_>, _>>()?;
     Ok((transitions, loop_rule))
-}
-
-#[allow(clippy::too_many_arguments)]
-fn transport_memory_predicate_facts(
-    pre_state: &CState,
-    execution: &Proposition,
-    pure_facts: &[Proposition],
-    execution_facts: &[ExecutionPureFact],
-    successor_facts: &mut Vec<Proposition>,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
-) -> Result<(), ClickError> {
-    let Proposition::CStatementExecutes { outcome, .. } = execution else {
-        return Ok(());
-    };
-    let post_state = match outcome {
-        CStatementOutcome::Normal(state) | CStatementOutcome::Return { state, .. } => state,
-        CStatementOutcome::UndefinedBehavior(_) | CStatementOutcome::RuntimeError(_) => {
-            return Ok(());
-        }
-    };
-    if pre_state.memory() == post_state.memory() {
-        return Ok(());
-    }
-
-    let mut proof_facts = successor_facts.clone();
-    proof_facts.extend(
-        execution_facts
-            .iter()
-            .map(|fact| fact.proposition().clone()),
-    );
-    let execution_assumptions = assumptions_from_propositions(&proof_facts);
-
-    for proposition in pure_facts {
-        let Proposition::Predicate { name, arguments } = proposition else {
-            continue;
-        };
-        let Some(definition) = predicate_environment.get(name) else {
-            continue;
-        };
-        let mut changed = false;
-        let transported_arguments = arguments
-            .iter()
-            .map(|argument| match argument {
-                Term::CMemory(memory) if memory == pre_state.memory() => {
-                    changed = true;
-                    Term::CMemory(post_state.memory().clone())
-                }
-                _ => argument.clone(),
-            })
-            .collect::<Vec<_>>();
-        if !changed {
-            continue;
-        }
-
-        let old_body = instantiate_predicate_definition(
-            definition,
-            arguments,
-            &execution_assumptions,
-            predicate_environment,
-            click_function_environment,
-        )
-        .map_err(|message| {
-            ClickError::new(format!(
-                "could not inspect predicate `{name}` for frame transport: {message}"
-            ))
-        })?;
-        if !predicate_body_memory_is_framed(
-            &old_body,
-            pre_state.memory(),
-            post_state.memory(),
-            &execution_assumptions,
-        ) {
-            continue;
-        }
-        let transported = Proposition::Predicate {
-            name: name.clone(),
-            arguments: transported_arguments,
-        };
-        if !successor_facts.contains(&transported) {
-            successor_facts.push(transported);
-        }
-    }
-    Ok(())
-}
-
-fn predicate_body_memory_is_framed(
-    proposition: &Proposition,
-    before: &CMemory,
-    after: &CMemory,
-    assumptions: &Assumptions,
-) -> bool {
-    match proposition {
-        Proposition::Equal(left, right) => {
-            predicate_term_memory_is_framed(left, before, after, assumptions)
-                && predicate_term_memory_is_framed(right, before, after, assumptions)
-        }
-        Proposition::ConditionIs(condition, _) => {
-            predicate_condition_memory_is_framed(condition, before, after, assumptions)
-        }
-        Proposition::And(left, right)
-        | Proposition::Or(left, right)
-        | Proposition::Implies(left, right) => {
-            predicate_body_memory_is_framed(left, before, after, assumptions)
-                && predicate_body_memory_is_framed(right, before, after, assumptions)
-        }
-        Proposition::Not(body)
-        | Proposition::ForAll { body, .. }
-        | Proposition::Exists { body, .. } => {
-            predicate_body_memory_is_framed(body, before, after, assumptions)
-        }
-        // Nested predicates require unfolding another definition. Keep default
-        // transport one-step and leave that case for an explicit proof.
-        Proposition::Predicate { .. } => false,
-        _ => false,
-    }
-}
-
-fn predicate_term_memory_is_framed(
-    term: &Term,
-    before: &CMemory,
-    after: &CMemory,
-    assumptions: &Assumptions,
-) -> bool {
-    match term {
-        Term::Condition(condition) => {
-            predicate_condition_memory_is_framed(condition, before, after, assumptions)
-        }
-        Term::Bitvector32(value) | Term::CValue(CValue::Int32(value) | CValue::UInt8(value)) => {
-            predicate_bitvector_memory_is_framed(value, before, after, assumptions)
-        }
-        Term::CMemory(memory) => memory != before,
-        Term::PointerOffset(_) | Term::CValue(CValue::Pointer(_)) => false,
-        Term::CExpressionOutcome(_)
-        | Term::CStatementOutcome(_)
-        | Term::CFunctionOutcome(_)
-        | Term::CState(_) => false,
-    }
-}
-
-fn predicate_condition_memory_is_framed(
-    condition: &ConditionTerm,
-    before: &CMemory,
-    after: &CMemory,
-    assumptions: &Assumptions,
-) -> bool {
-    let binary = |left: &Bitvector32Term, right: &Bitvector32Term| {
-        predicate_bitvector_memory_is_framed(left, before, after, assumptions)
-            && predicate_bitvector_memory_is_framed(right, before, after, assumptions)
-    };
-    match condition {
-        ConditionTerm::Constant(_) | ConditionTerm::Variable(_) => true,
-        ConditionTerm::Bitvector32SignedLessThan(left, right)
-        | ConditionTerm::Bitvector32SignedLessEqual(left, right)
-        | ConditionTerm::Bitvector32SignedGreaterThan(left, right)
-        | ConditionTerm::Bitvector32SignedGreaterEqual(left, right)
-        | ConditionTerm::Bitvector32Equal(left, right)
-        | ConditionTerm::Bitvector32SignedAddOverflows(left, right)
-        | ConditionTerm::Bitvector32SignedSubtractOverflows(left, right)
-        | ConditionTerm::Bitvector32SignedMultiplyOverflows(left, right)
-        | ConditionTerm::Bitvector32SignedDivideOverflows(left, right)
-        | ConditionTerm::Bitvector32SignedShiftLeftOverflows(left, right) => binary(left, right),
-        ConditionTerm::PointerOffsetEqual(_, _) | ConditionTerm::PointerEqual(_, _) => false,
-    }
-}
-
-fn predicate_bitvector_memory_is_framed(
-    term: &Bitvector32Term,
-    before: &CMemory,
-    after: &CMemory,
-    assumptions: &Assumptions,
-) -> bool {
-    let binary = |left: &Bitvector32Term, right: &Bitvector32Term| {
-        predicate_bitvector_memory_is_framed(left, before, after, assumptions)
-            && predicate_bitvector_memory_is_framed(right, before, after, assumptions)
-    };
-    match term {
-        Bitvector32Term::Constant(_) | Bitvector32Term::Variable(_) => true,
-        Bitvector32Term::Add(left, right)
-        | Bitvector32Term::Subtract(left, right)
-        | Bitvector32Term::Multiply(left, right)
-        | Bitvector32Term::Divide(left, right)
-        | Bitvector32Term::Remainder(left, right)
-        | Bitvector32Term::ShiftLeft(left, right)
-        | Bitvector32Term::ArithmeticShiftRight(left, right)
-        | Bitvector32Term::BitwiseAnd(left, right)
-        | Bitvector32Term::BitwiseOr(left, right)
-        | Bitvector32Term::BitwiseXor(left, right) => binary(left, right),
-        Bitvector32Term::BitwiseNot(value) => {
-            predicate_bitvector_memory_is_framed(value, before, after, assumptions)
-        }
-        Bitvector32Term::If {
-            condition,
-            then_term,
-            else_term,
-        } => {
-            predicate_condition_memory_is_framed(condition, before, after, assumptions)
-                && predicate_bitvector_memory_is_framed(then_term, before, after, assumptions)
-                && predicate_bitvector_memory_is_framed(else_term, before, after, assumptions)
-        }
-        Bitvector32Term::RangeFold {
-            start,
-            end,
-            initial,
-            body,
-            ..
-        } => {
-            predicate_bitvector_memory_is_framed(start, before, after, assumptions)
-                && predicate_bitvector_memory_is_framed(end, before, after, assumptions)
-                && predicate_bitvector_memory_is_framed(initial, before, after, assumptions)
-                && predicate_bitvector_memory_is_framed(body, before, after, assumptions)
-        }
-        Bitvector32Term::MemoryLoad(memory, pointer) => {
-            memory.as_ref() != before
-                || c_memory_load_is_unchanged(before, after, pointer, assumptions)
-        }
-    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2244,6 +2039,7 @@ fn verify_execution_proofs_forward(
                     iteration_contexts.push(ExecutionProofContext {
                         state: preservation.state().clone(),
                         pure_facts,
+                        next_opaque_call: context.next_opaque_call,
                     });
                 }
             }
@@ -2327,6 +2123,7 @@ fn split_execution_proof_branch_contexts(
             let next = ExecutionProofContext {
                 state: context.state.clone(),
                 pure_facts: transition.pure_facts,
+                next_opaque_call: context.next_opaque_call,
             };
             if transition.is_true {
                 then_contexts.push(next);
@@ -2348,7 +2145,7 @@ fn advance_execution_proof_statement(
     initialization_proven: bool,
 ) -> Result<Vec<ExecutionProofContext>, ClickError> {
     let mut advanced = Vec::new();
-    for context in contexts {
+    for mut context in contexts {
         let label = format!("execution proof traversal at region {region_index}");
         let preservation_proven = matches!(
             loop_preservation_source,
@@ -2360,21 +2157,19 @@ fn advance_execution_proof_statement(
                 &context.pure_facts,
                 statement,
                 environment.function_environment,
-                environment.predicate_environment,
-                environment.click_function_environment,
                 CExecutionSemantics::APPLY_CALL_RULES_AND_VERIFY_LOOPS,
                 &label,
+                &mut context.next_opaque_call,
             )?,
             _ => certified_loop_exit_transitions_with_proven_phases(
                 &context.state,
                 &context.pure_facts,
                 statement,
                 environment.function_environment,
-                environment.predicate_environment,
-                environment.click_function_environment,
                 &label,
                 initialization_proven,
                 preservation_proven,
+                &mut context.next_opaque_call,
             )?,
         };
         if matches!(statement, CStatement::While { .. })
@@ -2387,6 +2182,7 @@ fn advance_execution_proof_statement(
                 CStatementOutcome::Normal(state) => advanced.push(ExecutionProofContext {
                     state,
                     pure_facts: transition.pure_facts,
+                    next_opaque_call: context.next_opaque_call,
                 }),
                 CStatementOutcome::Return { .. } => {}
                 CStatementOutcome::UndefinedBehavior(kind) => {
@@ -3966,8 +3762,6 @@ fn replay_linear_steps(
                     arguments,
                     &assumptions,
                     function_environment,
-                    predicate_environment,
-                    click_function_environment,
                     claim_label,
                     step_index,
                     "execute_step",
@@ -3984,8 +3778,6 @@ fn replay_linear_steps(
                     parsed_function.parameters(),
                     arguments,
                     function_environment,
-                    predicate_environment,
-                    click_function_environment,
                     claim_label,
                     step_index,
                     matches!(step, ProofStep::ExecuteThenStep),
@@ -4002,8 +3794,6 @@ fn replay_linear_steps(
                     parsed_function.parameters(),
                     arguments,
                     function_environment,
-                    predicate_environment,
-                    click_function_environment,
                     claim_label,
                     step_index,
                     proof_step_name(step),
@@ -4028,8 +3818,6 @@ fn replay_linear_steps(
                     parsed_function.parameters(),
                     &arguments,
                     function_environment,
-                    predicate_environment,
-                    click_function_environment,
                     statement_index,
                     claim_label,
                     step_index,
@@ -4275,12 +4063,19 @@ fn replay_linear_steps(
                     }
                     continue;
                 }
+                let mut have_facts = requirement_pure_facts.clone();
+                have_facts.extend(
+                    replay
+                        .effect_facts
+                        .iter()
+                        .map(|fact| fact.proposition().clone()),
+                );
                 let fact = prove_have_at_current_point(
                     have,
                     theorem_environment,
                     claim_label,
                     step_index,
-                    &requirement_pure_facts,
+                    &have_facts,
                     parsed_function.parameters(),
                     &arguments,
                     replay.execution_start_state(&state),
@@ -4956,8 +4751,6 @@ fn execute_selected_branch_step_from_execution_point(
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
     function_environment: &CExecutionEnvironment,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
     claim_label: &str,
     step_index: usize,
     take_then: bool,
@@ -5020,10 +4813,9 @@ fn execute_selected_branch_step_from_execution_point(
             available_pure_facts,
             &assertion_prefix,
             function_environment,
-            predicate_environment,
-            click_function_environment,
             CExecutionSemantics::APPLY_VERIFIED_RULES,
             &transition_label,
+            &mut replay.next_opaque_call,
         )?;
         let [transition] = transitions.as_slice() else {
             return Err(ClickError::new(format!(
@@ -5249,8 +5041,6 @@ fn execute_step_from_execution_point(
     arguments: &[CExpression],
     assumptions: &Assumptions,
     function_environment: &CExecutionEnvironment,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
     claim_label: &str,
     step_index: usize,
     step_name: &str,
@@ -5358,10 +5148,9 @@ fn execute_step_from_execution_point(
         available_pure_facts,
         &step_statement,
         function_environment,
-        predicate_environment,
-        click_function_environment,
         CExecutionSemantics::APPLY_VERIFIED_RULES,
         &transition_label,
+        &mut replay.next_opaque_call,
     )?;
     if transitions.len() != 1 {
         return Err(ClickError::new(format!(
@@ -5576,8 +5365,6 @@ fn execute_rest_from_execution_point(
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
     function_environment: &CExecutionEnvironment,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
     claim_label: &str,
     step_index: usize,
     step_name: &str,
@@ -5614,6 +5401,7 @@ fn execute_rest_from_execution_point(
             }
 
             let assumptions = assumptions_from_propositions(available_pure_facts);
+            replay.next_opaque_call = 0;
             execute_step_from_execution_point(
                 replay,
                 state,
@@ -5624,8 +5412,6 @@ fn execute_rest_from_execution_point(
                 arguments,
                 &assumptions,
                 function_environment,
-                predicate_environment,
-                click_function_environment,
                 claim_label,
                 step_index,
                 step_name,
@@ -5736,8 +5522,6 @@ fn execute_until_statement(
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
     function_environment: &CExecutionEnvironment,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
     statement_index: usize,
     claim_label: &str,
     step_index: usize,
@@ -5764,6 +5548,7 @@ fn execute_until_statement(
     while replay.frontier.next_statement_index != statement_index {
         let region_start = replay.frontier.next_statement_index;
         let assumptions = assumptions_from_propositions(available_pure_facts);
+        replay.next_opaque_call = 0;
         execute_step_from_execution_point(
             replay,
             state,
@@ -5774,8 +5559,6 @@ fn execute_until_statement(
             arguments,
             &assumptions,
             function_environment,
-            predicate_environment,
-            click_function_environment,
             claim_label,
             step_index,
             "execute_until",
@@ -5792,6 +5575,7 @@ fn execute_until_statement(
             )));
         }
     }
+    replay.next_opaque_call = 0;
     record_current_statement_entry(
         replay,
         state,

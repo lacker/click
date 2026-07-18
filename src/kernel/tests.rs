@@ -3331,6 +3331,76 @@ fn covering_disjoint_fact_handles_shifted_mutable_range() {
 }
 
 #[test]
+fn atomic_condition_fact_transport_uses_certified_effect_summary() {
+    let before = CMemory::new()
+        .with_block("stable", 4)
+        .with_block("mutated", 4);
+    let after = before.clone().with_block("call-havoc:0", 0);
+    let stable = Pointer {
+        block: "stable".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let mutated = Pointer {
+        block: "mutated".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let fact = Proposition::ConditionIs(
+        ConditionTerm::equal(
+            Bitvector32Term::MemoryLoad(Box::new(before.clone()), Box::new(stable.clone())),
+            Bitvector32Term::Constant(7),
+        ),
+        true,
+    );
+    let assumptions = Assumptions::new().assume_proposition(Proposition::CMemoryEffectSummary {
+        before: before.clone(),
+        after: after.clone(),
+        mutable_ranges: vec![CMemoryRange::new(
+            mutated,
+            Bitvector32Term::Constant(0),
+            Bitvector32Term::Constant(1),
+        )],
+    });
+
+    let theorem = prove_c_condition_fact_transport(&fact, &after, &assumptions)
+        .expect("the framed load should transport");
+    assert_eq!(
+        theorem.proposition(),
+        &Proposition::Implies(
+            Box::new(fact),
+            Box::new(Proposition::ConditionIs(
+                ConditionTerm::equal(
+                    Bitvector32Term::MemoryLoad(Box::new(after), Box::new(stable)),
+                    Bitvector32Term::Constant(7),
+                ),
+                true,
+            )),
+        )
+    );
+}
+
+#[test]
+fn condition_fact_transport_rejects_arithmetic_terms() {
+    let before = CMemory::new().with_block("stable", 4);
+    let after = before.clone().with_block("local:value", 4);
+    let stable = Pointer {
+        block: "stable".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let fact = Proposition::ConditionIs(
+        ConditionTerm::equal(
+            Bitvector32Term::add(
+                Bitvector32Term::MemoryLoad(Box::new(before), Box::new(stable)),
+                Bitvector32Term::Constant(1),
+            ),
+            Bitvector32Term::Constant(8),
+        ),
+        true,
+    );
+
+    assert!(prove_c_condition_fact_transport(&fact, &after, &Assumptions::new()).is_none());
+}
+
+#[test]
 fn adjacent_disjoint_fact_ranges_cover_larger_disjoint_goal() {
     let n_bits = Bitvector32Term::Variable(Variable(87));
     let p_base = Pointer {

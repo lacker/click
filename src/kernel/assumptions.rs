@@ -3088,16 +3088,12 @@ impl Assumptions {
     fn memory_ranges_proven_equal(&self, left: &CMemoryRange, right: &CMemoryRange) -> bool {
         let left_length = memory_range_length_term(left);
         let right_length = memory_range_length_term(right);
-        self.pointers_proven_equal_for_resource_transport(left.base(), right.base())
-            && self.bitvector_terms_equal_for_resource_transport(left.start(), right.start())
-            && self.bitvector_terms_equal_for_resource_transport(&left_length, &right_length)
+        self.pointers_proven_equal_for_fact_transport(left.base(), right.base())
+            && self.bitvector_terms_equal_for_fact_transport(left.start(), right.start())
+            && self.bitvector_terms_equal_for_fact_transport(&left_length, &right_length)
     }
 
-    fn pointers_proven_equal_for_resource_transport(
-        &self,
-        left: &Pointer,
-        right: &Pointer,
-    ) -> bool {
+    fn pointers_proven_equal_for_fact_transport(&self, left: &Pointer, right: &Pointer) -> bool {
         if pointers_proven_equal(left, right, self) {
             return true;
         }
@@ -3110,16 +3106,19 @@ impl Assumptions {
         ) else {
             return false;
         };
-        self.bitvector_terms_equal_for_resource_transport(&left, &right)
+        self.bitvector_terms_equal_for_fact_transport(&left, &right)
     }
 
-    fn bitvector_terms_equal_for_resource_transport(
+    fn bitvector_terms_equal_for_fact_transport(
         &self,
         left: &Bitvector32Term,
         right: &Bitvector32Term,
     ) -> bool {
+        // Snapshot-aware endpoints are valid only for bounded fact transport.
+        // Keeping them out of the global equality graph avoids recursive
+        // memory resolution and changes to symbolic execution paths.
         if self.bitvector_terms_equal_for_transport(left, right)
-            || self.bitvector_terms_equal_from_facts_for_resource_transport(left, right)
+            || self.bitvector_terms_equal_from_snapshot_facts(left, right)
         {
             return true;
         }
@@ -3134,27 +3133,28 @@ impl Assumptions {
                 Bitvector32Term::Multiply(left_a, left_b),
                 Bitvector32Term::Multiply(right_a, right_b),
             ) => {
-                self.bitvector_terms_equal_for_resource_transport(left_a, right_a)
-                    && self.bitvector_terms_equal_for_resource_transport(left_b, right_b)
+                self.bitvector_terms_equal_for_fact_transport(left_a, right_a)
+                    && self.bitvector_terms_equal_for_fact_transport(left_b, right_b)
             }
             _ => false,
         }
     }
 
-    fn bitvector_terms_equal_from_facts_for_resource_transport(
+    fn bitvector_terms_equal_from_snapshot_facts(
         &self,
         left: &Bitvector32Term,
         right: &Bitvector32Term,
     ) -> bool {
-        // Snapshot-aware endpoints belong only to bounded fact transport. Adding
-        // them to the global equality graph makes memory resolution recursive.
+        let endpoint_matches = |left: &Bitvector32Term, right: &Bitvector32Term| {
+            left == right || memory_load_terms_equal_for_fact_transport(left, right, self)
+        };
         let mut seen = BTreeSet::new();
         let mut stack = vec![left.clone()];
         while let Some(term) = stack.pop() {
             if !seen.insert(term.clone()) {
                 continue;
             }
-            if self.resource_fact_endpoint_matches(&term, right) {
+            if endpoint_matches(&term, right) {
                 return true;
             }
             for (condition, value) in &self.condition_facts {
@@ -3176,23 +3176,15 @@ impl Assumptions {
                     }
                     _ => continue,
                 };
-                if self.resource_fact_endpoint_matches(&fact_left, &term) {
+                if endpoint_matches(&fact_left, &term) {
                     stack.push(fact_right.clone());
                 }
-                if self.resource_fact_endpoint_matches(&fact_right, &term) {
+                if endpoint_matches(&fact_right, &term) {
                     stack.push(fact_left);
                 }
             }
         }
         false
-    }
-
-    fn resource_fact_endpoint_matches(
-        &self,
-        left: &Bitvector32Term,
-        right: &Bitvector32Term,
-    ) -> bool {
-        left == right || memory_load_terms_equal_for_fact_transport(left, right, self)
     }
 
     fn range_covered_by_resource_separate_ranges(

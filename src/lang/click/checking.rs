@@ -575,7 +575,20 @@ pub(super) fn prove_ensure_proposition_by_simp(
     if available_pure_facts.contains(&proposition) {
         return Ok(());
     }
-    let assumptions = assumptions_from_propositions(available_pure_facts);
+    let mut reasoning_facts = available_pure_facts.to_vec();
+    reasoning_facts.extend(
+        execution_pure_facts
+            .iter()
+            .filter(|fact| {
+                matches!(
+                    fact.proposition(),
+                    Proposition::CMemoryMutatesOnly { .. }
+                        | Proposition::CMemoryEffectSummary { .. }
+                )
+            })
+            .map(|fact| fact.proposition().clone()),
+    );
+    let assumptions = assumptions_from_propositions(&reasoning_facts);
     proposition = unfold_predicates_in_proposition(
         predicate_environment,
         click_function_environment,

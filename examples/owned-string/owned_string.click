@@ -83,7 +83,12 @@ int32 owned_string_set(
     ensures (owner->data)[index] == value;
 } by {
     unfold(owned_string(owner));
+    unfold(terminated_at);
     execute_step();
+    have terminated_at(owner->data, owner->len) by {
+        unfold(terminated_at);
+        simp();
+    }
     fold(owned_string(owner));
     execute_step();
     frame();

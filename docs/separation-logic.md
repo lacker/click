@@ -242,15 +242,6 @@ each completed execution path.
 supported straight-line statement and expects needed pure facts and resource
 facts to already be available in the proof context.
 
-Each certified statement transition also performs deterministic frame
-transport for direct memory-dependent predicate facts. For a known predicate
-`P` at memory state `S`, Click forms the corresponding `P` at successor state
-`S'`, unfolds the known definition one step, and retains the successor
-predicate only if every explicit memory load in that body is unchanged by the
-transition's certified exact writes. This derives ordinary successor pure
-facts; it does not add a new resource-algebra primitive or recursively inspect
-nested predicates.
-
 `advance(point) ensuring { Q } by { steps }` is the sequencing rule for scoped
 execution. Every proof case in `steps` must reach `point` and prove `Q`. Click
 then replaces branch-local scalar values, mutable memory, pure facts, resource

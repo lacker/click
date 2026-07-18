@@ -22,11 +22,9 @@ makes observation finite while still letting mutators unfold and re-establish
 the concrete terminator condition.
 
 The verified operations cover initialization, viewed length and element reads,
-indexed replacement, push, general pop, clear, and a pipeline of modular
-calls. Indexed replacement demonstrates automatic frame transport for the
-`terminated_at(data, len)` predicate: writing an earlier element preserves the
-terminator fact and permits the proof to fold `owned_string(owner)` again
-without manually re-proving the predicate. Push and pop move the terminator and
+indexed replacement, push, general pop, clear, and a pipeline of modular calls.
+Indexed replacement explicitly unfolds and re-establishes the terminator
+predicate after its separate store. Push and pop move the terminator and
 therefore establish the new predicate explicitly.
 
 Push declares only the metadata length and the two cells beginning at the old
