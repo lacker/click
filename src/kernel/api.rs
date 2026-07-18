@@ -1345,7 +1345,11 @@ fn symbolic_c_statement_execution_with_loop_rule(
     assumptions: Assumptions,
     paths: Vec<CStatementExecutionPath>,
 ) -> (SymbolicCExecution, Option<CVerifiedLoopRule>) {
-    let loop_rule = matches!(statement, CStatement::While { .. }).then(|| CVerifiedLoopRule {
+    let loop_rule = (matches!(statement, CStatement::While { .. })
+        && paths
+            .iter()
+            .all(|path| path.obligations.iter().all(ProofObligation::is_assumable)))
+    .then(|| CVerifiedLoopRule {
         symbolic_entry_state: state.clone(),
         loop_statement: statement.clone(),
         required_assumptions: assumptions.clone(),

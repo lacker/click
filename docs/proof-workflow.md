@@ -129,8 +129,6 @@ Current proof steps:
   must produce exactly one normal successor.
 - `bounded_execute();`: use deterministic bounded execution for concrete-loop
   fallback proofs.
-- `loop_vc(loop(N));`: check the generated verification conditions for loop
-  code region `N`.
 - `frame();`: check the current function-level certified write summary against
   its declared effect using exact available range bounds.
 - `frame(loop(N));`: perform the same exact check for loop code region `N` and

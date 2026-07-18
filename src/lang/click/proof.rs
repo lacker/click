@@ -1618,7 +1618,6 @@ struct ProofStepReplayState {
     frontier: ExecutionFrontier,
     source_layout: SourceExecutionLayout,
     program_point_states: ProgramPointStates,
-    loop_vcs: BTreeSet<usize>,
     frames: BTreeSet<Option<CodeRegionRef>>,
     unfolded_predicates: Vec<String>,
     post_execution_steps: Vec<(usize, PostExecutionStep)>,
@@ -2411,9 +2410,13 @@ fn advance_execution_proof_statement(
                 &mut context.next_opaque_call,
             )?,
         };
-        if matches!(statement, CStatement::While { .. })
-            && let Some(loop_rule) = loop_rule
-        {
+        if matches!(statement, CStatement::While { .. }) {
+            let loop_rule = loop_rule.ok_or_else(|| {
+                ClickError::new(format!(
+                    "`{}` loop({region_index}) did not produce an obligation-free verified loop rule",
+                    environment.function_block.signature().name()
+                ))
+            })?;
             verified_loop_rules.push(loop_rule);
         }
         for transition in transitions {
@@ -3524,11 +3527,6 @@ pub(super) fn prove_claims_by_grouped_auto(
 ) -> Result<Vec<VerifiedCTheorem>, ClickError> {
     let mut steps = vec![ProofStep::ExecuteRest];
     steps.extend(
-        loop_step_regions(function_block)
-            .into_iter()
-            .map(|loop_index| ProofStep::LoopVc(CodeRegionRef::Loop(loop_index))),
-    );
-    steps.extend(
         loop_effect_summary_regions(function_block)
             .into_iter()
             .map(|loop_index| ProofStep::Frame(Some(CodeRegionRef::Loop(loop_index)))),
@@ -4482,25 +4480,6 @@ fn replay_linear_steps(
                         CExecutionSemantics::APPLY_VERIFIED_RULES,
                     ),
                 )?;
-            }
-            ProofStep::LoopVc(region_ref) => {
-                require_step_execution(&replay, claim_label, step_index, "loop_vc")?;
-                require_verification_execution(&replay, claim_label, step_index, "loop_vc")?;
-                let code_region =
-                    resolve_code_region_ref(function_block, region_ref, claim_label, step_index)?;
-                let CodeRegion::Loop(loop_index) = code_region else {
-                    return Err(ClickError::new(format!(
-                        "`{claim_label}` proof step {step_index}: `loop_vc` expects a loop code region"
-                    )));
-                };
-                validate_loop_code_region(parsed_function, loop_index, claim_label, step_index)?;
-                validate_loop_vc_step(
-                    replay.execution().expect("execution should exist"),
-                    loop_index,
-                    claim_label,
-                    step_index,
-                )?;
-                replay.loop_vcs.insert(loop_index);
             }
             ProofStep::Frame(region_ref) => {
                 require_step_execution(&replay, claim_label, step_index, "frame")?;
@@ -7750,33 +7729,6 @@ fn validate_loop_code_region(
     Ok(())
 }
 
-fn validate_loop_vc_step(
-    execution: &crate::kernel::SymbolicCExecution,
-    loop_index: usize,
-    claim_label: &str,
-    step_index: usize,
-) -> Result<(), ClickError> {
-    let context_prefix = format!("loop {loop_index} ");
-    let obligations = execution
-        .paths()
-        .iter()
-        .flat_map(|path| path.obligations())
-        .filter(|obligation| {
-            obligation
-                .context()
-                .is_some_and(|context| context.starts_with(&context_prefix))
-        })
-        .cloned()
-        .collect::<Vec<_>>();
-    if !obligations.is_empty() {
-        return Err(ClickError::new(format!(
-            "`{claim_label}` proof step {step_index}: `loop_vc(loop({loop_index}))` left obligations: {}",
-            describe_obligations(&obligations)
-        )));
-    }
-    Ok(())
-}
-
 fn validate_frame_code_region(
     function_block: &FunctionBlock,
     parsed_function: &syntax::C0Function,
@@ -8042,11 +7994,6 @@ fn auto_loop_verification_proof_step_candidates(
 ) -> Vec<Vec<ProofStep>> {
     let mut base = vec![ProofStep::ExecuteRest];
     base.extend(
-        loop_step_regions(function_block)
-            .into_iter()
-            .map(|loop_index| ProofStep::LoopVc(CodeRegionRef::Loop(loop_index))),
-    );
-    base.extend(
         loop_effect_summary_regions(function_block)
             .into_iter()
             .map(|loop_index| ProofStep::Frame(Some(CodeRegionRef::Loop(loop_index)))),
@@ -8068,17 +8015,6 @@ fn auto_loop_verification_proof_step_candidates(
             vec![frame, direct]
         }
     }
-}
-
-fn loop_step_regions(function_block: &FunctionBlock) -> BTreeSet<usize> {
-    function_block
-        .structural_clauses()
-        .iter()
-        .filter_map(|clause| match clause.region() {
-            CodeRegion::Loop(index) => Some(*index),
-            CodeRegion::Function | CodeRegion::Statement(_) => None,
-        })
-        .collect()
 }
 
 fn loop_effect_summary_regions(function_block: &FunctionBlock) -> BTreeSet<usize> {

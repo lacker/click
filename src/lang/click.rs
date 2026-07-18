@@ -517,7 +517,6 @@ pub enum ProofStep {
     ExecuteRest,
     ExecuteUntil(CodeRegionRef),
     BoundedExecute,
-    LoopVc(CodeRegionRef),
     Frame(Option<CodeRegionRef>),
     UnfoldPredicate(String),
     UnfoldResource(ResourceClause),
@@ -559,7 +558,6 @@ pub enum SimpleTactic {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FuzzyTactic {
     BoundedExecute,
-    LoopVc,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -613,7 +611,6 @@ impl ProofStep {
             Self::ExecuteElseStep => ProofStepClass::Smart(SmartProofStep::ExecuteElseStep),
             Self::Simp => ProofStepClass::Smart(SmartProofStep::Simp),
             Self::BoundedExecute => ProofStepClass::Fuzzy(FuzzyTactic::BoundedExecute),
-            Self::LoopVc(_) => ProofStepClass::Fuzzy(FuzzyTactic::LoopVc),
             Self::ExecuteRest => ProofStepClass::Macro(DeterministicProofMacro::ExecuteRest),
             Self::ExecuteUntil(_) => ProofStepClass::Macro(DeterministicProofMacro::ExecuteUntil),
             Self::Have(_) => ProofStepClass::ControlFlow(ProofControlFlow::Have),

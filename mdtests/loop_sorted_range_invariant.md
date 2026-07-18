@@ -55,7 +55,6 @@ int32 loop_sorted_range_invariant(int32 p[3]) {
     }
     ensures still_sorted: sorted(p, 3) by {
         execute_rest();
-        loop_vc(carry_sorted);
         frame(carry_sorted);
         unfold(sorted);
         unfold(sorted_range);

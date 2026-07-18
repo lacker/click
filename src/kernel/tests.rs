@@ -1025,7 +1025,7 @@ fn loop_exit_rule_with_proven_preservation_does_not_reverify_the_body() {
 }
 
 #[test]
-fn loop_exit_rule_with_proven_initialization_checks_preservation_only() {
+fn loop_exit_with_unproven_preservation_does_not_produce_rule() {
     let state = CState::new().with_local("i", int32(u32::MAX));
     let statement = c_while_with_invariant_checks(
         c_int32_literal(1),
@@ -1050,7 +1050,7 @@ fn loop_exit_rule_with_proven_initialization_checks_preservation_only() {
         false,
     );
 
-    assert!(loop_rule.is_some());
+    assert!(loop_rule.is_none());
     let obligations = execution
         .paths()
         .iter()

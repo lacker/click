@@ -143,21 +143,6 @@ pub(super) fn describe_proof_context(
     )
 }
 
-pub(super) fn describe_obligations(obligations: &[ProofObligation]) -> String {
-    if obligations.is_empty() {
-        return "[]".to_string();
-    }
-
-    let entries = obligations
-        .iter()
-        .map(|obligation| match obligation.context() {
-            Some(context) => format!("{context}: {:?}", obligation.proposition()),
-            None => format!("{:?}", obligation.proposition()),
-        })
-        .collect::<Vec<_>>();
-    format!("[{}]", entries.join(", "))
-}
-
 pub(super) fn describe_missing_proof_obligations(
     obligations: &[ProofObligation],
     pure_facts: &[Proposition],

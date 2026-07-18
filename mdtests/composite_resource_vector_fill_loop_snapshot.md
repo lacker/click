@@ -69,7 +69,6 @@ int32 composite_resource_vector_fill_loop_snapshot(
     };
 } by {
     execute_rest();
-    loop_vc(fill_cells);
     frame();
     simp();
 }

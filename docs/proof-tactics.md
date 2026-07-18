@@ -67,7 +67,6 @@ certificate. Until that exists, smart tactics remain part of stored proofs.
 | Tactic | Boundary still to clarify |
 | --- | --- |
 | `bounded_execute()` | Combines bounded program execution with obligation handling. |
-| `loop_vc(loop(N))` | Checks a collection of generated loop obligations. |
 
 The intended cleanup direction is to identify the deterministic kernel rule or
 rules inside each fuzzy command, expose those as simple tactics, and retain the

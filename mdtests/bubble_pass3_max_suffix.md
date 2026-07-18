@@ -49,7 +49,6 @@ int32 bubble_pass3(int32 p[3]) {
     }
     ensures max_at_end: all_le_range(p, 0, 2, p[2]) by {
         execute_rest();
-        loop_vc(loop(0));
         unfold(all_le_range);
         simp();
     }

@@ -106,7 +106,6 @@ int32 vector_fill(struct vector* owner, int32 value) {
     };
 } by {
     execute_rest();
-    loop_vc(fill_cells);
     frame();
     simp();
 }

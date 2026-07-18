@@ -2206,7 +2206,6 @@ fn validate_pure_theorem_steps(theorem_name: &str, steps: &[ProofStep]) -> Resul
             | ProofStep::ExecuteRest
             | ProofStep::ExecuteUntil(_)
             | ProofStep::BoundedExecute
-            | ProofStep::LoopVc(_)
             | ProofStep::Frame(_)
             | ProofStep::ObserveResource(_)
             | ProofStep::Transport { .. }
@@ -2234,7 +2233,6 @@ pub(super) fn proof_step_name(step: &ProofStep) -> &'static str {
         ProofStep::ExecuteRest => "execute_rest",
         ProofStep::ExecuteUntil(_) => "execute_until",
         ProofStep::BoundedExecute => "bounded_execute",
-        ProofStep::LoopVc(_) => "loop_vc",
         ProofStep::Frame(_) => "frame",
         ProofStep::UnfoldPredicate(_) | ProofStep::UnfoldResource(_) => "unfold",
         ProofStep::FoldResource(_) => "fold",

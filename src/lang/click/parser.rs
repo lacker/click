@@ -1715,12 +1715,6 @@ impl Parser {
                 self.expect_empty_step_args(&name)?;
                 ProofStep::BoundedExecute
             }
-            "loop_vc" => {
-                self.expect(Token::LParen)?;
-                let region_ref = self.parse_code_region_ref()?;
-                self.expect(Token::RParen)?;
-                ProofStep::LoopVc(region_ref)
-            }
             "frame" => {
                 self.expect(Token::LParen)?;
                 let region_ref = if self.peek() == Some(&Token::RParen) {

@@ -738,10 +738,7 @@ fn omitted_region_proofs_use_default_prover() {
 
 #[test]
 fn parses_proof_step_script() {
-    let source = FILL3_CLICK.replace(
-        "by auto;",
-        "by { execute_rest(); loop_vc(loop(0)); frame(loop(0)); simp(); }",
-    );
+    let source = FILL3_CLICK.replace("by auto;", "by { execute_rest(); frame(loop(0)); simp(); }");
     let file = parse(&source).expect("proof-step script should parse");
     let ensure = &file.function_blocks()[0].ensures()[0];
 
@@ -750,7 +747,6 @@ fn parses_proof_step_script() {
         Some(
             [
                 ProofStep::ExecuteRest,
-                ProofStep::LoopVc(CodeRegionRef::Loop(0)),
                 ProofStep::Frame(Some(CodeRegionRef::Loop(0))),
                 ProofStep::Simp,
             ]
@@ -1647,7 +1643,7 @@ fn rejects_legacy_structural_region_syntax() {
 
 #[test]
 fn rejects_legacy_proof_step_region_syntax() {
-    let source = FILL3_CLICK.replace("by auto;", "by { execute_rest(); loop_vc(loop 0); }");
+    let source = FILL3_CLICK.replace("by auto;", "by { execute_rest(); frame(loop 0); }");
     let error = parse(&source).expect_err("legacy proof-step region syntax should fail");
 
     assert!(
@@ -3676,7 +3672,6 @@ fn loop_phase_proofs_can_unfold_invariant_predicates() {
                 }
                 ensures still_sorted: sorted(p, 3) by {
                     execute_rest();
-                    loop_vc(loop(0));
                     frame(loop(0));
                     unfold(sorted);
                     unfold(sorted_range);
@@ -3728,7 +3723,6 @@ fn verifies_symbolic_copy_segment_invariant() {
                     0 <= k and k < n implies src[k] == old(src[k])
                 } by {
                     execute_rest();
-                    loop_vc(loop(0));
                     frame(loop(0));
                     simp();
                 }
@@ -3796,7 +3790,6 @@ fn auto_certificate_replays_for_loop_frame_claim() {
         .expect("source_unchanged theorem should be present");
     let expected_steps = [
         ProofStep::ExecuteRest,
-        ProofStep::LoopVc(CodeRegionRef::Loop(0)),
         ProofStep::Frame(Some(CodeRegionRef::Loop(0))),
         ProofStep::Simp,
     ];
@@ -3830,7 +3823,6 @@ fn auto_certificate_replays_for_loop_frame_claim() {
                     0 <= k and k < n implies src[k] == old(src[k])
                 } by {
                     execute_rest();
-                    loop_vc(loop(0));
                     frame(loop(0));
                     simp();
                 }

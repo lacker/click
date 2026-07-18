@@ -103,16 +103,9 @@ branch from an exact condition fact; `execute_step()`, `execute_then_step()`,
 and `execute_else_step()` provide contextual branch reasoning. Initialization
 is non-executing because its execution point is already the first loop entry.
 
-Some loop proofs call loop-specific steps:
-
-```click
-by {
-    loop_vc(loop(0));
-}
-```
-
-`loop_vc(loop(N))` checks the generated verification conditions for loop code
-region `N`.
+Successful initialization, preservation, and effect proofs certify a verified
+loop rule. Execution applies that rule directly; there is no separate proof step
+for rechecking the loop's verification conditions.
 
 `frame(loop(N))` checks a loop's certified write summary against its declared
 effect using exact available bounds, then exposes the summary for later proof
