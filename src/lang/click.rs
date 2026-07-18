@@ -499,16 +499,16 @@ impl fmt::Display for ComparisonOperator {
 pub enum Proof {
     Default,
     Tactic(SmartTactic),
-    Steps(Vec<ProofStep>),
+    Script(Vec<ProofTactic>),
 }
 
-/// A command in an explicit `.click` proof script.
+/// A tactic in an explicit `.click` proof script.
 ///
-/// Commands are classified by [`ProofStep::class`]. A `Proof::Steps`
+/// Tactics are classified by [`ProofTactic::class`]. A `Proof::Script`
 /// certificate is not considered fully expanded while it contains a smart
-/// command.
+/// tactic.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum ProofStep {
+pub enum ProofTactic {
     Step,
     ExecuteStep,
     ExecuteThenStep,
@@ -555,61 +555,56 @@ pub enum SimpleTactic {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum SmartProofStep {
+pub enum SmartTacticKind {
     ExecuteStep,
     ExecuteThenStep,
     ExecuteElseStep,
+    ExecuteRest,
+    ExecuteUntil,
     BoundedExecute,
     Simp,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum DeterministicProofMacro {
-    ExecuteRest,
-    ExecuteUntil,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ProofControlFlow {
+pub enum ControlFlowTactic {
     Have,
     If,
     Advance,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ProofStepClass {
+pub enum TacticClass {
     Simple(SimpleTactic),
-    Smart(SmartProofStep),
-    Macro(DeterministicProofMacro),
-    ControlFlow(ProofControlFlow),
+    Smart(SmartTacticKind),
+    ControlFlow(ControlFlowTactic),
 }
 
-impl ProofStep {
-    pub fn class(&self) -> ProofStepClass {
+impl ProofTactic {
+    pub fn class(&self) -> TacticClass {
         match self {
-            Self::Step => ProofStepClass::Simple(SimpleTactic::StatementTransition),
-            Self::UnfoldPredicate(_) => ProofStepClass::Simple(SimpleTactic::UnfoldPredicate),
-            Self::UnfoldResource(_) => ProofStepClass::Simple(SimpleTactic::UnfoldResource),
-            Self::ObserveResource(_) => ProofStepClass::Simple(SimpleTactic::ObserveResource),
-            Self::ApplyTheorem(_) => ProofStepClass::Simple(SimpleTactic::ApplyTheorem),
-            Self::Witness(_) => ProofStepClass::Simple(SimpleTactic::Witness),
-            Self::Choose(_) => ProofStepClass::Simple(SimpleTactic::Choose),
-            Self::Assumption => ProofStepClass::Simple(SimpleTactic::Assumption),
-            Self::Normalize => ProofStepClass::Simple(SimpleTactic::Normalize),
-            Self::Rewrite(_) => ProofStepClass::Simple(SimpleTactic::Rewrite),
-            Self::Transport { .. } => ProofStepClass::Simple(SimpleTactic::FactTransport),
-            Self::FoldResource(_) => ProofStepClass::Simple(SimpleTactic::FoldResource),
-            Self::Frame(_) => ProofStepClass::Simple(SimpleTactic::Frame),
-            Self::ExecuteStep => ProofStepClass::Smart(SmartProofStep::ExecuteStep),
-            Self::ExecuteThenStep => ProofStepClass::Smart(SmartProofStep::ExecuteThenStep),
-            Self::ExecuteElseStep => ProofStepClass::Smart(SmartProofStep::ExecuteElseStep),
-            Self::BoundedExecute => ProofStepClass::Smart(SmartProofStep::BoundedExecute),
-            Self::Simp => ProofStepClass::Smart(SmartProofStep::Simp),
-            Self::ExecuteRest => ProofStepClass::Macro(DeterministicProofMacro::ExecuteRest),
-            Self::ExecuteUntil(_) => ProofStepClass::Macro(DeterministicProofMacro::ExecuteUntil),
-            Self::Have(_) => ProofStepClass::ControlFlow(ProofControlFlow::Have),
-            Self::If(_) => ProofStepClass::ControlFlow(ProofControlFlow::If),
-            Self::Advance(_) => ProofStepClass::ControlFlow(ProofControlFlow::Advance),
+            Self::Step => TacticClass::Simple(SimpleTactic::StatementTransition),
+            Self::UnfoldPredicate(_) => TacticClass::Simple(SimpleTactic::UnfoldPredicate),
+            Self::UnfoldResource(_) => TacticClass::Simple(SimpleTactic::UnfoldResource),
+            Self::ObserveResource(_) => TacticClass::Simple(SimpleTactic::ObserveResource),
+            Self::ApplyTheorem(_) => TacticClass::Simple(SimpleTactic::ApplyTheorem),
+            Self::Witness(_) => TacticClass::Simple(SimpleTactic::Witness),
+            Self::Choose(_) => TacticClass::Simple(SimpleTactic::Choose),
+            Self::Assumption => TacticClass::Simple(SimpleTactic::Assumption),
+            Self::Normalize => TacticClass::Simple(SimpleTactic::Normalize),
+            Self::Rewrite(_) => TacticClass::Simple(SimpleTactic::Rewrite),
+            Self::Transport { .. } => TacticClass::Simple(SimpleTactic::FactTransport),
+            Self::FoldResource(_) => TacticClass::Simple(SimpleTactic::FoldResource),
+            Self::Frame(_) => TacticClass::Simple(SimpleTactic::Frame),
+            Self::ExecuteStep => TacticClass::Smart(SmartTacticKind::ExecuteStep),
+            Self::ExecuteThenStep => TacticClass::Smart(SmartTacticKind::ExecuteThenStep),
+            Self::ExecuteElseStep => TacticClass::Smart(SmartTacticKind::ExecuteElseStep),
+            Self::ExecuteRest => TacticClass::Smart(SmartTacticKind::ExecuteRest),
+            Self::ExecuteUntil(_) => TacticClass::Smart(SmartTacticKind::ExecuteUntil),
+            Self::BoundedExecute => TacticClass::Smart(SmartTacticKind::BoundedExecute),
+            Self::Simp => TacticClass::Smart(SmartTacticKind::Simp),
+            Self::Have(_) => TacticClass::ControlFlow(ControlFlowTactic::Have),
+            Self::If(_) => TacticClass::ControlFlow(ControlFlowTactic::If),
+            Self::Advance(_) => TacticClass::ControlFlow(ControlFlowTactic::Advance),
         }
     }
 }
@@ -623,15 +618,15 @@ pub struct ProofHave {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ProofIf {
     condition: ClickProposition,
-    then_steps: Vec<ProofStep>,
-    else_steps: Vec<ProofStep>,
+    then_tactics: Vec<ProofTactic>,
+    else_tactics: Vec<ProofTactic>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ProofAdvance {
     target: ProgramPointRef,
     assertions: Vec<ProofAssertion>,
-    steps: Vec<ProofStep>,
+    tactics: Vec<ProofTactic>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -788,7 +783,7 @@ pub struct VerifiedCTheorem {
     pub function_block: FunctionBlock,
     pub claim: VerifiedClaim,
     pub proof_kind: ProofKind,
-    pub proof_steps: Option<Vec<ProofStep>>,
+    pub proof_tactics: Option<Vec<ProofTactic>>,
     pub specification: CFunctionSpecification,
     pub theorem: Theorem,
 }
@@ -799,7 +794,7 @@ pub struct VerifiedPureTheorem {
     pub ensure_index: usize,
     pub ensure_clause: EnsureClause,
     pub proof_kind: ProofKind,
-    pub proof_steps: Option<Vec<ProofStep>>,
+    pub proof_tactics: Option<Vec<ProofTactic>>,
     pub requires: Vec<Proposition>,
     pub conclusion: Proposition,
 }
@@ -815,7 +810,7 @@ pub enum ProofKind {
     Pure,
     Frame,
     Simp,
-    ProofSteps,
+    TacticScript,
     LoopVerification,
 }
 
@@ -1110,13 +1105,13 @@ impl Proof {
         self.is_auto_tactic() || self.is_frame_tactic()
     }
 
-    fn unfold_step_names(&self) -> Vec<String> {
+    fn unfold_tactic_names(&self) -> Vec<String> {
         match self {
             Self::Default | Self::Tactic(_) => Vec::new(),
-            Self::Steps(steps) => steps
+            Self::Script(tactics) => tactics
                 .iter()
-                .filter_map(|step| match step {
-                    ProofStep::UnfoldPredicate(name) => Some(name.clone()),
+                .filter_map(|tactic| match tactic {
+                    ProofTactic::UnfoldPredicate(name) => Some(name.clone()),
                     _ => None,
                 })
                 .collect(),
@@ -1127,15 +1122,15 @@ impl Proof {
         match self {
             Self::Default => None,
             Self::Tactic(tactic) => Some(tactic),
-            Self::Steps(_) => None,
+            Self::Script(_) => None,
         }
     }
 
-    pub fn steps(&self) -> Option<&[ProofStep]> {
+    pub fn tactics(&self) -> Option<&[ProofTactic]> {
         match self {
             Self::Default => None,
             Self::Tactic(_) => None,
-            Self::Steps(steps) => Some(steps),
+            Self::Script(tactics) => Some(tactics),
         }
     }
 }
@@ -1145,8 +1140,8 @@ impl VerifiedCTheorem {
         self.proof_kind
     }
 
-    pub fn proof_steps(&self) -> Option<&[ProofStep]> {
-        self.proof_steps.as_deref()
+    pub fn proof_tactics(&self) -> Option<&[ProofTactic]> {
+        self.proof_tactics.as_deref()
     }
 
     pub fn ensure_clause(&self) -> Option<&EnsureClause> {
@@ -1286,7 +1281,7 @@ pub fn verify_c0_sources(
                     &resource_environment,
                     &theorem_environment,
                 )?,
-                Proof::Steps(steps) => prove_claims_by_grouped_steps(
+                Proof::Script(tactics) => prove_claims_by_grouped_tactics(
                     source_path,
                     &function_block,
                     parsed_function,
@@ -1296,11 +1291,11 @@ pub fn verify_c0_sources(
                     &click_function_environment,
                     &resource_environment,
                     &theorem_environment,
-                    steps,
+                    tactics,
                 )?,
                 Proof::Default | Proof::Tactic(SmartTactic::Simp | SmartTactic::Frame) => {
                     return Err(ClickError::new(format!(
-                        "grouped proof for `{}` must use `by auto;` or an explicit `by {{ ... }}` proof-step block",
+                        "grouped proof for `{}` must use `by auto;` or an explicit `by {{ ... }}` proof script",
                         function_block.signature().name()
                     )));
                 }
@@ -1351,7 +1346,7 @@ pub fn verify_c0_sources(
                         &resource_environment,
                         &theorem_environment,
                     )?,
-                    Proof::Steps(steps) => prove_claim_by_steps(
+                    Proof::Script(tactics) => prove_claim_by_tactics(
                         source_path,
                         &function_block,
                         parsed_function,
@@ -1362,7 +1357,7 @@ pub fn verify_c0_sources(
                         &click_function_environment,
                         &resource_environment,
                         &theorem_environment,
-                        steps,
+                        tactics,
                     )?,
                 };
                 function_verified.extend(theorems.iter().cloned());
@@ -1813,7 +1808,7 @@ fn validate_region_proof_clauses(
             };
             if proof.is_frame_tactic() {
                 return Err(ClickError::new(format!(
-                    "`{phase}` must use `auto`, `simp`, or a proof-step script"
+                    "`{phase}` must use `auto`, `simp`, or an explicit proof script"
                 )));
             }
         }
@@ -1852,33 +1847,33 @@ fn validate_region_proof_clauses(
 }
 
 fn validate_loop_phase_proof(phase: &str, proof: Option<&Proof>) -> Result<(), ClickError> {
-    let Some(Proof::Steps(steps)) = proof else {
+    let Some(Proof::Script(tactics)) = proof else {
         return Ok(());
     };
     if phase == "preserve" {
         return Ok(());
     }
-    validate_loop_initialization_steps(steps)
+    validate_loop_initialization_tactics(tactics)
 }
 
-fn validate_loop_initialization_steps(steps: &[ProofStep]) -> Result<(), ClickError> {
-    for step in steps {
-        match step {
-            ProofStep::UnfoldPredicate(_)
-            | ProofStep::ApplyTheorem(_)
-            | ProofStep::Have(_)
-            | ProofStep::Assumption
-            | ProofStep::Normalize
-            | ProofStep::Rewrite(_)
-            | ProofStep::Simp => {}
-            ProofStep::If(proof_if) => {
-                validate_loop_initialization_steps(&proof_if.then_steps)?;
-                validate_loop_initialization_steps(&proof_if.else_steps)?;
+fn validate_loop_initialization_tactics(tactics: &[ProofTactic]) -> Result<(), ClickError> {
+    for tactic in tactics {
+        match tactic {
+            ProofTactic::UnfoldPredicate(_)
+            | ProofTactic::ApplyTheorem(_)
+            | ProofTactic::Have(_)
+            | ProofTactic::Assumption
+            | ProofTactic::Normalize
+            | ProofTactic::Rewrite(_)
+            | ProofTactic::Simp => {}
+            ProofTactic::If(proof_if) => {
+                validate_loop_initialization_tactics(&proof_if.then_tactics)?;
+                validate_loop_initialization_tactics(&proof_if.else_tactics)?;
             }
-            step => {
+            tactic => {
                 return Err(ClickError::new(format!(
                     "`initialize` is a pure proof and cannot use `{}`",
-                    validation::proof_step_name(step)
+                    validation::tactic_name(tactic)
                 )));
             }
         }

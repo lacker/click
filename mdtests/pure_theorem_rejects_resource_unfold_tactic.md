@@ -1,11 +1,11 @@
-# pure theorem rejects resource unfold step
+# pure theorem rejects resource unfold tactic
 
 This checks that theorem proof scripts cannot manipulate the resource context.
 
 ```click
 resource token(x: int32);
 
-theorem resource_unfold_step_is_not_pure(x: int32) {
+theorem resource_unfold_tactic_is_not_pure(x: int32) {
     ensures x == x by {
         unfold(token(x));
         simp();
@@ -14,5 +14,5 @@ theorem resource_unfold_step_is_not_pure(x: int32) {
 ```
 
 ```expect
-fail: proof step `unfold` is not available in the pure proof for theorem `resource_unfold_step_is_not_pure`
+fail: tactic `unfold` is not available in the pure proof for theorem `resource_unfold_tactic_is_not_pure`
 ```

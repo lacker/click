@@ -316,7 +316,7 @@ int32 init_once(int32 flag[]) {
 }
 ```
 
-Together, the three resource proof steps are deliberately local:
+Together, the three resource tactics are deliberately local:
 
 - `observe(resource);` exposes one immediate view layer and consumes nothing.
 - `unfold(resource);` consumes one owned composite resource and exposes its
@@ -421,10 +421,10 @@ Implemented today:
   access authorization, splitting, and joining,
 - exact-match token resources declared with `resource name(...)`,
 - composite resources with explicit `unfold(resource)` and
-  `fold(resource)` proof steps, including composition over other declared
+  `fold(resource)` tactics, including composition over other declared
   resources,
 - one-step fact views for folded composite resources, plus
-  `observe(resource)` proof steps that explicitly record fact-view projection
+  `observe(resource)` tactics that explicitly record fact-view projection
   without exposing contained permissions,
 - owned memory implying viewed authority,
 - visible owned resources imply `separate(...)` facts; provably overlapping
@@ -445,7 +445,7 @@ Not implemented yet:
 - implicit resource unfold/fold search in `auto`,
 - persistent token resources,
 - ownership predicates,
-- explicit resource algebra proof steps,
+- explicit resource algebra tactics,
 - general mutable spec/model state.
 
 The current permission layer is intentionally small. It should be treated as the

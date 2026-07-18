@@ -1,7 +1,7 @@
-# Grouped post-execution steps respect source order
+# Grouped post-execution tactics respect source order
 
 `simp()` closes only claims provable at its position. A fact established by a
-later `have` does not retroactively affect that earlier simplification step.
+later `have` does not retroactively affect that earlier `simp()` tactic.
 
 ```c filename=grouped_post_order.c
 int32 identity(int32 x) {

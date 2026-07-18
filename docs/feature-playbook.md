@@ -18,7 +18,7 @@ Prefer this order:
 
 1. Ordinary Click definition in `stdlib/prelude.click`.
 2. Deterministic proof support in the kernel for a general pattern.
-3. New proof step if users need explicit control.
+3. New tactic if users need explicit control.
 4. New syntax only when the concept cannot be expressed clearly with existing
    syntax.
 
@@ -70,7 +70,7 @@ Prefer deterministic, narrow rules. Good examples:
 - instantiate one finite quantified pattern
 
 Avoid broad heuristic search unless it lives behind `auto` and successful cases
-can still produce replayable proof steps when possible.
+can still produce replayable tactic certificates when possible.
 
 ## Adding Standard Library Definitions
 

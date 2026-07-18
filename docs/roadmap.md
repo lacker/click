@@ -27,7 +27,7 @@ is:
 - Every new proof feature should land with an mdtest that explains why it
   exists.
 - Keep replayability in mind. `auto` may search, but successful automation
-  should move toward stable proof steps when a proof becomes important.
+  should move toward stable tactics when a proof becomes important.
 - Diagnostics are a design surface. A failed proof should point at the missing
   requirement, invariant, frame fact, or unsupported C feature.
 
@@ -112,7 +112,7 @@ Likely additions:
   covered subrange transfer for function calls. The implementation now has an
   explicit internal resource-family boundary for the memory family plus
   exact-match token resources with declared argument types and duplicate-owned-token
-  rejection. It also has composite resources with explicit proof-step
+  rejection. It also has composite resources with explicit
   `unfold(resource)` and `fold(resource)` operations for wrappers over built-in
   resources, other declared resources, and resource facts. Fractions, persistent
   token resources, implicit unfold/fold search, custom resource-family algebra,
@@ -194,7 +194,7 @@ Done means:
 - The same library predicate can be reused across multiple functions without
   copying proof scripts.
 - Common range/string/frame facts are proved by named stdlib theorems or stable
-  proof steps, not by adding ad hoc special cases every time.
+  tactic scripts, not by adding ad hoc special cases every time.
 
 ## Milestone 4: Modular Verification At Library Scale
 

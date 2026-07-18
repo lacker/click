@@ -11,12 +11,14 @@ will have exactly the names used here.
   some of these would be called axiom schemas or trusted proof procedures, but
   Click uses the simpler word axiom.
 - A **theorem** is a proposition produced by axioms.
-- A **simple tactic** is a deterministic, bounded proof-language call that
-  invokes one explicit proof rule.
-- A **proof** is a `by` clause: either a replayable sequence of proof steps, or
-  a tactic call that can later be expanded into proof steps.
+- A **simple tactic** is a deterministic, bounded tactic that performs one
+  explicit proof step.
+- A **proof** is a `by` clause containing a replayable tactic script or one
+  smart tactic that can later be expanded into a simple-tactic certificate.
 - A **smart tactic** may search or orchestrate several rules. Logically it
   should be replaceable by a sequence of simple tactics.
+- A **control-flow tactic** creates proof scopes or subgoals in which other
+  tactics run. `have`, proof-level `if`, and `advance` are control-flow tactics.
 - A **pure proof** derives a proposition from facts at one execution point. It
   has no execution frontier and cannot execute C or transform resources.
 - An **execution proof** establishes a pre/post relationship for a code region.

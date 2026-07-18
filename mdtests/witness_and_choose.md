@@ -1,4 +1,4 @@
-# Witness and choose proof steps
+# Witness and choose tactics
 
 ```c filename=witness_and_choose.c
 int32 witness_zero(int32 n) {

@@ -50,7 +50,7 @@ The shorthand `} by auto;` builds one deterministic grouped script:
 and `simp()` when it has postconditions. Composite-resource folds and theorem
 applications remain explicit.
 
-After execution reaches the return frontier, grouped proof steps retain source
+After execution reaches the return frontier, grouped tactics retain source
 order. `fold`, `apply`, and `have` transform the current finalized path;
 `frame()` closes the effect goals then provable, and `simp()` closes the
 postconditions then provable. A later fact or fold does not retroactively affect
@@ -71,7 +71,7 @@ Omitting a proof clause uses `auto`.
 
 For an individual claim, `auto` is the broad orchestration tactic. It first
 tries verification execution, then may try the smart `bounded_execute()` proof
-script and records the proof steps that succeeded. Grouped `auto` has the fixed
+script and records the tactics that succeeded. Grouped `auto` has the fixed
 expansion described above, so grouped proofs do not depend on proof search.
 
 `simp` is a smart contextual simplifier. It is useful for straight-line
@@ -83,14 +83,14 @@ discrete relationship between strict and non-strict integer bounds.
 
 `by frame` smartly proves `immutable` and `mutable` effect clauses using
 contextual range reasoning. It rejects ordinary postconditions. The explicit
-proof step `frame()` instead requires exact range bounds.
+tactic `frame()` instead requires exact range bounds.
 
 The exhaustive simple/smart classification is in the
 [proof tactics reference](proof-tactics.md).
 
-## Proof-Step Scripts
+## Explicit Proof Scripts
 
-Explicit proof scripts use function-call-shaped proof commands:
+Explicit proof scripts use function-call-shaped tactics:
 
 ```click
 by {
@@ -100,7 +100,7 @@ by {
 }
 ```
 
-Current proof steps:
+Current tactics:
 
 - `step();`: advance one small C transition using only exact or context-free execution
   prerequisites. It does not automatically transport memory-dependent facts to
@@ -119,7 +119,7 @@ Current proof steps:
   execution point to function exit. From function entry, this executes the
   whole C0 function. It applies verified abstract loop rules where available.
 - `symbolic_execute();`: deprecated source alias for `execute_rest();`; both
-  spellings parse to the same proof step.
+  spellings parse to the same tactic.
 - `execute_until(statement(N));`: execute the current deterministic prefix up
   to the entry of statement region `N`. It can cross verified loops, but an
   unresolved `if` still requires explicit branch entry. It composes with prior
@@ -265,8 +265,8 @@ fact or resource fact required by the following `step()` or `fold(resource)`.
 Applications after function exit remain path-local, so `result` and post-state
 expressions are interpreted separately for each completed path.
 
-Some successful `auto` proofs record replayable proof-step certificates when the
-current proof-step language can express the argument.
+Some successful `auto` proofs record replayable tactic certificates when the
+current tactic language can express the argument.
 
 An execution proof tracks an execution frontier: the current
 execution point together with its enclosing continuation stack. Proof scripts can
@@ -280,7 +280,7 @@ happen between those execution steps.
 The execution frontier carries the same global statement ID assigned by
 lowering. The source layout uses that ID to identify branch children,
 continuations, and nested loops. Checks inserted by annotation lowering remain
-attached to their source statement and do not become extra proof steps.
+attached to their source statement and do not become extra tactics.
 
 Ordinary statement steps, explicit branch entry, and region execution-proof
 traversal use the same certified condition and statement transitions. `advance` composes
@@ -298,7 +298,7 @@ one step automatically, matching `observe(composite(...))` for immediate
 contained views. Owned composite resources still require an explicit
 `observe(...)` when a proof wants to read through the folded resource.
 
-Existential proof steps are deterministic replay steps, not search tactics. A
+Existential tactics are deterministic replay steps, not search tactics. A
 typical existential-introduction proof names a witness:
 
 ```click
@@ -433,7 +433,7 @@ for loop(0) {
 
 Either phase may be omitted, meaning `by auto`. An explicit preservation proof
 runs in a fresh arbitrary-iteration context and must reach the loop back edge
-on every proof branch. It can use ordinary proof steps, including `have`,
+on every proof branch. It can use ordinary tactics, including `have`,
 resource operations, proof-level `if`, and branch execution.
 
 An explicit initialization proof is an ordinary pure proof at the actual loop
@@ -507,7 +507,7 @@ Failure messages usually include:
 - guarantee label
 - execution path index
 - pure facts
-- resource facts, when the failing proof step has a current resource context
+- resource facts, when the failing tactic has a current resource context
 - remaining proof obligations
 - simplified proposition for failed `simp`
 

@@ -39,5 +39,5 @@ int32 advance_missing_fact(int32 x) {
 
 ```expect
 fail: in else branch of proof `if x >= 0`:
-`advance_missing_fact.ensures_0` proof step 1: `advance` did not establish fact
+`advance_missing_fact.ensures_0` tactic 1: `advance` did not establish fact
 ```

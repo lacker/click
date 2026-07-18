@@ -1,30 +1,30 @@
-# proof steps prepare execution
+# tactics prepare execution
 
-These checks require deterministic pure proof steps inside an execution proof
+These checks require deterministic pure tactics inside an execution proof
 to update its current facts before the following C statement is executed.
 
-```c filename=proof_steps_prepare_execution.c
+```c filename=tactics_prepare_execution.c
 int32 increment_unfold(int32 x) {
     return x + 1;
 }
 ```
 
-```c filename=proof_steps_prepare_execution_apply.c
+```c filename=tactics_prepare_execution_apply.c
 int32 increment_apply(int32 x) {
     return x + 1;
 }
 ```
 
-```c filename=proof_steps_prepare_execution_have.c
+```c filename=tactics_prepare_execution_have.c
 int32 increment_have(int32 x) {
     return x + 1;
 }
 ```
 
 ```click
-verifying "proof_steps_prepare_execution.c";
-verifying "proof_steps_prepare_execution_apply.c";
-verifying "proof_steps_prepare_execution_have.c";
+verifying "tactics_prepare_execution.c";
+verifying "tactics_prepare_execution_apply.c";
+verifying "tactics_prepare_execution_have.c";
 
 predicate incrementable(int32 x) {
     x < 2147483647

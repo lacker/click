@@ -16,7 +16,7 @@ Larger example projects live directly under `examples/`. They contain ordinary
 - `mdtests/simp_postconditions.md`: deterministic `simp` postconditions.
 - `mdtests/simp_equality_order_transport.md`: deterministic equality rewriting,
   discrete integer-bound normalization, and equality-linked arithmetic.
-- `mdtests/proof_step_execute_rest.md`: explicit execution-proof step `execute_rest()`,
+- `mdtests/tactic_execute_rest.md`: explicit execution tactic `execute_rest()`,
   the clearer name for whole-function symbolic execution from the current proof
   execution point.
 
@@ -27,10 +27,10 @@ Larger example projects live directly under `examples/`. They contain ordinary
   unfolding.
 - `mdtests/pure_theorem_apply.md`: pure theorem proof script applying an
   earlier theorem.
-- `mdtests/pure_theorem_rejects_execution_step.md`: theorem proofs reject C
-  execution proof steps.
-- `mdtests/pure_theorem_rejects_observe_step.md`: theorem proofs reject
-  resource fact-observation proof steps.
+- `mdtests/pure_theorem_rejects_execution_tactic.md`: theorem proofs reject C
+  execution tactics.
+- `mdtests/pure_theorem_rejects_observe_tactic.md`: theorem proofs reject
+  resource fact-observation tactics.
 - `mdtests/theorem_apply_in_function_proof.md`: execution proof applying a pure
   theorem after symbolic execution.
 - `mdtests/theorem_apply_requires_precondition.md`: theorem application fails

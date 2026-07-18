@@ -225,7 +225,7 @@ theorems from the standard library.
 2. Add an mdtest using it from an ordinary `.click` sidecar.
 3. If the proof does not close, decide whether the missing support is:
    - a general kernel/prover law
-   - a missing proof step
+   - a missing tactic
    - a language feature
    - a bad library abstraction
 4. Update this document.

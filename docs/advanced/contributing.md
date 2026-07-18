@@ -21,7 +21,7 @@ Prefer this order:
 
 1. An ordinary Click definition in `stdlib/prelude.click`.
 2. Deterministic proof support for a general pattern.
-3. A new proof step if users need explicit control.
+3. A new tactic if users need explicit control.
 4. New syntax only when existing syntax cannot express the concept clearly.
 
 This keeps the language smaller and makes kernel support more reusable.

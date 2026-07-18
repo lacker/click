@@ -234,13 +234,14 @@ automatic verification for that premise.
 `apply(...)` and `have ... by { ... }` perform pure proofs at the current
 execution point. `observe(...)`, resource `unfold(...)`, and `fold(...)` perform
 resource reasoning there. None advances execution. This lets deterministic
-proof steps prepare facts and resources before the next C statement. At function exit, operations
+tactics prepare facts and resources before the next C statement. At function exit, operations
 whose meaning depends on `result` or the post-state are checked separately for
 each completed execution path.
 
-`execute_step()` is the primitive execution proof step. It advances by one
-supported straight-line statement and expects needed pure facts and resource
-facts to already be available in the proof context.
+`step()` is the simple execution tactic. It advances by one supported
+straight-line statement and expects needed pure facts and resource facts to
+already be available in the proof context. `execute_step()` is its smart,
+contextual counterpart.
 
 `advance(point) ensuring { Q } by { steps }` is the sequencing rule for scoped
 execution. Every proof case in `steps` must reach `point` and prove `Q`. Click
@@ -289,11 +290,11 @@ Examples:
 - An owned memory resource exposes its viewed memory core, but the viewed core
   is a resource fact, not a pure fact.
 
-This distinction matters. `observe(...)` should be a deterministic proof step
+This distinction matters. `observe(...)` should be a deterministic tactic
 that adds observable pure facts and viewed immediate contained resource facts.
 It should not unfold hidden owned permissions, and it should not consume the
 observed resource fact. It should also stay one-step: recursive expansion of
-large composite resources belongs behind an explicit bounded proof step or
+large composite resources belongs behind an explicit bounded tactic or
 future summary mechanism, not in default `auto` behavior.
 
 `ResourceContext::observable_facts(...)` implements the pure-fact side of this
@@ -378,7 +379,7 @@ Composite resources add a definitional layer:
   immediate body resource facts and pure facts.
 - `fold(resource)` requires the declared pure facts as exact current facts (or
   context-free truths), consumes one immediate body, and returns the owned
-  composite resource fact. Deriving those facts is a separate proof step.
+  composite resource fact. Deriving those facts is a separate tactic.
 - `observe(resource)` projects one view step without consuming the resource
   fact. It exposes immediate pure facts and viewed immediate contained resource
   facts, but not owned contained permissions.

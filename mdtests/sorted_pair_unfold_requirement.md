@@ -1,6 +1,6 @@
 # sorted_pair unfolds a requirement
 
-This checks that `unfold(predicate)` is an explicit proof step. The predicate
+This checks that `unfold(predicate)` is an explicit tactic. The predicate
 fact from `requires sorted_pair(p)` is opaque until the proof script unfolds it.
 
 ```c filename=sorted_pair_unfold_requirement.c

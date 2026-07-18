@@ -39,15 +39,15 @@ several reasoning rules even though its implementation is deterministic.
 Use `frame` for `immutable` and `mutable` effect clauses.
 
 Pure proofs for theorem declarations currently support `auto`, `simp`, and
-proof-step scripts made from `unfold(name);`, `apply(theorem(args));`,
+explicit proof scripts made from `unfold(name);`, `apply(theorem(args));`,
 `assumption();`, `normalize();`, `rewrite(equality);`, and `simp();`.
 They do not run C execution steps because there is no C function body attached
-to the theorem, and they do not run resource steps because theorem application
+to the theorem, and they do not run resource tactics because theorem application
 does not change the resource context.
 
-## Proof-Step Scripts
+## Explicit Proof Scripts
 
-When a proof needs more control, write a proof-step script:
+When a proof needs more control, write an explicit tactic script:
 
 ```click
 ensures result == x by {
@@ -56,12 +56,15 @@ ensures result == x by {
 }
 ```
 
-An explicit script records a specific proof path, but not every current command
+An explicit script records a specific proof path, but not every current tactic
 is simple. `assumption`, `normalize`, `rewrite`, and exact-premise `apply` are
-simple tactics. `auto`, `simp`, and `bounded_execute` are smart tactics. The
-[proof tactics reference](../proof-tactics.md) classifies every command.
+simple tactics. `auto`, `simp`, `execute_step`, `execute_then_step`,
+`execute_else_step`, `execute_rest`, `execute_until`, and `bounded_execute` are
+smart tactics. `have`, proof-level `if`, and `advance` are proof control-flow
+tactics. The
+[proof tactics reference](../proof-tactics.md) classifies every tactic.
 
-Common steps include:
+Common tactics include:
 
 - `step();`: perform one simple C statement transition using exact execution
   prerequisites and without automatic fact transport.
@@ -72,7 +75,7 @@ Common steps include:
 - `execute_rest();`: execute symbolically from the current execution point to
   function exit. From function entry, this executes the whole C function.
 - `symbolic_execute();`: deprecated source alias for `execute_rest();`; both
-  spellings parse to the same proof step.
+  spellings invoke the same tactic.
 - `execute_until(statement(N));`: advance from the current execution point to
   a forward, reachable statement entry point. An unresolved branch still
   requires explicit arm selection.
@@ -121,6 +124,6 @@ Then read the proof clause:
 - `by auto` means the proof is automated.
 - `by simp` means the result should follow by simplification.
 - `by { ... }` means the author wrote an explicit proof script; consult its
-  commands to see whether it is simple or smart.
+  tactics to see whether each is simple, smart, or control flow.
 
-The full proof-step reference is in the proof workflow page.
+The full tactic reference is in the proof workflow page.

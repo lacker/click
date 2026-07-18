@@ -1,11 +1,11 @@
-# pure theorem rejects resource fold step
+# pure theorem rejects resource fold tactic
 
 This checks that theorem proof scripts cannot manipulate the resource context.
 
 ```click
 resource token(x: int32);
 
-theorem fold_step_is_not_pure(x: int32) {
+theorem fold_tactic_is_not_pure(x: int32) {
     ensures x == x by {
         fold(token(x));
         simp();
@@ -14,5 +14,5 @@ theorem fold_step_is_not_pure(x: int32) {
 ```
 
 ```expect
-fail: proof step `fold` is not available in the pure proof for theorem `fold_step_is_not_pure`
+fail: tactic `fold` is not available in the pure proof for theorem `fold_tactic_is_not_pure`
 ```

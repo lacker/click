@@ -161,7 +161,7 @@ pub(super) fn prove_ensure_resource(
     )))
 }
 
-pub(super) fn check_function_claim_with_existence_steps(
+pub(super) fn check_function_claim_with_existence_tactics(
     claim_label: &str,
     path_index: usize,
     execution_pure_facts: &[crate::kernel::ExecutionPureFact],
@@ -174,19 +174,19 @@ pub(super) fn check_function_claim_with_existence_steps(
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
     unfolded_predicates: &[String],
-    proof_steps: &[ProofStep],
+    proof_tactics: &[ProofTactic],
     original_requirements: &[Requirement],
     program_point_states: &ProgramPointStates,
     use_simp: bool,
 ) -> Result<(), ClickError> {
     let FunctionClaimRef::Ensure(_, ensure_clause) = claim else {
         return Err(ClickError::new(format!(
-            "`witness` and `choose` proof steps currently prove proposition `ensures` clauses for `{claim_label}`; use `frame` for effect clauses"
+            "`witness` and `choose` tactics currently prove proposition `ensures` clauses for `{claim_label}`; use `frame` for effect clauses"
         )));
     };
     let Ensure::Proposition(surface_goal) = ensure_clause.ensure() else {
         return Err(ClickError::new(format!(
-            "`witness` and `choose` proof steps currently prove proposition `ensures` clauses for `{claim_label}`; resource `ensures` are checked directly"
+            "`witness` and `choose` tactics currently prove proposition `ensures` clauses for `{claim_label}`; resource `ensures` are checked directly"
         )));
     };
     let CFunctionOutcome::Return {
@@ -238,14 +238,14 @@ pub(super) fn check_function_claim_with_existence_steps(
     })?;
 
     let mut next_choice_variable = 3_000_000;
-    for (step_index, step) in proof_steps.iter().enumerate() {
-        match step {
-            ProofStep::Choose(choice) => {
-                apply_choose_step(
+    for (tactic_index, tactic) in proof_tactics.iter().enumerate() {
+        match tactic {
+            ProofTactic::Choose(choice) => {
+                apply_choose_tactic(
                     choice,
                     claim_label,
                     path_index,
-                    step_index,
+                    tactic_index,
                     available_pure_facts,
                     &mut values,
                     original_requirements,
@@ -262,11 +262,11 @@ pub(super) fn check_function_claim_with_existence_steps(
                 )
                 .map_err(|message| {
                     ClickError::new(format!(
-                        "`choose` failed for `{claim_label}` path {path_index}, proof step {step_index}: {message}"
+                        "`choose` failed for `{claim_label}` path {path_index}, tactic {tactic_index}: {message}"
                     ))
                 })?;
             }
-            ProofStep::Witness(witness) => {
+            ProofTactic::Witness(witness) => {
                 assumptions = assumptions_from_propositions(available_pure_facts);
                 goal = unfold_predicates_in_proposition(
                     predicate_environment,
@@ -277,14 +277,14 @@ pub(super) fn check_function_claim_with_existence_steps(
                 )
                 .map_err(|message| {
                     ClickError::new(format!(
-                        "`witness` failed for `{claim_label}` path {path_index}, proof step {step_index}: {message}"
+                        "`witness` failed for `{claim_label}` path {path_index}, tactic {tactic_index}: {message}"
                     ))
                 })?;
-                let witness_value = evaluate_witness_step_value(
+                let witness_value = evaluate_witness_tactic_value(
                     witness,
                     claim_label,
                     path_index,
-                    step_index,
+                    tactic_index,
                     &values,
                     &array_refs,
                     pre_state,
@@ -295,13 +295,13 @@ pub(super) fn check_function_claim_with_existence_steps(
                     click_function_environment,
                     program_point_states,
                 )?;
-                goal = apply_witness_step(
+                goal = apply_witness_tactic(
                     witness,
                     witness_value,
                     goal,
                     claim_label,
                     path_index,
-                    step_index,
+                    tactic_index,
                 )?;
             }
             _ => {}
@@ -354,11 +354,11 @@ pub(super) fn check_function_claim_with_existence_steps(
     }
 }
 
-pub(super) fn apply_choose_step(
+pub(super) fn apply_choose_tactic(
     choice: &ProofChoice,
     claim_label: &str,
     path_index: usize,
-    step_index: usize,
+    tactic_index: usize,
     available_pure_facts: &mut Vec<Proposition>,
     values: &mut BTreeMap<String, CValue>,
     original_requirements: &[Requirement],
@@ -369,7 +369,7 @@ pub(super) fn apply_choose_step(
 ) -> Result<(), ClickError> {
     if choice.name == "result" || values.contains_key(&choice.name) {
         return Err(ClickError::new(format!(
-            "`choose` failed for `{claim_label}` path {path_index}, proof step {step_index}: `{}` is already in scope",
+            "`choose` failed for `{claim_label}` path {path_index}, tactic {tactic_index}: `{}` is already in scope",
             choice.name
         )));
     }
@@ -378,7 +378,7 @@ pub(super) fn apply_choose_step(
         ProofFactSource::Requirement(index) => {
             if *index >= original_requirements.len() {
                 return Err(ClickError::new(format!(
-                    "`choose` failed for `{claim_label}` path {path_index}, proof step {step_index}: requirement {index} is out of range; function has {} requirement(s)",
+                    "`choose` failed for `{claim_label}` path {path_index}, tactic {tactic_index}: requirement {index} is out of range; function has {} requirement(s)",
                     original_requirements.len()
                 )));
             }
@@ -389,7 +389,7 @@ pub(super) fn apply_choose_step(
             .position(|requirement| requirement.label() == Some(label.as_str()))
             .ok_or_else(|| {
                 ClickError::new(format!(
-                    "`choose` failed for `{claim_label}` path {path_index}, proof step {step_index}: unknown requirement label `{label}`"
+                    "`choose` failed for `{claim_label}` path {path_index}, tactic {tactic_index}: unknown requirement label `{label}`"
                 ))
             })?,
     };
@@ -398,7 +398,7 @@ pub(super) fn apply_choose_step(
         .cloned()
         .ok_or_else(|| {
             ClickError::new(format!(
-                "`choose` failed for `{claim_label}` path {path_index}, proof step {step_index}: requirement {source_index} was not available"
+                "`choose` failed for `{claim_label}` path {path_index}, tactic {tactic_index}: requirement {source_index} was not available"
             ))
         })?;
     if !matches!(source, Proposition::Exists { .. }) && !unfolded_predicates.is_empty() {
@@ -412,7 +412,7 @@ pub(super) fn apply_choose_step(
         )
         .map_err(|message| {
             ClickError::new(format!(
-                "`choose` failed for `{claim_label}` path {path_index}, proof step {step_index}: {message}"
+                "`choose` failed for `{claim_label}` path {path_index}, tactic {tactic_index}: {message}"
             ))
         })?;
     }
@@ -422,12 +422,12 @@ pub(super) fn apply_choose_step(
     } = source
     else {
         return Err(ClickError::new(format!(
-            "`choose` failed for `{claim_label}` path {path_index}, proof step {step_index}: source is not an existential proposition"
+            "`choose` failed for `{claim_label}` path {path_index}, tactic {tactic_index}: source is not an existential proposition"
         )));
     };
     if sort != Sort::CInt32 {
         return Err(ClickError::new(format!(
-            "`choose` failed for `{claim_label}` path {path_index}, proof step {step_index}: only int32 existential choices are supported"
+            "`choose` failed for `{claim_label}` path {path_index}, tactic {tactic_index}: only int32 existential choices are supported"
         )));
     }
 
@@ -438,11 +438,11 @@ pub(super) fn apply_choose_step(
     Ok(())
 }
 
-pub(super) fn evaluate_witness_step_value(
+pub(super) fn evaluate_witness_tactic_value(
     witness: &ProofWitness,
     claim_label: &str,
     path_index: usize,
-    step_index: usize,
+    tactic_index: usize,
     values: &BTreeMap<String, CValue>,
     array_refs: &ClickArrayRefs,
     pre_state: &CState,
@@ -469,26 +469,26 @@ pub(super) fn evaluate_witness_step_value(
     )
     .map_err(|message| {
         ClickError::new(format!(
-            "`witness` failed for `{claim_label}` path {path_index}, proof step {step_index}: could not evaluate witness value for `{}`: {message}",
+            "`witness` failed for `{claim_label}` path {path_index}, tactic {tactic_index}: could not evaluate witness value for `{}`: {message}",
             witness.name
         ))
     })?;
     let CValue::Int32(value) = value else {
         return Err(ClickError::new(format!(
-            "`witness` failed for `{claim_label}` path {path_index}, proof step {step_index}: witness `{}` did not evaluate to int32",
+            "`witness` failed for `{claim_label}` path {path_index}, tactic {tactic_index}: witness `{}` did not evaluate to int32",
             witness.name
         )));
     };
     Ok(value)
 }
 
-pub(super) fn apply_witness_step(
+pub(super) fn apply_witness_tactic(
     witness: &ProofWitness,
     witness_value: Bitvector32Term,
     goal: Proposition,
     claim_label: &str,
     path_index: usize,
-    step_index: usize,
+    tactic_index: usize,
 ) -> Result<Proposition, ClickError> {
     let Proposition::Exists {
         name,
@@ -498,17 +498,17 @@ pub(super) fn apply_witness_step(
     } = goal
     else {
         return Err(ClickError::new(format!(
-            "`witness` failed for `{claim_label}` path {path_index}, proof step {step_index}: goal is not an existential proposition"
+            "`witness` failed for `{claim_label}` path {path_index}, tactic {tactic_index}: goal is not an existential proposition"
         )));
     };
     if sort != Sort::CInt32 {
         return Err(ClickError::new(format!(
-            "`witness` failed for `{claim_label}` path {path_index}, proof step {step_index}: only int32 existential witnesses are supported"
+            "`witness` failed for `{claim_label}` path {path_index}, tactic {tactic_index}: only int32 existential witnesses are supported"
         )));
     }
     if name != witness.name {
         return Err(ClickError::new(format!(
-            "`witness` failed for `{claim_label}` path {path_index}, proof step {step_index}: goal binds `{name}`, but proof provided witness `{}`",
+            "`witness` failed for `{claim_label}` path {path_index}, tactic {tactic_index}: goal binds `{name}`, but proof provided witness `{}`",
             witness.name
         )));
     }

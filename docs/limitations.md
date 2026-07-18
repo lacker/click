@@ -110,7 +110,7 @@ lowering concept for parameters written as `int32 p[]`, `int32* p`,
 ## Existentials Need Explicit Facts
 
 `exists (int32 k) { ... }` is supported, and symbolic `(lo..hi).any(...)`
-lowers to a bounded existential. Proof-step scripts can prove existential goals
+lowers to a bounded existential. Proof scripts can prove existential goals
 with `witness(k = expression);` and can open direct existential preconditions
 with `choose(k from requirement N);`. If an explicitly unfolded predicate
 requirement lowers to an existential, `choose` can open that requirement too.

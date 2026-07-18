@@ -114,7 +114,7 @@ Theorems are intentionally pure. They do not support resource `requires`,
 resource `ensures`, effects, region proof blocks, `old(...)`, `at(...)`, or
 `result`. Pure theorem proof scripts currently support `unfold(name);`,
 `apply(theorem(args));`, `assumption();`, `normalize();`,
-`rewrite(equality);`, and `simp();`; C execution and resource proof steps are
+`rewrite(equality);`, and `simp();`; C execution and resource tactics are
 rejected. Applying a theorem never consumes, creates, returns, opens, or closes
 resources.
 
@@ -159,7 +159,7 @@ Inside those proof cases, `step()` enters the uniquely selected arm when its
 condition truth value is already an exact pure fact. `execute_step()` performs
 the same transition with contextual condition reasoning.
 `execute_then_step()` and `execute_else_step()` remain useful smart forms when
-the proof should also assert which arm it expects to enter. Each command moves
+the proof should also assert which arm it expects to enter. Each tactic moves
 the execution point to the start of the arm without executing its body.
 
 For straight-line execution, `step()` is the simple form: it accepts only exact
@@ -237,7 +237,7 @@ consumes p[0..1];
 ```
 
 Requirement labels use the same `label:` spelling as `ensures` labels. Labels
-are optional, but they are the preferred way for proof-step scripts to refer to a
+are optional, but they are the preferred way for proof scripts to refer to a
 specific precondition, for example `choose(k from requirement has_k);`.
 
 `loadable(base[start..end])` and `memory(base[start..end])` use half-open
@@ -381,7 +381,7 @@ range loadable for symbolic execution, so ordinary external reads and writes
 do not need a separate `loadable(...)` requirement for the same range.
 
 This is intentionally not the full permission system. There are no fractions,
-ownership predicates, explicit resource algebra proof steps, C heap allocation,
+ownership predicates, explicit resource algebra tactics, C heap allocation,
 or allocation-sized deallocation semantics yet. `loadable`, `mutable`, and
 `immutable` remain separate concepts from permission: loadability proves an
 access is in bounds, while resources authorize the access.
@@ -417,7 +417,7 @@ Prefer these range combinators for guarded memory reads. A plain proposition
 such as `exists (int32 k) { lo <= k and k < hi and p[k] == x }` does not
 currently let the earlier conjunct guard the later memory read during lowering.
 
-Existential goals are proved explicitly in proof-step scripts with `witness`.
+Existential goals are proved explicitly in proof scripts with `witness`.
 The witness name must match the existential binder. For a symbolic `.any`, the
 range item name is the existential binder:
 
@@ -473,8 +473,8 @@ scoped to the fresh arbitrary loop-head visit whose body iteration is being
 proved.
 
 `at(statement(N).entry, expression)` and
-`at(statement(N).exit, expression)` are currently supported in proof-step
-claims after deterministic execution records that statement point.
+`at(statement(N).exit, expression)` are currently supported in explicit
+proof-script claims after deterministic execution records that statement point.
 `execute_step()`, `execute_until(...)`, and `execute_rest()` all record every
 deterministic statement boundary they cross. Executing an annotated loop uses
 its verified abstract rule and records both `at(loop_label.entry, expression)`

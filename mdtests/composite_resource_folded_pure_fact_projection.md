@@ -1,7 +1,7 @@
 # composite resource folded pure fact projection
 
 This checks that holding a folded composite resource exposes its pure facts
-without an explicit `unfold(...)` proof step.
+without an explicit `unfold(...)` tactic.
 
 ```c filename=return_fd.c
 int32 return_fd(int32 fd) {

@@ -254,47 +254,47 @@ fn expand_declared_resource_proof(
     match proof {
         Proof::Default => Ok(proof),
         Proof::Tactic(_) => Ok(proof),
-        Proof::Steps(steps) => Ok(Proof::Steps(
-            steps
+        Proof::Script(tactics) => Ok(Proof::Script(
+            tactics
                 .into_iter()
-                .map(|step| expand_declared_resource_proof_step(step, resource_definitions))
+                .map(|tactic| expand_declared_resource_tactic(tactic, resource_definitions))
                 .collect::<Result<Vec<_>, _>>()?,
         )),
     }
 }
 
-fn expand_declared_resource_proof_step(
-    step: ProofStep,
+fn expand_declared_resource_tactic(
+    tactic: ProofTactic,
     resource_definitions: &BTreeMap<String, DeclaredResourceInfo>,
-) -> Result<ProofStep, ClickError> {
-    match step {
-        ProofStep::UnfoldResource(resource) => Ok(ProofStep::UnfoldResource(
+) -> Result<ProofTactic, ClickError> {
+    match tactic {
+        ProofTactic::UnfoldResource(resource) => Ok(ProofTactic::UnfoldResource(
             expand_declared_resource_clause(resource, resource_definitions)?,
         )),
-        ProofStep::ObserveResource(resource) => Ok(ProofStep::ObserveResource(
+        ProofTactic::ObserveResource(resource) => Ok(ProofTactic::ObserveResource(
             expand_declared_resource_clause(resource, resource_definitions)?,
         )),
-        ProofStep::FoldResource(resource) => Ok(ProofStep::FoldResource(
+        ProofTactic::FoldResource(resource) => Ok(ProofTactic::FoldResource(
             expand_declared_resource_clause(resource, resource_definitions)?,
         )),
-        ProofStep::Have(have) => Ok(ProofStep::Have(ProofHave {
+        ProofTactic::Have(have) => Ok(ProofTactic::Have(ProofHave {
             proposition: have.proposition,
             proof: expand_declared_resource_proof(have.proof, resource_definitions)?,
         })),
-        ProofStep::If(proof_if) => Ok(ProofStep::If(ProofIf {
+        ProofTactic::If(proof_if) => Ok(ProofTactic::If(ProofIf {
             condition: proof_if.condition,
-            then_steps: proof_if
-                .then_steps
+            then_tactics: proof_if
+                .then_tactics
                 .into_iter()
-                .map(|step| expand_declared_resource_proof_step(step, resource_definitions))
+                .map(|tactic| expand_declared_resource_tactic(tactic, resource_definitions))
                 .collect::<Result<Vec<_>, _>>()?,
-            else_steps: proof_if
-                .else_steps
+            else_tactics: proof_if
+                .else_tactics
                 .into_iter()
-                .map(|step| expand_declared_resource_proof_step(step, resource_definitions))
+                .map(|tactic| expand_declared_resource_tactic(tactic, resource_definitions))
                 .collect::<Result<Vec<_>, _>>()?,
         })),
-        ProofStep::Advance(advance) => Ok(ProofStep::Advance(ProofAdvance {
+        ProofTactic::Advance(advance) => Ok(ProofTactic::Advance(ProofAdvance {
             target: advance.target,
             assertions: advance
                 .assertions
@@ -306,13 +306,13 @@ fn expand_declared_resource_proof_step(
                     )),
                 })
                 .collect::<Result<Vec<_>, ClickError>>()?,
-            steps: advance
-                .steps
+            tactics: advance
+                .tactics
                 .into_iter()
-                .map(|step| expand_declared_resource_proof_step(step, resource_definitions))
+                .map(|tactic| expand_declared_resource_tactic(tactic, resource_definitions))
                 .collect::<Result<Vec<_>, _>>()?,
         })),
-        _ => Ok(step),
+        _ => Ok(tactic),
     }
 }
 
@@ -2176,46 +2176,49 @@ fn validate_pure_theorem_proof(theorem_name: &str, proof: &Proof) -> Result<(), 
         Proof::Tactic(SmartTactic::Frame) => Err(ClickError::new(format!(
             "`frame` is not available in the pure proof for theorem `{theorem_name}`"
         ))),
-        Proof::Steps(steps) => validate_pure_theorem_steps(theorem_name, steps),
+        Proof::Script(tactics) => validate_pure_theorem_tactics(theorem_name, tactics),
     }
 }
 
-fn validate_pure_theorem_steps(theorem_name: &str, steps: &[ProofStep]) -> Result<(), ClickError> {
-    for step in steps {
-        match step {
-            ProofStep::UnfoldPredicate(_)
-            | ProofStep::ApplyTheorem(_)
-            | ProofStep::Assumption
-            | ProofStep::Normalize
-            | ProofStep::Rewrite(_)
-            | ProofStep::Simp => {}
-            ProofStep::If(proof_if) => {
-                validate_pure_theorem_steps(theorem_name, &proof_if.then_steps)?;
-                validate_pure_theorem_steps(theorem_name, &proof_if.else_steps)?;
+fn validate_pure_theorem_tactics(
+    theorem_name: &str,
+    tactics: &[ProofTactic],
+) -> Result<(), ClickError> {
+    for tactic in tactics {
+        match tactic {
+            ProofTactic::UnfoldPredicate(_)
+            | ProofTactic::ApplyTheorem(_)
+            | ProofTactic::Assumption
+            | ProofTactic::Normalize
+            | ProofTactic::Rewrite(_)
+            | ProofTactic::Simp => {}
+            ProofTactic::If(proof_if) => {
+                validate_pure_theorem_tactics(theorem_name, &proof_if.then_tactics)?;
+                validate_pure_theorem_tactics(theorem_name, &proof_if.else_tactics)?;
             }
-            ProofStep::Advance(_) => {
+            ProofTactic::Advance(_) => {
                 return Err(ClickError::new(format!(
-                    "execution proof step `advance` is not available in the pure proof for theorem `{theorem_name}`"
+                    "execution tactic `advance` is not available in the pure proof for theorem `{theorem_name}`"
                 )));
             }
-            ProofStep::Step
-            | ProofStep::ExecuteStep
-            | ProofStep::ExecuteThenStep
-            | ProofStep::ExecuteElseStep
-            | ProofStep::ExecuteRest
-            | ProofStep::ExecuteUntil(_)
-            | ProofStep::BoundedExecute
-            | ProofStep::Frame(_)
-            | ProofStep::ObserveResource(_)
-            | ProofStep::Transport { .. }
-            | ProofStep::UnfoldResource(_)
-            | ProofStep::FoldResource(_)
-            | ProofStep::Have(_)
-            | ProofStep::Witness(_)
-            | ProofStep::Choose(_) => {
+            ProofTactic::Step
+            | ProofTactic::ExecuteStep
+            | ProofTactic::ExecuteThenStep
+            | ProofTactic::ExecuteElseStep
+            | ProofTactic::ExecuteRest
+            | ProofTactic::ExecuteUntil(_)
+            | ProofTactic::BoundedExecute
+            | ProofTactic::Frame(_)
+            | ProofTactic::ObserveResource(_)
+            | ProofTactic::Transport { .. }
+            | ProofTactic::UnfoldResource(_)
+            | ProofTactic::FoldResource(_)
+            | ProofTactic::Have(_)
+            | ProofTactic::Witness(_)
+            | ProofTactic::Choose(_) => {
                 return Err(ClickError::new(format!(
-                    "proof step `{}` is not available in the pure proof for theorem `{theorem_name}`",
-                    proof_step_name(step)
+                    "tactic `{}` is not available in the pure proof for theorem `{theorem_name}`",
+                    tactic_name(tactic)
                 )));
             }
         }
@@ -2223,30 +2226,30 @@ fn validate_pure_theorem_steps(theorem_name: &str, steps: &[ProofStep]) -> Resul
     Ok(())
 }
 
-pub(super) fn proof_step_name(step: &ProofStep) -> &'static str {
-    match step {
-        ProofStep::Step => "step",
-        ProofStep::ExecuteStep => "execute_step",
-        ProofStep::ExecuteThenStep => "execute_then_step",
-        ProofStep::ExecuteElseStep => "execute_else_step",
-        ProofStep::ExecuteRest => "execute_rest",
-        ProofStep::ExecuteUntil(_) => "execute_until",
-        ProofStep::BoundedExecute => "bounded_execute",
-        ProofStep::Frame(_) => "frame",
-        ProofStep::UnfoldPredicate(_) | ProofStep::UnfoldResource(_) => "unfold",
-        ProofStep::FoldResource(_) => "fold",
-        ProofStep::ApplyTheorem(_) => "apply",
-        ProofStep::Have(_) => "have",
-        ProofStep::If(_) => "if",
-        ProofStep::Advance(_) => "advance",
-        ProofStep::ObserveResource(_) => "observe",
-        ProofStep::Witness(_) => "witness",
-        ProofStep::Choose(_) => "choose",
-        ProofStep::Assumption => "assumption",
-        ProofStep::Normalize => "normalize",
-        ProofStep::Rewrite(_) => "rewrite",
-        ProofStep::Transport { .. } => "transport",
-        ProofStep::Simp => "simp",
+pub(super) fn tactic_name(tactic: &ProofTactic) -> &'static str {
+    match tactic {
+        ProofTactic::Step => "step",
+        ProofTactic::ExecuteStep => "execute_step",
+        ProofTactic::ExecuteThenStep => "execute_then_step",
+        ProofTactic::ExecuteElseStep => "execute_else_step",
+        ProofTactic::ExecuteRest => "execute_rest",
+        ProofTactic::ExecuteUntil(_) => "execute_until",
+        ProofTactic::BoundedExecute => "bounded_execute",
+        ProofTactic::Frame(_) => "frame",
+        ProofTactic::UnfoldPredicate(_) | ProofTactic::UnfoldResource(_) => "unfold",
+        ProofTactic::FoldResource(_) => "fold",
+        ProofTactic::ApplyTheorem(_) => "apply",
+        ProofTactic::Have(_) => "have",
+        ProofTactic::If(_) => "if",
+        ProofTactic::Advance(_) => "advance",
+        ProofTactic::ObserveResource(_) => "observe",
+        ProofTactic::Witness(_) => "witness",
+        ProofTactic::Choose(_) => "choose",
+        ProofTactic::Assumption => "assumption",
+        ProofTactic::Normalize => "normalize",
+        ProofTactic::Rewrite(_) => "rewrite",
+        ProofTactic::Transport { .. } => "transport",
+        ProofTactic::Simp => "simp",
     }
 }
 

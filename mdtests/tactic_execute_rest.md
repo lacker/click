@@ -1,4 +1,4 @@
-# execute rest proof step
+# execute rest tactic
 
 This checks `execute_rest()`, the clearer name for executing from the current
 execution point to function exit. From function entry, this is equivalent to

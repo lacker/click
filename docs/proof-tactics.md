@@ -8,6 +8,11 @@ design boundary, not a performance hint.
 - A **smart tactic** may search, invoke solvers, or orchestrate several proof
   operations. In principle, a successful smart tactic should be replaceable by
   a certificate made from simple tactics.
+
+A proof script is a sequence of tactics. A **proof step** is the one atomic
+operation performed by a simple tactic; a smart tactic may perform many proof
+steps. A **control-flow tactic** creates subgoals or scopes in which further
+tactics run.
 ## Simple Tactics
 
 | Tactic | One operation |
@@ -45,13 +50,15 @@ using the context.
 | `by frame;` | Prove an effect claim using frame reasoning. |
 | `execute_step()` | Advance one small C transition while contextually proving prerequisites and automatically transporting supported framed facts. |
 | `execute_then_step()` / `execute_else_step()` | Select a requested C branch using contextual condition reasoning. |
+| `execute_rest()` | Orchestrate contextual execution from the current point to function exit. |
+| `execute_until(...)` | Repeatedly perform contextual execution until a selected forward program point. |
 | `bounded_execute()` | Repeatedly apply contextual one-step execution until function exit or a fixed step budget. |
 
 `simp()` remains smart even though its algorithm is deterministic: it performs
 nontrivial contextual reasoning rather than one fixed kernel rule. Determinism
 alone does not make a tactic simple.
 
-Click does not yet expose a command that expands a smart tactic into its simple
+Click does not yet expose a tactic that expands a smart tactic into its simple
 certificate. Until that exists, smart tactics remain part of stored proofs.
 
 ## Statement Execution
@@ -74,7 +81,7 @@ transition. Their proof behavior differs:
   uniquely determined arm. It uses the same one-condition loop transition as
   `step()`.
 - `bounded_execute()` repeatedly performs contextual one-step transitions and
-  explores finite symbolic branch alternatives, subject to a fixed proof-step
+  explores finite symbolic branch alternatives, subject to a fixed execution-step
   budget. It is smart orchestration over the ordinary execution frontier, not
   a separate execution semantics.
 
@@ -95,17 +102,20 @@ The intended explicit pattern is to prove or apply a theorem concluding
 same prerequisite from the current context and is therefore a smart shorthand
 for that longer proof.
 
-## Macros And Control Flow
+`execute_rest()` and `execute_until(...)` are deterministic smart tactics: they
+do not search for a tactic sequence, but they orchestrate multiple contextual
+execution operations. They may be described internally as proof macros, but
+“macro” is not a separate user-facing tactic class.
 
-Some proof forms are neither individual tactics nor search:
+## Control-Flow Tactics
 
-- `execute_rest()` and `execute_until(...)` are deterministic proof macros over
-  execution transitions. They perform more than O(1) work and should eventually
-  be expandable into smaller execution steps.
+The following tactics structure a proof rather than directly applying a proof
+rule:
+
 - `have`, proof-level `if`, and `advance ... ensuring ... by` structure proof
-  goals and scopes. They are proof control flow. Their nested scripts may
-  contain simple, smart, or macro commands.
+  goals and scopes. Their nested scripts may contain simple, smart, or further
+  control-flow tactics.
 
 The Rust AST enforces this inventory through `SimpleTactic`, `SmartTactic`,
-`SmartProofStep`, `DeterministicProofMacro`, `ProofControlFlow`, and
-`ProofStep::class()`. Any new proof command must be classified explicitly.
+`SmartTacticKind`, `ControlFlowTactic`, and `ProofTactic::class()`. Any new
+tactic must be classified explicitly.

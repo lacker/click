@@ -570,12 +570,12 @@ fn parses_grouped_function_proof() {
     let function = &file.function_blocks()[0];
 
     assert_eq!(
-        function.grouped_proof().and_then(Proof::steps),
+        function.grouped_proof().and_then(Proof::tactics),
         Some(
             [
-                ProofStep::ExecuteRest,
-                ProofStep::Frame(None),
-                ProofStep::Simp
+                ProofTactic::ExecuteRest,
+                ProofTactic::Frame(None),
+                ProofTactic::Simp
             ]
             .as_slice()
         )
@@ -695,17 +695,17 @@ fn grouped_auto_uses_one_deterministic_execution_proof() {
         "#;
     let verified = verify_c0_sources(click_source, &[("set.c", c_source)])
         .expect("grouped auto proof should verify");
-    let expected_steps = [
-        ProofStep::ExecuteRest,
-        ProofStep::Frame(None),
-        ProofStep::Simp,
+    let expected_tactics = [
+        ProofTactic::ExecuteRest,
+        ProofTactic::Frame(None),
+        ProofTactic::Simp,
     ];
 
     assert_eq!(verified.len(), 4);
     assert!(
         verified
             .iter()
-            .all(|theorem| theorem.proof_steps() == Some(expected_steps.as_slice()))
+            .all(|theorem| theorem.proof_tactics() == Some(expected_tactics.as_slice()))
     );
 }
 
@@ -737,18 +737,18 @@ fn omitted_region_proofs_use_default_prover() {
 }
 
 #[test]
-fn parses_proof_step_script() {
+fn parses_proof_tactic_script() {
     let source = FILL3_CLICK.replace("by auto;", "by { execute_rest(); frame(loop(0)); simp(); }");
-    let file = parse(&source).expect("proof-step script should parse");
+    let file = parse(&source).expect("explicit proof script should parse");
     let ensure = &file.function_blocks()[0].ensures()[0];
 
     assert_eq!(
-        ensure.proof().steps(),
+        ensure.proof().tactics(),
         Some(
             [
-                ProofStep::ExecuteRest,
-                ProofStep::Frame(Some(CodeRegionRef::Loop(0))),
-                ProofStep::Simp,
+                ProofTactic::ExecuteRest,
+                ProofTactic::Frame(Some(CodeRegionRef::Loop(0))),
+                ProofTactic::Simp,
             ]
             .as_slice()
         )
@@ -803,7 +803,7 @@ fn parses_composite_resource_definition() {
 }
 
 #[test]
-fn parses_resource_observe_unfold_and_fold_steps() {
+fn parses_resource_observe_unfold_and_fold_tactics() {
     let source = r#"
             resource uncalled(flag: int32*) {
                 owns flag[0..1];
@@ -820,29 +820,29 @@ fn parses_resource_observe_unfold_and_fold_steps() {
                 }
             }
         "#;
-    let file = parse(source).expect("resource proof steps should parse");
+    let file = parse(source).expect("resource tactics should parse");
     let ensure = &file.function_blocks()[0].ensures()[0];
 
     assert_eq!(
-        ensure.proof().steps(),
+        ensure.proof().tactics(),
         Some(
             [
-                ProofStep::ObserveResource(ResourceClause::Declared {
+                ProofTactic::ObserveResource(ResourceClause::Declared {
                     access: ResourceAccessMode::View,
                     kind: ResourceKind::Composite,
                     name: "uncalled".to_string(),
                     arguments: vec![current_var("flag")],
                     parameter_types: vec![C0Type::Int32Pointer],
                 }),
-                ProofStep::UnfoldResource(ResourceClause::Declared {
+                ProofTactic::UnfoldResource(ResourceClause::Declared {
                     access: ResourceAccessMode::Own,
                     kind: ResourceKind::Composite,
                     name: "uncalled".to_string(),
                     arguments: vec![current_var("flag")],
                     parameter_types: vec![C0Type::Int32Pointer],
                 }),
-                ProofStep::ExecuteRest,
-                ProofStep::FoldResource(ResourceClause::Declared {
+                ProofTactic::ExecuteRest,
+                ProofTactic::FoldResource(ResourceClause::Declared {
                     access: ResourceAccessMode::Own,
                     kind: ResourceKind::Composite,
                     name: "uncalled".to_string(),
@@ -926,26 +926,26 @@ fn parses_resource_verb_function_clauses() {
 }
 
 #[test]
-fn parses_bounded_execute_proof_step() {
+fn parses_bounded_execute_proof_tactic() {
     let source = FILL3_CLICK.replace("by auto;", "by { bounded_execute(); }");
-    let file = parse(&source).expect("bounded proof-step script should parse");
+    let file = parse(&source).expect("bounded explicit proof script should parse");
     let ensure = &file.function_blocks()[0].ensures()[0];
 
     assert_eq!(
-        ensure.proof().steps(),
-        Some([ProofStep::BoundedExecute].as_slice())
+        ensure.proof().tactics(),
+        Some([ProofTactic::BoundedExecute].as_slice())
     );
 }
 
 #[test]
-fn parses_execute_rest_proof_step() {
+fn parses_execute_rest_proof_tactic() {
     let source = FILL3_CLICK.replace("by auto;", "by { execute_rest(); simp(); }");
-    let file = parse(&source).expect("execute_rest proof-step script should parse");
+    let file = parse(&source).expect("execute_rest explicit proof script should parse");
     let ensure = &file.function_blocks()[0].ensures()[0];
 
     assert_eq!(
-        ensure.proof().steps(),
-        Some([ProofStep::ExecuteRest, ProofStep::Simp].as_slice())
+        ensure.proof().tactics(),
+        Some([ProofTactic::ExecuteRest, ProofTactic::Simp].as_slice())
     );
 }
 
@@ -956,24 +956,24 @@ fn parses_symbolic_execute_as_execute_rest() {
     let ensure = &file.function_blocks()[0].ensures()[0];
 
     assert_eq!(
-        ensure.proof().steps(),
-        Some([ProofStep::ExecuteRest, ProofStep::Simp].as_slice())
+        ensure.proof().tactics(),
+        Some([ProofTactic::ExecuteRest, ProofTactic::Simp].as_slice())
     );
 }
 
 #[test]
-fn parses_execute_step_proof_step() {
+fn parses_execute_step_proof_tactic() {
     let source = FILL3_CLICK.replace("by auto;", "by { execute_step(); execute_rest(); simp(); }");
-    let file = parse(&source).expect("execute_step proof-step script should parse");
+    let file = parse(&source).expect("execute_step explicit proof script should parse");
     let ensure = &file.function_blocks()[0].ensures()[0];
 
     assert_eq!(
-        ensure.proof().steps(),
+        ensure.proof().tactics(),
         Some(
             [
-                ProofStep::ExecuteStep,
-                ProofStep::ExecuteRest,
-                ProofStep::Simp,
+                ProofTactic::ExecuteStep,
+                ProofTactic::ExecuteRest,
+                ProofTactic::Simp,
             ]
             .as_slice()
         )
@@ -1112,7 +1112,7 @@ fn simple_step_does_not_contextually_prove_execution_prerequisites() {
         "#;
 
     let error = verify_c0_sources(click_source, &[("increment.c", c_source)])
-        .expect_err("simple step must preserve the overflow prerequisite");
+        .expect_err("simple tactic must preserve the overflow prerequisite");
     assert!(
         error.message().contains("missing exact prerequisite"),
         "{}",
@@ -1121,25 +1121,25 @@ fn simple_step_does_not_contextually_prove_execution_prerequisites() {
 }
 
 #[test]
-fn parses_explicit_branch_execution_steps() {
+fn parses_explicit_branch_execution_tactics() {
     let source = FILL3_CLICK.replace(
         "by auto;",
         "by { if n <= 0 { execute_then_step(); execute_rest(); simp(); } else { execute_else_step(); execute_rest(); simp(); } }",
     );
-    let file = parse(&source).expect("explicit branch execution steps should parse");
-    let steps = file.function_blocks()[0].ensures()[0]
+    let file = parse(&source).expect("explicit branch execution tactics should parse");
+    let tactics = file.function_blocks()[0].ensures()[0]
         .proof()
-        .steps()
-        .expect("expected proof steps");
+        .tactics()
+        .expect("expected tactics");
 
     assert!(matches!(
-        &steps[0],
-        ProofStep::If(ProofIf {
-            then_steps,
-            else_steps,
+        &tactics[0],
+        ProofTactic::If(ProofIf {
+            then_tactics,
+            else_tactics,
             ..
-        }) if then_steps.first() == Some(&ProofStep::ExecuteThenStep)
-            && else_steps.first() == Some(&ProofStep::ExecuteElseStep)
+        }) if then_tactics.first() == Some(&ProofTactic::ExecuteThenStep)
+            && else_tactics.first() == Some(&ProofTactic::ExecuteElseStep)
     ));
 }
 
@@ -1161,46 +1161,46 @@ fn parses_advance_with_fact_and_resource_assertions() {
             simp();
         }"#,
     );
-    let file = parse(&source).expect("advance proof step should parse");
-    let steps = file.function_blocks()[0].ensures()[0]
+    let file = parse(&source).expect("advance tactic should parse");
+    let tactics = file.function_blocks()[0].ensures()[0]
         .proof()
-        .steps()
-        .expect("expected proof steps");
+        .tactics()
+        .expect("expected tactics");
 
     assert!(matches!(
-        &steps[0],
-        ProofStep::Advance(ProofAdvance {
+        &tactics[0],
+        ProofTactic::Advance(ProofAdvance {
             target: ProgramPointRef {
                 region: CodeRegionRef::Statement(1),
                 kind: ProgramPointKind::Exit,
             },
             assertions,
-            steps,
+            tactics,
         }) if matches!(assertions.as_slice(), [
             ProofAssertion::Fact(_),
             ProofAssertion::Resource(ResourceClause::Write(_)),
             ProofAssertion::Resource(ResourceClause::Read(_)),
-        ]) && steps == &[ProofStep::ExecuteStep]
+        ]) && tactics == &[ProofTactic::ExecuteStep]
     ));
-    assert_eq!(steps[1..], [ProofStep::ExecuteRest, ProofStep::Simp]);
+    assert_eq!(tactics[1..], [ProofTactic::ExecuteRest, ProofTactic::Simp]);
 }
 
 #[test]
-fn parses_execute_until_proof_step() {
+fn parses_execute_until_proof_tactic() {
     let source = FILL3_CLICK.replace(
         "by auto;",
         "by { execute_until(statement(1)); execute_rest(); simp(); }",
     );
-    let file = parse(&source).expect("execute_until proof-step script should parse");
+    let file = parse(&source).expect("execute_until explicit proof script should parse");
     let ensure = &file.function_blocks()[0].ensures()[0];
 
     assert_eq!(
-        ensure.proof().steps(),
+        ensure.proof().tactics(),
         Some(
             [
-                ProofStep::ExecuteUntil(CodeRegionRef::Statement(1)),
-                ProofStep::ExecuteRest,
-                ProofStep::Simp,
+                ProofTactic::ExecuteUntil(CodeRegionRef::Statement(1)),
+                ProofTactic::ExecuteRest,
+                ProofTactic::Simp,
             ]
             .as_slice()
         )
@@ -1208,18 +1208,18 @@ fn parses_execute_until_proof_step() {
 }
 
 #[test]
-fn parses_unfold_proof_step() {
+fn parses_unfold_proof_tactic() {
     let source = FILL3_CLICK.replace("by auto;", "by { execute_rest(); unfold(sorted); simp(); }");
-    let file = parse(&source).expect("unfold proof-step script should parse");
+    let file = parse(&source).expect("unfold explicit proof script should parse");
     let ensure = &file.function_blocks()[0].ensures()[0];
 
     assert_eq!(
-        ensure.proof().steps(),
+        ensure.proof().tactics(),
         Some(
             [
-                ProofStep::ExecuteRest,
-                ProofStep::UnfoldPredicate("sorted".to_string()),
-                ProofStep::Simp,
+                ProofTactic::ExecuteRest,
+                ProofTactic::UnfoldPredicate("sorted".to_string()),
+                ProofTactic::Simp,
             ]
             .as_slice()
         )
@@ -1227,24 +1227,24 @@ fn parses_unfold_proof_step() {
 }
 
 #[test]
-fn parses_apply_theorem_proof_step() {
+fn parses_apply_theorem_proof_tactic() {
     let source = FILL3_CLICK.replace(
         "by auto;",
         "by { execute_rest(); apply(nonnegative(result)); simp(); }",
     );
-    let file = parse(&source).expect("apply proof-step script should parse");
+    let file = parse(&source).expect("apply explicit proof script should parse");
     let ensure = &file.function_blocks()[0].ensures()[0];
 
     assert_eq!(
-        ensure.proof().steps(),
+        ensure.proof().tactics(),
         Some(
             [
-                ProofStep::ExecuteRest,
-                ProofStep::ApplyTheorem(TheoremApplication {
+                ProofTactic::ExecuteRest,
+                ProofTactic::ApplyTheorem(TheoremApplication {
                     name: "nonnegative".to_string(),
                     arguments: vec![current_var("result")],
                 }),
-                ProofStep::Simp,
+                ProofTactic::Simp,
             ]
             .as_slice()
         )
@@ -1263,33 +1263,33 @@ fn parses_and_classifies_simple_and_smart_tactics() {
             }
         "#;
     let file = parse(source).expect("simple tactics should parse");
-    let steps = file.theorem_definitions()[0].ensures()[0]
+    let tactics = file.theorem_definitions()[0].ensures()[0]
         .proof()
-        .steps()
-        .expect("expected proof steps");
+        .tactics()
+        .expect("expected tactics");
 
     assert!(matches!(
-        steps[0].class(),
-        ProofStepClass::Simple(SimpleTactic::Rewrite)
+        tactics[0].class(),
+        TacticClass::Simple(SimpleTactic::Rewrite)
     ));
     assert!(matches!(
-        steps[1].class(),
-        ProofStepClass::Simple(SimpleTactic::Normalize)
+        tactics[1].class(),
+        TacticClass::Simple(SimpleTactic::Normalize)
     ));
     assert!(matches!(
-        ProofStep::Simp.class(),
-        ProofStepClass::Smart(SmartProofStep::Simp)
+        ProofTactic::Simp.class(),
+        TacticClass::Smart(SmartTacticKind::Simp)
     ));
     assert!(matches!(
-        ProofStep::ExecuteStep.class(),
-        ProofStepClass::Smart(SmartProofStep::ExecuteStep)
+        ProofTactic::ExecuteStep.class(),
+        TacticClass::Smart(SmartTacticKind::ExecuteStep)
     ));
     assert!(matches!(
-        ProofStep::Step.class(),
-        ProofStepClass::Simple(SimpleTactic::StatementTransition)
+        ProofTactic::Step.class(),
+        TacticClass::Simple(SimpleTactic::StatementTransition)
     ));
     assert!(matches!(
-        ProofStep::FoldResource(ResourceClause::Declared {
+        ProofTactic::FoldResource(ResourceClause::Declared {
             access: ResourceAccessMode::Own,
             kind: ResourceKind::Composite,
             name: "cell".to_string(),
@@ -1297,23 +1297,27 @@ fn parses_and_classifies_simple_and_smart_tactics() {
             parameter_types: vec![],
         })
         .class(),
-        ProofStepClass::Simple(SimpleTactic::FoldResource)
+        TacticClass::Simple(SimpleTactic::FoldResource)
     ));
     assert!(matches!(
-        ProofStep::Frame(None).class(),
-        ProofStepClass::Simple(SimpleTactic::Frame)
+        ProofTactic::Frame(None).class(),
+        TacticClass::Simple(SimpleTactic::Frame)
     ));
     assert!(matches!(
-        ProofStep::ExecuteThenStep.class(),
-        ProofStepClass::Smart(SmartProofStep::ExecuteThenStep)
+        ProofTactic::ExecuteThenStep.class(),
+        TacticClass::Smart(SmartTacticKind::ExecuteThenStep)
     ));
     assert!(matches!(
-        ProofStep::ExecuteElseStep.class(),
-        ProofStepClass::Smart(SmartProofStep::ExecuteElseStep)
+        ProofTactic::ExecuteElseStep.class(),
+        TacticClass::Smart(SmartTacticKind::ExecuteElseStep)
     ));
     assert!(matches!(
-        ProofStep::ExecuteRest.class(),
-        ProofStepClass::Macro(DeterministicProofMacro::ExecuteRest)
+        ProofTactic::ExecuteRest.class(),
+        TacticClass::Smart(SmartTacticKind::ExecuteRest)
+    ));
+    assert!(matches!(
+        ProofTactic::ExecuteUntil(CodeRegionRef::Statement(1)).class(),
+        TacticClass::Smart(SmartTacticKind::ExecuteUntil)
     ));
 }
 
@@ -1345,7 +1349,7 @@ fn defined_fact_makes_simple_statement_step_explicit() {
         "#;
 
     verify_c0_sources(click_source, &[("increment.c", c_source)])
-        .expect("an explicit definedness theorem should satisfy simple step");
+        .expect("an explicit definedness theorem should satisfy simple tactic");
 }
 
 #[test]
@@ -1368,76 +1372,79 @@ fn defined_rejects_concrete_undefined_expression() {
 }
 
 #[test]
-fn parses_local_have_proof_step() {
+fn parses_local_have_proof_tactic() {
     let source = FILL3_CLICK.replace(
         "by auto;",
         "by { have n < 2147483647 by { simp(); } execute_rest(); simp(); }",
     );
-    let file = parse(&source).expect("local have proof step should parse");
-    let steps = file.function_blocks()[0].ensures()[0]
+    let file = parse(&source).expect("local have tactic should parse");
+    let tactics = file.function_blocks()[0].ensures()[0]
         .proof()
-        .steps()
-        .expect("expected proof steps");
+        .tactics()
+        .expect("expected tactics");
 
     assert!(matches!(
-        &steps[0],
-        ProofStep::Have(ProofHave {
-            proof: Proof::Steps(inner),
+        &tactics[0],
+        ProofTactic::Have(ProofHave {
+            proof: Proof::Script(inner),
             ..
-        }) if inner == &[ProofStep::Simp]
+        }) if inner == &[ProofTactic::Simp]
     ));
-    assert_eq!(&steps[1..], &[ProofStep::ExecuteRest, ProofStep::Simp]);
+    assert_eq!(
+        &tactics[1..],
+        &[ProofTactic::ExecuteRest, ProofTactic::Simp]
+    );
 }
 
 #[test]
-fn parses_proof_if_step() {
+fn parses_proof_if_tactic() {
     let source = FILL3_CLICK.replace(
         "by auto;",
         "by { if n <= 0 { execute_rest(); simp(); } else { execute_rest(); simp(); } }",
     );
     let file = parse(&source).expect("proof if should parse");
-    let steps = file.function_blocks()[0].ensures()[0]
+    let tactics = file.function_blocks()[0].ensures()[0]
         .proof()
-        .steps()
-        .expect("expected proof steps");
+        .tactics()
+        .expect("expected tactics");
 
     assert!(matches!(
-        &steps[0],
-        ProofStep::If(ProofIf {
-            then_steps,
-            else_steps,
+        &tactics[0],
+        ProofTactic::If(ProofIf {
+            then_tactics,
+            else_tactics,
             ..
-        }) if then_steps == &[ProofStep::ExecuteRest, ProofStep::Simp]
-            && else_steps == &[ProofStep::ExecuteRest, ProofStep::Simp]
+        }) if then_tactics == &[ProofTactic::ExecuteRest, ProofTactic::Simp]
+            && else_tactics == &[ProofTactic::ExecuteRest, ProofTactic::Simp]
     ));
 }
 
 #[test]
-fn parses_existential_proof_steps() {
+fn parses_existential_proof_tactics() {
     let source = FILL3_CLICK.replace(
         "by auto;",
         "by { execute_rest(); choose(k from requirement has_k); witness(j = k + 1); simp(); }",
     );
-    let file = parse(&source).expect("existential proof-step script should parse");
+    let file = parse(&source).expect("existential explicit proof script should parse");
     let ensure = &file.function_blocks()[0].ensures()[0];
 
     assert_eq!(
-        ensure.proof().steps(),
+        ensure.proof().tactics(),
         Some(
             [
-                ProofStep::ExecuteRest,
-                ProofStep::Choose(ProofChoice {
+                ProofTactic::ExecuteRest,
+                ProofTactic::Choose(ProofChoice {
                     name: "k".to_string(),
                     source: ProofFactSource::RequirementLabel("has_k".to_string()),
                 }),
-                ProofStep::Witness(ProofWitness {
+                ProofTactic::Witness(ProofWitness {
                     name: "j".to_string(),
                     value: ContractExpression::Add(
                         Box::new(current_var("k")),
                         Box::new(current_int(1)),
                     ),
                 }),
-                ProofStep::Simp,
+                ProofTactic::Simp,
             ]
             .as_slice()
         )
@@ -1615,7 +1622,7 @@ fn parses_loop_invariants_and_statement_asserts() {
     ));
     assert!(matches!(
         function.structural_clauses()[1].preserve_proof(),
-        Some(Proof::Steps(steps)) if steps.len() == 3
+        Some(Proof::Script(tactics)) if tactics.len() == 3
     ));
 }
 
@@ -1642,9 +1649,9 @@ fn rejects_legacy_structural_region_syntax() {
 }
 
 #[test]
-fn rejects_legacy_proof_step_region_syntax() {
+fn rejects_legacy_proof_tactic_region_syntax() {
     let source = FILL3_CLICK.replace("by auto;", "by { execute_rest(); frame(loop 0); }");
-    let error = parse(&source).expect_err("legacy proof-step region syntax should fail");
+    let error = parse(&source).expect_err("legacy proof tactic region syntax should fail");
 
     assert!(
         error.message().contains("expected LParen"),
@@ -1930,12 +1937,12 @@ fn unfolds_predicate_requirement_to_prove_consequence() {
 
     assert_eq!(verified.len(), 1);
     assert_eq!(
-        verified[0].proof_steps(),
+        verified[0].proof_tactics(),
         Some(
             [
-                ProofStep::ExecuteRest,
-                ProofStep::UnfoldPredicate("sorted_pair".to_string()),
-                ProofStep::Simp,
+                ProofTactic::ExecuteRest,
+                ProofTactic::UnfoldPredicate("sorted_pair".to_string()),
+                ProofTactic::Simp,
             ]
             .as_slice()
         )
@@ -2064,7 +2071,7 @@ fn verifies_simp_normalizes_simple_postconditions() {
 }
 
 #[test]
-fn verifies_simple_postcondition_with_proof_steps() {
+fn verifies_simple_postcondition_with_proof_tactics() {
     let c_source = r#"
             int32 identity(int32 x) {
                 return x;
@@ -2082,10 +2089,10 @@ fn verifies_simple_postcondition_with_proof_steps() {
         "#;
 
     let verified = verify_c0_sources(click_source, &[("identity.c", c_source)])
-        .expect("proof-step script should prove simple postcondition");
+        .expect("explicit proof script should prove simple postcondition");
 
     assert_eq!(verified.len(), 1);
-    assert_eq!(verified[0].proof_kind(), ProofKind::ProofSteps);
+    assert_eq!(verified[0].proof_kind(), ProofKind::TacticScript);
 }
 
 #[test]
@@ -2113,7 +2120,7 @@ fn verifies_omitted_proof_with_default_prover() {
 }
 
 #[test]
-fn verifies_mutable_effect_with_bounded_frame_steps() {
+fn verifies_mutable_effect_with_bounded_frame_tactics() {
     let c_source = r#"
             int32 write_second(int32* p) {
                 p[1] = 9;
@@ -2134,16 +2141,19 @@ fn verifies_mutable_effect_with_bounded_frame_steps() {
         "#;
 
     let verified = verify_c0_sources(click_source, &[("write_second.c", c_source)])
-        .expect("bounded frame proof steps should prove mutable effect");
-    let expected_steps = [ProofStep::BoundedExecute, ProofStep::Frame(None)];
+        .expect("bounded frame tactics should prove mutable effect");
+    let expected_tactics = [ProofTactic::BoundedExecute, ProofTactic::Frame(None)];
 
     assert_eq!(verified.len(), 1);
-    assert_eq!(verified[0].proof_kind(), ProofKind::ProofSteps);
-    assert_eq!(verified[0].proof_steps(), Some(expected_steps.as_slice()));
+    assert_eq!(verified[0].proof_kind(), ProofKind::TacticScript);
+    assert_eq!(
+        verified[0].proof_tactics(),
+        Some(expected_tactics.as_slice())
+    );
 }
 
 #[test]
-fn bare_frame_step_rejects_ensure_claim() {
+fn bare_frame_tactic_rejects_ensure_claim() {
     let c_source = r#"
             int32 identity(int32 x) {
                 return x;
@@ -2161,7 +2171,7 @@ fn bare_frame_step_rejects_ensure_claim() {
         "#;
 
     let error = verify_c0_sources(click_source, &[("identity.c", c_source)])
-        .expect_err("bare frame step should not prove postconditions");
+        .expect_err("bare frame tactic should not prove postconditions");
 
     assert!(
         error
@@ -2201,13 +2211,13 @@ fn auto_certificate_replays_for_bounded_execution() {
 
     let auto_verified = verify_c0_sources(auto_click_source, &[("fill3_array_loop.c", c_source)])
         .expect("bounded auto proof should verify");
-    let expected_steps = [ProofStep::BoundedExecute, ProofStep::Simp];
+    let expected_tactics = [ProofTactic::BoundedExecute, ProofTactic::Simp];
 
     assert_eq!(auto_verified.len(), 1);
-    assert_eq!(auto_verified[0].proof_kind(), ProofKind::ProofSteps);
+    assert_eq!(auto_verified[0].proof_kind(), ProofKind::TacticScript);
     assert_eq!(
-        auto_verified[0].proof_steps(),
-        Some(expected_steps.as_slice())
+        auto_verified[0].proof_tactics(),
+        Some(expected_tactics.as_slice())
     );
 
     let explicit_click_source = r#"
@@ -2229,13 +2239,13 @@ fn auto_certificate_replays_for_bounded_execution() {
 
     let explicit_verified =
         verify_c0_sources(explicit_click_source, &[("fill3_array_loop.c", c_source)])
-            .expect("bounded auto certificate should replay as explicit proof steps");
+            .expect("bounded auto certificate should replay as explicit tactics");
 
     assert_eq!(explicit_verified.len(), 1);
-    assert_eq!(explicit_verified[0].proof_kind(), ProofKind::ProofSteps);
+    assert_eq!(explicit_verified[0].proof_kind(), ProofKind::TacticScript);
     assert_eq!(
-        explicit_verified[0].proof_steps(),
-        Some(expected_steps.as_slice())
+        explicit_verified[0].proof_tactics(),
+        Some(expected_tactics.as_slice())
     );
 }
 
@@ -3510,7 +3520,7 @@ fn structural_invariant_rejects_frame_tactic() {
 }
 
 #[test]
-fn loop_initialize_rejects_execution_steps() {
+fn loop_initialize_rejects_execution_tactics() {
     let c_source = r#"
             int32 count_once() {
                 int32 i;
@@ -3589,7 +3599,7 @@ fn loop_preserve_requires_one_complete_iteration() {
 }
 
 #[test]
-fn loop_preserve_non_execution_steps_do_not_fall_back_to_auto() {
+fn loop_preserve_non_execution_tactics_do_not_fall_back_to_auto() {
     let c_source = r#"
             int32 count_once() {
                 int32 i;
@@ -3788,16 +3798,16 @@ fn auto_certificate_replays_for_loop_frame_claim() {
                 .is_some_and(|name| name == "source_unchanged")
         })
         .expect("source_unchanged theorem should be present");
-    let expected_steps = [
-        ProofStep::ExecuteRest,
-        ProofStep::Frame(Some(CodeRegionRef::Loop(0))),
-        ProofStep::Simp,
+    let expected_tactics = [
+        ProofTactic::ExecuteRest,
+        ProofTactic::Frame(Some(CodeRegionRef::Loop(0))),
+        ProofTactic::Simp,
     ];
 
     assert_eq!(source_unchanged.proof_kind(), ProofKind::LoopVerification);
     assert_eq!(
-        source_unchanged.proof_steps(),
-        Some(expected_steps.as_slice())
+        source_unchanged.proof_tactics(),
+        Some(expected_tactics.as_slice())
     );
 
     let explicit_click_source = r#"
@@ -3830,13 +3840,13 @@ fn auto_certificate_replays_for_loop_frame_claim() {
         "#;
 
     let explicit_verified = verify_c0_sources(explicit_click_source, &[("copy_n.c", c_source)])
-        .expect("auto certificate should replay as explicit proof steps");
+        .expect("auto certificate should replay as explicit tactics");
 
     assert_eq!(explicit_verified.len(), 1);
-    assert_eq!(explicit_verified[0].proof_kind(), ProofKind::ProofSteps);
+    assert_eq!(explicit_verified[0].proof_kind(), ProofKind::TacticScript);
     assert_eq!(
-        explicit_verified[0].proof_steps(),
-        Some(expected_steps.as_slice())
+        explicit_verified[0].proof_tactics(),
+        Some(expected_tactics.as_slice())
     );
 }
 
@@ -3989,10 +3999,10 @@ fn step_and_execute_step_advance_one_concrete_loop_transition() {
         "#;
 
     let verified = verify_c0_sources(click_source, &[("count_two.c", c_source)])
-        .expect("small steps should traverse concrete loop heads and iterations");
+        .expect("small tactics should traverse concrete loop heads and iterations");
 
     assert_eq!(verified.len(), 1);
-    assert_eq!(verified[0].proof_kind(), ProofKind::ProofSteps);
+    assert_eq!(verified[0].proof_kind(), ProofKind::TacticScript);
 }
 
 #[test]
@@ -4029,7 +4039,7 @@ fn bounded_execute_resumes_and_explores_symbolic_branches() {
     assert!(
         verified
             .iter()
-            .all(|theorem| theorem.proof_kind() == ProofKind::ProofSteps)
+            .all(|theorem| theorem.proof_kind() == ProofKind::TacticScript)
     );
 }
 

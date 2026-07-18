@@ -1586,19 +1586,17 @@ impl Parser {
                     Proof::Tactic(tactic)
                 }
                 Some(Token::RBrace) => {
-                    return Err(
-                        self.error("`by` block must contain at least one proof step or tactic")
-                    );
+                    return Err(self.error("`by` block must contain at least one tactic"));
                 }
                 Some(_) => {
-                    let mut steps = Vec::new();
+                    let mut tactics = Vec::new();
                     while self.peek() != Some(&Token::RBrace) {
-                        steps.push(self.parse_proof_step()?);
+                        tactics.push(self.parse_proof_tactic()?);
                     }
                     self.expect(Token::RBrace)?;
-                    Proof::Steps(steps)
+                    Proof::Script(tactics)
                 }
-                None => return Err(self.error("expected proof step or tactic, got end of input")),
+                None => return Err(self.error("expected tactic, got end of input")),
             };
             return Ok(proof);
         }
@@ -1615,28 +1613,28 @@ impl Parser {
         }
     }
 
-    fn parse_proof_step(&mut self) -> Result<ProofStep, ClickError> {
-        let name = self.expect_ident("proof step")?;
+    fn parse_proof_tactic(&mut self) -> Result<ProofTactic, ClickError> {
+        let name = self.expect_ident("tactic")?;
         if name == "have" {
             let proposition = self.parse_proposition()?;
             let proof = self.parse_by_clause()?;
             if self.peek() == Some(&Token::Semicolon) {
                 self.position += 1;
             }
-            return Ok(ProofStep::Have(ProofHave { proposition, proof }));
+            return Ok(ProofTactic::Have(ProofHave { proposition, proof }));
         }
         if name == "if" {
             let condition = self.parse_proposition()?;
-            let then_steps = self.parse_proof_step_block("`if` branch")?;
+            let then_tactics = self.parse_tactic_block("`if` branch")?;
             self.expect_ident_spelling("else")?;
-            let else_steps = self.parse_proof_step_block("`else` branch")?;
+            let else_tactics = self.parse_tactic_block("`else` branch")?;
             if self.peek() == Some(&Token::Semicolon) {
                 self.position += 1;
             }
-            return Ok(ProofStep::If(ProofIf {
+            return Ok(ProofTactic::If(ProofIf {
                 condition,
-                then_steps,
-                else_steps,
+                then_tactics,
+                else_tactics,
             }));
         }
         if name == "advance" {
@@ -1670,50 +1668,50 @@ impl Parser {
             }
             self.expect(Token::RBrace)?;
             self.expect_ident_spelling("by")?;
-            let steps = self.parse_proof_step_block("`advance` proof")?;
+            let tactics = self.parse_tactic_block("`advance` proof")?;
             if self.peek() == Some(&Token::Semicolon) {
                 self.position += 1;
             }
-            return Ok(ProofStep::Advance(ProofAdvance {
+            return Ok(ProofTactic::Advance(ProofAdvance {
                 target,
                 assertions,
-                steps,
+                tactics,
             }));
         }
-        let step = match name.as_str() {
+        let tactic = match name.as_str() {
             "step" => {
-                self.expect_empty_step_args(&name)?;
-                ProofStep::Step
+                self.expect_empty_tactic_args(&name)?;
+                ProofTactic::Step
             }
             "symbolic_execute" => {
-                self.expect_empty_step_args(&name)?;
-                ProofStep::ExecuteRest
+                self.expect_empty_tactic_args(&name)?;
+                ProofTactic::ExecuteRest
             }
             "execute_step" => {
-                self.expect_empty_step_args(&name)?;
-                ProofStep::ExecuteStep
+                self.expect_empty_tactic_args(&name)?;
+                ProofTactic::ExecuteStep
             }
             "execute_then_step" => {
-                self.expect_empty_step_args(&name)?;
-                ProofStep::ExecuteThenStep
+                self.expect_empty_tactic_args(&name)?;
+                ProofTactic::ExecuteThenStep
             }
             "execute_else_step" => {
-                self.expect_empty_step_args(&name)?;
-                ProofStep::ExecuteElseStep
+                self.expect_empty_tactic_args(&name)?;
+                ProofTactic::ExecuteElseStep
             }
             "execute_rest" => {
-                self.expect_empty_step_args(&name)?;
-                ProofStep::ExecuteRest
+                self.expect_empty_tactic_args(&name)?;
+                ProofTactic::ExecuteRest
             }
             "execute_until" => {
                 self.expect(Token::LParen)?;
                 let region_ref = self.parse_code_region_ref()?;
                 self.expect(Token::RParen)?;
-                ProofStep::ExecuteUntil(region_ref)
+                ProofTactic::ExecuteUntil(region_ref)
             }
             "bounded_execute" => {
-                self.expect_empty_step_args(&name)?;
-                ProofStep::BoundedExecute
+                self.expect_empty_tactic_args(&name)?;
+                ProofTactic::BoundedExecute
             }
             "frame" => {
                 self.expect(Token::LParen)?;
@@ -1723,33 +1721,33 @@ impl Parser {
                     Some(self.parse_code_region_ref()?)
                 };
                 self.expect(Token::RParen)?;
-                ProofStep::Frame(region_ref)
+                ProofTactic::Frame(region_ref)
             }
             "unfold" => {
                 self.expect(Token::LParen)?;
-                let step = if matches!(self.peek(), Some(Token::Ident(_)))
+                let tactic = if matches!(self.peek(), Some(Token::Ident(_)))
                     && self.peek_next() == Some(&Token::LParen)
                 {
-                    ProofStep::UnfoldResource(self.parse_declared_resource_call()?)
+                    ProofTactic::UnfoldResource(self.parse_declared_resource_call()?)
                 } else {
                     let predicate = self.expect_ident("predicate name")?;
-                    ProofStep::UnfoldPredicate(predicate)
+                    ProofTactic::UnfoldPredicate(predicate)
                 };
                 self.expect(Token::RParen)?;
-                step
+                tactic
             }
             "apply" => {
                 self.expect(Token::LParen)?;
                 let application = self.parse_theorem_application()?;
                 self.expect(Token::RParen)?;
-                ProofStep::ApplyTheorem(application)
+                ProofTactic::ApplyTheorem(application)
             }
             "observe" => {
                 self.expect(Token::LParen)?;
                 let resource =
                     self.parse_declared_resource_call_with_access(ResourceAccessMode::View)?;
                 self.expect(Token::RParen)?;
-                ProofStep::ObserveResource(resource)
+                ProofTactic::ObserveResource(resource)
             }
             "witness" => {
                 self.expect(Token::LParen)?;
@@ -1757,7 +1755,7 @@ impl Parser {
                 self.expect(Token::Equal)?;
                 let value = self.parse_contract_expression()?;
                 self.expect(Token::RParen)?;
-                ProofStep::Witness(ProofWitness { name, value })
+                ProofTactic::Witness(ProofWitness { name, value })
             }
             "choose" => {
                 self.expect(Token::LParen)?;
@@ -1765,21 +1763,21 @@ impl Parser {
                 self.expect_ident_spelling("from")?;
                 let source = self.parse_proof_fact_source()?;
                 self.expect(Token::RParen)?;
-                ProofStep::Choose(ProofChoice { name, source })
+                ProofTactic::Choose(ProofChoice { name, source })
             }
             "assumption" => {
-                self.expect_empty_step_args(&name)?;
-                ProofStep::Assumption
+                self.expect_empty_tactic_args(&name)?;
+                ProofTactic::Assumption
             }
             "normalize" => {
-                self.expect_empty_step_args(&name)?;
-                ProofStep::Normalize
+                self.expect_empty_tactic_args(&name)?;
+                ProofTactic::Normalize
             }
             "rewrite" => {
                 self.expect(Token::LParen)?;
                 let equality = self.parse_proposition()?;
                 self.expect(Token::RParen)?;
-                ProofStep::Rewrite(equality)
+                ProofTactic::Rewrite(equality)
             }
             "transport" => {
                 self.expect(Token::LParen)?;
@@ -1787,40 +1785,40 @@ impl Parser {
                 self.expect(Token::Comma)?;
                 let target = self.parse_proposition()?;
                 self.expect(Token::RParen)?;
-                ProofStep::Transport { source, target }
+                ProofTactic::Transport { source, target }
             }
             "simp" => {
-                self.expect_empty_step_args(&name)?;
-                ProofStep::Simp
+                self.expect_empty_tactic_args(&name)?;
+                ProofTactic::Simp
             }
             "fold" => {
                 self.expect(Token::LParen)?;
                 let resource = self.parse_declared_resource_call()?;
                 self.expect(Token::RParen)?;
-                ProofStep::FoldResource(resource)
+                ProofTactic::FoldResource(resource)
             }
             _ if is_tactic_name(&name) => {
                 return Err(self.error(format!(
-                    "`{name}` is a tactic, not a deterministic proof step; use `by {name};` or an explicit proof-step script"
+                    "`{name}` is only available as a standalone smart tactic; use `by {name};`"
                 )));
             }
-            _ => return Err(self.error(format!("unknown proof step `{name}`"))),
+            _ => return Err(self.error(format!("unknown tactic `{name}`"))),
         };
         self.expect(Token::Semicolon)?;
-        Ok(step)
+        Ok(tactic)
     }
 
-    fn parse_proof_step_block(&mut self, context: &str) -> Result<Vec<ProofStep>, ClickError> {
+    fn parse_tactic_block(&mut self, context: &str) -> Result<Vec<ProofTactic>, ClickError> {
         self.expect(Token::LBrace)?;
         if self.peek() == Some(&Token::RBrace) {
-            return Err(self.error(format!("{context} must contain at least one proof step")));
+            return Err(self.error(format!("{context} must contain at least one tactic")));
         }
-        let mut steps = Vec::new();
+        let mut tactics = Vec::new();
         while self.peek() != Some(&Token::RBrace) {
-            steps.push(self.parse_proof_step()?);
+            tactics.push(self.parse_proof_tactic()?);
         }
         self.expect(Token::RBrace)?;
-        Ok(steps)
+        Ok(tactics)
     }
 
     fn parse_theorem_application(&mut self) -> Result<TheoremApplication, ClickError> {
@@ -1846,7 +1844,7 @@ impl Parser {
         })
     }
 
-    fn expect_empty_step_args(&mut self, name: &str) -> Result<(), ClickError> {
+    fn expect_empty_tactic_args(&mut self, name: &str) -> Result<(), ClickError> {
         self.expect(Token::LParen)?;
         if self.peek() != Some(&Token::RParen) {
             return Err(self.error(format!("`{name}` expects no arguments")));

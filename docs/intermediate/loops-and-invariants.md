@@ -94,7 +94,7 @@ for loop(0) {
 The arithmetic invariants prove access bounds. The frame clauses summarize what
 memory the loop may write.
 
-## Loop Proof Steps
+## Loop Proof Tactics
 
 An explicit preservation proof starts at an arbitrary loop-head visit and must
 traverse exactly one complete iteration. Straight-line bodies use one `step()`
@@ -104,7 +104,7 @@ and `execute_else_step()` provide contextual branch reasoning. Initialization
 is non-executing because its execution point is already the first loop entry.
 
 Successful initialization, preservation, and effect proofs certify a verified
-loop rule. Execution applies that rule directly; there is no separate proof step
+loop rule. Execution applies that rule directly; there is no separate tactic
 for rechecking the loop's verification conditions.
 
 `frame(loop(N))` checks a loop's certified write summary against its declared

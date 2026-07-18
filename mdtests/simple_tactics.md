@@ -1,6 +1,6 @@
 # simple proof tactics
 
-These proofs use only deterministic, bounded proof steps. `assumption` closes
+These proofs use only deterministic, bounded simple tactics. `assumption` closes
 an exact fact, `normalize` computes a proposition without consulting the proof
 context, and `rewrite` performs one explicitly named equality substitution.
 

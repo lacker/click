@@ -1,5 +1,5 @@
 use super::diagnostics::*;
-use super::validation::proof_step_name;
+use super::validation::tactic_name;
 use super::*;
 
 type NextTopLevelStatement = (
@@ -210,7 +210,7 @@ fn verify_theorem_ensure(
                 ensure_index,
                 ensure_clause: ensure_clause.clone(),
                 proof_kind: ProofKind::Pure,
-                proof_steps: None,
+                proof_tactics: None,
                 requires: context.requires.clone(),
                 conclusion: goal,
             })
@@ -234,7 +234,7 @@ fn verify_theorem_ensure(
                 ensure_index,
                 ensure_clause: ensure_clause.clone(),
                 proof_kind: ProofKind::Simp,
-                proof_steps: None,
+                proof_tactics: None,
                 requires: context.requires.clone(),
                 conclusion: goal,
             })
@@ -242,14 +242,14 @@ fn verify_theorem_ensure(
         Proof::Tactic(SmartTactic::Frame) => Err(ClickError::new(format!(
             "`frame` is not available in the pure proof for theorem `{claim_label}`"
         ))),
-        Proof::Steps(steps) => {
-            if steps.is_empty() {
+        Proof::Script(tactics) => {
+            if tactics.is_empty() {
                 return Err(ClickError::new(format!(
-                    "`{claim_label}` has an empty proof-step script"
+                    "`{claim_label}` has an empty explicit proof script"
                 )));
             }
-            for proof_case in expand_proof_if_cases(steps, claim_label)? {
-                prove_pure_theorem_steps(
+            for proof_case in expand_proof_if_cases(tactics, claim_label)? {
+                prove_pure_theorem_tactics(
                     claim_label,
                     &context.requires,
                     &goal,
@@ -264,8 +264,8 @@ fn verify_theorem_ensure(
                 theorem_definition: theorem.clone(),
                 ensure_index,
                 ensure_clause: ensure_clause.clone(),
-                proof_kind: ProofKind::ProofSteps,
-                proof_steps: Some(steps.to_vec()),
+                proof_kind: ProofKind::TacticScript,
+                proof_tactics: Some(tactics.to_vec()),
                 requires: context.requires.clone(),
                 conclusion: goal,
             })
@@ -274,20 +274,20 @@ fn verify_theorem_ensure(
 }
 
 struct ExpandedProofCase {
-    steps: Vec<ProofStep>,
+    tactics: Vec<ProofTactic>,
     assumptions: Vec<ProofCaseAssumption>,
     advance_checks: Vec<ProofAdvanceCheck>,
 }
 
 struct ProofCaseAssumption {
-    step_index: usize,
+    tactic_index: usize,
     proposition: ClickProposition,
     value: bool,
 }
 
 struct ProofAdvanceCheck {
     join_id: usize,
-    step_index: usize,
+    tactic_index: usize,
     target: ProgramPointRef,
     assertions: Vec<ProofAssertion>,
 }
@@ -295,55 +295,55 @@ struct ProofAdvanceCheck {
 // Pure proofs and point-local `have` proofs use flat logical cases. Execution
 // proofs use `InternalProofNode`, where `advance` has region-join semantics.
 fn expand_proof_if_cases(
-    steps: &[ProofStep],
+    tactics: &[ProofTactic],
     claim_label: &str,
 ) -> Result<Vec<ExpandedProofCase>, ClickError> {
     let mut next_join_id = 0;
-    expand_structured_proof_cases(steps, claim_label, &mut next_join_id)
+    expand_structured_proof_cases(tactics, claim_label, &mut next_join_id)
 }
 
 fn expand_structured_proof_cases(
-    steps: &[ProofStep],
+    tactics: &[ProofTactic],
     claim_label: &str,
     next_join_id: &mut usize,
 ) -> Result<Vec<ExpandedProofCase>, ClickError> {
-    let Some((control_index, control_step)) = steps
+    let Some((control_index, control_tactic)) = tactics
         .iter()
         .enumerate()
-        .find(|(_, step)| matches!(step, ProofStep::If(_) | ProofStep::Advance(_)))
+        .find(|(_, tactic)| matches!(tactic, ProofTactic::If(_) | ProofTactic::Advance(_)))
     else {
         return Ok(vec![ExpandedProofCase {
-            steps: steps.to_vec(),
+            tactics: tactics.to_vec(),
             assumptions: Vec::new(),
             advance_checks: Vec::new(),
         }]);
     };
-    let prefix = &steps[..control_index];
-    match control_step {
-        ProofStep::If(proof_if) => {
-            if control_index + 1 != steps.len() {
+    let prefix = &tactics[..control_index];
+    match control_tactic {
+        ProofTactic::If(proof_if) => {
+            if control_index + 1 != tactics.len() {
                 return Err(ClickError::new(format!(
-                    "`{claim_label}` proof step {control_index}: proof-level `if` must be the final step because both branches prove the current claim; use `advance(...)` to join C execution before a shared suffix"
+                    "`{claim_label}` tactic {control_index}: proof-level `if` must be the final tactic because both branches prove the current claim; use `advance(...)` to join C execution before a shared suffix"
                 )));
             }
             let mut cases = Vec::new();
-            for (value, branch_steps) in [
-                (true, proof_if.then_steps.as_slice()),
-                (false, proof_if.else_steps.as_slice()),
+            for (value, branch_tactics) in [
+                (true, proof_if.then_tactics.as_slice()),
+                (false, proof_if.else_tactics.as_slice()),
             ] {
                 for mut branch in
-                    expand_structured_proof_cases(branch_steps, claim_label, next_join_id)?
+                    expand_structured_proof_cases(branch_tactics, claim_label, next_join_id)?
                 {
                     let mut linear = prefix.to_vec();
-                    linear.append(&mut branch.steps);
+                    linear.append(&mut branch.tactics);
                     let mut assumptions = vec![ProofCaseAssumption {
-                        step_index: prefix.len(),
+                        tactic_index: prefix.len(),
                         proposition: proof_if.condition.clone(),
                         value,
                     }];
                     assumptions.extend(branch.assumptions.into_iter().map(|assumption| {
                         ProofCaseAssumption {
-                            step_index: prefix.len() + assumption.step_index,
+                            tactic_index: prefix.len() + assumption.tactic_index,
                             ..assumption
                         }
                     }));
@@ -351,12 +351,12 @@ fn expand_structured_proof_cases(
                         .advance_checks
                         .into_iter()
                         .map(|check| ProofAdvanceCheck {
-                            step_index: prefix.len() + check.step_index,
+                            tactic_index: prefix.len() + check.tactic_index,
                             ..check
                         })
                         .collect();
                     cases.push(ExpandedProofCase {
-                        steps: linear,
+                        tactics: linear,
                         assumptions,
                         advance_checks,
                     });
@@ -364,35 +364,35 @@ fn expand_structured_proof_cases(
             }
             Ok(cases)
         }
-        ProofStep::Advance(advance) => {
+        ProofTactic::Advance(advance) => {
             let join_id = *next_join_id;
             *next_join_id += 1;
             let body_cases =
-                expand_structured_proof_cases(&advance.steps, claim_label, next_join_id)?;
+                expand_structured_proof_cases(&advance.tactics, claim_label, next_join_id)?;
             let suffix_cases = expand_structured_proof_cases(
-                &steps[control_index + 1..],
+                &tactics[control_index + 1..],
                 claim_label,
                 next_join_id,
             )?;
             let mut cases = Vec::new();
             for body in &body_cases {
                 for suffix in &suffix_cases {
-                    let boundary = prefix.len() + body.steps.len();
+                    let boundary = prefix.len() + body.tactics.len();
                     let mut linear = prefix.to_vec();
-                    linear.extend(body.steps.iter().cloned());
-                    linear.extend(suffix.steps.iter().cloned());
+                    linear.extend(body.tactics.iter().cloned());
+                    linear.extend(suffix.tactics.iter().cloned());
                     let mut assumptions = body
                         .assumptions
                         .iter()
                         .map(|assumption| ProofCaseAssumption {
-                            step_index: prefix.len() + assumption.step_index,
+                            tactic_index: prefix.len() + assumption.tactic_index,
                             proposition: assumption.proposition.clone(),
                             value: assumption.value,
                         })
                         .collect::<Vec<_>>();
                     assumptions.extend(suffix.assumptions.iter().map(|assumption| {
                         ProofCaseAssumption {
-                            step_index: boundary + assumption.step_index,
+                            tactic_index: boundary + assumption.tactic_index,
                             proposition: assumption.proposition.clone(),
                             value: assumption.value,
                         }
@@ -402,27 +402,27 @@ fn expand_structured_proof_cases(
                         .iter()
                         .map(|check| ProofAdvanceCheck {
                             join_id: check.join_id,
-                            step_index: prefix.len() + check.step_index,
+                            tactic_index: prefix.len() + check.tactic_index,
                             target: check.target.clone(),
                             assertions: check.assertions.clone(),
                         })
                         .collect::<Vec<_>>();
                     advance_checks.push(ProofAdvanceCheck {
                         join_id,
-                        step_index: boundary,
+                        tactic_index: boundary,
                         target: advance.target.clone(),
                         assertions: advance.assertions.clone(),
                     });
                     advance_checks.extend(suffix.advance_checks.iter().map(|check| {
                         ProofAdvanceCheck {
                             join_id: check.join_id,
-                            step_index: boundary + check.step_index,
+                            tactic_index: boundary + check.tactic_index,
                             target: check.target.clone(),
                             assertions: check.assertions.clone(),
                         }
                     }));
                     cases.push(ExpandedProofCase {
-                        steps: linear,
+                        tactics: linear,
                         assumptions,
                         advance_checks,
                     });
@@ -430,20 +430,20 @@ fn expand_structured_proof_cases(
             }
             Ok(cases)
         }
-        _ => unreachable!("control-step search only returns if or advance"),
+        _ => unreachable!("control-tactic search only returns if or advance"),
     }
 }
 
 #[derive(Clone)]
-struct IndexedProofStep {
+struct IndexedTactic {
     index: usize,
-    step: ProofStep,
+    tactic: ProofTactic,
 }
 
 enum InternalProofNode {
     Done,
     Linear {
-        steps: Vec<IndexedProofStep>,
+        tactics: Vec<IndexedTactic>,
         continuation: Box<InternalProofNode>,
     },
     If {
@@ -463,35 +463,35 @@ enum InternalProofNode {
 }
 
 fn build_internal_proof(
-    steps: &[ProofStep],
+    tactics: &[ProofTactic],
     claim_label: &str,
 ) -> Result<InternalProofNode, ClickError> {
     let mut next_join_id = 0;
-    build_internal_proof_at(steps, claim_label, &mut next_join_id, 0)
+    build_internal_proof_at(tactics, claim_label, &mut next_join_id, 0)
 }
 
 fn build_internal_proof_at(
-    steps: &[ProofStep],
+    tactics: &[ProofTactic],
     claim_label: &str,
     next_join_id: &mut usize,
     index_offset: usize,
 ) -> Result<InternalProofNode, ClickError> {
-    let Some((control_index, control_step)) = steps
+    let Some((control_index, control_tactic)) = tactics
         .iter()
         .enumerate()
-        .find(|(_, step)| matches!(step, ProofStep::If(_) | ProofStep::Advance(_)))
+        .find(|(_, tactic)| matches!(tactic, ProofTactic::If(_) | ProofTactic::Advance(_)))
     else {
-        if steps.is_empty() {
+        if tactics.is_empty() {
             return Ok(InternalProofNode::Done);
         }
         return Ok(InternalProofNode::Linear {
-            steps: steps
+            tactics: tactics
                 .iter()
                 .cloned()
                 .enumerate()
-                .map(|(index, step)| IndexedProofStep {
+                .map(|(index, tactic)| IndexedTactic {
                     index: index_offset + index,
-                    step,
+                    tactic,
                 })
                 .collect(),
             continuation: Box::new(InternalProofNode::Done),
@@ -499,31 +499,31 @@ fn build_internal_proof_at(
     };
 
     let index = index_offset + control_index;
-    let control = match control_step {
-        ProofStep::If(proof_if) => {
-            if control_index + 1 != steps.len() {
+    let control = match control_tactic {
+        ProofTactic::If(proof_if) => {
+            if control_index + 1 != tactics.len() {
                 return Err(ClickError::new(format!(
-                    "`{claim_label}` proof step {index}: proof-level `if` must be the final step because both branches prove the current claim; use `advance(...)` to join C execution before a shared suffix"
+                    "`{claim_label}` tactic {index}: proof-level `if` must be the final tactic because both branches prove the current claim; use `advance(...)` to join C execution before a shared suffix"
                 )));
             }
             InternalProofNode::If {
                 index,
                 condition: proof_if.condition.clone(),
                 then_branch: Box::new(build_internal_proof_at(
-                    &proof_if.then_steps,
+                    &proof_if.then_tactics,
                     claim_label,
                     next_join_id,
                     index + 1,
                 )?),
                 else_branch: Box::new(build_internal_proof_at(
-                    &proof_if.else_steps,
+                    &proof_if.else_tactics,
                     claim_label,
                     next_join_id,
                     index + 1,
                 )?),
             }
         }
-        ProofStep::Advance(advance) => {
+        ProofTactic::Advance(advance) => {
             let join_id = *next_join_id;
             *next_join_id += 1;
             InternalProofNode::Advance {
@@ -532,33 +532,33 @@ fn build_internal_proof_at(
                 target: advance.target.clone(),
                 assertions: advance.assertions.clone(),
                 body: Box::new(build_internal_proof_at(
-                    &advance.steps,
+                    &advance.tactics,
                     claim_label,
                     next_join_id,
                     index + 1,
                 )?),
                 continuation: Box::new(build_internal_proof_at(
-                    &steps[control_index + 1..],
+                    &tactics[control_index + 1..],
                     claim_label,
                     next_join_id,
                     index + 1,
                 )?),
             }
         }
-        _ => unreachable!("control-step search only returns if or advance"),
+        _ => unreachable!("control-tactic search only returns if or advance"),
     };
 
     if control_index == 0 {
         Ok(control)
     } else {
         Ok(InternalProofNode::Linear {
-            steps: steps[..control_index]
+            tactics: tactics[..control_index]
                 .iter()
                 .cloned()
                 .enumerate()
-                .map(|(prefix_index, step)| IndexedProofStep {
+                .map(|(prefix_index, tactic)| IndexedTactic {
                     index: index_offset + prefix_index,
-                    step,
+                    tactic,
                 })
                 .collect(),
             continuation: Box::new(control),
@@ -663,7 +663,7 @@ fn prove_pure_theorem_goal(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn prove_pure_theorem_steps(
+fn prove_pure_theorem_tactics(
     claim_label: &str,
     requires: &[Proposition],
     original_goal: &Proposition,
@@ -688,11 +688,11 @@ fn prove_pure_theorem_steps(
     let mut goal = original_goal.clone();
     let mut closed = false;
 
-    for (step_index, step) in proof_case.steps.iter().enumerate() {
+    for (tactic_index, tactic) in proof_case.tactics.iter().enumerate() {
         for assumption in proof_case
             .assumptions
             .iter()
-            .filter(|assumption| assumption.step_index == step_index)
+            .filter(|assumption| assumption.tactic_index == tactic_index)
         {
             let proposition = lower_pure_theorem_proposition(
                 claim_label,
@@ -705,7 +705,7 @@ fn prove_pure_theorem_steps(
             )
             .map_err(|message| {
                 ClickError::new(format!(
-                    "`{claim_label}` proof step {step_index}: could not lower `if` condition: {message}"
+                    "`{claim_label}` tactic {tactic_index}: could not lower `if` condition: {message}"
                 ))
             })?;
             available.push(if assumption.value {
@@ -716,16 +716,16 @@ fn prove_pure_theorem_steps(
         }
         if closed {
             return Err(ClickError::new(format!(
-                "`{claim_label}` proof step {step_index}: `{}` follows a goal-closing tactic",
-                proof_step_name(step)
+                "`{claim_label}` tactic {tactic_index}: `{}` follows a goal-closing tactic",
+                tactic_name(tactic)
             )));
         }
 
-        match step {
-            ProofStep::UnfoldPredicate(name) => {
+        match tactic {
+            ProofTactic::UnfoldPredicate(name) => {
                 if predicate_environment.get(name).is_none() {
                     return Err(ClickError::new(format!(
-                        "`{claim_label}` proof step {step_index}: unknown predicate `{name}`"
+                        "`{claim_label}` tactic {tactic_index}: unknown predicate `{name}`"
                     )));
                 }
                 if !unfolded_predicates.contains(name) {
@@ -738,9 +738,7 @@ fn prove_pure_theorem_steps(
                     &available,
                 )
                 .map_err(|message| {
-                    ClickError::new(format!(
-                        "`{claim_label}` proof step {step_index}: {message}"
-                    ))
+                    ClickError::new(format!("`{claim_label}` tactic {tactic_index}: {message}"))
                 })?;
                 let assumptions = assumptions_from_propositions(&available);
                 goal = unfold_predicates_in_proposition(
@@ -751,15 +749,13 @@ fn prove_pure_theorem_steps(
                     &assumptions,
                 )
                 .map_err(|message| {
-                    ClickError::new(format!(
-                        "`{claim_label}` proof step {step_index}: {message}"
-                    ))
+                    ClickError::new(format!("`{claim_label}` tactic {tactic_index}: {message}"))
                 })?;
             }
-            ProofStep::ApplyTheorem(application) => {
+            ProofTactic::ApplyTheorem(application) => {
                 available = apply_theorem_applications_to_available(
                     theorem_environment,
-                    &[(step_index, application.clone())],
+                    &[(tactic_index, application.clone())],
                     claim_label,
                     None,
                     available,
@@ -769,7 +765,7 @@ fn prove_pure_theorem_steps(
                     &unfolded_predicates,
                 )?;
             }
-            ProofStep::Assumption => {
+            ProofTactic::Assumption => {
                 if !available.contains(&goal) {
                     return Err(ClickError::new(format!(
                         "`assumption` failed for `{claim_label}`: {}",
@@ -778,7 +774,7 @@ fn prove_pure_theorem_steps(
                 }
                 closed = true;
             }
-            ProofStep::Normalize => {
+            ProofTactic::Normalize => {
                 if !matches!(normalize_proposition(&goal), SimpProposition::True) {
                     return Err(ClickError::new(format!(
                         "`normalize` failed for `{claim_label}`: goal did not normalize to true: {goal:?}"
@@ -786,7 +782,7 @@ fn prove_pure_theorem_steps(
                 }
                 closed = true;
             }
-            ProofStep::Rewrite(surface_equality) => {
+            ProofTactic::Rewrite(surface_equality) => {
                 let mut equality = lower_pure_theorem_proposition(
                     claim_label,
                     surface_equality,
@@ -817,7 +813,7 @@ fn prove_pure_theorem_steps(
                         ClickError::new(format!("`rewrite` failed for `{claim_label}`: {message}"))
                     })?;
             }
-            ProofStep::Simp => {
+            ProofTactic::Simp => {
                 let assumptions = assumptions_from_propositions(&available);
                 match simp_proposition(&goal, &assumptions) {
                     SimpProposition::True => closed = true,
@@ -831,8 +827,8 @@ fn prove_pure_theorem_steps(
             }
             _ => {
                 return Err(ClickError::new(format!(
-                    "`{claim_label}` pure proof step {step_index}: `{}` is not available in a pure proof",
-                    proof_step_name(step)
+                    "`{claim_label}` pure tactic {tactic_index}: `{}` is not available in a pure proof",
+                    tactic_name(tactic)
                 )));
             }
         }
@@ -842,7 +838,7 @@ fn prove_pure_theorem_steps(
         Ok(())
     } else {
         Err(ClickError::new(format!(
-            "proof steps failed for `{claim_label}`: {}",
+            "tactics failed for `{claim_label}`: {}",
             describe_missing_pure_fact(&goal, &available, &[], &[], &[], &[])
         )))
     }
@@ -868,7 +864,7 @@ fn apply_theorem_applications_to_available(
     click_function_environment: &ClickFunctionEnvironment,
     unfolded_predicates: &[String],
 ) -> Result<Vec<Proposition>, ClickError> {
-    for (step_index, application) in theorem_applications {
+    for (tactic_index, application) in theorem_applications {
         available = unfold_available_predicate_facts(
             predicate_environment,
             click_function_environment,
@@ -876,14 +872,14 @@ fn apply_theorem_applications_to_available(
             &available,
         )
         .map_err(|message| {
-            theorem_application_error(claim_label, path_index, *step_index, message)
+            theorem_application_error(claim_label, path_index, *tactic_index, message)
         })?;
         let conclusions = instantiate_theorem_application(
             theorem_environment,
             application,
             claim_label,
             path_index,
-            *step_index,
+            *tactic_index,
             &available,
             context,
             predicate_environment,
@@ -910,7 +906,7 @@ fn instantiate_theorem_application(
     application: &TheoremApplication,
     claim_label: &str,
     path_index: Option<usize>,
-    step_index: usize,
+    tactic_index: usize,
     available: &[Proposition],
     context: &TheoremApplicationContext<'_>,
     predicate_environment: &PredicateEnvironment,
@@ -921,7 +917,7 @@ fn instantiate_theorem_application(
         theorem_application_error(
             claim_label,
             path_index,
-            step_index,
+            tactic_index,
             format!("unknown theorem `{}`", application.name),
         )
     })?;
@@ -929,7 +925,7 @@ fn instantiate_theorem_application(
         return Err(theorem_application_error(
             claim_label,
             path_index,
-            step_index,
+            tactic_index,
             format!(
                 "theorem `{}` expects {} argument(s), got {}",
                 theorem.name(),
@@ -948,7 +944,7 @@ fn instantiate_theorem_application(
         predicate_environment,
         click_function_environment,
     )
-    .map_err(|message| theorem_application_error(claim_label, path_index, step_index, message))?;
+    .map_err(|message| theorem_application_error(claim_label, path_index, tactic_index, message))?;
     let mut lowerer = KernelPropositionLowerer::new(
         values,
         array_refs,
@@ -962,7 +958,7 @@ fn instantiate_theorem_application(
             return Err(theorem_application_error(
                 claim_label,
                 path_index,
-                step_index,
+                tactic_index,
                 format!(
                     "theorem `{}` has a non-proposition requirement that cannot be applied here",
                     theorem.name()
@@ -975,7 +971,7 @@ fn instantiate_theorem_application(
                 theorem_application_error(
                     claim_label,
                     path_index,
-                    step_index,
+                    tactic_index,
                     format!(
                         "could not lower theorem `{}` requirement: {}",
                         theorem.name(),
@@ -991,7 +987,7 @@ fn instantiate_theorem_application(
             &assumptions,
         )
         .map_err(|message| {
-            theorem_application_error(claim_label, path_index, step_index, message)
+            theorem_application_error(claim_label, path_index, tactic_index, message)
         })?;
         if !available.contains(&lowered)
             && !matches!(normalize_proposition(&lowered), SimpProposition::True)
@@ -999,7 +995,7 @@ fn instantiate_theorem_application(
             return Err(theorem_application_error(
                 claim_label,
                 path_index,
-                step_index,
+                tactic_index,
                 format!(
                     "required exact fact for theorem `{}` is unavailable: {}",
                     theorem.name(),
@@ -1015,7 +1011,7 @@ fn instantiate_theorem_application(
             return Err(theorem_application_error(
                 claim_label,
                 path_index,
-                step_index,
+                tactic_index,
                 format!(
                     "theorem `{}` has a non-proposition conclusion that cannot be applied here",
                     theorem.name()
@@ -1028,7 +1024,7 @@ fn instantiate_theorem_application(
                 theorem_application_error(
                     claim_label,
                     path_index,
-                    step_index,
+                    tactic_index,
                     format!(
                         "could not lower theorem `{}` conclusion: {}",
                         theorem.name(),
@@ -1120,14 +1116,14 @@ fn theorem_application_bindings(
 fn theorem_application_error(
     claim_label: &str,
     path_index: Option<usize>,
-    step_index: usize,
+    tactic_index: usize,
     message: impl Into<String>,
 ) -> ClickError {
     let path = path_index
         .map(|index| format!(" path {index},"))
         .unwrap_or_default();
     ClickError::new(format!(
-        "`{claim_label}`{path} proof step {step_index}: `apply` failed: {}",
+        "`{claim_label}`{path} tactic {tactic_index}: `apply` failed: {}",
         message.into()
     ))
 }
@@ -1302,7 +1298,7 @@ pub(super) fn prove_claim_by_auto(
         resource_environment,
     ) {
         Ok(theorems) => {
-            let proof_steps = certified_proof_steps(
+            let proof_tactics = certified_proof_tactics(
                 source_path,
                 function_block,
                 parsed_function,
@@ -1313,15 +1309,15 @@ pub(super) fn prove_claim_by_auto(
                 click_function_environment,
                 resource_environment,
                 theorem_environment,
-                auto_loop_verification_proof_step_candidates(function_block, claim),
+                auto_loop_verification_tactic_candidates(function_block, claim),
             );
-            return Ok(with_proof_steps(theorems, proof_steps));
+            return Ok(with_proof_tactics(theorems, proof_tactics));
         }
         Err(error) => Some(error),
     };
     let mut bounded_error = None;
-    for steps in bounded_execution_proof_step_candidates(claim) {
-        match prove_claim_by_steps(
+    for tactics in bounded_execution_tactic_candidates(claim) {
+        match prove_claim_by_tactics(
             source_path,
             function_block,
             parsed_function,
@@ -1332,7 +1328,7 @@ pub(super) fn prove_claim_by_auto(
             click_function_environment,
             resource_environment,
             theorem_environment,
-            &steps,
+            &tactics,
         ) {
             Ok(theorems) => return Ok(theorems),
             Err(error) => bounded_error = Some(error),
@@ -1415,7 +1411,7 @@ pub(super) fn prove_claim_by_frame(
         click_function_environment,
         resource_environment,
     )?;
-    let proof_steps = certified_proof_steps(
+    let proof_tactics = certified_proof_tactics(
         source_path,
         function_block,
         parsed_function,
@@ -1426,9 +1422,9 @@ pub(super) fn prove_claim_by_frame(
         click_function_environment,
         resource_environment,
         theorem_environment,
-        frame_proof_step_candidates(),
+        frame_tactic_candidates(),
     );
-    Ok(with_proof_steps(theorems, proof_steps))
+    Ok(with_proof_tactics(theorems, proof_tactics))
 }
 
 pub(super) fn prove_claim_by_simp(
@@ -1466,7 +1462,7 @@ pub(super) fn prove_claim_by_simp(
         click_function_environment,
         resource_environment,
     )?;
-    let proof_steps = certified_proof_steps(
+    let proof_tactics = certified_proof_tactics(
         source_path,
         function_block,
         parsed_function,
@@ -1477,7 +1473,7 @@ pub(super) fn prove_claim_by_simp(
         click_function_environment,
         resource_environment,
         theorem_environment,
-        vec![vec![ProofStep::ExecuteRest, ProofStep::Simp]],
+        vec![vec![ProofTactic::ExecuteRest, ProofTactic::Simp]],
     );
     let assumptions = assumptions_from_propositions(&requirement_pure_facts);
     let execution = prove_symbolic_c_function_execution_paths_with_environment(
@@ -1581,7 +1577,7 @@ pub(super) fn prove_claim_by_simp(
             function_block: function_block.clone(),
             claim: claim.verified_claim(),
             proof_kind: ProofKind::Simp,
-            proof_steps: proof_steps.clone(),
+            proof_tactics: proof_tactics.clone(),
             specification,
             theorem,
         });
@@ -1591,13 +1587,13 @@ pub(super) fn prove_claim_by_simp(
 }
 
 #[derive(Clone, Default)]
-struct ProofStepReplayState {
+struct TacticReplayState {
     frontier: ExecutionFrontier,
     source_layout: SourceExecutionLayout,
     program_point_states: ProgramPointStates,
     frames: BTreeSet<Option<CodeRegionRef>>,
     unfolded_predicates: Vec<String>,
-    post_execution_steps: Vec<(usize, PostExecutionStep)>,
+    post_execution_tactics: Vec<(usize, PostExecutionTactic)>,
     case_assumptions: Vec<(usize, ClickProposition, bool)>,
     effect_facts: Vec<ExecutionPureFact>,
     region_proof: bool,
@@ -1607,7 +1603,7 @@ struct ProofStepReplayState {
 }
 
 #[derive(Clone)]
-enum PostExecutionStep {
+enum PostExecutionTactic {
     Fold(ResourceClause),
     UnfoldPredicate(String),
     Apply(TheoremApplication),
@@ -1658,11 +1654,11 @@ enum ProofExecutionPoint {
 struct ProofReplayContext {
     state: CState,
     pure_facts: Vec<Proposition>,
-    replay: ProofStepReplayState,
+    replay: TacticReplayState,
     branch_path: Vec<String>,
 }
 
-impl ProofStepReplayState {
+impl TacticReplayState {
     fn is_at_function_exit(&self) -> bool {
         matches!(
             self.frontier.point,
@@ -1767,14 +1763,14 @@ pub(super) fn verify_loop_execution_proofs(
     Ok(verified_loop_rules)
 }
 
-fn explicit_loop_preservation_steps(clause: &StructuralClause) -> Option<&[ProofStep]> {
-    let Proof::Steps(steps) = clause.preserve_proof()? else {
+fn explicit_loop_preservation_tactics(clause: &StructuralClause) -> Option<&[ProofTactic]> {
+    let Proof::Script(tactics) = clause.preserve_proof()? else {
         return None;
     };
-    (!steps
+    (!tactics
         .iter()
-        .all(|step| matches!(step, ProofStep::UnfoldPredicate(_))))
-    .then_some(steps)
+        .all(|tactic| matches!(tactic, ProofTactic::UnfoldPredicate(_))))
+    .then_some(tactics)
 }
 
 struct ExecutionProofEnvironment<'a> {
@@ -2200,7 +2196,7 @@ fn verify_execution_proofs_forward(
                 .structural_clauses()
                 .iter()
                 .find(|clause| clause.region() == &CodeRegion::Loop(loop_index));
-            let explicit_steps = loop_clause.and_then(explicit_loop_preservation_steps);
+            let explicit_tactics = loop_clause.and_then(explicit_loop_preservation_tactics);
             let explicit_initialization = loop_clause
                 .and_then(StructuralClause::initialize_proof)
                 .filter(|proof| !proof.is_auto_tactic());
@@ -2245,10 +2241,10 @@ fn verify_execution_proofs_forward(
                     pure_facts.extend_from_slice(preservation.pure_facts());
                     pure_facts.sort();
                     pure_facts.dedup();
-                    if let Some(steps) = explicit_steps {
+                    if let Some(tactics) = explicit_tactics {
                         verify_one_loop_preservation_proof(
                             loop_index,
-                            steps,
+                            tactics,
                             &preservation,
                             &pure_facts,
                             invariant_checks,
@@ -2283,7 +2279,7 @@ fn verify_execution_proofs_forward(
                 loop_index,
                 environment,
                 verified_loop_rules,
-                if explicit_steps.is_some() {
+                if explicit_tactics.is_some() {
                     LoopPreservationSource::ExecutionProof
                 } else {
                     LoopPreservationSource::Automatic
@@ -2491,7 +2487,7 @@ fn verify_loop_initialization_pure_proof(
 #[allow(clippy::too_many_arguments)]
 fn verify_one_loop_preservation_proof(
     loop_index: usize,
-    steps: &[ProofStep],
+    tactics: &[ProofTactic],
     preservation: &crate::kernel::CLoopPreservationContext,
     pure_facts: &[Proposition],
     invariant_checks: &[CLoopInvariantCheck],
@@ -2515,14 +2511,14 @@ fn verify_one_loop_preservation_proof(
     };
     let dummy_claim = FunctionClaimRef::Ensure(0, &dummy_ensure);
     let proof_claims = [dummy_claim];
-    let program = build_internal_proof(steps, &claim_label)?;
+    let program = build_internal_proof(tactics, &claim_label)?;
     let sentinel = CStatement::Return(CExpression::Value(int32(0)));
     let remaining = c_seq(body.clone(), sentinel.clone());
     let source_layout = SourceExecutionLayout::new(environment.parsed_function.body());
     let loop_body_statement_index = source_layout.loop_body_entry(loop_index).ok_or_else(|| {
         ClickError::new(format!("`{claim_label}` has no source loop({loop_index})"))
     })?;
-    let mut replay = ProofStepReplayState {
+    let mut replay = TacticReplayState {
         frontier: ExecutionFrontier {
             point: ProofExecutionPoint::StatementEntry { remaining },
             execution_start_state: Some(preservation.state().clone()),
@@ -2531,7 +2527,7 @@ fn verify_one_loop_preservation_proof(
         },
         source_layout,
         region_proof: true,
-        ..ProofStepReplayState::default()
+        ..TacticReplayState::default()
     };
     replay.program_point_states.insert(
         ProgramPointRef {
@@ -2595,7 +2591,7 @@ fn apply_theorem_at_current_point(
     theorem_environment: &TheoremEnvironment,
     application: &TheoremApplication,
     claim_label: &str,
-    step_index: usize,
+    tactic_index: usize,
     available: Vec<Proposition>,
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
@@ -2608,7 +2604,7 @@ fn apply_theorem_at_current_point(
 ) -> Result<Vec<Proposition>, ClickError> {
     let values = parameter_values(parameters, arguments).map_err(|error| {
         ClickError::new(format!(
-            "`{claim_label}` proof step {step_index}: {}",
+            "`{claim_label}` tactic {tactic_index}: {}",
             error.message
         ))
     })?;
@@ -2624,7 +2620,7 @@ fn apply_theorem_at_current_point(
     };
     let available = apply_theorem_applications_to_available(
         theorem_environment,
-        &[(step_index, application.clone())],
+        &[(tactic_index, application.clone())],
         claim_label,
         None,
         available,
@@ -2641,7 +2637,7 @@ fn fold_composite_resource_at_current_point(
     resource_environment: &ResourceEnvironment,
     resource: &ResourceClause,
     claim_label: &str,
-    step_index: usize,
+    tactic_index: usize,
     available_pure_facts: &[Proposition],
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
@@ -2659,7 +2655,7 @@ fn fold_composite_resource_at_current_point(
         resource_environment,
         std::slice::from_ref(resource),
         claim_label,
-        step_index,
+        tactic_index,
         &[],
         available_pure_facts,
         parameters,
@@ -2743,7 +2739,7 @@ fn prove_have_at_current_point(
     have: &ProofHave,
     theorem_environment: &TheoremEnvironment,
     claim_label: &str,
-    outer_step_index: usize,
+    outer_tactic_index: usize,
     outer_available: &[Proposition],
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
@@ -2758,7 +2754,7 @@ fn prove_have_at_current_point(
         have,
         theorem_environment,
         claim_label,
-        outer_step_index,
+        outer_tactic_index,
         outer_available,
         parameters,
         arguments,
@@ -2778,7 +2774,7 @@ fn prove_have_at_point(
     have: &ProofHave,
     theorem_environment: &TheoremEnvironment,
     claim_label: &str,
-    outer_step_index: usize,
+    outer_tactic_index: usize,
     outer_available: &[Proposition],
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
@@ -2797,7 +2793,7 @@ fn prove_have_at_point(
         "have",
         theorem_environment,
         claim_label,
-        outer_step_index,
+        outer_tactic_index,
         outer_available,
         parameters,
         arguments,
@@ -2819,7 +2815,7 @@ fn prove_pure_proposition_at_point(
     proof_name: &str,
     theorem_environment: &TheoremEnvironment,
     claim_label: &str,
-    outer_step_index: usize,
+    outer_tactic_index: usize,
     outer_available: &[Proposition],
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
@@ -2833,10 +2829,10 @@ fn prove_pure_proposition_at_point(
     path_index: Option<usize>,
 ) -> Result<Proposition, ClickError> {
     let (proof_cases, tactic_simp) = match proof {
-        Proof::Steps(steps) => (expand_proof_if_cases(steps, claim_label)?, false),
+        Proof::Script(tactics) => (expand_proof_if_cases(tactics, claim_label)?, false),
         Proof::Default | Proof::Tactic(SmartTactic::Auto | SmartTactic::Simp) => (
             vec![ExpandedProofCase {
-                steps: Vec::new(),
+                tactics: Vec::new(),
                 assumptions: Vec::new(),
                 advance_checks: Vec::new(),
             }],
@@ -2844,7 +2840,7 @@ fn prove_pure_proposition_at_point(
         ),
         Proof::Tactic(SmartTactic::Frame) => {
             return Err(ClickError::new(format!(
-                "`{claim_label}` {proof_name} proof {outer_step_index}: `frame` is not available in a pure proof"
+                "`{claim_label}` {proof_name} proof {outer_tactic_index}: `frame` is not available in a pure proof"
             )));
         }
     };
@@ -2853,7 +2849,7 @@ fn prove_pure_proposition_at_point(
         .any(|proof_case| !proof_case.advance_checks.is_empty())
     {
         return Err(ClickError::new(format!(
-            "`{claim_label}` {proof_name} proof {outer_step_index}: `advance` is not available in a pure proof"
+            "`{claim_label}` {proof_name} proof {outer_tactic_index}: `advance` is not available in a pure proof"
         )));
     }
 
@@ -2866,7 +2862,7 @@ fn prove_pure_proposition_at_point(
             proof_name,
             theorem_environment,
             claim_label,
-            outer_step_index,
+            outer_tactic_index,
             outer_available,
             parameters,
             arguments,
@@ -2883,14 +2879,14 @@ fn prove_pure_proposition_at_point(
             && expected != &fact
         {
             return Err(ClickError::new(format!(
-                "`{claim_label}` proof step {outer_step_index}: `have` cases lowered the same surface fact differently"
+                "`{claim_label}` tactic {outer_tactic_index}: `have` cases lowered the same surface fact differently"
             )));
         }
         proven_fact = Some(fact);
     }
     proven_fact.ok_or_else(|| {
         ClickError::new(format!(
-            "`{claim_label}` {proof_name} proof {outer_step_index} has no proof cases"
+            "`{claim_label}` {proof_name} proof {outer_tactic_index} has no proof cases"
         ))
     })
 }
@@ -2903,7 +2899,7 @@ fn prove_pure_proposition_case_at_point(
     proof_name: &str,
     theorem_environment: &TheoremEnvironment,
     claim_label: &str,
-    outer_step_index: usize,
+    outer_tactic_index: usize,
     outer_available: &[Proposition],
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
@@ -2921,7 +2917,7 @@ fn prove_pure_proposition_case_at_point(
     let mut use_simp = tactic_simp;
     let parameter_values = parameter_values(parameters, arguments).map_err(|error| {
         ClickError::new(format!(
-            "`{claim_label}` {proof_name} proof {outer_step_index}: {}",
+            "`{claim_label}` {proof_name} proof {outer_tactic_index}: {}",
             error.message
         ))
     })?;
@@ -2933,13 +2929,13 @@ fn prove_pure_proposition_case_at_point(
     let mut goal_closed = false;
     let mut next_choice_variable = 3_000_000;
 
-    for (inner_step_index, step) in proof_case.steps.iter().enumerate() {
+    for (inner_tactic_index, tactic) in proof_case.tactics.iter().enumerate() {
         add_have_case_assumptions(
             proof_case,
-            inner_step_index,
+            inner_tactic_index,
             &mut available,
             claim_label,
-            outer_step_index,
+            outer_tactic_index,
             parameters,
             arguments,
             pre_state,
@@ -2951,15 +2947,15 @@ fn prove_pure_proposition_case_at_point(
         )?;
         if goal_closed {
             return Err(ClickError::new(format!(
-                "`{claim_label}` {proof_name} proof {outer_step_index}, step {inner_step_index}: `{}` follows a goal-closing simple tactic",
-                proof_step_name(step)
+                "`{claim_label}` {proof_name} proof {outer_tactic_index}, tactic {inner_tactic_index}: `{}` follows a goal-closing simple tactic",
+                tactic_name(tactic)
             )));
         }
-        match step {
-            ProofStep::UnfoldPredicate(name) => {
+        match tactic {
+            ProofTactic::UnfoldPredicate(name) => {
                 if predicate_environment.get(name).is_none() {
                     return Err(ClickError::new(format!(
-                        "`{claim_label}` {proof_name} proof {outer_step_index}, step {inner_step_index}: unknown predicate `{name}`"
+                        "`{claim_label}` {proof_name} proof {outer_tactic_index}, tactic {inner_tactic_index}: unknown predicate `{name}`"
                     )));
                 }
                 if !unfolded_predicates.contains(name) {
@@ -2972,10 +2968,10 @@ fn prove_pure_proposition_case_at_point(
                     &available,
                 )
                 .map_err(|message| ClickError::new(format!(
-                    "`{claim_label}` {proof_name} proof {outer_step_index}, step {inner_step_index}: {message}"
+                    "`{claim_label}` {proof_name} proof {outer_tactic_index}, tactic {inner_tactic_index}: {message}"
                 )))?;
             }
-            ProofStep::ApplyTheorem(application) => {
+            ProofTactic::ApplyTheorem(application) => {
                 let application_context = TheoremApplicationContext {
                     values: &values,
                     array_refs: &array_refs,
@@ -2986,7 +2982,7 @@ fn prove_pure_proposition_case_at_point(
                 };
                 available = apply_theorem_applications_to_available(
                     theorem_environment,
-                    &[(inner_step_index, application.clone())],
+                    &[(inner_tactic_index, application.clone())],
                     claim_label,
                     path_index,
                     available,
@@ -2996,12 +2992,12 @@ fn prove_pure_proposition_case_at_point(
                     &unfolded_predicates,
                 )?;
             }
-            ProofStep::Have(inner_have) => {
+            ProofTactic::Have(inner_have) => {
                 let inner_fact = prove_have_at_point(
                     inner_have,
                     theorem_environment,
                     claim_label,
-                    outer_step_index,
+                    outer_tactic_index,
                     &available,
                     parameters,
                     arguments,
@@ -3018,12 +3014,12 @@ fn prove_pure_proposition_case_at_point(
                     available.push(inner_fact);
                 }
             }
-            ProofStep::Choose(choice) => {
-                apply_choose_step(
+            ProofTactic::Choose(choice) => {
+                apply_choose_tactic(
                     choice,
                     claim_label,
                     path_index.unwrap_or(0),
-                    inner_step_index,
+                    inner_tactic_index,
                     &mut available,
                     &mut values,
                     original_requirements,
@@ -3033,7 +3029,7 @@ fn prove_pure_proposition_case_at_point(
                     &unfolded_predicates,
                 )?;
             }
-            ProofStep::Witness(witness) => {
+            ProofTactic::Witness(witness) => {
                 if goal.is_none() {
                     let lowered = lower_point_proposition_with_values(
                         proposition,
@@ -3049,7 +3045,7 @@ fn prove_pure_proposition_case_at_point(
                     )
                     .map_err(|message| {
                         ClickError::new(format!(
-                            "`{claim_label}` {proof_name} proof {outer_step_index}: could not lower pure goal: {message}"
+                            "`{claim_label}` {proof_name} proof {outer_tactic_index}: could not lower pure goal: {message}"
                         ))
                     })?;
                     fact = Some(lowered.clone());
@@ -3065,14 +3061,14 @@ fn prove_pure_proposition_case_at_point(
                 )
                 .map_err(|message| {
                     ClickError::new(format!(
-                        "`{claim_label}` {proof_name} proof {outer_step_index}: could not unfold pure goal: {message}"
+                        "`{claim_label}` {proof_name} proof {outer_tactic_index}: could not unfold pure goal: {message}"
                     ))
                 })?;
-                let witness_value = evaluate_witness_step_value(
+                let witness_value = evaluate_witness_tactic_value(
                     witness,
                     claim_label,
                     path_index.unwrap_or(0),
-                    inner_step_index,
+                    inner_tactic_index,
                     &values,
                     &array_refs,
                     pre_state,
@@ -3083,16 +3079,16 @@ fn prove_pure_proposition_case_at_point(
                     click_function_environment,
                     program_point_states,
                 )?;
-                goal = Some(apply_witness_step(
+                goal = Some(apply_witness_tactic(
                     witness,
                     witness_value,
                     unfolded_goal,
                     claim_label,
                     path_index.unwrap_or(0),
-                    inner_step_index,
+                    inner_tactic_index,
                 )?);
             }
-            ProofStep::Assumption | ProofStep::Normalize | ProofStep::Rewrite(_) => {
+            ProofTactic::Assumption | ProofTactic::Normalize | ProofTactic::Rewrite(_) => {
                 if goal.is_none() {
                     let lowered = lower_point_proposition_with_values(
                         proposition,
@@ -3108,7 +3104,7 @@ fn prove_pure_proposition_case_at_point(
                     )
                     .map_err(|message| {
                         ClickError::new(format!(
-                            "`{claim_label}` {proof_name} proof {outer_step_index}: could not lower pure goal: {message}"
+                            "`{claim_label}` {proof_name} proof {outer_tactic_index}: could not lower pure goal: {message}"
                         ))
                     })?;
                     fact = Some(lowered.clone());
@@ -3124,14 +3120,14 @@ fn prove_pure_proposition_case_at_point(
                 )
                 .map_err(|message| {
                     ClickError::new(format!(
-                        "`{claim_label}` {proof_name} proof {outer_step_index}: could not unfold pure goal: {message}"
+                        "`{claim_label}` {proof_name} proof {outer_tactic_index}: could not unfold pure goal: {message}"
                     ))
                 })?;
-                match step {
-                    ProofStep::Assumption => {
+                match tactic {
+                    ProofTactic::Assumption => {
                         if !available.contains(&unfolded_goal) {
                             return Err(ClickError::new(format!(
-                                "`{claim_label}` {proof_name} proof {outer_step_index}: `assumption` failed: {}",
+                                "`{claim_label}` {proof_name} proof {outer_tactic_index}: `assumption` failed: {}",
                                 describe_missing_pure_fact(
                                     &unfolded_goal,
                                     &available,
@@ -3144,15 +3140,15 @@ fn prove_pure_proposition_case_at_point(
                         }
                         goal_closed = true;
                     }
-                    ProofStep::Normalize => {
+                    ProofTactic::Normalize => {
                         if !matches!(normalize_proposition(&unfolded_goal), SimpProposition::True) {
                             return Err(ClickError::new(format!(
-                                "`{claim_label}` {proof_name} proof {outer_step_index}: `normalize` failed because the goal did not normalize to true: {unfolded_goal:?}"
+                                "`{claim_label}` {proof_name} proof {outer_tactic_index}: `normalize` failed because the goal did not normalize to true: {unfolded_goal:?}"
                             )));
                         }
                         goal_closed = true;
                     }
-                    ProofStep::Rewrite(surface_equality) => {
+                    ProofTactic::Rewrite(surface_equality) => {
                         let equality = lower_point_proposition_with_values(
                             surface_equality,
                             &available,
@@ -3167,7 +3163,7 @@ fn prove_pure_proposition_case_at_point(
                         )
                         .map_err(|message| {
                             ClickError::new(format!(
-                                "`{claim_label}` {proof_name} proof {outer_step_index}: `rewrite` could not lower equality: {message}"
+                                "`{claim_label}` {proof_name} proof {outer_tactic_index}: `rewrite` could not lower equality: {message}"
                             ))
                         })?;
                         goal = Some(
@@ -3178,7 +3174,7 @@ fn prove_pure_proposition_case_at_point(
                             )
                             .map_err(|message| {
                                 ClickError::new(format!(
-                                    "`{claim_label}` {proof_name} proof {outer_step_index}: {message}"
+                                    "`{claim_label}` {proof_name} proof {outer_tactic_index}: {message}"
                                 ))
                             })?,
                         );
@@ -3186,22 +3182,22 @@ fn prove_pure_proposition_case_at_point(
                     _ => unreachable!(),
                 }
             }
-            ProofStep::Simp => use_simp = true,
-            ProofStep::If(_) => unreachable!("proof-level if steps are expanded before replay"),
+            ProofTactic::Simp => use_simp = true,
+            ProofTactic::If(_) => unreachable!("proof-level if tactics are expanded before replay"),
             _ => {
                 return Err(ClickError::new(format!(
-                    "`{claim_label}` {proof_name} proof {outer_step_index}, step {inner_step_index}: `{}` is not available in a pure proof",
-                    proof_step_name(step)
+                    "`{claim_label}` {proof_name} proof {outer_tactic_index}, tactic {inner_tactic_index}: `{}` is not available in a pure proof",
+                    tactic_name(tactic)
                 )));
             }
         }
     }
     add_have_case_assumptions(
         proof_case,
-        proof_case.steps.len(),
+        proof_case.tactics.len(),
         &mut available,
         claim_label,
-        outer_step_index,
+        outer_tactic_index,
         parameters,
         arguments,
         pre_state,
@@ -3228,7 +3224,7 @@ fn prove_pure_proposition_case_at_point(
         )
         .map_err(|message| {
             ClickError::new(format!(
-                "`{claim_label}` {proof_name} proof {outer_step_index}: could not lower pure goal: {message}"
+                "`{claim_label}` {proof_name} proof {outer_tactic_index}: could not lower pure goal: {message}"
             ))
         })?,
     };
@@ -3242,7 +3238,7 @@ fn prove_pure_proposition_case_at_point(
     )
     .map_err(|message| {
         ClickError::new(format!(
-            "`{claim_label}` {proof_name} proof {outer_step_index}: could not unfold pure goal: {message}"
+            "`{claim_label}` {proof_name} proof {outer_tactic_index}: could not unfold pure goal: {message}"
         ))
     })?;
     if goal_closed
@@ -3261,11 +3257,11 @@ fn prove_pure_proposition_case_at_point(
     );
     if proof_name == "have" {
         Err(ClickError::new(format!(
-            "`{claim_label}` proof step {outer_step_index}: `have` failed: {failure}"
+            "`{claim_label}` tactic {outer_tactic_index}: `have` failed: {failure}"
         )))
     } else {
         Err(ClickError::new(format!(
-            "`{claim_label}` {proof_name} proof {outer_step_index} failed: {failure}"
+            "`{claim_label}` {proof_name} proof {outer_tactic_index} failed: {failure}"
         )))
     }
 }
@@ -3273,10 +3269,10 @@ fn prove_pure_proposition_case_at_point(
 #[allow(clippy::too_many_arguments)]
 fn add_have_case_assumptions(
     proof_case: &ExpandedProofCase,
-    inner_step_index: usize,
+    inner_tactic_index: usize,
     available: &mut Vec<Proposition>,
     claim_label: &str,
-    outer_step_index: usize,
+    outer_tactic_index: usize,
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
     pre_state: &CState,
@@ -3289,7 +3285,7 @@ fn add_have_case_assumptions(
     for case_assumption in proof_case
         .assumptions
         .iter()
-        .filter(|assumption| assumption.step_index == inner_step_index)
+        .filter(|assumption| assumption.tactic_index == inner_tactic_index)
     {
         let proposition = lower_point_proposition(
             &case_assumption.proposition,
@@ -3305,7 +3301,7 @@ fn add_have_case_assumptions(
         )
         .map_err(|message| {
             ClickError::new(format!(
-                "`{claim_label}` proof step {outer_step_index}, `have` step {inner_step_index}: could not lower `if` condition: {message}"
+                "`{claim_label}` tactic {outer_tactic_index}, `have` tactic {inner_tactic_index}: could not lower `if` condition: {message}"
             ))
         })?;
         available.push(if case_assumption.value {
@@ -3317,7 +3313,7 @@ fn add_have_case_assumptions(
     Ok(())
 }
 
-pub(super) fn prove_claim_by_steps(
+pub(super) fn prove_claim_by_tactics(
     source_path: &str,
     function_block: &FunctionBlock,
     parsed_function: &syntax::C0Function,
@@ -3328,14 +3324,14 @@ pub(super) fn prove_claim_by_steps(
     click_function_environment: &ClickFunctionEnvironment,
     resource_environment: &ResourceEnvironment,
     theorem_environment: &TheoremEnvironment,
-    steps: &[ProofStep],
+    tactics: &[ProofTactic],
 ) -> Result<Vec<VerifiedCTheorem>, ClickError> {
-    if steps.is_empty() {
+    if tactics.is_empty() {
         return Err(ClickError::new(format!(
-            "`{claim_label}` has an empty proof-step script"
+            "`{claim_label}` has an empty explicit proof script"
         )));
     }
-    let program = build_internal_proof(steps, claim_label)?;
+    let program = build_internal_proof(tactics, claim_label)?;
     let (state, arguments, pure_facts) = initial_claim_context(
         function_block,
         parsed_function,
@@ -3359,10 +3355,10 @@ pub(super) fn prove_claim_by_steps(
         ProofReplayContext {
             state,
             pure_facts,
-            replay: ProofStepReplayState {
+            replay: TacticReplayState {
                 source_layout: SourceExecutionLayout::new(parsed_function.body()),
                 ordered_finalization: true,
-                ..ProofStepReplayState::default()
+                ..TacticReplayState::default()
             },
             branch_path: Vec::new(),
         },
@@ -3394,7 +3390,7 @@ pub(super) fn prove_claim_by_steps(
             theorem_environment,
             &function,
             &arguments,
-            steps,
+            tactics,
         )? {
             if !verified.contains(&theorem) {
                 verified.push(theorem);
@@ -3405,7 +3401,7 @@ pub(super) fn prove_claim_by_steps(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(super) fn prove_claims_by_grouped_steps(
+pub(super) fn prove_claims_by_grouped_tactics(
     source_path: &str,
     function_block: &FunctionBlock,
     parsed_function: &syntax::C0Function,
@@ -3415,7 +3411,7 @@ pub(super) fn prove_claims_by_grouped_steps(
     click_function_environment: &ClickFunctionEnvironment,
     resource_environment: &ResourceEnvironment,
     theorem_environment: &TheoremEnvironment,
-    steps: &[ProofStep],
+    tactics: &[ProofTactic],
 ) -> Result<Vec<VerifiedCTheorem>, ClickError> {
     let proof_label = format!("{}.contract", function_block.signature().name());
     if claims.is_empty() {
@@ -3423,12 +3419,12 @@ pub(super) fn prove_claims_by_grouped_steps(
             "`{proof_label}` grouped proof has no contract claims"
         )));
     }
-    if steps.is_empty() {
+    if tactics.is_empty() {
         return Err(ClickError::new(format!(
-            "`{proof_label}` has an empty grouped proof-step script"
+            "`{proof_label}` has an empty grouped explicit proof script"
         )));
     }
-    let program = build_internal_proof(steps, &proof_label)?;
+    let program = build_internal_proof(tactics, &proof_label)?;
     let (state, arguments, pure_facts) = initial_claim_context(
         function_block,
         parsed_function,
@@ -3451,11 +3447,11 @@ pub(super) fn prove_claims_by_grouped_steps(
         ProofReplayContext {
             state,
             pure_facts,
-            replay: ProofStepReplayState {
+            replay: TacticReplayState {
                 source_layout: SourceExecutionLayout::new(parsed_function.body()),
                 ordered_finalization: true,
                 grouped_contract: true,
-                ..ProofStepReplayState::default()
+                ..TacticReplayState::default()
             },
             branch_path: Vec::new(),
         },
@@ -3487,7 +3483,7 @@ pub(super) fn prove_claims_by_grouped_steps(
             theorem_environment,
             &function,
             &arguments,
-            steps,
+            tactics,
         )? {
             if !verified.contains(&theorem) {
                 verified.push(theorem);
@@ -3509,26 +3505,26 @@ pub(super) fn prove_claims_by_grouped_auto(
     resource_environment: &ResourceEnvironment,
     theorem_environment: &TheoremEnvironment,
 ) -> Result<Vec<VerifiedCTheorem>, ClickError> {
-    let mut steps = vec![ProofStep::ExecuteRest];
-    steps.extend(
+    let mut tactics = vec![ProofTactic::ExecuteRest];
+    tactics.extend(
         loop_effect_summary_regions(function_block)
             .into_iter()
-            .map(|loop_index| ProofStep::Frame(Some(CodeRegionRef::Loop(loop_index)))),
+            .map(|loop_index| ProofTactic::Frame(Some(CodeRegionRef::Loop(loop_index)))),
     );
     if claims
         .iter()
         .any(|claim| matches!(claim, FunctionClaimRef::Effect(_, _)))
     {
-        steps.push(ProofStep::Frame(None));
+        tactics.push(ProofTactic::Frame(None));
     }
     if claims
         .iter()
         .any(|claim| matches!(claim, FunctionClaimRef::Ensure(_, _)))
     {
-        steps.push(ProofStep::Simp);
+        tactics.push(ProofTactic::Simp);
     }
 
-    prove_claims_by_grouped_steps(
+    prove_claims_by_grouped_tactics(
         source_path,
         function_block,
         parsed_function,
@@ -3538,7 +3534,7 @@ pub(super) fn prove_claims_by_grouped_auto(
         click_function_environment,
         resource_environment,
         theorem_environment,
-        &steps,
+        &tactics,
     )
 }
 
@@ -3556,7 +3552,7 @@ fn finish_ordered_proof_replay(
     theorem_environment: &TheoremEnvironment,
     function: &CFunction,
     arguments: &[CExpression],
-    certificate_steps: &[ProofStep],
+    certificate_tactics: &[ProofTactic],
 ) -> Result<Vec<VerifiedCTheorem>, ClickError> {
     let ProofReplayContext {
         state,
@@ -3623,7 +3619,7 @@ fn finish_ordered_proof_replay(
                         "execution proof failed for `{proof_label}` path {path_index}: proof-level `if` requires a return outcome"
                     )));
                 };
-                for (step_index, condition, value) in &replay.case_assumptions {
+                for (tactic_index, condition, value) in &replay.case_assumptions {
                     let condition = lower_outcome_proposition_with_program_points(
                         parsed_function.parameters(),
                         arguments,
@@ -3638,7 +3634,7 @@ fn finish_ordered_proof_replay(
                     )
                     .map_err(|message| {
                         ClickError::new(format!(
-                            "`{proof_label}` path {path_index}, proof step {step_index}: could not lower `if` condition: {message}"
+                            "`{proof_label}` path {path_index}, tactic {tactic_index}: could not lower `if` condition: {message}"
                         ))
                     })?;
                     path_requirements.push(if *value {
@@ -3676,10 +3672,10 @@ fn finish_ordered_proof_replay(
             let mut closed_claims = vec![false; claims.len()];
             let mut closer_errors = vec![None; claims.len()];
             let mut rewritten_claim_goals: Vec<Option<Proposition>> = vec![None; claims.len()];
-            let mut existence_steps = Vec::new();
-            for (step_index, post_step) in &replay.post_execution_steps {
-                match post_step {
-                    PostExecutionStep::Fold(resource) => {
+            let mut existence_tactics = Vec::new();
+            for (tactic_index, post_tactic) in &replay.post_execution_tactics {
+                match post_tactic {
+                    PostExecutionTactic::Fold(resource) => {
                         outcome = fold_composite_resources_on_outcome(
                             resource_environment,
                             std::slice::from_ref(resource),
@@ -3708,7 +3704,7 @@ fn finish_ordered_proof_replay(
                             path_index,
                         )?;
                     }
-                    PostExecutionStep::UnfoldPredicate(name) => {
+                    PostExecutionTactic::UnfoldPredicate(name) => {
                         if !unfolded_predicates.contains(name) {
                             unfolded_predicates.push(name.clone());
                         }
@@ -3720,18 +3716,18 @@ fn finish_ordered_proof_replay(
                         )
                         .map_err(|message| {
                             ClickError::new(format!(
-                                "`{proof_label}` path {path_index}, proof step {step_index}: {message}"
+                                "`{proof_label}` path {path_index}, tactic {tactic_index}: {message}"
                             ))
                         })?;
                     }
-                    PostExecutionStep::Apply(application) => {
+                    PostExecutionTactic::Apply(application) => {
                         let CFunctionOutcome::Return {
                             value: result,
                             state: post_state,
                         } = &outcome
                         else {
                             return Err(ClickError::new(format!(
-                                "`{proof_label}` path {path_index}, proof step {step_index}: theorem application requires a return outcome"
+                                "`{proof_label}` path {path_index}, tactic {tactic_index}: theorem application requires a return outcome"
                             )));
                         };
                         let values = parameter_values(parsed_function.parameters(), arguments)
@@ -3751,7 +3747,7 @@ fn finish_ordered_proof_replay(
                         };
                         path_requirements = apply_theorem_applications_to_available(
                             theorem_environment,
-                            &[(*step_index, application.clone())],
+                            &[(*tactic_index, application.clone())],
                             &proof_label,
                             Some(path_index),
                             path_requirements,
@@ -3761,21 +3757,21 @@ fn finish_ordered_proof_replay(
                             &unfolded_predicates,
                         )?;
                     }
-                    PostExecutionStep::Have(have) => {
+                    PostExecutionTactic::Have(have) => {
                         let CFunctionOutcome::Return {
                             value: result,
                             state: post_state,
                         } = &outcome
                         else {
                             return Err(ClickError::new(format!(
-                                "`{proof_label}` path {path_index}, proof step {step_index}: `have` requires a return outcome"
+                                "`{proof_label}` path {path_index}, tactic {tactic_index}: `have` requires a return outcome"
                             )));
                         };
                         let fact = prove_have_at_point(
                             have,
                             theorem_environment,
                             &proof_label,
-                            *step_index,
+                            *tactic_index,
                             &path_requirements,
                             parsed_function.parameters(),
                             arguments,
@@ -3792,13 +3788,13 @@ fn finish_ordered_proof_replay(
                             path_requirements.push(fact);
                         }
                     }
-                    PostExecutionStep::Choose(choice) => {
-                        existence_steps.push(ProofStep::Choose(choice.clone()));
+                    PostExecutionTactic::Choose(choice) => {
+                        existence_tactics.push(ProofTactic::Choose(choice.clone()));
                     }
-                    PostExecutionStep::Witness(witness) => {
-                        existence_steps.push(ProofStep::Witness(witness.clone()));
+                    PostExecutionTactic::Witness(witness) => {
+                        existence_tactics.push(ProofTactic::Witness(witness.clone()));
                     }
-                    PostExecutionStep::Assumption => {
+                    PostExecutionTactic::Assumption => {
                         let mut closed_any = false;
                         for (claim_index, claim) in claims.iter().enumerate() {
                             if closed_claims[claim_index] {
@@ -3826,7 +3822,7 @@ fn finish_ordered_proof_replay(
                                 )
                                 .map_err(|message| {
                                     ClickError::new(format!(
-                                        "`{proof_label}` path {path_index}, proof step {step_index}: `assumption` could not lower goal: {message}"
+                                        "`{proof_label}` path {path_index}, tactic {tactic_index}: `assumption` could not lower goal: {message}"
                                     ))
                                 })?,
                             };
@@ -3837,11 +3833,11 @@ fn finish_ordered_proof_replay(
                         }
                         if !closed_any {
                             return Err(ClickError::new(format!(
-                                "`{proof_label}` path {path_index}, proof step {step_index}: `assumption` did not match any current proposition goal"
+                                "`{proof_label}` path {path_index}, tactic {tactic_index}: `assumption` did not match any current proposition goal"
                             )));
                         }
                     }
-                    PostExecutionStep::Normalize => {
+                    PostExecutionTactic::Normalize => {
                         let mut closed_any = false;
                         for (claim_index, claim) in claims.iter().enumerate() {
                             if closed_claims[claim_index] {
@@ -3869,7 +3865,7 @@ fn finish_ordered_proof_replay(
                                 )
                                 .map_err(|message| {
                                     ClickError::new(format!(
-                                        "`{proof_label}` path {path_index}, proof step {step_index}: `normalize` could not lower goal: {message}"
+                                        "`{proof_label}` path {path_index}, tactic {tactic_index}: `normalize` could not lower goal: {message}"
                                     ))
                                 })?,
                             };
@@ -3880,18 +3876,18 @@ fn finish_ordered_proof_replay(
                         }
                         if !closed_any {
                             return Err(ClickError::new(format!(
-                                "`{proof_label}` path {path_index}, proof step {step_index}: `normalize` did not prove any current proposition goal"
+                                "`{proof_label}` path {path_index}, tactic {tactic_index}: `normalize` did not prove any current proposition goal"
                             )));
                         }
                     }
-                    PostExecutionStep::Rewrite(surface_equality) => {
+                    PostExecutionTactic::Rewrite(surface_equality) => {
                         let CFunctionOutcome::Return {
                             value: result,
                             state: post_state,
                         } = &outcome
                         else {
                             return Err(ClickError::new(format!(
-                                "`{proof_label}` path {path_index}, proof step {step_index}: `rewrite` requires a return outcome"
+                                "`{proof_label}` path {path_index}, tactic {tactic_index}: `rewrite` requires a return outcome"
                             )));
                         };
                         let equality = lower_outcome_proposition_with_program_points(
@@ -3908,7 +3904,7 @@ fn finish_ordered_proof_replay(
                         )
                         .map_err(|message| {
                             ClickError::new(format!(
-                                "`{proof_label}` path {path_index}, proof step {step_index}: `rewrite` could not lower equality: {message}"
+                                "`{proof_label}` path {path_index}, tactic {tactic_index}: `rewrite` could not lower equality: {message}"
                             ))
                         })?;
                         let mut rewrote_any = false;
@@ -3939,7 +3935,7 @@ fn finish_ordered_proof_replay(
                                 )
                                 .map_err(|message| {
                                     ClickError::new(format!(
-                                        "`{proof_label}` path {path_index}, proof step {step_index}: `rewrite` could not lower goal: {message}"
+                                        "`{proof_label}` path {path_index}, tactic {tactic_index}: `rewrite` could not lower goal: {message}"
                                     ))
                                 })?,
                             };
@@ -3959,14 +3955,14 @@ fn finish_ordered_proof_replay(
                         }
                         if !rewrote_any {
                             return Err(ClickError::new(format!(
-                                "`{proof_label}` path {path_index}, proof step {step_index}: `rewrite` failed: {}",
+                                "`{proof_label}` path {path_index}, tactic {tactic_index}: `rewrite` failed: {}",
                                 first_error.unwrap_or_else(|| {
                                     "there is no current proposition goal".to_string()
                                 })
                             )));
                         }
                     }
-                    PostExecutionStep::Frame => {
+                    PostExecutionTactic::Frame => {
                         for (claim_index, claim) in claims.iter().enumerate() {
                             if !matches!(claim, FunctionClaimRef::Effect(_, _)) {
                                 continue;
@@ -3987,7 +3983,7 @@ fn finish_ordered_proof_replay(
                             closed_claims[claim_index] = true;
                         }
                     }
-                    PostExecutionStep::Simp => {
+                    PostExecutionTactic::Simp => {
                         for (claim_index, claim) in claims.iter().enumerate() {
                             if closed_claims[claim_index]
                                 || !matches!(claim, FunctionClaimRef::Ensure(_, _))
@@ -3997,9 +3993,9 @@ fn finish_ordered_proof_replay(
                             let claim_label =
                                 function_claim_label(function_block.signature().name(), claim);
                             let result = if let Some(goal) = &rewritten_claim_goals[claim_index] {
-                                if !existence_steps.is_empty() {
+                                if !existence_tactics.is_empty() {
                                     return Err(ClickError::new(format!(
-                                        "`{proof_label}` path {path_index}, proof step {step_index}: rewritten existential goals are not yet supported"
+                                        "`{proof_label}` path {path_index}, tactic {tactic_index}: rewritten existential goals are not yet supported"
                                     )));
                                 }
                                 let mut reasoning_facts = path_requirements.clone();
@@ -4022,7 +4018,7 @@ fn finish_ordered_proof_replay(
                                         "`simp` failed for `{claim_label}` path {path_index}: simplified rewritten proposition was not true: {simplified:?}"
                                     ))),
                                 }
-                            } else if existence_steps.is_empty() {
+                            } else if existence_tactics.is_empty() {
                                 check_function_claim_by_simp(
                                     &claim_label,
                                     path_index,
@@ -4040,7 +4036,7 @@ fn finish_ordered_proof_replay(
                                 )
                             } else {
                                 let mut available = path_requirements.clone();
-                                check_function_claim_with_existence_steps(
+                                check_function_claim_with_existence_tactics(
                                     &claim_label,
                                     path_index,
                                     &path.execution_facts(),
@@ -4053,7 +4049,7 @@ fn finish_ordered_proof_replay(
                                     predicate_environment,
                                     click_function_environment,
                                     &unfolded_predicates,
-                                    &existence_steps,
+                                    &existence_tactics,
                                     function_block.requires(),
                                     &replay.program_point_states,
                                     true,
@@ -4080,9 +4076,9 @@ fn finish_ordered_proof_replay(
                     }
                     let claim_label =
                         function_claim_label(function_block.signature().name(), claim);
-                    let result = if !existence_steps.is_empty() {
+                    let result = if !existence_tactics.is_empty() {
                         let mut available = path_requirements.clone();
-                        check_function_claim_with_existence_steps(
+                        check_function_claim_with_existence_tactics(
                             &claim_label,
                             path_index,
                             &path.execution_facts(),
@@ -4095,7 +4091,7 @@ fn finish_ordered_proof_replay(
                             predicate_environment,
                             click_function_environment,
                             &unfolded_predicates,
-                            &existence_steps,
+                            &existence_tactics,
                             function_block.requires(),
                             &replay.program_point_states,
                             false,
@@ -4163,8 +4159,8 @@ fn finish_ordered_proof_replay(
                     source_path: source_path.to_string(),
                     function_block: function_block.clone(),
                     claim: claim.verified_claim(),
-                    proof_kind: ProofKind::ProofSteps,
-                    proof_steps: Some(certificate_steps.to_vec()),
+                    proof_kind: ProofKind::TacticScript,
+                    proof_tactics: Some(certificate_tactics.to_vec()),
                     specification: specification.clone(),
                     theorem: theorem.clone(),
                 });
@@ -4176,7 +4172,7 @@ fn finish_ordered_proof_replay(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn replay_linear_steps(
+fn replay_linear_tactics(
     context: ProofReplayContext,
     function_block: &FunctionBlock,
     parsed_function: &syntax::C0Function,
@@ -4189,7 +4185,7 @@ fn replay_linear_steps(
     theorem_environment: &TheoremEnvironment,
     function: &CFunction,
     arguments: &[CExpression],
-    steps: &[IndexedProofStep],
+    tactics: &[IndexedTactic],
 ) -> Result<ProofReplayContext, ClickError> {
     let ProofReplayContext {
         mut state,
@@ -4199,14 +4195,14 @@ fn replay_linear_steps(
     } = context;
     let mut assumptions = assumptions_from_propositions(&requirement_pure_facts);
 
-    for indexed_step in steps {
-        let step_index = indexed_step.index;
-        let step = &indexed_step.step;
-        match step {
-            ProofStep::UnfoldResource(resource) => {
+    for indexed_tactic in tactics {
+        let tactic_index = indexed_tactic.index;
+        let tactic = &indexed_tactic.tactic;
+        match tactic {
+            ProofTactic::UnfoldResource(resource) => {
                 if replay.is_at_function_exit() {
                     return Err(ClickError::new(format!(
-                        "`{claim_label}` proof step {step_index}: `unfold` must run before execution reaches function exit"
+                        "`{claim_label}` tactic {tactic_index}: `unfold` must run before execution reaches function exit"
                     )));
                 }
                 state = unfold_composite_resource(
@@ -4219,14 +4215,14 @@ fn replay_linear_steps(
                     predicate_environment,
                     click_function_environment,
                     claim_label,
-                    step_index,
+                    tactic_index,
                 )?;
                 assumptions = assumptions_from_propositions(&requirement_pure_facts);
             }
-            ProofStep::ObserveResource(resource) => {
+            ProofTactic::ObserveResource(resource) => {
                 if replay.is_at_function_exit() {
                     return Err(ClickError::new(format!(
-                        "`{claim_label}` proof step {step_index}: `observe` must run before execution reaches function exit"
+                        "`{claim_label}` tactic {tactic_index}: `observe` must run before execution reaches function exit"
                     )));
                 }
                 state = observe_composite_resource(
@@ -4239,14 +4235,14 @@ fn replay_linear_steps(
                     predicate_environment,
                     click_function_environment,
                     claim_label,
-                    step_index,
+                    tactic_index,
                 )?;
                 assumptions = assumptions_from_propositions(&requirement_pure_facts);
             }
-            ProofStep::Transport { source, target } => {
+            ProofTactic::Transport { source, target } => {
                 if replay.is_at_function_entry() || replay.is_at_function_exit() {
                     return Err(ClickError::new(format!(
-                        "`{claim_label}` proof step {step_index}: `transport` requires a current statement frontier after at least one execution step"
+                        "`{claim_label}` tactic {tactic_index}: `transport` requires a current statement frontier after at least one execution step"
                     )));
                 }
                 let pre_state = replay.execution_start_state(&state);
@@ -4264,12 +4260,12 @@ fn replay_linear_steps(
                 )
                 .map_err(|message| {
                     ClickError::new(format!(
-                        "`{claim_label}` proof step {step_index}: could not lower `transport` source: {message}"
+                        "`{claim_label}` tactic {tactic_index}: could not lower `transport` source: {message}"
                     ))
                 })?;
                 if !requirement_pure_facts.contains(&source) {
                     return Err(ClickError::new(format!(
-                        "`{claim_label}` proof step {step_index}: `transport` requires an exact source fact: {}",
+                        "`{claim_label}` tactic {tactic_index}: `transport` requires an exact source fact: {}",
                         describe_missing_pure_fact(
                             &source,
                             &requirement_pure_facts,
@@ -4294,7 +4290,7 @@ fn replay_linear_steps(
                 )
                 .map_err(|message| {
                     ClickError::new(format!(
-                        "`{claim_label}` proof step {step_index}: could not lower `transport` target: {message}"
+                        "`{claim_label}` tactic {tactic_index}: could not lower `transport` target: {message}"
                     ))
                 })?;
                 let mut transport_facts = requirement_pure_facts.clone();
@@ -4312,7 +4308,7 @@ fn replay_linear_steps(
                 )
                 .ok_or_else(|| {
                     ClickError::new(format!(
-                        "`{claim_label}` proof step {step_index}: no certified frame transport applies to the exact source fact\n  source: {source:?}\n  current memory: {:?}\n  effect facts: {:?}",
+                        "`{claim_label}` tactic {tactic_index}: no certified frame transport applies to the exact source fact\n  source: {source:?}\n  current memory: {:?}\n  effect facts: {:?}",
                         state.memory(), replay.effect_facts
                     ))
                 })?;
@@ -4323,7 +4319,7 @@ fn replay_linear_steps(
                 let requested = normalize_direct_atomic_memory_loads(&target);
                 if transported != requested {
                     return Err(ClickError::new(format!(
-                        "`{claim_label}` proof step {step_index}: transported fact does not equal the requested target\n  transported: {:?}\n  requested: {:?}",
+                        "`{claim_label}` tactic {tactic_index}: transported fact does not equal the requested target\n  transported: {:?}\n  requested: {:?}",
                         transported, requested
                     )));
                 }
@@ -4332,13 +4328,13 @@ fn replay_linear_steps(
                 }
                 assumptions = assumptions_from_propositions(&requirement_pure_facts);
             }
-            ProofStep::Step | ProofStep::ExecuteStep => {
-                let (prerequisite_policy, fact_transport_policy) = match step {
-                    ProofStep::Step => (
+            ProofTactic::Step | ProofTactic::ExecuteStep => {
+                let (prerequisite_policy, fact_transport_policy) = match tactic {
+                    ProofTactic::Step => (
                         StatementPrerequisitePolicy::Exact,
                         StatementFactTransportPolicy::None,
                     ),
-                    ProofStep::ExecuteStep => (
+                    ProofTactic::ExecuteStep => (
                         StatementPrerequisitePolicy::Contextual,
                         StatementFactTransportPolicy::Automatic,
                     ),
@@ -4355,15 +4351,15 @@ fn replay_linear_steps(
                     &assumptions,
                     function_environment,
                     claim_label,
-                    step_index,
-                    proof_step_name(step),
+                    tactic_index,
+                    tactic_name(tactic),
                     prerequisite_policy,
                     fact_transport_policy,
                     LoopStepPolicy::EnterBody,
                 )?;
                 assumptions = assumptions_from_propositions(&requirement_pure_facts);
             }
-            ProofStep::ExecuteThenStep | ProofStep::ExecuteElseStep => {
+            ProofTactic::ExecuteThenStep | ProofTactic::ExecuteElseStep => {
                 let entered = execute_branch_step_from_execution_point(
                     &mut replay,
                     &mut state,
@@ -4374,8 +4370,8 @@ fn replay_linear_steps(
                     arguments,
                     function_environment,
                     claim_label,
-                    step_index,
-                    Some(matches!(step, ProofStep::ExecuteThenStep)),
+                    tactic_index,
+                    Some(matches!(tactic, ProofTactic::ExecuteThenStep)),
                     StatementPrerequisitePolicy::Contextual,
                     StatementFactTransportPolicy::Automatic,
                     BranchStepPolicy::RequireProven,
@@ -4383,7 +4379,7 @@ fn replay_linear_steps(
                 debug_assert!(entered);
                 assumptions = assumptions_from_propositions(&requirement_pure_facts);
             }
-            ProofStep::ExecuteRest => {
+            ProofTactic::ExecuteRest => {
                 execute_rest_from_execution_point(
                     &mut replay,
                     &mut state,
@@ -4394,18 +4390,18 @@ fn replay_linear_steps(
                     arguments,
                     function_environment,
                     claim_label,
-                    step_index,
-                    proof_step_name(step),
-                    matches!(step, ProofStep::ExecuteRest),
+                    tactic_index,
+                    tactic_name(tactic),
+                    matches!(tactic, ProofTactic::ExecuteRest),
                 )?;
                 assumptions = assumptions_from_propositions(&requirement_pure_facts);
             }
-            ProofStep::ExecuteUntil(region_ref) => {
+            ProofTactic::ExecuteUntil(region_ref) => {
                 let code_region =
-                    resolve_code_region_ref(function_block, region_ref, claim_label, step_index)?;
+                    resolve_code_region_ref(function_block, region_ref, claim_label, tactic_index)?;
                 let CodeRegion::Statement(statement_index) = code_region else {
                     return Err(ClickError::new(format!(
-                        "`{claim_label}` proof step {step_index}: `execute_until` expects a statement region"
+                        "`{claim_label}` tactic {tactic_index}: `execute_until` expects a statement region"
                     )));
                 };
                 execute_until_statement(
@@ -4419,11 +4415,11 @@ fn replay_linear_steps(
                     function_environment,
                     statement_index,
                     claim_label,
-                    step_index,
+                    tactic_index,
                 )?;
                 assumptions = assumptions_from_propositions(&requirement_pure_facts);
             }
-            ProofStep::BoundedExecute => {
+            ProofTactic::BoundedExecute => {
                 bounded_execute_from_execution_point(
                     &mut replay,
                     &mut state,
@@ -4434,16 +4430,21 @@ fn replay_linear_steps(
                     arguments,
                     function_environment,
                     claim_label,
-                    step_index,
+                    tactic_index,
                 )?;
                 assumptions = assumptions_from_propositions(&requirement_pure_facts);
             }
-            ProofStep::Frame(region_ref) => {
-                require_step_execution(&replay, claim_label, step_index, "frame")?;
+            ProofTactic::Frame(region_ref) => {
+                require_function_exit(&replay, claim_label, tactic_index, "frame")?;
                 let code_region = region_ref
                     .as_ref()
                     .map(|region_ref| {
-                        resolve_code_region_ref(function_block, region_ref, claim_label, step_index)
+                        resolve_code_region_ref(
+                            function_block,
+                            region_ref,
+                            claim_label,
+                            tactic_index,
+                        )
                     })
                     .transpose()?;
                 if replay.ordered_finalization
@@ -4457,7 +4458,7 @@ fn replay_linear_steps(
                             code_region,
                             &claims[0],
                             claim_label,
-                            step_index,
+                            tactic_index,
                         )?;
                     }
                     let Some(effect_claim) = claims
@@ -4465,7 +4466,7 @@ fn replay_linear_steps(
                         .find(|claim| matches!(claim, FunctionClaimRef::Effect(_, _)))
                     else {
                         return Err(ClickError::new(format!(
-                            "`{claim_label}` proof step {step_index}: `frame()` has no effect claim to prove"
+                            "`{claim_label}` tactic {tactic_index}: `frame()` has no effect claim to prove"
                         )));
                     };
                     validate_frame_code_region(
@@ -4474,11 +4475,11 @@ fn replay_linear_steps(
                         code_region,
                         effect_claim,
                         claim_label,
-                        step_index,
+                        tactic_index,
                     )?;
                     replay
-                        .post_execution_steps
-                        .push((step_index, PostExecutionStep::Frame));
+                        .post_execution_tactics
+                        .push((tactic_index, PostExecutionTactic::Frame));
                     replay.frames.insert(region_ref.clone());
                     continue;
                 }
@@ -4493,7 +4494,7 @@ fn replay_linear_steps(
                         code_region,
                         &claims[0],
                         claim_label,
-                        step_index,
+                        tactic_index,
                     )?;
                 }
                 for claim in effect_claims {
@@ -4503,15 +4504,15 @@ fn replay_linear_steps(
                         code_region,
                         claim,
                         claim_label,
-                        step_index,
+                        tactic_index,
                     )?;
                     match code_region {
                         None | Some(CodeRegion::Function) => {
-                            validate_function_frame_step(
+                            validate_function_frame_tactic(
                                 replay.execution().expect("execution should exist"),
                                 claim,
                                 claim_label,
-                                step_index,
+                                tactic_index,
                                 parsed_function.parameters(),
                                 arguments,
                                 &state,
@@ -4524,16 +4525,17 @@ fn replay_linear_steps(
                 }
                 replay.frames.insert(region_ref.clone());
             }
-            ProofStep::UnfoldPredicate(name) => {
+            ProofTactic::UnfoldPredicate(name) => {
                 if predicate_environment.get(name).is_none() {
                     return Err(ClickError::new(format!(
-                        "`{claim_label}` proof step {step_index}: unknown predicate `{name}`"
+                        "`{claim_label}` tactic {tactic_index}: unknown predicate `{name}`"
                     )));
                 }
                 if replay.ordered_finalization && replay.is_at_function_exit() {
-                    replay
-                        .post_execution_steps
-                        .push((step_index, PostExecutionStep::UnfoldPredicate(name.clone())));
+                    replay.post_execution_tactics.push((
+                        tactic_index,
+                        PostExecutionTactic::UnfoldPredicate(name.clone()),
+                    ));
                     continue;
                 }
                 if !replay.unfolded_predicates.contains(name) {
@@ -4546,27 +4548,26 @@ fn replay_linear_steps(
                     &requirement_pure_facts,
                 )
                 .map_err(|message| {
-                    ClickError::new(format!(
-                        "`{claim_label}` proof step {step_index}: {message}"
-                    ))
+                    ClickError::new(format!("`{claim_label}` tactic {tactic_index}: {message}"))
                 })?;
                 assumptions = assumptions_from_propositions(&requirement_pure_facts);
             }
-            ProofStep::ApplyTheorem(application) => {
+            ProofTactic::ApplyTheorem(application) => {
                 if theorem_environment.get(&application.name).is_none() {
                     return Err(ClickError::new(format!(
-                        "`{claim_label}` proof step {step_index}: unknown theorem `{}`",
+                        "`{claim_label}` tactic {tactic_index}: unknown theorem `{}`",
                         application.name
                     )));
                 }
                 if replay.is_at_function_exit() {
                     if replay.ordered_finalization {
-                        replay
-                            .post_execution_steps
-                            .push((step_index, PostExecutionStep::Apply(application.clone())));
+                        replay.post_execution_tactics.push((
+                            tactic_index,
+                            PostExecutionTactic::Apply(application.clone()),
+                        ));
                     } else {
                         return Err(ClickError::new(format!(
-                            "`{claim_label}` proof step {step_index}: post-execution `apply` is not available in this region proof"
+                            "`{claim_label}` tactic {tactic_index}: post-execution `apply` is not available in this region proof"
                         )));
                     }
                 } else {
@@ -4574,7 +4575,7 @@ fn replay_linear_steps(
                         theorem_environment,
                         application,
                         claim_label,
-                        step_index,
+                        tactic_index,
                         requirement_pure_facts,
                         parsed_function.parameters(),
                         arguments,
@@ -4588,15 +4589,15 @@ fn replay_linear_steps(
                     assumptions = assumptions_from_propositions(&requirement_pure_facts);
                 }
             }
-            ProofStep::FoldResource(resource) => {
+            ProofTactic::FoldResource(resource) => {
                 if replay.is_at_function_exit() {
                     if replay.ordered_finalization {
                         replay
-                            .post_execution_steps
-                            .push((step_index, PostExecutionStep::Fold(resource.clone())));
+                            .post_execution_tactics
+                            .push((tactic_index, PostExecutionTactic::Fold(resource.clone())));
                     } else {
                         return Err(ClickError::new(format!(
-                            "`{claim_label}` proof step {step_index}: post-execution `fold` is not available in this region proof"
+                            "`{claim_label}` tactic {tactic_index}: post-execution `fold` is not available in this region proof"
                         )));
                     }
                 } else {
@@ -4605,7 +4606,7 @@ fn replay_linear_steps(
                         resource_environment,
                         resource,
                         claim_label,
-                        step_index,
+                        tactic_index,
                         &requirement_pure_facts,
                         parsed_function.parameters(),
                         arguments,
@@ -4617,15 +4618,15 @@ fn replay_linear_steps(
                     )?;
                 }
             }
-            ProofStep::Have(have) => {
+            ProofTactic::Have(have) => {
                 if replay.is_at_function_exit() {
                     if replay.ordered_finalization {
                         replay
-                            .post_execution_steps
-                            .push((step_index, PostExecutionStep::Have(have.clone())));
+                            .post_execution_tactics
+                            .push((tactic_index, PostExecutionTactic::Have(have.clone())));
                     } else {
                         return Err(ClickError::new(format!(
-                            "`{claim_label}` proof step {step_index}: post-execution `have` is not available in this region proof"
+                            "`{claim_label}` tactic {tactic_index}: post-execution `have` is not available in this region proof"
                         )));
                     }
                     continue;
@@ -4641,7 +4642,7 @@ fn replay_linear_steps(
                     have,
                     theorem_environment,
                     claim_label,
-                    step_index,
+                    tactic_index,
                     &have_facts,
                     parsed_function.parameters(),
                     arguments,
@@ -4657,72 +4658,69 @@ fn replay_linear_steps(
                 }
                 assumptions = assumptions_from_propositions(&requirement_pure_facts);
             }
-            ProofStep::If(_) | ProofStep::Advance(_) => {
-                unreachable!("structured proof steps are represented by internal proof nodes")
+            ProofTactic::If(_) | ProofTactic::Advance(_) => {
+                unreachable!("structured tactics are represented by internal proof nodes")
             }
-            ProofStep::Witness(_) => {
+            ProofTactic::Witness(_) => {
                 if replay.grouped_contract {
                     return Err(ClickError::new(format!(
-                        "`{claim_label}` proof step {step_index}: top-level `witness` is not available in a grouped proof; use it inside `have proposition by {{ ... }}`"
+                        "`{claim_label}` tactic {tactic_index}: top-level `witness` is not available in a grouped proof; use it inside `have proposition by {{ ... }}`"
                     )));
                 }
                 if replay.ordered_finalization && replay.is_at_function_exit() {
-                    let ProofStep::Witness(witness) = step else {
+                    let ProofTactic::Witness(witness) = tactic else {
                         unreachable!()
                     };
                     replay
-                        .post_execution_steps
-                        .push((step_index, PostExecutionStep::Witness(witness.clone())));
+                        .post_execution_tactics
+                        .push((tactic_index, PostExecutionTactic::Witness(witness.clone())));
                     continue;
                 }
-                require_step_execution(&replay, claim_label, step_index, "witness")?;
+                require_function_exit(&replay, claim_label, tactic_index, "witness")?;
             }
-            ProofStep::Choose(_) => {
+            ProofTactic::Choose(_) => {
                 if replay.grouped_contract {
                     return Err(ClickError::new(format!(
-                        "`{claim_label}` proof step {step_index}: top-level `choose` is not available in a grouped proof; use it inside `have proposition by {{ ... }}`"
+                        "`{claim_label}` tactic {tactic_index}: top-level `choose` is not available in a grouped proof; use it inside `have proposition by {{ ... }}`"
                     )));
                 }
                 if replay.ordered_finalization && replay.is_at_function_exit() {
-                    let ProofStep::Choose(choice) = step else {
+                    let ProofTactic::Choose(choice) = tactic else {
                         unreachable!()
                     };
                     replay
-                        .post_execution_steps
-                        .push((step_index, PostExecutionStep::Choose(choice.clone())));
+                        .post_execution_tactics
+                        .push((tactic_index, PostExecutionTactic::Choose(choice.clone())));
                     continue;
                 }
-                require_step_execution(&replay, claim_label, step_index, "choose")?;
+                require_function_exit(&replay, claim_label, tactic_index, "choose")?;
             }
-            ProofStep::Assumption | ProofStep::Normalize | ProofStep::Rewrite(_) => {
+            ProofTactic::Assumption | ProofTactic::Normalize | ProofTactic::Rewrite(_) => {
                 if !replay.region_proof {
-                    require_step_execution(
-                        &replay,
-                        claim_label,
-                        step_index,
-                        proof_step_name(step),
-                    )?;
+                    require_function_exit(&replay, claim_label, tactic_index, tactic_name(tactic))?;
                 }
                 if replay.ordered_finalization && replay.is_at_function_exit() {
-                    let post_step = match step {
-                        ProofStep::Assumption => PostExecutionStep::Assumption,
-                        ProofStep::Normalize => PostExecutionStep::Normalize,
-                        ProofStep::Rewrite(equality) => {
-                            PostExecutionStep::Rewrite(equality.clone())
+                    let post_tactic = match tactic {
+                        ProofTactic::Assumption => PostExecutionTactic::Assumption,
+                        ProofTactic::Normalize => PostExecutionTactic::Normalize,
+                        ProofTactic::Rewrite(equality) => {
+                            PostExecutionTactic::Rewrite(equality.clone())
                         }
                         _ => unreachable!(),
                     };
-                    replay.post_execution_steps.push((step_index, post_step));
+                    replay
+                        .post_execution_tactics
+                        .push((tactic_index, post_tactic));
                 }
             }
-            ProofStep::Simp => {
+            ProofTactic::Simp => {
                 if !replay.region_proof {
-                    require_step_execution(&replay, claim_label, step_index, "simp")?;
+                    require_function_exit(&replay, claim_label, tactic_index, "simp")?;
                 }
                 if replay.ordered_finalization && replay.is_at_function_exit() {
                     replay
-                        .post_execution_steps
-                        .push((step_index, PostExecutionStep::Simp));
+                        .post_execution_tactics
+                        .push((tactic_index, PostExecutionTactic::Simp));
                 }
             }
         }
@@ -4755,11 +4753,11 @@ fn execute_internal_proof(
     match node {
         InternalProofNode::Done => Ok(vec![context]),
         InternalProofNode::Linear {
-            steps,
+            tactics,
             continuation,
         } => {
             let branch_path = context.branch_path.clone();
-            let context = replay_linear_steps(
+            let context = replay_linear_tactics(
                 context,
                 function_block,
                 parsed_function,
@@ -4772,7 +4770,7 @@ fn execute_internal_proof(
                 theorem_environment,
                 function,
                 arguments,
-                steps,
+                tactics,
             )
             .map_err(|error| add_proof_branch_path(error, &branch_path))?;
             execute_internal_proof(
@@ -4903,7 +4901,7 @@ fn execute_internal_proof(
             }
             let joined_context = joined_context.ok_or_else(|| {
                 ClickError::new(format!(
-                    "`{claim_label}` proof step {index}: `advance` body produced no proof frontier"
+                    "`{claim_label}` tactic {index}: `advance` body produced no proof frontier"
                 ))
             })?;
             execute_internal_proof(
@@ -4930,7 +4928,7 @@ fn introduce_proof_case_assumption(
     context: &mut ProofReplayContext,
     condition: &ClickProposition,
     value: bool,
-    step_index: usize,
+    tactic_index: usize,
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
     predicate_environment: &PredicateEnvironment,
@@ -4941,7 +4939,7 @@ fn introduce_proof_case_assumption(
         context
             .replay
             .case_assumptions
-            .push((step_index, condition.clone(), value));
+            .push((tactic_index, condition.clone(), value));
         return Ok(());
     }
     let proposition = lower_point_proposition(
@@ -4958,7 +4956,7 @@ fn introduce_proof_case_assumption(
     )
     .map_err(|message| {
         ClickError::new(format!(
-            "`{claim_label}` proof step {step_index}: could not lower `if` condition: {message}"
+            "`{claim_label}` tactic {tactic_index}: could not lower `if` condition: {message}"
         ))
     })?;
     context.pure_facts.push(if value {
@@ -4984,8 +4982,8 @@ fn apply_advance_interface(
     join_id: usize,
     target: &ProgramPointRef,
     assertions: &[ProofAssertion],
-    step_index: usize,
-    replay: &mut ProofStepReplayState,
+    tactic_index: usize,
+    replay: &mut TacticReplayState,
     state: &mut CState,
     available_pure_facts: &mut Vec<Proposition>,
     function_block: &FunctionBlock,
@@ -4997,7 +4995,8 @@ fn apply_advance_interface(
     claim_label: &str,
     stable_join_locals: &BTreeMap<String, CValue>,
 ) -> Result<(), ClickError> {
-    let region = resolve_code_region_ref(function_block, &target.region, claim_label, step_index)?;
+    let region =
+        resolve_code_region_ref(function_block, &target.region, claim_label, tactic_index)?;
     let at_target = !replay.frontier.inside_branch()
         && match (region, &replay.frontier.point, target.kind) {
             (
@@ -5024,7 +5023,7 @@ fn apply_advance_interface(
                     .loop_statement(loop_index)
                     .ok_or_else(|| {
                         ClickError::new(format!(
-                            "`{claim_label}` proof step {step_index}: `advance` could not resolve source loop({loop_index})"
+                            "`{claim_label}` tactic {tactic_index}: `advance` could not resolve source loop({loop_index})"
                         ))
                     })?;
                 let continuation_node = replay
@@ -5041,14 +5040,14 @@ fn apply_advance_interface(
             }
             (CodeRegion::Function, _, _) => {
                 return Err(ClickError::new(format!(
-                    "`{claim_label}` proof step {step_index}: `advance` requires a statement or loop entry or exit target"
+                    "`{claim_label}` tactic {tactic_index}: `advance` requires a statement or loop entry or exit target"
                 )));
             }
             _ => false,
         };
     if !at_target {
         return Err(ClickError::new(format!(
-            "`{claim_label}` proof step {step_index}: `advance` branch did not reach `{}.{}`",
+            "`{claim_label}` tactic {tactic_index}: `advance` branch did not reach `{}.{}`",
             describe_code_region_ref(&target.region),
             match target.kind {
                 ProgramPointKind::Entry => "entry",
@@ -5076,13 +5075,13 @@ fn apply_advance_interface(
                     )
                     .map_err(|message| {
                         ClickError::new(format!(
-                            "`{claim_label}` proof step {step_index}: could not lower `advance` fact: {message}"
+                            "`{claim_label}` tactic {tactic_index}: could not lower `advance` fact: {message}"
                         ))
                 })?;
                 let assumptions = assumptions_from_propositions(&concrete_facts);
                 if !concrete_facts.contains(&fact) && !assumptions.proves(&fact) {
                     return Err(ClickError::new(format!(
-                        "`{claim_label}` proof step {step_index}: `advance` did not establish fact: {}",
+                        "`{claim_label}` tactic {tactic_index}: `advance` did not establish fact: {}",
                         describe_missing_pure_fact(
                             &fact,
                             &concrete_facts,
@@ -5106,11 +5105,11 @@ fn apply_advance_interface(
                     &established_interface_resources,
                     resource_environment,
                     claim_label,
-                    step_index,
+                    tactic_index,
                 )?;
                 if !is_observed_core && !state.resources().satisfies_fact(&expected, &assumptions) {
                     return Err(ClickError::new(format!(
-                        "`{claim_label}` proof step {step_index}: `advance` did not establish resource fact: {}",
+                        "`{claim_label}` tactic {tactic_index}: `advance` did not establish resource fact: {}",
                         describe_missing_resource_fact(
                             &expected,
                             &concrete_facts,
@@ -5131,13 +5130,13 @@ fn apply_advance_interface(
         .and_then(|offset| 10_000_000_000u64.checked_add(offset))
         .ok_or_else(|| {
             ClickError::new(format!(
-                "`{claim_label}` proof step {step_index}: too many nested `advance` joins"
+                "`{claim_label}` tactic {tactic_index}: too many nested `advance` joins"
             ))
         })?;
     let mut abstract_state =
         abstract_c_state_for_join(state, stable_join_locals, variable_start).map_err(|message| {
             ClickError::new(format!(
-                "`{claim_label}` proof step {step_index}: could not abstract `advance` target state: {message}"
+                "`{claim_label}` tactic {tactic_index}: could not abstract `advance` target state: {message}"
             ))
         })?;
 
@@ -5173,7 +5172,7 @@ fn apply_advance_interface(
             {
                 let definition = resource_environment.get(name).ok_or_else(|| {
                     ClickError::new(format!(
-                        "`{claim_label}` proof step {step_index}: unknown resource `{name}`"
+                        "`{claim_label}` tactic {tactic_index}: unknown resource `{name}`"
                     ))
                 })?;
                 let CResource::Composite {
@@ -5201,7 +5200,7 @@ fn apply_advance_interface(
                 )
                 .map_err(|message| {
                     ClickError::new(format!(
-                        "`{claim_label}` proof step {step_index}: could not project `advance` resource `{name}`: {message}"
+                        "`{claim_label}` tactic {tactic_index}: could not project `advance` resource `{name}`: {message}"
                     ))
                 })?;
                 abstract_state = abstract_state.with_memory(memory);
@@ -5229,7 +5228,7 @@ fn apply_advance_interface(
                 )
                 .map_err(|message| {
                     ClickError::new(format!(
-                        "`{claim_label}` proof step {step_index}: could not abstract `advance` fact: {message}"
+                        "`{claim_label}` tactic {tactic_index}: could not abstract `advance` fact: {message}"
                     ))
                 })?;
             if !exported_pure_facts.contains(&fact) {
@@ -5243,7 +5242,7 @@ fn apply_advance_interface(
             .try_compose_with_facts(exported_resources.facts().iter().cloned(), &exported_assumptions)
             .map_err(|error| {
                 ClickError::new(format!(
-                    "`{claim_label}` proof step {step_index}: invalid `advance` resource interface: {error:?}"
+                    "`{claim_label}` tactic {tactic_index}: invalid `advance` resource interface: {error:?}"
                 ))
             })?;
     abstract_state = abstract_state.with_resource_context(exported_resources);
@@ -5278,7 +5277,7 @@ fn resource_is_direct_observed_core(
     established: &[ResourceClause],
     resource_environment: &ResourceEnvironment,
     claim_label: &str,
-    step_index: usize,
+    tactic_index: usize,
 ) -> Result<bool, ClickError> {
     for parent in established {
         let ResourceClause::Declared {
@@ -5296,11 +5295,11 @@ fn resource_is_direct_observed_core(
             continue;
         };
         let substitutions =
-            resource_argument_substitutions(definition, parent, claim_label, step_index)?;
+            resource_argument_substitutions(definition, parent, claim_label, tactic_index)?;
         for child in body.contains() {
             let child = instantiate_resource_clause(child, &substitutions).map_err(|message| {
                 ClickError::new(format!(
-                    "`{claim_label}` proof step {step_index}: could not instantiate observed child of `{name}`: {message}"
+                    "`{claim_label}` tactic {tactic_index}: could not instantiate observed child of `{name}`: {message}"
                 ))
             })?;
             let core = match child {
@@ -5331,7 +5330,7 @@ fn resource_is_direct_observed_core(
 
 #[allow(clippy::too_many_arguments)]
 fn execute_branch_step_from_execution_point(
-    replay: &mut ProofStepReplayState,
+    replay: &mut TacticReplayState,
     state: &mut CState,
     available_pure_facts: &mut Vec<Proposition>,
     function_block: &FunctionBlock,
@@ -5340,13 +5339,13 @@ fn execute_branch_step_from_execution_point(
     arguments: &[CExpression],
     function_environment: &CExecutionEnvironment,
     claim_label: &str,
-    step_index: usize,
+    tactic_index: usize,
     requested_branch: Option<bool>,
     prerequisite_policy: StatementPrerequisitePolicy,
     fact_transport_policy: StatementFactTransportPolicy,
     branch_step_policy: BranchStepPolicy,
 ) -> Result<bool, ClickError> {
-    let step_name = match requested_branch {
+    let tactic_name = match requested_branch {
         Some(true) => "execute_then_step",
         Some(false) => "execute_else_step",
         None if matches!(prerequisite_policy, StatementPrerequisitePolicy::Exact) => "step",
@@ -5355,7 +5354,7 @@ fn execute_branch_step_from_execution_point(
     let statement_index = replay.frontier.next_statement_index;
     let source_region = replay.source_layout.statement(statement_index).ok_or_else(|| {
         ClickError::new(format!(
-            "`{claim_label}` proof step {step_index}: `{step_name}` could not resolve source statement({statement_index})"
+            "`{claim_label}` tactic {tactic_index}: `{tactic_name}` could not resolve source statement({statement_index})"
         ))
     })?;
     let assertion_prefix_count =
@@ -5368,8 +5367,8 @@ fn execute_branch_step_from_execution_point(
             arguments,
             assertion_prefix_count,
             claim_label,
-            step_index,
-            step_name,
+            tactic_index,
+            tactic_name,
         )?;
     let CStatement::If {
         condition,
@@ -5378,7 +5377,7 @@ fn execute_branch_step_from_execution_point(
     } = statement
     else {
         return Err(ClickError::new(format!(
-            "`{claim_label}` proof step {step_index}: `{step_name}` requires the next C statement to be an `if`"
+            "`{claim_label}` tactic {tactic_index}: `{tactic_name}` requires the next C statement to be an `if`"
         )));
     };
     let SourceStatementKind::If {
@@ -5387,7 +5386,7 @@ fn execute_branch_step_from_execution_point(
     } = source_region.kind
     else {
         return Err(ClickError::new(format!(
-            "`{claim_label}` proof step {step_index}: `{step_name}` found a C `if` outside its source region"
+            "`{claim_label}` tactic {tactic_index}: `{tactic_name}` found a C `if` outside its source region"
         )));
     };
 
@@ -5399,7 +5398,7 @@ fn execute_branch_step_from_execution_point(
         current_state.clone(),
     );
     if let Some(assertion_prefix) = assertion_prefix {
-        let transition_label = format!("`{claim_label}` proof step {step_index}: `{step_name}`");
+        let transition_label = format!("`{claim_label}` tactic {tactic_index}: `{tactic_name}`");
         let (transitions, _) = certified_statement_transitions(
             &current_state,
             available_pure_facts,
@@ -5413,20 +5412,20 @@ fn execute_branch_step_from_execution_point(
         )?;
         let [transition] = transitions.as_slice() else {
             return Err(ClickError::new(format!(
-                "`{claim_label}` proof step {step_index}: `{step_name}` assertion prefix requires exactly one successor, got {}",
+                "`{claim_label}` tactic {tactic_index}: `{tactic_name}` assertion prefix requires exactly one successor, got {}",
                 transitions.len()
             )));
         };
         let CStatementOutcome::Normal(next_state) = &transition.outcome else {
             return Err(ClickError::new(format!(
-                "`{claim_label}` proof step {step_index}: `{step_name}` assertion prefix did not complete normally"
+                "`{claim_label}` tactic {tactic_index}: `{tactic_name}` assertion prefix did not complete normally"
             )));
         };
         current_state = next_state.clone();
         *available_pure_facts = transition.pure_facts.clone();
     }
     let current_resources = current_state.resources().facts().to_vec();
-    let transition_label = format!("`{claim_label}` proof step {step_index}: `{step_name}`");
+    let transition_label = format!("`{claim_label}` tactic {tactic_index}: `{tactic_name}`");
     let condition_transitions = certified_condition_transitions(
         &current_state,
         available_pure_facts,
@@ -5441,7 +5440,7 @@ fn execute_branch_step_from_execution_point(
             if take_then { "true" } else { "false" }
         });
         return Err(ClickError::new(format!(
-            "`{claim_label}` proof step {step_index}: `{step_name}` could not prove that the next C `if` condition `{}` is {expected}; got {} feasible condition paths\n{}",
+            "`{claim_label}` tactic {tactic_index}: `{tactic_name}` could not prove that the next C `if` condition `{}` is {expected}; got {} feasible condition paths\n{}",
             describe_c_expression(&condition),
             condition_transitions.len(),
             describe_proof_context(
@@ -5473,7 +5472,7 @@ fn execute_branch_step_from_execution_point(
     if requested_branch.is_some_and(|take_then| selected_then != take_then) {
         let actual = if selected_then { "then" } else { "else" };
         return Err(ClickError::new(format!(
-            "`{claim_label}` proof step {step_index}: `{step_name}` requested the {} branch, but current pure facts prove the {actual} branch",
+            "`{claim_label}` tactic {tactic_index}: `{tactic_name}` requested the {} branch, but current pure facts prove the {actual} branch",
             if requested_branch == Some(true) {
                 "then"
             } else {
@@ -5511,7 +5510,7 @@ fn execute_branch_step_from_execution_point(
 
 #[allow(clippy::too_many_arguments)]
 fn execute_concrete_loop_head_step(
-    replay: &mut ProofStepReplayState,
+    replay: &mut TacticReplayState,
     state: &mut CState,
     available_pure_facts: &mut Vec<Proposition>,
     function_block: &FunctionBlock,
@@ -5519,8 +5518,8 @@ fn execute_concrete_loop_head_step(
     arguments: &[CExpression],
     function_environment: &CExecutionEnvironment,
     claim_label: &str,
-    step_index: usize,
-    step_name: &str,
+    tactic_index: usize,
+    tactic_name: &str,
     prerequisite_policy: StatementPrerequisitePolicy,
     fact_transport_policy: StatementFactTransportPolicy,
     statement_index: usize,
@@ -5555,7 +5554,7 @@ fn execute_concrete_loop_head_step(
     );
 
     if let Some(assertion_prefix) = assertion_prefix {
-        let transition_label = format!("`{claim_label}` proof step {step_index}: `{step_name}`");
+        let transition_label = format!("`{claim_label}` tactic {tactic_index}: `{tactic_name}`");
         let (transitions, _) = certified_statement_transitions(
             &current_state,
             available_pure_facts,
@@ -5569,13 +5568,13 @@ fn execute_concrete_loop_head_step(
         )?;
         let [transition] = transitions.as_slice() else {
             return Err(ClickError::new(format!(
-                "`{claim_label}` proof step {step_index}: `{step_name}` loop assertion prefix requires exactly one successor, got {}",
+                "`{claim_label}` tactic {tactic_index}: `{tactic_name}` loop assertion prefix requires exactly one successor, got {}",
                 transitions.len()
             )));
         };
         let CStatementOutcome::Normal(next_state) = &transition.outcome else {
             return Err(ClickError::new(format!(
-                "`{claim_label}` proof step {step_index}: `{step_name}` loop assertion prefix did not complete normally"
+                "`{claim_label}` tactic {tactic_index}: `{tactic_name}` loop assertion prefix did not complete normally"
             )));
         };
         append_execution_effect_facts(&mut replay.effect_facts, &transition.execution_facts);
@@ -5584,7 +5583,7 @@ fn execute_concrete_loop_head_step(
     }
 
     let current_resources = current_state.resources().facts().to_vec();
-    let transition_label = format!("`{claim_label}` proof step {step_index}: `{step_name}`");
+    let transition_label = format!("`{claim_label}` tactic {tactic_index}: `{tactic_name}`");
     let condition_transitions = certified_condition_transitions(
         &current_state,
         available_pure_facts,
@@ -5594,7 +5593,7 @@ fn execute_concrete_loop_head_step(
     )?;
     if condition_transitions.len() != 1 {
         return Err(ClickError::new(format!(
-            "`{claim_label}` proof step {step_index}: `{step_name}` could not prove one exact truth value for loop({loop_index}) condition `{}`; got {} feasible condition paths\n{}",
+            "`{claim_label}` tactic {tactic_index}: `{tactic_name}` could not prove one exact truth value for loop({loop_index}) condition `{}`; got {} feasible condition paths\n{}",
             describe_c_expression(&condition),
             condition_transitions.len(),
             describe_proof_context(
@@ -5657,7 +5656,7 @@ fn execute_concrete_loop_head_step(
     };
     let Some(remaining) = next else {
         return Err(ClickError::new(format!(
-            "`{claim_label}` proof step {step_index}: `{step_name}` reached the end of the function without a return"
+            "`{claim_label}` tactic {tactic_index}: `{tactic_name}` reached the end of the function without a return"
         )));
     };
     replay.frontier.point = ProofExecutionPoint::StatementEntry { remaining };
@@ -5666,14 +5665,14 @@ fn execute_concrete_loop_head_step(
 
 #[allow(clippy::too_many_arguments)]
 fn next_top_level_statement_from_execution_point(
-    replay: &ProofStepReplayState,
+    replay: &TacticReplayState,
     state: &CState,
     function: &CFunction,
     arguments: &[CExpression],
     assertion_prefix_count: usize,
     claim_label: &str,
-    step_index: usize,
-    step_name: &str,
+    tactic_index: usize,
+    tactic_name: &str,
 ) -> Result<NextTopLevelStatement, ClickError> {
     match &replay.frontier.point {
         ProofExecutionPoint::FunctionEntry => {
@@ -5681,7 +5680,7 @@ fn next_top_level_statement_from_execution_point(
             let current_state = c_function_entry_state(&execution_start_state, function, arguments)
                 .ok_or_else(|| {
                     ClickError::new(format!(
-                        "`{claim_label}` proof step {step_index}: `{step_name}` could not bind function arguments"
+                        "`{claim_label}` tactic {tactic_index}: `{tactic_name}` could not bind function arguments"
                     ))
                 })?;
             let (assertion_prefix, statement, remaining) = split_next_source_operation(
@@ -5690,7 +5689,7 @@ fn next_top_level_statement_from_execution_point(
             )
             .map_err(|message| {
                 ClickError::new(format!(
-                    "`{claim_label}` proof step {step_index}: `{step_name}` failed: {message}"
+                    "`{claim_label}` tactic {tactic_index}: `{tactic_name}` failed: {message}"
                 ))
             })?;
             Ok((
@@ -5708,7 +5707,7 @@ fn next_top_level_statement_from_execution_point(
                 .clone()
                 .ok_or_else(|| {
                 ClickError::new(format!(
-                    "`{claim_label}` proof step {step_index}: `{step_name}` has no execution start state"
+                    "`{claim_label}` tactic {tactic_index}: `{tactic_name}` has no execution start state"
                 ))
             })?;
             let (assertion_prefix, statement, remaining) = split_next_source_operation(
@@ -5717,7 +5716,7 @@ fn next_top_level_statement_from_execution_point(
             )
             .map_err(|message| {
                 ClickError::new(format!(
-                    "`{claim_label}` proof step {step_index}: `{step_name}` failed: {message}"
+                    "`{claim_label}` tactic {tactic_index}: `{tactic_name}` failed: {message}"
                 ))
             })?;
             Ok((
@@ -5729,13 +5728,13 @@ fn next_top_level_statement_from_execution_point(
             ))
         }
         ProofExecutionPoint::FunctionExit { .. } => Err(ClickError::new(format!(
-            "`{claim_label}` proof step {step_index}: `{step_name}` cannot run after execution already reached function exit"
+            "`{claim_label}` tactic {tactic_index}: `{tactic_name}` cannot run after execution already reached function exit"
         ))),
     }
 }
 
 fn record_loop_program_point_state(
-    replay: &mut ProofStepReplayState,
+    replay: &mut TacticReplayState,
     function_block: &FunctionBlock,
     loop_index: usize,
     kind: ProgramPointKind,
@@ -5765,7 +5764,7 @@ fn record_loop_program_point_state(
 }
 
 fn record_statement_program_point_state(
-    replay: &mut ProofStepReplayState,
+    replay: &mut TacticReplayState,
     function_block: &FunctionBlock,
     statement_index: usize,
     kind: ProgramPointKind,
@@ -5796,7 +5795,7 @@ fn record_statement_program_point_state(
 
 #[allow(clippy::too_many_arguments)]
 fn execute_step_from_execution_point(
-    replay: &mut ProofStepReplayState,
+    replay: &mut TacticReplayState,
     state: &mut CState,
     available_pure_facts: &mut Vec<Proposition>,
     function_block: &FunctionBlock,
@@ -5806,8 +5805,8 @@ fn execute_step_from_execution_point(
     assumptions: &Assumptions,
     function_environment: &CExecutionEnvironment,
     claim_label: &str,
-    step_index: usize,
-    step_name: &str,
+    tactic_index: usize,
+    tactic_name: &str,
     prerequisite_policy: StatementPrerequisitePolicy,
     fact_transport_policy: StatementFactTransportPolicy,
     loop_step_policy: LoopStepPolicy,
@@ -5815,7 +5814,7 @@ fn execute_step_from_execution_point(
     let statement_index = replay.frontier.next_statement_index;
     let source_region = replay.source_layout.statement(statement_index).ok_or_else(|| {
         ClickError::new(format!(
-            "`{claim_label}` proof step {step_index}: `{step_name}` could not resolve source statement({statement_index})"
+            "`{claim_label}` tactic {tactic_index}: `{tactic_name}` could not resolve source statement({statement_index})"
         ))
     })?;
     if matches!(source_region.kind, SourceStatementKind::If { .. }) {
@@ -5829,7 +5828,7 @@ fn execute_step_from_execution_point(
             arguments,
             function_environment,
             claim_label,
-            step_index,
+            tactic_index,
             None,
             prerequisite_policy,
             fact_transport_policy,
@@ -5852,12 +5851,12 @@ fn execute_step_from_execution_point(
             arguments,
             assertion_prefix_count,
             claim_label,
-            step_index,
-            step_name,
+            tactic_index,
+            tactic_name,
         )?;
     if matches!(source_statement, CStatement::While { .. }) && loop_index.is_none() {
         return Err(ClickError::new(format!(
-            "`{claim_label}` proof step {step_index}: `{step_name}` could not resolve the source loop at statement({statement_index})"
+            "`{claim_label}` tactic {tactic_index}: `{tactic_name}` could not resolve the source loop at statement({statement_index})"
         )));
     }
     if let (Some(loop_index), CStatement::While { .. }) = (loop_index, &source_statement)
@@ -5872,8 +5871,8 @@ fn execute_step_from_execution_point(
             arguments,
             function_environment,
             claim_label,
-            step_index,
-            step_name,
+            tactic_index,
+            tactic_name,
             prerequisite_policy,
             fact_transport_policy,
             statement_index,
@@ -5907,7 +5906,7 @@ fn execute_step_from_execution_point(
         );
     }
     let current_resources = current_state.resources().facts().to_vec();
-    let transition_label = format!("`{claim_label}` proof step {step_index}: `{step_name}`");
+    let transition_label = format!("`{claim_label}` tactic {tactic_index}: `{tactic_name}`");
     let (transitions, _) = certified_statement_transitions(
         &current_state,
         available_pure_facts,
@@ -5937,7 +5936,7 @@ fn execute_step_from_execution_point(
                     .find(|fact| !exact_fact_is_available(fact, available_pure_facts))
             {
                 return Err(ClickError::new(format!(
-                    "`{claim_label}` proof step {step_index}: `{step_name}` is missing exact prerequisite needed to select the safe statement transition: {required:?}"
+                    "`{claim_label}` tactic {tactic_index}: `{tactic_name}` is missing exact prerequisite needed to select the safe statement transition: {required:?}"
                 )));
             }
         }
@@ -5950,7 +5949,7 @@ fn execute_step_from_execution_point(
         {
             let outcome = CFunctionOutcome::UndefinedBehavior(kind);
             return Err(ClickError::new(format!(
-                "`{claim_label}` proof step {step_index}: `{step_name}` produced {}\n{}",
+                "`{claim_label}` tactic {tactic_index}: `{tactic_name}` produced {}\n{}",
                 describe_function_outcome(&outcome, parameters, arguments),
                 describe_proof_context(
                     available_pure_facts,
@@ -5969,7 +5968,7 @@ fn execute_step_from_execution_point(
             })
         {
             return Err(ClickError::new(format!(
-                "`{claim_label}` proof step {step_index}: `{step_name}` produced runtime error: {}\n{}",
+                "`{claim_label}` tactic {tactic_index}: `{tactic_name}` produced runtime error: {}\n{}",
                 describe_runtime_error(error, parameters, arguments),
                 describe_proof_context(
                     available_pure_facts,
@@ -5981,7 +5980,7 @@ fn execute_step_from_execution_point(
             )));
         }
         return Err(ClickError::new(format!(
-            "`{claim_label}` proof step {step_index}: `{step_name}` requires exactly one statement successor, got {}",
+            "`{claim_label}` tactic {tactic_index}: `{tactic_name}` requires exactly one statement successor, got {}",
             transitions.len()
         )));
     }
@@ -6035,7 +6034,7 @@ fn execute_step_from_execution_point(
                 remaining
             } else {
                 return Err(ClickError::new(format!(
-                    "`{claim_label}` proof step {step_index}: `{step_name}` reached the end of the function without a return"
+                    "`{claim_label}` tactic {tactic_index}: `{tactic_name}` reached the end of the function without a return"
                 )));
             };
             *available_pure_facts = successor_pure_facts;
@@ -6072,8 +6071,8 @@ fn execute_step_from_execution_point(
             set_replay_execution(
                 replay,
                 claim_label,
-                step_index,
-                step_name,
+                tactic_index,
+                tactic_name,
                 execution_start_state,
                 completed,
             )?;
@@ -6083,7 +6082,7 @@ fn execute_step_from_execution_point(
         CStatementOutcome::UndefinedBehavior(kind) => {
             let outcome = CFunctionOutcome::UndefinedBehavior(kind);
             return Err(ClickError::new(format!(
-                "`{claim_label}` proof step {step_index}: `{step_name}` produced {}\n{}",
+                "`{claim_label}` tactic {tactic_index}: `{tactic_name}` produced {}\n{}",
                 describe_function_outcome(&outcome, parameters, arguments),
                 describe_proof_context(
                     available_pure_facts,
@@ -6096,7 +6095,7 @@ fn execute_step_from_execution_point(
         }
         CStatementOutcome::RuntimeError(error) => {
             return Err(ClickError::new(format!(
-                "`{claim_label}` proof step {step_index}: `{step_name}` produced runtime error: {}\n{}",
+                "`{claim_label}` tactic {tactic_index}: `{tactic_name}` produced runtime error: {}\n{}",
                 describe_runtime_error(&error, parameters, arguments),
                 describe_proof_context(
                     available_pure_facts,
@@ -6112,7 +6111,7 @@ fn execute_step_from_execution_point(
 }
 
 fn resume_after_completed_region(
-    replay: &mut ProofStepReplayState,
+    replay: &mut TacticReplayState,
     function_block: &FunctionBlock,
     state: &CState,
 ) -> Option<CStatement> {
@@ -6135,7 +6134,7 @@ fn resume_after_completed_region(
 }
 
 fn record_completed_continuation_exits(
-    replay: &mut ProofStepReplayState,
+    replay: &mut TacticReplayState,
     function_block: &FunctionBlock,
     state: &CState,
 ) {
@@ -6154,20 +6153,20 @@ fn record_completed_continuation_exits(
 
 #[allow(clippy::too_many_arguments)]
 fn record_current_statement_entry(
-    replay: &mut ProofStepReplayState,
+    replay: &mut TacticReplayState,
     state: &CState,
     function_block: &FunctionBlock,
     function: &CFunction,
     arguments: &[CExpression],
     claim_label: &str,
-    step_index: usize,
-    step_name: &str,
+    tactic_index: usize,
+    tactic_name: &str,
 ) -> Result<(), ClickError> {
     let current_state = match &replay.frontier.point {
         ProofExecutionPoint::FunctionEntry => c_function_entry_state(state, function, arguments)
             .ok_or_else(|| {
                 ClickError::new(format!(
-                    "`{claim_label}` proof step {step_index}: `{step_name}` could not bind function arguments"
+                    "`{claim_label}` tactic {tactic_index}: `{tactic_name}` could not bind function arguments"
                 ))
             })?,
         ProofExecutionPoint::StatementEntry { .. } => state.clone(),
@@ -6187,14 +6186,14 @@ const BOUNDED_EXECUTE_STEP_LIMIT: usize = 10_000;
 
 #[derive(Clone)]
 struct BoundedProofFrontier {
-    replay: ProofStepReplayState,
+    replay: TacticReplayState,
     state: CState,
     pure_facts: Vec<Proposition>,
 }
 
 #[allow(clippy::too_many_arguments)]
 fn bounded_execute_from_execution_point(
-    replay: &mut ProofStepReplayState,
+    replay: &mut TacticReplayState,
     state: &mut CState,
     available_pure_facts: &mut Vec<Proposition>,
     function_block: &FunctionBlock,
@@ -6203,7 +6202,7 @@ fn bounded_execute_from_execution_point(
     arguments: &[CExpression],
     function_environment: &CExecutionEnvironment,
     claim_label: &str,
-    step_index: usize,
+    tactic_index: usize,
 ) -> Result<(), ClickError> {
     let mut pending = vec![BoundedProofFrontier {
         replay: replay.clone(),
@@ -6220,7 +6219,7 @@ fn bounded_execute_from_execution_point(
         }
         if executed_steps == BOUNDED_EXECUTE_STEP_LIMIT {
             return Err(ClickError::new(format!(
-                "`{claim_label}` proof step {step_index}: `bounded_execute` exhausted its {BOUNDED_EXECUTE_STEP_LIMIT}-step budget at statement({})",
+                "`{claim_label}` tactic {tactic_index}: `bounded_execute` exhausted its {BOUNDED_EXECUTE_STEP_LIMIT}-step budget at statement({})",
                 frontier.replay.frontier.next_statement_index
             )));
         }
@@ -6232,7 +6231,7 @@ fn bounded_execute_from_execution_point(
             .statement(frontier.replay.frontier.next_statement_index)
             .ok_or_else(|| {
                 ClickError::new(format!(
-                    "`{claim_label}` proof step {step_index}: `bounded_execute` could not resolve source statement({})",
+                    "`{claim_label}` tactic {tactic_index}: `bounded_execute` could not resolve source statement({})",
                     frontier.replay.frontier.next_statement_index
                 ))
             })?;
@@ -6249,7 +6248,7 @@ fn bounded_execute_from_execution_point(
                     arguments,
                     function_environment,
                     claim_label,
-                    step_index,
+                    tactic_index,
                     Some(take_then),
                     StatementPrerequisitePolicy::Contextual,
                     StatementFactTransportPolicy::Automatic,
@@ -6274,7 +6273,7 @@ fn bounded_execute_from_execution_point(
             &assumptions,
             function_environment,
             claim_label,
-            step_index,
+            tactic_index,
             "bounded_execute",
             StatementPrerequisitePolicy::Contextual,
             StatementFactTransportPolicy::Automatic,
@@ -6282,7 +6281,7 @@ fn bounded_execute_from_execution_point(
         )
         .map_err(|error| {
             ClickError::new(format!(
-                "`{claim_label}` proof step {step_index}: `bounded_execute` failed after {executed_steps} small steps: {}",
+                "`{claim_label}` tactic {tactic_index}: `bounded_execute` failed after {executed_steps} small execution steps: {}",
                 error.message()
             ))
         })?;
@@ -6297,24 +6296,24 @@ fn bounded_execute_from_execution_point(
         arguments,
         completed,
         claim_label,
-        step_index,
+        tactic_index,
     )
 }
 
 #[allow(clippy::too_many_arguments)]
 fn merge_bounded_execution_frontiers(
-    replay: &mut ProofStepReplayState,
+    replay: &mut TacticReplayState,
     state: &mut CState,
     available_pure_facts: &mut Vec<Proposition>,
     function: &CFunction,
     arguments: &[CExpression],
     mut completed: Vec<BoundedProofFrontier>,
     claim_label: &str,
-    step_index: usize,
+    tactic_index: usize,
 ) -> Result<(), ClickError> {
     if completed.is_empty() {
         return Err(ClickError::new(format!(
-            "`{claim_label}` proof step {step_index}: `bounded_execute` produced no complete execution paths"
+            "`{claim_label}` tactic {tactic_index}: `bounded_execute` produced no complete execution paths"
         )));
     }
 
@@ -6325,7 +6324,7 @@ fn merge_bounded_execution_frontiers(
         .clone()
         .ok_or_else(|| {
             ClickError::new(format!(
-                "`{claim_label}` proof step {step_index}: `bounded_execute` has no execution start state"
+                "`{claim_label}` tactic {tactic_index}: `bounded_execute` has no execution start state"
             ))
         })?;
     let mut common_pure_facts = completed[0].pure_facts.clone();
@@ -6354,7 +6353,7 @@ fn merge_bounded_execution_frontiers(
                 implication_body(path.theorem().proposition())
             else {
                 return Err(ClickError::new(format!(
-                    "`{claim_label}` proof step {step_index}: `bounded_execute` saw an unexpected completed theorem"
+                    "`{claim_label}` tactic {tactic_index}: `bounded_execute` saw an unexpected completed theorem"
                 )));
             };
             let mut facts = path.execution_facts();
@@ -6388,7 +6387,7 @@ fn merge_bounded_execution_frontiers(
 
 #[allow(clippy::too_many_arguments)]
 fn execute_rest_from_execution_point(
-    replay: &mut ProofStepReplayState,
+    replay: &mut TacticReplayState,
     state: &mut CState,
     available_pure_facts: &mut Vec<Proposition>,
     function_block: &FunctionBlock,
@@ -6397,8 +6396,8 @@ fn execute_rest_from_execution_point(
     arguments: &[CExpression],
     function_environment: &CExecutionEnvironment,
     claim_label: &str,
-    step_index: usize,
-    step_name: &str,
+    tactic_index: usize,
+    tactic_name: &str,
     record_straight_line_snapshots: bool,
 ) -> Result<(), ClickError> {
     if record_straight_line_snapshots {
@@ -6444,8 +6443,8 @@ fn execute_rest_from_execution_point(
                 &assumptions,
                 function_environment,
                 claim_label,
-                step_index,
-                step_name,
+                tactic_index,
+                tactic_name,
                 StatementPrerequisitePolicy::Contextual,
                 StatementFactTransportPolicy::Automatic,
                 LoopStepPolicy::ApplyVerifiedRule,
@@ -6461,8 +6460,8 @@ fn execute_rest_from_execution_point(
             function,
             arguments,
             claim_label,
-            step_index,
-            step_name,
+            tactic_index,
+            tactic_name,
         )?;
     }
     let assumptions = assumptions_from_propositions(available_pure_facts);
@@ -6471,8 +6470,8 @@ fn execute_rest_from_execution_point(
             set_replay_execution(
                 replay,
                 claim_label,
-                step_index,
-                step_name,
+                tactic_index,
+                tactic_name,
                 state.clone(),
                 prove_symbolic_c_function_verification_paths_with_environment(
                     state.clone(),
@@ -6495,7 +6494,7 @@ fn execute_rest_from_execution_point(
             );
             let Some(execution_start_state) = replay.frontier.execution_start_state.clone() else {
                 return Err(ClickError::new(format!(
-                    "`{claim_label}` proof step {step_index}: `{step_name}` has no execution start state"
+                    "`{claim_label}` tactic {tactic_index}: `{tactic_name}` has no execution start state"
                 )));
             };
             let completed = complete_segmented_function_execution(
@@ -6506,15 +6505,15 @@ fn execute_rest_from_execution_point(
                 available_pure_facts,
                 &assumptions,
                 claim_label,
-                step_index,
-                step_name,
+                tactic_index,
+                tactic_name,
             )?;
             let replay_state = execution_start_state.clone();
             set_replay_execution(
                 replay,
                 claim_label,
-                step_index,
-                step_name,
+                tactic_index,
+                tactic_name,
                 execution_start_state,
                 completed,
             )?;
@@ -6522,7 +6521,7 @@ fn execute_rest_from_execution_point(
         }
         ProofExecutionPoint::FunctionExit { .. } => {
             return Err(ClickError::new(format!(
-                "`{claim_label}` proof step {step_index}: `{step_name}` cannot run after execution already reached function exit"
+                "`{claim_label}` tactic {tactic_index}: `{tactic_name}` cannot run after execution already reached function exit"
             )));
         }
     }
@@ -6530,7 +6529,7 @@ fn execute_rest_from_execution_point(
 }
 
 fn remaining_with_execution_continuations(
-    replay: &ProofStepReplayState,
+    replay: &TacticReplayState,
     current: &CStatement,
 ) -> CStatement {
     replay
@@ -6546,7 +6545,7 @@ fn remaining_with_execution_continuations(
 
 #[allow(clippy::too_many_arguments)]
 fn execute_until_statement(
-    replay: &mut ProofStepReplayState,
+    replay: &mut TacticReplayState,
     state: &mut CState,
     available_pure_facts: &mut Vec<Proposition>,
     function_block: &FunctionBlock,
@@ -6556,23 +6555,23 @@ fn execute_until_statement(
     function_environment: &CExecutionEnvironment,
     statement_index: usize,
     claim_label: &str,
-    step_index: usize,
+    tactic_index: usize,
 ) -> Result<(), ClickError> {
     if replay.source_layout.statement(statement_index).is_none() {
         return Err(ClickError::new(format!(
-            "`{claim_label}` proof step {step_index}: function has no source statement({statement_index}); it contains {} statement regions",
+            "`{claim_label}` tactic {tactic_index}: function has no source statement({statement_index}); it contains {} statement regions",
             replay.source_layout.statement_count()
         )));
     }
 
     if replay.is_at_function_exit() {
         return Err(ClickError::new(format!(
-            "`{claim_label}` proof step {step_index}: `execute_until(statement({statement_index}))` cannot run after execution already reached function exit"
+            "`{claim_label}` tactic {tactic_index}: `execute_until(statement({statement_index}))` cannot run after execution already reached function exit"
         )));
     }
     if statement_index < replay.frontier.next_statement_index {
         return Err(ClickError::new(format!(
-            "`{claim_label}` proof step {step_index}: `execute_until(statement({statement_index}))` cannot move backward from statement({})",
+            "`{claim_label}` tactic {tactic_index}: `execute_until(statement({statement_index}))` cannot move backward from statement({})",
             replay.frontier.next_statement_index
         )));
     }
@@ -6592,7 +6591,7 @@ fn execute_until_statement(
             &assumptions,
             function_environment,
             claim_label,
-            step_index,
+            tactic_index,
             "execute_until",
             StatementPrerequisitePolicy::Contextual,
             StatementFactTransportPolicy::Automatic,
@@ -6600,12 +6599,12 @@ fn execute_until_statement(
         )?;
         if replay.is_at_function_exit() {
             return Err(ClickError::new(format!(
-                "`{claim_label}` proof step {step_index}: `execute_until(statement({statement_index}))` reached function exit before its target"
+                "`{claim_label}` tactic {tactic_index}: `execute_until(statement({statement_index}))` reached function exit before its target"
             )));
         }
         if replay.frontier.next_statement_index > statement_index {
             return Err(ClickError::new(format!(
-                "`{claim_label}` proof step {step_index}: `execute_until(statement({statement_index}))` target is not reachable from the current execution path; advancing statement({region_start}) moved the frontier to statement({})",
+                "`{claim_label}` tactic {tactic_index}: `execute_until(statement({statement_index}))` target is not reachable from the current execution path; advancing statement({region_start}) moved the frontier to statement({})",
                 replay.frontier.next_statement_index
             )));
         }
@@ -6618,7 +6617,7 @@ fn execute_until_statement(
         function,
         arguments,
         claim_label,
-        step_index,
+        tactic_index,
         "execute_until",
     )?;
     Ok(())
@@ -6633,17 +6632,17 @@ fn complete_segmented_function_execution(
     available_pure_facts: &[Proposition],
     assumptions: &Assumptions,
     claim_label: &str,
-    step_index: usize,
-    step_name: &str,
+    tactic_index: usize,
+    tactic_name: &str,
 ) -> Result<crate::kernel::SymbolicCExecution, ClickError> {
     if let Some(limit) = execution.limit() {
         return Err(ClickError::new(format!(
-            "`{claim_label}` proof step {step_index}: `{step_name}` hit execution limit {limit:?}"
+            "`{claim_label}` tactic {tactic_index}: `{tactic_name}` hit execution limit {limit:?}"
         )));
     }
     if execution.paths().is_empty() {
         return Err(ClickError::new(format!(
-            "`{claim_label}` proof step {step_index}: `{step_name}` produced no suffix execution paths"
+            "`{claim_label}` tactic {tactic_index}: `{tactic_name}` produced no suffix execution paths"
         )));
     }
     let mut completed_paths = Vec::new();
@@ -6652,7 +6651,7 @@ fn complete_segmented_function_execution(
             implication_body(path.theorem().proposition())
         else {
             return Err(ClickError::new(format!(
-                "`{claim_label}` proof step {step_index}: `{step_name}` saw unexpected suffix theorem"
+                "`{claim_label}` tactic {tactic_index}: `{tactic_name}` saw unexpected suffix theorem"
             )));
         };
         let mut path_pure_facts = available_pure_facts.to_vec();
@@ -6756,16 +6755,16 @@ fn sequence_from_statements(statements: &[CStatement]) -> Option<CStatement> {
 }
 
 fn set_replay_execution(
-    replay: &mut ProofStepReplayState,
+    replay: &mut TacticReplayState,
     claim_label: &str,
-    step_index: usize,
-    step_name: &str,
+    tactic_index: usize,
+    tactic_name: &str,
     execution_start_state: CState,
     execution: crate::kernel::SymbolicCExecution,
 ) -> Result<(), ClickError> {
     if replay.is_at_function_exit() {
         return Err(ClickError::new(format!(
-            "`{claim_label}` proof step {step_index}: `{step_name}` cannot run after execution already reached function exit"
+            "`{claim_label}` tactic {tactic_index}: `{tactic_name}` cannot run after execution already reached function exit"
         )));
     }
     replay.frontier.execution_start_state = Some(execution_start_state);
@@ -6773,15 +6772,15 @@ fn set_replay_execution(
     Ok(())
 }
 
-fn require_step_execution(
-    replay: &ProofStepReplayState,
+fn require_function_exit(
+    replay: &TacticReplayState,
     claim_label: &str,
-    step_index: usize,
-    step_name: &str,
+    tactic_index: usize,
+    tactic_name: &str,
 ) -> Result<(), ClickError> {
     if !replay.is_at_function_exit() {
         return Err(ClickError::new(format!(
-            "`{claim_label}` proof step {step_index}: `{step_name}` requires execution to reach function exit first"
+            "`{claim_label}` tactic {tactic_index}: `{tactic_name}` requires execution to reach function exit first"
         )));
     }
     Ok(())
@@ -7054,14 +7053,14 @@ fn observe_composite_resource(
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
     claim_label: &str,
-    step_index: usize,
+    tactic_index: usize,
 ) -> Result<CState, ClickError> {
     let definition = composite_resource_law_definition(
         resource_environment,
         resource,
         "observe",
         claim_label,
-        step_index,
+        tactic_index,
     )?;
     let abstract_resource = lower_resource_clause(resource, parameters, arguments, state.memory())?;
     let assumptions = assumptions_from_propositions(available_pure_facts);
@@ -7070,7 +7069,7 @@ fn observe_composite_resource(
         .satisfies_fact(&abstract_resource, &assumptions)
     {
         return Err(ClickError::new(format!(
-            "`{claim_label}` proof step {step_index}: `observe({})` failed: {}",
+            "`{claim_label}` tactic {tactic_index}: `observe({})` failed: {}",
             describe_resource_clause(resource),
             describe_missing_resource_fact(
                 &abstract_resource,
@@ -7088,7 +7087,7 @@ fn observe_composite_resource(
     } = abstract_resource.resource()
     else {
         return Err(ClickError::new(format!(
-            "`{claim_label}` proof step {step_index}: `observe` expects a composite resource"
+            "`{claim_label}` tactic {tactic_index}: `observe` expects a composite resource"
         )));
     };
     let (memory, contained_resources) = apply_composite_observation_law(
@@ -7105,7 +7104,7 @@ fn observe_composite_resource(
     )
     .map_err(|message| {
         ClickError::new(format!(
-            "`{claim_label}` proof step {step_index}: could not observe `{}`: {message}",
+            "`{claim_label}` tactic {tactic_index}: could not observe `{}`: {message}",
             describe_resource_clause(resource)
         ))
     })?;
@@ -7548,20 +7547,20 @@ fn unfold_composite_resource(
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
     claim_label: &str,
-    step_index: usize,
+    tactic_index: usize,
 ) -> Result<CState, ClickError> {
     let definition = composite_resource_law_definition(
         resource_environment,
         resource,
         "unfold",
         claim_label,
-        step_index,
+        tactic_index,
     )?;
     let composite_body = definition
         .composite_body()
         .expect("composite_resource_law_definition should require a composite body");
     let substitutions =
-        resource_argument_substitutions(definition, resource, claim_label, step_index)?;
+        resource_argument_substitutions(definition, resource, claim_label, tactic_index)?;
     let abstract_resource = lower_resource_clause(resource, parameters, arguments, state.memory())?;
     let assumptions = assumptions_from_propositions(available_pure_facts);
     let resources = state
@@ -7570,7 +7569,7 @@ fn unfold_composite_resource(
         .without_fact(&abstract_resource, &assumptions)
         .ok_or_else(|| {
             ClickError::new(format!(
-                "`{claim_label}` proof step {step_index}: `unfold({})` failed: {}",
+                "`{claim_label}` tactic {tactic_index}: `unfold({})` failed: {}",
                 describe_resource_clause(resource),
                 describe_missing_resource_fact(
                     &abstract_resource,
@@ -7588,7 +7587,7 @@ fn unfold_composite_resource(
     for contained in composite_body.contains() {
         let contained = instantiate_resource_clause(contained, &substitutions).map_err(|message| {
             ClickError::new(format!(
-                "`{claim_label}` proof step {step_index}: could not instantiate `unfold({})`: {message}",
+                "`{claim_label}` tactic {tactic_index}: could not instantiate `unfold({})`: {message}",
                 describe_resource_clause(resource)
             ))
         })?;
@@ -7606,7 +7605,7 @@ fn unfold_composite_resource(
             .try_compose_with_fact(lowered, &assumptions)
             .map_err(|error| {
                 ClickError::new(format!(
-                    "`{claim_label}` proof step {step_index}: `unfold({})` produced {}",
+                    "`{claim_label}` tactic {tactic_index}: `unfold({})` produced {}",
                     describe_resource_clause(resource),
                     describe_resource_context_validity_error(error, parameters, arguments)
                 ))
@@ -7621,7 +7620,7 @@ fn unfold_composite_resource(
         )
         .map_err(|error| {
             ClickError::new(format!(
-                "`{claim_label}` proof step {step_index}: could not project `unfold({})` loadability: {}",
+                "`{claim_label}` tactic {tactic_index}: could not project `unfold({})` loadability: {}",
                 describe_resource_clause(resource),
                 error.message()
             ))
@@ -7638,7 +7637,7 @@ fn unfold_composite_resource(
     for fact in composite_body.facts() {
         let fact = substitute_click_proposition(fact, &substitutions).map_err(|message| {
                 ClickError::new(format!(
-                    "`{claim_label}` proof step {step_index}: could not instantiate `unfold({})` fact: {message}",
+                    "`{claim_label}` tactic {tactic_index}: could not instantiate `unfold({})` fact: {message}",
                     describe_resource_clause(resource)
                 ))
             })?;
@@ -7655,7 +7654,7 @@ fn unfold_composite_resource(
         )
         .map_err(|message| {
             ClickError::new(format!(
-                "`{claim_label}` proof step {step_index}: could not lower `unfold({})` pure fact `{}`: {message}\n{}",
+                "`{claim_label}` tactic {tactic_index}: could not lower `unfold({})` pure fact `{}`: {message}\n{}",
                 describe_resource_clause(resource),
                 describe_click_proposition(&fact),
                 describe_proof_context(
@@ -7676,7 +7675,7 @@ fn unfold_composite_resource(
         &state,
         available_pure_facts,
         &format!(
-            "`{claim_label}` proof step {step_index}: `unfold({})`",
+            "`{claim_label}` tactic {tactic_index}: `unfold({})`",
             describe_resource_clause(resource)
         ),
     )?;
@@ -7834,11 +7833,11 @@ fn composite_resource_law_definition<'a>(
     resource: &ResourceClause,
     action: &str,
     claim_label: &str,
-    step_index: usize,
+    tactic_index: usize,
 ) -> Result<&'a ResourceDefinition, ClickError> {
     let ResourceClause::Declared { name, .. } = resource else {
         return Err(ClickError::new(format!(
-            "`{claim_label}` proof step {step_index}: `{action}` expects a composite resource"
+            "`{claim_label}` tactic {tactic_index}: `{action}` expects a composite resource"
         )));
     };
     if matches!(action, "fold" | "unfold")
@@ -7851,7 +7850,7 @@ fn composite_resource_law_definition<'a>(
         )
     {
         return Err(ClickError::new(format!(
-            "`{claim_label}` proof step {step_index}: `{action}` expects an owned composite resource"
+            "`{claim_label}` tactic {tactic_index}: `{action}` expects an owned composite resource"
         )));
     }
     if !matches!(
@@ -7862,17 +7861,17 @@ fn composite_resource_law_definition<'a>(
         }
     ) {
         return Err(ClickError::new(format!(
-            "`{claim_label}` proof step {step_index}: `{action}` expects composite resource `{name}` to have a body"
+            "`{claim_label}` tactic {tactic_index}: `{action}` expects composite resource `{name}` to have a body"
         )));
     }
     let definition = resource_environment.get(name).ok_or_else(|| {
         ClickError::new(format!(
-            "`{claim_label}` proof step {step_index}: unknown resource `{name}`"
+            "`{claim_label}` tactic {tactic_index}: unknown resource `{name}`"
         ))
     })?;
     if definition.composite_body().is_none() {
         return Err(ClickError::new(format!(
-            "`{claim_label}` proof step {step_index}: `{action}` expects composite resource `{name}` to have a body"
+            "`{claim_label}` tactic {tactic_index}: `{action}` expects composite resource `{name}` to have a body"
         )));
     }
     Ok(definition)
@@ -7882,7 +7881,7 @@ fn resource_argument_substitutions(
     definition: &ResourceDefinition,
     resource: &ResourceClause,
     claim_label: &str,
-    step_index: usize,
+    tactic_index: usize,
 ) -> Result<BTreeMap<String, ContractExpression>, ClickError> {
     let ResourceClause::Declared {
         name,
@@ -7892,17 +7891,17 @@ fn resource_argument_substitutions(
     } = resource
     else {
         return Err(ClickError::new(format!(
-            "`{claim_label}` proof step {step_index}: expected declared resource"
+            "`{claim_label}` tactic {tactic_index}: expected declared resource"
         )));
     };
     if definition.name() != name {
         return Err(ClickError::new(format!(
-            "`{claim_label}` proof step {step_index}: resource definition mismatch for `{name}`"
+            "`{claim_label}` tactic {tactic_index}: resource definition mismatch for `{name}`"
         )));
     }
     if definition.parameters().len() != arguments.len() {
         return Err(ClickError::new(format!(
-            "`{claim_label}` proof step {step_index}: resource `{name}` expects {} argument(s), got {}",
+            "`{claim_label}` tactic {tactic_index}: resource `{name}` expects {} argument(s), got {}",
             definition.parameters().len(),
             arguments.len()
         )));
@@ -7914,7 +7913,7 @@ fn resource_argument_substitutions(
         .collect::<Vec<_>>();
     if parameter_types != &expected_types {
         return Err(ClickError::new(format!(
-            "`{claim_label}` proof step {step_index}: resource `{name}` has malformed argument type metadata"
+            "`{claim_label}` tactic {tactic_index}: resource `{name}` has malformed argument type metadata"
         )));
     }
     Ok(definition
@@ -8017,7 +8016,7 @@ fn resolve_code_region_ref(
     function_block: &FunctionBlock,
     region_ref: &CodeRegionRef,
     claim_label: &str,
-    step_index: usize,
+    tactic_index: usize,
 ) -> Result<CodeRegion, ClickError> {
     Ok(match region_ref {
         CodeRegionRef::Function => CodeRegion::Function,
@@ -8030,7 +8029,7 @@ fn resolve_code_region_ref(
             .map(StructuralClause::region)
             .ok_or_else(|| {
                 ClickError::new(format!(
-                    "`{claim_label}` proof step {step_index}: unknown code region label `{label}`"
+                    "`{claim_label}` tactic {tactic_index}: unknown code region label `{label}`"
                 ))
             })?,
     })
@@ -8040,12 +8039,12 @@ fn validate_loop_code_region(
     parsed_function: &syntax::C0Function,
     loop_index: usize,
     claim_label: &str,
-    step_index: usize,
+    tactic_index: usize,
 ) -> Result<(), ClickError> {
     let loop_count = count_loops(parsed_function.body());
     if loop_index >= loop_count {
         return Err(ClickError::new(format!(
-            "`{claim_label}` proof step {step_index}: function has no `loop({loop_index})` code region; it contains {loop_count} loop(s)"
+            "`{claim_label}` tactic {tactic_index}: function has no `loop({loop_index})` code region; it contains {loop_count} loop(s)"
         )));
     }
     Ok(())
@@ -8057,25 +8056,25 @@ fn validate_frame_code_region(
     code_region: Option<CodeRegion>,
     claim: &FunctionClaimRef<'_>,
     claim_label: &str,
-    step_index: usize,
+    tactic_index: usize,
 ) -> Result<(), ClickError> {
     match code_region {
         None | Some(CodeRegion::Function) => {
             if matches!(claim, FunctionClaimRef::Ensure(_, _)) {
                 return Err(ClickError::new(format!(
-                    "`{claim_label}` proof step {step_index}: `frame()` proves function-level effect claims; use `frame(loop(N))` or a code region label to use loop effect summaries in an `ensures` proof"
+                    "`{claim_label}` tactic {tactic_index}: `frame()` proves function-level effect claims; use `frame(loop(N))` or a code region label to use loop effect summaries in an `ensures` proof"
                 )));
             }
             Ok(())
         }
         Some(CodeRegion::Loop(loop_index)) => {
-            validate_loop_code_region(parsed_function, loop_index, claim_label, step_index)?;
+            validate_loop_code_region(parsed_function, loop_index, claim_label, tactic_index)?;
             if !function_block.structural_clauses().iter().any(|clause| {
                 clause.region() == &CodeRegion::Loop(loop_index)
                     && clause.items().iter().any(StructuralItem::is_effect_kind)
             }) {
                 return Err(ClickError::new(format!(
-                    "`{claim_label}` proof step {step_index}: `frame(loop({loop_index}))` needs a loop effect clause such as `mutable` or `immutable`"
+                    "`{claim_label}` tactic {tactic_index}: `frame(loop({loop_index}))` needs a loop effect clause such as `mutable` or `immutable`"
                 )));
             }
             Ok(())
@@ -8084,21 +8083,21 @@ fn validate_frame_code_region(
             let statement_count = count_statements(parsed_function.body());
             if statement_index >= statement_count {
                 return Err(ClickError::new(format!(
-                    "`{claim_label}` proof step {step_index}: function has no `statement({statement_index})` code region; it contains {statement_count} statement(s)"
+                    "`{claim_label}` tactic {tactic_index}: function has no `statement({statement_index})` code region; it contains {statement_count} statement(s)"
                 )));
             }
             Err(ClickError::new(format!(
-                "`{claim_label}` proof step {step_index}: `frame(statement({statement_index}))` is not supported yet"
+                "`{claim_label}` tactic {tactic_index}: `frame(statement({statement_index}))` is not supported yet"
             )))
         }
     }
 }
 
-fn validate_function_frame_step(
+fn validate_function_frame_tactic(
     execution: &crate::kernel::SymbolicCExecution,
     claim: &FunctionClaimRef<'_>,
     claim_label: &str,
-    step_index: usize,
+    tactic_index: usize,
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
     state: &CState,
@@ -8106,19 +8105,19 @@ fn validate_function_frame_step(
 ) -> Result<(), ClickError> {
     if let Some(limit) = execution.limit() {
         return Err(ClickError::new(format!(
-            "`{claim_label}` proof step {step_index}: `frame()` hit execution limit {limit:?}"
+            "`{claim_label}` tactic {tactic_index}: `frame()` hit execution limit {limit:?}"
         )));
     }
     if execution.paths().is_empty() {
         return Err(ClickError::new(format!(
-            "`{claim_label}` proof step {step_index}: `frame()` had no complete execution path"
+            "`{claim_label}` tactic {tactic_index}: `frame()` had no complete execution path"
         )));
     }
 
     for (path_index, path) in execution.paths().iter().enumerate() {
         if !path.obligations().is_empty() {
             return Err(ClickError::new(format!(
-                "`{claim_label}` proof step {step_index}: `frame()` failed on path {path_index}: {}",
+                "`{claim_label}` tactic {tactic_index}: `frame()` failed on path {path_index}: {}",
                 describe_missing_proof_obligations(
                     path.obligations(),
                     requirement_pure_facts,
@@ -8133,7 +8132,7 @@ fn validate_function_frame_step(
             Proposition::CFunctionExecutes { outcome, .. } => outcome.clone(),
             proposition => {
                 return Err(ClickError::new(format!(
-                    "`{claim_label}` proof step {step_index}: `frame()` saw unexpected theorem body {proposition:?}\n  execution pure facts: {}",
+                    "`{claim_label}` tactic {tactic_index}: `frame()` saw unexpected theorem body {proposition:?}\n  execution pure facts: {}",
                     describe_execution_pure_facts(path.facts())
                 )));
             }
@@ -8207,13 +8206,13 @@ impl AutoExecutionKind {
     }
 }
 
-fn with_proof_steps(
+fn with_proof_tactics(
     mut theorems: Vec<VerifiedCTheorem>,
-    proof_steps: Option<Vec<ProofStep>>,
+    proof_tactics: Option<Vec<ProofTactic>>,
 ) -> Vec<VerifiedCTheorem> {
-    if let Some(proof_steps) = proof_steps {
+    if let Some(proof_tactics) = proof_tactics {
         for theorem in &mut theorems {
-            theorem.proof_steps = Some(proof_steps.clone());
+            theorem.proof_tactics = Some(proof_tactics.clone());
         }
     }
     theorems
@@ -8225,7 +8224,7 @@ fn requirements_with_structural_unfolds(
     function_block: &FunctionBlock,
     requirement_pure_facts: &[Proposition],
 ) -> Result<Vec<Proposition>, String> {
-    let unfolded_predicates = structural_unfold_step_names(function_block);
+    let unfolded_predicates = structural_unfold_tactic_names(function_block);
     unfold_available_predicate_facts(
         predicate_environment,
         click_function_environment,
@@ -8234,7 +8233,7 @@ fn requirements_with_structural_unfolds(
     )
 }
 
-fn structural_unfold_step_names(function_block: &FunctionBlock) -> Vec<String> {
+fn structural_unfold_tactic_names(function_block: &FunctionBlock) -> Vec<String> {
     let mut seen = BTreeSet::new();
     let mut names = Vec::new();
     for clause in function_block.structural_clauses() {
@@ -8242,14 +8241,14 @@ fn structural_unfold_step_names(function_block: &FunctionBlock) -> Vec<String> {
             .into_iter()
             .flatten()
         {
-            for name in proof.unfold_step_names() {
+            for name in proof.unfold_tactic_names() {
                 if seen.insert(name.clone()) {
                     names.push(name);
                 }
             }
         }
         for item in clause.items() {
-            for name in item.proof().unfold_step_names() {
+            for name in item.proof().unfold_tactic_names() {
                 if seen.insert(name.clone()) {
                     names.push(name);
                 }
@@ -8259,7 +8258,7 @@ fn structural_unfold_step_names(function_block: &FunctionBlock) -> Vec<String> {
     names
 }
 
-fn certified_proof_steps(
+fn certified_proof_tactics(
     source_path: &str,
     function_block: &FunctionBlock,
     parsed_function: &syntax::C0Function,
@@ -8270,10 +8269,10 @@ fn certified_proof_steps(
     click_function_environment: &ClickFunctionEnvironment,
     resource_environment: &ResourceEnvironment,
     theorem_environment: &TheoremEnvironment,
-    candidates: Vec<Vec<ProofStep>>,
-) -> Option<Vec<ProofStep>> {
-    candidates.into_iter().find(|steps| {
-        prove_claim_by_steps(
+    candidates: Vec<Vec<ProofTactic>>,
+) -> Option<Vec<ProofTactic>> {
+    candidates.into_iter().find(|tactics| {
+        prove_claim_by_tactics(
             source_path,
             function_block,
             parsed_function,
@@ -8284,50 +8283,50 @@ fn certified_proof_steps(
             click_function_environment,
             resource_environment,
             theorem_environment,
-            steps,
+            tactics,
         )
         .is_ok()
     })
 }
 
-fn frame_proof_step_candidates() -> Vec<Vec<ProofStep>> {
-    vec![vec![ProofStep::ExecuteRest, ProofStep::Frame(None)]]
+fn frame_tactic_candidates() -> Vec<Vec<ProofTactic>> {
+    vec![vec![ProofTactic::ExecuteRest, ProofTactic::Frame(None)]]
 }
 
-fn bounded_execution_proof_step_candidates(claim: &FunctionClaimRef<'_>) -> Vec<Vec<ProofStep>> {
+fn bounded_execution_tactic_candidates(claim: &FunctionClaimRef<'_>) -> Vec<Vec<ProofTactic>> {
     match claim {
         FunctionClaimRef::Ensure(_, _) => vec![
-            vec![ProofStep::BoundedExecute, ProofStep::Simp],
-            vec![ProofStep::BoundedExecute],
+            vec![ProofTactic::BoundedExecute, ProofTactic::Simp],
+            vec![ProofTactic::BoundedExecute],
         ],
         FunctionClaimRef::Effect(_, _) => {
-            vec![vec![ProofStep::BoundedExecute, ProofStep::Frame(None)]]
+            vec![vec![ProofTactic::BoundedExecute, ProofTactic::Frame(None)]]
         }
     }
 }
 
-fn auto_loop_verification_proof_step_candidates(
+fn auto_loop_verification_tactic_candidates(
     function_block: &FunctionBlock,
     claim: &FunctionClaimRef<'_>,
-) -> Vec<Vec<ProofStep>> {
-    let mut base = vec![ProofStep::ExecuteRest];
+) -> Vec<Vec<ProofTactic>> {
+    let mut base = vec![ProofTactic::ExecuteRest];
     base.extend(
         loop_effect_summary_regions(function_block)
             .into_iter()
-            .map(|loop_index| ProofStep::Frame(Some(CodeRegionRef::Loop(loop_index)))),
+            .map(|loop_index| ProofTactic::Frame(Some(CodeRegionRef::Loop(loop_index)))),
     );
 
     match claim {
         FunctionClaimRef::Ensure(_, _) => {
             let mut simp = base.clone();
-            simp.push(ProofStep::Simp);
+            simp.push(ProofTactic::Simp);
 
             let direct = base;
             vec![simp, direct]
         }
         FunctionClaimRef::Effect(_, _) => {
             let mut frame = base.clone();
-            frame.push(ProofStep::Frame(None));
+            frame.push(ProofTactic::Frame(None));
 
             let direct = base;
             vec![frame, direct]
@@ -8503,7 +8502,7 @@ fn prove_claim_from_execution(
             function_block: function_block.clone(),
             claim: claim.verified_claim(),
             proof_kind,
-            proof_steps: None,
+            proof_tactics: None,
             specification,
             theorem,
         });
