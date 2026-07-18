@@ -535,7 +535,7 @@ pub(super) fn prove_ensure_proposition_by_simp(
     program_point_states: &ProgramPointStates,
     unfolded_predicates: &[String],
 ) -> Result<(), ClickError> {
-    let CFunctionOutcome::Return { value, state } = outcome else {
+    let CFunctionOutcome::Return { state, .. } = outcome else {
         return Err(ClickError::new(format!(
             "`simp` failed for `{ensure_label}` path {path_index}: {}\n{}",
             describe_function_outcome(outcome, parameters, arguments),
@@ -548,17 +548,17 @@ pub(super) fn prove_ensure_proposition_by_simp(
             )
         )));
     };
-    let mut proposition = lower_outcome_proposition_with_program_points(
+    let proposition = lower_ensure_proposition_goal(
+        available_pure_facts,
+        proposition,
         parameters,
         arguments,
         pre_state,
-        state,
-        value,
-        available_pure_facts,
-        proposition,
+        outcome,
         predicate_environment,
         click_function_environment,
         program_point_states,
+        unfolded_predicates,
     )
     .map_err(|message| {
         ClickError::new(format!(
@@ -589,18 +589,6 @@ pub(super) fn prove_ensure_proposition_by_simp(
             .map(|fact| fact.proposition().clone()),
     );
     let assumptions = assumptions_from_propositions(&reasoning_facts);
-    proposition = unfold_predicates_in_proposition(
-        predicate_environment,
-        click_function_environment,
-        unfolded_predicates,
-        &proposition,
-        &assumptions,
-    )
-    .map_err(|message| {
-        ClickError::new(format!(
-            "`simp` failed for `{ensure_label}` path {path_index}: {message}"
-        ))
-    })?;
     match simp_proposition(&proposition, &assumptions) {
         SimpProposition::True => Ok(()),
         simplified => Err(ClickError::new(format!(
@@ -615,6 +603,44 @@ pub(super) fn prove_ensure_proposition_by_simp(
             )
         ))),
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn lower_ensure_proposition_goal(
+    available_pure_facts: &[Proposition],
+    proposition: &ClickProposition,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    pre_state: &CState,
+    outcome: &CFunctionOutcome,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    program_point_states: &ProgramPointStates,
+    unfolded_predicates: &[String],
+) -> Result<Proposition, String> {
+    let CFunctionOutcome::Return { value, state } = outcome else {
+        return Err("the execution path does not return".to_string());
+    };
+    let proposition = lower_outcome_proposition_with_program_points(
+        parameters,
+        arguments,
+        pre_state,
+        state,
+        value,
+        available_pure_facts,
+        proposition,
+        predicate_environment,
+        click_function_environment,
+        program_point_states,
+    )?;
+    let assumptions = assumptions_from_propositions(available_pure_facts);
+    unfold_predicates_in_proposition(
+        predicate_environment,
+        click_function_environment,
+        unfolded_predicates,
+        &proposition,
+        &assumptions,
+    )
 }
 
 pub(super) fn unfold_available_predicate_facts(
@@ -2094,6 +2120,109 @@ pub(super) enum SimpProposition {
     True,
     False,
     Proposition(Proposition),
+}
+
+pub(super) fn normalize_proposition(proposition: &Proposition) -> SimpProposition {
+    match proposition {
+        Proposition::Equal(left, right) => match simp_terms_equal(left, right) {
+            Some(true) => SimpProposition::True,
+            Some(false) => SimpProposition::False,
+            None => {
+                SimpProposition::Proposition(Proposition::Equal(simp_term(left), simp_term(right)))
+            }
+        },
+        Proposition::ConditionIs(condition, expected) => {
+            match simp_condition_without_assumptions(condition) {
+                Some(actual) if actual == *expected => SimpProposition::True,
+                Some(_) => SimpProposition::False,
+                None => SimpProposition::Proposition(proposition.clone()),
+            }
+        }
+        Proposition::And(left, right) => {
+            let left = normalize_proposition(left);
+            let right = normalize_proposition(right);
+            match (left, right) {
+                (SimpProposition::False, _) | (_, SimpProposition::False) => SimpProposition::False,
+                (SimpProposition::True, SimpProposition::True) => SimpProposition::True,
+                (SimpProposition::True, right) => right,
+                (left, SimpProposition::True) => left,
+                (left, right) => SimpProposition::Proposition(Proposition::And(
+                    Box::new(left.into_proposition()),
+                    Box::new(right.into_proposition()),
+                )),
+            }
+        }
+        Proposition::Or(left, right) => {
+            let left = normalize_proposition(left);
+            let right = normalize_proposition(right);
+            match (left, right) {
+                (SimpProposition::True, _) | (_, SimpProposition::True) => SimpProposition::True,
+                (SimpProposition::False, SimpProposition::False) => SimpProposition::False,
+                (SimpProposition::False, right) => right,
+                (left, SimpProposition::False) => left,
+                (left, right) => SimpProposition::Proposition(Proposition::Or(
+                    Box::new(left.into_proposition()),
+                    Box::new(right.into_proposition()),
+                )),
+            }
+        }
+        Proposition::Not(body) => match normalize_proposition(body) {
+            SimpProposition::True => SimpProposition::False,
+            SimpProposition::False => SimpProposition::True,
+            body => {
+                SimpProposition::Proposition(Proposition::Not(Box::new(body.into_proposition())))
+            }
+        },
+        Proposition::Implies(left, right) => {
+            let left = normalize_proposition(left);
+            let right = normalize_proposition(right);
+            match (left, right) {
+                (SimpProposition::False, _) | (_, SimpProposition::True) => SimpProposition::True,
+                (SimpProposition::True, right) => right,
+                (_, SimpProposition::False) => SimpProposition::False,
+                (left, right) => SimpProposition::Proposition(Proposition::Implies(
+                    Box::new(left.into_proposition()),
+                    Box::new(right.into_proposition()),
+                )),
+            }
+        }
+        _ => SimpProposition::Proposition(proposition.clone()),
+    }
+}
+
+pub(super) fn rewrite_proposition_by_exact_equality(
+    goal: &Proposition,
+    equality: &Proposition,
+    available: &[Proposition],
+) -> Result<Proposition, String> {
+    let Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), true) = equality
+    else {
+        return Err("`rewrite` currently expects an int32 equality".to_string());
+    };
+    let reverse = Proposition::ConditionIs(
+        ConditionTerm::Bitvector32Equal(
+            Box::new(right.as_ref().clone()),
+            Box::new(left.as_ref().clone()),
+        ),
+        true,
+    );
+    if !available.contains(equality) && !available.contains(&reverse) {
+        return Err(format!(
+            "`rewrite` requires an exact available equality, missing {equality:?}"
+        ));
+    }
+    let Bitvector32Term::Variable(variable) = left.as_ref() else {
+        return Err(
+            "`rewrite` currently requires the equality's left side to be an int32 variable"
+                .to_string(),
+        );
+    };
+    let rewritten =
+        substitute_int32_variable_in_proposition(goal, *variable, right.as_ref().clone());
+    if &rewritten == goal {
+        return Err("`rewrite` equality does not occur in the current goal".to_string());
+    }
+    Ok(rewritten)
 }
 
 pub(super) fn simp_proposition(

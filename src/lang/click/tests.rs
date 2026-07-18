@@ -1116,6 +1116,45 @@ fn parses_apply_theorem_proof_step() {
 }
 
 #[test]
+fn parses_and_classifies_simple_and_smart_tactics() {
+    let source = r#"
+            theorem rewritten(x: int32, y: int32) {
+                requires x == y;
+                ensures x == y by {
+                    rewrite(x == y);
+                    normalize();
+                }
+            }
+        "#;
+    let file = parse(source).expect("simple tactics should parse");
+    let steps = file.theorem_definitions()[0].ensures()[0]
+        .proof()
+        .steps()
+        .expect("expected proof steps");
+
+    assert!(matches!(
+        steps[0].class(),
+        ProofStepClass::Simple(SimpleTactic::Rewrite)
+    ));
+    assert!(matches!(
+        steps[1].class(),
+        ProofStepClass::Simple(SimpleTactic::Normalize)
+    ));
+    assert!(matches!(
+        ProofStep::Simp.class(),
+        ProofStepClass::Smart(SmartTactic::Simp)
+    ));
+    assert!(matches!(
+        ProofStep::ExecuteStep.class(),
+        ProofStepClass::Fuzzy(FuzzyTactic::ExecuteStep)
+    ));
+    assert!(matches!(
+        ProofStep::ExecuteRest.class(),
+        ProofStepClass::Macro(DeterministicProofMacro::ExecuteRest)
+    ));
+}
+
+#[test]
 fn parses_local_have_proof_step() {
     let source = FILL3_CLICK.replace(
         "by auto;",
@@ -1235,7 +1274,7 @@ fn parses_simp_tactic() {
     let file = parse(&source).expect("sidecar should parse");
     let ensure = &file.function_blocks()[0].ensures()[0];
 
-    assert!(matches!(ensure.proof().tactic(), Some(Tactic::Simp)));
+    assert!(matches!(ensure.proof().tactic(), Some(SmartTactic::Simp)));
 }
 
 #[test]
@@ -1252,7 +1291,7 @@ fn parses_frame_tactic() {
     let file = parse(source).expect("frame tactic should parse");
     let effect = &file.function_blocks()[0].effects()[0];
 
-    assert!(matches!(effect.proof().tactic(), Some(Tactic::Frame)));
+    assert!(matches!(effect.proof().tactic(), Some(SmartTactic::Frame)));
 }
 
 #[test]
@@ -1359,7 +1398,7 @@ fn parses_loop_invariants_and_statement_asserts() {
     );
     assert!(matches!(
         function.structural_clauses()[1].initialize_proof(),
-        Some(Proof::Tactic(Tactic::Simp))
+        Some(Proof::Tactic(SmartTactic::Simp))
     ));
     assert!(matches!(
         function.structural_clauses()[1].preserve_proof(),
@@ -3410,6 +3449,7 @@ fn loop_phase_proofs_can_unfold_invariant_predicates() {
                     initialize by {
                         unfold(sorted);
                         unfold(sorted_range);
+                        simp();
                     }
                     preserve by {
                         unfold(sorted);

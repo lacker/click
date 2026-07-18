@@ -15,10 +15,10 @@ The simplest proof clause is:
 by auto;
 ```
 
-`auto` is Click's default automation. It symbolically executes the C function,
-checks generated obligations, and tries the deterministic proof rules that are
-currently available. For pure theorem declarations, `auto` proves the theorem
-goal directly from the theorem's proposition requirements.
+`auto` is Click's default smart tactic. It symbolically executes the C function,
+checks generated obligations, and searches the proof rules that are currently
+available. For pure theorem declarations, `auto` proves the theorem goal
+directly from the theorem's proposition requirements.
 
 ## Tactics
 
@@ -32,13 +32,15 @@ by frame;
 
 Use `auto` for most beginner proofs.
 
-Use `simp` for deterministic local simplification, especially after unfolding a
-predicate.
+Use `simp` for local simplification and contextual reasoning, especially after
+unfolding a predicate. `simp` is classified as smart because it may combine
+several reasoning rules even though its implementation is deterministic.
 
 Use `frame` for `immutable` and `mutable` effect clauses.
 
 Pure proofs for theorem declarations currently support `auto`, `simp`, and
-proof-step scripts made from `unfold(name);`, `apply(theorem(args));`, and `simp();`.
+proof-step scripts made from `unfold(name);`, `apply(theorem(args));`,
+`assumption();`, `normalize();`, `rewrite(equality);`, and `simp();`.
 They do not run C execution steps because there is no C function body attached
 to the theorem, and they do not run resource steps because theorem application
 does not change the resource context.
@@ -54,11 +56,12 @@ ensures result == x by {
 }
 ```
 
-Proof steps are meant to be stable and replayable. They are less magical than
-`auto`: the script records a specific proof path. Execution steps advance the
-execution frontier. Pure steps such as `apply` and `simp` derive facts without
-advancing it; resource steps can transform resource facts at the current
-frontier.
+An explicit script records a specific proof path, but not every current command
+is simple. `assumption`, `normalize`, `rewrite`, and exact-premise `apply` are
+simple tactics. `auto` and `simp` are smart tactics. Some execution and resource
+commands remain fuzzy while their implicit reasoning is split into simple
+rules. The [proof tactics reference](../proof-tactics.md) classifies every
+command.
 
 Common steps include:
 
@@ -75,10 +78,14 @@ Common steps include:
 - `unfold(resource);`: expose one body layer of an owned composite resource.
 - `fold(resource);`: rebuild one owned composite resource from its body.
 - `apply(theorem(args));`: use a verified stdlib or current-file theorem as a
-  derived fact.
+  derived fact. Its premises must be exact available facts or normalize to true.
 - `observe(resource);`: expose one view layer of a held composite resource
   without unfolding its contained permissions.
 - `simp();`: simplify the current proof goal.
+- `assumption();`: close the current pure goal using an exact available fact.
+- `normalize();`: close the current pure goal by context-free normalization.
+- `rewrite(equality);`: perform one explicit equality substitution in the
+  current pure goal.
 - `frame();`: prove an effect claim.
 
 The end of the `by { ... }` block checks the claim.
@@ -102,6 +109,7 @@ Then read the proof clause:
 
 - `by auto` means the proof is automated.
 - `by simp` means the result should follow by simplification.
-- `by { ... }` means the author needed a specific deterministic sequence.
+- `by { ... }` means the author wrote an explicit proof script; consult its
+  commands to see whether it is simple, smart, or still fuzzy.
 
 The full proof-step reference is in the proof workflow page.

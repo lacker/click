@@ -40,6 +40,7 @@ int32 bubble_pass3(int32 p[3]) {
         invariant all_le_range(p, 0, j, p[j]);
         initialize by {
             unfold(all_le_range);
+            simp();
         }
         preserve by {
             unfold(all_le_range);

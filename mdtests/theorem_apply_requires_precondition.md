@@ -1,7 +1,7 @@
 # theorem application requires theorem preconditions
 
-This checks that `apply(...)` rejects theorem applications whose requirements
-are not available at the proof site.
+This checks that `apply(...)` rejects theorem applications whose exact
+requirements are not available at the proof site.
 
 ```click
 theorem positive_is_nonnegative(x: int32) {
@@ -19,5 +19,5 @@ theorem bad_apply(y: int32) {
 ```
 
 ```expect
-fail: could not prove requirement for theorem `positive_is_nonnegative`
+fail: required exact fact for theorem `positive_is_nonnegative` is unavailable
 ```

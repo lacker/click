@@ -183,7 +183,7 @@ fn verify_theorem_ensure(
     })?;
 
     match ensure_clause.proof() {
-        Proof::Default | Proof::Tactic(Tactic::Auto) => {
+        Proof::Default | Proof::Tactic(SmartTactic::Auto) => {
             prove_pure_theorem_goal(
                 claim_label,
                 "auto",
@@ -207,7 +207,7 @@ fn verify_theorem_ensure(
                 conclusion: goal,
             })
         }
-        Proof::Tactic(Tactic::Simp) => {
+        Proof::Tactic(SmartTactic::Simp) => {
             prove_pure_theorem_goal(
                 claim_label,
                 "simp",
@@ -231,7 +231,7 @@ fn verify_theorem_ensure(
                 conclusion: goal,
             })
         }
-        Proof::Tactic(Tactic::Frame) => Err(ClickError::new(format!(
+        Proof::Tactic(SmartTactic::Frame) => Err(ClickError::new(format!(
             "`frame` is not available in the pure proof for theorem `{claim_label}`"
         ))),
         Proof::Steps(steps) => {
@@ -241,77 +241,15 @@ fn verify_theorem_ensure(
                 )));
             }
             for proof_case in expand_proof_if_cases(steps, claim_label)? {
-                let mut available = context.requires.clone();
-                let mut unfolded_predicates = Vec::new();
-                let mut theorem_applications = Vec::new();
-                let mut use_simp = false;
-                for (step_index, step) in proof_case.steps.iter().enumerate() {
-                    for assumption in proof_case
-                        .assumptions
-                        .iter()
-                        .filter(|assumption| assumption.step_index == step_index)
-                    {
-                        let proposition = lower_pure_theorem_proposition(
-                            claim_label,
-                            &assumption.proposition,
-                            &context.values,
-                            &context.array_refs,
-                            &context.memory,
-                            predicate_environment,
-                            click_function_environment,
-                        )
-                        .map_err(|message| ClickError::new(format!(
-                            "`{claim_label}` proof step {step_index}: could not lower `if` condition: {message}"
-                        )))?;
-                        available.push(if assumption.value {
-                            proposition
-                        } else {
-                            Proposition::Not(Box::new(proposition))
-                        });
-                    }
-                    match step {
-                        ProofStep::UnfoldPredicate(name) => {
-                            if predicate_environment.get(name).is_none() {
-                                return Err(ClickError::new(format!(
-                                    "`{claim_label}` proof step {step_index}: unknown predicate `{name}`"
-                                )));
-                            }
-                            if !unfolded_predicates.contains(name) {
-                                unfolded_predicates.push(name.clone());
-                            }
-                        }
-                        ProofStep::ApplyTheorem(application) => {
-                            if theorem_environment.get(&application.name).is_none() {
-                                return Err(ClickError::new(format!(
-                                    "`{claim_label}` proof step {step_index}: unknown theorem `{}`",
-                                    application.name
-                                )));
-                            }
-                            theorem_applications.push((step_index, application.clone()));
-                        }
-                        ProofStep::Simp => {
-                            use_simp = true;
-                        }
-                        _ => {
-                            return Err(ClickError::new(format!(
-                                "`{claim_label}` pure proof step {step_index}: `{}` is not available in a pure proof",
-                                proof_step_name(step)
-                            )));
-                        }
-                    }
-                }
-                prove_pure_theorem_goal(
+                prove_pure_theorem_steps(
                     claim_label,
-                    "proof steps",
-                    &available,
+                    &context.requires,
                     &goal,
                     predicate_environment,
                     click_function_environment,
                     theorem_environment,
                     context,
-                    &theorem_applications,
-                    &unfolded_predicates,
-                    use_simp,
+                    &proof_case,
                 )?;
             }
             Ok(VerifiedPureTheorem {
@@ -695,8 +633,7 @@ fn prove_pure_theorem_goal(
         &assumptions,
     )
     .map_err(|message| ClickError::new(format!("`{claim_label}` failed: {message}")))?;
-    let assumptions = assumptions_from_propositions(&available);
-    if assumptions.proves(&goal) {
+    if available.contains(&goal) {
         return Ok(());
     }
     if use_simp {
@@ -715,6 +652,192 @@ fn prove_pure_theorem_goal(
         "`{proof_name}` failed for `{claim_label}`: {}",
         describe_missing_pure_fact(&goal, &available, &[], &[], &[], &[])
     )))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn prove_pure_theorem_steps(
+    claim_label: &str,
+    requires: &[Proposition],
+    original_goal: &Proposition,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    theorem_environment: &TheoremEnvironment,
+    context: &PureTheoremContext,
+    proof_case: &ExpandedProofCase,
+) -> Result<(), ClickError> {
+    let state = CState::new().with_memory(context.memory.clone());
+    let program_point_states = ProgramPointStates::new();
+    let application_context = TheoremApplicationContext {
+        values: &context.values,
+        array_refs: &context.array_refs,
+        pre_state: &state,
+        post_state: &state,
+        result: None,
+        program_point_states: &program_point_states,
+    };
+    let mut available = requires.to_vec();
+    let mut unfolded_predicates = Vec::new();
+    let mut goal = original_goal.clone();
+    let mut closed = false;
+
+    for (step_index, step) in proof_case.steps.iter().enumerate() {
+        for assumption in proof_case
+            .assumptions
+            .iter()
+            .filter(|assumption| assumption.step_index == step_index)
+        {
+            let proposition = lower_pure_theorem_proposition(
+                claim_label,
+                &assumption.proposition,
+                &context.values,
+                &context.array_refs,
+                &context.memory,
+                predicate_environment,
+                click_function_environment,
+            )
+            .map_err(|message| {
+                ClickError::new(format!(
+                    "`{claim_label}` proof step {step_index}: could not lower `if` condition: {message}"
+                ))
+            })?;
+            available.push(if assumption.value {
+                proposition
+            } else {
+                Proposition::Not(Box::new(proposition))
+            });
+        }
+        if closed {
+            return Err(ClickError::new(format!(
+                "`{claim_label}` proof step {step_index}: `{}` follows a goal-closing tactic",
+                proof_step_name(step)
+            )));
+        }
+
+        match step {
+            ProofStep::UnfoldPredicate(name) => {
+                if predicate_environment.get(name).is_none() {
+                    return Err(ClickError::new(format!(
+                        "`{claim_label}` proof step {step_index}: unknown predicate `{name}`"
+                    )));
+                }
+                if !unfolded_predicates.contains(name) {
+                    unfolded_predicates.push(name.clone());
+                }
+                available = unfold_available_predicate_facts(
+                    predicate_environment,
+                    click_function_environment,
+                    std::slice::from_ref(name),
+                    &available,
+                )
+                .map_err(|message| {
+                    ClickError::new(format!(
+                        "`{claim_label}` proof step {step_index}: {message}"
+                    ))
+                })?;
+                let assumptions = assumptions_from_propositions(&available);
+                goal = unfold_predicates_in_proposition(
+                    predicate_environment,
+                    click_function_environment,
+                    std::slice::from_ref(name),
+                    &goal,
+                    &assumptions,
+                )
+                .map_err(|message| {
+                    ClickError::new(format!(
+                        "`{claim_label}` proof step {step_index}: {message}"
+                    ))
+                })?;
+            }
+            ProofStep::ApplyTheorem(application) => {
+                available = apply_theorem_applications_to_available(
+                    theorem_environment,
+                    &[(step_index, application.clone())],
+                    claim_label,
+                    None,
+                    available,
+                    &application_context,
+                    predicate_environment,
+                    click_function_environment,
+                    &unfolded_predicates,
+                )?;
+            }
+            ProofStep::Assumption => {
+                if !available.contains(&goal) {
+                    return Err(ClickError::new(format!(
+                        "`assumption` failed for `{claim_label}`: {}",
+                        describe_missing_pure_fact(&goal, &available, &[], &[], &[], &[])
+                    )));
+                }
+                closed = true;
+            }
+            ProofStep::Normalize => {
+                if !matches!(normalize_proposition(&goal), SimpProposition::True) {
+                    return Err(ClickError::new(format!(
+                        "`normalize` failed for `{claim_label}`: goal did not normalize to true: {goal:?}"
+                    )));
+                }
+                closed = true;
+            }
+            ProofStep::Rewrite(surface_equality) => {
+                let mut equality = lower_pure_theorem_proposition(
+                    claim_label,
+                    surface_equality,
+                    &context.values,
+                    &context.array_refs,
+                    &context.memory,
+                    predicate_environment,
+                    click_function_environment,
+                )
+                .map_err(|message| {
+                    ClickError::new(format!(
+                        "`rewrite` failed for `{claim_label}`: could not lower equality: {message}"
+                    ))
+                })?;
+                let assumptions = assumptions_from_propositions(&available);
+                equality = unfold_predicates_in_proposition(
+                    predicate_environment,
+                    click_function_environment,
+                    &unfolded_predicates,
+                    &equality,
+                    &assumptions,
+                )
+                .map_err(|message| {
+                    ClickError::new(format!("`rewrite` failed for `{claim_label}`: {message}"))
+                })?;
+                goal = rewrite_proposition_by_exact_equality(&goal, &equality, &available)
+                    .map_err(|message| {
+                        ClickError::new(format!("`rewrite` failed for `{claim_label}`: {message}"))
+                    })?;
+            }
+            ProofStep::Simp => {
+                let assumptions = assumptions_from_propositions(&available);
+                match simp_proposition(&goal, &assumptions) {
+                    SimpProposition::True => closed = true,
+                    simplified => {
+                        return Err(ClickError::new(format!(
+                            "`simp` failed for `{claim_label}`: simplified proposition was not true: {simplified:?}\n  {}",
+                            describe_missing_pure_fact(&goal, &available, &[], &[], &[], &[])
+                        )));
+                    }
+                }
+            }
+            _ => {
+                return Err(ClickError::new(format!(
+                    "`{claim_label}` pure proof step {step_index}: `{}` is not available in a pure proof",
+                    proof_step_name(step)
+                )));
+            }
+        }
+    }
+
+    if closed || available.contains(&goal) {
+        Ok(())
+    } else {
+        Err(ClickError::new(format!(
+            "proof steps failed for `{claim_label}`: {}",
+            describe_missing_pure_fact(&goal, &available, &[], &[], &[], &[])
+        )))
+    }
 }
 
 struct TheoremApplicationContext<'a> {
@@ -862,18 +985,15 @@ fn instantiate_theorem_application(
         .map_err(|message| {
             theorem_application_error(claim_label, path_index, step_index, message)
         })?;
-        if !assumptions.proves(&lowered)
-            && !matches!(
-                simp_proposition(&lowered, &assumptions),
-                SimpProposition::True
-            )
+        if !available.contains(&lowered)
+            && !matches!(normalize_proposition(&lowered), SimpProposition::True)
         {
             return Err(theorem_application_error(
                 claim_label,
                 path_index,
                 step_index,
                 format!(
-                    "could not prove requirement for theorem `{}`: {}",
+                    "required exact fact for theorem `{}` is unavailable: {}",
                     theorem.name(),
                     describe_missing_pure_fact(&lowered, available, &[], &[], &[], &[])
                 ),
@@ -1518,6 +1638,9 @@ enum PostExecutionStep {
     Have(ProofHave),
     Choose(ProofChoice),
     Witness(ProofWitness),
+    Assumption,
+    Normalize,
+    Rewrite(ClickProposition),
     Frame,
     Simp,
 }
@@ -2283,7 +2406,7 @@ fn verify_one_loop_preservation_proof(
             operator: ComparisonOperator::Equal,
             right: ContractExpression::CFragment(CExpression::Value(int32(0))),
         }),
-        proof: Proof::Tactic(Tactic::Auto),
+        proof: Proof::Tactic(SmartTactic::Auto),
     };
     let dummy_claim = FunctionClaimRef::Ensure(0, &dummy_ensure);
     let proof_claims = [dummy_claim];
@@ -2606,7 +2729,7 @@ fn prove_pure_proposition_at_point(
 ) -> Result<Proposition, ClickError> {
     let (proof_cases, tactic_simp) = match proof {
         Proof::Steps(steps) => (expand_proof_if_cases(steps, claim_label)?, false),
-        Proof::Default | Proof::Tactic(Tactic::Auto | Tactic::Simp) => (
+        Proof::Default | Proof::Tactic(SmartTactic::Auto | SmartTactic::Simp) => (
             vec![ExpandedProofCase {
                 steps: Vec::new(),
                 assumptions: Vec::new(),
@@ -2614,7 +2737,7 @@ fn prove_pure_proposition_at_point(
             }],
             true,
         ),
-        Proof::Tactic(Tactic::Frame) => {
+        Proof::Tactic(SmartTactic::Frame) => {
             return Err(ClickError::new(format!(
                 "`{claim_label}` {proof_name} proof {outer_step_index}: `frame` is not available in a pure proof"
             )));
@@ -2702,6 +2825,7 @@ fn prove_pure_proposition_case_at_point(
         contract_environment_at_state(&parameter_values, &array_refs, state);
     let mut fact = None;
     let mut goal = None;
+    let mut goal_closed = false;
     let mut next_choice_variable = 3_000_000;
 
     for (inner_step_index, step) in proof_case.steps.iter().enumerate() {
@@ -2720,6 +2844,12 @@ fn prove_pure_proposition_case_at_point(
             predicate_environment,
             click_function_environment,
         )?;
+        if goal_closed {
+            return Err(ClickError::new(format!(
+                "`{claim_label}` {proof_name} proof {outer_step_index}, step {inner_step_index}: `{}` follows a goal-closing simple tactic",
+                proof_step_name(step)
+            )));
+        }
         match step {
             ProofStep::UnfoldPredicate(name) => {
                 if predicate_environment.get(name).is_none() {
@@ -2857,6 +2987,100 @@ fn prove_pure_proposition_case_at_point(
                     inner_step_index,
                 )?);
             }
+            ProofStep::Assumption | ProofStep::Normalize | ProofStep::Rewrite(_) => {
+                if goal.is_none() {
+                    let lowered = lower_point_proposition_with_values(
+                        proposition,
+                        &available,
+                        values.clone(),
+                        &array_refs,
+                        pre_state,
+                        state,
+                        result,
+                        program_point_states,
+                        predicate_environment,
+                        click_function_environment,
+                    )
+                    .map_err(|message| {
+                        ClickError::new(format!(
+                            "`{claim_label}` {proof_name} proof {outer_step_index}: could not lower pure goal: {message}"
+                        ))
+                    })?;
+                    fact = Some(lowered.clone());
+                    goal = Some(lowered);
+                }
+                let assumptions = assumptions_from_propositions(&available);
+                let unfolded_goal = unfold_predicates_in_proposition(
+                    predicate_environment,
+                    click_function_environment,
+                    &unfolded_predicates,
+                    goal.as_ref().expect("simple tactic goal should be initialized"),
+                    &assumptions,
+                )
+                .map_err(|message| {
+                    ClickError::new(format!(
+                        "`{claim_label}` {proof_name} proof {outer_step_index}: could not unfold pure goal: {message}"
+                    ))
+                })?;
+                match step {
+                    ProofStep::Assumption => {
+                        if !available.contains(&unfolded_goal) {
+                            return Err(ClickError::new(format!(
+                                "`{claim_label}` {proof_name} proof {outer_step_index}: `assumption` failed: {}",
+                                describe_missing_pure_fact(
+                                    &unfolded_goal,
+                                    &available,
+                                    state.resources().facts(),
+                                    parameters,
+                                    arguments,
+                                    &[]
+                                )
+                            )));
+                        }
+                        goal_closed = true;
+                    }
+                    ProofStep::Normalize => {
+                        if !matches!(normalize_proposition(&unfolded_goal), SimpProposition::True) {
+                            return Err(ClickError::new(format!(
+                                "`{claim_label}` {proof_name} proof {outer_step_index}: `normalize` failed because the goal did not normalize to true: {unfolded_goal:?}"
+                            )));
+                        }
+                        goal_closed = true;
+                    }
+                    ProofStep::Rewrite(surface_equality) => {
+                        let equality = lower_point_proposition_with_values(
+                            surface_equality,
+                            &available,
+                            values.clone(),
+                            &array_refs,
+                            pre_state,
+                            state,
+                            result,
+                            program_point_states,
+                            predicate_environment,
+                            click_function_environment,
+                        )
+                        .map_err(|message| {
+                            ClickError::new(format!(
+                                "`{claim_label}` {proof_name} proof {outer_step_index}: `rewrite` could not lower equality: {message}"
+                            ))
+                        })?;
+                        goal = Some(
+                            rewrite_proposition_by_exact_equality(
+                                &unfolded_goal,
+                                &equality,
+                                &available,
+                            )
+                            .map_err(|message| {
+                                ClickError::new(format!(
+                                    "`{claim_label}` {proof_name} proof {outer_step_index}: {message}"
+                                ))
+                            })?,
+                        );
+                    }
+                    _ => unreachable!(),
+                }
+            }
             ProofStep::Simp => use_simp = true,
             ProofStep::If(_) => unreachable!("proof-level if steps are expanded before replay"),
             _ => {
@@ -2916,7 +3140,8 @@ fn prove_pure_proposition_case_at_point(
             "`{claim_label}` {proof_name} proof {outer_step_index}: could not unfold pure goal: {message}"
         ))
     })?;
-    if assumptions.proves(&goal)
+    if goal_closed
+        || available.contains(&goal)
         || (use_simp && matches!(simp_proposition(&goal, &assumptions), SimpProposition::True))
     {
         return Ok(fact);
@@ -3356,6 +3581,7 @@ fn finish_ordered_proof_replay(
 
             let mut closed_claims = vec![false; claims.len()];
             let mut closer_errors = vec![None; claims.len()];
+            let mut rewritten_claim_goals: Vec<Option<Proposition>> = vec![None; claims.len()];
             let mut existence_steps = Vec::new();
             for (step_index, post_step) in &replay.post_execution_steps {
                 match post_step {
@@ -3478,6 +3704,174 @@ fn finish_ordered_proof_replay(
                     PostExecutionStep::Witness(witness) => {
                         existence_steps.push(ProofStep::Witness(witness.clone()));
                     }
+                    PostExecutionStep::Assumption => {
+                        let mut closed_any = false;
+                        for (claim_index, claim) in claims.iter().enumerate() {
+                            if closed_claims[claim_index] {
+                                continue;
+                            }
+                            let FunctionClaimRef::Ensure(_, ensure_clause) = claim else {
+                                continue;
+                            };
+                            let Ensure::Proposition(surface_goal) = ensure_clause.ensure() else {
+                                continue;
+                            };
+                            let goal = match &rewritten_claim_goals[claim_index] {
+                                Some(goal) => goal.clone(),
+                                None => lower_ensure_proposition_goal(
+                                    &path_requirements,
+                                    surface_goal,
+                                    parsed_function.parameters(),
+                                    arguments,
+                                    pre_state,
+                                    &outcome,
+                                    predicate_environment,
+                                    click_function_environment,
+                                    &replay.program_point_states,
+                                    &unfolded_predicates,
+                                )
+                                .map_err(|message| {
+                                    ClickError::new(format!(
+                                        "`{proof_label}` path {path_index}, proof step {step_index}: `assumption` could not lower goal: {message}"
+                                    ))
+                                })?,
+                            };
+                            if path_requirements.contains(&goal) {
+                                closed_claims[claim_index] = true;
+                                closed_any = true;
+                            }
+                        }
+                        if !closed_any {
+                            return Err(ClickError::new(format!(
+                                "`{proof_label}` path {path_index}, proof step {step_index}: `assumption` did not match any current proposition goal"
+                            )));
+                        }
+                    }
+                    PostExecutionStep::Normalize => {
+                        let mut closed_any = false;
+                        for (claim_index, claim) in claims.iter().enumerate() {
+                            if closed_claims[claim_index] {
+                                continue;
+                            }
+                            let FunctionClaimRef::Ensure(_, ensure_clause) = claim else {
+                                continue;
+                            };
+                            let Ensure::Proposition(surface_goal) = ensure_clause.ensure() else {
+                                continue;
+                            };
+                            let goal = match &rewritten_claim_goals[claim_index] {
+                                Some(goal) => goal.clone(),
+                                None => lower_ensure_proposition_goal(
+                                    &path_requirements,
+                                    surface_goal,
+                                    parsed_function.parameters(),
+                                    arguments,
+                                    pre_state,
+                                    &outcome,
+                                    predicate_environment,
+                                    click_function_environment,
+                                    &replay.program_point_states,
+                                    &unfolded_predicates,
+                                )
+                                .map_err(|message| {
+                                    ClickError::new(format!(
+                                        "`{proof_label}` path {path_index}, proof step {step_index}: `normalize` could not lower goal: {message}"
+                                    ))
+                                })?,
+                            };
+                            if matches!(normalize_proposition(&goal), SimpProposition::True) {
+                                closed_claims[claim_index] = true;
+                                closed_any = true;
+                            }
+                        }
+                        if !closed_any {
+                            return Err(ClickError::new(format!(
+                                "`{proof_label}` path {path_index}, proof step {step_index}: `normalize` did not prove any current proposition goal"
+                            )));
+                        }
+                    }
+                    PostExecutionStep::Rewrite(surface_equality) => {
+                        let CFunctionOutcome::Return {
+                            value: result,
+                            state: post_state,
+                        } = &outcome
+                        else {
+                            return Err(ClickError::new(format!(
+                                "`{proof_label}` path {path_index}, proof step {step_index}: `rewrite` requires a return outcome"
+                            )));
+                        };
+                        let equality = lower_outcome_proposition_with_program_points(
+                            parsed_function.parameters(),
+                            arguments,
+                            pre_state,
+                            post_state,
+                            result,
+                            &path_requirements,
+                            surface_equality,
+                            predicate_environment,
+                            click_function_environment,
+                            &replay.program_point_states,
+                        )
+                        .map_err(|message| {
+                            ClickError::new(format!(
+                                "`{proof_label}` path {path_index}, proof step {step_index}: `rewrite` could not lower equality: {message}"
+                            ))
+                        })?;
+                        let mut rewrote_any = false;
+                        let mut first_error = None;
+                        for (claim_index, claim) in claims.iter().enumerate() {
+                            if closed_claims[claim_index] {
+                                continue;
+                            }
+                            let FunctionClaimRef::Ensure(_, ensure_clause) = claim else {
+                                continue;
+                            };
+                            let Ensure::Proposition(surface_goal) = ensure_clause.ensure() else {
+                                continue;
+                            };
+                            let goal = match &rewritten_claim_goals[claim_index] {
+                                Some(goal) => goal.clone(),
+                                None => lower_ensure_proposition_goal(
+                                    &path_requirements,
+                                    surface_goal,
+                                    parsed_function.parameters(),
+                                    arguments,
+                                    pre_state,
+                                    &outcome,
+                                    predicate_environment,
+                                    click_function_environment,
+                                    &replay.program_point_states,
+                                    &unfolded_predicates,
+                                )
+                                .map_err(|message| {
+                                    ClickError::new(format!(
+                                        "`{proof_label}` path {path_index}, proof step {step_index}: `rewrite` could not lower goal: {message}"
+                                    ))
+                                })?,
+                            };
+                            match rewrite_proposition_by_exact_equality(
+                                &goal,
+                                &equality,
+                                &path_requirements,
+                            ) {
+                                Ok(rewritten) => {
+                                    rewritten_claim_goals[claim_index] = Some(rewritten);
+                                    rewrote_any = true;
+                                }
+                                Err(message) => {
+                                    first_error.get_or_insert(message);
+                                }
+                            }
+                        }
+                        if !rewrote_any {
+                            return Err(ClickError::new(format!(
+                                "`{proof_label}` path {path_index}, proof step {step_index}: `rewrite` failed: {}",
+                                first_error.unwrap_or_else(|| {
+                                    "there is no current proposition goal".to_string()
+                                })
+                            )));
+                        }
+                    }
                     PostExecutionStep::Frame => {
                         for (claim_index, claim) in claims.iter().enumerate() {
                             if !matches!(claim, FunctionClaimRef::Effect(_, _)) {
@@ -3512,7 +3906,33 @@ fn finish_ordered_proof_replay(
                             }
                             let claim_label =
                                 function_claim_label(function_block.signature().name(), claim);
-                            let result = if existence_steps.is_empty() {
+                            let result = if let Some(goal) = &rewritten_claim_goals[claim_index] {
+                                if !existence_steps.is_empty() {
+                                    return Err(ClickError::new(format!(
+                                        "`{proof_label}` path {path_index}, proof step {step_index}: rewritten existential goals are not yet supported"
+                                    )));
+                                }
+                                let mut reasoning_facts = path_requirements.clone();
+                                reasoning_facts.extend(
+                                    path.execution_facts()
+                                        .iter()
+                                        .filter(|fact| {
+                                            matches!(
+                                                fact.proposition(),
+                                                Proposition::CMemoryMutatesOnly { .. }
+                                                    | Proposition::CMemoryEffectSummary { .. }
+                                            )
+                                        })
+                                        .map(|fact| fact.proposition().clone()),
+                                );
+                                let assumptions = assumptions_from_propositions(&reasoning_facts);
+                                match simp_proposition(goal, &assumptions) {
+                                    SimpProposition::True => Ok(()),
+                                    simplified => Err(ClickError::new(format!(
+                                        "`simp` failed for `{claim_label}` path {path_index}: simplified rewritten proposition was not true: {simplified:?}"
+                                    ))),
+                                }
+                            } else if existence_steps.is_empty() {
                                 check_function_claim_by_simp(
                                     &claim_label,
                                     path_index,
@@ -4126,6 +4546,27 @@ fn replay_linear_steps(
                     continue;
                 }
                 require_step_execution(&replay, claim_label, step_index, "choose")?;
+            }
+            ProofStep::Assumption | ProofStep::Normalize | ProofStep::Rewrite(_) => {
+                if !replay.region_proof {
+                    require_step_execution(
+                        &replay,
+                        claim_label,
+                        step_index,
+                        proof_step_name(step),
+                    )?;
+                }
+                if replay.ordered_finalization && replay.is_at_function_exit() {
+                    let post_step = match step {
+                        ProofStep::Assumption => PostExecutionStep::Assumption,
+                        ProofStep::Normalize => PostExecutionStep::Normalize,
+                        ProofStep::Rewrite(equality) => {
+                            PostExecutionStep::Rewrite(equality.clone())
+                        }
+                        _ => unreachable!(),
+                    };
+                    replay.post_execution_steps.push((step_index, post_step));
+                }
             }
             ProofStep::Simp => {
                 if !replay.region_proof {

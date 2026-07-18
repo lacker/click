@@ -1115,7 +1115,7 @@ impl Parser {
                         ));
                     }
                     self.expect(Token::Semicolon)?;
-                    Proof::Tactic(Tactic::Auto)
+                    Proof::Tactic(SmartTactic::Auto)
                 } else {
                     self.parse_proof_clause_or_default()?
                 };
@@ -1761,6 +1761,20 @@ impl Parser {
                 self.expect(Token::RParen)?;
                 ProofStep::Choose(ProofChoice { name, source })
             }
+            "assumption" => {
+                self.expect_empty_step_args(&name)?;
+                ProofStep::Assumption
+            }
+            "normalize" => {
+                self.expect_empty_step_args(&name)?;
+                ProofStep::Normalize
+            }
+            "rewrite" => {
+                self.expect(Token::LParen)?;
+                let equality = self.parse_proposition()?;
+                self.expect(Token::RParen)?;
+                ProofStep::Rewrite(equality)
+            }
             "simp" => {
                 self.expect_empty_step_args(&name)?;
                 ProofStep::Simp
@@ -1875,11 +1889,11 @@ impl Parser {
         }
     }
 
-    fn parse_tactic(&mut self) -> Result<Tactic, ClickError> {
+    fn parse_tactic(&mut self) -> Result<SmartTactic, ClickError> {
         let tactic = match self.next() {
-            Some(Token::Ident(name)) if name == "auto" => Tactic::Auto,
-            Some(Token::Ident(name)) if name == "frame" => Tactic::Frame,
-            Some(Token::Ident(name)) if name == "simp" => Tactic::Simp,
+            Some(Token::Ident(name)) if name == "auto" => SmartTactic::Auto,
+            Some(Token::Ident(name)) if name == "frame" => SmartTactic::Frame,
+            Some(Token::Ident(name)) if name == "simp" => SmartTactic::Simp,
             Some(Token::Ident(name)) => {
                 return Err(self.error(format!("expected tactic, got `{name}`")));
             }

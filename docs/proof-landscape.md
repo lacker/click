@@ -11,18 +11,23 @@ will have exactly the names used here.
   some of these would be called axiom schemas or trusted proof procedures, but
   Click uses the simpler word axiom.
 - A **theorem** is a proposition produced by axioms.
-- A **proof step** is a deterministic proof-language call that invokes an axiom
-  or a fixed deterministic sequence of axioms.
+- A **simple tactic** is a deterministic, bounded proof-language call that
+  invokes one explicit proof rule.
 - A **proof** is a `by` clause: either a replayable sequence of proof steps, or
   a tactic call that can later be expanded into proof steps.
-- A **tactic** is a heuristic program that tries to generate a proof. Tactics may
-  search; proof steps should be stable and replayable.
+- A **smart tactic** may search or orchestrate several rules. Logically it
+  should be replaceable by a sequence of simple tactics.
+- A **fuzzy tactic** is an existing command that still mixes deterministic work
+  with implicit proving. It is a migration category, not a soundness category.
 - A **pure proof** derives a proposition from facts at one execution point. It
   has no execution frontier and cannot execute C or transform resources.
 - An **execution proof** establishes a pre/post relationship for a code region.
   It advances an execution frontier carrying symbolic state, pure facts, and
   resource facts. It may use pure and resource reasoning between execution
   steps.
+
+See the [proof tactics reference](proof-tactics.md) for the exhaustive current
+classification.
 
 The current `.click` language exposes function-level `requires` clauses and
 per-guarantee `ensures ... by auto;` clauses, backed by native C symbolic
@@ -62,7 +67,7 @@ new proof workflow concepts too early.
 | Assertions and facts | Lean/Dafny/F* proof scripts | spec assertion checking | `for statement(N) { assert ... by auto; }`, later `have`, `exact` | `mdtests/count_to_three_loop_invariants.md`, `mdtests/count_to_three_bad_assert.md` |
 | Proposition syntax | Lean/Isabelle/Dafny/F* specifications | kernel `And`, `Or`, `Not`, `Implies`, `ForAll`, `Exists` propositions | `and`, `or`, `not`, `implies`, `forall`, `exists` | `mdtests/click_proposition_logic.md`, `mdtests/forall_array_segment.md`, `mdtests/forall_array_segment_rejects_overwritten_cell.md`, `mdtests/exists_and_symbolic_any.md` |
 | Existential proof | Lean `exists`/`cases`, Coq `exists`/`destruct`, Dafny witnesses | proof-local existential introduction and elimination | `witness(k = expr)`, `choose(k from requirement N)` | `mdtests/witness_and_choose.md` |
-| Rewriting and simplification | Lean `simp`, Isabelle simplifier | rewrite theorem application | `simp`, later `rewrite`, `calc` | `mdtests/simp_postconditions.md`, `mdtests/pure_click_functions.md` |
+| Rewriting and simplification | Lean `simp`, Isabelle simplifier | explicit equality substitution and simplification | `rewrite`, `normalize`, `simp`; later `calc` | `mdtests/simple_tactics.md`, `mdtests/simp_postconditions.md`, `mdtests/pure_click_functions.md` |
 | Bitvector arithmetic | SMT, CBMC, hardware-oriented provers | bitvector32 solver/normalizer | `auto`, `simp()` | `mdtests/c_bitwise.md`, `mdtests/c_shifts.md`, `mdtests/c_shift_uint8_promoted.md` |
 | Frame reasoning | separation logic, C verifiers | pre/post memory evaluation with symbolic initial cells and loop write footprints | `auto`, `frame`, `frame(loop(N))` | `mdtests/write_second_old_keeps_first.md`, `mdtests/write_second_old_rejects_overwritten_cell.md`, `mdtests/fill_tail_keeps_first.md`, `mdtests/loop_frame_segment_shapes.md`, `mdtests/shifted_loop_effect_preserves_prefix.md` |
 | C array and struct surface syntax | C frontends, C verifiers | parameter-array lowering, local stack blocks, compact struct field loads/stores, and first-field Click helpers | ordinary C/Click signatures plus explicit ranges for multi-field structs | `mdtests/fill3_array_loop.md`, `mdtests/copy3_array_demo.md`, `mdtests/local_array.md`, `mdtests/local_array_loop.md`, `mdtests/struct_multifield_explicit_permissions.md`, `mdtests/struct_pointer_field_explicit_permissions.md`, `mdtests/jsonc_refcount_getter.md`, `mdtests/jsonc_refcount_setter.md`, `mdtests/jsonc_refcount_increment.md` |

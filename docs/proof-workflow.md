@@ -74,7 +74,7 @@ between verification execution and bounded execution, then records the proof
 steps that succeeded. Grouped `auto` has the fixed expansion described above,
 so grouped proofs do not depend on proof search.
 
-`simp` is deterministic local normalization. It is useful for straight-line
+`simp` is a smart contextual simplifier. It is useful for straight-line
 postconditions and unfolded predicate goals. It simplifies logical connectives,
 constant/reflexive integer comparisons, small arithmetic forms, concrete folds,
 and several kernel equality patterns. For order goals, it also rewrites through
@@ -84,9 +84,12 @@ discrete relationship between strict and non-strict integer bounds.
 `frame` proves `immutable` and `mutable` effect clauses. It rejects ordinary
 postconditions.
 
+The exhaustive simple/smart/fuzzy classification is in the
+[proof tactics reference](proof-tactics.md).
+
 ## Proof-Step Scripts
 
-Deterministic proof scripts use function-call-shaped proof steps:
+Explicit proof scripts use function-call-shaped proof commands:
 
 ```click
 by {
@@ -131,10 +134,11 @@ Current proof steps:
   immediate body facts.
 - `fold(resource);`: consume one immediate composite body and rebuild the owned
   composite resource fact.
-- `apply(theorem_name(args...));`: perform a pure proof step by instantiating a
-  verified pure theorem from the standard library or current file, prove its
-  requirements from the current proof context, and add its conclusions as
-  derived facts. This step never changes the resource context.
+- `apply(theorem_name(args...));`: instantiate one verified pure theorem from
+  the standard library or current file. Every requirement must be an exact
+  current fact or normalize to true without context; the step does not search
+  for a derivation. It adds the theorem's conclusions and never changes the
+  resource context.
 - `have proposition by { ... }`: run a scoped pure proof and add its proposition
   to the current pure facts. The nested proof accepts
   `unfold`, `apply`, `choose`, `witness`, `simp`, nested `have`, and proof-level
@@ -163,7 +167,11 @@ Current proof steps:
   index. Prefer labels for durable scripts.
 - `witness(k = expression);`: prove the current existential goal by substituting
   the given int32 expression for binder `k`.
-- `simp();`: request deterministic simplification when the proof block is
+- `assumption();`: close an exact current pure goal.
+- `normalize();`: close a pure goal by context-free computation.
+- `rewrite(equality);`: rewrite a pure goal once using an exact available int32
+  equality whose left side is a variable.
+- `simp();`: request smart contextual simplification when the proof block is
   checked.
 
 The end of a per-claim `by { ... }` block checks that claim. The end of a

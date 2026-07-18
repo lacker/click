@@ -2155,8 +2155,8 @@ fn validate_resource_subject_expression_types(
 fn validate_pure_theorem_proof(theorem_name: &str, proof: &Proof) -> Result<(), ClickError> {
     match proof {
         Proof::Default => Ok(()),
-        Proof::Tactic(Tactic::Auto | Tactic::Simp) => Ok(()),
-        Proof::Tactic(Tactic::Frame) => Err(ClickError::new(format!(
+        Proof::Tactic(SmartTactic::Auto | SmartTactic::Simp) => Ok(()),
+        Proof::Tactic(SmartTactic::Frame) => Err(ClickError::new(format!(
             "`frame` is not available in the pure proof for theorem `{theorem_name}`"
         ))),
         Proof::Steps(steps) => validate_pure_theorem_steps(theorem_name, steps),
@@ -2166,7 +2166,12 @@ fn validate_pure_theorem_proof(theorem_name: &str, proof: &Proof) -> Result<(), 
 fn validate_pure_theorem_steps(theorem_name: &str, steps: &[ProofStep]) -> Result<(), ClickError> {
     for step in steps {
         match step {
-            ProofStep::UnfoldPredicate(_) | ProofStep::ApplyTheorem(_) | ProofStep::Simp => {}
+            ProofStep::UnfoldPredicate(_)
+            | ProofStep::ApplyTheorem(_)
+            | ProofStep::Assumption
+            | ProofStep::Normalize
+            | ProofStep::Rewrite(_)
+            | ProofStep::Simp => {}
             ProofStep::If(proof_if) => {
                 validate_pure_theorem_steps(theorem_name, &proof_if.then_steps)?;
                 validate_pure_theorem_steps(theorem_name, &proof_if.else_steps)?;
@@ -2219,6 +2224,9 @@ pub(super) fn proof_step_name(step: &ProofStep) -> &'static str {
         ProofStep::ObserveResource(_) => "observe",
         ProofStep::Witness(_) => "witness",
         ProofStep::Choose(_) => "choose",
+        ProofStep::Assumption => "assumption",
+        ProofStep::Normalize => "normalize",
+        ProofStep::Rewrite(_) => "rewrite",
         ProofStep::Simp => "simp",
     }
 }

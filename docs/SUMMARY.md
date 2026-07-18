@@ -42,6 +42,7 @@
 - [C0 Subset Reference](c0-subset.md)
 - [Core Representation Reference](click-core.md)
 - [Proof Workflow Reference](proof-workflow.md)
+- [Proof Tactics Reference](proof-tactics.md)
 - [Memory Model Reference](memory-model.md)
 - [Standard Library Reference](standard-library.md)
 - [Examples Catalog](examples.md)

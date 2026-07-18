@@ -113,7 +113,8 @@ declaration.
 Theorems are intentionally pure. They do not support resource `requires`,
 resource `ensures`, effects, region proof blocks, `old(...)`, `at(...)`, or
 `result`. Pure theorem proof scripts currently support `unfold(name);`,
-`apply(theorem(args));`, and `simp();`; C execution and resource proof steps are
+`apply(theorem(args));`, `assumption();`, `normalize();`,
+`rewrite(equality);`, and `simp();`; C execution and resource proof steps are
 rejected. Applying a theorem never consumes, creates, returns, opens, or closes
 resources.
 
@@ -196,10 +197,11 @@ A structural clause may give a statement or loop a stable name with
 proof scripts: `execute_until(label)`, `advance(label.exit)`, and
 `at(label.entry, expression)` all resolve to the same code region.
 
-`apply(...)` instantiates a verified theorem, proves that theorem's proposition
-`requires` clauses from the current proof context, and adds its proposition
-`ensures` clauses as derived facts. It does not change the current resource
-context. Theorem declarations are checked in source order after the standard
+`apply(...)` instantiates a verified theorem, requires each proposition
+`requires` clause as an exact current pure fact or a context-free tautology,
+and adds its proposition `ensures` clauses as derived facts. It does not search
+the context for an implication that would establish a missing premise, and it
+does not change the current resource context. Theorem declarations are checked in source order after the standard
 library, so a theorem proof can apply stdlib theorems and earlier theorem
 declarations. C function proof scripts can apply any verified theorem from the
 standard library or the current file. Before function exit, `apply(...)`
