@@ -1468,30 +1468,19 @@ pub(super) fn prove_claim_by_simp(
     resource_environment: &ResourceEnvironment,
     theorem_environment: &TheoremEnvironment,
 ) -> Result<Vec<VerifiedCTheorem>, ClickError> {
+    if matches!(claim, FunctionClaimRef::Effect(_, _)) {
+        return Err(ClickError::new(format!(
+            "`simp` does not prove effect clauses for `{claim_label}`; use `by frame;` or `by auto;`"
+        )));
+    }
     if count_loops(parsed_function.body()) != 0 {
         return Err(ClickError::new(format!(
             "`simp` does not prove loop-backed claims for `{claim_label}`; use `by auto;`"
         )));
     }
 
-    let (state, arguments, requirement_pure_facts) = initial_claim_context(
-        function_block,
-        parsed_function,
-        resource_environment,
-        predicate_environment,
-        click_function_environment,
-        claim_label,
-    )?;
-    let function = annotated_function(
-        function_block,
-        parsed_function,
-        &state,
-        &arguments,
-        predicate_environment,
-        click_function_environment,
-        resource_environment,
-    )?;
-    let proof_tactics = certified_proof_tactics(
+    let tactics = [ProofTactic::ExecuteRest, ProofTactic::Simp];
+    let mut theorems = prove_claim_by_tactics(
         source_path,
         function_block,
         parsed_function,
@@ -1502,117 +1491,12 @@ pub(super) fn prove_claim_by_simp(
         click_function_environment,
         resource_environment,
         theorem_environment,
-        vec![vec![ProofTactic::ExecuteRest, ProofTactic::Simp]],
-    );
-    let assumptions = assumptions_from_propositions(&requirement_pure_facts);
-    let execution = prove_symbolic_c_function_execution_paths_with_environment(
-        state.clone(),
-        function.clone(),
-        arguments.clone(),
-        assumptions,
-        function_environment.clone(),
-        CExecutionSemantics::APPLY_VERIFIED_RULES,
-    );
-    if let Some(limit) = execution.limit() {
-        return Err(ClickError::new(format!(
-            "`simp` hit execution limit {limit:?} for `{claim_label}`"
-        )));
+        &tactics,
+    )?;
+    for theorem in &mut theorems {
+        theorem.proof_kind = ProofKind::Simp;
     }
-    if execution.paths().is_empty() {
-        return Err(ClickError::new(format!(
-            "`simp` could not establish a direct execution path for `{claim_label}`"
-        )));
-    }
-
-    let mut verified = Vec::new();
-    for (path_index, path) in execution.paths().iter().enumerate() {
-        if !path.obligations().is_empty() {
-            return Err(ClickError::new(format!(
-                "`simp` failed for `{claim_label}` path {path_index}: {}",
-                describe_missing_proof_obligations(
-                    path.obligations(),
-                    &requirement_pure_facts,
-                    state.resources().facts(),
-                    parsed_function.parameters(),
-                    &arguments,
-                    path.facts()
-                )
-            )));
-        }
-
-        let outcome = match implication_body(path.theorem().proposition()) {
-            Proposition::CFunctionExecutes { outcome, .. } => outcome.clone(),
-            proposition => {
-                return Err(ClickError::new(format!(
-                    "`simp` failed for `{claim_label}` path {path_index}: unexpected theorem body {proposition:?}\n  pure facts: {}\n  execution pure facts: {}",
-                    describe_pure_facts(&requirement_pure_facts),
-                    describe_execution_pure_facts(path.facts())
-                )));
-            }
-        };
-
-        let mut path_requirements = requirement_pure_facts.to_vec();
-        path_requirements.extend(path.facts().iter().map(|fact| fact.proposition().clone()));
-        path_requirements = project_outcome_resource_facts(
-            resource_environment,
-            parsed_function.parameters(),
-            &arguments,
-            &state,
-            &outcome,
-            &path_requirements,
-            predicate_environment,
-            click_function_environment,
-            claim_label,
-            path_index,
-        )?;
-        let program_point_states = ProgramPointStates::new();
-        check_function_claim_by_simp(
-            claim_label,
-            path_index,
-            &path.execution_facts(),
-            &path_requirements,
-            claim,
-            parsed_function.parameters(),
-            &arguments,
-            &state,
-            &outcome,
-            predicate_environment,
-            click_function_environment,
-            &program_point_states,
-            &[],
-        )?;
-        let specification = c_function_specification(
-            state.clone(),
-            arguments.clone(),
-            path_requirements,
-            outcome.clone(),
-        );
-        let theorem = prove_c_function_satisfies_specification_with_environment(
-            function.clone(),
-            specification.clone(),
-            Assumptions::new(),
-            function_environment.clone(),
-            CExecutionSemantics::APPLY_VERIFIED_RULES,
-        )
-        .ok_or_else(|| {
-            ClickError::new(format!(
-                "`simp` failed for `{claim_label}` path {path_index}: execution did not satisfy the packaged specification\n  execution pure facts: {}",
-                describe_execution_pure_facts(path.facts())
-            ))
-        })?;
-
-        verified.push(VerifiedCTheorem {
-            source_path: source_path.to_string(),
-            function_block: function_block.clone(),
-            claim: claim.verified_claim(),
-            proof_kind: ProofKind::Simp,
-            proof_tactics: proof_tactics.clone(),
-            specification,
-            theorem,
-        });
-    }
-
-    Ok(verified)
+    Ok(theorems)
 }
 
 #[derive(Clone, Default)]
@@ -9095,37 +8979,6 @@ fn structural_unfold_tactic_names(function_block: &FunctionBlock) -> Vec<String>
         }
     }
     names
-}
-
-fn certified_proof_tactics(
-    source_path: &str,
-    function_block: &FunctionBlock,
-    parsed_function: &syntax::C0Function,
-    claim: &FunctionClaimRef<'_>,
-    claim_label: &str,
-    function_environment: &CExecutionEnvironment,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
-    resource_environment: &ResourceEnvironment,
-    theorem_environment: &TheoremEnvironment,
-    candidates: Vec<Vec<ProofTactic>>,
-) -> Option<Vec<ProofTactic>> {
-    candidates.into_iter().find(|tactics| {
-        prove_claim_by_tactics(
-            source_path,
-            function_block,
-            parsed_function,
-            claim,
-            claim_label,
-            function_environment,
-            predicate_environment,
-            click_function_environment,
-            resource_environment,
-            theorem_environment,
-            tactics,
-        )
-        .is_ok()
-    })
 }
 
 fn bounded_execution_tactic_candidates(claim: &FunctionClaimRef<'_>) -> Vec<Vec<ProofTactic>> {

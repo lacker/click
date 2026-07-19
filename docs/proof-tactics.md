@@ -87,9 +87,13 @@ conjunction, disjunction, implication, finite case splits, and disjunction
 elimination. Its atomic leaves use bounded deterministic kernel theory checks;
 replay checks the selected tree and never searches for an alternative proof.
 Pure `by simp` proofs store this expanded certificate. A `simp()` nested in a
-larger execution script is planned and replayed the same way when it runs, but
-the surrounding stored script continues to contain the surface `simp()` until
-the other smart tactics in that script are also migrated.
+larger execution script is planned and replayed the same way when it runs. The
+stored script retains its surface spelling; Click does not yet expose the
+internal expansion as source text.
+
+Function-level `by simp` is exactly the certificate-backed sequence
+`execute_rest(); simp()`. It no longer runs a separate direct execution after
+checking that sequence.
 
 `execute_step` plans one internal certified statement transition. The
 transition carries explicit proposition derivations for contextual safety
