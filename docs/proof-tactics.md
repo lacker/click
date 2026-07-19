@@ -111,6 +111,9 @@ not participate in verification; it observes the same successful replay.
 parseable `by { ... }` clause. `format_proof_tactics()` first validates a raw
 tactic slice, so smart tactics and private replay evidence cannot be printed
 as expanded Click source.
+`VerifiedCTheorem::expanded_proof_certificate()` exposes the checked artifact;
+`expanded_proof_source()` validates and prints it in one call. Both report the
+recorded expansion blocker instead of returning partial source.
 One-step execution uses only the context premises named by its recorded
 proposition derivations. Atomic comparison transport is emitted as an explicit
 `transport` whose source is named at the preceding statement-entry snapshot;

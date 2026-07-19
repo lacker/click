@@ -1358,6 +1358,11 @@ fn execute_step_records_a_point_checked_surface_expansion() {
     assert_eq!(verified[0].expansion_blocker(), None);
     TacticCertificate::from_proof_tactics(expanded)
         .expect("the recorded expansion should be a surface certificate");
+    let source = verified[0]
+        .expanded_proof_source()
+        .expect("checked expansion should have canonical source");
+    assert!(source.contains("step();"));
+    assert!(source.contains("normalize();"));
 }
 
 #[test]

@@ -1590,6 +1590,30 @@ impl VerifiedCTheorem {
         self.expansion_blocker.as_deref()
     }
 
+    pub fn expanded_proof_certificate(&self) -> Result<TacticCertificate, ClickError> {
+        let tactics = self.expanded_proof_tactics.as_deref().ok_or_else(|| {
+            ClickError::new(format!(
+                "proof expansion is unavailable for `{}`: {}",
+                self.function_block.signature().name(),
+                self.expansion_blocker
+                    .as_deref()
+                    .unwrap_or("verification did not record a surface expansion")
+            ))
+        })?;
+        TacticCertificate::from_proof_tactics(tactics).map_err(|error| {
+            ClickError::new(format!(
+                "recorded proof expansion for `{}` is not a surface certificate: {error:?}",
+                self.function_block.signature().name()
+            ))
+        })
+    }
+
+    pub fn expanded_proof_source(&self) -> Result<String, ClickError> {
+        Ok(format_tactic_certificate(
+            &self.expanded_proof_certificate()?,
+        ))
+    }
+
     pub fn ensure_clause(&self) -> Option<&EnsureClause> {
         match &self.claim {
             VerifiedClaim::Ensure { clause, .. } => Some(clause),
