@@ -787,12 +787,6 @@ impl ProofReplayPlan {
     fn tactics(&self) -> &[ProofTactic] {
         &self.tactics
     }
-
-    fn surface_tactics(&self) -> Option<&[ProofTactic]> {
-        validate_certificate_tactics(&self.tactics, &mut Vec::new())
-            .is_ok()
-            .then_some(&self.tactics)
-    }
 }
 
 fn validate_certificate_tactics(

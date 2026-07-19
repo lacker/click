@@ -212,7 +212,7 @@ fn verifies_pure_theorem_definition() {
 }
 
 #[test]
-fn pure_simp_does_not_expose_internal_replay_evidence_as_surface_tactics() {
+fn pure_simp_exposes_a_surface_derivation_certificate() {
     let source = r#"
         theorem positive_is_nonnegative(x: int32) {
             requires x > 0;
@@ -221,7 +221,10 @@ fn pure_simp_does_not_expose_internal_replay_evidence_as_surface_tactics() {
     "#;
 
     let verified = verify_click_theorems(source).expect("simp theorem should verify");
-    assert_eq!(verified[0].proof_tactics, None);
+    assert!(matches!(
+        verified[0].proof_tactics.as_deref(),
+        Some([ProofTactic::Derive(ProofDerive { premises, .. })]) if premises.len() == 1
+    ));
 }
 
 #[test]

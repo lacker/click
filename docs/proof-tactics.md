@@ -146,6 +146,11 @@ whose memory snapshots advance. Replay checks those derivations at the exact
 symbolic path point where their premises are available; it does not rerun the
 contextual search that selected them.
 
+An exact proposition derivation lowers to `have P by { derive P using { ... } }`.
+If the derivation has no contextual premises, its `have` body uses
+`normalize()` instead. Every conclusion and premise must have a checked Click
+spelling at that proof point.
+
 `execute_then_step` and `execute_else_step` use the same certificate form, but
 planning additionally requires the current context to select the requested
 arm. Replay independently checks that the certified statement transition

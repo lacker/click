@@ -298,6 +298,43 @@ fn theorem_claim_label(
     }
 }
 
+fn lower_pure_simp_certificate(
+    theorem: &TheoremDefinition,
+    surface_goal: &ClickProposition,
+    context: &PureTheoremContext,
+    certificate: &ProofReplayPlan,
+) -> Option<Vec<ProofTactic>> {
+    let tactic = match certificate.tactics() {
+        [ProofTactic::Normalize] => ProofTactic::Normalize,
+        [ProofTactic::ExactPropositionDerivation(derivation)] => {
+            let premises = derivation
+                .context_premises()
+                .iter()
+                .map(|premise| {
+                    context
+                        .requires
+                        .iter()
+                        .position(|available| available == premise)
+                        .and_then(|index| theorem.requires().get(index))
+                        .and_then(Requirement::proposition)
+                        .cloned()
+                })
+                .collect::<Option<Vec<_>>>()?;
+            if premises.is_empty() {
+                ProofTactic::Normalize
+            } else {
+                ProofTactic::Derive(ProofDerive {
+                    proposition: surface_goal.clone(),
+                    premises,
+                })
+            }
+        }
+        _ => return None,
+    };
+    TacticCertificate::from_proof_tactics(std::slice::from_ref(&tactic)).ok()?;
+    Some(vec![tactic])
+}
+
 fn verify_theorem_ensure(
     theorem: &TheoremDefinition,
     ensure_index: usize,
@@ -373,7 +410,12 @@ fn verify_theorem_ensure(
                 ensure_index,
                 ensure_clause: ensure_clause.clone(),
                 proof_kind: ProofKind::Simp,
-                proof_tactics: certificate.surface_tactics().map(<[_]>::to_vec),
+                proof_tactics: lower_pure_simp_certificate(
+                    theorem,
+                    surface_goal,
+                    context,
+                    &certificate,
+                ),
                 requires: context.requires.clone(),
                 conclusion: goal,
             })
@@ -5082,12 +5124,57 @@ fn record_surface_replay_tactic(
             tactic_offset: replay.surface_replay.tactics.len(),
         }),
         ProofTactic::CertifiedAlternatives(_) => {}
-        ProofTactic::ExactPropositionDerivation(_) | ProofTactic::CertifiedFrame(_) => {
-            replay.surface_replay.block(format!(
-                "surface lowering is not implemented for internal replay tactic `{}`",
-                tactic_name(tactic)
-            ))
+        ProofTactic::ExactPropositionDerivation(derivation) => {
+            let conclusion = checked_surface_fact_at_point(
+                replay,
+                derivation.conclusion(),
+                available,
+                parameters,
+                arguments,
+                state,
+                predicate_environment,
+                click_function_environment,
+            );
+            let premises = derivation
+                .context_premises()
+                .iter()
+                .map(|premise| {
+                    checked_surface_fact_at_point(
+                        replay,
+                        premise,
+                        available,
+                        parameters,
+                        arguments,
+                        state,
+                        predicate_environment,
+                        click_function_environment,
+                    )
+                })
+                .collect::<Result<Vec<_>, _>>();
+            match (conclusion, premises) {
+                (Ok(conclusion), Ok(premises)) => {
+                    let proof = if premises.is_empty() {
+                        Proof::Script(vec![ProofTactic::Normalize])
+                    } else {
+                        Proof::Script(vec![ProofTactic::Derive(ProofDerive {
+                            proposition: conclusion.clone(),
+                            premises,
+                        })])
+                    };
+                    replay.surface_replay.push(ProofTactic::Have(ProofHave {
+                        proposition: conclusion,
+                        proof,
+                    }));
+                }
+                (conclusion, premises) => replay.surface_replay.block(format!(
+                    "could not lower exact proposition derivation\n  conclusion: {conclusion:?}\n  premises: {premises:?}"
+                )),
+            }
         }
+        ProofTactic::CertifiedFrame(_) => replay.surface_replay.block(format!(
+            "surface lowering is not implemented for internal replay tactic `{}`",
+            tactic_name(tactic)
+        )),
         _ => match tactic.class() {
             TacticClass::Simple(simple) if simple.is_surface_expressible() => {
                 replay.surface_replay.push(tactic.clone())
