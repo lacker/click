@@ -1092,6 +1092,7 @@ fn simple_statement_transition_does_not_transport_facts_automatically() {
         &mut next_opaque_call,
         StatementPrerequisitePolicy::Exact,
         StatementFactTransportPolicy::None,
+        &[],
     )
     .expect("simple transition should execute");
     let [transition] = transitions.as_slice() else {
@@ -1310,6 +1311,10 @@ fn parses_and_classifies_simple_and_smart_tactics() {
     assert!(matches!(
         ProofTactic::Step.class(),
         TacticClass::Simple(SimpleTactic::StatementTransition)
+    ));
+    assert!(matches!(
+        ProofTactic::CertifiedStatementStep(Vec::new()).class(),
+        TacticClass::Simple(SimpleTactic::CertifiedStatementTransition)
     ));
     assert!(matches!(
         ProofTactic::FoldResource(ResourceClause::Declared {

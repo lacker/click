@@ -2203,6 +2203,8 @@ fn validate_pure_theorem_tactics(
                 )));
             }
             ProofTactic::Step
+            | ProofTactic::CertifiedStatementStep(_)
+            | ProofTactic::CertifiedFactTransport { .. }
             | ProofTactic::ExecuteStep
             | ProofTactic::ExecuteThenStep
             | ProofTactic::ExecuteElseStep
@@ -2230,6 +2232,7 @@ fn validate_pure_theorem_tactics(
 pub(super) fn tactic_name(tactic: &ProofTactic) -> &'static str {
     match tactic {
         ProofTactic::Step => "step",
+        ProofTactic::CertifiedStatementStep(_) => "certified_statement_step",
         ProofTactic::ExecuteStep => "execute_step",
         ProofTactic::ExecuteThenStep => "execute_then_step",
         ProofTactic::ExecuteElseStep => "execute_else_step",
@@ -2251,6 +2254,7 @@ pub(super) fn tactic_name(tactic: &ProofTactic) -> &'static str {
         ProofTactic::Rewrite(_) => "rewrite",
         ProofTactic::Transport { .. } => "transport",
         ProofTactic::ExactPropositionDerivation(_) => "exact_proposition_derivation",
+        ProofTactic::CertifiedFactTransport { .. } => "certified_fact_transport",
         ProofTactic::Simp => "simp",
     }
 }

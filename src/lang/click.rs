@@ -510,6 +510,7 @@ pub enum Proof {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ProofTactic {
     Step,
+    CertifiedStatementStep(Vec<PropositionDerivation>),
     ExecuteStep,
     ExecuteThenStep,
     ExecuteElseStep,
@@ -535,12 +536,18 @@ pub enum ProofTactic {
         target: ClickProposition,
     },
     ExactPropositionDerivation(PropositionDerivation),
+    CertifiedFactTransport {
+        source: Proposition,
+        target: Proposition,
+        theorem: Theorem,
+    },
     Simp,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SimpleTactic {
     StatementTransition,
+    CertifiedStatementTransition,
     UnfoldPredicate,
     UnfoldResource,
     ObserveResource,
@@ -552,6 +559,7 @@ pub enum SimpleTactic {
     Rewrite,
     FactTransport,
     ExactPropositionDerivation,
+    CertifiedFactTransport,
     FoldResource,
     Frame,
 }
@@ -705,6 +713,9 @@ impl ProofTactic {
     pub fn class(&self) -> TacticClass {
         match self {
             Self::Step => TacticClass::Simple(SimpleTactic::StatementTransition),
+            Self::CertifiedStatementStep(_) => {
+                TacticClass::Simple(SimpleTactic::CertifiedStatementTransition)
+            }
             Self::UnfoldPredicate(_) => TacticClass::Simple(SimpleTactic::UnfoldPredicate),
             Self::UnfoldResource(_) => TacticClass::Simple(SimpleTactic::UnfoldResource),
             Self::ObserveResource(_) => TacticClass::Simple(SimpleTactic::ObserveResource),
@@ -717,6 +728,9 @@ impl ProofTactic {
             Self::Transport { .. } => TacticClass::Simple(SimpleTactic::FactTransport),
             Self::ExactPropositionDerivation(_) => {
                 TacticClass::Simple(SimpleTactic::ExactPropositionDerivation)
+            }
+            Self::CertifiedFactTransport { .. } => {
+                TacticClass::Simple(SimpleTactic::CertifiedFactTransport)
             }
             Self::FoldResource(_) => TacticClass::Simple(SimpleTactic::FoldResource),
             Self::Frame(_) => TacticClass::Simple(SimpleTactic::Frame),

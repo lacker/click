@@ -60,7 +60,7 @@ alone does not make a tactic simple.
 
 Click does not yet expose a surface tactic that prints or expands a smart
 tactic's simple certificate. The internal conversion is being introduced one
-smart tactic at a time; `simp` is the first migrated tactic.
+smart tactic at a time; `simp` and `execute_step` are certificate-backed.
 
 ## Tactic Certificates
 
@@ -84,6 +84,13 @@ Pure `by simp` proofs store this expanded certificate. A `simp()` nested in a
 larger execution script is planned and replayed the same way when it runs, but
 the surrounding stored script continues to contain the surface `simp()` until
 the other smart tactics in that script are also migrated.
+
+`execute_step` plans one internal certified statement transition. The
+transition carries explicit proposition derivations for contextual safety
+prerequisites, followed by explicit theorem-backed transports for pure facts
+whose memory snapshots advance. Replay checks those derivations at the exact
+symbolic path point where their premises are available; it does not rerun the
+contextual search that selected them.
 
 ## Statement Execution
 

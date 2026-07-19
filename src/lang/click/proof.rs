@@ -1724,6 +1724,7 @@ struct TacticReplayState {
     ordered_finalization: bool,
     grouped_contract: bool,
     next_opaque_call: u64,
+    planned_tactics: Vec<ProofTactic>,
 }
 
 #[derive(Clone)]
@@ -1921,6 +1922,7 @@ struct ExecutionProofContext {
 struct CertifiedConditionTransition {
     is_true: bool,
     pure_facts: Vec<Proposition>,
+    prerequisite_derivations: Vec<PropositionDerivation>,
 }
 
 #[derive(Clone)]
@@ -1929,12 +1931,54 @@ pub(super) struct CertifiedStatementTransition {
     pub(super) execution_facts: Vec<ExecutionPureFact>,
     pub(super) obligations: Vec<ProofObligation>,
     pub(super) pure_facts: Vec<Proposition>,
+    pub(super) prerequisite_derivations: Vec<PropositionDerivation>,
+    pub(super) fact_transports: Vec<CertifiedFactTransport>,
+}
+
+#[derive(Clone)]
+pub(super) struct CertifiedFactTransport {
+    pub(super) source: Proposition,
+    pub(super) target: Proposition,
+    pub(super) theorem: Theorem,
+}
+
+fn append_statement_transition_certificate(
+    replay: &mut TacticReplayState,
+    transition: &CertifiedStatementTransition,
+) {
+    replay
+        .planned_tactics
+        .push(ProofTactic::CertifiedStatementStep(
+            transition.prerequisite_derivations.clone(),
+        ));
+    replay
+        .planned_tactics
+        .extend(transition.fact_transports.iter().map(|transport| {
+            ProofTactic::CertifiedFactTransport {
+                source: transport.source.clone(),
+                target: transport.target.clone(),
+                theorem: transport.theorem.clone(),
+            }
+        }));
+}
+
+fn append_condition_transition_certificate(
+    replay: &mut TacticReplayState,
+    transition: &CertifiedConditionTransition,
+) {
+    replay
+        .planned_tactics
+        .push(ProofTactic::CertifiedStatementStep(
+            transition.prerequisite_derivations.clone(),
+        ));
 }
 
 #[derive(Clone, Copy)]
 pub(super) enum StatementPrerequisitePolicy {
     Exact,
+    Certified,
     Contextual,
+    Planning,
 }
 
 #[derive(Clone, Copy)]
@@ -2001,10 +2045,13 @@ fn certified_condition_transitions(
     condition: &CExpression,
     context_label: &str,
     prerequisite_policy: StatementPrerequisitePolicy,
+    certified_prerequisites: &[PropositionDerivation],
 ) -> Result<Vec<CertifiedConditionTransition>, ClickError> {
     let assumptions = match prerequisite_policy {
         StatementPrerequisitePolicy::Exact => Assumptions::new(),
-        StatementPrerequisitePolicy::Contextual => assumptions_from_propositions(pure_facts),
+        StatementPrerequisitePolicy::Certified
+        | StatementPrerequisitePolicy::Contextual
+        | StatementPrerequisitePolicy::Planning => assumptions_from_propositions(pure_facts),
     };
     let evaluation =
         prove_symbolic_c_condition_evaluation(state.clone(), condition.clone(), assumptions);
@@ -2017,7 +2064,10 @@ fn certified_condition_transitions(
         .paths()
         .iter()
         .filter(|path| {
-            !matches!(prerequisite_policy, StatementPrerequisitePolicy::Exact)
+            matches!(
+                prerequisite_policy,
+                StatementPrerequisitePolicy::Contextual | StatementPrerequisitePolicy::Planning
+            )
                 || !path.facts().iter().any(|path_fact| {
                     pure_facts.iter().any(|available| {
                         exact_facts_directly_conflict(available, path_fact.proposition())
@@ -2027,32 +2077,67 @@ fn certified_condition_transitions(
         .map(|path| {
             let mut successor_facts = pure_facts.to_vec();
             successor_facts.extend(path.facts().iter().map(|fact| fact.proposition().clone()));
-            if let Some(obligation) = path
-                .obligations()
-                .iter()
-                .find(|obligation| match prerequisite_policy {
-                    StatementPrerequisitePolicy::Exact => {
-                        !exact_fact_is_available(obligation.proposition(), pure_facts)
-                            && !matches!(
+            let prerequisite_assumptions = assumptions_from_propositions(&successor_facts);
+            let mut prerequisite_derivations = Vec::new();
+            for obligation in path.obligations() {
+                let derivation = match prerequisite_policy {
+                    StatementPrerequisitePolicy::Exact
+                    | StatementPrerequisitePolicy::Certified => {
+                        if exact_fact_is_available(obligation.proposition(), pure_facts)
+                            || matches!(
                                 normalize_proposition(obligation.proposition()),
                                 SimpProposition::True
                             )
+                            || matches!(prerequisite_policy, StatementPrerequisitePolicy::Certified)
+                                && certified_prerequisites.iter().any(|derivation| {
+                                    derivation.conclusion() == obligation.proposition()
+                                        && derivation.replay(&prerequisite_assumptions)
+                                })
+                        {
+                            None
+                        } else {
+                            return Err(ClickError::new(format!(
+                                "{context_label} is missing condition prerequisite{}: {:?}",
+                                obligation
+                                    .context()
+                                    .map(|context| format!(" ({context})"))
+                                    .unwrap_or_default(),
+                                obligation.proposition()
+                            )));
+                        }
                     }
                     StatementPrerequisitePolicy::Contextual => {
-                        let successor_assumptions =
-                            assumptions_from_propositions(&successor_facts);
-                        !successor_assumptions.proves(obligation.proposition())
+                        if prerequisite_assumptions.proves(obligation.proposition()) {
+                            None
+                        } else {
+                            return Err(ClickError::new(format!(
+                                "{context_label} is missing condition prerequisite{}: {:?}",
+                                obligation
+                                    .context()
+                                    .map(|context| format!(" ({context})"))
+                                    .unwrap_or_default(),
+                                obligation.proposition()
+                            )));
+                        }
                     }
-                })
-            {
-                return Err(ClickError::new(format!(
-                    "{context_label} is missing condition prerequisite{}: {:?}",
-                    obligation
-                        .context()
-                        .map(|context| format!(" ({context})"))
-                        .unwrap_or_default(),
-                    obligation.proposition()
-                )));
+                    StatementPrerequisitePolicy::Planning => Some(
+                        prerequisite_assumptions
+                            .derive_proposition(obligation.proposition())
+                            .ok_or_else(|| {
+                                ClickError::new(format!(
+                                    "{context_label} is missing condition prerequisite{}: {:?}",
+                                    obligation
+                                        .context()
+                                        .map(|context| format!(" ({context})"))
+                                        .unwrap_or_default(),
+                                    obligation.proposition()
+                                ))
+                            })?,
+                    ),
+                };
+                if let Some(derivation) = derivation {
+                    prerequisite_derivations.push(derivation);
+                }
             }
             match implication_body(path.theorem().proposition()) {
                 Proposition::CConditionEvaluates {
@@ -2061,6 +2146,7 @@ fn certified_condition_transitions(
                 } => Ok(CertifiedConditionTransition {
                     is_true: *is_true,
                     pure_facts: successor_facts,
+                    prerequisite_derivations,
                 }),
                 Proposition::CConditionEvaluates {
                     outcome: CConditionOutcome::UndefinedBehavior(kind),
@@ -2092,10 +2178,13 @@ pub(super) fn certified_statement_transitions(
     next_opaque_call: &mut u64,
     prerequisite_policy: StatementPrerequisitePolicy,
     fact_transport_policy: StatementFactTransportPolicy,
+    certified_prerequisites: &[PropositionDerivation],
 ) -> Result<(Vec<CertifiedStatementTransition>, Option<CVerifiedLoopRule>), ClickError> {
     let assumptions = match prerequisite_policy {
         StatementPrerequisitePolicy::Exact => Assumptions::new(),
-        StatementPrerequisitePolicy::Contextual => assumptions_from_propositions(pure_facts),
+        StatementPrerequisitePolicy::Certified
+        | StatementPrerequisitePolicy::Contextual
+        | StatementPrerequisitePolicy::Planning => assumptions_from_propositions(pure_facts),
     };
     let mut budget = ExecutionBudget::default().with_next_opaque_call(*next_opaque_call);
     let (execution, loop_rule) =
@@ -2115,6 +2204,7 @@ pub(super) fn certified_statement_transitions(
         context_label,
         prerequisite_policy,
         fact_transport_policy,
+        certified_prerequisites,
     )
 }
 
@@ -2147,6 +2237,7 @@ fn certified_loop_exit_transitions_with_proven_phases(
         context_label,
         StatementPrerequisitePolicy::Contextual,
         StatementFactTransportPolicy::Automatic,
+        &[],
     )
 }
 
@@ -2157,6 +2248,7 @@ fn certified_transitions_from_execution(
     context_label: &str,
     prerequisite_policy: StatementPrerequisitePolicy,
     fact_transport_policy: StatementFactTransportPolicy,
+    certified_prerequisites: &[PropositionDerivation],
 ) -> Result<(Vec<CertifiedStatementTransition>, Option<CVerifiedLoopRule>), ClickError> {
     if let Some(limit) = execution.limit() {
         return Err(ClickError::new(format!(
@@ -2167,12 +2259,14 @@ fn certified_transitions_from_execution(
         .paths()
         .iter()
         .filter(|path| {
-            !matches!(prerequisite_policy, StatementPrerequisitePolicy::Exact)
-                || !path.facts().iter().any(|path_fact| {
-                    pure_facts.iter().any(|available| {
-                        exact_facts_directly_conflict(available, path_fact.proposition())
-                    })
+            matches!(
+                prerequisite_policy,
+                StatementPrerequisitePolicy::Contextual | StatementPrerequisitePolicy::Planning
+            ) || !path.facts().iter().any(|path_fact| {
+                pure_facts.iter().any(|available| {
+                    exact_facts_directly_conflict(available, path_fact.proposition())
                 })
+            })
         })
         .map(|path| {
             let mut successor_facts = pure_facts.to_vec();
@@ -2186,30 +2280,69 @@ fn certified_transitions_from_execution(
             );
             let transport_assumptions = assumptions_from_propositions(&transport_facts);
             let prerequisite_assumptions = assumptions_from_propositions(&successor_facts);
-            if let Some(obligation) = path.obligations().iter().find(|obligation| {
+            let mut prerequisite_derivations = Vec::new();
+            for obligation in path.obligations() {
                 let proposition = obligation.proposition();
-                match prerequisite_policy {
-                    StatementPrerequisitePolicy::Exact => {
-                        !exact_fact_is_available(proposition, pure_facts)
-                            && !matches!(normalize_proposition(proposition), SimpProposition::True)
+                let derivation = match prerequisite_policy {
+                    StatementPrerequisitePolicy::Exact | StatementPrerequisitePolicy::Certified => {
+                        if exact_fact_is_available(proposition, pure_facts)
+                            || matches!(normalize_proposition(proposition), SimpProposition::True)
+                            || matches!(prerequisite_policy, StatementPrerequisitePolicy::Certified)
+                                && certified_prerequisites.iter().any(|derivation| {
+                                    derivation.conclusion() == proposition
+                                        && derivation.replay(&prerequisite_assumptions)
+                                })
+                        {
+                            None
+                        } else {
+                            let requirement = match prerequisite_policy {
+                                StatementPrerequisitePolicy::Exact => "exact prerequisite",
+                                StatementPrerequisitePolicy::Certified => "certified prerequisite",
+                                StatementPrerequisitePolicy::Contextual
+                                | StatementPrerequisitePolicy::Planning => unreachable!(),
+                            };
+                            return Err(ClickError::new(format!(
+                                "{context_label} is missing {requirement}{}: {:?}",
+                                obligation
+                                    .context()
+                                    .map(|context| format!(" ({context})"))
+                                    .unwrap_or_default(),
+                                proposition
+                            )));
+                        }
                     }
                     StatementPrerequisitePolicy::Contextual => {
-                        !prerequisite_assumptions.proves(proposition)
+                        if prerequisite_assumptions.proves(proposition) {
+                            None
+                        } else {
+                            return Err(ClickError::new(format!(
+                                "{context_label} is missing prerequisite{}: {:?}",
+                                obligation
+                                    .context()
+                                    .map(|context| format!(" ({context})"))
+                                    .unwrap_or_default(),
+                                proposition
+                            )));
+                        }
                     }
-                }
-            }) {
-                let requirement = match prerequisite_policy {
-                    StatementPrerequisitePolicy::Exact => "exact prerequisite",
-                    StatementPrerequisitePolicy::Contextual => "prerequisite",
+                    StatementPrerequisitePolicy::Planning => Some(
+                        prerequisite_assumptions
+                            .derive_proposition(proposition)
+                            .ok_or_else(|| {
+                                ClickError::new(format!(
+                                    "{context_label} is missing prerequisite{}: {:?}",
+                                    obligation
+                                        .context()
+                                        .map(|context| format!(" ({context})"))
+                                        .unwrap_or_default(),
+                                    proposition
+                                ))
+                            })?,
+                    ),
                 };
-                return Err(ClickError::new(format!(
-                    "{context_label} is missing {requirement}{}: {:?}",
-                    obligation
-                        .context()
-                        .map(|context| format!(" ({context})"))
-                        .unwrap_or_default(),
-                    obligation.proposition()
-                )));
+                if let Some(derivation) = derivation {
+                    prerequisite_derivations.push(derivation);
+                }
             }
             let Proposition::CStatementExecutes { outcome, .. } =
                 implication_body(path.theorem().proposition())
@@ -2238,20 +2371,34 @@ fn certified_transitions_from_execution(
                     let Proposition::Implies(_, conclusion) = theorem.proposition() else {
                         unreachable!("condition transport must produce an implication")
                     };
-                    transported_facts.push((fact, conclusion.as_ref().clone()));
+                    transported_facts.push(CertifiedFactTransport {
+                        source: fact,
+                        target: conclusion.as_ref().clone(),
+                        theorem,
+                    });
                 }
-                for (before, after) in transported_facts {
-                    successor_facts.retain(|fact| fact != &before);
-                    if !successor_facts.contains(&after) {
-                        successor_facts.push(after);
+                for transport in &transported_facts {
+                    successor_facts.retain(|fact| fact != &transport.source);
+                    if !successor_facts.contains(&transport.target) {
+                        successor_facts.push(transport.target.clone());
                     }
                 }
+                return Ok(CertifiedStatementTransition {
+                    outcome: outcome.clone(),
+                    execution_facts,
+                    obligations: path.obligations().to_vec(),
+                    pure_facts: successor_facts,
+                    prerequisite_derivations,
+                    fact_transports: transported_facts,
+                });
             }
             Ok(CertifiedStatementTransition {
                 outcome: outcome.clone(),
                 execution_facts,
                 obligations: path.obligations().to_vec(),
                 pure_facts: successor_facts,
+                prerequisite_derivations,
+                fact_transports: Vec::new(),
             })
         })
         .collect::<Result<Vec<_>, _>>()?;
@@ -2461,6 +2608,7 @@ fn split_execution_proof_branch_contexts(
             condition,
             "execution proof traversal",
             StatementPrerequisitePolicy::Contextual,
+            &[],
         )? {
             let next = ExecutionProofContext {
                 state: context.state.clone(),
@@ -2504,6 +2652,7 @@ fn advance_execution_proof_statement(
                 &mut context.next_opaque_call,
                 StatementPrerequisitePolicy::Contextual,
                 StatementFactTransportPolicy::Automatic,
+                &[],
             )?,
             _ => certified_loop_exit_transitions_with_proven_phases(
                 &context.state,
@@ -4315,7 +4464,7 @@ fn replay_linear_tactics(
         mut state,
         pure_facts: mut requirement_pure_facts,
         mut replay,
-        branch_path,
+        mut branch_path,
     } = context;
     let mut assumptions = assumptions_from_propositions(&requirement_pure_facts);
 
@@ -4452,15 +4601,12 @@ fn replay_linear_tactics(
                 }
                 assumptions = assumptions_from_propositions(&requirement_pure_facts);
             }
-            ProofTactic::Step | ProofTactic::ExecuteStep => {
-                let (prerequisite_policy, fact_transport_policy) = match tactic {
-                    ProofTactic::Step => (
-                        StatementPrerequisitePolicy::Exact,
-                        StatementFactTransportPolicy::None,
-                    ),
-                    ProofTactic::ExecuteStep => (
-                        StatementPrerequisitePolicy::Contextual,
-                        StatementFactTransportPolicy::Automatic,
+            ProofTactic::Step | ProofTactic::CertifiedStatementStep(_) => {
+                let (prerequisite_policy, certified_prerequisites) = match tactic {
+                    ProofTactic::Step => (StatementPrerequisitePolicy::Exact, &[][..]),
+                    ProofTactic::CertifiedStatementStep(derivations) => (
+                        StatementPrerequisitePolicy::Certified,
+                        derivations.as_slice(),
                     ),
                     _ => unreachable!(),
                 };
@@ -4477,10 +4623,77 @@ fn replay_linear_tactics(
                     claim_label,
                     tactic_index,
                     tactic_name(tactic),
+                    certified_prerequisites,
                     prerequisite_policy,
-                    fact_transport_policy,
+                    StatementFactTransportPolicy::None,
                     LoopStepPolicy::EnterBody,
                 )?;
+                assumptions = assumptions_from_propositions(&requirement_pure_facts);
+            }
+            ProofTactic::ExecuteStep => {
+                let mut planning_replay = replay.clone();
+                planning_replay.planned_tactics.clear();
+                let mut planning_state = state.clone();
+                let mut planning_facts = requirement_pure_facts.clone();
+                execute_step_from_execution_point(
+                    &mut planning_replay,
+                    &mut planning_state,
+                    &mut planning_facts,
+                    function_block,
+                    function,
+                    parsed_function.parameters(),
+                    arguments,
+                    &assumptions,
+                    function_environment,
+                    claim_label,
+                    tactic_index,
+                    "execute_step",
+                    &[],
+                    StatementPrerequisitePolicy::Planning,
+                    StatementFactTransportPolicy::Automatic,
+                    LoopStepPolicy::EnterBody,
+                )?;
+                let certificate =
+                    TacticCertificate::from_proof_tactics(&planning_replay.planned_tactics)
+                        .map_err(|error| {
+                            ClickError::new(format!(
+                                "`{claim_label}` tactic {tactic_index}: `execute_step` planned a non-certificate tactic {:?}",
+                                error.smart_tactic()
+                            ))
+                        })?;
+                let certificate_tactics = certificate
+                    .tactics()
+                    .iter()
+                    .cloned()
+                    .map(|tactic| IndexedTactic {
+                        index: tactic_index,
+                        tactic,
+                    })
+                    .collect::<Vec<_>>();
+                let result = replay_linear_tactics(
+                    ProofReplayContext {
+                        state,
+                        pure_facts: requirement_pure_facts,
+                        replay,
+                        branch_path,
+                    },
+                    function_block,
+                    parsed_function,
+                    claims,
+                    claim_label,
+                    function_environment,
+                    predicate_environment,
+                    click_function_environment,
+                    resource_environment,
+                    theorem_environment,
+                    function,
+                    arguments,
+                    &certificate_tactics,
+                )?;
+                state = result.state;
+                requirement_pure_facts = result.pure_facts;
+                replay = result.replay;
+                branch_path = result.branch_path;
                 assumptions = assumptions_from_propositions(&requirement_pure_facts);
             }
             ProofTactic::ExecuteThenStep | ProofTactic::ExecuteElseStep => {
@@ -4496,6 +4709,7 @@ fn replay_linear_tactics(
                     claim_label,
                     tactic_index,
                     Some(matches!(tactic, ProofTactic::ExecuteThenStep)),
+                    &[],
                     StatementPrerequisitePolicy::Contextual,
                     StatementFactTransportPolicy::Automatic,
                     BranchStepPolicy::RequireProven,
@@ -4838,10 +5052,41 @@ fn replay_linear_tactics(
                 }
             }
             ProofTactic::ExactPropositionDerivation(derivation) => {
-                return Err(ClickError::new(format!(
-                    "`{claim_label}` tactic {tactic_index}: internal exact proposition derivations are only valid for a current pure goal (got {:?})",
-                    derivation.conclusion()
-                )));
+                if !derivation.replay(&assumptions) {
+                    return Err(ClickError::new(format!(
+                        "`{claim_label}` tactic {tactic_index}: proposition derivation did not replay"
+                    )));
+                }
+                if !requirement_pure_facts.contains(derivation.conclusion()) {
+                    requirement_pure_facts.push(derivation.conclusion().clone());
+                    assumptions = assumptions_from_propositions(&requirement_pure_facts);
+                }
+            }
+            ProofTactic::CertifiedFactTransport {
+                source,
+                target,
+                theorem,
+            } => {
+                if !exact_fact_is_available(source, &requirement_pure_facts) {
+                    return Err(ClickError::new(format!(
+                        "`{claim_label}` tactic {tactic_index}: certified fact transport is missing exact source {source:?}"
+                    )));
+                }
+                let Proposition::Implies(theorem_source, theorem_target) = theorem.proposition()
+                else {
+                    return Err(ClickError::new(format!(
+                        "`{claim_label}` tactic {tactic_index}: certified fact transport theorem is not an implication"
+                    )));
+                };
+                if theorem_source.as_ref() != source || theorem_target.as_ref() != target {
+                    return Err(ClickError::new(format!(
+                        "`{claim_label}` tactic {tactic_index}: certified fact transport theorem does not match its source and target"
+                    )));
+                }
+                if !requirement_pure_facts.contains(target) {
+                    requirement_pure_facts.push(target.clone());
+                }
+                assumptions = assumptions_from_propositions(&requirement_pure_facts);
             }
             ProofTactic::Simp => {
                 if !replay.region_proof {
@@ -5471,6 +5716,7 @@ fn execute_branch_step_from_execution_point(
     claim_label: &str,
     tactic_index: usize,
     requested_branch: Option<bool>,
+    certified_prerequisites: &[PropositionDerivation],
     prerequisite_policy: StatementPrerequisitePolicy,
     fact_transport_policy: StatementFactTransportPolicy,
     branch_step_policy: BranchStepPolicy,
@@ -5539,6 +5785,7 @@ fn execute_branch_step_from_execution_point(
             &mut replay.next_opaque_call,
             prerequisite_policy,
             fact_transport_policy,
+            certified_prerequisites,
         )?;
         let [transition] = transitions.as_slice() else {
             return Err(ClickError::new(format!(
@@ -5562,6 +5809,7 @@ fn execute_branch_step_from_execution_point(
         &condition,
         &transition_label,
         prerequisite_policy,
+        certified_prerequisites,
     )?;
     if matches!(branch_step_policy, BranchStepPolicy::RequireProven)
         && condition_transitions.len() != 1
@@ -5611,6 +5859,9 @@ fn execute_branch_step_from_execution_point(
         )));
     }
 
+    if matches!(prerequisite_policy, StatementPrerequisitePolicy::Planning) {
+        append_condition_transition_certificate(replay, &condition_transition);
+    }
     *available_pure_facts = condition_transition.pure_facts;
     let selected_branch = if selected_then {
         *then_branch
@@ -5650,6 +5901,7 @@ fn execute_concrete_loop_head_step(
     claim_label: &str,
     tactic_index: usize,
     tactic_name: &str,
+    certified_prerequisites: &[PropositionDerivation],
     prerequisite_policy: StatementPrerequisitePolicy,
     fact_transport_policy: StatementFactTransportPolicy,
     statement_index: usize,
@@ -5695,6 +5947,7 @@ fn execute_concrete_loop_head_step(
             &mut replay.next_opaque_call,
             prerequisite_policy,
             fact_transport_policy,
+            certified_prerequisites,
         )?;
         let [transition] = transitions.as_slice() else {
             return Err(ClickError::new(format!(
@@ -5720,6 +5973,7 @@ fn execute_concrete_loop_head_step(
         &condition,
         &transition_label,
         prerequisite_policy,
+        certified_prerequisites,
     )?;
     if condition_transitions.len() != 1 {
         return Err(ClickError::new(format!(
@@ -5739,6 +5993,9 @@ fn execute_concrete_loop_head_step(
         .into_iter()
         .next()
         .expect("one condition transition was required");
+    if matches!(prerequisite_policy, StatementPrerequisitePolicy::Planning) {
+        append_condition_transition_certificate(replay, &condition_transition);
+    }
     *available_pure_facts = condition_transition.pure_facts;
     replay.frontier.execution_start_state = Some(execution_start_state);
     *state = current_state.clone();
@@ -5937,6 +6194,7 @@ fn execute_step_from_execution_point(
     claim_label: &str,
     tactic_index: usize,
     tactic_name: &str,
+    certified_prerequisites: &[PropositionDerivation],
     prerequisite_policy: StatementPrerequisitePolicy,
     fact_transport_policy: StatementFactTransportPolicy,
     loop_step_policy: LoopStepPolicy,
@@ -5960,6 +6218,7 @@ fn execute_step_from_execution_point(
             claim_label,
             tactic_index,
             None,
+            certified_prerequisites,
             prerequisite_policy,
             fact_transport_policy,
             BranchStepPolicy::RequireProven,
@@ -6003,6 +6262,7 @@ fn execute_step_from_execution_point(
             claim_label,
             tactic_index,
             tactic_name,
+            certified_prerequisites,
             prerequisite_policy,
             fact_transport_policy,
             statement_index,
@@ -6047,6 +6307,7 @@ fn execute_step_from_execution_point(
         &mut replay.next_opaque_call,
         prerequisite_policy,
         fact_transport_policy,
+        certified_prerequisites,
     )?;
     if transitions.len() != 1 {
         if matches!(prerequisite_policy, StatementPrerequisitePolicy::Exact) {
@@ -6118,6 +6379,9 @@ fn execute_step_from_execution_point(
         .into_iter()
         .next()
         .expect("one statement transition was required");
+    if matches!(prerequisite_policy, StatementPrerequisitePolicy::Planning) {
+        append_statement_transition_certificate(replay, &transition);
+    }
     let execution_pure_facts = transition.execution_facts;
     append_execution_effect_facts(&mut replay.effect_facts, &execution_pure_facts);
     let transition_obligations = transition.obligations;
@@ -6380,6 +6644,7 @@ fn bounded_execute_from_execution_point(
                     claim_label,
                     tactic_index,
                     Some(take_then),
+                    &[],
                     StatementPrerequisitePolicy::Contextual,
                     StatementFactTransportPolicy::Automatic,
                     BranchStepPolicy::Explore,
@@ -6405,6 +6670,7 @@ fn bounded_execute_from_execution_point(
             claim_label,
             tactic_index,
             "bounded_execute",
+            &[],
             StatementPrerequisitePolicy::Contextual,
             StatementFactTransportPolicy::Automatic,
             LoopStepPolicy::EnterBody,
@@ -6575,6 +6841,7 @@ fn execute_rest_from_execution_point(
                 claim_label,
                 tactic_index,
                 tactic_name,
+                &[],
                 StatementPrerequisitePolicy::Contextual,
                 StatementFactTransportPolicy::Automatic,
                 LoopStepPolicy::ApplyVerifiedRule,
@@ -6723,6 +6990,7 @@ fn execute_until_statement(
             claim_label,
             tactic_index,
             "execute_until",
+            &[],
             StatementPrerequisitePolicy::Contextual,
             StatementFactTransportPolicy::Automatic,
             LoopStepPolicy::ApplyVerifiedRule,
