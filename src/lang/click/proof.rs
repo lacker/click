@@ -10,6 +10,111 @@ type NextTopLevelStatement = (
     Option<CStatement>,
 );
 
+fn apply_logical_goal_tactic(
+    tactic: &ProofTactic,
+    goal: &mut Proposition,
+    available: &mut Vec<Proposition>,
+    contradiction_fact: Option<Proposition>,
+) -> Result<bool, String> {
+    match tactic {
+        ProofTactic::Intro => match goal.clone() {
+            Proposition::Implies(antecedent, consequent) => {
+                if !available.contains(&antecedent) {
+                    available.push(*antecedent);
+                }
+                *goal = *consequent;
+                Ok(false)
+            }
+            Proposition::ForAll { body, .. } => {
+                *goal = *body;
+                Ok(false)
+            }
+            _ => Err(format!(
+                "`intro` requires an implication or universal goal, got {goal:?}"
+            )),
+        },
+        ProofTactic::Conjunction => {
+            let Proposition::And(left, right) = goal else {
+                return Err(format!(
+                    "`conjunction` requires a conjunction goal, got {goal:?}"
+                ));
+            };
+            if !available.contains(left.as_ref()) || !available.contains(right.as_ref()) {
+                return Err(format!(
+                    "`conjunction` requires both conjuncts as exact facts: {left:?} and {right:?}"
+                ));
+            }
+            Ok(true)
+        }
+        ProofTactic::Left => {
+            let Proposition::Or(left, _) = goal else {
+                return Err(format!("`left` requires a disjunction goal, got {goal:?}"));
+            };
+            if !available.contains(left.as_ref()) {
+                return Err(format!(
+                    "`left` requires its selected disjunct as an exact fact: {left:?}"
+                ));
+            }
+            Ok(true)
+        }
+        ProofTactic::Right => {
+            let Proposition::Or(_, right) = goal else {
+                return Err(format!("`right` requires a disjunction goal, got {goal:?}"));
+            };
+            if !available.contains(right.as_ref()) {
+                return Err(format!(
+                    "`right` requires its selected disjunct as an exact fact: {right:?}"
+                ));
+            }
+            Ok(true)
+        }
+        ProofTactic::DoubleNegation => {
+            let Proposition::Not(outer) = goal else {
+                return Err(format!(
+                    "`double_negation` requires a double-negation goal, got {goal:?}"
+                ));
+            };
+            let Proposition::Not(inner) = outer.as_ref() else {
+                return Err(format!(
+                    "`double_negation` requires a double-negation goal, got {goal:?}"
+                ));
+            };
+            if !available.contains(inner.as_ref()) {
+                return Err(format!(
+                    "`double_negation` requires its inner proposition as an exact fact: {inner:?}"
+                ));
+            }
+            Ok(true)
+        }
+        ProofTactic::Vacuous => {
+            let Proposition::Implies(antecedent, _) = goal else {
+                return Err(format!(
+                    "`vacuous` requires an implication goal, got {goal:?}"
+                ));
+            };
+            let negated = Proposition::Not(Box::new(antecedent.as_ref().clone()));
+            if !available.contains(&negated) {
+                return Err(format!(
+                    "`vacuous` requires the negated antecedent as an exact fact: {negated:?}"
+                ));
+            }
+            Ok(true)
+        }
+        ProofTactic::Contradiction(_) => {
+            let fact = contradiction_fact
+                .ok_or_else(|| "`contradiction` is missing its lowered fact".to_string())?;
+            let negated = Proposition::Not(Box::new(fact.clone()));
+            if !available.contains(&fact) || !available.contains(&negated) {
+                return Err(format!(
+                    "`contradiction` requires both exact facts: {fact:?} and {negated:?}"
+                ));
+            }
+            Ok(true)
+        }
+        _ => Err("not a logical goal tactic".to_string()),
+    }
+}
+
 pub(super) fn verify_theorem_definitions(
     theorem_definitions: &[TheoremDefinition],
     predicate_environment: &PredicateEnvironment,
@@ -905,6 +1010,42 @@ fn prove_pure_theorem_tactics(
                     )));
                 }
                 closed = true;
+            }
+            ProofTactic::Intro
+            | ProofTactic::Conjunction
+            | ProofTactic::Left
+            | ProofTactic::Right
+            | ProofTactic::DoubleNegation
+            | ProofTactic::Vacuous
+            | ProofTactic::Contradiction(_) => {
+                let contradiction_fact = match tactic {
+                    ProofTactic::Contradiction(surface_fact) => Some(
+                        lower_pure_theorem_proposition(
+                            claim_label,
+                            surface_fact,
+                            &context.values,
+                            &context.array_refs,
+                            &context.memory,
+                            predicate_environment,
+                            click_function_environment,
+                        )
+                        .map_err(|message| {
+                            ClickError::new(format!(
+                                "`contradiction` failed for `{claim_label}`: could not lower fact: {message}"
+                            ))
+                        })?,
+                    ),
+                    _ => None,
+                };
+                closed = apply_logical_goal_tactic(
+                    tactic,
+                    &mut goal,
+                    &mut available,
+                    contradiction_fact,
+                )
+                .map_err(|message| {
+                    ClickError::new(format!("`{claim_label}` tactic {tactic_index}: {message}"))
+                })?;
             }
             ProofTactic::Rewrite(surface_equality) => {
                 let mut equality = lower_pure_theorem_proposition(
@@ -3174,7 +3315,16 @@ fn prove_pure_proposition_case_at_point(
                     inner_tactic_index,
                 )?);
             }
-            ProofTactic::Assumption | ProofTactic::Normalize | ProofTactic::Rewrite(_) => {
+            ProofTactic::Assumption
+            | ProofTactic::Normalize
+            | ProofTactic::Intro
+            | ProofTactic::Conjunction
+            | ProofTactic::Left
+            | ProofTactic::Right
+            | ProofTactic::DoubleNegation
+            | ProofTactic::Vacuous
+            | ProofTactic::Contradiction(_)
+            | ProofTactic::Rewrite(_) => {
                 if goal.is_none() {
                     let lowered = lower_point_proposition_with_values(
                         proposition,
@@ -3233,6 +3383,49 @@ fn prove_pure_proposition_case_at_point(
                             )));
                         }
                         goal_closed = true;
+                    }
+                    ProofTactic::Intro
+                    | ProofTactic::Conjunction
+                    | ProofTactic::Left
+                    | ProofTactic::Right
+                    | ProofTactic::DoubleNegation
+                    | ProofTactic::Vacuous
+                    | ProofTactic::Contradiction(_) => {
+                        let contradiction_fact = match tactic {
+                            ProofTactic::Contradiction(surface_fact) => Some(
+                                lower_point_proposition_with_values(
+                                    surface_fact,
+                                    &available,
+                                    values.clone(),
+                                    &array_refs,
+                                    pre_state,
+                                    state,
+                                    result,
+                                    program_point_states,
+                                    predicate_environment,
+                                    click_function_environment,
+                                )
+                                .map_err(|message| {
+                                    ClickError::new(format!(
+                                        "`{claim_label}` {proof_name} proof {outer_tactic_index}: `contradiction` could not lower fact: {message}"
+                                    ))
+                                })?,
+                            ),
+                            _ => None,
+                        };
+                        let mut logical_goal = unfolded_goal;
+                        goal_closed = apply_logical_goal_tactic(
+                            tactic,
+                            &mut logical_goal,
+                            &mut available,
+                            contradiction_fact,
+                        )
+                        .map_err(|message| {
+                            ClickError::new(format!(
+                                "`{claim_label}` {proof_name} proof {outer_tactic_index}: {message}"
+                            ))
+                        })?;
+                        goal = Some(logical_goal);
                     }
                     ProofTactic::Rewrite(surface_equality) => {
                         let equality = lower_point_proposition_with_values(
@@ -5317,6 +5510,18 @@ fn replay_linear_tactics(
             ProofTactic::FinishCertifiedFactTransports(sources) => {
                 requirement_pure_facts.retain(|fact| !sources.contains(fact));
                 assumptions = assumptions_from_propositions(&requirement_pure_facts);
+            }
+            ProofTactic::Intro
+            | ProofTactic::Conjunction
+            | ProofTactic::Left
+            | ProofTactic::Right
+            | ProofTactic::DoubleNegation
+            | ProofTactic::Vacuous
+            | ProofTactic::Contradiction(_) => {
+                return Err(ClickError::new(format!(
+                    "`{claim_label}` tactic {tactic_index}: `{}` is only available while proving a pure goal, such as inside `have ... by`",
+                    tactic_name(tactic)
+                )));
             }
             ProofTactic::Simp => {
                 if !replay.region_proof {

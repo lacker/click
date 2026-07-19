@@ -277,6 +277,9 @@ fn expand_declared_resource_tactic(
         ProofTactic::FoldResource(resource) => Ok(ProofTactic::FoldResource(
             expand_declared_resource_clause(resource, resource_definitions)?,
         )),
+        ProofTactic::Contradiction(proposition) => Ok(ProofTactic::Contradiction(
+            expand_declared_resource_proposition(proposition, resource_definitions)?,
+        )),
         ProofTactic::Have(have) => Ok(ProofTactic::Have(ProofHave {
             proposition: have.proposition,
             proof: expand_declared_resource_proof(have.proof, resource_definitions)?,
@@ -2190,6 +2193,13 @@ fn validate_pure_theorem_tactics(
             | ProofTactic::ApplyTheorem(_)
             | ProofTactic::Assumption
             | ProofTactic::Normalize
+            | ProofTactic::Intro
+            | ProofTactic::Conjunction
+            | ProofTactic::Left
+            | ProofTactic::Right
+            | ProofTactic::DoubleNegation
+            | ProofTactic::Vacuous
+            | ProofTactic::Contradiction(_)
             | ProofTactic::Rewrite(_)
             | ProofTactic::ExactPropositionDerivation(_)
             | ProofTactic::Simp => {}
@@ -2263,6 +2273,13 @@ pub(super) fn tactic_name(tactic: &ProofTactic) -> &'static str {
         ProofTactic::Choose(_) => "choose",
         ProofTactic::Assumption => "assumption",
         ProofTactic::Normalize => "normalize",
+        ProofTactic::Intro => "intro",
+        ProofTactic::Conjunction => "conjunction",
+        ProofTactic::Left => "left",
+        ProofTactic::Right => "right",
+        ProofTactic::DoubleNegation => "double_negation",
+        ProofTactic::Vacuous => "vacuous",
+        ProofTactic::Contradiction(_) => "contradiction",
         ProofTactic::Rewrite(_) => "rewrite",
         ProofTactic::Transport { .. } => "transport",
         ProofTactic::ExactPropositionDerivation(_) => "exact_proposition_derivation",

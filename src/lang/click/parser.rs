@@ -1773,6 +1773,36 @@ impl Parser {
                 self.expect_empty_tactic_args(&name)?;
                 ProofTactic::Normalize
             }
+            "intro" => {
+                self.expect_empty_tactic_args(&name)?;
+                ProofTactic::Intro
+            }
+            "conjunction" => {
+                self.expect_empty_tactic_args(&name)?;
+                ProofTactic::Conjunction
+            }
+            "left" => {
+                self.expect_empty_tactic_args(&name)?;
+                ProofTactic::Left
+            }
+            "right" => {
+                self.expect_empty_tactic_args(&name)?;
+                ProofTactic::Right
+            }
+            "double_negation" => {
+                self.expect_empty_tactic_args(&name)?;
+                ProofTactic::DoubleNegation
+            }
+            "vacuous" => {
+                self.expect_empty_tactic_args(&name)?;
+                ProofTactic::Vacuous
+            }
+            "contradiction" => {
+                self.expect(Token::LParen)?;
+                let proposition = self.parse_proposition()?;
+                self.expect(Token::RParen)?;
+                ProofTactic::Contradiction(proposition)
+            }
             "rewrite" => {
                 self.expect(Token::LParen)?;
                 let equality = self.parse_proposition()?;

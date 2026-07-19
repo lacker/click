@@ -225,6 +225,78 @@ fn pure_simp_does_not_expose_internal_replay_evidence_as_surface_tactics() {
 }
 
 #[test]
+fn verifies_explicit_structural_logic_tactics() {
+    let source = r#"
+        theorem conjunction_rule(x: int32) {
+            requires x == x;
+            ensures x == x and x == x by {
+                conjunction();
+            }
+        }
+
+        theorem left_rule(x: int32) {
+            requires x == x;
+            ensures x == x or x != x by {
+                left();
+            }
+        }
+
+        theorem right_rule(x: int32) {
+            requires x == x;
+            ensures x != x or x == x by {
+                right();
+            }
+        }
+
+        theorem double_negation_rule(x: int32) {
+            requires x == x;
+            ensures not (not (x == x)) by {
+                double_negation();
+            }
+        }
+
+        theorem intro_implication_rule(x: int32) {
+            ensures x == x implies x == x by {
+                intro();
+                assumption();
+            }
+        }
+
+        theorem intro_forall_rule() {
+            ensures forall (int32 k) { k == k } by {
+                intro();
+                normalize();
+            }
+        }
+
+        theorem vacuous_rule(x: int32) {
+            requires not (x != x);
+            ensures x != x implies x == 0 by {
+                vacuous();
+            }
+        }
+
+        theorem contradiction_rule(x: int32) {
+            requires x == 0;
+            requires not (x == 0);
+            ensures x == 1 by {
+                contradiction(x == 0);
+            }
+        }
+    "#;
+
+    let verified = verify_click_theorems(source).expect("logical tactics should verify");
+    assert_eq!(verified.len(), 8);
+    assert!(verified.iter().all(|theorem| {
+        theorem.proof_kind == ProofKind::TacticScript
+            && theorem
+                .proof_tactics
+                .as_ref()
+                .is_some_and(|tactics| TacticCertificate::from_proof_tactics(tactics).is_ok())
+    }));
+}
+
+#[test]
 fn parses_symbolic_loadable_bytes() {
     let source = r#"
             verifying "fill.c";

@@ -20,6 +20,12 @@ tactics run.
 | `step()` | Advance one small C transition when every execution prerequisite is exact or context-free; do not transport facts automatically. |
 | `assumption()` | Close a pure goal only when that exact fact is present. |
 | `normalize()` | Close a goal by context-free computation and structural normalization. |
+| `intro()` | Replace one implication goal with its consequent while assuming its antecedent, or replace one universal goal with its body. |
+| `conjunction()` | Close a conjunction goal when both conjuncts are exact facts. |
+| `left()` / `right()` | Close a disjunction goal from the selected exact disjunct. |
+| `double_negation()` | Close `not (not P)` from the exact fact `P`. |
+| `vacuous()` | Close an implication from the exact negation of its antecedent. |
+| `contradiction(P)` | Close any pure goal when both `P` and `not P` are exact facts. |
 | `rewrite(equality)` | Rewrite the current pure goal once using an exact available equality. |
 | `transport(source, target)` | Apply one certified frame-transport rule from an exact source fact to the explicitly stated target fact. |
 | `apply(theorem(args))` | Instantiate one theorem, require each premise exactly or by context-free normalization, and add its conclusions. |
@@ -40,6 +46,11 @@ For example, a context containing `x > 0` does not let `apply` silently satisfy
 a premise `x >= 0`. Establish `x >= 0` first, then apply the theorem. A premise
 such as `0 >= 0` may be accepted directly because it normalizes to true without
 using the context.
+
+The logical introduction tactics operate only while a pure goal is active,
+including inside `have ... by`. They do not search for their premises. Expanded
+proofs can therefore establish required premises with earlier `have` or
+`apply` tactics and then invoke exactly one logical rule.
 
 ## Smart Tactics
 
