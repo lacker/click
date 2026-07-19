@@ -2740,6 +2740,125 @@ pub(super) fn prove_effect_clause_exact(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
+pub(super) fn plan_effect_clause_derivations(
+    claim_label: &str,
+    path_index: usize,
+    execution_pure_facts: &[crate::kernel::ExecutionPureFact],
+    available_pure_facts: &[Proposition],
+    effect: &Effect,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    pre_state: &CState,
+    outcome: &CFunctionOutcome,
+) -> Result<Vec<PropositionDerivation>, ClickError> {
+    let CFunctionOutcome::Return { .. } = outcome else {
+        return Err(ClickError::new(format!(
+            "`{claim_label}` failed on path {path_index}: {}",
+            describe_function_outcome(outcome, parameters, arguments)
+        )));
+    };
+    let segments = match effect {
+        Effect::Immutable => Vec::new(),
+        Effect::Mutable(segments) => segments
+            .iter()
+            .map(|segment| {
+                evaluate_effect_segment(
+                    parameters,
+                    arguments,
+                    pre_state,
+                    available_pure_facts,
+                    segment,
+                )
+                .map_err(|message| {
+                    ClickError::new(format!(
+                        "`{claim_label}` failed on path {path_index}: could not evaluate mutable segment `{}`: {message}",
+                        describe_contract_segment(segment)
+                    ))
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?,
+    };
+    let mut effect_facts = execution_pure_facts.to_vec();
+    effect_facts.extend(
+        available_pure_facts
+            .iter()
+            .filter(|proposition| {
+                matches!(
+                    proposition,
+                    Proposition::CMemoryMutatesOnly { .. }
+                        | Proposition::CMemoryEffectSummary { .. }
+                )
+            })
+            .cloned()
+            .map(ExecutionPureFact::new),
+    );
+    let mut reasoning_facts = available_pure_facts.to_vec();
+    reasoning_facts.extend(effect_facts.iter().map(|fact| fact.proposition().clone()));
+    let assumptions = assumptions_from_propositions(&reasoning_facts);
+    let mut derivations = Vec::new();
+    let mut writes = memory_effect_write_pointers(&effect_facts);
+    writes.retain(is_effect_relevant_pointer);
+
+    for pointer in &writes {
+        let Some(selected) = segments.iter().find_map(|segment| {
+            let goals = pointer_containment_goals(segment, pointer, &assumptions)?;
+            goals
+                .into_iter()
+                .map(|goal| assumptions.derive_proposition(&goal))
+                .collect::<Option<Vec<_>>>()
+        }) else {
+            return Err(ClickError::new(format!(
+                "`{claim_label}` failed on path {path_index}: write to `{}` is outside the mutable footprint",
+                describe_pointer(pointer, parameters, arguments)
+            )));
+        };
+        append_unique_derivations(&mut derivations, selected);
+    }
+
+    for range in effect_facts
+        .iter()
+        .filter_map(|fact| match fact.proposition() {
+            Proposition::CMemoryEffectSummary { mutable_ranges, .. } => {
+                Some(mutable_ranges.as_slice())
+            }
+            _ => None,
+        })
+        .flatten()
+        .filter(|range| is_effect_relevant_pointer(range.base()))
+    {
+        let Some(selected) = segments.iter().find_map(|segment| {
+            let goals = range_containment_goals(segment, range, &assumptions)?;
+            goals
+                .into_iter()
+                .map(|goal| assumptions.derive_proposition(&goal))
+                .collect::<Option<Vec<_>>>()
+        }) else {
+            return Err(ClickError::new(format!(
+                "`{claim_label}` failed on path {path_index}: effect summary range `{}` is outside the mutable footprint",
+                describe_memory_range(range, parameters, arguments)
+            )));
+        };
+        append_unique_derivations(&mut derivations, selected);
+    }
+
+    Ok(derivations)
+}
+
+fn append_unique_derivations(
+    derivations: &mut Vec<PropositionDerivation>,
+    additional: Vec<PropositionDerivation>,
+) {
+    for derivation in additional {
+        if !derivations
+            .iter()
+            .any(|existing| existing.conclusion() == derivation.conclusion())
+        {
+            derivations.push(derivation);
+        }
+    }
+}
+
 pub(super) fn prove_ensure_proposition(
     ensure_label: &str,
     path_index: usize,
@@ -3119,6 +3238,21 @@ fn segment_contains_pointer_exact(
     )
 }
 
+fn pointer_containment_goals(
+    segment: &EvaluatedContractSegment,
+    pointer: &Pointer,
+    assumptions: &Assumptions,
+) -> Option<[Proposition; 2]> {
+    let index = pointer_element_index_from_base(pointer, &segment.base, assumptions)?;
+    Some([
+        Proposition::ConditionIs(
+            signed_less_equal(segment.start.clone(), index.clone()),
+            true,
+        ),
+        Proposition::ConditionIs(signed_less_than(index, segment.end.clone()), true),
+    ])
+}
+
 fn segment_contains_range_exact(
     segment: &EvaluatedContractSegment,
     range: &CMemoryRange,
@@ -3138,6 +3272,20 @@ fn segment_contains_range_exact(
         &Proposition::ConditionIs(signed_less_equal(range_end, segment.end.clone()), true),
         available,
     )
+}
+
+fn range_containment_goals(
+    segment: &EvaluatedContractSegment,
+    range: &CMemoryRange,
+    assumptions: &Assumptions,
+) -> Option<[Proposition; 2]> {
+    let base_index = pointer_element_index_from_base(range.base(), &segment.base, assumptions)?;
+    let range_start = bitvector32_add(base_index.clone(), range.start().clone());
+    let range_end = bitvector32_add(base_index, range.end().clone());
+    Some([
+        Proposition::ConditionIs(signed_less_equal(segment.start.clone(), range_start), true),
+        Proposition::ConditionIs(signed_less_equal(range_end, segment.end.clone()), true),
+    ])
 }
 
 pub(super) fn is_effect_relevant_pointer(pointer: &Pointer) -> bool {

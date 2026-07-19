@@ -520,6 +520,7 @@ pub enum ProofTactic {
     ExecuteRest,
     ExecuteUntil(CodeRegionRef),
     BoundedExecute,
+    ContextualFrame,
     Frame(Option<CodeRegionRef>),
     UnfoldPredicate(String),
     UnfoldResource(ResourceClause),
@@ -549,6 +550,7 @@ pub enum ProofTactic {
         facts: Vec<Proposition>,
         theorem: Theorem,
     },
+    CertifiedFrame(Vec<Vec<PropositionDerivation>>),
     CertifiedAlternatives(Vec<TacticCertificate>),
     Simp,
 }
@@ -574,6 +576,7 @@ pub enum SimpleTactic {
     CertifiedFactTransport,
     CertifiedFactTransportFinish,
     CertifiedPathAssumption,
+    CertifiedFrame,
     FoldResource,
     Frame,
 }
@@ -769,6 +772,7 @@ impl ProofTactic {
             Self::CertifiedPathAssumption { .. } => {
                 TacticClass::Simple(SimpleTactic::CertifiedPathAssumption)
             }
+            Self::CertifiedFrame(_) => TacticClass::Simple(SimpleTactic::CertifiedFrame),
             Self::FoldResource(_) => TacticClass::Simple(SimpleTactic::FoldResource),
             Self::Frame(_) => TacticClass::Simple(SimpleTactic::Frame),
             Self::ExecuteStep => TacticClass::Smart(SmartTacticKind::ExecuteStep),
@@ -777,6 +781,7 @@ impl ProofTactic {
             Self::ExecuteRest => TacticClass::Smart(SmartTacticKind::ExecuteRest),
             Self::ExecuteUntil(_) => TacticClass::Smart(SmartTacticKind::ExecuteUntil),
             Self::BoundedExecute => TacticClass::Smart(SmartTacticKind::BoundedExecute),
+            Self::ContextualFrame => TacticClass::Smart(SmartTacticKind::Frame),
             Self::Simp => TacticClass::Smart(SmartTacticKind::Simp),
             Self::Have(_) => TacticClass::ControlFlow(ControlFlowTactic::Have),
             Self::If(_) => TacticClass::ControlFlow(ControlFlowTactic::If),

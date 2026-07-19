@@ -1348,6 +1348,14 @@ fn parses_and_classifies_simple_and_smart_tactics() {
         TacticClass::Simple(SimpleTactic::Frame)
     ));
     assert!(matches!(
+        ProofTactic::ContextualFrame.class(),
+        TacticClass::Smart(SmartTacticKind::Frame)
+    ));
+    assert!(matches!(
+        ProofTactic::CertifiedFrame(Vec::new()).class(),
+        TacticClass::Simple(SimpleTactic::CertifiedFrame)
+    ));
+    assert!(matches!(
         ProofTactic::ExecuteThenStep.class(),
         TacticClass::Smart(SmartTacticKind::ExecuteThenStep)
     ));

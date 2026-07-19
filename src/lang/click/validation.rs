@@ -2210,6 +2210,7 @@ fn validate_pure_theorem_tactics(
             | ProofTactic::CertifiedFactTransport { .. }
             | ProofTactic::FinishCertifiedFactTransports(_)
             | ProofTactic::CertifiedPathAssumption { .. }
+            | ProofTactic::CertifiedFrame(_)
             | ProofTactic::CertifiedAlternatives(_)
             | ProofTactic::ExecuteStep
             | ProofTactic::ExecuteThenStep
@@ -2217,6 +2218,7 @@ fn validate_pure_theorem_tactics(
             | ProofTactic::ExecuteRest
             | ProofTactic::ExecuteUntil(_)
             | ProofTactic::BoundedExecute
+            | ProofTactic::ContextualFrame
             | ProofTactic::Frame(_)
             | ProofTactic::ObserveResource(_)
             | ProofTactic::Transport { .. }
@@ -2248,6 +2250,7 @@ pub(super) fn tactic_name(tactic: &ProofTactic) -> &'static str {
         ProofTactic::ExecuteRest => "execute_rest",
         ProofTactic::ExecuteUntil(_) => "execute_until",
         ProofTactic::BoundedExecute => "bounded_execute",
+        ProofTactic::ContextualFrame => "frame",
         ProofTactic::Frame(_) => "frame",
         ProofTactic::UnfoldPredicate(_) | ProofTactic::UnfoldResource(_) => "unfold",
         ProofTactic::FoldResource(_) => "fold",
@@ -2266,6 +2269,7 @@ pub(super) fn tactic_name(tactic: &ProofTactic) -> &'static str {
         ProofTactic::CertifiedFactTransport { .. } => "certified_fact_transport",
         ProofTactic::FinishCertifiedFactTransports(_) => "finish_certified_fact_transports",
         ProofTactic::CertifiedPathAssumption { .. } => "certified_path_assumption",
+        ProofTactic::CertifiedFrame(_) => "certified_frame",
         ProofTactic::CertifiedAlternatives(_) => "certified_alternatives",
         ProofTactic::Simp => "simp",
     }

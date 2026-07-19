@@ -1481,61 +1481,8 @@ pub(super) fn prove_claim_by_frame(
         )));
     }
 
-    let (state, arguments, requirement_pure_facts) = initial_claim_context(
-        function_block,
-        parsed_function,
-        resource_environment,
-        predicate_environment,
-        click_function_environment,
-        claim_label,
-    )?;
-    let function = annotated_function(
-        function_block,
-        parsed_function,
-        &state,
-        &arguments,
-        predicate_environment,
-        click_function_environment,
-        resource_environment,
-    )?;
-    let assumptions = assumptions_from_propositions(&requirement_pure_facts);
-    let execution = prove_symbolic_c_function_verification_paths_with_environment(
-        state.clone(),
-        function.clone(),
-        arguments.clone(),
-        assumptions,
-        function_environment.clone(),
-        CExecutionSemantics::APPLY_VERIFIED_RULES,
-    );
-    if let Some(error) = execution_obligation_error_for_tactic(
-        "frame",
-        &execution,
-        claim_label,
-        &requirement_pure_facts,
-        state.resources().facts(),
-        parsed_function.parameters(),
-        &arguments,
-    ) {
-        return Err(error);
-    }
-
-    let theorems = prove_claim_from_execution(
-        &execution,
-        AutoExecutionKind::Frame,
-        source_path,
-        function_block,
-        claim,
-        claim_label,
-        parsed_function.parameters(),
-        &function,
-        &state,
-        &arguments,
-        &requirement_pure_facts,
-        predicate_environment,
-        click_function_environment,
-        resource_environment,
-    )?;
-    let proof_tactics = certified_proof_tactics(
+    let tactics = [ProofTactic::ExecuteRest, ProofTactic::ContextualFrame];
+    let mut theorems = prove_claim_by_tactics(
         source_path,
         function_block,
         parsed_function,
@@ -1546,9 +1493,12 @@ pub(super) fn prove_claim_by_frame(
         click_function_environment,
         resource_environment,
         theorem_environment,
-        frame_tactic_candidates(),
-    );
-    Ok(with_proof_tactics(theorems, proof_tactics))
+        &tactics,
+    )?;
+    for theorem in &mut theorems {
+        theorem.proof_kind = ProofKind::Frame;
+    }
+    Ok(theorems)
 }
 
 pub(super) fn prove_claim_by_simp(
@@ -1739,6 +1689,7 @@ enum PostExecutionTactic {
     Normalize,
     Rewrite(ClickProposition),
     Frame,
+    CertifiedFrame(Vec<Vec<PropositionDerivation>>),
     Simp,
 }
 
@@ -4279,6 +4230,50 @@ fn finish_ordered_proof_replay(
                             closed_claims[claim_index] = true;
                         }
                     }
+                    PostExecutionTactic::CertifiedFrame(path_derivations) => {
+                        let derivations = path_derivations.get(path_index).ok_or_else(|| {
+                            ClickError::new(format!(
+                                "`{proof_label}` path {path_index}, tactic {tactic_index}: certified frame has no derivations for this execution path"
+                            ))
+                        })?;
+                        let mut frame_facts = path_requirements.clone();
+                        frame_facts.extend(
+                            path.execution_facts()
+                                .iter()
+                                .map(|fact| fact.proposition().clone()),
+                        );
+                        let assumptions = assumptions_from_propositions(&frame_facts);
+                        for derivation in derivations {
+                            if !derivation.replay(&assumptions) {
+                                return Err(ClickError::new(format!(
+                                    "`{proof_label}` path {path_index}, tactic {tactic_index}: certified frame derivation did not replay for {:?}",
+                                    derivation.conclusion()
+                                )));
+                            }
+                            if !path_requirements.contains(derivation.conclusion()) {
+                                path_requirements.push(derivation.conclusion().clone());
+                            }
+                        }
+                        for (claim_index, claim) in claims.iter().enumerate() {
+                            if !matches!(claim, FunctionClaimRef::Effect(_, _)) {
+                                continue;
+                            }
+                            let claim_label =
+                                function_claim_label(function_block.signature().name(), claim);
+                            check_effect_claim_exact(
+                                &claim_label,
+                                path_index,
+                                &path.execution_facts(),
+                                &path_requirements,
+                                claim,
+                                parsed_function.parameters(),
+                                arguments,
+                                pre_state,
+                                &outcome,
+                            )?;
+                            closed_claims[claim_index] = true;
+                        }
+                    }
                     PostExecutionTactic::Simp => {
                         for (claim_index, claim) in claims.iter().enumerate() {
                             if closed_claims[claim_index]
@@ -5083,6 +5078,83 @@ fn replay_linear_tactics(
                 branch_path = result.branch_path;
                 assumptions = assumptions_from_propositions(&requirement_pure_facts);
             }
+            ProofTactic::ContextualFrame => {
+                require_function_exit(&replay, claim_label, tactic_index, "frame")?;
+                let Some(effect_claim) = claims
+                    .iter()
+                    .find(|claim| matches!(claim, FunctionClaimRef::Effect(_, _)))
+                else {
+                    return Err(ClickError::new(format!(
+                        "`{claim_label}` tactic {tactic_index}: `frame` has no effect claim to prove"
+                    )));
+                };
+                let FunctionClaimRef::Effect(_, effect_clause) = effect_claim else {
+                    unreachable!("selected claim must be an effect claim")
+                };
+                let execution = replay
+                    .execution()
+                    .expect("function-exit replay should contain an execution");
+                let pre_state = replay.execution_start_state(&state);
+                let mut path_derivations = Vec::with_capacity(execution.paths().len());
+                for (path_index, path) in execution.paths().iter().enumerate() {
+                    if !path.obligations().is_empty() {
+                        return Err(ClickError::new(format!(
+                            "`{claim_label}` tactic {tactic_index}: `frame` cannot plan from an execution path with unresolved obligations"
+                        )));
+                    }
+                    let Proposition::CFunctionExecutes { outcome, .. } =
+                        implication_body(path.theorem().proposition())
+                    else {
+                        return Err(ClickError::new(format!(
+                            "`{claim_label}` tactic {tactic_index}: `frame` saw an unexpected execution theorem"
+                        )));
+                    };
+                    let mut path_facts = requirement_pure_facts.clone();
+                    path_facts.extend(path.facts().iter().map(|fact| fact.proposition().clone()));
+                    path_derivations.push(plan_effect_clause_derivations(
+                        claim_label,
+                        path_index,
+                        &path.execution_facts(),
+                        &path_facts,
+                        effect_clause.effect(),
+                        parsed_function.parameters(),
+                        arguments,
+                        pre_state,
+                        outcome,
+                    )?);
+                }
+                let certificate =
+                    TacticCertificate::from_proof_tactics(&[ProofTactic::CertifiedFrame(
+                        path_derivations,
+                    )])
+                    .expect("certified frame is a simple tactic");
+                let result = replay_execution_tactic_certificate(
+                    ProofReplayContext {
+                        state,
+                        pure_facts: requirement_pure_facts,
+                        replay,
+                        branch_path,
+                    },
+                    function_block,
+                    parsed_function,
+                    claims,
+                    claim_label,
+                    function_environment,
+                    predicate_environment,
+                    click_function_environment,
+                    resource_environment,
+                    theorem_environment,
+                    function,
+                    arguments,
+                    tactic_index,
+                    &certificate,
+                )?;
+                state = result.state;
+                requirement_pure_facts = result.pure_facts;
+                replay = result.replay;
+                branch_path = result.branch_path;
+                assumptions = assumptions_from_propositions(&requirement_pure_facts);
+            }
             ProofTactic::Frame(region_ref) => {
                 require_function_exit(&replay, claim_label, tactic_index, "frame")?;
                 let code_region = region_ref
@@ -5173,6 +5245,13 @@ fn replay_linear_tactics(
                     }
                 }
                 replay.frames.insert(region_ref.clone());
+            }
+            ProofTactic::CertifiedFrame(path_derivations) => {
+                require_function_exit(&replay, claim_label, tactic_index, "certified_frame")?;
+                replay.post_execution_tactics.push((
+                    tactic_index,
+                    PostExecutionTactic::CertifiedFrame(path_derivations.clone()),
+                ));
             }
             ProofTactic::UnfoldPredicate(name) => {
                 if predicate_environment.get(name).is_none() {
@@ -9024,21 +9103,18 @@ fn check_effect_claim_exact(
 }
 
 enum AutoExecutionKind {
-    Frame,
     LoopVerification,
 }
 
 impl AutoExecutionKind {
     fn proof_kind(&self) -> ProofKind {
         match self {
-            Self::Frame => ProofKind::Frame,
             Self::LoopVerification => ProofKind::LoopVerification,
         }
     }
 
     fn tactic_name(&self) -> &'static str {
         match self {
-            Self::Frame => "frame",
             Self::LoopVerification => "auto",
         }
     }
@@ -9125,10 +9201,6 @@ fn certified_proof_tactics(
         )
         .is_ok()
     })
-}
-
-fn frame_tactic_candidates() -> Vec<Vec<ProofTactic>> {
-    vec![vec![ProofTactic::ExecuteRest, ProofTactic::Frame(None)]]
 }
 
 fn bounded_execution_tactic_candidates(claim: &FunctionClaimRef<'_>) -> Vec<Vec<ProofTactic>> {
@@ -9323,17 +9395,13 @@ fn prove_claim_from_execution(
             path_requirements,
             outcome.clone(),
         );
-        let theorem = match execution_kind {
-            AutoExecutionKind::Frame | AutoExecutionKind::LoopVerification => {
-                prove_c_function_satisfies_specification_from_symbolic_path(
-                    function.clone(),
-                    specification.clone(),
-                    Assumptions::new(),
-                    path.facts(),
-                    path.obligations(),
-                )
-            }
-        };
+        let theorem = prove_c_function_satisfies_specification_from_symbolic_path(
+            function.clone(),
+            specification.clone(),
+            Assumptions::new(),
+            path.facts(),
+            path.obligations(),
+        );
 
         verified.push(VerifiedCTheorem {
             source_path: source_path.to_string(),

@@ -63,6 +63,8 @@ tactic's simple certificate. The internal conversion is being introduced one
 smart tactic at a time; `simp`, `execute_step`, `execute_then_step`, and
 `execute_else_step` are certificate-backed. `execute_until` is also
 certificate-backed, as are `bounded_execute` and `execute_rest`.
+The contextual `by frame` prover is certificate-backed as well; explicit
+`frame()` remains the exact simple tactic.
 
 ## Tactic Certificates
 
@@ -114,6 +116,11 @@ partially explored branch set directly.
 prefix. If it reaches unresolved control flow, it finishes with the same
 explicit certificate alternatives used by `bounded_execute`. Consequently,
 there is no whole-function execution leaf that bypasses one-step replay.
+
+`by frame` plans path-specific proposition derivations establishing that every
+certified write and effect-summary range lies inside the declared mutable
+footprint. Replay checks those derivations against the corresponding execution
+path and then applies the same exact footprint rule used by `frame()`.
 
 ## Statement Execution
 
