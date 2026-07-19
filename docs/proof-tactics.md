@@ -107,6 +107,10 @@ certificate replay. `VerifiedCTheorem::expanded_proof_tactics()` returns the
 surface sequence when every internal item was lowered, while
 `expansion_blocker()` identifies the first unsupported item. This trace does
 not participate in verification; it observes the same successful replay.
+`format_tactic_certificate()` prints a validated certificate as a canonical,
+parseable `by { ... }` clause. `format_proof_tactics()` first validates a raw
+tactic slice, so smart tactics and private replay evidence cannot be printed
+as expanded Click source.
 One-step execution uses only the context premises named by its recorded
 proposition derivations. Atomic comparison transport is emitted as an explicit
 `transport` whose source is named at the preceding statement-entry snapshot;

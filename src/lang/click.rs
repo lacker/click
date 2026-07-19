@@ -37,11 +37,13 @@ mod checking;
 mod diagnostics;
 mod lowering;
 mod parser;
+mod printing;
 mod proof;
 mod validation;
 use checking::*;
 use lowering::*;
 use parser::ContractLetBinding;
+pub use printing::{format_proof_tactics, format_tactic_certificate};
 use proof::*;
 use validation::{
     combined_click_function_definitions, combined_predicate_definitions,

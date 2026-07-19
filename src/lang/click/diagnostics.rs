@@ -777,11 +777,13 @@ pub(super) fn describe_click_proposition(proposition: &ClickProposition) -> Stri
             describe_binary_click_proposition(left, "=>", right)
         }
         ClickProposition::ForAll { c_type, name, body } => format!(
-            "forall ({c_type:?} {name}) {{ {} }}",
+            "forall ({} {name}) {{ {} }}",
+            describe_c0_type(*c_type),
             describe_click_proposition(body)
         ),
         ClickProposition::Exists { c_type, name, body } => format!(
-            "exists ({c_type:?} {name}) {{ {} }}",
+            "exists ({} {name}) {{ {} }}",
+            describe_c0_type(*c_type),
             describe_click_proposition(body)
         ),
         ClickProposition::RangeAll {

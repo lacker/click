@@ -1643,6 +1643,46 @@ fn parses_and_classifies_simple_and_smart_tactics() {
 }
 
 #[test]
+fn canonical_tactic_printer_round_trips_nested_surface_certificate() {
+    let nonnegative = ClickProposition::Comparison {
+        left: ContractExpression::CFragment(CExpression::Variable("x".to_string())),
+        operator: ComparisonOperator::GreaterEqual,
+        right: ContractExpression::CFragment(CExpression::Value(int32(0))),
+    };
+    let tactics = vec![
+        ProofTactic::StepUsing(vec![nonnegative.clone()]),
+        ProofTactic::If(ProofIf {
+            condition: nonnegative.clone(),
+            then_tactics: vec![ProofTactic::Have(ProofHave {
+                proposition: nonnegative.clone(),
+                proof: Proof::Script(vec![ProofTactic::Derive(ProofDerive {
+                    proposition: nonnegative.clone(),
+                    premises: vec![nonnegative.clone()],
+                })]),
+            })],
+            else_tactics: vec![ProofTactic::Normalize],
+        }),
+    ];
+    let certificate = TacticCertificate::from_proof_tactics(&tactics)
+        .expect("test tactics should form a surface certificate");
+    let printed = format_tactic_certificate(&certificate);
+    let source = format!(
+        r#"
+            verifying "printer.c";
+
+            int32 printer(int32 x) {{
+                ensures x == x;
+            }} {printed}
+        "#
+    );
+    let parsed = parse(&source).expect("printed certificate should parse");
+    assert_eq!(
+        parsed.function_blocks()[0].grouped_proof(),
+        Some(&Proof::Script(tactics))
+    );
+}
+
+#[test]
 fn tactic_certificate_accepts_only_simple_tactics() {
     let tactics = vec![
         ProofTactic::Rewrite(ClickProposition::Comparison {
