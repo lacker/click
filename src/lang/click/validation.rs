@@ -2191,6 +2191,7 @@ fn validate_pure_theorem_tactics(
             | ProofTactic::Assumption
             | ProofTactic::Normalize
             | ProofTactic::Rewrite(_)
+            | ProofTactic::ExactPropositionDerivation(_)
             | ProofTactic::Simp => {}
             ProofTactic::If(proof_if) => {
                 validate_pure_theorem_tactics(theorem_name, &proof_if.then_tactics)?;
@@ -2249,6 +2250,7 @@ pub(super) fn tactic_name(tactic: &ProofTactic) -> &'static str {
         ProofTactic::Normalize => "normalize",
         ProofTactic::Rewrite(_) => "rewrite",
         ProofTactic::Transport { .. } => "transport",
+        ProofTactic::ExactPropositionDerivation(_) => "exact_proposition_derivation",
         ProofTactic::Simp => "simp",
     }
 }

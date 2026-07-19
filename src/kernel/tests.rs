@@ -40,6 +40,42 @@ fn write_context(
     ResourceContext::new().unchecked_with_fact(write_element(base, start, end))
 }
 
+fn assert_replayable_derivation(assumptions: &Assumptions, proposition: &Proposition) {
+    let derivation = assumptions
+        .derive_proposition(proposition)
+        .expect("expected an explicit proposition derivation");
+    assert_eq!(derivation.conclusion(), proposition);
+    assert!(
+        derivation.replay(assumptions),
+        "explicit proposition derivation must replay"
+    );
+}
+
+#[test]
+fn proposition_derivation_proves_implication_from_false_antecedent() {
+    let condition = ConditionTerm::equal(
+        Bitvector32Term::Variable(Variable(1)),
+        Bitvector32Term::Constant(0),
+    );
+    let antecedent = Proposition::ConditionIs(condition.clone(), false);
+    let conclusion = Proposition::Implies(
+        Box::new(antecedent),
+        Box::new(Proposition::ConditionIs(
+            ConditionTerm::equal(
+                Bitvector32Term::Variable(Variable(2)),
+                Bitvector32Term::Variable(Variable(3)),
+            ),
+            true,
+        )),
+    );
+    let assumptions = Assumptions::new().assume_condition(condition, true);
+
+    let derivation = assumptions
+        .derive_simp_proposition(&conclusion)
+        .expect("a false antecedent should prove an implication");
+    assert!(derivation.replay(&assumptions));
+}
+
 #[test]
 fn bitwise_xor_normalizes_swap_identities() {
     let x = Bitvector32Term::Variable(Variable(1));
@@ -1268,6 +1304,22 @@ fn builtin_obligation_solver_proves_trivial_props() {
 }
 
 #[test]
+fn proposition_derivation_replay_requires_its_context() {
+    let x = Bitvector32Term::Variable(Variable(86));
+    let proposition = Proposition::ConditionIs(
+        ConditionTerm::signed_greater_equal(x, Bitvector32Term::Constant(0)),
+        true,
+    );
+    let assumptions = Assumptions::new().assume_proposition(proposition.clone());
+    let derivation = assumptions
+        .derive_simp_proposition(&proposition)
+        .expect("exact fact should produce a derivation");
+
+    assert!(derivation.replay(&assumptions));
+    assert!(!derivation.replay(&Assumptions::new()));
+}
+
+#[test]
 fn assumptions_split_small_finite_context_variable() {
     let j = Bitvector32Term::Variable(Variable(87));
     let assumptions = Assumptions::new()
@@ -1291,6 +1343,37 @@ fn assumptions_split_small_finite_context_variable() {
     );
 
     assert!(assumptions.proves(&proposition));
+    assert_replayable_derivation(&assumptions, &proposition);
+}
+
+#[test]
+fn proposition_derivation_composes_case_split_conjuncts() {
+    let j = Bitvector32Term::Variable(Variable(187));
+    let assumptions = Assumptions::new()
+        .assume_condition(
+            ConditionTerm::signed_greater_equal(j.clone(), Bitvector32Term::Constant(0)),
+            true,
+        )
+        .assume_condition(
+            ConditionTerm::signed_less_than(j.clone(), Bitvector32Term::Constant(2)),
+            true,
+        );
+    let finite_choice = Proposition::Or(
+        Box::new(Proposition::ConditionIs(
+            ConditionTerm::equal(j, Bitvector32Term::Constant(0)),
+            true,
+        )),
+        Box::new(Proposition::ConditionIs(
+            ConditionTerm::equal(
+                Bitvector32Term::Variable(Variable(187)),
+                Bitvector32Term::Constant(1),
+            ),
+            true,
+        )),
+    );
+    let proposition = Proposition::And(Box::new(finite_choice.clone()), Box::new(finite_choice));
+
+    assert_replayable_derivation(&assumptions, &proposition);
 }
 
 #[test]
@@ -1360,7 +1443,9 @@ fn assumptions_prove_by_bounded_disjunction_cases() {
         Box::new(x_is_one.clone()),
     ));
 
-    assert!(assumptions.proves(&Proposition::Or(Box::new(x_is_one), Box::new(x_is_zero),)));
+    let proposition = Proposition::Or(Box::new(x_is_one), Box::new(x_is_zero));
+    assert!(assumptions.proves(&proposition));
+    assert_replayable_derivation(&assumptions, &proposition);
 }
 
 #[test]

@@ -216,25 +216,25 @@ fn verify_theorem_ensure(
             })
         }
         Proof::Tactic(SmartTactic::Simp) => {
-            prove_pure_theorem_goal(
+            let assumptions = assumptions_from_propositions(&context.requires);
+            let certificate = plan_simp_certificate(&goal, &assumptions)
+                .ok_or_else(|| ClickError::new(format!("`simp` failed for `{claim_label}`")))?;
+            replay_pure_theorem_certificate(
                 claim_label,
-                "simp",
                 &context.requires,
                 &goal,
                 predicate_environment,
                 click_function_environment,
                 theorem_environment,
                 context,
-                &[],
-                &[],
-                true,
+                &certificate,
             )?;
             Ok(VerifiedPureTheorem {
                 theorem_definition: theorem.clone(),
                 ensure_index,
                 ensure_clause: ensure_clause.clone(),
                 proof_kind: ProofKind::Simp,
-                proof_tactics: None,
+                proof_tactics: Some(certificate.tactics().to_vec()),
                 requires: context.requires.clone(),
                 conclusion: goal,
             })
@@ -271,9 +271,7 @@ fn verify_theorem_ensure(
     }
 }
 
-/// Replay is kept separate from ordinary script verification until the first
-/// smart tactic is migrated to produce certificates.
-#[allow(dead_code)]
+/// Replay a validated certificate through the ordinary pure-tactic executor.
 #[allow(clippy::too_many_arguments)]
 fn replay_pure_theorem_certificate(
     claim_label: &str,
@@ -881,6 +879,15 @@ fn prove_pure_theorem_tactics(
                     click_function_environment,
                     &unfolded_predicates,
                 )?;
+            }
+            ProofTactic::ExactPropositionDerivation(derivation) => {
+                let assumptions = assumptions_from_propositions(&available);
+                if derivation.conclusion() != &goal || !derivation.replay(&assumptions) {
+                    return Err(ClickError::new(format!(
+                        "`{claim_label}` tactic {tactic_index}: proposition derivation did not replay"
+                    )));
+                }
+                closed = true;
             }
             ProofTactic::Assumption => {
                 if !available.contains(&goal) {
@@ -4829,6 +4836,12 @@ fn replay_linear_tactics(
                         .post_execution_tactics
                         .push((tactic_index, post_tactic));
                 }
+            }
+            ProofTactic::ExactPropositionDerivation(derivation) => {
+                return Err(ClickError::new(format!(
+                    "`{claim_label}` tactic {tactic_index}: internal exact proposition derivations are only valid for a current pure goal (got {:?})",
+                    derivation.conclusion()
+                )));
             }
             ProofTactic::Simp => {
                 if !replay.region_proof {

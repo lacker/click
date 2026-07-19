@@ -14,10 +14,10 @@ use crate::kernel::{
     CLoopEffectCheck, CLoopEffectSpan, CLoopInvariantCheck, CMemory, CMemoryRange, CMemorySegment,
     CResource, CResourceAccessMode, CResourceFact, CResourceSpec, CState, CStatement,
     CStatementOutcome, CType, CValue, CVerifiedLoopRule, ConditionTerm, ExecutionBudget,
-    ExecutionPureFact, Pointer, PointerOffsetTerm, ProofObligation, Proposition, ResourceContext,
-    ResourceContextValidityError, Sort, SpecExpression, SpecMemory, SpecPredicateArgument,
-    SpecProposition, SpecResource, SymbolicCExecution, Term, Theorem, Variable,
-    abstract_c_state_for_join, c_expression_definedness_proposition, c_function,
+    ExecutionPureFact, Pointer, PointerOffsetTerm, ProofObligation, Proposition,
+    PropositionDerivation, ResourceContext, ResourceContextValidityError, Sort, SpecExpression,
+    SpecMemory, SpecPredicateArgument, SpecProposition, SpecResource, SymbolicCExecution, Term,
+    Theorem, Variable, abstract_c_state_for_join, c_expression_definedness_proposition, c_function,
     c_function_entry_state, c_function_outcome_from_statement_outcome, c_function_specification,
     c_if, c_labeled_assert, c_loop_effects_hold_at_back_edge, c_loop_invariants_hold_at_back_edge,
     c_loop_invariants_hold_at_entry, c_loop_preservation_contexts,
@@ -534,6 +534,7 @@ pub enum ProofTactic {
         source: ClickProposition,
         target: ClickProposition,
     },
+    ExactPropositionDerivation(PropositionDerivation),
     Simp,
 }
 
@@ -550,6 +551,7 @@ pub enum SimpleTactic {
     Normalize,
     Rewrite,
     FactTransport,
+    ExactPropositionDerivation,
     FoldResource,
     Frame,
 }
@@ -713,6 +715,9 @@ impl ProofTactic {
             Self::Normalize => TacticClass::Simple(SimpleTactic::Normalize),
             Self::Rewrite(_) => TacticClass::Simple(SimpleTactic::Rewrite),
             Self::Transport { .. } => TacticClass::Simple(SimpleTactic::FactTransport),
+            Self::ExactPropositionDerivation(_) => {
+                TacticClass::Simple(SimpleTactic::ExactPropositionDerivation)
+            }
             Self::FoldResource(_) => TacticClass::Simple(SimpleTactic::FoldResource),
             Self::Frame(_) => TacticClass::Simple(SimpleTactic::Frame),
             Self::ExecuteStep => TacticClass::Smart(SmartTacticKind::ExecuteStep),

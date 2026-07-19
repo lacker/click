@@ -1989,6 +1989,283 @@ impl Assumptions {
             || self.proves_by_disjunction_cases(proposition)
     }
 
+    /// Search for an explicit proof tree for a contextual consequence.
+    ///
+    /// This is the proof-producing counterpart to [`Self::proves`]. Atomic
+    /// leaves retain the complete context used to check them; minimizing that
+    /// context would require repeated solver calls and is not part of proof
+    /// correctness.
+    pub fn derive_proposition(&self, proposition: &Proposition) -> Option<PropositionDerivation> {
+        self.derive_proposition_using(proposition, false)
+    }
+
+    pub fn derive_simp_proposition(
+        &self,
+        proposition: &Proposition,
+    ) -> Option<PropositionDerivation> {
+        self.derive_proposition_using(proposition, true)
+    }
+
+    fn derive_proposition_using(
+        &self,
+        proposition: &Proposition,
+        for_simp: bool,
+    ) -> Option<PropositionDerivation> {
+        if solve_builtin_prop(proposition) {
+            return Some(proposition_derivation(
+                proposition,
+                PropositionDerivationRule::ContextFree,
+            ));
+        }
+        if self.is_inconsistent() {
+            return Some(proposition_derivation(
+                proposition,
+                PropositionDerivationRule::Explosion {
+                    premises: self.clone(),
+                },
+            ));
+        }
+
+        let direct = match proposition {
+            Proposition::And(left, right) => self
+                .derive_proposition_using(left, for_simp)
+                .zip(self.derive_proposition_using(right, for_simp))
+                .map(|(left, right)| PropositionDerivationRule::And {
+                    left: Box::new(left),
+                    right: Box::new(right),
+                }),
+            Proposition::Or(left, right) => self
+                .derive_proposition_using(left, for_simp)
+                .map(|proof| PropositionDerivationRule::OrLeft(Box::new(proof)))
+                .or_else(|| {
+                    self.derive_proposition_using(right, for_simp)
+                        .map(|proof| PropositionDerivationRule::OrRight(Box::new(proof)))
+                }),
+            Proposition::Not(body) => match body.as_ref() {
+                Proposition::Not(inner) => self
+                    .derive_proposition_using(inner, for_simp)
+                    .map(|proof| PropositionDerivationRule::DoubleNegation(Box::new(proof))),
+                _ if self.proves_atomic_for_derivation(proposition, for_simp) => {
+                    Some(PropositionDerivationRule::ContextualAtomic {
+                        premises: self.clone(),
+                        for_simp,
+                    })
+                }
+                _ => None,
+            },
+            Proposition::Implies(left, right) => {
+                let antecedent = left.as_ref().clone();
+                self.clone()
+                    .assume_proposition(antecedent.clone())
+                    .derive_proposition_using(right, for_simp)
+                    .map(|body| PropositionDerivationRule::Implies {
+                        antecedent,
+                        body: Box::new(body),
+                    })
+                    .or_else(|| {
+                        self.derive_proposition_using(
+                            &Proposition::Not(Box::new(left.as_ref().clone())),
+                            for_simp,
+                        )
+                        .map(|proof| {
+                            PropositionDerivationRule::ImpliesFalseAntecedent(Box::new(proof))
+                        })
+                    })
+            }
+            Proposition::ForAll { body, .. } => self
+                .derive_finite_forall(proposition, for_simp)
+                .or_else(|| {
+                    self.derive_proposition_using(body, for_simp)
+                        .map(|proof| PropositionDerivationRule::ForAllBody(Box::new(proof)))
+                }),
+            _ if self.proves_atomic_for_derivation(proposition, for_simp) => {
+                Some(PropositionDerivationRule::ContextualAtomic {
+                    premises: self.clone(),
+                    for_simp,
+                })
+            }
+            _ => None,
+        };
+        if let Some(rule) = direct {
+            return Some(proposition_derivation(proposition, rule));
+        }
+        if let Some(rule) = self.derive_by_finite_context_split(proposition, for_simp) {
+            return Some(proposition_derivation(proposition, rule));
+        }
+        self.derive_by_disjunction_cases(proposition, for_simp)
+            .map(|rule| proposition_derivation(proposition, rule))
+    }
+
+    fn proves_atomic_without_search(&self, proposition: &Proposition) -> bool {
+        match proposition {
+            Proposition::ConditionIs(condition, value) => {
+                self.decide(condition) == Some(*value)
+                    || self.proves_condition_from_facts(condition, *value)
+            }
+            Proposition::Not(body) => match body.as_ref() {
+                Proposition::ConditionIs(condition, value) => {
+                    self.decide(condition) == Some(!*value)
+                }
+                _ => self.prop_facts.contains(proposition),
+            },
+            Proposition::CMemoryLoadable {
+                memory,
+                base,
+                bytes,
+            } => self.proves_memory_loadable(memory, base, bytes),
+            Proposition::CMemoryCanStore {
+                memory,
+                pointer,
+                byte_width,
+            } => self.proves_memory_access(memory, pointer, *byte_width),
+            Proposition::CMemoryDisjoint {
+                left_base,
+                left_start,
+                left_end,
+                right_base,
+                right_start,
+                right_end,
+            } => {
+                self.prop_facts.contains(proposition)
+                    || self.proves_memory_disjoint(
+                        left_base,
+                        left_start,
+                        left_end,
+                        right_base,
+                        right_start,
+                        right_end,
+                    )
+                    || self.proves_memory_disjoint_from_resource_separate(
+                        left_base,
+                        left_start,
+                        left_end,
+                        right_base,
+                        right_start,
+                        right_end,
+                    )
+            }
+            Proposition::CResourceSeparate { left, right } => {
+                self.prop_facts.contains(proposition) || self.proves_resource_separate(left, right)
+            }
+            Proposition::CResourceContains { parent, child } => {
+                self.prop_facts.contains(proposition)
+                    || self.proves_resource_contains(parent, child)
+            }
+            Proposition::And(_, _)
+            | Proposition::Or(_, _)
+            | Proposition::Implies(_, _)
+            | Proposition::ForAll { .. } => false,
+            _ => self.prop_facts.contains(proposition),
+        }
+    }
+
+    fn proves_atomic_for_derivation(&self, proposition: &Proposition, for_simp: bool) -> bool {
+        if for_simp
+            && let Proposition::ConditionIs(condition, value) = proposition
+            && self.decide_condition_for_simp(condition) == Some(*value)
+        {
+            return true;
+        }
+        self.proves_atomic_without_search(proposition)
+    }
+
+    fn derive_finite_forall(
+        &self,
+        proposition: &Proposition,
+        for_simp: bool,
+    ) -> Option<PropositionDerivationRule> {
+        let instances = self.finite_forall_instantiations(proposition);
+        if instances.is_empty() {
+            return None;
+        }
+        instances
+            .iter()
+            .map(|instance| self.derive_proposition_using(instance, for_simp))
+            .collect::<Option<Vec<_>>>()
+            .map(|instances| PropositionDerivationRule::FiniteForAll { instances })
+    }
+
+    fn derive_by_finite_context_split(
+        &self,
+        proposition: &Proposition,
+        for_simp: bool,
+    ) -> Option<PropositionDerivationRule> {
+        let mut variables = BTreeSet::new();
+        collect_proposition_bitvector_variables(proposition, &mut variables);
+        let mut candidates = variables
+            .into_iter()
+            .filter_map(|variable| {
+                self.finite_context_range(variable)
+                    .map(|range| (variable, range))
+            })
+            .filter(|(_, range)| range.lower <= range.upper)
+            .collect::<Vec<_>>();
+        candidates.sort_by_key(|(_, range)| range.upper - range.lower);
+
+        let (variable, range) = candidates.into_iter().next()?;
+        let width = usize::try_from(range.upper - range.lower + 1).ok()?;
+        if width > FINITE_CONTEXT_SPLIT_LIMIT {
+            return None;
+        }
+        let propositions = (range.lower..=range.upper)
+            .map(|value| {
+                substitute_bitvector_variable_in_proposition(
+                    proposition,
+                    variable,
+                    &signed_i64_bitvector_constant(value),
+                )
+            })
+            .collect::<Vec<_>>();
+        if propositions.iter().all(|instance| instance == proposition) {
+            return None;
+        }
+        let instances = propositions
+            .iter()
+            .map(|instance| self.derive_proposition_using(instance, for_simp))
+            .collect::<Option<Vec<_>>>()?;
+        Some(PropositionDerivationRule::FiniteContextSplit {
+            variable,
+            lower: range.lower,
+            upper: range.upper,
+            instances,
+        })
+    }
+
+    fn derive_by_disjunction_cases(
+        &self,
+        proposition: &Proposition,
+        for_simp: bool,
+    ) -> Option<PropositionDerivationRule> {
+        if !matches!(proposition, Proposition::Or(_, _)) {
+            return None;
+        }
+        for disjunction in &self.prop_facts {
+            let mut cases = Vec::new();
+            collect_or_cases(disjunction, &mut cases);
+            if cases.len() < 2 || cases.len() > DISJUNCTION_CASE_LIMIT {
+                continue;
+            }
+            let mut base = self.clone();
+            base.prop_facts.remove(disjunction);
+            let Some(proofs) = cases
+                .iter()
+                .map(|case| {
+                    base.clone()
+                        .assume_proposition(case.clone())
+                        .derive_proposition_using(proposition, for_simp)
+                })
+                .collect::<Option<Vec<_>>>()
+            else {
+                continue;
+            };
+            return Some(PropositionDerivationRule::DisjunctionCases {
+                disjunction: disjunction.clone(),
+                cases: proofs,
+            });
+        }
+        None
+    }
+
     pub(super) fn proves_by_disjunction_cases(&self, proposition: &Proposition) -> bool {
         if !matches!(proposition, Proposition::Or(_, _)) {
             return false;
@@ -3474,6 +3751,153 @@ impl Assumptions {
         )) == Some(true)
             && self.decide(&ConditionTerm::signed_less_equal(range_end, end.clone())) == Some(true)
     }
+}
+
+fn proposition_derivation(
+    conclusion: &Proposition,
+    rule: PropositionDerivationRule,
+) -> PropositionDerivation {
+    PropositionDerivation {
+        conclusion: conclusion.clone(),
+        rule,
+    }
+}
+
+impl PropositionDerivation {
+    /// Check this proof tree against an available context without searching for
+    /// alternate proofs.
+    pub fn replay(&self, available: &Assumptions) -> bool {
+        match &self.rule {
+            PropositionDerivationRule::ContextFree => solve_builtin_prop(&self.conclusion),
+            PropositionDerivationRule::ContextualAtomic { premises, for_simp } => {
+                available.includes(premises)
+                    && premises.proves_atomic_for_derivation(&self.conclusion, *for_simp)
+            }
+            PropositionDerivationRule::Explosion { premises } => {
+                available.includes(premises) && premises.is_inconsistent()
+            }
+            PropositionDerivationRule::And { left, right } => {
+                let Proposition::And(expected_left, expected_right) = &self.conclusion else {
+                    return false;
+                };
+                left.conclusion == **expected_left
+                    && right.conclusion == **expected_right
+                    && left.replay(available)
+                    && right.replay(available)
+            }
+            PropositionDerivationRule::OrLeft(proof) => {
+                let Proposition::Or(expected, _) = &self.conclusion else {
+                    return false;
+                };
+                proof.conclusion == **expected && proof.replay(available)
+            }
+            PropositionDerivationRule::OrRight(proof) => {
+                let Proposition::Or(_, expected) = &self.conclusion else {
+                    return false;
+                };
+                proof.conclusion == **expected && proof.replay(available)
+            }
+            PropositionDerivationRule::DoubleNegation(proof) => {
+                let Proposition::Not(body) = &self.conclusion else {
+                    return false;
+                };
+                let Proposition::Not(expected) = body.as_ref() else {
+                    return false;
+                };
+                proof.conclusion == **expected && proof.replay(available)
+            }
+            PropositionDerivationRule::Implies { antecedent, body } => {
+                let Proposition::Implies(expected_antecedent, expected_body) = &self.conclusion
+                else {
+                    return false;
+                };
+                antecedent == expected_antecedent.as_ref()
+                    && body.conclusion == **expected_body
+                    && body.replay(&available.clone().assume_proposition(antecedent.clone()))
+            }
+            PropositionDerivationRule::ImpliesFalseAntecedent(proof) => {
+                let Proposition::Implies(expected_antecedent, _) = &self.conclusion else {
+                    return false;
+                };
+                proof.conclusion == Proposition::Not(Box::new(expected_antecedent.as_ref().clone()))
+                    && proof.replay(available)
+            }
+            PropositionDerivationRule::ForAllBody(proof) => {
+                let Proposition::ForAll { body, .. } = &self.conclusion else {
+                    return false;
+                };
+                proof.conclusion == **body && proof.replay(available)
+            }
+            PropositionDerivationRule::FiniteForAll { instances } => {
+                let expected = available.finite_forall_instantiations(&self.conclusion);
+                !expected.is_empty()
+                    && derivations_match_propositions(instances, &expected)
+                    && instances.iter().all(|proof| proof.replay(available))
+            }
+            PropositionDerivationRule::FiniteContextSplit {
+                variable,
+                lower,
+                upper,
+                instances,
+            } => {
+                let Some(range) = available.finite_context_range(*variable) else {
+                    return false;
+                };
+                if range.lower != *lower || range.upper != *upper {
+                    return false;
+                }
+                let Ok(width) = usize::try_from(upper - lower + 1) else {
+                    return false;
+                };
+                if width > FINITE_CONTEXT_SPLIT_LIMIT {
+                    return false;
+                }
+                let expected = (*lower..=*upper)
+                    .map(|value| {
+                        substitute_bitvector_variable_in_proposition(
+                            &self.conclusion,
+                            *variable,
+                            &signed_i64_bitvector_constant(value),
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                derivations_match_propositions(instances, &expected)
+                    && instances.iter().all(|proof| proof.replay(available))
+            }
+            PropositionDerivationRule::DisjunctionCases { disjunction, cases } => {
+                if !matches!(self.conclusion, Proposition::Or(_, _))
+                    || !available.prop_facts.contains(disjunction)
+                {
+                    return false;
+                }
+                let mut expected_cases = Vec::new();
+                collect_or_cases(disjunction, &mut expected_cases);
+                if expected_cases.len() < 2
+                    || expected_cases.len() > DISJUNCTION_CASE_LIMIT
+                    || cases.len() != expected_cases.len()
+                {
+                    return false;
+                }
+                let mut base = available.clone();
+                base.prop_facts.remove(disjunction);
+                cases.iter().zip(expected_cases).all(|(proof, case)| {
+                    proof.conclusion == self.conclusion
+                        && proof.replay(&base.clone().assume_proposition(case))
+                })
+            }
+        }
+    }
+}
+
+fn derivations_match_propositions(
+    derivations: &[PropositionDerivation],
+    propositions: &[Proposition],
+) -> bool {
+    derivations.len() == propositions.len()
+        && derivations
+            .iter()
+            .zip(propositions)
+            .all(|(derivation, proposition)| derivation.conclusion == *proposition)
 }
 
 fn relative_range_offset(value: &Bitvector32Term, origin: &Bitvector32Term) -> Bitvector32Term {

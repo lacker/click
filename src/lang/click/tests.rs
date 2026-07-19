@@ -212,6 +212,29 @@ fn verifies_pure_theorem_definition() {
 }
 
 #[test]
+fn pure_simp_stores_a_simple_tactic_certificate() {
+    let source = r#"
+        theorem positive_is_nonnegative(x: int32) {
+            requires x > 0;
+            ensures x >= 0 by simp;
+        }
+    "#;
+
+    let verified = verify_click_theorems(source).expect("simp theorem should verify");
+    let tactics = verified[0]
+        .proof_tactics
+        .as_deref()
+        .expect("simp should store its expanded certificate");
+
+    assert!(matches!(
+        tactics,
+        [ProofTactic::ExactPropositionDerivation(_)]
+    ));
+    TacticCertificate::from_proof_tactics(tactics)
+        .expect("stored simp proof must contain only simple tactics");
+}
+
+#[test]
 fn parses_symbolic_loadable_bytes() {
     let source = r#"
             verifying "fill.c";

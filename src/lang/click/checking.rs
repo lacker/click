@@ -2287,14 +2287,44 @@ fn normalize_direct_atomic_memory_load(term: &Bitvector32Term) -> Bitvector32Ter
     }
 }
 
+pub(super) fn plan_simp_certificate(
+    proposition: &Proposition,
+    assumptions: &Assumptions,
+) -> Option<TacticCertificate> {
+    let tactic = if matches!(normalize_proposition(proposition), SimpProposition::True) {
+        ProofTactic::Normalize
+    } else {
+        ProofTactic::ExactPropositionDerivation(assumptions.derive_simp_proposition(proposition)?)
+    };
+    TacticCertificate::from_proof_tactics(&[tactic]).ok()
+}
+
+pub(super) fn replay_simp_certificate(
+    proposition: &Proposition,
+    assumptions: &Assumptions,
+    certificate: &TacticCertificate,
+) -> bool {
+    match certificate.tactics() {
+        [ProofTactic::Normalize] => {
+            matches!(normalize_proposition(proposition), SimpProposition::True)
+        }
+        [ProofTactic::ExactPropositionDerivation(derivation)] => {
+            derivation.conclusion() == proposition && derivation.replay(assumptions)
+        }
+        _ => false,
+    }
+}
+
 pub(super) fn simp_proposition(
     proposition: &Proposition,
     assumptions: &Assumptions,
 ) -> SimpProposition {
-    if assumptions.proves(proposition) {
+    if let Some(certificate) = plan_simp_certificate(proposition, assumptions)
+        && replay_simp_certificate(proposition, assumptions, &certificate)
+    {
         return SimpProposition::True;
     }
-    match proposition {
+    let simplified = match proposition {
         Proposition::Equal(left, right) => match simp_terms_equal(left, right) {
             Some(true) => SimpProposition::True,
             Some(false) => SimpProposition::False,
@@ -2374,12 +2404,14 @@ pub(super) fn simp_proposition(
         | Proposition::CMemoryMutatesOnly { .. }
         | Proposition::CMemoryEffectSummary { .. }
         | Proposition::CWhileInvariantRule { .. } => {
-            if assumptions.proves(proposition) {
-                SimpProposition::True
-            } else {
-                SimpProposition::Proposition(proposition.clone())
-            }
+            SimpProposition::Proposition(proposition.clone())
         }
+    };
+    if matches!(simplified, SimpProposition::True) {
+        // A successful smart tactic must come from the certificate path above.
+        SimpProposition::Proposition(proposition.clone())
+    } else {
+        simplified
     }
 }
 
@@ -2426,16 +2458,6 @@ pub(super) fn simp_term(term: &Term) -> Term {
 pub(super) fn simp_condition(condition: &ConditionTerm, assumptions: &Assumptions) -> Option<bool> {
     simp_condition_without_assumptions(condition)
         .or_else(|| assumptions.decide_condition_for_simp(condition))
-        .or_else(|| {
-            assumptions
-                .proves(&Proposition::ConditionIs(condition.clone(), true))
-                .then_some(true)
-                .or_else(|| {
-                    assumptions
-                        .proves(&Proposition::ConditionIs(condition.clone(), false))
-                        .then_some(false)
-                })
-        })
 }
 
 pub(super) fn simp_condition_without_assumptions(condition: &ConditionTerm) -> Option<bool> {

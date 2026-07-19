@@ -886,6 +886,54 @@ pub struct Theorem {
     pub(super) proposition: Proposition,
 }
 
+/// A proof tree produced by contextual proposition reasoning.
+///
+/// Smart reasoning may search for this tree. Replay only checks the selected
+/// rule and its explicit children; it never searches for an alternative proof.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PropositionDerivation {
+    pub(super) conclusion: Proposition,
+    pub(super) rule: PropositionDerivationRule,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) enum PropositionDerivationRule {
+    ContextFree,
+    ContextualAtomic {
+        premises: Assumptions,
+        for_simp: bool,
+    },
+    Explosion {
+        premises: Assumptions,
+    },
+    And {
+        left: Box<PropositionDerivation>,
+        right: Box<PropositionDerivation>,
+    },
+    OrLeft(Box<PropositionDerivation>),
+    OrRight(Box<PropositionDerivation>),
+    DoubleNegation(Box<PropositionDerivation>),
+    Implies {
+        antecedent: Proposition,
+        body: Box<PropositionDerivation>,
+    },
+    ImpliesFalseAntecedent(Box<PropositionDerivation>),
+    ForAllBody(Box<PropositionDerivation>),
+    FiniteForAll {
+        instances: Vec<PropositionDerivation>,
+    },
+    FiniteContextSplit {
+        variable: Variable,
+        lower: i64,
+        upper: i64,
+        instances: Vec<PropositionDerivation>,
+    },
+    DisjunctionCases {
+        disjunction: Proposition,
+        cases: Vec<PropositionDerivation>,
+    },
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct Assumptions {
     pub(super) condition_facts: BTreeMap<ConditionTerm, bool>,
@@ -3056,6 +3104,12 @@ impl Theorem {
 
     pub fn proposition(&self) -> &Proposition {
         &self.proposition
+    }
+}
+
+impl PropositionDerivation {
+    pub fn conclusion(&self) -> &Proposition {
+        &self.conclusion
     }
 }
 
