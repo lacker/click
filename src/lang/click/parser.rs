@@ -1739,7 +1739,31 @@ impl Parser {
                 self.expect(Token::LParen)?;
                 let region_ref = self.parse_code_region_ref()?;
                 self.expect(Token::RParen)?;
-                ProofTactic::ApplyLoopSummary(region_ref)
+                if self.peek_ident() != Some("using") {
+                    ProofTactic::ApplyLoopSummary(region_ref)
+                } else {
+                    self.position += 1;
+                    self.expect(Token::LBrace)?;
+                    let mut premises = Vec::new();
+                    while self.peek() != Some(&Token::RBrace) {
+                        self.expect_ident_spelling("fact")?;
+                        premises.push(self.parse_proposition()?);
+                        self.expect(Token::Semicolon)?;
+                    }
+                    self.expect(Token::RBrace)?;
+                    if premises.is_empty() {
+                        return Err(self.error(
+                            "`apply_loop_summary using` requires at least one explicit premise",
+                        ));
+                    }
+                    if self.peek() == Some(&Token::Semicolon) {
+                        self.position += 1;
+                    }
+                    return Ok(ProofTactic::ApplyLoopSummaryUsing {
+                        region: region_ref,
+                        premises,
+                    });
+                }
             }
             "symbolic_execute" => {
                 self.expect_empty_tactic_args(&name)?;

@@ -571,6 +571,10 @@ pub enum ProofTactic {
     Step,
     StepUsing(Vec<ClickProposition>),
     ApplyLoopSummary(CodeRegionRef),
+    ApplyLoopSummaryUsing {
+        region: CodeRegionRef,
+        premises: Vec<ClickProposition>,
+    },
     CertifiedStatementStep(Vec<PropositionDerivation>),
     CertifiedLoopSummaryStep(Vec<PropositionDerivation>),
     RecordExecutionPoint,
@@ -954,7 +958,9 @@ impl ProofTactic {
         match self {
             Self::Step => TacticClass::Simple(SimpleTactic::StatementTransition),
             Self::StepUsing(_) => TacticClass::Simple(SimpleTactic::StatementTransition),
-            Self::ApplyLoopSummary(_) => TacticClass::Simple(SimpleTactic::LoopSummaryTransition),
+            Self::ApplyLoopSummary(_) | Self::ApplyLoopSummaryUsing { .. } => {
+                TacticClass::Simple(SimpleTactic::LoopSummaryTransition)
+            }
             Self::CertifiedStatementStep(_) => {
                 TacticClass::Simple(SimpleTactic::CertifiedStatementTransition)
             }

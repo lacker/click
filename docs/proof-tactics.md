@@ -20,6 +20,7 @@ tactics run.
 | `step()` | Advance one small C transition when every execution prerequisite is exact or context-free; do not transport facts automatically. |
 | `step using { fact P; ... }` | Advance one small C transition using only the listed exact pure facts as contextual execution premises. |
 | `apply_loop_summary(loop(N))` | Apply one already verified loop summary at that loop's entry. |
+| `apply_loop_summary(loop(N)) using { fact P; ... }` | Apply one verified loop summary using only the listed exact pure premises. |
 | `assumption()` | Close a pure goal only when that exact fact is present. |
 | `normalize()` | Close a goal by context-free computation and structural normalization. |
 | `intro()` | Replace one implication goal with its consequent while assuming its antecedent, or replace one universal goal with its body. |
@@ -180,6 +181,8 @@ transition. Their proof behavior differs:
 - `apply_loop_summary(loop(N))` applies that loop's already verified abstract
   rule and advances to its exit in one transition. It does not enter or replay
   the loop body.
+- Its `using { fact P; ... }` form makes contextual premises explicit in the
+  same way as `step using`.
 - `transport(source, target)` explicitly moves one atomic condition fact to the
   current snapshot when a certified effect fact proves that its referenced
   memory was framed.

@@ -4843,8 +4843,43 @@ fn replay_linear_tactics(
                 }
                 assumptions = assumptions_from_propositions(&requirement_pure_facts);
             }
-            ProofTactic::StepUsing(premises) => {
+            ProofTactic::StepUsing(premises)
+            | ProofTactic::ApplyLoopSummaryUsing { premises, .. } => {
                 let all_pure_facts = requirement_pure_facts.clone();
+                let (tactic_name, loop_step_policy) = match tactic {
+                    ProofTactic::StepUsing(_) => ("step using", LoopStepPolicy::EnterBody),
+                    ProofTactic::ApplyLoopSummaryUsing { region, .. } => {
+                        let CodeRegion::Loop(expected_loop) = resolve_code_region_ref(
+                            function_block,
+                            region,
+                            claim_label,
+                            tactic_index,
+                        )?
+                        else {
+                            return Err(ClickError::new(format!(
+                                "`{claim_label}` tactic {tactic_index}: `apply_loop_summary` expects a loop region"
+                            )));
+                        };
+                        let current_loop = replay
+                            .source_layout
+                            .statement(replay.frontier.next_statement_index)
+                            .and_then(|region| match region.kind {
+                                SourceStatementKind::Loop { loop_index } => Some(loop_index),
+                                SourceStatementKind::Plain | SourceStatementKind::If { .. } => None,
+                            });
+                        if current_loop != Some(expected_loop) {
+                            return Err(ClickError::new(format!(
+                                "`{claim_label}` tactic {tactic_index}: `apply_loop_summary(loop({expected_loop}))` is not at that loop's entry; current statement is statement({})",
+                                replay.frontier.next_statement_index
+                            )));
+                        }
+                        (
+                            "apply_loop_summary using",
+                            LoopStepPolicy::ApplyVerifiedRule,
+                        )
+                    }
+                    _ => unreachable!(),
+                };
                 let pre_state = replay.execution_start_state(&state).clone();
                 let mut explicit_premises = Vec::new();
                 for surface_premise in premises {
@@ -4862,7 +4897,7 @@ fn replay_linear_tactics(
                     )
                     .map_err(|message| {
                         ClickError::new(format!(
-                            "`{claim_label}` tactic {tactic_index}: could not lower `step using` premise: {message}"
+                            "`{claim_label}` tactic {tactic_index}: could not lower `{tactic_name}` premise: {message}"
                         ))
                     })?;
                     replay
@@ -4870,13 +4905,13 @@ fn replay_linear_tactics(
                         .record_lowering(surface_premise, &premise)
                         .map_err(|error| {
                             ClickError::new(format!(
-                                "`{claim_label}` tactic {tactic_index}: could not record `step using` premise: {}",
+                                "`{claim_label}` tactic {tactic_index}: could not record `{tactic_name}` premise: {}",
                                 error.message()
                             ))
                         })?;
                     if !exact_fact_is_available(&premise, &all_pure_facts) {
                         return Err(ClickError::new(format!(
-                            "`{claim_label}` tactic {tactic_index}: `step using` requires an exact premise: {}",
+                            "`{claim_label}` tactic {tactic_index}: `{tactic_name}` requires an exact premise: {}",
                             describe_missing_pure_fact(
                                 &premise,
                                 &all_pure_facts,
@@ -4904,11 +4939,11 @@ fn replay_linear_tactics(
                     function_environment,
                     claim_label,
                     tactic_index,
-                    "step using",
+                    tactic_name,
                     &[],
                     StatementPrerequisitePolicy::Contextual,
                     StatementFactTransportPolicy::None,
-                    LoopStepPolicy::EnterBody,
+                    loop_step_policy,
                 )?;
                 for fact in all_pure_facts {
                     if !explicit_premises.contains(&fact) {

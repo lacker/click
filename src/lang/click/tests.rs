@@ -4389,6 +4389,46 @@ fn apply_loop_summary_advances_one_verified_loop_transition() {
 }
 
 #[test]
+fn apply_loop_summary_using_limits_context_to_explicit_premises() {
+    let c_source = r#"
+            int32 count_to_n(int32 n) {
+                int32 i;
+                i = 0;
+                while (i < n) {
+                    i = i + 1;
+                }
+                return i;
+            }
+        "#;
+    let click_source = r#"
+            verifying "count_to_n.c";
+
+            int32 count_to_n(int32 n) {
+                requires n >= 0;
+                requires n <= 2147483647;
+                for loop(0) {
+                    invariant i >= 0 and i <= n;
+                    initialize by auto;
+                    preserve by auto;
+                }
+                ensures returns_n: result == n by {
+                    step();
+                    step();
+                    apply_loop_summary(loop(0)) using {
+                        fact n >= 0;
+                        fact n <= 2147483647;
+                    }
+                    step();
+                    simp();
+                }
+            }
+        "#;
+
+    verify_c0_sources(click_source, &[("count_to_n.c", c_source)])
+        .expect("explicit premises should justify one loop-summary transition");
+}
+
+#[test]
 fn bounded_execute_resumes_and_explores_symbolic_branches() {
     let c_source = r#"
             int32 choose_after_init(int32 x) {
