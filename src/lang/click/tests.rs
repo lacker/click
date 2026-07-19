@@ -5104,3 +5104,124 @@ fn failed_memory_postcondition_reports_loaded_value() {
         error.message()
     );
 }
+
+#[test]
+fn modular_call_snapshot_reports_missing_preserved_struct_bound() {
+    let initialize_c = r#"
+        struct pair {
+            int32 pos;
+            int32 len;
+        };
+
+        int32 initialize(struct pair* p, int32 length) {
+            p->pos = 0;
+            p->len = length;
+            return 0;
+        }
+    "#;
+    let disturb_c = r#"
+        struct pair {
+            int32 pos;
+            int32 len;
+        };
+
+        int32 disturb(struct pair* q) {
+            q->pos = 7;
+            return 0;
+        }
+    "#;
+    let read_c = r#"
+        struct pair {
+            int32 pos;
+            int32 len;
+        };
+
+        int32 read(struct pair* p) {
+            return p->pos;
+        }
+    "#;
+    let pipeline_c = r#"
+        struct pair {
+            int32 pos;
+            int32 len;
+        };
+
+        int32 pipeline(struct pair* p, struct pair* q, int32 length) {
+            int32 ignored;
+            int32 value;
+            ignored = initialize(p, length);
+            ignored = disturb(q);
+            value = read(p);
+            return value;
+        }
+    "#;
+    let click_source = r#"
+        verifying "initialize.c";
+        verifying "disturb.c";
+        verifying "read.c";
+        verifying "pipeline.c";
+
+        int32 initialize(struct pair* p, int32 length) {
+            consumes p[0..2];
+            mutable p[0..2];
+            produces p[0..2];
+            ensures p->pos == 0;
+            ensures p->len == length;
+            ensures result == 0;
+        } by {
+            execute_rest();
+            frame();
+            simp();
+        }
+
+        int32 disturb(struct pair* q) {
+            consumes q[0..2];
+            mutable q[0..1];
+            produces q[0..2];
+            ensures result == 0;
+        } by {
+            execute_rest();
+            frame();
+            simp();
+        }
+
+        int32 read(struct pair* p) {
+            requires p->pos < p->len;
+            views p[0..2];
+            immutable;
+            ensures result == p->pos by auto;
+        }
+
+        int32 pipeline(struct pair* p, struct pair* q, int32 length) {
+            requires 1 <= length;
+            requires separate(memory(p[0..2]), memory(q[0..2]));
+            consumes p[0..2];
+            consumes q[0..2];
+            mutable p[0..2], q[0..1];
+            produces p[0..2];
+            produces q[0..2];
+            ensures result == 0;
+        } by {
+            execute_rest();
+            frame();
+            simp();
+        }
+    "#;
+    let error = verify_c0_sources(
+        click_source,
+        &[
+            ("initialize.c", initialize_c),
+            ("disturb.c", disturb_c),
+            ("read.c", read_c),
+            ("pipeline.c", pipeline_c),
+        ],
+    )
+    .expect_err("the preserved struct bound is not yet derived across the disjoint call");
+
+    assert!(
+        error.message().contains("read precondition")
+            && error.message().contains("missing prerequisite"),
+        "{}",
+        error.message()
+    );
+}
