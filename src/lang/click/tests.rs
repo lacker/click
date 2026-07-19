@@ -373,6 +373,21 @@ fn records_checked_surface_spellings_for_lowered_propositions() {
             .surface(&Proposition::Not(kernel_left.clone()))
             .is_err()
     );
+
+    assert_eq!(
+        spellings
+            .checked_surface(&kernel, |_| Ok(kernel.clone()))
+            .expect("the same point lowering should remain usable"),
+        surface
+    );
+    let error = spellings
+        .checked_surface(&kernel, |_| Ok(kernel_left.as_ref().clone()))
+        .expect_err("a spelling from another proof point must not be reused");
+    assert!(
+        error.message().contains("different proposition"),
+        "{}",
+        error.message()
+    );
 }
 
 #[test]

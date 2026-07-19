@@ -369,6 +369,24 @@ impl SurfacePropositionMap {
             ))
         })
     }
+
+    pub fn checked_surface<F>(
+        &self,
+        kernel: &Proposition,
+        mut lower_at_current_point: F,
+    ) -> Result<ClickProposition, ClickError>
+    where
+        F: FnMut(&ClickProposition) -> Result<Proposition, ClickError>,
+    {
+        let surface = self.surface(kernel)?;
+        let lowered = lower_at_current_point(surface)?;
+        if &lowered != kernel {
+            return Err(ClickError::new(format!(
+                "recorded Click spelling lowers to a different proposition at the current proof point: {surface:?} -> {lowered:?}, expected {kernel:?}"
+            )));
+        }
+        Ok(surface.clone())
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

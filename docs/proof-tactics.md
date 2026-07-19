@@ -107,6 +107,8 @@ a checked map from each `ClickProposition` fact or goal to its exact lowered
 kernel proposition, including corresponding logical subpropositions. It may
 refer only to one of these recorded spellings or to a newly synthesized
 spelling that successfully lowers back to the required kernel proposition.
+Because lowering is snapshot-sensitive, a recorded spelling must also be
+re-lowered and checked at the exact proof point where expansion emits it.
 
 Certificate replay starts from ordinary proof inputs and delegates each leaf to
 the deterministic simple-tactic executor. Failed replay does not mutate those
