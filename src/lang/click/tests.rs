@@ -1350,11 +1350,61 @@ fn execute_step_records_a_point_checked_surface_expansion() {
         .expanded_proof_tactics()
         .expect("the linear smart step should have a surface expansion");
 
-    assert!(matches!(expanded[0], ProofTactic::StepUsing(_)));
+    assert_eq!(expanded[0], ProofTactic::Step);
     assert_eq!(expanded[1], ProofTactic::Normalize);
     assert_eq!(verified[0].expansion_blocker(), None);
     TacticCertificate::from_proof_tactics(expanded)
         .expect("the recorded expansion should be a surface certificate");
+}
+
+#[test]
+fn execute_step_expands_atomic_snapshot_transport() {
+    let c_source = r#"
+            int32 set_second_return_first(int32 p[2]) {
+                p[1] = 9;
+                return p[0];
+            }
+        "#;
+    let click_source = r#"
+            verifying "transport.c";
+
+            predicate first_is_seven(int32 p[]) {
+                p[0] == 7
+            }
+
+            int32 set_second_return_first(int32 p[2]) {
+                requires first_is_seven(p);
+                consumes p[0..2];
+                mutable p[1..2] by {
+                    unfold(first_is_seven);
+                    have p[0] == 7 by {
+                        assumption();
+                    }
+                    execute_step();
+                    execute_step();
+                    frame();
+                }
+                produces p[0..2];
+            }
+        "#;
+
+    let verified = verify_c0_sources(click_source, &[("transport.c", c_source)])
+        .expect("automatic snapshot transport should verify");
+    let expanded = verified[0].expanded_proof_tactics().unwrap_or_else(|| {
+        panic!(
+            "atomic transport should have a surface expansion: {:?}",
+            verified[0].expansion_blocker()
+        )
+    });
+
+    assert!(expanded.iter().any(|tactic| matches!(
+        tactic,
+        ProofTactic::Transport { source, target }
+            if matches!(source, ClickProposition::Comparison { .. })
+                && matches!(target, ClickProposition::Comparison { .. })
+    )));
+    TacticCertificate::from_proof_tactics(expanded)
+        .expect("the transport expansion should be a surface certificate");
 }
 
 #[test]

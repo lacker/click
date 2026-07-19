@@ -107,6 +107,11 @@ certificate replay. `VerifiedCTheorem::expanded_proof_tactics()` returns the
 surface sequence when every internal item was lowered, while
 `expansion_blocker()` identifies the first unsupported item. This trace does
 not participate in verification; it observes the same successful replay.
+One-step execution uses only the context premises named by its recorded
+proposition derivations. Atomic comparison transport is emitted as an explicit
+`transport` whose source is named at the preceding statement-entry snapshot;
+both source and target are re-lowered against the certified transport before
+the trace accepts them.
 
 Kernel propositions are not printed by guessing source text. Expansion builds
 a checked map from each `ClickProposition` fact or goal to its exact lowered

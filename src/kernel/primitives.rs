@@ -3111,6 +3111,50 @@ impl PropositionDerivation {
     pub fn conclusion(&self) -> &Proposition {
         &self.conclusion
     }
+
+    pub fn context_premises(&self) -> Vec<Proposition> {
+        let mut premises = BTreeSet::new();
+        self.collect_context_premises(&mut premises);
+        premises.into_iter().collect()
+    }
+
+    fn collect_context_premises(&self, premises: &mut BTreeSet<Proposition>) {
+        match &self.rule {
+            PropositionDerivationRule::ContextFree => {}
+            PropositionDerivationRule::ContextualAtomic {
+                premises: required, ..
+            }
+            | PropositionDerivationRule::Explosion { premises: required } => {
+                premises.extend(required.pure_facts());
+            }
+            PropositionDerivationRule::And { left, right } => {
+                left.collect_context_premises(premises);
+                right.collect_context_premises(premises);
+            }
+            PropositionDerivationRule::OrLeft(proof)
+            | PropositionDerivationRule::OrRight(proof)
+            | PropositionDerivationRule::DoubleNegation(proof)
+            | PropositionDerivationRule::ImpliesFalseAntecedent(proof)
+            | PropositionDerivationRule::ForAllBody(proof) => {
+                proof.collect_context_premises(premises);
+            }
+            PropositionDerivationRule::Implies { body, .. } => {
+                body.collect_context_premises(premises);
+            }
+            PropositionDerivationRule::FiniteForAll { instances }
+            | PropositionDerivationRule::FiniteContextSplit { instances, .. } => {
+                for instance in instances {
+                    instance.collect_context_premises(premises);
+                }
+            }
+            PropositionDerivationRule::DisjunctionCases { disjunction, cases } => {
+                premises.insert(disjunction.clone());
+                for case in cases {
+                    case.collect_context_premises(premises);
+                }
+            }
+        }
+    }
 }
 
 impl Default for ExecutionBudget {

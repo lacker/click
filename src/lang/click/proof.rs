@@ -1780,6 +1780,7 @@ struct TacticReplayState {
 struct SurfaceReplay {
     tactics: Vec<ProofTactic>,
     blocker: Option<String>,
+    last_step_entry: Option<ProgramPointRef>,
 }
 
 impl SurfaceReplay {
@@ -4735,6 +4736,57 @@ fn checked_surface_fact_at_point(
         })
 }
 
+fn comparison_at_program_point(
+    proposition: &ClickProposition,
+    point: &ProgramPointRef,
+) -> Option<ClickProposition> {
+    let ClickProposition::Comparison {
+        left,
+        operator,
+        right,
+    } = proposition
+    else {
+        return None;
+    };
+    Some(ClickProposition::Comparison {
+        left: ContractExpression::At {
+            selector: VisitSelector::ProgramPoint(point.clone()),
+            expression: Box::new(left.clone()),
+        },
+        operator: *operator,
+        right: ContractExpression::At {
+            selector: VisitSelector::ProgramPoint(point.clone()),
+            expression: Box::new(right.clone()),
+        },
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn lower_surface_candidate_at_point(
+    replay: &TacticReplayState,
+    candidate: &ClickProposition,
+    available: &[Proposition],
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    state: &CState,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+) -> Result<Proposition, ClickError> {
+    lower_point_proposition(
+        candidate,
+        available,
+        parameters,
+        arguments,
+        replay.execution_start_state(state),
+        state,
+        None,
+        &replay.program_point_states,
+        predicate_environment,
+        click_function_environment,
+    )
+    .map_err(ClickError::new)
+}
+
 #[allow(clippy::too_many_arguments)]
 fn record_surface_replay_tactic(
     replay: &mut TacticReplayState,
@@ -4749,8 +4801,8 @@ fn record_surface_replay_tactic(
     if replay.surface_replay.blocker.is_some() {
         return;
     }
-    let contextual_step = |replay: &TacticReplayState| {
-        available
+    let contextual_step = |replay: &TacticReplayState, needed: &[Proposition]| {
+        needed
             .iter()
             .map(|fact| {
                 checked_surface_fact_at_point(
@@ -4767,15 +4819,29 @@ fn record_surface_replay_tactic(
             .collect::<Result<Vec<_>, _>>()
     };
     match tactic {
-        ProofTactic::CertifiedStatementStep(_) => match contextual_step(replay) {
-            Ok(premises) if premises.is_empty() => replay.surface_replay.push(ProofTactic::Step),
-            Ok(premises) => replay.surface_replay.push(ProofTactic::StepUsing(premises)),
-            Err(error) => replay.surface_replay.block(format!(
-                "could not express a statement-step premise at the current proof point: {}",
-                error.message()
-            )),
-        },
-        ProofTactic::CertifiedLoopSummaryStep(_) => {
+        ProofTactic::CertifiedStatementStep(derivations) => {
+            replay.surface_replay.last_step_entry = Some(ProgramPointRef {
+                region: CodeRegionRef::Statement(replay.frontier.next_statement_index),
+                kind: ProgramPointKind::Entry,
+            });
+            let needed = derivations
+                .iter()
+                .flat_map(PropositionDerivation::context_premises)
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .collect::<Vec<_>>();
+            match contextual_step(replay, &needed) {
+                Ok(premises) if premises.is_empty() => {
+                    replay.surface_replay.push(ProofTactic::Step)
+                }
+                Ok(premises) => replay.surface_replay.push(ProofTactic::StepUsing(premises)),
+                Err(error) => replay.surface_replay.block(format!(
+                    "could not express a statement-step premise at the current proof point: {}",
+                    error.message()
+                )),
+            }
+        }
+        ProofTactic::CertifiedLoopSummaryStep(derivations) => {
             let loop_index = replay
                 .source_layout
                 .statement(replay.frontier.next_statement_index)
@@ -4789,7 +4855,17 @@ fn record_surface_replay_tactic(
                     .block("certified loop-summary replay is not at a source loop entry");
                 return;
             };
-            match contextual_step(replay) {
+            replay.surface_replay.last_step_entry = Some(ProgramPointRef {
+                region: CodeRegionRef::Statement(replay.frontier.next_statement_index),
+                kind: ProgramPointKind::Entry,
+            });
+            let needed = derivations
+                .iter()
+                .flat_map(PropositionDerivation::context_premises)
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .collect::<Vec<_>>();
+            match contextual_step(replay, &needed) {
                 Ok(premises) if premises.is_empty() => {
                     replay
                         .surface_replay
@@ -4809,11 +4885,72 @@ fn record_surface_replay_tactic(
                 )),
             }
         }
+        ProofTactic::CertifiedFactTransport { source, target, .. } => {
+            let Some(step_entry) = replay.surface_replay.last_step_entry.clone() else {
+                replay
+                    .surface_replay
+                    .block("fact transport has no preceding statement-entry snapshot");
+                return;
+            };
+            let base_surface = replay
+                .surface_propositions
+                .surface(source)
+                .or_else(|_| replay.surface_propositions.surface(target))
+                .cloned();
+            let Ok(base_surface) = base_surface else {
+                replay
+                    .surface_replay
+                    .block("fact transport has no recorded Click comparison spelling");
+                return;
+            };
+            let Some(source_surface) = comparison_at_program_point(&base_surface, &step_entry)
+            else {
+                replay
+                    .surface_replay
+                    .block("fact transport surface lowering currently supports comparisons only");
+                return;
+            };
+            let source_lowered = lower_surface_candidate_at_point(
+                replay,
+                &source_surface,
+                available,
+                parameters,
+                arguments,
+                state,
+                predicate_environment,
+                click_function_environment,
+            );
+            let target_lowered = lower_surface_candidate_at_point(
+                replay,
+                &base_surface,
+                available,
+                parameters,
+                arguments,
+                state,
+                predicate_environment,
+                click_function_environment,
+            );
+            match (source_lowered, target_lowered) {
+                (Ok(lowered_source), Ok(lowered_target))
+                    if normalize_direct_atomic_memory_loads(&lowered_source)
+                        == normalize_direct_atomic_memory_loads(source)
+                        && normalize_direct_atomic_memory_loads(&lowered_target)
+                            == normalize_direct_atomic_memory_loads(target) =>
+                {
+                    replay.surface_replay.push(ProofTactic::Transport {
+                        source: source_surface,
+                        target: base_surface,
+                    });
+                }
+                (source_result, target_result) => replay.surface_replay.block(format!(
+                    "fact transport spellings did not lower to the certified source and target\n  source result: {source_result:?}\n  certified source: {source:?}\n  target result: {target_result:?}\n  certified target: {target:?}"
+                )),
+            }
+        }
         ProofTactic::FinishCertifiedFactTransports(_) => {}
         ProofTactic::RecordExecutionPoint
         | ProofTactic::ResetOpaqueCallCounter
         | ProofTactic::ExactPropositionDerivation(_)
-        | ProofTactic::CertifiedFactTransport { .. }
         | ProofTactic::CertifiedPathAssumption { .. }
         | ProofTactic::CertifiedFrame(_)
         | ProofTactic::CertifiedAlternatives(_) => replay.surface_replay.block(format!(

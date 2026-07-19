@@ -1317,6 +1317,7 @@ fn proposition_derivation_replay_requires_its_context() {
 
     assert!(derivation.replay(&assumptions));
     assert!(!derivation.replay(&Assumptions::new()));
+    assert_eq!(derivation.context_premises(), vec![proposition]);
 }
 
 #[test]
