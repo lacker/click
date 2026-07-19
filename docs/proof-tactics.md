@@ -62,7 +62,7 @@ Click does not yet expose a surface tactic that prints or expands a smart
 tactic's simple certificate. The internal conversion is being introduced one
 smart tactic at a time; `simp`, `execute_step`, `execute_then_step`, and
 `execute_else_step` are certificate-backed. `execute_until` is also
-certificate-backed, as is `bounded_execute`.
+certificate-backed, as are `bounded_execute` and `execute_rest`.
 
 ## Tactic Certificates
 
@@ -109,6 +109,11 @@ explored execution path. Each alternative records its condition-path facts,
 then contains only certified one-step transitions. Replay executes every
 alternative and merges completed frontiers; the planner cannot commit a
 partially explored branch set directly.
+
+`execute_rest` plans certified statement transitions through a straight-line
+prefix. If it reaches unresolved control flow, it finishes with the same
+explicit certificate alternatives used by `bounded_execute`. Consequently,
+there is no whole-function execution leaf that bypasses one-step replay.
 
 ## Statement Execution
 

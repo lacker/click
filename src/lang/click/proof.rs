@@ -4915,10 +4915,14 @@ fn replay_linear_tactics(
                 assumptions = assumptions_from_propositions(&requirement_pure_facts);
             }
             ProofTactic::ExecuteRest => {
+                let mut planning_replay = replay.clone();
+                planning_replay.planned_tactics.clear();
+                let mut planning_state = state.clone();
+                let mut planning_facts = requirement_pure_facts.clone();
                 execute_rest_from_execution_point(
-                    &mut replay,
-                    &mut state,
-                    &mut requirement_pure_facts,
+                    &mut planning_replay,
+                    &mut planning_state,
+                    &mut planning_facts,
                     function_block,
                     function,
                     parsed_function.parameters(),
@@ -4928,7 +4932,41 @@ fn replay_linear_tactics(
                     tactic_index,
                     tactic_name(tactic),
                     matches!(tactic, ProofTactic::ExecuteRest),
+                    StatementPrerequisitePolicy::Planning,
                 )?;
+                let certificate =
+                    TacticCertificate::from_proof_tactics(&planning_replay.planned_tactics)
+                        .map_err(|error| {
+                            ClickError::new(format!(
+                                "`{claim_label}` tactic {tactic_index}: `execute_rest` planned a non-certificate tactic {:?}",
+                                error.smart_tactic()
+                            ))
+                        })?;
+                let result = replay_execution_tactic_certificate(
+                    ProofReplayContext {
+                        state,
+                        pure_facts: requirement_pure_facts,
+                        replay,
+                        branch_path,
+                    },
+                    function_block,
+                    parsed_function,
+                    claims,
+                    claim_label,
+                    function_environment,
+                    predicate_environment,
+                    click_function_environment,
+                    resource_environment,
+                    theorem_environment,
+                    function,
+                    arguments,
+                    tactic_index,
+                    &certificate,
+                )?;
+                state = result.state;
+                requirement_pure_facts = result.pure_facts;
+                replay = result.replay;
+                branch_path = result.branch_path;
                 assumptions = assumptions_from_propositions(&requirement_pure_facts);
             }
             ProofTactic::ExecuteUntil(region_ref) => {
@@ -7156,6 +7194,7 @@ fn execute_rest_from_execution_point(
     tactic_index: usize,
     tactic_name: &str,
     record_straight_line_snapshots: bool,
+    prerequisite_policy: StatementPrerequisitePolicy,
 ) -> Result<(), ClickError> {
     if record_straight_line_snapshots {
         loop {
@@ -7188,6 +7227,11 @@ fn execute_rest_from_execution_point(
             }
 
             let assumptions = assumptions_from_propositions(available_pure_facts);
+            if matches!(prerequisite_policy, StatementPrerequisitePolicy::Planning) {
+                replay
+                    .planned_tactics
+                    .push(ProofTactic::ResetOpaqueCallCounter);
+            }
             replay.next_opaque_call = 0;
             execute_step_from_execution_point(
                 replay,
@@ -7203,11 +7247,30 @@ fn execute_rest_from_execution_point(
                 tactic_index,
                 tactic_name,
                 &[],
-                StatementPrerequisitePolicy::Contextual,
+                prerequisite_policy,
                 StatementFactTransportPolicy::Automatic,
                 LoopStepPolicy::ApplyVerifiedRule,
             )?;
         }
+    }
+
+    if matches!(prerequisite_policy, StatementPrerequisitePolicy::Planning) {
+        if !replay.is_at_function_exit() {
+            bounded_execute_from_execution_point(
+                replay,
+                state,
+                available_pure_facts,
+                function_block,
+                function,
+                parameters,
+                arguments,
+                function_environment,
+                claim_label,
+                tactic_index,
+                StatementPrerequisitePolicy::Planning,
+            )?;
+        }
+        return Ok(());
     }
 
     if record_straight_line_snapshots {
