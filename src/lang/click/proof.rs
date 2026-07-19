@@ -1369,76 +1369,31 @@ pub(super) fn prove_claim_by_auto(
     resource_environment: &ResourceEnvironment,
     theorem_environment: &TheoremEnvironment,
 ) -> Result<Vec<VerifiedCTheorem>, ClickError> {
-    let (state, arguments, requirement_pure_facts) = initial_claim_context(
-        function_block,
-        parsed_function,
-        resource_environment,
-        predicate_environment,
-        click_function_environment,
-        claim_label,
-    )?;
-    let function = annotated_function(
-        function_block,
-        parsed_function,
-        &state,
-        &arguments,
-        predicate_environment,
-        click_function_environment,
-        resource_environment,
-    )?;
-    let assumptions = assumptions_from_propositions(&requirement_pure_facts);
-    let vc_execution = prove_symbolic_c_function_verification_paths_with_environment(
-        state.clone(),
-        function.clone(),
-        arguments.clone(),
-        assumptions.clone(),
-        function_environment.clone(),
-        CExecutionSemantics::APPLY_VERIFIED_RULES,
-    );
-    if let Some(error) = execution_obligation_error(
-        &vc_execution,
-        claim_label,
-        &requirement_pure_facts,
-        state.resources().facts(),
-        parsed_function.parameters(),
-        &arguments,
-    ) {
-        return Err(error);
-    }
-    let loop_verification_error = match prove_claim_from_execution(
-        &vc_execution,
-        AutoExecutionKind::LoopVerification,
-        source_path,
-        function_block,
-        claim,
-        claim_label,
-        parsed_function.parameters(),
-        &function,
-        &state,
-        &arguments,
-        &requirement_pure_facts,
-        predicate_environment,
-        click_function_environment,
-        resource_environment,
-    ) {
-        Ok(theorems) => {
-            let proof_tactics = certified_proof_tactics(
-                source_path,
-                function_block,
-                parsed_function,
-                claim,
-                claim_label,
-                function_environment,
-                predicate_environment,
-                click_function_environment,
-                resource_environment,
-                theorem_environment,
-                auto_loop_verification_tactic_candidates(function_block, claim),
-            );
-            return Ok(with_proof_tactics(theorems, proof_tactics));
+    let mut loop_verification_error = None;
+    for tactics in auto_loop_verification_tactic_candidates(function_block, claim) {
+        match prove_claim_by_tactics(
+            source_path,
+            function_block,
+            parsed_function,
+            claim,
+            claim_label,
+            function_environment,
+            predicate_environment,
+            click_function_environment,
+            resource_environment,
+            theorem_environment,
+            &tactics,
+        ) {
+            Ok(mut theorems) => {
+                for theorem in &mut theorems {
+                    theorem.proof_kind = ProofKind::LoopVerification;
+                }
+                return Ok(theorems);
+            }
+            Err(error) => loop_verification_error = Some(error),
         }
-        Err(error) => Some(error),
-    };
+    }
+
     let mut bounded_error = None;
     for tactics in bounded_execution_tactic_candidates(claim) {
         match prove_claim_by_tactics(
@@ -1460,7 +1415,7 @@ pub(super) fn prove_claim_by_auto(
     }
     Err(loop_verification_error
         .or(bounded_error)
-        .expect("auto should attempt at least one bounded execution proof"))
+        .expect("auto should attempt at least one certificate candidate"))
 }
 
 pub(super) fn prove_claim_by_frame(
@@ -9102,36 +9057,6 @@ fn check_effect_claim_exact(
     )
 }
 
-enum AutoExecutionKind {
-    LoopVerification,
-}
-
-impl AutoExecutionKind {
-    fn proof_kind(&self) -> ProofKind {
-        match self {
-            Self::LoopVerification => ProofKind::LoopVerification,
-        }
-    }
-
-    fn tactic_name(&self) -> &'static str {
-        match self {
-            Self::LoopVerification => "auto",
-        }
-    }
-}
-
-fn with_proof_tactics(
-    mut theorems: Vec<VerifiedCTheorem>,
-    proof_tactics: Option<Vec<ProofTactic>>,
-) -> Vec<VerifiedCTheorem> {
-    if let Some(proof_tactics) = proof_tactics {
-        for theorem in &mut theorems {
-            theorem.proof_tactics = Some(proof_tactics.clone());
-        }
-    }
-    theorems
-}
-
 fn requirements_with_structural_unfolds(
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
@@ -9205,13 +9130,13 @@ fn certified_proof_tactics(
 
 fn bounded_execution_tactic_candidates(claim: &FunctionClaimRef<'_>) -> Vec<Vec<ProofTactic>> {
     match claim {
-        FunctionClaimRef::Ensure(_, _) => vec![
-            vec![ProofTactic::BoundedExecute, ProofTactic::Simp],
-            vec![ProofTactic::BoundedExecute],
-        ],
-        FunctionClaimRef::Effect(_, _) => {
-            vec![vec![ProofTactic::BoundedExecute, ProofTactic::Frame(None)]]
+        FunctionClaimRef::Ensure(_, _) => {
+            vec![vec![ProofTactic::BoundedExecute, ProofTactic::Simp]]
         }
+        FunctionClaimRef::Effect(_, _) => vec![vec![
+            ProofTactic::BoundedExecute,
+            ProofTactic::ContextualFrame,
+        ]],
     }
 }
 
@@ -9228,18 +9153,13 @@ fn auto_loop_verification_tactic_candidates(
 
     match claim {
         FunctionClaimRef::Ensure(_, _) => {
-            let mut simp = base.clone();
+            let mut simp = base;
             simp.push(ProofTactic::Simp);
-
-            let direct = base;
-            vec![simp, direct]
+            vec![simp]
         }
         FunctionClaimRef::Effect(_, _) => {
-            let mut frame = base.clone();
-            frame.push(ProofTactic::Frame(None));
-
-            let direct = base;
-            vec![frame, direct]
+            base.push(ProofTactic::ContextualFrame);
+            vec![base]
         }
     }
 }
@@ -9257,162 +9177,4 @@ fn loop_effect_summary_regions(function_block: &FunctionBlock) -> BTreeSet<usize
             _ => None,
         })
         .collect()
-}
-
-fn execution_obligation_error(
-    execution: &crate::kernel::SymbolicCExecution,
-    ensure_label: &str,
-    requirement_pure_facts: &[Proposition],
-    resource_facts: &[CResourceFact],
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
-) -> Option<ClickError> {
-    execution_obligation_error_for_tactic(
-        "auto",
-        execution,
-        ensure_label,
-        requirement_pure_facts,
-        resource_facts,
-        parameters,
-        arguments,
-    )
-}
-
-fn execution_obligation_error_for_tactic(
-    tactic_name: &str,
-    execution: &crate::kernel::SymbolicCExecution,
-    ensure_label: &str,
-    requirement_pure_facts: &[Proposition],
-    resource_facts: &[CResourceFact],
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
-) -> Option<ClickError> {
-    if let Some(limit) = execution.limit() {
-        return Some(ClickError::new(format!(
-            "`{tactic_name}` hit execution limit {limit:?} for `{ensure_label}`"
-        )));
-    }
-    if execution.paths().is_empty() {
-        return Some(ClickError::new(format!(
-            "`{tactic_name}` could not prove any complete execution path for `{ensure_label}`"
-        )));
-    }
-
-    for (path_index, path) in execution.paths().iter().enumerate() {
-        if !path.obligations().is_empty() {
-            return Some(ClickError::new(format!(
-                "`{tactic_name}` failed for `{ensure_label}` path {path_index}: {}",
-                describe_missing_proof_obligations(
-                    path.obligations(),
-                    requirement_pure_facts,
-                    resource_facts,
-                    parameters,
-                    arguments,
-                    path.facts()
-                )
-            )));
-        }
-    }
-
-    None
-}
-
-fn prove_claim_from_execution(
-    execution: &crate::kernel::SymbolicCExecution,
-    execution_kind: AutoExecutionKind,
-    source_path: &str,
-    function_block: &FunctionBlock,
-    claim: &FunctionClaimRef<'_>,
-    claim_label: &str,
-    parameters: &[syntax::C0Parameter],
-    function: &CFunction,
-    state: &CState,
-    arguments: &[CExpression],
-    requirement_pure_facts: &[Proposition],
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
-    resource_environment: &ResourceEnvironment,
-) -> Result<Vec<VerifiedCTheorem>, ClickError> {
-    let proof_kind = execution_kind.proof_kind();
-    let tactic_name = execution_kind.tactic_name();
-    if let Some(limit) = execution.limit() {
-        return Err(ClickError::new(format!(
-            "`{tactic_name}` hit execution limit {limit:?} for `{claim_label}`"
-        )));
-    }
-    if execution.paths().is_empty() {
-        return Err(ClickError::new(format!(
-            "`{tactic_name}` could not prove any complete execution path for `{claim_label}`"
-        )));
-    }
-
-    let mut verified = Vec::new();
-    for (path_index, path) in execution.paths().iter().enumerate() {
-        let outcome = match implication_body(path.theorem().proposition()) {
-            Proposition::CFunctionExecutes { outcome, .. } => outcome.clone(),
-            proposition => {
-                return Err(ClickError::new(format!(
-                    "`{tactic_name}` failed for `{claim_label}` path {path_index}: unexpected theorem body {proposition:?}\n  pure facts: {}\n  execution pure facts: {}",
-                    describe_pure_facts(requirement_pure_facts),
-                    describe_execution_pure_facts(path.facts())
-                )));
-            }
-        };
-
-        let mut path_requirements = requirement_pure_facts.to_vec();
-        path_requirements.extend(path.facts().iter().map(|fact| fact.proposition().clone()));
-        path_requirements = project_outcome_resource_facts(
-            resource_environment,
-            parameters,
-            arguments,
-            state,
-            &outcome,
-            &path_requirements,
-            predicate_environment,
-            click_function_environment,
-            claim_label,
-            path_index,
-        )?;
-        let program_point_states = ProgramPointStates::new();
-        check_function_claim(
-            claim_label,
-            path_index,
-            &path.execution_facts(),
-            &path_requirements,
-            claim,
-            parameters,
-            arguments,
-            state,
-            &outcome,
-            predicate_environment,
-            click_function_environment,
-            &program_point_states,
-            &[],
-        )?;
-        let specification = c_function_specification(
-            state.clone(),
-            arguments.to_vec(),
-            path_requirements,
-            outcome.clone(),
-        );
-        let theorem = prove_c_function_satisfies_specification_from_symbolic_path(
-            function.clone(),
-            specification.clone(),
-            Assumptions::new(),
-            path.facts(),
-            path.obligations(),
-        );
-
-        verified.push(VerifiedCTheorem {
-            source_path: source_path.to_string(),
-            function_block: function_block.clone(),
-            claim: claim.verified_claim(),
-            proof_kind,
-            proof_tactics: None,
-            specification,
-            theorem,
-        });
-    }
-
-    Ok(verified)
 }

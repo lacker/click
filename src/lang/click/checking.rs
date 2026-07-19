@@ -2808,10 +2808,22 @@ pub(super) fn plan_effect_clause_derivations(
                 .map(|goal| assumptions.derive_proposition(&goal))
                 .collect::<Option<Vec<_>>>()
         }) else {
-            return Err(ClickError::new(format!(
-                "`{claim_label}` failed on path {path_index}: write to `{}` is outside the mutable footprint",
-                describe_pointer(pointer, parameters, arguments)
-            )));
+            return prove_effect_clause(
+                claim_label,
+                path_index,
+                execution_pure_facts,
+                available_pure_facts,
+                effect,
+                parameters,
+                arguments,
+                pre_state,
+                outcome,
+            )
+            .and_then(|()| {
+                Err(ClickError::new(format!(
+                    "`{claim_label}` failed on path {path_index}: contextual footprint proof did not produce replayable derivations"
+                )))
+            });
         };
         append_unique_derivations(&mut derivations, selected);
     }
@@ -2834,10 +2846,22 @@ pub(super) fn plan_effect_clause_derivations(
                 .map(|goal| assumptions.derive_proposition(&goal))
                 .collect::<Option<Vec<_>>>()
         }) else {
-            return Err(ClickError::new(format!(
-                "`{claim_label}` failed on path {path_index}: effect summary range `{}` is outside the mutable footprint",
-                describe_memory_range(range, parameters, arguments)
-            )));
+            return prove_effect_clause(
+                claim_label,
+                path_index,
+                execution_pure_facts,
+                available_pure_facts,
+                effect,
+                parameters,
+                arguments,
+                pre_state,
+                outcome,
+            )
+            .and_then(|()| {
+                Err(ClickError::new(format!(
+                    "`{claim_label}` failed on path {path_index}: contextual footprint proof did not produce replayable derivations"
+                )))
+            });
         };
         append_unique_derivations(&mut derivations, selected);
     }

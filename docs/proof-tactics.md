@@ -64,7 +64,9 @@ smart tactic at a time; `simp`, `execute_step`, `execute_then_step`, and
 `execute_else_step` are certificate-backed. `execute_until` is also
 certificate-backed, as are `bounded_execute` and `execute_rest`.
 The contextual `by frame` prover is certificate-backed as well; explicit
-`frame()` remains the exact simple tactic.
+`frame()` remains the exact simple tactic. `auto` now searches only among
+these certificate-backed tactic sequences; it no longer proves a claim through
+a separate whole-function fallback.
 
 ## Tactic Certificates
 
@@ -121,6 +123,11 @@ there is no whole-function execution leaf that bypasses one-step replay.
 certified write and effect-summary range lies inside the declared mutable
 footprint. Replay checks those derivations against the corresponding execution
 path and then applies the same exact footprint rule used by `frame()`.
+
+`auto` tries a finite ordered set of tactic sequences. It first uses
+`execute_rest` with verified loop summaries, then falls back to
+`bounded_execute`; each candidate ends with `simp` or contextual frame
+planning. A candidate succeeds only through its ordinary certificate replay.
 
 ## Statement Execution
 
