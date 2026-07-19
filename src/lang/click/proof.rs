@@ -1522,7 +1522,15 @@ fn initial_claim_context(
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
     claim_label: &str,
-) -> Result<(CState, Vec<CExpression>, Vec<Proposition>), ClickError> {
+) -> Result<
+    (
+        CState,
+        Vec<CExpression>,
+        Vec<Proposition>,
+        SurfacePropositionMap,
+    ),
+    ClickError,
+> {
     let (mut state, arguments) = initial_call_state(
         function_block.signature.name(),
         function_block.requires(),
@@ -1543,6 +1551,32 @@ fn initial_claim_context(
         predicate_environment,
         click_function_environment,
     )?;
+    let mut surface_propositions = SurfacePropositionMap::default();
+    for requirement in function_block.requires() {
+        let surface = match requirement.inner() {
+            Requirement::Proposition(proposition) => Some(proposition.clone()),
+            Requirement::LoadableSegment { segment } => Some(ClickProposition::Loadable {
+                segment: segment.clone(),
+            }),
+            Requirement::LoadableBytes { .. }
+            | Requirement::Resource(_)
+            | Requirement::Labeled { .. } => None,
+        };
+        let Some(surface) = surface else {
+            continue;
+        };
+        let lowered = requirement_propositions(
+            std::slice::from_ref(requirement),
+            parsed_function.parameters(),
+            &arguments,
+            state.memory(),
+            predicate_environment,
+            click_function_environment,
+        )?;
+        if let [kernel] = lowered.as_slice() {
+            surface_propositions.record_lowering(&surface, kernel)?;
+        }
+    }
     requirement_pure_facts = requirements_with_structural_unfolds(
         predicate_environment,
         click_function_environment,
@@ -1573,7 +1607,12 @@ fn initial_claim_context(
         click_function_environment,
         claim_label,
     )?;
-    Ok((state, arguments, requirement_pure_facts))
+    Ok((
+        state,
+        arguments,
+        requirement_pure_facts,
+        surface_propositions,
+    ))
 }
 
 pub(super) fn prove_claim_by_auto(
@@ -1733,6 +1772,7 @@ struct TacticReplayState {
     grouped_contract: bool,
     next_opaque_call: u64,
     planned_tactics: Vec<ProofTactic>,
+    surface_propositions: SurfacePropositionMap,
 }
 
 #[derive(Clone)]
@@ -1849,14 +1889,15 @@ pub(super) fn verify_loop_execution_proofs(
     }
 
     let label = format!("{}.loop_preservation", function_block.signature().name());
-    let (initial_state, arguments, requirement_facts) = initial_claim_context(
-        function_block,
-        parsed_function,
-        resource_environment,
-        predicate_environment,
-        click_function_environment,
-        &label,
-    )?;
+    let (initial_state, arguments, requirement_facts, surface_propositions) =
+        initial_claim_context(
+            function_block,
+            parsed_function,
+            resource_environment,
+            predicate_environment,
+            click_function_environment,
+            &label,
+        )?;
     let function = annotated_function(
         function_block,
         parsed_function,
@@ -1880,6 +1921,7 @@ pub(super) fn verify_loop_execution_proofs(
         theorem_environment,
         function: &function,
         arguments: &arguments,
+        surface_propositions: &surface_propositions,
     };
     let mut next_loop_index = 0;
     let mut verified_loop_rules = Vec::new();
@@ -1918,6 +1960,7 @@ struct ExecutionProofEnvironment<'a> {
     theorem_environment: &'a TheoremEnvironment,
     function: &'a CFunction,
     arguments: &'a [CExpression],
+    surface_propositions: &'a SurfacePropositionMap,
 }
 
 #[derive(Clone)]
@@ -2832,6 +2875,7 @@ fn verify_one_loop_preservation_proof(
         },
         source_layout,
         region_proof: true,
+        surface_propositions: environment.surface_propositions.clone(),
         ..TacticReplayState::default()
     };
     replay.program_point_states.insert(
@@ -3748,7 +3792,7 @@ pub(super) fn prove_claim_by_tactics(
         )));
     }
     let program = build_internal_proof(tactics, claim_label)?;
-    let (state, arguments, pure_facts) = initial_claim_context(
+    let (state, arguments, pure_facts, surface_propositions) = initial_claim_context(
         function_block,
         parsed_function,
         resource_environment,
@@ -3774,6 +3818,7 @@ pub(super) fn prove_claim_by_tactics(
             replay: TacticReplayState {
                 source_layout: SourceExecutionLayout::new(parsed_function.body()),
                 ordered_finalization: true,
+                surface_propositions,
                 ..TacticReplayState::default()
             },
             branch_path: Vec::new(),
@@ -3841,7 +3886,7 @@ pub(super) fn prove_claims_by_grouped_tactics(
         )));
     }
     let program = build_internal_proof(tactics, &proof_label)?;
-    let (state, arguments, pure_facts) = initial_claim_context(
+    let (state, arguments, pure_facts, surface_propositions) = initial_claim_context(
         function_block,
         parsed_function,
         resource_environment,
@@ -3867,6 +3912,7 @@ pub(super) fn prove_claims_by_grouped_tactics(
                 source_layout: SourceExecutionLayout::new(parsed_function.body()),
                 ordered_finalization: true,
                 grouped_contract: true,
+                surface_propositions,
                 ..TacticReplayState::default()
             },
             branch_path: Vec::new(),
@@ -4699,19 +4745,22 @@ fn replay_linear_tactics(
                 )?;
                 assumptions = assumptions_from_propositions(&requirement_pure_facts);
             }
-            ProofTactic::Transport { source, target } => {
+            ProofTactic::Transport {
+                source: surface_source,
+                target: surface_target,
+            } => {
                 if replay.is_at_function_entry() || replay.is_at_function_exit() {
                     return Err(ClickError::new(format!(
                         "`{claim_label}` tactic {tactic_index}: `transport` requires a current statement frontier after at least one execution step"
                     )));
                 }
-                let pre_state = replay.execution_start_state(&state);
+                let pre_state = replay.execution_start_state(&state).clone();
                 let source = lower_point_proposition(
-                    source,
+                    surface_source,
                     &requirement_pure_facts,
                     parsed_function.parameters(),
                     arguments,
-                    pre_state,
+                    &pre_state,
                     &state,
                     None,
                     &replay.program_point_states,
@@ -4723,6 +4772,9 @@ fn replay_linear_tactics(
                         "`{claim_label}` tactic {tactic_index}: could not lower `transport` source: {message}"
                     ))
                 })?;
+                replay
+                    .surface_propositions
+                    .record_lowering(surface_source, &source)?;
                 if !requirement_pure_facts.contains(&source) {
                     return Err(ClickError::new(format!(
                         "`{claim_label}` tactic {tactic_index}: `transport` requires an exact source fact: {}",
@@ -4737,11 +4789,11 @@ fn replay_linear_tactics(
                     )));
                 }
                 let target = lower_point_proposition(
-                    target,
+                    surface_target,
                     &requirement_pure_facts,
                     parsed_function.parameters(),
                     arguments,
-                    pre_state,
+                    &pre_state,
                     &state,
                     None,
                     &replay.program_point_states,
@@ -4753,6 +4805,9 @@ fn replay_linear_tactics(
                         "`{claim_label}` tactic {tactic_index}: could not lower `transport` target: {message}"
                     ))
                 })?;
+                replay
+                    .surface_propositions
+                    .record_lowering(surface_target, &target)?;
                 let mut transport_facts = requirement_pure_facts.clone();
                 transport_facts.extend(
                     replay
@@ -4790,15 +4845,15 @@ fn replay_linear_tactics(
             }
             ProofTactic::StepUsing(premises) => {
                 let all_pure_facts = requirement_pure_facts.clone();
-                let pre_state = replay.execution_start_state(&state);
+                let pre_state = replay.execution_start_state(&state).clone();
                 let mut explicit_premises = Vec::new();
-                for premise in premises {
+                for surface_premise in premises {
                     let premise = lower_point_proposition(
-                        premise,
+                        surface_premise,
                         &all_pure_facts,
                         parsed_function.parameters(),
                         arguments,
-                        pre_state,
+                        &pre_state,
                         &state,
                         None,
                         &replay.program_point_states,
@@ -4810,6 +4865,15 @@ fn replay_linear_tactics(
                             "`{claim_label}` tactic {tactic_index}: could not lower `step using` premise: {message}"
                         ))
                     })?;
+                    replay
+                        .surface_propositions
+                        .record_lowering(surface_premise, &premise)
+                        .map_err(|error| {
+                            ClickError::new(format!(
+                                "`{claim_label}` tactic {tactic_index}: could not record `step using` premise: {}",
+                                error.message()
+                            ))
+                        })?;
                     if !exact_fact_is_available(&premise, &all_pure_facts) {
                         return Err(ClickError::new(format!(
                             "`{claim_label}` tactic {tactic_index}: `step using` requires an exact premise: {}",
@@ -5645,6 +5709,9 @@ fn replay_linear_tactics(
                     click_function_environment,
                     function_block.requires(),
                 )?;
+                replay
+                    .surface_propositions
+                    .record_lowering(&have.proposition, &fact)?;
                 if !requirement_pure_facts.contains(&fact) {
                     requirement_pure_facts.push(fact);
                 }
@@ -6049,11 +6116,21 @@ fn introduce_proof_case_assumption(
             "`{claim_label}` tactic {tactic_index}: could not lower `if` condition: {message}"
         ))
     })?;
-    context.pure_facts.push(if value {
+    let surface_fact = if value {
+        condition.clone()
+    } else {
+        ClickProposition::Not(Box::new(condition.clone()))
+    };
+    let kernel_fact = if value {
         proposition
     } else {
         Proposition::Not(Box::new(proposition))
-    });
+    };
+    context
+        .replay
+        .surface_propositions
+        .record_lowering(&surface_fact, &kernel_fact)?;
+    context.pure_facts.push(kernel_fact);
     Ok(())
 }
 
@@ -6168,6 +6245,9 @@ fn apply_advance_interface(
                             "`{claim_label}` tactic {tactic_index}: could not lower `advance` fact: {message}"
                         ))
                 })?;
+                replay
+                    .surface_propositions
+                    .record_lowering(surface_fact, &fact)?;
                 let assumptions = assumptions_from_propositions(&concrete_facts);
                 if !concrete_facts.contains(&fact) && !assumptions.proves(&fact) {
                     return Err(ClickError::new(format!(
