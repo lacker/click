@@ -1326,6 +1326,38 @@ fn step_using_limits_execution_to_explicit_pure_premises() {
 }
 
 #[test]
+fn execute_step_records_a_point_checked_surface_expansion() {
+    let c_source = r#"
+            int32 increment(int32 x) {
+                return x + 1;
+            }
+        "#;
+    let click_source = r#"
+            verifying "increment.c";
+
+            int32 increment(int32 x) {
+                requires x < 2147483647;
+                ensures result == x + 1;
+            } by {
+                execute_step();
+                normalize();
+            }
+        "#;
+
+    let verified = verify_c0_sources(click_source, &[("increment.c", c_source)])
+        .expect("the smart execution step should verify");
+    let expanded = verified[0]
+        .expanded_proof_tactics()
+        .expect("the linear smart step should have a surface expansion");
+
+    assert!(matches!(expanded[0], ProofTactic::StepUsing(_)));
+    assert_eq!(expanded[1], ProofTactic::Normalize);
+    assert_eq!(verified[0].expansion_blocker(), None);
+    TacticCertificate::from_proof_tactics(expanded)
+        .expect("the recorded expansion should be a surface certificate");
+}
+
+#[test]
 fn parses_explicit_branch_execution_tactics() {
     let source = FILL3_CLICK.replace(
         "by auto;",

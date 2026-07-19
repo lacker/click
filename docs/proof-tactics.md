@@ -102,6 +102,12 @@ Before expansion, smart tactics may retain private replay evidence in a
 `ProofReplayPlan`. Replay evidence is not a tactic and cannot be placed in a
 `TacticCertificate`; expansion must lower it to surface tactics first.
 
+C verification now records a point-aware surface replay alongside ordinary
+certificate replay. `VerifiedCTheorem::expanded_proof_tactics()` returns the
+surface sequence when every internal item was lowered, while
+`expansion_blocker()` identifies the first unsupported item. This trace does
+not participate in verification; it observes the same successful replay.
+
 Kernel propositions are not printed by guessing source text. Expansion builds
 a checked map from each `ClickProposition` fact or goal to its exact lowered
 kernel proposition, including corresponding logical subpropositions. It may

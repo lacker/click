@@ -1773,6 +1773,28 @@ struct TacticReplayState {
     next_opaque_call: u64,
     planned_tactics: Vec<ProofTactic>,
     surface_propositions: SurfacePropositionMap,
+    surface_replay: SurfaceReplay,
+}
+
+#[derive(Clone, Default)]
+struct SurfaceReplay {
+    tactics: Vec<ProofTactic>,
+    blocker: Option<String>,
+}
+
+impl SurfaceReplay {
+    fn push(&mut self, tactic: ProofTactic) {
+        if self.blocker.is_none() {
+            self.tactics.push(tactic);
+        }
+    }
+
+    fn block(&mut self, message: impl Into<String>) {
+        if self.blocker.is_none() {
+            self.blocker = Some(message.into());
+            self.tactics.clear();
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -4667,6 +4689,12 @@ fn finish_ordered_proof_replay(
                     claim: claim.verified_claim(),
                     proof_kind: ProofKind::TacticScript,
                     proof_tactics: Some(certificate_tactics.to_vec()),
+                    expanded_proof_tactics: replay
+                        .surface_replay
+                        .blocker
+                        .is_none()
+                        .then(|| replay.surface_replay.tactics.clone()),
+                    expansion_blocker: replay.surface_replay.blocker.clone(),
                     specification: specification.clone(),
                     theorem: theorem.clone(),
                 });
@@ -4675,6 +4703,138 @@ fn finish_ordered_proof_replay(
         Ok(verified)
     })();
     result.map_err(|error| add_proof_branch_path(error, &branch_path))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn checked_surface_fact_at_point(
+    replay: &TacticReplayState,
+    kernel: &Proposition,
+    available: &[Proposition],
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    state: &CState,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+) -> Result<ClickProposition, ClickError> {
+    replay
+        .surface_propositions
+        .checked_surface(kernel, |surface| {
+            lower_point_proposition(
+                surface,
+                available,
+                parameters,
+                arguments,
+                replay.execution_start_state(state),
+                state,
+                None,
+                &replay.program_point_states,
+                predicate_environment,
+                click_function_environment,
+            )
+            .map_err(ClickError::new)
+        })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn record_surface_replay_tactic(
+    replay: &mut TacticReplayState,
+    state: &CState,
+    available: &[Proposition],
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    tactic: &ProofTactic,
+) {
+    if replay.surface_replay.blocker.is_some() {
+        return;
+    }
+    let contextual_step = |replay: &TacticReplayState| {
+        available
+            .iter()
+            .map(|fact| {
+                checked_surface_fact_at_point(
+                    replay,
+                    fact,
+                    available,
+                    parameters,
+                    arguments,
+                    state,
+                    predicate_environment,
+                    click_function_environment,
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()
+    };
+    match tactic {
+        ProofTactic::CertifiedStatementStep(_) => match contextual_step(replay) {
+            Ok(premises) if premises.is_empty() => replay.surface_replay.push(ProofTactic::Step),
+            Ok(premises) => replay.surface_replay.push(ProofTactic::StepUsing(premises)),
+            Err(error) => replay.surface_replay.block(format!(
+                "could not express a statement-step premise at the current proof point: {}",
+                error.message()
+            )),
+        },
+        ProofTactic::CertifiedLoopSummaryStep(_) => {
+            let loop_index = replay
+                .source_layout
+                .statement(replay.frontier.next_statement_index)
+                .and_then(|region| match region.kind {
+                    SourceStatementKind::Loop { loop_index } => Some(loop_index),
+                    SourceStatementKind::Plain | SourceStatementKind::If { .. } => None,
+                });
+            let Some(loop_index) = loop_index else {
+                replay
+                    .surface_replay
+                    .block("certified loop-summary replay is not at a source loop entry");
+                return;
+            };
+            match contextual_step(replay) {
+                Ok(premises) if premises.is_empty() => {
+                    replay
+                        .surface_replay
+                        .push(ProofTactic::ApplyLoopSummary(CodeRegionRef::Loop(
+                            loop_index,
+                        )))
+                }
+                Ok(premises) => replay
+                    .surface_replay
+                    .push(ProofTactic::ApplyLoopSummaryUsing {
+                        region: CodeRegionRef::Loop(loop_index),
+                        premises,
+                    }),
+                Err(error) => replay.surface_replay.block(format!(
+                    "could not express a loop-summary premise at the current proof point: {}",
+                    error.message()
+                )),
+            }
+        }
+        ProofTactic::FinishCertifiedFactTransports(_) => {}
+        ProofTactic::RecordExecutionPoint
+        | ProofTactic::ResetOpaqueCallCounter
+        | ProofTactic::ExactPropositionDerivation(_)
+        | ProofTactic::CertifiedFactTransport { .. }
+        | ProofTactic::CertifiedPathAssumption { .. }
+        | ProofTactic::CertifiedFrame(_)
+        | ProofTactic::CertifiedAlternatives(_) => replay.surface_replay.block(format!(
+            "surface lowering is not implemented for internal replay tactic `{}`",
+            tactic_name(tactic)
+        )),
+        _ => match tactic.class() {
+            TacticClass::Simple(simple) if simple.is_surface_expressible() => {
+                replay.surface_replay.push(tactic.clone())
+            }
+            TacticClass::ControlFlow(_) => {
+                match TacticCertificate::from_proof_tactics(std::slice::from_ref(tactic)) {
+                    Ok(_) => replay.surface_replay.push(tactic.clone()),
+                    Err(error) => replay
+                        .surface_replay
+                        .block(format!("could not lower control-flow tactic: {error:?}")),
+                }
+            }
+            TacticClass::Smart(_) | TacticClass::Simple(_) => {}
+        },
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -4704,6 +4864,16 @@ fn replay_linear_tactics(
     for indexed_tactic in tactics {
         let tactic_index = indexed_tactic.index;
         let tactic = &indexed_tactic.tactic;
+        record_surface_replay_tactic(
+            &mut replay,
+            &state,
+            &requirement_pure_facts,
+            parsed_function.parameters(),
+            arguments,
+            predicate_environment,
+            click_function_environment,
+            tactic,
+        );
         match tactic {
             ProofTactic::UnfoldResource(resource) => {
                 if replay.is_at_function_exit() {

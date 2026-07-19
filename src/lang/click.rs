@@ -1232,6 +1232,8 @@ pub struct VerifiedCTheorem {
     pub claim: VerifiedClaim,
     pub proof_kind: ProofKind,
     pub proof_tactics: Option<Vec<ProofTactic>>,
+    pub expanded_proof_tactics: Option<Vec<ProofTactic>>,
+    pub expansion_blocker: Option<String>,
     pub specification: CFunctionSpecification,
     pub theorem: Theorem,
 }
@@ -1590,6 +1592,14 @@ impl VerifiedCTheorem {
 
     pub fn proof_tactics(&self) -> Option<&[ProofTactic]> {
         self.proof_tactics.as_deref()
+    }
+
+    pub fn expanded_proof_tactics(&self) -> Option<&[ProofTactic]> {
+        self.expanded_proof_tactics.as_deref()
+    }
+
+    pub fn expansion_blocker(&self) -> Option<&str> {
+        self.expansion_blocker.as_deref()
     }
 
     pub fn ensure_clause(&self) -> Option<&EnsureClause> {
