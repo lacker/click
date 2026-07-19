@@ -162,6 +162,11 @@ then contains only certified one-step transitions. Replay executes every
 alternative and merges completed frontiers; the planner cannot commit a
 partially explored branch set directly.
 
+Surface expansion retains the corresponding proof-level `if` tree. Subsequent
+surface-expressible tactics are copied into every branch leaf, because a
+proof-level `if` proves the current claim independently in each branch rather
+than exposing an execution join.
+
 `execute_rest` plans certified statement transitions through a straight-line
 prefix. If it reaches unresolved control flow, it finishes with the same
 explicit certificate alternatives used by `bounded_execute`. Consequently,

@@ -4547,6 +4547,7 @@ fn bounded_execute_resumes_and_explores_symbolic_branches() {
                     step();
                     step();
                     bounded_execute();
+                    normalize();
                     simp();
                 }
             }
@@ -4561,6 +4562,25 @@ fn bounded_execute_resumes_and_explores_symbolic_branches() {
             .iter()
             .all(|theorem| theorem.proof_kind() == ProofKind::TacticScript)
     );
+    for theorem in &verified {
+        let expanded = theorem.expanded_proof_tactics().unwrap_or_else(|| {
+            panic!(
+                "bounded branch execution should expand: {:?}",
+                theorem.expansion_blocker()
+            )
+        });
+        let proof_if = expanded
+            .iter()
+            .find_map(|tactic| match tactic {
+                ProofTactic::If(proof_if) => Some(proof_if),
+                _ => None,
+            })
+            .expect("bounded branch execution should retain its surface branch");
+        assert_eq!(proof_if.then_tactics.last(), Some(&ProofTactic::Normalize));
+        assert_eq!(proof_if.else_tactics.last(), Some(&ProofTactic::Normalize));
+        TacticCertificate::from_proof_tactics(expanded)
+            .expect("bounded branch expansion should be a surface certificate");
+    }
 }
 
 #[test]

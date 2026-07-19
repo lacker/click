@@ -1781,12 +1781,20 @@ struct SurfaceReplay {
     tactics: Vec<ProofTactic>,
     blocker: Option<String>,
     last_step_entry: Option<ProgramPointRef>,
+    path_choices: Vec<SurfacePathChoice>,
+}
+
+#[derive(Clone)]
+struct SurfacePathChoice {
+    condition: ClickProposition,
+    value: bool,
+    tactic_offset: usize,
 }
 
 impl SurfaceReplay {
     fn push(&mut self, tactic: ProofTactic) {
         if self.blocker.is_none() {
-            self.tactics.push(tactic);
+            append_surface_tactic_to_leaves(&mut self.tactics, tactic);
         }
     }
 
@@ -1794,8 +1802,89 @@ impl SurfaceReplay {
         if self.blocker.is_none() {
             self.blocker = Some(message.into());
             self.tactics.clear();
+            self.path_choices.clear();
         }
     }
+}
+
+fn append_surface_tactic_to_leaves(tactics: &mut Vec<ProofTactic>, tactic: ProofTactic) {
+    if let Some(ProofTactic::If(proof_if)) = tactics.last_mut() {
+        append_surface_tactic_to_leaves(&mut proof_if.then_tactics, tactic.clone());
+        append_surface_tactic_to_leaves(&mut proof_if.else_tactics, tactic);
+    } else {
+        tactics.push(tactic);
+    }
+}
+
+fn synthesize_surface_alternatives(paths: Vec<SurfaceReplay>) -> Result<Vec<ProofTactic>, String> {
+    if paths.is_empty() {
+        return Err("certified alternatives contained no paths".to_string());
+    }
+    if let Some(blocker) = paths.iter().find_map(|path| path.blocker.clone()) {
+        return Err(blocker);
+    }
+    synthesize_surface_paths(paths)
+}
+
+fn synthesize_surface_paths(paths: Vec<SurfaceReplay>) -> Result<Vec<ProofTactic>, String> {
+    if paths.len() == 1 {
+        return Ok(paths.into_iter().next().unwrap().tactics);
+    }
+    let first_choice = paths
+        .first()
+        .and_then(|path| path.path_choices.first())
+        .ok_or_else(|| "distinct certified paths have no surface branch condition".to_string())?
+        .clone();
+    let prefix = paths[0]
+        .tactics
+        .get(..first_choice.tactic_offset)
+        .ok_or_else(|| "surface branch offset exceeds its tactic trace".to_string())?
+        .to_vec();
+
+    let mut then_paths = Vec::new();
+    let mut else_paths = Vec::new();
+    for mut path in paths {
+        let choice = path
+            .path_choices
+            .first()
+            .ok_or_else(|| "only some certified paths contain a branch condition".to_string())?
+            .clone();
+        if choice.condition != first_choice.condition
+            || choice.tactic_offset != first_choice.tactic_offset
+            || path.tactics.get(..choice.tactic_offset) != Some(prefix.as_slice())
+        {
+            return Err("certified paths do not share one branch prefix".to_string());
+        }
+        path.tactics.drain(..choice.tactic_offset);
+        path.path_choices.remove(0);
+        for remaining in &mut path.path_choices {
+            remaining.tactic_offset -= choice.tactic_offset;
+        }
+        if choice.value {
+            then_paths.push(path);
+        } else {
+            else_paths.push(path);
+        }
+    }
+
+    if then_paths.is_empty() {
+        let mut tactics = prefix;
+        tactics.extend(synthesize_surface_paths(else_paths)?);
+        return Ok(tactics);
+    }
+    if else_paths.is_empty() {
+        let mut tactics = prefix;
+        tactics.extend(synthesize_surface_paths(then_paths)?);
+        return Ok(tactics);
+    }
+
+    let mut tactics = prefix;
+    tactics.push(ProofTactic::If(ProofIf {
+        condition: first_choice.condition,
+        then_tactics: synthesize_surface_paths(then_paths)?,
+        else_tactics: synthesize_surface_paths(else_paths)?,
+    }));
+    Ok(tactics)
 }
 
 #[derive(Clone)]
@@ -2063,6 +2152,14 @@ fn append_condition_transition_certificate(
         .push(ProofTactic::CertifiedStatementStep(
             transition.prerequisite_derivations.clone(),
         ));
+}
+
+fn surface_c_condition(condition: &CExpression) -> ClickProposition {
+    ClickProposition::Comparison {
+        left: ContractExpression::CFragment(condition.clone()),
+        operator: ComparisonOperator::NotEqual,
+        right: ContractExpression::CFragment(CExpression::Value(int32(0))),
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -4948,12 +5045,18 @@ fn record_surface_replay_tactic(
             }
         }
         ProofTactic::FinishCertifiedFactTransports(_) => {}
+        ProofTactic::CertifiedPathAssumption {
+            condition, value, ..
+        } => replay.surface_replay.path_choices.push(SurfacePathChoice {
+            condition: condition.clone(),
+            value: *value,
+            tactic_offset: replay.surface_replay.tactics.len(),
+        }),
+        ProofTactic::CertifiedAlternatives(_) => {}
         ProofTactic::RecordExecutionPoint
         | ProofTactic::ResetOpaqueCallCounter
         | ProofTactic::ExactPropositionDerivation(_)
-        | ProofTactic::CertifiedPathAssumption { .. }
-        | ProofTactic::CertifiedFrame(_)
-        | ProofTactic::CertifiedAlternatives(_) => replay.surface_replay.block(format!(
+        | ProofTactic::CertifiedFrame(_) => replay.surface_replay.block(format!(
             "surface lowering is not implemented for internal replay tactic `{}`",
             tactic_name(tactic)
         )),
@@ -5349,7 +5452,7 @@ fn replay_linear_tactics(
             ProofTactic::ResetOpaqueCallCounter => {
                 replay.next_opaque_call = 0;
             }
-            ProofTactic::CertifiedPathAssumption { facts, theorem } => {
+            ProofTactic::CertifiedPathAssumption { facts, theorem, .. } => {
                 if !matches!(
                     implication_body(theorem.proposition()),
                     Proposition::CConditionEvaluates { .. }
@@ -5366,6 +5469,7 @@ fn replay_linear_tactics(
                 assumptions = assumptions_from_propositions(&requirement_pure_facts);
             }
             ProofTactic::CertifiedAlternatives(alternatives) => {
+                let outer_surface_replay = replay.surface_replay.clone();
                 let base = ProofReplayContext {
                     state: state.clone(),
                     pure_facts: requirement_pure_facts.clone(),
@@ -5373,9 +5477,12 @@ fn replay_linear_tactics(
                     branch_path: branch_path.clone(),
                 };
                 let mut completed = Vec::new();
+                let mut surface_paths = Vec::new();
                 for alternative in alternatives {
+                    let mut alternative_base = base.clone();
+                    alternative_base.replay.surface_replay = SurfaceReplay::default();
                     let result = replay_execution_tactic_certificate(
-                        base.clone(),
+                        alternative_base,
                         function_block,
                         parsed_function,
                         claims,
@@ -5390,6 +5497,7 @@ fn replay_linear_tactics(
                         tactic_index,
                         alternative,
                     )?;
+                    surface_paths.push(result.replay.surface_replay.clone());
                     completed.push(BoundedProofFrontier {
                         replay: result.replay,
                         state: result.state,
@@ -5406,6 +5514,17 @@ fn replay_linear_tactics(
                     claim_label,
                     tactic_index,
                 )?;
+                replay.surface_replay = outer_surface_replay;
+                match synthesize_surface_alternatives(surface_paths) {
+                    Ok(tactics) => {
+                        for tactic in tactics {
+                            replay.surface_replay.push(tactic);
+                        }
+                    }
+                    Err(message) => replay.surface_replay.block(format!(
+                        "could not lower certified branch alternatives: {message}"
+                    )),
+                }
                 assumptions = assumptions_from_propositions(&requirement_pure_facts);
             }
             ProofTactic::ExecuteStep => {
@@ -7002,6 +7121,8 @@ fn execute_branch_step_from_execution_point(
         replay
             .planned_tactics
             .push(ProofTactic::CertifiedPathAssumption {
+                condition: surface_c_condition(&condition),
+                value: condition_transition.is_true,
                 facts: condition_transition.path_facts.clone(),
                 theorem: condition_transition.theorem.clone(),
             });

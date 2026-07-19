@@ -639,6 +639,8 @@ pub enum ProofTactic {
     },
     FinishCertifiedFactTransports(Vec<Proposition>),
     CertifiedPathAssumption {
+        condition: ClickProposition,
+        value: bool,
         facts: Vec<Proposition>,
         theorem: Theorem,
     },
