@@ -1714,6 +1714,12 @@ impl Parser {
                 self.expect_empty_tactic_args(&name)?;
                 ProofTactic::Step
             }
+            "apply_loop_summary" => {
+                self.expect(Token::LParen)?;
+                let region_ref = self.parse_code_region_ref()?;
+                self.expect(Token::RParen)?;
+                ProofTactic::ApplyLoopSummary(region_ref)
+            }
             "symbolic_execute" => {
                 self.expect_empty_tactic_args(&name)?;
                 ProofTactic::ExecuteRest

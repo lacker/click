@@ -4789,6 +4789,7 @@ fn replay_linear_tactics(
                 assumptions = assumptions_from_propositions(&requirement_pure_facts);
             }
             ProofTactic::Step
+            | ProofTactic::ApplyLoopSummary(_)
             | ProofTactic::CertifiedStatementStep(_)
             | ProofTactic::CertifiedLoopSummaryStep(_) => {
                 let (prerequisite_policy, certified_prerequisites, loop_step_policy) = match tactic
@@ -4798,6 +4799,37 @@ fn replay_linear_tactics(
                         &[][..],
                         LoopStepPolicy::EnterBody,
                     ),
+                    ProofTactic::ApplyLoopSummary(region_ref) => {
+                        let CodeRegion::Loop(expected_loop) = resolve_code_region_ref(
+                            function_block,
+                            region_ref,
+                            claim_label,
+                            tactic_index,
+                        )?
+                        else {
+                            return Err(ClickError::new(format!(
+                                "`{claim_label}` tactic {tactic_index}: `apply_loop_summary` expects a loop region"
+                            )));
+                        };
+                        let current_loop = replay
+                            .source_layout
+                            .statement(replay.frontier.next_statement_index)
+                            .and_then(|region| match region.kind {
+                                SourceStatementKind::Loop { loop_index } => Some(loop_index),
+                                SourceStatementKind::Plain | SourceStatementKind::If { .. } => None,
+                            });
+                        if current_loop != Some(expected_loop) {
+                            return Err(ClickError::new(format!(
+                                "`{claim_label}` tactic {tactic_index}: `apply_loop_summary(loop({expected_loop}))` is not at that loop's entry; current statement is statement({})",
+                                replay.frontier.next_statement_index
+                            )));
+                        }
+                        (
+                            StatementPrerequisitePolicy::Exact,
+                            &[][..],
+                            LoopStepPolicy::ApplyVerifiedRule,
+                        )
+                    }
                     ProofTactic::CertifiedStatementStep(derivations) => (
                         StatementPrerequisitePolicy::Certified,
                         derivations.as_slice(),

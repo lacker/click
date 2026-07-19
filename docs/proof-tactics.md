@@ -18,6 +18,7 @@ tactics run.
 | Tactic | One operation |
 | --- | --- |
 | `step()` | Advance one small C transition when every execution prerequisite is exact or context-free; do not transport facts automatically. |
+| `apply_loop_summary(loop(N))` | Apply one already verified loop summary at that loop's entry. |
 | `assumption()` | Close a pure goal only when that exact fact is present. |
 | `normalize()` | Close a goal by context-free computation and structural normalization. |
 | `intro()` | Replace one implication goal with its consequent while assuming its antecedent, or replace one universal goal with its body. |
@@ -172,6 +173,9 @@ transition. Their proof behavior differs:
   the next statement is an `if`, an exact condition fact selects and enters one
   arm without executing that arm's body. At a loop head, it evaluates the
   condition once and either enters one iteration or advances past the loop.
+- `apply_loop_summary(loop(N))` applies that loop's already verified abstract
+  rule and advances to its exit in one transition. It does not enter or replay
+  the loop body.
 - `transport(source, target)` explicitly moves one atomic condition fact to the
   current snapshot when a certified effect fact proves that its referenced
   memory was framed.

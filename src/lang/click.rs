@@ -569,6 +569,7 @@ pub enum Proof {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ProofTactic {
     Step,
+    ApplyLoopSummary(CodeRegionRef),
     CertifiedStatementStep(Vec<PropositionDerivation>),
     CertifiedLoopSummaryStep(Vec<PropositionDerivation>),
     RecordExecutionPoint,
@@ -626,6 +627,7 @@ pub enum ProofTactic {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SimpleTactic {
     StatementTransition,
+    LoopSummaryTransition,
     CertifiedStatementTransition,
     CertifiedLoopSummaryTransition,
     ExecutionPointRecord,
@@ -950,6 +952,7 @@ impl ProofTactic {
     pub fn class(&self) -> TacticClass {
         match self {
             Self::Step => TacticClass::Simple(SimpleTactic::StatementTransition),
+            Self::ApplyLoopSummary(_) => TacticClass::Simple(SimpleTactic::LoopSummaryTransition),
             Self::CertifiedStatementStep(_) => {
                 TacticClass::Simple(SimpleTactic::CertifiedStatementTransition)
             }

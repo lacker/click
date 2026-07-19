@@ -1454,6 +1454,10 @@ fn parses_and_classifies_simple_and_smart_tactics() {
         TacticClass::Simple(SimpleTactic::StatementTransition)
     ));
     assert!(matches!(
+        ProofTactic::ApplyLoopSummary(CodeRegionRef::Loop(0)).class(),
+        TacticClass::Simple(SimpleTactic::LoopSummaryTransition)
+    ));
+    assert!(matches!(
         ProofTactic::CertifiedStatementStep(Vec::new()).class(),
         TacticClass::Simple(SimpleTactic::CertifiedStatementTransition)
     ));
@@ -4309,6 +4313,44 @@ fn step_and_execute_step_advance_one_concrete_loop_transition() {
 
     let verified = verify_c0_sources(click_source, &[("count_two.c", c_source)])
         .expect("small tactics should traverse concrete loop heads and iterations");
+
+    assert_eq!(verified.len(), 1);
+    assert_eq!(verified[0].proof_kind(), ProofKind::TacticScript);
+}
+
+#[test]
+fn apply_loop_summary_advances_one_verified_loop_transition() {
+    let c_source = r#"
+            int32 count_to_two() {
+                int32 i;
+                i = 0;
+                while (i < 2) {
+                    i = i + 1;
+                }
+                return i;
+            }
+        "#;
+    let click_source = r#"
+            verifying "count_to_two.c";
+
+            int32 count_to_two() {
+                for loop(0) {
+                    invariant i >= 0 and i <= 2;
+                    initialize by auto;
+                    preserve by auto;
+                }
+                ensures returns_two: result == 2 by {
+                    step();
+                    step();
+                    apply_loop_summary(loop(0));
+                    step();
+                    simp();
+                }
+            }
+        "#;
+
+    let verified = verify_c0_sources(click_source, &[("count_to_two.c", c_source)])
+        .expect("the explicit loop-summary tactic should apply the verified loop rule");
 
     assert_eq!(verified.len(), 1);
     assert_eq!(verified[0].proof_kind(), ProofKind::TacticScript);

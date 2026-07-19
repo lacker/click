@@ -168,6 +168,11 @@ facts between memory snapshots. `execute_step()` is the smart automated
 convenience form. An explicit `transport(source, target)` applies
 one certified frame-transport rule between two stated atomic facts.
 
+At an annotated loop entry, `apply_loop_summary(loop(N))` is the simple tactic
+that consumes the already verified loop rule and advances to its abstract exit.
+Ordinary `step()` instead evaluates the loop condition and enters at most one
+iteration.
+
 When both proof cases should continue through common code, `advance` gives the
 branch-local execution a shared, explicit postcondition:
 

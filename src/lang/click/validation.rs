@@ -2237,6 +2237,7 @@ fn validate_pure_theorem_tactics(
                 )));
             }
             ProofTactic::Step
+            | ProofTactic::ApplyLoopSummary(_)
             | ProofTactic::CertifiedStatementStep(_)
             | ProofTactic::CertifiedLoopSummaryStep(_)
             | ProofTactic::RecordExecutionPoint
@@ -2274,6 +2275,7 @@ fn validate_pure_theorem_tactics(
 pub(super) fn tactic_name(tactic: &ProofTactic) -> &'static str {
     match tactic {
         ProofTactic::Step => "step",
+        ProofTactic::ApplyLoopSummary(_) => "apply_loop_summary",
         ProofTactic::CertifiedStatementStep(_) => "certified_statement_step",
         ProofTactic::CertifiedLoopSummaryStep(_) => "certified_loop_summary_step",
         ProofTactic::RecordExecutionPoint => "record_execution_point",
