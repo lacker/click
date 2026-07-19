@@ -280,6 +280,28 @@ fn expand_declared_resource_tactic(
         ProofTactic::Contradiction(proposition) => Ok(ProofTactic::Contradiction(
             expand_declared_resource_proposition(proposition, resource_definitions)?,
         )),
+        ProofTactic::Derive(derive) => Ok(ProofTactic::Derive(ProofDerive {
+            proposition: expand_declared_resource_proposition(
+                derive.proposition,
+                resource_definitions,
+            )?,
+            premises: derive
+                .premises
+                .into_iter()
+                .map(|premise| expand_declared_resource_proposition(premise, resource_definitions))
+                .collect::<Result<Vec<_>, _>>()?,
+        })),
+        ProofTactic::Calculate(derive) => Ok(ProofTactic::Calculate(ProofDerive {
+            proposition: expand_declared_resource_proposition(
+                derive.proposition,
+                resource_definitions,
+            )?,
+            premises: derive
+                .premises
+                .into_iter()
+                .map(|premise| expand_declared_resource_proposition(premise, resource_definitions))
+                .collect::<Result<Vec<_>, _>>()?,
+        })),
         ProofTactic::Have(have) => Ok(ProofTactic::Have(ProofHave {
             proposition: have.proposition,
             proof: expand_declared_resource_proof(have.proof, resource_definitions)?,
@@ -2200,6 +2222,8 @@ fn validate_pure_theorem_tactics(
             | ProofTactic::DoubleNegation
             | ProofTactic::Vacuous
             | ProofTactic::Contradiction(_)
+            | ProofTactic::Derive(_)
+            | ProofTactic::Calculate(_)
             | ProofTactic::Rewrite(_)
             | ProofTactic::ExactPropositionDerivation(_)
             | ProofTactic::Simp => {}
@@ -2280,6 +2304,8 @@ pub(super) fn tactic_name(tactic: &ProofTactic) -> &'static str {
         ProofTactic::DoubleNegation => "double_negation",
         ProofTactic::Vacuous => "vacuous",
         ProofTactic::Contradiction(_) => "contradiction",
+        ProofTactic::Derive(_) => "derive",
+        ProofTactic::Calculate(_) => "calculate",
         ProofTactic::Rewrite(_) => "rewrite",
         ProofTactic::Transport { .. } => "transport",
         ProofTactic::ExactPropositionDerivation(_) => "exact_proposition_derivation",

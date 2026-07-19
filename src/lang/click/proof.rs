@@ -115,6 +115,40 @@ fn apply_logical_goal_tactic(
     }
 }
 
+fn check_atomic_derivation_goal(
+    tactic: &ProofTactic,
+    target: Proposition,
+    premises: Vec<Proposition>,
+    goal: &Proposition,
+    available: &[Proposition],
+) -> Result<(), String> {
+    if &target != goal {
+        return Err(format!(
+            "`{}` target does not match the current goal\n  target: {target:?}\n  goal: {goal:?}",
+            tactic_name(tactic)
+        ));
+    }
+    if let Some(missing) = premises.iter().find(|premise| !available.contains(premise)) {
+        return Err(format!(
+            "`{}` is missing an exact listed premise: {missing:?}",
+            tactic_name(tactic)
+        ));
+    }
+    let assumptions = assumptions_from_propositions(&premises);
+    let derivation = match tactic {
+        ProofTactic::Derive(_) => assumptions.derive_atomic_proposition(&target),
+        ProofTactic::Calculate(_) => assumptions.derive_simp_atomic_proposition(&target),
+        _ => return Err("not an atomic derivation tactic".to_string()),
+    };
+    if derivation.is_none() {
+        return Err(format!(
+            "`{}` could not check the atomic target from exactly the listed premises: {target:?}",
+            tactic_name(tactic)
+        ));
+    }
+    Ok(())
+}
+
 pub(super) fn verify_theorem_definitions(
     theorem_definitions: &[TheoremDefinition],
     predicate_environment: &PredicateEnvironment,
@@ -1046,6 +1080,50 @@ fn prove_pure_theorem_tactics(
                 .map_err(|message| {
                     ClickError::new(format!("`{claim_label}` tactic {tactic_index}: {message}"))
                 })?;
+            }
+            ProofTactic::Derive(derive) | ProofTactic::Calculate(derive) => {
+                let target = lower_pure_theorem_proposition(
+                    claim_label,
+                    &derive.proposition,
+                    &context.values,
+                    &context.array_refs,
+                    &context.memory,
+                    predicate_environment,
+                    click_function_environment,
+                )
+                .map_err(|message| {
+                    ClickError::new(format!(
+                        "`{claim_label}` tactic {tactic_index}: could not lower `{}` target: {message}",
+                        tactic_name(tactic)
+                    ))
+                })?;
+                let premises = derive
+                    .premises
+                    .iter()
+                    .map(|premise| {
+                        lower_pure_theorem_proposition(
+                            claim_label,
+                            premise,
+                            &context.values,
+                            &context.array_refs,
+                            &context.memory,
+                            predicate_environment,
+                            click_function_environment,
+                        )
+                    })
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(|message| {
+                        ClickError::new(format!(
+                            "`{claim_label}` tactic {tactic_index}: could not lower `{}` premise: {message}",
+                            tactic_name(tactic)
+                        ))
+                    })?;
+                check_atomic_derivation_goal(tactic, target, premises, &goal, &available).map_err(
+                    |message| {
+                        ClickError::new(format!("`{claim_label}` tactic {tactic_index}: {message}"))
+                    },
+                )?;
+                closed = true;
             }
             ProofTactic::Rewrite(surface_equality) => {
                 let mut equality = lower_pure_theorem_proposition(
@@ -3324,6 +3402,8 @@ fn prove_pure_proposition_case_at_point(
             | ProofTactic::DoubleNegation
             | ProofTactic::Vacuous
             | ProofTactic::Contradiction(_)
+            | ProofTactic::Derive(_)
+            | ProofTactic::Calculate(_)
             | ProofTactic::Rewrite(_) => {
                 if goal.is_none() {
                     let lowered = lower_point_proposition_with_values(
@@ -3426,6 +3506,63 @@ fn prove_pure_proposition_case_at_point(
                             ))
                         })?;
                         goal = Some(logical_goal);
+                    }
+                    ProofTactic::Derive(derive) | ProofTactic::Calculate(derive) => {
+                        let target = lower_point_proposition_with_values(
+                            &derive.proposition,
+                            &available,
+                            values.clone(),
+                            &array_refs,
+                            pre_state,
+                            state,
+                            result,
+                            program_point_states,
+                            predicate_environment,
+                            click_function_environment,
+                        )
+                        .map_err(|message| {
+                            ClickError::new(format!(
+                                "`{claim_label}` {proof_name} proof {outer_tactic_index}: could not lower `{}` target: {message}",
+                                tactic_name(tactic)
+                            ))
+                        })?;
+                        let premises = derive
+                            .premises
+                            .iter()
+                            .map(|premise| {
+                                lower_point_proposition_with_values(
+                                    premise,
+                                    &available,
+                                    values.clone(),
+                                    &array_refs,
+                                    pre_state,
+                                    state,
+                                    result,
+                                    program_point_states,
+                                    predicate_environment,
+                                    click_function_environment,
+                                )
+                            })
+                            .collect::<Result<Vec<_>, _>>()
+                            .map_err(|message| {
+                                ClickError::new(format!(
+                                    "`{claim_label}` {proof_name} proof {outer_tactic_index}: could not lower `{}` premise: {message}",
+                                    tactic_name(tactic)
+                                ))
+                            })?;
+                        check_atomic_derivation_goal(
+                            tactic,
+                            target,
+                            premises,
+                            &unfolded_goal,
+                            &available,
+                        )
+                        .map_err(|message| {
+                            ClickError::new(format!(
+                                "`{claim_label}` {proof_name} proof {outer_tactic_index}: {message}"
+                            ))
+                        })?;
+                        goal_closed = true;
                     }
                     ProofTactic::Rewrite(surface_equality) => {
                         let equality = lower_point_proposition_with_values(
@@ -5470,6 +5607,20 @@ fn replay_linear_tactics(
                         .push((tactic_index, post_tactic));
                 }
             }
+            ProofTactic::Intro
+            | ProofTactic::Conjunction
+            | ProofTactic::Left
+            | ProofTactic::Right
+            | ProofTactic::DoubleNegation
+            | ProofTactic::Vacuous
+            | ProofTactic::Contradiction(_)
+            | ProofTactic::Derive(_)
+            | ProofTactic::Calculate(_) => {
+                return Err(ClickError::new(format!(
+                    "`{claim_label}` tactic {tactic_index}: `{}` is only available while proving a pure goal, such as inside `have ... by`",
+                    tactic_name(tactic)
+                )));
+            }
             ProofTactic::ExactPropositionDerivation(derivation) => {
                 if !derivation.replay(&assumptions) {
                     return Err(ClickError::new(format!(
@@ -5510,18 +5661,6 @@ fn replay_linear_tactics(
             ProofTactic::FinishCertifiedFactTransports(sources) => {
                 requirement_pure_facts.retain(|fact| !sources.contains(fact));
                 assumptions = assumptions_from_propositions(&requirement_pure_facts);
-            }
-            ProofTactic::Intro
-            | ProofTactic::Conjunction
-            | ProofTactic::Left
-            | ProofTactic::Right
-            | ProofTactic::DoubleNegation
-            | ProofTactic::Vacuous
-            | ProofTactic::Contradiction(_) => {
-                return Err(ClickError::new(format!(
-                    "`{claim_label}` tactic {tactic_index}: `{}` is only available while proving a pure goal, such as inside `have ... by`",
-                    tactic_name(tactic)
-                )));
             }
             ProofTactic::Simp => {
                 if !replay.region_proof {

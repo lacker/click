@@ -26,6 +26,8 @@ tactics run.
 | `double_negation()` | Close `not (not P)` from the exact fact `P`. |
 | `vacuous()` | Close an implication from the exact negation of its antecedent. |
 | `contradiction(P)` | Close any pure goal when both `P` and `not P` are exact facts. |
+| `derive(P) using { fact Q; ... }` | Check one atomic consequence `P` using exactly the listed premises and the ordinary kernel theory rules. |
+| `calculate(P) using { fact Q; ... }` | Check one atomic consequence using the simplifier's deterministic equality and arithmetic theory rules. |
 | `rewrite(equality)` | Rewrite the current pure goal once using an exact available equality. |
 | `transport(source, target)` | Apply one certified frame-transport rule from an exact source fact to the explicitly stated target fact. |
 | `apply(theorem(args))` | Instantiate one theorem, require each premise exactly or by context-free normalization, and add its conclusions. |
@@ -51,6 +53,12 @@ The logical introduction tactics operate only while a pure goal is active,
 including inside `have ... by`. They do not search for their premises. Expanded
 proofs can therefore establish required premises with earlier `have` or
 `apply` tactics and then invoke exactly one logical rule.
+
+`derive` and `calculate` make atomic theory evidence explicit. Every listed
+premise must be an exact available fact, and no unlisted fact from the ambient
+proof context participates. They do not introduce conjunctions, implications,
+quantifiers, or case splits; use the structural logical tactics for those
+rules. `normalize()` remains the tactic for a context-free atomic goal.
 
 ## Smart Tactics
 

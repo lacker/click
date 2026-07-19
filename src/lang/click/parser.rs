@@ -1678,6 +1678,37 @@ impl Parser {
                 tactics,
             }));
         }
+        if matches!(name.as_str(), "derive" | "calculate") {
+            self.expect(Token::LParen)?;
+            let proposition = self.parse_proposition()?;
+            self.expect(Token::RParen)?;
+            self.expect_ident_spelling("using")?;
+            self.expect(Token::LBrace)?;
+            let mut premises = Vec::new();
+            while self.peek() != Some(&Token::RBrace) {
+                self.expect_ident_spelling("fact")?;
+                premises.push(self.parse_proposition()?);
+                self.expect(Token::Semicolon)?;
+            }
+            self.expect(Token::RBrace)?;
+            if premises.is_empty() {
+                return Err(self.error(format!(
+                    "`{name}` requires at least one explicit premise; use `normalize()` for a context-free goal"
+                )));
+            }
+            if self.peek() == Some(&Token::Semicolon) {
+                self.position += 1;
+            }
+            let derivation = ProofDerive {
+                proposition,
+                premises,
+            };
+            return Ok(if name == "derive" {
+                ProofTactic::Derive(derivation)
+            } else {
+                ProofTactic::Calculate(derivation)
+            });
+        }
         let tactic = match name.as_str() {
             "step" => {
                 self.expect_empty_tactic_args(&name)?;

@@ -538,6 +538,8 @@ pub enum ProofTactic {
     DoubleNegation,
     Vacuous,
     Contradiction(ClickProposition),
+    Derive(ProofDerive),
+    Calculate(ProofDerive),
     Rewrite(ClickProposition),
     Transport {
         source: ClickProposition,
@@ -581,6 +583,8 @@ pub enum SimpleTactic {
     DoubleNegation,
     Vacuous,
     Contradiction,
+    Derive,
+    Calculate,
     Rewrite,
     FactTransport,
     ExactPropositionDerivation,
@@ -909,6 +913,8 @@ impl ProofTactic {
             Self::DoubleNegation => TacticClass::Simple(SimpleTactic::DoubleNegation),
             Self::Vacuous => TacticClass::Simple(SimpleTactic::Vacuous),
             Self::Contradiction(_) => TacticClass::Simple(SimpleTactic::Contradiction),
+            Self::Derive(_) => TacticClass::Simple(SimpleTactic::Derive),
+            Self::Calculate(_) => TacticClass::Simple(SimpleTactic::Calculate),
             Self::Rewrite(_) => TacticClass::Simple(SimpleTactic::Rewrite),
             Self::Transport { .. } => TacticClass::Simple(SimpleTactic::FactTransport),
             Self::ExactPropositionDerivation(_) => {
@@ -972,6 +978,12 @@ pub struct ProofAdvance {
     target: ProgramPointRef,
     assertions: Vec<ProofAssertion>,
     tactics: Vec<ProofTactic>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProofDerive {
+    proposition: ClickProposition,
+    premises: Vec<ClickProposition>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

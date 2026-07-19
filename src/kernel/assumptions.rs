@@ -2006,6 +2006,42 @@ impl Assumptions {
         self.derive_proposition_using(proposition, true)
     }
 
+    /// Check one atomic theory consequence against this exact premise set.
+    ///
+    /// Unlike [`Self::derive_proposition`], this does not introduce logical
+    /// structure or attempt finite case splits.
+    pub fn derive_atomic_proposition(
+        &self,
+        proposition: &Proposition,
+    ) -> Option<PropositionDerivation> {
+        self.derive_atomic_proposition_using(proposition, false)
+    }
+
+    /// The simplifier's atomic theory check, without structural proof search.
+    pub fn derive_simp_atomic_proposition(
+        &self,
+        proposition: &Proposition,
+    ) -> Option<PropositionDerivation> {
+        self.derive_atomic_proposition_using(proposition, true)
+    }
+
+    fn derive_atomic_proposition_using(
+        &self,
+        proposition: &Proposition,
+        for_simp: bool,
+    ) -> Option<PropositionDerivation> {
+        self.proves_atomic_for_derivation(proposition, for_simp)
+            .then(|| {
+                proposition_derivation(
+                    proposition,
+                    PropositionDerivationRule::ContextualAtomic {
+                        premises: self.clone(),
+                        for_simp,
+                    },
+                )
+            })
+    }
+
     fn derive_proposition_using(
         &self,
         proposition: &Proposition,

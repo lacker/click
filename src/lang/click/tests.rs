@@ -297,6 +297,38 @@ fn verifies_explicit_structural_logic_tactics() {
 }
 
 #[test]
+fn verifies_atomic_derivation_from_explicit_premises() {
+    let source = r#"
+        theorem derives_nonnegative(x: int32) {
+            requires x > 0;
+            ensures x >= 0 by {
+                derive(x >= 0) using {
+                    fact x > 0;
+                }
+            }
+        }
+
+        theorem calculates_nonnegative(x: int32) {
+            requires x > 0;
+            ensures x >= 0 by {
+                calculate(x >= 0) using {
+                    fact x > 0;
+                }
+            }
+        }
+    "#;
+
+    let verified = verify_click_theorems(source).expect("atomic derivations should verify");
+    assert_eq!(verified.len(), 2);
+    assert!(verified.iter().all(|theorem| {
+        theorem
+            .proof_tactics
+            .as_ref()
+            .is_some_and(|tactics| TacticCertificate::from_proof_tactics(tactics).is_ok())
+    }));
+}
+
+#[test]
 fn parses_symbolic_loadable_bytes() {
     let source = r#"
             verifying "fill.c";
