@@ -511,6 +511,9 @@ pub enum Proof {
 pub enum ProofTactic {
     Step,
     CertifiedStatementStep(Vec<PropositionDerivation>),
+    CertifiedLoopSummaryStep(Vec<PropositionDerivation>),
+    RecordExecutionPoint,
+    ResetOpaqueCallCounter,
     ExecuteStep,
     ExecuteThenStep,
     ExecuteElseStep,
@@ -541,6 +544,7 @@ pub enum ProofTactic {
         target: Proposition,
         theorem: Theorem,
     },
+    FinishCertifiedFactTransports(Vec<Proposition>),
     Simp,
 }
 
@@ -548,6 +552,9 @@ pub enum ProofTactic {
 pub enum SimpleTactic {
     StatementTransition,
     CertifiedStatementTransition,
+    CertifiedLoopSummaryTransition,
+    ExecutionPointRecord,
+    OpaqueCallCounterReset,
     UnfoldPredicate,
     UnfoldResource,
     ObserveResource,
@@ -560,6 +567,7 @@ pub enum SimpleTactic {
     FactTransport,
     ExactPropositionDerivation,
     CertifiedFactTransport,
+    CertifiedFactTransportFinish,
     FoldResource,
     Frame,
 }
@@ -716,6 +724,13 @@ impl ProofTactic {
             Self::CertifiedStatementStep(_) => {
                 TacticClass::Simple(SimpleTactic::CertifiedStatementTransition)
             }
+            Self::CertifiedLoopSummaryStep(_) => {
+                TacticClass::Simple(SimpleTactic::CertifiedLoopSummaryTransition)
+            }
+            Self::RecordExecutionPoint => TacticClass::Simple(SimpleTactic::ExecutionPointRecord),
+            Self::ResetOpaqueCallCounter => {
+                TacticClass::Simple(SimpleTactic::OpaqueCallCounterReset)
+            }
             Self::UnfoldPredicate(_) => TacticClass::Simple(SimpleTactic::UnfoldPredicate),
             Self::UnfoldResource(_) => TacticClass::Simple(SimpleTactic::UnfoldResource),
             Self::ObserveResource(_) => TacticClass::Simple(SimpleTactic::ObserveResource),
@@ -731,6 +746,9 @@ impl ProofTactic {
             }
             Self::CertifiedFactTransport { .. } => {
                 TacticClass::Simple(SimpleTactic::CertifiedFactTransport)
+            }
+            Self::FinishCertifiedFactTransports(_) => {
+                TacticClass::Simple(SimpleTactic::CertifiedFactTransportFinish)
             }
             Self::FoldResource(_) => TacticClass::Simple(SimpleTactic::FoldResource),
             Self::Frame(_) => TacticClass::Simple(SimpleTactic::Frame),

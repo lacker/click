@@ -1945,12 +1945,16 @@ pub(super) struct CertifiedFactTransport {
 fn append_statement_transition_certificate(
     replay: &mut TacticReplayState,
     transition: &CertifiedStatementTransition,
+    loop_step_policy: LoopStepPolicy,
 ) {
-    replay
-        .planned_tactics
-        .push(ProofTactic::CertifiedStatementStep(
-            transition.prerequisite_derivations.clone(),
-        ));
+    replay.planned_tactics.push(match loop_step_policy {
+        LoopStepPolicy::EnterBody => {
+            ProofTactic::CertifiedStatementStep(transition.prerequisite_derivations.clone())
+        }
+        LoopStepPolicy::ApplyVerifiedRule => {
+            ProofTactic::CertifiedLoopSummaryStep(transition.prerequisite_derivations.clone())
+        }
+    });
     replay
         .planned_tactics
         .extend(transition.fact_transports.iter().map(|transport| {
@@ -1960,6 +1964,17 @@ fn append_statement_transition_certificate(
                 theorem: transport.theorem.clone(),
             }
         }));
+    if !transition.fact_transports.is_empty() {
+        replay
+            .planned_tactics
+            .push(ProofTactic::FinishCertifiedFactTransports(
+                transition
+                    .fact_transports
+                    .iter()
+                    .map(|transport| transport.source.clone())
+                    .collect(),
+            ));
+    }
 }
 
 fn append_condition_transition_certificate(
@@ -4601,12 +4616,25 @@ fn replay_linear_tactics(
                 }
                 assumptions = assumptions_from_propositions(&requirement_pure_facts);
             }
-            ProofTactic::Step | ProofTactic::CertifiedStatementStep(_) => {
-                let (prerequisite_policy, certified_prerequisites) = match tactic {
-                    ProofTactic::Step => (StatementPrerequisitePolicy::Exact, &[][..]),
+            ProofTactic::Step
+            | ProofTactic::CertifiedStatementStep(_)
+            | ProofTactic::CertifiedLoopSummaryStep(_) => {
+                let (prerequisite_policy, certified_prerequisites, loop_step_policy) = match tactic
+                {
+                    ProofTactic::Step => (
+                        StatementPrerequisitePolicy::Exact,
+                        &[][..],
+                        LoopStepPolicy::EnterBody,
+                    ),
                     ProofTactic::CertifiedStatementStep(derivations) => (
                         StatementPrerequisitePolicy::Certified,
                         derivations.as_slice(),
+                        LoopStepPolicy::EnterBody,
+                    ),
+                    ProofTactic::CertifiedLoopSummaryStep(derivations) => (
+                        StatementPrerequisitePolicy::Certified,
+                        derivations.as_slice(),
+                        LoopStepPolicy::ApplyVerifiedRule,
                     ),
                     _ => unreachable!(),
                 };
@@ -4626,9 +4654,24 @@ fn replay_linear_tactics(
                     certified_prerequisites,
                     prerequisite_policy,
                     StatementFactTransportPolicy::None,
-                    LoopStepPolicy::EnterBody,
+                    loop_step_policy,
                 )?;
                 assumptions = assumptions_from_propositions(&requirement_pure_facts);
+            }
+            ProofTactic::RecordExecutionPoint => {
+                record_current_statement_entry(
+                    &mut replay,
+                    &state,
+                    function_block,
+                    function,
+                    arguments,
+                    claim_label,
+                    tactic_index,
+                    "record_execution_point",
+                )?;
+            }
+            ProofTactic::ResetOpaqueCallCounter => {
+                replay.next_opaque_call = 0;
             }
             ProofTactic::ExecuteStep => {
                 let mut planning_replay = replay.clone();
@@ -4829,10 +4872,14 @@ fn replay_linear_tactics(
                         "`{claim_label}` tactic {tactic_index}: `execute_until` expects a statement region"
                     )));
                 };
+                let mut planning_replay = replay.clone();
+                planning_replay.planned_tactics.clear();
+                let mut planning_state = state.clone();
+                let mut planning_facts = requirement_pure_facts.clone();
                 execute_until_statement(
-                    &mut replay,
-                    &mut state,
-                    &mut requirement_pure_facts,
+                    &mut planning_replay,
+                    &mut planning_state,
+                    &mut planning_facts,
                     function_block,
                     function,
                     parsed_function.parameters(),
@@ -4841,7 +4888,41 @@ fn replay_linear_tactics(
                     statement_index,
                     claim_label,
                     tactic_index,
+                    StatementPrerequisitePolicy::Planning,
                 )?;
+                let certificate =
+                    TacticCertificate::from_proof_tactics(&planning_replay.planned_tactics)
+                        .map_err(|error| {
+                            ClickError::new(format!(
+                                "`{claim_label}` tactic {tactic_index}: `execute_until` planned a non-certificate tactic {:?}",
+                                error.smart_tactic()
+                            ))
+                        })?;
+                let result = replay_execution_tactic_certificate(
+                    ProofReplayContext {
+                        state,
+                        pure_facts: requirement_pure_facts,
+                        replay,
+                        branch_path,
+                    },
+                    function_block,
+                    parsed_function,
+                    claims,
+                    claim_label,
+                    function_environment,
+                    predicate_environment,
+                    click_function_environment,
+                    resource_environment,
+                    theorem_environment,
+                    function,
+                    arguments,
+                    tactic_index,
+                    &certificate,
+                )?;
+                state = result.state;
+                requirement_pure_facts = result.pure_facts;
+                replay = result.replay;
+                branch_path = result.branch_path;
                 assumptions = assumptions_from_propositions(&requirement_pure_facts);
             }
             ProofTactic::BoundedExecute => {
@@ -5173,6 +5254,10 @@ fn replay_linear_tactics(
                 if !requirement_pure_facts.contains(target) {
                     requirement_pure_facts.push(target.clone());
                 }
+                assumptions = assumptions_from_propositions(&requirement_pure_facts);
+            }
+            ProofTactic::FinishCertifiedFactTransports(sources) => {
+                requirement_pure_facts.retain(|fact| !sources.contains(fact));
                 assumptions = assumptions_from_propositions(&requirement_pure_facts);
             }
             ProofTactic::Simp => {
@@ -6510,7 +6595,15 @@ fn execute_step_from_execution_point(
         .next()
         .expect("one statement transition was required");
     if matches!(prerequisite_policy, StatementPrerequisitePolicy::Planning) {
-        append_statement_transition_certificate(replay, &transition);
+        append_statement_transition_certificate(
+            replay,
+            &transition,
+            if loop_index.is_some() {
+                loop_step_policy
+            } else {
+                LoopStepPolicy::EnterBody
+            },
+        );
     }
     let execution_pure_facts = transition.execution_facts;
     append_execution_effect_facts(&mut replay.effect_facts, &execution_pure_facts);
@@ -7083,6 +7176,7 @@ fn execute_until_statement(
     statement_index: usize,
     claim_label: &str,
     tactic_index: usize,
+    prerequisite_policy: StatementPrerequisitePolicy,
 ) -> Result<(), ClickError> {
     if replay.source_layout.statement(statement_index).is_none() {
         return Err(ClickError::new(format!(
@@ -7106,6 +7200,11 @@ fn execute_until_statement(
     while replay.frontier.next_statement_index != statement_index {
         let region_start = replay.frontier.next_statement_index;
         let assumptions = assumptions_from_propositions(available_pure_facts);
+        if matches!(prerequisite_policy, StatementPrerequisitePolicy::Planning) {
+            replay
+                .planned_tactics
+                .push(ProofTactic::ResetOpaqueCallCounter);
+        }
         replay.next_opaque_call = 0;
         execute_step_from_execution_point(
             replay,
@@ -7121,7 +7220,7 @@ fn execute_until_statement(
             tactic_index,
             "execute_until",
             &[],
-            StatementPrerequisitePolicy::Contextual,
+            prerequisite_policy,
             StatementFactTransportPolicy::Automatic,
             LoopStepPolicy::ApplyVerifiedRule,
         )?;
@@ -7137,7 +7236,17 @@ fn execute_until_statement(
             )));
         }
     }
+    if matches!(prerequisite_policy, StatementPrerequisitePolicy::Planning) {
+        replay
+            .planned_tactics
+            .push(ProofTactic::ResetOpaqueCallCounter);
+    }
     replay.next_opaque_call = 0;
+    if matches!(prerequisite_policy, StatementPrerequisitePolicy::Planning) {
+        replay
+            .planned_tactics
+            .push(ProofTactic::RecordExecutionPoint);
+    }
     record_current_statement_entry(
         replay,
         state,

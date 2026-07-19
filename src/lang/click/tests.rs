@@ -1317,6 +1317,18 @@ fn parses_and_classifies_simple_and_smart_tactics() {
         TacticClass::Simple(SimpleTactic::CertifiedStatementTransition)
     ));
     assert!(matches!(
+        ProofTactic::CertifiedLoopSummaryStep(Vec::new()).class(),
+        TacticClass::Simple(SimpleTactic::CertifiedLoopSummaryTransition)
+    ));
+    assert!(matches!(
+        ProofTactic::RecordExecutionPoint.class(),
+        TacticClass::Simple(SimpleTactic::ExecutionPointRecord)
+    ));
+    assert!(matches!(
+        ProofTactic::ResetOpaqueCallCounter.class(),
+        TacticClass::Simple(SimpleTactic::OpaqueCallCounterReset)
+    ));
+    assert!(matches!(
         ProofTactic::FoldResource(ResourceClause::Declared {
             access: ResourceAccessMode::Own,
             kind: ResourceKind::Composite,
