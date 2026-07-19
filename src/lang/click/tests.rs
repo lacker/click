@@ -2704,6 +2704,59 @@ fn source_expander_replaces_and_replays_contextual_frame() {
 }
 
 #[test]
+fn source_expander_is_idempotent() {
+    let c_source = r#"
+            int32 identity(int32 x) {
+                return x;
+            }
+        "#;
+    let click_source = r#"
+            verifying "identity.c";
+
+            int32 identity(int32 x) {
+                ensures result == x by simp;
+            }
+        "#;
+    let sources = [("identity.c", c_source)];
+
+    let expanded_once =
+        expand_c0_claim_source(click_source, &sources, "identity", CProofClaim::Ensure(0))
+            .expect("smart proof should expand");
+    let expanded_twice =
+        expand_c0_claim_source(&expanded_once, &sources, "identity", CProofClaim::Ensure(0))
+            .expect("expanded proof should expand again");
+
+    assert_eq!(expanded_once, expanded_twice);
+}
+
+#[test]
+fn source_expander_rejects_default_proofs_without_rewrite_spans() {
+    let c_source = r#"
+            int32 identity(int32 x) {
+                return x;
+            }
+        "#;
+    let click_source = r#"
+            verifying "identity.c";
+
+            int32 identity(int32 x) {
+                ensures result == x;
+            }
+        "#;
+
+    let error = expand_c0_claim_source(
+        click_source,
+        &[("identity.c", c_source)],
+        "identity",
+        CProofClaim::Ensure(0),
+    )
+    .expect_err("default proof has no source clause to replace");
+
+    assert!(error.message().contains("uses a default proof"));
+    assert!(error.message().contains("no source proof clause"));
+}
+
+#[test]
 fn verifies_simple_postcondition_with_proof_tactics() {
     let c_source = r#"
             int32 identity(int32 x) {

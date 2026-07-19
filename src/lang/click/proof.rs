@@ -1831,7 +1831,6 @@ struct SurfacePathChoice {
     condition: ClickProposition,
     value: bool,
     tactic_offset: usize,
-    kernel_facts: Vec<Proposition>,
 }
 
 impl SurfaceReplay {
@@ -5086,6 +5085,11 @@ fn synthesize_surface_proposition(
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
 ) -> Option<ClickProposition> {
+    if let Proposition::Not(body) = proposition {
+        return Some(ClickProposition::Not(Box::new(
+            synthesize_surface_proposition(body, parameters, arguments)?,
+        )));
+    }
     let Proposition::ConditionIs(condition, value) = proposition else {
         return None;
     };
@@ -5413,6 +5417,82 @@ fn lower_surface_candidate_at_point(
     .map_err(ClickError::new)
 }
 
+fn condition_term_contains_memory_load(condition: &ConditionTerm) -> bool {
+    match condition {
+        ConditionTerm::Constant(_) | ConditionTerm::Variable(_) => false,
+        ConditionTerm::Bitvector32SignedLessThan(left, right)
+        | ConditionTerm::Bitvector32SignedLessEqual(left, right)
+        | ConditionTerm::Bitvector32SignedGreaterThan(left, right)
+        | ConditionTerm::Bitvector32SignedGreaterEqual(left, right)
+        | ConditionTerm::Bitvector32Equal(left, right)
+        | ConditionTerm::Bitvector32SignedAddOverflows(left, right)
+        | ConditionTerm::Bitvector32SignedSubtractOverflows(left, right)
+        | ConditionTerm::Bitvector32SignedMultiplyOverflows(left, right)
+        | ConditionTerm::Bitvector32SignedDivideOverflows(left, right)
+        | ConditionTerm::Bitvector32SignedShiftLeftOverflows(left, right) => {
+            bitvector_term_contains_memory_load(left) || bitvector_term_contains_memory_load(right)
+        }
+        ConditionTerm::PointerOffsetEqual(left, right) => {
+            pointer_offset_contains_memory_load(left) || pointer_offset_contains_memory_load(right)
+        }
+        ConditionTerm::PointerEqual(left, right) => {
+            pointer_offset_contains_memory_load(&left.offset)
+                || pointer_offset_contains_memory_load(&right.offset)
+        }
+    }
+}
+
+fn bitvector_term_contains_memory_load(term: &Bitvector32Term) -> bool {
+    match term {
+        Bitvector32Term::Constant(_) | Bitvector32Term::Variable(_) => false,
+        Bitvector32Term::Add(left, right)
+        | Bitvector32Term::Subtract(left, right)
+        | Bitvector32Term::Multiply(left, right)
+        | Bitvector32Term::Divide(left, right)
+        | Bitvector32Term::Remainder(left, right)
+        | Bitvector32Term::ShiftLeft(left, right)
+        | Bitvector32Term::ArithmeticShiftRight(left, right)
+        | Bitvector32Term::BitwiseAnd(left, right)
+        | Bitvector32Term::BitwiseOr(left, right)
+        | Bitvector32Term::BitwiseXor(left, right) => {
+            bitvector_term_contains_memory_load(left) || bitvector_term_contains_memory_load(right)
+        }
+        Bitvector32Term::BitwiseNot(term) => bitvector_term_contains_memory_load(term),
+        Bitvector32Term::If {
+            condition,
+            then_term,
+            else_term,
+        } => {
+            condition_term_contains_memory_load(condition)
+                || bitvector_term_contains_memory_load(then_term)
+                || bitvector_term_contains_memory_load(else_term)
+        }
+        Bitvector32Term::RangeFold {
+            start,
+            end,
+            initial,
+            body,
+            ..
+        } => {
+            bitvector_term_contains_memory_load(start)
+                || bitvector_term_contains_memory_load(end)
+                || bitvector_term_contains_memory_load(initial)
+                || bitvector_term_contains_memory_load(body)
+        }
+        Bitvector32Term::MemoryLoad(_, _) => true,
+    }
+}
+
+fn pointer_offset_contains_memory_load(offset: &PointerOffsetTerm) -> bool {
+    match offset {
+        PointerOffsetTerm::Constant(_) | PointerOffsetTerm::Variable(_) => false,
+        PointerOffsetTerm::Add(left, right) => {
+            pointer_offset_contains_memory_load(left) || pointer_offset_contains_memory_load(right)
+        }
+        PointerOffsetTerm::Int32Scaled { value, .. } => bitvector_term_contains_memory_load(value),
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn record_surface_replay_tactic(
     replay: &mut TacticReplayState,
@@ -5431,6 +5511,22 @@ fn record_surface_replay_tactic(
         let mut premises = needed
             .iter()
             .map(|fact| {
+                let fact = available
+                    .iter()
+                    .find(|available| *available == fact)
+                    .or_else(|| {
+                        let normalized = normalize_proposition(fact);
+                        available
+                            .iter()
+                            .find(|available| normalize_proposition(available) == normalized)
+                    })
+                    .or_else(|| {
+                        available.iter().find(|available| {
+                            assumptions_from_propositions(std::slice::from_ref(*available))
+                                .proves(fact)
+                        })
+                    })
+                    .unwrap_or(fact);
                 checked_surface_fact_at_point(
                     replay,
                     fact,
@@ -5444,13 +5540,10 @@ fn record_surface_replay_tactic(
             })
             .collect::<Result<Vec<_>, _>>()?;
         for fact in available {
-            if needed.contains(fact)
-                || replay
-                    .surface_replay
-                    .path_choices
-                    .iter()
-                    .any(|choice| choice.kernel_facts.contains(fact))
-            {
+            let Proposition::ConditionIs(condition, _) = fact else {
+                continue;
+            };
+            if condition_term_contains_memory_load(condition) {
                 continue;
             }
             if let Ok(surface) = checked_surface_fact_at_point(
@@ -5600,15 +5693,11 @@ fn record_surface_replay_tactic(
         }
         ProofTactic::FinishCertifiedFactTransports(_) => {}
         ProofTactic::CertifiedPathAssumption {
-            condition,
-            value,
-            facts,
-            ..
+            condition, value, ..
         } => replay.surface_replay.path_choices.push(SurfacePathChoice {
             condition: condition.clone(),
             value: *value,
             tactic_offset: replay.surface_replay.tactics.len(),
-            kernel_facts: facts.clone(),
         }),
         ProofTactic::CertifiedAlternatives(_) => {}
         ProofTactic::ExactPropositionDerivation(derivation) => {
@@ -7179,12 +7268,37 @@ fn introduce_proof_case_assumption(
     let surface_fact = if value {
         condition.clone()
     } else {
-        ClickProposition::Not(Box::new(condition.clone()))
+        match condition {
+            ClickProposition::Comparison {
+                left,
+                operator,
+                right,
+            } => ClickProposition::Comparison {
+                left: left.clone(),
+                operator: match operator {
+                    ComparisonOperator::Equal => ComparisonOperator::NotEqual,
+                    ComparisonOperator::NotEqual => ComparisonOperator::Equal,
+                    ComparisonOperator::LessThan => ComparisonOperator::GreaterEqual,
+                    ComparisonOperator::LessEqual => ComparisonOperator::GreaterThan,
+                    ComparisonOperator::GreaterThan => ComparisonOperator::LessEqual,
+                    ComparisonOperator::GreaterEqual => ComparisonOperator::LessThan,
+                },
+                right: right.clone(),
+            },
+            ClickProposition::Not(body) => body.as_ref().clone(),
+            condition => ClickProposition::Not(Box::new(condition.clone())),
+        }
     };
     let kernel_fact = if value {
         proposition
     } else {
-        Proposition::Not(Box::new(proposition))
+        match proposition {
+            Proposition::ConditionIs(condition, value) => {
+                Proposition::ConditionIs(condition, !value)
+            }
+            Proposition::Not(body) => *body,
+            proposition => Proposition::Not(Box::new(proposition)),
+        }
     };
     context
         .replay

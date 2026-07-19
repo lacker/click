@@ -7,6 +7,7 @@ use click::lang::click::verify_c0_sources;
 fn example_projects() {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let examples_dir = manifest_dir.join("examples");
+    let requested = std::env::var_os("CLICK_EXAMPLE");
     let mut projects = fs::read_dir(&examples_dir)
         .unwrap_or_else(|error| panic!("failed to read `{}`: {error}", examples_dir.display()))
         .map(|entry| {
@@ -15,13 +16,19 @@ fn example_projects() {
                 .path()
         })
         .filter(|path| path.is_dir())
+        .filter(|path| {
+            requested.as_ref().is_none_or(|requested| {
+                path.file_name()
+                    .is_some_and(|name| name == requested.as_os_str())
+            })
+        })
         .collect::<Vec<_>>();
     projects.sort();
 
     assert!(
         !projects.is_empty(),
-        "expected at least one example project in `{}`",
-        examples_dir.display()
+        "expected at least one matching example project in `{}`",
+        examples_dir.display(),
     );
 
     for project in projects {
