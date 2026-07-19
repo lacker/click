@@ -168,6 +168,17 @@ facts between memory snapshots. `execute_step()` is the smart automated
 convenience form. An explicit `transport(source, target)` applies
 one certified frame-transport rule between two stated atomic facts.
 
+When one transition needs contextual pure facts, list them explicitly:
+
+```click
+step using {
+    fact x < 2147483647;
+}
+```
+
+Only those listed pure facts are visible to that C transition. Other facts stay
+in the proof context for later tactics.
+
 At an annotated loop entry, `apply_loop_summary(loop(N))` is the simple tactic
 that consumes the already verified loop rule and advances to its abstract exit.
 Ordinary `step()` instead evaluates the loop condition and enters at most one

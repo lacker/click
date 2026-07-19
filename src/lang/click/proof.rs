@@ -4788,6 +4788,72 @@ fn replay_linear_tactics(
                 }
                 assumptions = assumptions_from_propositions(&requirement_pure_facts);
             }
+            ProofTactic::StepUsing(premises) => {
+                let all_pure_facts = requirement_pure_facts.clone();
+                let pre_state = replay.execution_start_state(&state);
+                let mut explicit_premises = Vec::new();
+                for premise in premises {
+                    let premise = lower_point_proposition(
+                        premise,
+                        &all_pure_facts,
+                        parsed_function.parameters(),
+                        arguments,
+                        pre_state,
+                        &state,
+                        None,
+                        &replay.program_point_states,
+                        predicate_environment,
+                        click_function_environment,
+                    )
+                    .map_err(|message| {
+                        ClickError::new(format!(
+                            "`{claim_label}` tactic {tactic_index}: could not lower `step using` premise: {message}"
+                        ))
+                    })?;
+                    if !exact_fact_is_available(&premise, &all_pure_facts) {
+                        return Err(ClickError::new(format!(
+                            "`{claim_label}` tactic {tactic_index}: `step using` requires an exact premise: {}",
+                            describe_missing_pure_fact(
+                                &premise,
+                                &all_pure_facts,
+                                state.resources().facts(),
+                                parsed_function.parameters(),
+                                arguments,
+                                &replay.effect_facts,
+                            )
+                        )));
+                    }
+                    if !explicit_premises.contains(&premise) {
+                        explicit_premises.push(premise);
+                    }
+                }
+                let explicit_assumptions = assumptions_from_propositions(&explicit_premises);
+                execute_step_from_execution_point(
+                    &mut replay,
+                    &mut state,
+                    &mut explicit_premises,
+                    function_block,
+                    function,
+                    parsed_function.parameters(),
+                    arguments,
+                    &explicit_assumptions,
+                    function_environment,
+                    claim_label,
+                    tactic_index,
+                    "step using",
+                    &[],
+                    StatementPrerequisitePolicy::Contextual,
+                    StatementFactTransportPolicy::None,
+                    LoopStepPolicy::EnterBody,
+                )?;
+                for fact in all_pure_facts {
+                    if !explicit_premises.contains(&fact) {
+                        explicit_premises.push(fact);
+                    }
+                }
+                requirement_pure_facts = explicit_premises;
+                assumptions = assumptions_from_propositions(&requirement_pure_facts);
+            }
             ProofTactic::Step
             | ProofTactic::ApplyLoopSummary(_)
             | ProofTactic::CertifiedStatementStep(_)

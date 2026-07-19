@@ -1286,6 +1286,31 @@ fn simple_step_does_not_contextually_prove_execution_prerequisites() {
 }
 
 #[test]
+fn step_using_limits_execution_to_explicit_pure_premises() {
+    let c_source = r#"
+            int32 increment(int32 x) {
+                return x + 1;
+            }
+        "#;
+    let click_source = r#"
+            verifying "increment.c";
+
+            int32 increment(int32 x) {
+                requires x < 2147483647;
+                ensures result == x + 1;
+            } by {
+                step using {
+                    fact x < 2147483647;
+                }
+                simp();
+            }
+        "#;
+
+    verify_c0_sources(click_source, &[("increment.c", c_source)])
+        .expect("an explicit premise should justify one contextual execution transition");
+}
+
+#[test]
 fn parses_explicit_branch_execution_tactics() {
     let source = FILL3_CLICK.replace(
         "by auto;",
@@ -1451,6 +1476,13 @@ fn parses_and_classifies_simple_and_smart_tactics() {
     ));
     assert!(matches!(
         ProofTactic::Step.class(),
+        TacticClass::Simple(SimpleTactic::StatementTransition)
+    ));
+    assert!(matches!(
+        ProofTactic::StepUsing(vec![ClickProposition::Defined {
+            expression: current_int(0),
+        }])
+        .class(),
         TacticClass::Simple(SimpleTactic::StatementTransition)
     ));
     assert!(matches!(

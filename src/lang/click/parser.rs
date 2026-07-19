@@ -1711,8 +1711,29 @@ impl Parser {
         }
         let tactic = match name.as_str() {
             "step" => {
-                self.expect_empty_tactic_args(&name)?;
-                ProofTactic::Step
+                if self.peek() == Some(&Token::LParen) {
+                    self.expect_empty_tactic_args(&name)?;
+                    ProofTactic::Step
+                } else {
+                    self.expect_ident_spelling("using")?;
+                    self.expect(Token::LBrace)?;
+                    let mut premises = Vec::new();
+                    while self.peek() != Some(&Token::RBrace) {
+                        self.expect_ident_spelling("fact")?;
+                        premises.push(self.parse_proposition()?);
+                        self.expect(Token::Semicolon)?;
+                    }
+                    self.expect(Token::RBrace)?;
+                    if premises.is_empty() {
+                        return Err(self.error(
+                            "`step using` requires at least one explicit premise; use `step()` without premises",
+                        ));
+                    }
+                    if self.peek() == Some(&Token::Semicolon) {
+                        self.position += 1;
+                    }
+                    return Ok(ProofTactic::StepUsing(premises));
+                }
             }
             "apply_loop_summary" => {
                 self.expect(Token::LParen)?;

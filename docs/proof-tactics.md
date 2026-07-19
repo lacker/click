@@ -18,6 +18,7 @@ tactics run.
 | Tactic | One operation |
 | --- | --- |
 | `step()` | Advance one small C transition when every execution prerequisite is exact or context-free; do not transport facts automatically. |
+| `step using { fact P; ... }` | Advance one small C transition using only the listed exact pure facts as contextual execution premises. |
 | `apply_loop_summary(loop(N))` | Apply one already verified loop summary at that loop's entry. |
 | `assumption()` | Close a pure goal only when that exact fact is present. |
 | `normalize()` | Close a goal by context-free computation and structural normalization. |
@@ -173,6 +174,9 @@ transition. Their proof behavior differs:
   the next statement is an `if`, an exact condition fact selects and enters one
   arm without executing that arm's body. At a loop head, it evaluates the
   condition once and either enters one iteration or advances past the loop.
+- `step using { fact P; ... }` gives the evaluator exactly the listed pure
+  facts. Every listed premise must already be an exact fact. Other pure facts
+  remain in the proof context but cannot influence this execution transition.
 - `apply_loop_summary(loop(N))` applies that loop's already verified abstract
   rule and advances to its exit in one transition. It does not enter or replay
   the loop body.
