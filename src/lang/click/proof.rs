@@ -4764,9 +4764,6 @@ fn replay_linear_tactics(
                     function_environment,
                     claim_label,
                     tactic_index,
-                    tactic_name(tactic),
-                    matches!(tactic, ProofTactic::ExecuteRest),
-                    StatementPrerequisitePolicy::Planning,
                 )?;
                 let certificate =
                     TacticCertificate::from_proof_tactics(&planning_replay.planned_tactics)
@@ -7110,176 +7107,77 @@ fn execute_rest_from_execution_point(
     function_environment: &CExecutionEnvironment,
     claim_label: &str,
     tactic_index: usize,
-    tactic_name: &str,
-    record_straight_line_snapshots: bool,
-    prerequisite_policy: StatementPrerequisitePolicy,
 ) -> Result<(), ClickError> {
-    if record_straight_line_snapshots {
-        loop {
-            let assertion_prefix_count = replay
-                .source_layout
-                .statement(replay.frontier.next_statement_index)
-                .map(|region| {
-                    let loop_index = match region.kind {
-                        SourceStatementKind::Loop { loop_index } => Some(loop_index),
-                        SourceStatementKind::Plain | SourceStatementKind::If { .. } => None,
-                    };
-                    source_assertion_prefix_count(
-                        function_block,
-                        replay.frontier.next_statement_index,
-                        loop_index,
-                    )
-                })
-                .unwrap_or(0);
-            let can_execute_one_step = match &replay.frontier.point {
-                ProofExecutionPoint::FunctionEntry => {
-                    split_next_execution_step(function.body(), assertion_prefix_count).is_ok()
-                }
-                ProofExecutionPoint::StatementEntry { remaining } => {
-                    split_next_execution_step(remaining, assertion_prefix_count).is_ok()
-                }
-                ProofExecutionPoint::FunctionExit { .. } => return Ok(()),
-            };
-            if !can_execute_one_step {
-                break;
+    loop {
+        let assertion_prefix_count = replay
+            .source_layout
+            .statement(replay.frontier.next_statement_index)
+            .map(|region| {
+                let loop_index = match region.kind {
+                    SourceStatementKind::Loop { loop_index } => Some(loop_index),
+                    SourceStatementKind::Plain | SourceStatementKind::If { .. } => None,
+                };
+                source_assertion_prefix_count(
+                    function_block,
+                    replay.frontier.next_statement_index,
+                    loop_index,
+                )
+            })
+            .unwrap_or(0);
+        let can_execute_one_step = match &replay.frontier.point {
+            ProofExecutionPoint::FunctionEntry => {
+                split_next_execution_step(function.body(), assertion_prefix_count).is_ok()
             }
-
-            let assumptions = assumptions_from_propositions(available_pure_facts);
-            if matches!(prerequisite_policy, StatementPrerequisitePolicy::Planning) {
-                replay
-                    .planned_tactics
-                    .push(ProofTactic::ResetOpaqueCallCounter);
+            ProofExecutionPoint::StatementEntry { remaining } => {
+                split_next_execution_step(remaining, assertion_prefix_count).is_ok()
             }
-            replay.next_opaque_call = 0;
-            execute_step_from_execution_point(
-                replay,
-                state,
-                available_pure_facts,
-                function_block,
-                function,
-                parameters,
-                arguments,
-                &assumptions,
-                function_environment,
-                claim_label,
-                tactic_index,
-                tactic_name,
-                &[],
-                prerequisite_policy,
-                StatementFactTransportPolicy::Automatic,
-                LoopStepPolicy::ApplyVerifiedRule,
-            )?;
+            ProofExecutionPoint::FunctionExit { .. } => return Ok(()),
+        };
+        if !can_execute_one_step {
+            break;
         }
-    }
 
-    if matches!(prerequisite_policy, StatementPrerequisitePolicy::Planning) {
-        if !replay.is_at_function_exit() {
-            bounded_execute_from_execution_point(
-                replay,
-                state,
-                available_pure_facts,
-                function_block,
-                function,
-                parameters,
-                arguments,
-                function_environment,
-                claim_label,
-                tactic_index,
-                StatementPrerequisitePolicy::Planning,
-            )?;
-        }
-        return Ok(());
-    }
-
-    if record_straight_line_snapshots {
-        record_current_statement_entry(
+        let assumptions = assumptions_from_propositions(available_pure_facts);
+        replay
+            .planned_tactics
+            .push(ProofTactic::ResetOpaqueCallCounter);
+        replay.next_opaque_call = 0;
+        execute_step_from_execution_point(
             replay,
             state,
+            available_pure_facts,
             function_block,
             function,
+            parameters,
             arguments,
+            &assumptions,
+            function_environment,
             claim_label,
             tactic_index,
-            tactic_name,
+            "execute_rest",
+            &[],
+            StatementPrerequisitePolicy::Planning,
+            StatementFactTransportPolicy::Automatic,
+            LoopStepPolicy::ApplyVerifiedRule,
         )?;
     }
-    let assumptions = assumptions_from_propositions(available_pure_facts);
-    match &replay.frontier.point {
-        ProofExecutionPoint::FunctionEntry => {
-            set_replay_execution(
-                replay,
-                claim_label,
-                tactic_index,
-                tactic_name,
-                state.clone(),
-                prove_symbolic_c_function_verification_paths_with_environment(
-                    state.clone(),
-                    function.clone(),
-                    arguments.to_vec(),
-                    assumptions.clone(),
-                    function_environment.clone(),
-                    CExecutionSemantics::APPLY_VERIFIED_RULES,
-                ),
-            )?;
-        }
-        ProofExecutionPoint::StatementEntry { remaining, .. } => {
-            let remaining = remaining_with_execution_continuations(replay, remaining);
-            let execution = prove_symbolic_c_execution_paths_with_environment(
-                state.clone(),
-                remaining,
-                assumptions.clone(),
-                function_environment.clone(),
-                CExecutionSemantics::APPLY_VERIFIED_RULES,
-            );
-            let Some(execution_start_state) = replay.frontier.execution_start_state.clone() else {
-                return Err(ClickError::new(format!(
-                    "`{claim_label}` tactic {tactic_index}: `{tactic_name}` has no execution start state"
-                )));
-            };
-            let completed = complete_segmented_function_execution(
-                execution,
-                &execution_start_state,
-                function,
-                arguments,
-                available_pure_facts,
-                &assumptions,
-                claim_label,
-                tactic_index,
-                tactic_name,
-            )?;
-            let replay_state = execution_start_state.clone();
-            set_replay_execution(
-                replay,
-                claim_label,
-                tactic_index,
-                tactic_name,
-                execution_start_state,
-                completed,
-            )?;
-            *state = replay_state;
-        }
-        ProofExecutionPoint::FunctionExit { .. } => {
-            return Err(ClickError::new(format!(
-                "`{claim_label}` tactic {tactic_index}: `{tactic_name}` cannot run after execution already reached function exit"
-            )));
-        }
+
+    if !replay.is_at_function_exit() {
+        bounded_execute_from_execution_point(
+            replay,
+            state,
+            available_pure_facts,
+            function_block,
+            function,
+            parameters,
+            arguments,
+            function_environment,
+            claim_label,
+            tactic_index,
+            StatementPrerequisitePolicy::Planning,
+        )?;
     }
     Ok(())
-}
-
-fn remaining_with_execution_continuations(
-    replay: &TacticReplayState,
-    current: &CStatement,
-) -> CStatement {
-    replay
-        .frontier
-        .continuations
-        .iter()
-        .rev()
-        .filter_map(|continuation| continuation.remaining.as_ref())
-        .fold(current.clone(), |body, continuation| {
-            c_seq(body, continuation.clone())
-        })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -7377,58 +7275,6 @@ fn execute_until_statement(
         "execute_until",
     )?;
     Ok(())
-}
-
-#[allow(clippy::too_many_arguments)]
-fn complete_segmented_function_execution(
-    execution: crate::kernel::SymbolicCExecution,
-    execution_start_state: &CState,
-    function: &CFunction,
-    arguments: &[CExpression],
-    available_pure_facts: &[Proposition],
-    assumptions: &Assumptions,
-    claim_label: &str,
-    tactic_index: usize,
-    tactic_name: &str,
-) -> Result<crate::kernel::SymbolicCExecution, ClickError> {
-    if let Some(limit) = execution.limit() {
-        return Err(ClickError::new(format!(
-            "`{claim_label}` tactic {tactic_index}: `{tactic_name}` hit execution limit {limit:?}"
-        )));
-    }
-    if execution.paths().is_empty() {
-        return Err(ClickError::new(format!(
-            "`{claim_label}` tactic {tactic_index}: `{tactic_name}` produced no suffix execution paths"
-        )));
-    }
-    let mut completed_paths = Vec::new();
-    for path in execution.paths() {
-        let Proposition::CStatementExecutes { outcome, .. } =
-            implication_body(path.theorem().proposition())
-        else {
-            return Err(ClickError::new(format!(
-                "`{claim_label}` tactic {tactic_index}: `{tactic_name}` saw unexpected suffix theorem"
-            )));
-        };
-        let mut path_pure_facts = available_pure_facts.to_vec();
-        path_pure_facts.extend(path.facts().iter().map(|fact| fact.proposition().clone()));
-        let return_assumptions = assumptions_from_propositions(&path_pure_facts);
-        let (outcome, obligations) = c_function_outcome_from_statement_outcome(
-            execution_start_state,
-            function,
-            outcome.clone(),
-            path.obligations().to_vec(),
-            &return_assumptions,
-        );
-        completed_paths.push((outcome, path.facts().to_vec(), obligations));
-    }
-    Ok(certify_c_function_execution_paths_from_outcomes(
-        execution_start_state.clone(),
-        function.clone(),
-        arguments.to_vec(),
-        assumptions.clone(),
-        completed_paths,
-    ))
 }
 
 fn source_assertion_prefix_count(
