@@ -59,14 +59,13 @@ nontrivial contextual reasoning rather than one fixed kernel rule. Determinism
 alone does not make a tactic simple.
 
 Click does not yet expose a surface tactic that prints or expands a smart
-tactic's simple certificate. The internal conversion is being introduced one
-smart tactic at a time; `simp`, `execute_step`, `execute_then_step`, and
-`execute_else_step` are certificate-backed. `execute_until` is also
-certificate-backed, as are `bounded_execute` and `execute_rest`.
-The contextual `by frame` prover is certificate-backed as well; explicit
-`frame()` remains the exact simple tactic. `auto` now searches only among
-these certificate-backed tactic sequences; it no longer proves a claim through
-a separate whole-function fallback.
+tactic's simple certificate. Internally, every current smart tactic plans and
+replays certificate-backed operations: `simp`, the one-step execution tactics,
+`execute_until`, `bounded_execute`, and `execute_rest`. The contextual
+`by frame` prover is certificate-backed as well; explicit `frame()` remains the
+exact simple tactic. `auto` searches only among these certificate-backed tactic
+sequences and no longer proves a claim through a separate whole-function
+fallback.
 
 ## Tactic Certificates
 
