@@ -60,7 +60,8 @@ alone does not make a tactic simple.
 
 Click does not yet expose a surface tactic that prints or expands a smart
 tactic's simple certificate. The internal conversion is being introduced one
-smart tactic at a time; `simp` and `execute_step` are certificate-backed.
+smart tactic at a time; `simp`, `execute_step`, and `execute_then_step` are
+certificate-backed.
 
 ## Tactic Certificates
 
@@ -91,6 +92,10 @@ prerequisites, followed by explicit theorem-backed transports for pure facts
 whose memory snapshots advance. Replay checks those derivations at the exact
 symbolic path point where their premises are available; it does not rerun the
 contextual search that selected them.
+
+`execute_then_step` uses the same certificate form, but planning additionally
+requires the current context to select the then arm. Replay independently
+checks that the certified statement transition enters that arm.
 
 ## Statement Execution
 

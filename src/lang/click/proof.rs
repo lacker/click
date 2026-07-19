@@ -4661,16 +4661,7 @@ fn replay_linear_tactics(
                                 error.smart_tactic()
                             ))
                         })?;
-                let certificate_tactics = certificate
-                    .tactics()
-                    .iter()
-                    .cloned()
-                    .map(|tactic| IndexedTactic {
-                        index: tactic_index,
-                        tactic,
-                    })
-                    .collect::<Vec<_>>();
-                let result = replay_linear_tactics(
+                let result = replay_execution_tactic_certificate(
                     ProofReplayContext {
                         state,
                         pure_facts: requirement_pure_facts,
@@ -4688,7 +4679,8 @@ fn replay_linear_tactics(
                     theorem_environment,
                     function,
                     arguments,
-                    &certificate_tactics,
+                    tactic_index,
+                    &certificate,
                 )?;
                 state = result.state;
                 requirement_pure_facts = result.pure_facts;
@@ -4696,7 +4688,65 @@ fn replay_linear_tactics(
                 branch_path = result.branch_path;
                 assumptions = assumptions_from_propositions(&requirement_pure_facts);
             }
-            ProofTactic::ExecuteThenStep | ProofTactic::ExecuteElseStep => {
+            ProofTactic::ExecuteThenStep => {
+                let mut planning_replay = replay.clone();
+                planning_replay.planned_tactics.clear();
+                let mut planning_state = state.clone();
+                let mut planning_facts = requirement_pure_facts.clone();
+                let entered = execute_branch_step_from_execution_point(
+                    &mut planning_replay,
+                    &mut planning_state,
+                    &mut planning_facts,
+                    function_block,
+                    function,
+                    parsed_function.parameters(),
+                    arguments,
+                    function_environment,
+                    claim_label,
+                    tactic_index,
+                    Some(true),
+                    &[],
+                    StatementPrerequisitePolicy::Planning,
+                    StatementFactTransportPolicy::Automatic,
+                    BranchStepPolicy::RequireProven,
+                )?;
+                debug_assert!(entered);
+                let certificate =
+                    TacticCertificate::from_proof_tactics(&planning_replay.planned_tactics)
+                        .map_err(|error| {
+                            ClickError::new(format!(
+                                "`{claim_label}` tactic {tactic_index}: `execute_then_step` planned a non-certificate tactic {:?}",
+                                error.smart_tactic()
+                            ))
+                        })?;
+                let result = replay_execution_tactic_certificate(
+                    ProofReplayContext {
+                        state,
+                        pure_facts: requirement_pure_facts,
+                        replay,
+                        branch_path,
+                    },
+                    function_block,
+                    parsed_function,
+                    claims,
+                    claim_label,
+                    function_environment,
+                    predicate_environment,
+                    click_function_environment,
+                    resource_environment,
+                    theorem_environment,
+                    function,
+                    arguments,
+                    tactic_index,
+                    &certificate,
+                )?;
+                state = result.state;
+                requirement_pure_facts = result.pure_facts;
+                replay = result.replay;
+                branch_path = result.branch_path;
+                assumptions = assumptions_from_propositions(&requirement_pure_facts);
+            }
+            ProofTactic::ExecuteElseStep => {
                 let entered = execute_branch_step_from_execution_point(
                     &mut replay,
                     &mut state,
@@ -4708,7 +4758,7 @@ fn replay_linear_tactics(
                     function_environment,
                     claim_label,
                     tactic_index,
-                    Some(matches!(tactic, ProofTactic::ExecuteThenStep)),
+                    Some(false),
                     &[],
                     StatementPrerequisitePolicy::Contextual,
                     StatementFactTransportPolicy::Automatic,
@@ -5107,6 +5157,49 @@ fn replay_linear_tactics(
         replay,
         branch_path,
     })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn replay_execution_tactic_certificate(
+    context: ProofReplayContext,
+    function_block: &FunctionBlock,
+    parsed_function: &syntax::C0Function,
+    claims: &[FunctionClaimRef<'_>],
+    claim_label: &str,
+    function_environment: &CExecutionEnvironment,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    resource_environment: &ResourceEnvironment,
+    theorem_environment: &TheoremEnvironment,
+    function: &CFunction,
+    arguments: &[CExpression],
+    tactic_index: usize,
+    certificate: &TacticCertificate,
+) -> Result<ProofReplayContext, ClickError> {
+    let tactics = certificate
+        .tactics()
+        .iter()
+        .cloned()
+        .map(|tactic| IndexedTactic {
+            index: tactic_index,
+            tactic,
+        })
+        .collect::<Vec<_>>();
+    replay_linear_tactics(
+        context,
+        function_block,
+        parsed_function,
+        claims,
+        claim_label,
+        function_environment,
+        predicate_environment,
+        click_function_environment,
+        resource_environment,
+        theorem_environment,
+        function,
+        arguments,
+        &tactics,
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
