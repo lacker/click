@@ -212,7 +212,7 @@ fn verifies_pure_theorem_definition() {
 }
 
 #[test]
-fn pure_simp_stores_a_simple_tactic_certificate() {
+fn pure_simp_does_not_expose_internal_replay_evidence_as_surface_tactics() {
     let source = r#"
         theorem positive_is_nonnegative(x: int32) {
             requires x > 0;
@@ -221,17 +221,7 @@ fn pure_simp_stores_a_simple_tactic_certificate() {
     "#;
 
     let verified = verify_click_theorems(source).expect("simp theorem should verify");
-    let tactics = verified[0]
-        .proof_tactics
-        .as_deref()
-        .expect("simp should store its expanded certificate");
-
-    assert!(matches!(
-        tactics,
-        [ProofTactic::ExactPropositionDerivation(_)]
-    ));
-    TacticCertificate::from_proof_tactics(tactics)
-        .expect("stored simp proof must contain only simple tactics");
+    assert_eq!(verified[0].proof_tactics, None);
 }
 
 #[test]
@@ -1395,8 +1385,23 @@ fn tactic_certificate_rejects_a_direct_smart_tactic() {
     let error = TacticCertificate::from_proof_tactics(&[ProofTactic::Simp])
         .expect_err("a smart tactic cannot be a certificate leaf");
 
-    assert_eq!(error.smart_tactic(), SmartTacticKind::Simp);
+    assert_eq!(
+        error.tactic_class(),
+        TacticClass::Smart(SmartTacticKind::Simp)
+    );
     assert_eq!(error.path(), &[CertificatePathSegment::Tactic(0)]);
+}
+
+#[test]
+fn tactic_certificate_rejects_internal_replay_evidence() {
+    let error =
+        TacticCertificate::from_proof_tactics(&[ProofTactic::CertifiedStatementStep(Vec::new())])
+            .expect_err("internal replay evidence is not a surface tactic");
+
+    assert_eq!(
+        error.tactic_class(),
+        TacticClass::Simple(SimpleTactic::CertifiedStatementTransition)
+    );
 }
 
 #[test]
@@ -1429,7 +1434,10 @@ fn tactic_certificate_rejects_smart_tactics_in_nested_control_flow() {
     let error = TacticCertificate::from_proof_tactics(&tactics)
         .expect_err("nested smart tactics cannot be hidden in a certificate");
 
-    assert_eq!(error.smart_tactic(), SmartTacticKind::Simp);
+    assert_eq!(
+        error.tactic_class(),
+        TacticClass::Smart(SmartTacticKind::Simp)
+    );
     assert_eq!(
         error.path(),
         &[
@@ -1458,7 +1466,10 @@ fn tactic_certificate_treats_an_omitted_nested_proof_as_auto() {
     let error = TacticCertificate::from_proof_tactics(&tactics)
         .expect_err("an omitted nested proof is smart auto");
 
-    assert_eq!(error.smart_tactic(), SmartTacticKind::Auto);
+    assert_eq!(
+        error.tactic_class(),
+        TacticClass::Smart(SmartTacticKind::Auto)
+    );
     assert_eq!(
         error.path(),
         &[

@@ -2290,19 +2290,19 @@ fn normalize_direct_atomic_memory_load(term: &Bitvector32Term) -> Bitvector32Ter
 pub(super) fn plan_simp_certificate(
     proposition: &Proposition,
     assumptions: &Assumptions,
-) -> Option<TacticCertificate> {
+) -> Option<ProofReplayPlan> {
     let tactic = if matches!(normalize_proposition(proposition), SimpProposition::True) {
         ProofTactic::Normalize
     } else {
         ProofTactic::ExactPropositionDerivation(assumptions.derive_simp_proposition(proposition)?)
     };
-    TacticCertificate::from_proof_tactics(&[tactic]).ok()
+    ProofReplayPlan::from_planned_tactics(&[tactic]).ok()
 }
 
 pub(super) fn replay_simp_certificate(
     proposition: &Proposition,
     assumptions: &Assumptions,
-    certificate: &TacticCertificate,
+    certificate: &ProofReplayPlan,
 ) -> bool {
     match certificate.tactics() {
         [ProofTactic::Normalize] => {

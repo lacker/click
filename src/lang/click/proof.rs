@@ -234,7 +234,7 @@ fn verify_theorem_ensure(
                 ensure_index,
                 ensure_clause: ensure_clause.clone(),
                 proof_kind: ProofKind::Simp,
-                proof_tactics: Some(certificate.tactics().to_vec()),
+                proof_tactics: certificate.surface_tactics().map(<[_]>::to_vec),
                 requires: context.requires.clone(),
                 conclusion: goal,
             })
@@ -281,7 +281,7 @@ fn replay_pure_theorem_certificate(
     click_function_environment: &ClickFunctionEnvironment,
     theorem_environment: &TheoremEnvironment,
     context: &PureTheoremContext,
-    certificate: &TacticCertificate,
+    certificate: &ProofReplayPlan,
 ) -> Result<(), ClickError> {
     prove_pure_theorem_script(
         claim_label,
@@ -356,9 +356,9 @@ mod certificate_tests {
             &click_function_environment,
         )
         .expect("goal should lower");
-        let failing = TacticCertificate::from_proof_tactics(&[ProofTactic::Assumption])
+        let failing = ProofReplayPlan::from_planned_tactics(&[ProofTactic::Assumption])
             .expect("assumption is a simple tactic");
-        let succeeding = TacticCertificate::from_proof_tactics(&[ProofTactic::Normalize])
+        let succeeding = ProofReplayPlan::from_planned_tactics(&[ProofTactic::Normalize])
             .expect("normalize is a simple tactic");
 
         assert!(
@@ -4598,7 +4598,7 @@ fn replay_linear_tactics(
                     LoopStepPolicy::EnterBody,
                 )?;
                 let certificate =
-                    TacticCertificate::from_proof_tactics(&planning_replay.planned_tactics)
+                    ProofReplayPlan::from_planned_tactics(&planning_replay.planned_tactics)
                         .map_err(|error| {
                             ClickError::new(format!(
                                 "`{claim_label}` tactic {tactic_index}: `execute_step` planned a non-certificate tactic {:?}",
@@ -4656,7 +4656,7 @@ fn replay_linear_tactics(
                 )?;
                 debug_assert!(entered);
                 let certificate =
-                    TacticCertificate::from_proof_tactics(&planning_replay.planned_tactics)
+                    ProofReplayPlan::from_planned_tactics(&planning_replay.planned_tactics)
                         .map_err(|error| {
                             ClickError::new(format!(
                                 "`{claim_label}` tactic {tactic_index}: `execute_then_step` planned a non-certificate tactic {:?}",
@@ -4714,7 +4714,7 @@ fn replay_linear_tactics(
                 )?;
                 debug_assert!(entered);
                 let certificate =
-                    TacticCertificate::from_proof_tactics(&planning_replay.planned_tactics)
+                    ProofReplayPlan::from_planned_tactics(&planning_replay.planned_tactics)
                         .map_err(|error| {
                             ClickError::new(format!(
                                 "`{claim_label}` tactic {tactic_index}: `execute_else_step` planned a non-certificate tactic {:?}",
@@ -4766,7 +4766,7 @@ fn replay_linear_tactics(
                     tactic_index,
                 )?;
                 let certificate =
-                    TacticCertificate::from_proof_tactics(&planning_replay.planned_tactics)
+                    ProofReplayPlan::from_planned_tactics(&planning_replay.planned_tactics)
                         .map_err(|error| {
                             ClickError::new(format!(
                                 "`{claim_label}` tactic {tactic_index}: `execute_rest` planned a non-certificate tactic {:?}",
@@ -4827,7 +4827,7 @@ fn replay_linear_tactics(
                     StatementPrerequisitePolicy::Planning,
                 )?;
                 let certificate =
-                    TacticCertificate::from_proof_tactics(&planning_replay.planned_tactics)
+                    ProofReplayPlan::from_planned_tactics(&planning_replay.planned_tactics)
                         .map_err(|error| {
                             ClickError::new(format!(
                                 "`{claim_label}` tactic {tactic_index}: `execute_until` planned a non-certificate tactic {:?}",
@@ -4880,7 +4880,7 @@ fn replay_linear_tactics(
                     StatementPrerequisitePolicy::Planning,
                 )?;
                 let certificate =
-                    TacticCertificate::from_proof_tactics(&planning_replay.planned_tactics)
+                    ProofReplayPlan::from_planned_tactics(&planning_replay.planned_tactics)
                         .map_err(|error| {
                             ClickError::new(format!(
                                 "`{claim_label}` tactic {tactic_index}: `bounded_execute` planned a non-certificate tactic {:?}",
@@ -4960,7 +4960,7 @@ fn replay_linear_tactics(
                     )?);
                 }
                 let certificate =
-                    TacticCertificate::from_proof_tactics(&[ProofTactic::CertifiedFrame(
+                    ProofReplayPlan::from_planned_tactics(&[ProofTactic::CertifiedFrame(
                         path_derivations,
                     )])
                     .expect("certified frame is a simple tactic");
@@ -5354,7 +5354,7 @@ fn replay_execution_tactic_certificate(
     function: &CFunction,
     arguments: &[CExpression],
     tactic_index: usize,
-    certificate: &TacticCertificate,
+    certificate: &ProofReplayPlan,
 ) -> Result<ProofReplayContext, ClickError> {
     let tactics = certificate
         .tactics()
@@ -6981,7 +6981,7 @@ fn bounded_execute_from_execution_point(
             completed
                 .iter()
                 .map(|frontier| {
-                    TacticCertificate::from_proof_tactics(&frontier.replay.planned_tactics)
+                    ProofReplayPlan::from_planned_tactics(&frontier.replay.planned_tactics)
                         .map_err(|error| {
                             ClickError::new(format!(
                                 "`{claim_label}` tactic {tactic_index}: `bounded_execute` path planned a non-certificate tactic {:?}",

@@ -548,7 +548,7 @@ pub enum ProofTactic {
         theorem: Theorem,
     },
     CertifiedFrame(Vec<Vec<PropositionDerivation>>),
-    CertifiedAlternatives(Vec<TacticCertificate>),
+    CertifiedAlternatives(Vec<ProofReplayPlan>),
     Simp,
 }
 
@@ -616,6 +616,13 @@ pub struct TacticCertificate {
     tactics: Vec<ProofTactic>,
 }
 
+/// Internal evidence selected by a smart tactic before it is lowered to a
+/// surface-expressible [`TacticCertificate`].
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProofReplayPlan {
+    tactics: Vec<ProofTactic>,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CertificatePathSegment {
     Tactic(usize),
@@ -627,8 +634,20 @@ pub enum CertificatePathSegment {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CertificateError {
+    tactic_class: TacticClass,
+    path: Vec<CertificatePathSegment>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ReplayPlanError {
     smart_tactic: SmartTacticKind,
     path: Vec<CertificatePathSegment>,
+}
+
+impl ReplayPlanError {
+    fn smart_tactic(&self) -> SmartTacticKind {
+        self.smart_tactic
+    }
 }
 
 impl TacticCertificate {
@@ -645,12 +664,31 @@ impl TacticCertificate {
 }
 
 impl CertificateError {
-    pub fn smart_tactic(&self) -> SmartTacticKind {
-        self.smart_tactic
+    pub fn tactic_class(&self) -> TacticClass {
+        self.tactic_class
     }
 
     pub fn path(&self) -> &[CertificatePathSegment] {
         &self.path
+    }
+}
+
+impl ProofReplayPlan {
+    fn from_planned_tactics(tactics: &[ProofTactic]) -> Result<Self, ReplayPlanError> {
+        validate_replay_plan_tactics(tactics, &mut Vec::new())?;
+        Ok(Self {
+            tactics: tactics.to_vec(),
+        })
+    }
+
+    fn tactics(&self) -> &[ProofTactic] {
+        &self.tactics
+    }
+
+    fn surface_tactics(&self) -> Option<&[ProofTactic]> {
+        validate_certificate_tactics(&self.tactics, &mut Vec::new())
+            .is_ok()
+            .then_some(&self.tactics)
     }
 }
 
@@ -661,11 +699,19 @@ fn validate_certificate_tactics(
     for (index, tactic) in tactics.iter().enumerate() {
         path.push(CertificatePathSegment::Tactic(index));
         let result = match tactic.class() {
-            TacticClass::Simple(_) => Ok(()),
-            TacticClass::Smart(smart_tactic) => Err(CertificateError {
-                smart_tactic,
-                path: path.clone(),
-            }),
+            TacticClass::Simple(simple) if simple.is_surface_expressible() => Ok(()),
+            tactic_class @ (TacticClass::Simple(_) | TacticClass::Smart(_)) => {
+                Err(CertificateError {
+                    tactic_class,
+                    path: path.clone(),
+                })
+            }
+            TacticClass::ControlFlow(ControlFlowTactic::CertifiedAlternatives) => {
+                Err(CertificateError {
+                    tactic_class: tactic.class(),
+                    path: path.clone(),
+                })
+            }
             TacticClass::ControlFlow(ControlFlowTactic::Have) => {
                 let ProofTactic::Have(proof_have) = tactic else {
                     unreachable!("tactic class and variant must agree")
@@ -700,12 +746,65 @@ fn validate_certificate_tactics(
                 path.pop();
                 result
             }
+        };
+        path.pop();
+        result?;
+    }
+    Ok(())
+}
+
+fn validate_replay_plan_tactics(
+    tactics: &[ProofTactic],
+    path: &mut Vec<CertificatePathSegment>,
+) -> Result<(), ReplayPlanError> {
+    for (index, tactic) in tactics.iter().enumerate() {
+        path.push(CertificatePathSegment::Tactic(index));
+        let result = match tactic.class() {
+            TacticClass::Simple(_) => Ok(()),
+            TacticClass::Smart(smart_tactic) => Err(ReplayPlanError {
+                smart_tactic,
+                path: path.clone(),
+            }),
+            TacticClass::ControlFlow(ControlFlowTactic::Have) => {
+                let ProofTactic::Have(proof_have) = tactic else {
+                    unreachable!("tactic class and variant must agree")
+                };
+                path.push(CertificatePathSegment::HaveBody);
+                let result = validate_replay_plan_proof(&proof_have.proof, path);
+                path.pop();
+                result
+            }
+            TacticClass::ControlFlow(ControlFlowTactic::If) => {
+                let ProofTactic::If(proof_if) = tactic else {
+                    unreachable!("tactic class and variant must agree")
+                };
+                path.push(CertificatePathSegment::ThenBranch);
+                let then_result = validate_replay_plan_tactics(&proof_if.then_tactics, path);
+                path.pop();
+                if then_result.is_err() {
+                    then_result
+                } else {
+                    path.push(CertificatePathSegment::ElseBranch);
+                    let else_result = validate_replay_plan_tactics(&proof_if.else_tactics, path);
+                    path.pop();
+                    else_result
+                }
+            }
+            TacticClass::ControlFlow(ControlFlowTactic::Advance) => {
+                let ProofTactic::Advance(proof_advance) = tactic else {
+                    unreachable!("tactic class and variant must agree")
+                };
+                path.push(CertificatePathSegment::AdvanceBody);
+                let result = validate_replay_plan_tactics(&proof_advance.tactics, path);
+                path.pop();
+                result
+            }
             TacticClass::ControlFlow(ControlFlowTactic::CertifiedAlternatives) => {
                 let ProofTactic::CertifiedAlternatives(alternatives) = tactic else {
                     unreachable!("tactic class and variant must agree")
                 };
                 for alternative in alternatives {
-                    validate_certificate_tactics(alternative.tactics(), path)?;
+                    validate_replay_plan_tactics(alternative.tactics(), path)?;
                 }
                 Ok(())
             }
@@ -716,20 +815,54 @@ fn validate_certificate_tactics(
     Ok(())
 }
 
+fn validate_replay_plan_proof(
+    proof: &Proof,
+    path: &mut Vec<CertificatePathSegment>,
+) -> Result<(), ReplayPlanError> {
+    match proof {
+        Proof::Default => Err(ReplayPlanError {
+            smart_tactic: SmartTacticKind::Auto,
+            path: path.clone(),
+        }),
+        Proof::Tactic(smart_tactic) => Err(ReplayPlanError {
+            smart_tactic: smart_tactic.kind(),
+            path: path.clone(),
+        }),
+        Proof::Script(tactics) => validate_replay_plan_tactics(tactics, path),
+    }
+}
+
 fn validate_certificate_proof(
     proof: &Proof,
     path: &mut Vec<CertificatePathSegment>,
 ) -> Result<(), CertificateError> {
     match proof {
         Proof::Default => Err(CertificateError {
-            smart_tactic: SmartTacticKind::Auto,
+            tactic_class: TacticClass::Smart(SmartTacticKind::Auto),
             path: path.clone(),
         }),
         Proof::Tactic(smart_tactic) => Err(CertificateError {
-            smart_tactic: smart_tactic.kind(),
+            tactic_class: TacticClass::Smart(smart_tactic.kind()),
             path: path.clone(),
         }),
         Proof::Script(tactics) => validate_certificate_tactics(tactics, path),
+    }
+}
+
+impl SimpleTactic {
+    fn is_surface_expressible(self) -> bool {
+        !matches!(
+            self,
+            Self::CertifiedStatementTransition
+                | Self::CertifiedLoopSummaryTransition
+                | Self::ExecutionPointRecord
+                | Self::OpaqueCallCounterReset
+                | Self::ExactPropositionDerivation
+                | Self::CertifiedFactTransport
+                | Self::CertifiedFactTransportFinish
+                | Self::CertifiedPathAssumption
+                | Self::CertifiedFrame
+        )
     }
 }
 

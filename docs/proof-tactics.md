@@ -59,8 +59,8 @@ nontrivial contextual reasoning rather than one fixed kernel rule. Determinism
 alone does not make a tactic simple.
 
 Click does not yet expose a surface tactic that prints or expands a smart
-tactic's simple certificate. Internally, every current smart tactic plans and
-replays certificate-backed operations: `simp`, the one-step execution tactics,
+tactic. Internally, every current smart tactic selects and replays a proof
+plan: `simp`, the one-step execution tactics,
 `execute_until`, `bounded_execute`, and `execute_rest`. The contextual
 `by frame` prover is certificate-backed as well; explicit `frame()` remains the
 exact simple tactic. `auto` searches only among these certificate-backed tactic
@@ -71,24 +71,28 @@ fallback.
 
 The certificate foundation is deliberately narrower than arbitrary tactic
 scripts. A `TacticCertificate` wraps a tactic script only after a recursive
-validator establishes that every leaf is a simple tactic. `have`, proof-level
-`if`, and `advance` may remain as control-flow nodes, but none of their nested
-proof scopes may contain a smart tactic. An omitted nested proof is treated as
-`auto` and is therefore rejected.
+validator establishes that every leaf is both simple and expressible in Click
+source. `have`, proof-level `if`, and `advance` may remain as control-flow
+nodes, but none of their nested proof scopes may contain a smart tactic. An
+omitted nested proof is treated as `auto` and is therefore rejected.
+
+Before expansion, smart tactics may retain private replay evidence in a
+`ProofReplayPlan`. Replay evidence is not a tactic and cannot be placed in a
+`TacticCertificate`; expansion must lower it to surface tactics first.
 
 Certificate replay starts from ordinary proof inputs and delegates each leaf to
 the deterministic simple-tactic executor. Failed replay does not mutate those
 inputs.
 
-`simp` plans either a context-free `normalize` leaf or an internal exact
+`simp` plans either a context-free `normalize` leaf or internal exact
 proposition derivation. The derivation records its logical structure, including
 conjunction, disjunction, implication, finite case splits, and disjunction
 elimination. Its atomic leaves use bounded deterministic kernel theory checks;
 replay checks the selected tree and never searches for an alternative proof.
-Pure `by simp` proofs store this expanded certificate. A `simp()` nested in a
-larger execution script is planned and replayed the same way when it runs. The
-stored script retains its surface spelling; Click does not yet expose the
-internal expansion as source text.
+Until that derivation is lowered to surface tactics, pure `by simp` proofs do
+not expose it as a tactic certificate. A `simp()` nested in a larger execution
+script is planned and replayed the same way when it runs. The stored explicit
+script retains its surface spelling.
 
 Function-level `by simp` is exactly the certificate-backed sequence
 `execute_rest(); simp()`. It no longer runs a separate direct execution after
