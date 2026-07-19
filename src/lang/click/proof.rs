@@ -4747,10 +4747,14 @@ fn replay_linear_tactics(
                 assumptions = assumptions_from_propositions(&requirement_pure_facts);
             }
             ProofTactic::ExecuteElseStep => {
+                let mut planning_replay = replay.clone();
+                planning_replay.planned_tactics.clear();
+                let mut planning_state = state.clone();
+                let mut planning_facts = requirement_pure_facts.clone();
                 let entered = execute_branch_step_from_execution_point(
-                    &mut replay,
-                    &mut state,
-                    &mut requirement_pure_facts,
+                    &mut planning_replay,
+                    &mut planning_state,
+                    &mut planning_facts,
                     function_block,
                     function,
                     parsed_function.parameters(),
@@ -4760,11 +4764,44 @@ fn replay_linear_tactics(
                     tactic_index,
                     Some(false),
                     &[],
-                    StatementPrerequisitePolicy::Contextual,
+                    StatementPrerequisitePolicy::Planning,
                     StatementFactTransportPolicy::Automatic,
                     BranchStepPolicy::RequireProven,
                 )?;
                 debug_assert!(entered);
+                let certificate =
+                    TacticCertificate::from_proof_tactics(&planning_replay.planned_tactics)
+                        .map_err(|error| {
+                            ClickError::new(format!(
+                                "`{claim_label}` tactic {tactic_index}: `execute_else_step` planned a non-certificate tactic {:?}",
+                                error.smart_tactic()
+                            ))
+                        })?;
+                let result = replay_execution_tactic_certificate(
+                    ProofReplayContext {
+                        state,
+                        pure_facts: requirement_pure_facts,
+                        replay,
+                        branch_path,
+                    },
+                    function_block,
+                    parsed_function,
+                    claims,
+                    claim_label,
+                    function_environment,
+                    predicate_environment,
+                    click_function_environment,
+                    resource_environment,
+                    theorem_environment,
+                    function,
+                    arguments,
+                    tactic_index,
+                    &certificate,
+                )?;
+                state = result.state;
+                requirement_pure_facts = result.pure_facts;
+                replay = result.replay;
+                branch_path = result.branch_path;
                 assumptions = assumptions_from_propositions(&requirement_pure_facts);
             }
             ProofTactic::ExecuteRest => {
