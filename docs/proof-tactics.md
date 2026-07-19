@@ -182,6 +182,11 @@ certified write and effect-summary range lies inside the declared mutable
 footprint. Replay checks those derivations against the corresponding execution
 path and then applies the same exact footprint rule used by `frame()`.
 
+Surface expansion spells those path-specific bounds as `have`/`derive`
+tactics, followed by `frame()` in each proof leaf. Generated signed arithmetic
+comparisons are converted back to Click syntax and checked by lowering them at
+the same proof point; unsupported kernel terms block expansion explicitly.
+
 `auto` tries a finite ordered set of tactic sequences. It first uses
 `execute_rest` with verified loop summaries, then falls back to
 `bounded_execute`; each candidate ends with `simp` or contextual frame

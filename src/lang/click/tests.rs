@@ -2888,6 +2888,102 @@ fn separate_requirement_proves_symbolic_unwritten_read() {
 }
 
 #[test]
+fn contextual_frame_expands_to_surface_bounds_and_exact_frame() {
+    let c_source = r#"
+            int32 write_in_bounds(int32 p[], int32 i, int32 n) {
+                p[i] = 9;
+                return 0;
+            }
+        "#;
+    let click_source = r#"
+            verifying "write_in_bounds.c";
+
+            int32 write_in_bounds(int32 p[], int32 i, int32 n) {
+                requires n >= 0;
+                requires n <= 2147483647;
+                requires i >= 0;
+                requires i < n;
+                requires loadable(p[0..n]);
+                consumes p[0..n];
+                mutable p[0..n] by frame;
+            }
+        "#;
+
+    let verified = verify_c0_sources(click_source, &[("write_in_bounds.c", c_source)])
+        .expect("contextual frame should verify");
+    let theorem = verified
+        .iter()
+        .find(|theorem| theorem.proof_kind() == ProofKind::Frame)
+        .expect("effect claim should use the frame proof");
+    let expanded = theorem.expanded_proof_tactics().unwrap_or_else(|| {
+        panic!(
+            "contextual frame should have a surface expansion: {:?}",
+            theorem.expansion_blocker()
+        )
+    });
+    assert!(
+        expanded
+            .iter()
+            .any(|tactic| matches!(tactic, ProofTactic::Have(_)))
+    );
+    assert_eq!(expanded.last(), Some(&ProofTactic::Frame(None)));
+    TacticCertificate::from_proof_tactics(expanded)
+        .expect("contextual frame expansion should be a surface certificate");
+}
+
+#[test]
+fn contextual_frame_expands_independently_in_branch_leaves() {
+    let c_source = r#"
+            int32 write_selected(int32 p[2], int32 flag) {
+                if (flag) {
+                    p[0] = 1;
+                } else {
+                    p[1] = 1;
+                }
+                return 0;
+            }
+        "#;
+    let click_source = r#"
+            verifying "write_selected.c";
+
+            int32 write_selected(int32 p[2], int32 flag) {
+                consumes p[0..2];
+                mutable p[0..2] by frame;
+            }
+        "#;
+
+    let verified = verify_c0_sources(click_source, &[("write_selected.c", c_source)])
+        .expect("branched contextual frame should verify");
+    let theorem = verified
+        .iter()
+        .find(|theorem| theorem.proof_kind() == ProofKind::Frame)
+        .expect("effect claim should use the frame proof");
+    let expanded = theorem.expanded_proof_tactics().unwrap_or_else(|| {
+        panic!(
+            "branched contextual frame should expand: {:?}",
+            theorem.expansion_blocker()
+        )
+    });
+    let proof_if = expanded
+        .iter()
+        .find_map(|tactic| match tactic {
+            ProofTactic::If(proof_if) => Some(proof_if),
+            _ => None,
+        })
+        .expect("branched frame expansion should retain the branch");
+    assert_eq!(
+        proof_if.then_tactics.last(),
+        Some(&ProofTactic::Frame(None))
+    );
+    assert_eq!(
+        proof_if.else_tactics.last(),
+        Some(&ProofTactic::Frame(None))
+    );
+    TacticCertificate::from_proof_tactics(expanded)
+        .expect("branched frame expansion should be a surface certificate");
+}
+
+#[test]
 fn quantified_old_memory_rejects_overwritten_cell() {
     let c_source = r#"
             int32 write_second(int32* p) {

@@ -1858,6 +1858,36 @@ fn append_surface_tactic_to_leaves(tactics: &mut Vec<ProofTactic>, tactic: Proof
     }
 }
 
+fn append_surface_tactics_by_leaf(
+    tactics: &mut Vec<ProofTactic>,
+    path_tactics: &[Vec<ProofTactic>],
+) -> Result<(), String> {
+    fn append(
+        tactics: &mut Vec<ProofTactic>,
+        path_tactics: &[Vec<ProofTactic>],
+        next_path: &mut usize,
+    ) {
+        if let Some(ProofTactic::If(proof_if)) = tactics.last_mut() {
+            append(&mut proof_if.then_tactics, path_tactics, next_path);
+            append(&mut proof_if.else_tactics, path_tactics, next_path);
+        } else if let Some(suffix) = path_tactics.get(*next_path) {
+            tactics.extend(suffix.iter().cloned());
+            *next_path += 1;
+        }
+    }
+
+    let mut next_path = 0;
+    append(tactics, path_tactics, &mut next_path);
+    if next_path == path_tactics.len() {
+        Ok(())
+    } else {
+        Err(format!(
+            "surface proof has {next_path} leaves but frame certificate has {} paths",
+            path_tactics.len()
+        ))
+    }
+}
+
 fn synthesize_surface_alternatives(paths: Vec<SurfaceReplay>) -> Result<Vec<ProofTactic>, String> {
     if paths.is_empty() {
         return Err("certified alternatives contained no paths".to_string());
@@ -4885,23 +4915,238 @@ fn checked_surface_fact_at_point(
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<ClickProposition, ClickError> {
-    replay
-        .surface_propositions
-        .checked_surface(kernel, |surface| {
-            lower_point_proposition(
-                surface,
+    let check = |surface: &ClickProposition| {
+        lower_point_proposition(
+            surface,
+            available,
+            parameters,
+            arguments,
+            replay.execution_start_state(state),
+            state,
+            None,
+            &replay.program_point_states,
+            predicate_environment,
+            click_function_environment,
+        )
+        .map_err(ClickError::new)
+    };
+    if let Ok(surface) = replay.surface_propositions.checked_surface(kernel, check) {
+        return Ok(surface);
+    }
+    let candidate =
+        synthesize_surface_proposition(kernel, parameters, arguments).ok_or_else(|| {
+            ClickError::new(format!(
+                "kernel fact has no recorded or structurally synthesized Click spelling: {kernel:?}"
+            ))
+        })?;
+    let lowered = check(&candidate)?;
+    if lowered == *kernel {
+        Ok(candidate)
+    } else {
+        Err(ClickError::new(format!(
+            "synthesized Click fact does not lower to the kernel fact at this proof point\n  Click: {candidate:?}\n  lowered: {lowered:?}\n  kernel: {kernel:?}"
+        )))
+    }
+}
+
+fn synthesize_surface_proposition(
+    proposition: &Proposition,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+) -> Option<ClickProposition> {
+    let Proposition::ConditionIs(condition, value) = proposition else {
+        return None;
+    };
+    if let ConditionTerm::Constant(condition) = condition {
+        return Some(ClickProposition::Comparison {
+            left: ContractExpression::CFragment(CExpression::Value(int32(0))),
+            operator: if condition == value {
+                ComparisonOperator::Equal
+            } else {
+                ComparisonOperator::NotEqual
+            },
+            right: ContractExpression::CFragment(CExpression::Value(int32(0))),
+        });
+    }
+    let (left, operator, right) = match condition {
+        ConditionTerm::Bitvector32SignedLessThan(left, right) => {
+            (left, ComparisonOperator::LessThan, right)
+        }
+        ConditionTerm::Bitvector32SignedLessEqual(left, right) => {
+            (left, ComparisonOperator::LessEqual, right)
+        }
+        ConditionTerm::Bitvector32SignedGreaterThan(left, right) => {
+            (left, ComparisonOperator::GreaterThan, right)
+        }
+        ConditionTerm::Bitvector32SignedGreaterEqual(left, right) => {
+            (left, ComparisonOperator::GreaterEqual, right)
+        }
+        ConditionTerm::Bitvector32Equal(left, right) => (left, ComparisonOperator::Equal, right),
+        _ => return None,
+    };
+    let operator = if *value {
+        operator
+    } else {
+        match operator {
+            ComparisonOperator::Equal => ComparisonOperator::NotEqual,
+            ComparisonOperator::NotEqual => ComparisonOperator::Equal,
+            ComparisonOperator::LessThan => ComparisonOperator::GreaterEqual,
+            ComparisonOperator::LessEqual => ComparisonOperator::GreaterThan,
+            ComparisonOperator::GreaterThan => ComparisonOperator::LessEqual,
+            ComparisonOperator::GreaterEqual => ComparisonOperator::LessThan,
+        }
+    };
+    Some(ClickProposition::Comparison {
+        left: synthesize_surface_bitvector(left, parameters, arguments)?,
+        operator,
+        right: synthesize_surface_bitvector(right, parameters, arguments)?,
+    })
+}
+
+fn synthesize_surface_bitvector(
+    term: &Bitvector32Term,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+) -> Option<ContractExpression> {
+    if let Some(name) = describe_parameter_bitvector(term, parameters, arguments) {
+        return Some(ContractExpression::CFragment(CExpression::Variable(name)));
+    }
+    let binary = |left: &Bitvector32Term, right: &Bitvector32Term| {
+        Some((
+            Box::new(synthesize_surface_bitvector(left, parameters, arguments)?),
+            Box::new(synthesize_surface_bitvector(right, parameters, arguments)?),
+        ))
+    };
+    match term {
+        Bitvector32Term::Constant(_) => Some(ContractExpression::CFragment(CExpression::Value(
+            CValue::Int32(term.clone()),
+        ))),
+        Bitvector32Term::Add(left, right) => {
+            let (left, right) = binary(left, right)?;
+            Some(ContractExpression::Add(left, right))
+        }
+        Bitvector32Term::Subtract(left, right) => {
+            let (left, right) = binary(left, right)?;
+            Some(ContractExpression::Subtract(left, right))
+        }
+        Bitvector32Term::Multiply(left, right) => {
+            let (left, right) = binary(left, right)?;
+            Some(ContractExpression::Multiply(left, right))
+        }
+        Bitvector32Term::Divide(left, right) => {
+            let (left, right) = binary(left, right)?;
+            Some(ContractExpression::Divide(left, right))
+        }
+        Bitvector32Term::Remainder(left, right) => {
+            let (left, right) = binary(left, right)?;
+            Some(ContractExpression::Remainder(left, right))
+        }
+        Bitvector32Term::ShiftLeft(left, right) => {
+            let (left, right) = binary(left, right)?;
+            Some(ContractExpression::ShiftLeft(left, right))
+        }
+        Bitvector32Term::ArithmeticShiftRight(left, right) => {
+            let (left, right) = binary(left, right)?;
+            Some(ContractExpression::ShiftRight(left, right))
+        }
+        Bitvector32Term::BitwiseAnd(left, right) => {
+            let (left, right) = binary(left, right)?;
+            Some(ContractExpression::BitwiseAnd(left, right))
+        }
+        Bitvector32Term::BitwiseOr(left, right) => {
+            let (left, right) = binary(left, right)?;
+            Some(ContractExpression::BitwiseOr(left, right))
+        }
+        Bitvector32Term::BitwiseXor(left, right) => {
+            let (left, right) = binary(left, right)?;
+            Some(ContractExpression::BitwiseXor(left, right))
+        }
+        Bitvector32Term::BitwiseNot(value) => Some(ContractExpression::BitwiseNot(Box::new(
+            synthesize_surface_bitvector(value, parameters, arguments)?,
+        ))),
+        Bitvector32Term::Variable(_)
+        | Bitvector32Term::If { .. }
+        | Bitvector32Term::RangeFold { .. }
+        | Bitvector32Term::MemoryLoad(_, _) => None,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn lower_surface_atomic_derivation(
+    replay: &TacticReplayState,
+    derivation: &PropositionDerivation,
+    available: &[Proposition],
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    state: &CState,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+) -> Result<(ClickProposition, Proof), ClickError> {
+    let conclusion = checked_surface_fact_at_point(
+        replay,
+        derivation.conclusion(),
+        available,
+        parameters,
+        arguments,
+        state,
+        predicate_environment,
+        click_function_environment,
+    )?;
+    let premise_pairs = derivation
+        .context_premises()
+        .into_iter()
+        .filter_map(|premise| {
+            checked_surface_fact_at_point(
+                replay,
+                &premise,
                 available,
                 parameters,
                 arguments,
-                replay.execution_start_state(state),
                 state,
-                None,
-                &replay.program_point_states,
                 predicate_environment,
                 click_function_environment,
             )
-            .map_err(ClickError::new)
+            .ok()
+            .map(|surface| (premise, surface))
         })
+        .collect::<Vec<_>>();
+    let kernel_premises = premise_pairs
+        .iter()
+        .map(|(kernel, _)| kernel.clone())
+        .collect::<Vec<_>>();
+    let surface_premises = premise_pairs
+        .into_iter()
+        .map(|(_, surface)| surface)
+        .collect::<Vec<_>>();
+    let assumptions = assumptions_from_propositions(&kernel_premises);
+    let proof_tactic = if matches!(
+        normalize_proposition(derivation.conclusion()),
+        SimpProposition::True
+    ) {
+        ProofTactic::Normalize
+    } else if assumptions
+        .derive_atomic_proposition(derivation.conclusion())
+        .is_some()
+    {
+        ProofTactic::Derive(ProofDerive {
+            proposition: conclusion.clone(),
+            premises: surface_premises,
+        })
+    } else if assumptions
+        .derive_simp_atomic_proposition(derivation.conclusion())
+        .is_some()
+    {
+        ProofTactic::Calculate(ProofDerive {
+            proposition: conclusion.clone(),
+            premises: surface_premises,
+        })
+    } else {
+        return Err(ClickError::new(format!(
+            "surface premises do not replay the atomic derivation of {:?}",
+            derivation.conclusion()
+        )));
+    };
+    Ok((conclusion, Proof::Script(vec![proof_tactic])))
 }
 
 fn comparison_at_program_point(
@@ -5125,56 +5370,68 @@ fn record_surface_replay_tactic(
         }),
         ProofTactic::CertifiedAlternatives(_) => {}
         ProofTactic::ExactPropositionDerivation(derivation) => {
-            let conclusion = checked_surface_fact_at_point(
+            match lower_surface_atomic_derivation(
                 replay,
-                derivation.conclusion(),
+                derivation,
                 available,
                 parameters,
                 arguments,
                 state,
                 predicate_environment,
                 click_function_environment,
-            );
-            let premises = derivation
-                .context_premises()
-                .iter()
-                .map(|premise| {
-                    checked_surface_fact_at_point(
-                        replay,
-                        premise,
-                        available,
-                        parameters,
-                        arguments,
-                        state,
-                        predicate_environment,
-                        click_function_environment,
-                    )
-                })
-                .collect::<Result<Vec<_>, _>>();
-            match (conclusion, premises) {
-                (Ok(conclusion), Ok(premises)) => {
-                    let proof = if premises.is_empty() {
-                        Proof::Script(vec![ProofTactic::Normalize])
-                    } else {
-                        Proof::Script(vec![ProofTactic::Derive(ProofDerive {
-                            proposition: conclusion.clone(),
-                            premises,
-                        })])
-                    };
+            ) {
+                Ok((conclusion, proof)) => {
                     replay.surface_replay.push(ProofTactic::Have(ProofHave {
                         proposition: conclusion,
                         proof,
                     }));
                 }
-                (conclusion, premises) => replay.surface_replay.block(format!(
-                    "could not lower exact proposition derivation\n  conclusion: {conclusion:?}\n  premises: {premises:?}"
+                Err(error) => replay.surface_replay.block(format!(
+                    "could not lower exact proposition derivation: {}",
+                    error.message()
                 )),
             }
         }
-        ProofTactic::CertifiedFrame(_) => replay.surface_replay.block(format!(
-            "surface lowering is not implemented for internal replay tactic `{}`",
-            tactic_name(tactic)
-        )),
+        ProofTactic::CertifiedFrame(path_derivations) => {
+            let lowered = path_derivations
+                .iter()
+                .map(|derivations| {
+                    let mut tactics = Vec::new();
+                    for derivation in derivations {
+                        let (conclusion, proof) = lower_surface_atomic_derivation(
+                            replay,
+                            derivation,
+                            available,
+                            parameters,
+                            arguments,
+                            state,
+                            predicate_environment,
+                            click_function_environment,
+                        )?;
+                        tactics.push(ProofTactic::Have(ProofHave {
+                            proposition: conclusion,
+                            proof,
+                        }));
+                    }
+                    tactics.push(ProofTactic::Frame(None));
+                    Ok::<_, ClickError>(tactics)
+                })
+                .collect::<Result<Vec<_>, _>>();
+            match lowered {
+                Ok(path_tactics) => {
+                    if let Err(message) = append_surface_tactics_by_leaf(
+                        &mut replay.surface_replay.tactics,
+                        &path_tactics,
+                    ) {
+                        replay.surface_replay.block(message);
+                    }
+                }
+                Err(error) => replay.surface_replay.block(format!(
+                    "could not lower contextual frame certificate: {}",
+                    error.message()
+                )),
+            }
+        }
         _ => match tactic.class() {
             TacticClass::Simple(simple) if simple.is_surface_expressible() => {
                 replay.surface_replay.push(tactic.clone())
