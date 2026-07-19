@@ -99,6 +99,12 @@ Before expansion, smart tactics may retain private replay evidence in a
 `ProofReplayPlan`. Replay evidence is not a tactic and cannot be placed in a
 `TacticCertificate`; expansion must lower it to surface tactics first.
 
+Kernel propositions are not printed by guessing source text. Expansion builds
+a checked map from each `ClickProposition` fact or goal to its exact lowered
+kernel proposition, including corresponding logical subpropositions. It may
+refer only to one of these recorded spellings or to a newly synthesized
+spelling that successfully lowers back to the required kernel proposition.
+
 Certificate replay starts from ordinary proof inputs and delegates each leaf to
 the deterministic simple-tactic executor. Failed replay does not mutate those
 inputs.

@@ -329,6 +329,53 @@ fn verifies_atomic_derivation_from_explicit_premises() {
 }
 
 #[test]
+fn records_checked_surface_spellings_for_lowered_propositions() {
+    let left = ClickProposition::Comparison {
+        left: current_var("x"),
+        operator: ComparisonOperator::GreaterThan,
+        right: current_int(0),
+    };
+    let right = ClickProposition::Comparison {
+        left: current_var("x"),
+        operator: ComparisonOperator::LessThan,
+        right: current_int(10),
+    };
+    let surface = ClickProposition::And(Box::new(left.clone()), Box::new(right.clone()));
+    let values = BTreeMap::from([(
+        "x".to_string(),
+        CValue::Int32(Bitvector32Term::Variable(Variable(42))),
+    )]);
+    let predicates = PredicateEnvironment::new(&[]);
+    let functions = ClickFunctionEnvironment::new(&[]);
+    let mut lowerer = KernelPropositionLowerer::new(
+        values,
+        BTreeMap::new(),
+        CMemory::new(),
+        &predicates,
+        &functions,
+    );
+    let kernel = lowerer
+        .lower_requirement_proposition(&surface)
+        .expect("surface proposition should lower");
+    let Proposition::And(kernel_left, kernel_right) = &kernel else {
+        panic!("expected conjunction lowering");
+    };
+    let mut spellings = SurfacePropositionMap::default();
+    spellings
+        .record_lowering(&surface, &kernel)
+        .expect("matching logical structure should record");
+
+    assert_eq!(spellings.surface(&kernel).unwrap(), &surface);
+    assert_eq!(spellings.surface(kernel_left).unwrap(), &left);
+    assert_eq!(spellings.surface(kernel_right).unwrap(), &right);
+    assert!(
+        spellings
+            .surface(&Proposition::Not(kernel_left.clone()))
+            .is_err()
+    );
+}
+
+#[test]
 fn parses_symbolic_loadable_bytes() {
     let source = r#"
             verifying "fill.c";

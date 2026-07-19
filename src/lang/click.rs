@@ -309,6 +309,68 @@ pub enum ClickProposition {
     },
 }
 
+/// Surface spellings paired with the exact kernel propositions they lowered
+/// to in one proof context.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct SurfacePropositionMap {
+    by_kernel: BTreeMap<Proposition, ClickProposition>,
+}
+
+impl SurfacePropositionMap {
+    pub fn record_lowering(
+        &mut self,
+        surface: &ClickProposition,
+        kernel: &Proposition,
+    ) -> Result<(), ClickError> {
+        self.by_kernel
+            .entry(kernel.clone())
+            .or_insert_with(|| surface.clone());
+        match (surface, kernel) {
+            (ClickProposition::And(surface_left, surface_right), Proposition::And(left, right))
+            | (ClickProposition::Or(surface_left, surface_right), Proposition::Or(left, right))
+            | (
+                ClickProposition::Implies(surface_left, surface_right),
+                Proposition::Implies(left, right),
+            ) => {
+                self.record_lowering(surface_left, left)?;
+                self.record_lowering(surface_right, right)
+            }
+            (ClickProposition::Not(surface_body), Proposition::Not(body)) => {
+                self.record_lowering(surface_body, body)
+            }
+            (
+                ClickProposition::ForAll {
+                    body: surface_body, ..
+                },
+                Proposition::ForAll { body, .. },
+            )
+            | (
+                ClickProposition::Exists {
+                    body: surface_body, ..
+                },
+                Proposition::Exists { body, .. },
+            ) => self.record_lowering(surface_body, body),
+            (ClickProposition::And(_, _), _)
+            | (ClickProposition::Or(_, _), _)
+            | (ClickProposition::Not(_), _)
+            | (ClickProposition::Implies(_, _), _)
+            | (ClickProposition::ForAll { .. }, _)
+            | (ClickProposition::Exists { .. }, _) => Err(ClickError::new(format!(
+                "surface proposition did not lower to matching logical structure: {surface:?} -> {kernel:?}"
+            ))),
+            _ => Ok(()),
+        }
+    }
+
+    pub fn surface(&self, kernel: &Proposition) -> Result<&ClickProposition, ClickError> {
+        self.by_kernel.get(kernel).ok_or_else(|| {
+            ClickError::new(format!(
+                "kernel proposition has no recorded Click surface spelling: {kernel:?}"
+            ))
+        })
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ContractExpression {
     /// A C0 expression fragment appearing inside Surface Click.
