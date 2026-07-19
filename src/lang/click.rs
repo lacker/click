@@ -545,6 +545,11 @@ pub enum ProofTactic {
         theorem: Theorem,
     },
     FinishCertifiedFactTransports(Vec<Proposition>),
+    CertifiedPathAssumption {
+        facts: Vec<Proposition>,
+        theorem: Theorem,
+    },
+    CertifiedAlternatives(Vec<TacticCertificate>),
     Simp,
 }
 
@@ -568,6 +573,7 @@ pub enum SimpleTactic {
     ExactPropositionDerivation,
     CertifiedFactTransport,
     CertifiedFactTransportFinish,
+    CertifiedPathAssumption,
     FoldResource,
     Frame,
 }
@@ -590,6 +596,7 @@ pub enum ControlFlowTactic {
     Have,
     If,
     Advance,
+    CertifiedAlternatives,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -693,6 +700,15 @@ fn validate_certificate_tactics(
                 path.pop();
                 result
             }
+            TacticClass::ControlFlow(ControlFlowTactic::CertifiedAlternatives) => {
+                let ProofTactic::CertifiedAlternatives(alternatives) = tactic else {
+                    unreachable!("tactic class and variant must agree")
+                };
+                for alternative in alternatives {
+                    validate_certificate_tactics(alternative.tactics(), path)?;
+                }
+                Ok(())
+            }
         };
         path.pop();
         result?;
@@ -750,6 +766,9 @@ impl ProofTactic {
             Self::FinishCertifiedFactTransports(_) => {
                 TacticClass::Simple(SimpleTactic::CertifiedFactTransportFinish)
             }
+            Self::CertifiedPathAssumption { .. } => {
+                TacticClass::Simple(SimpleTactic::CertifiedPathAssumption)
+            }
             Self::FoldResource(_) => TacticClass::Simple(SimpleTactic::FoldResource),
             Self::Frame(_) => TacticClass::Simple(SimpleTactic::Frame),
             Self::ExecuteStep => TacticClass::Smart(SmartTacticKind::ExecuteStep),
@@ -762,6 +781,9 @@ impl ProofTactic {
             Self::Have(_) => TacticClass::ControlFlow(ControlFlowTactic::Have),
             Self::If(_) => TacticClass::ControlFlow(ControlFlowTactic::If),
             Self::Advance(_) => TacticClass::ControlFlow(ControlFlowTactic::Advance),
+            Self::CertifiedAlternatives(_) => {
+                TacticClass::ControlFlow(ControlFlowTactic::CertifiedAlternatives)
+            }
         }
     }
 }

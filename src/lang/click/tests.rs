@@ -1329,6 +1329,10 @@ fn parses_and_classifies_simple_and_smart_tactics() {
         TacticClass::Simple(SimpleTactic::OpaqueCallCounterReset)
     ));
     assert!(matches!(
+        ProofTactic::CertifiedAlternatives(Vec::new()).class(),
+        TacticClass::ControlFlow(ControlFlowTactic::CertifiedAlternatives)
+    ));
+    assert!(matches!(
         ProofTactic::FoldResource(ResourceClause::Declared {
             access: ResourceAccessMode::Own,
             kind: ResourceKind::Composite,

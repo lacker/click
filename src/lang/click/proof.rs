@@ -1922,6 +1922,8 @@ struct ExecutionProofContext {
 struct CertifiedConditionTransition {
     is_true: bool,
     pure_facts: Vec<Proposition>,
+    path_facts: Vec<Proposition>,
+    theorem: Theorem,
     prerequisite_derivations: Vec<PropositionDerivation>,
 }
 
@@ -2161,6 +2163,12 @@ fn certified_condition_transitions(
                 } => Ok(CertifiedConditionTransition {
                     is_true: *is_true,
                     pure_facts: successor_facts,
+                    path_facts: path
+                        .facts()
+                        .iter()
+                        .map(|fact| fact.proposition().clone())
+                        .collect(),
+                    theorem: path.theorem().clone(),
                     prerequisite_derivations,
                 }),
                 Proposition::CConditionEvaluates {
@@ -4673,6 +4681,65 @@ fn replay_linear_tactics(
             ProofTactic::ResetOpaqueCallCounter => {
                 replay.next_opaque_call = 0;
             }
+            ProofTactic::CertifiedPathAssumption { facts, theorem } => {
+                if !matches!(
+                    implication_body(theorem.proposition()),
+                    Proposition::CConditionEvaluates { .. }
+                ) {
+                    return Err(ClickError::new(format!(
+                        "`{claim_label}` tactic {tactic_index}: certified path assumption is not backed by a condition-evaluation theorem"
+                    )));
+                }
+                for fact in facts {
+                    if !requirement_pure_facts.contains(fact) {
+                        requirement_pure_facts.push(fact.clone());
+                    }
+                }
+                assumptions = assumptions_from_propositions(&requirement_pure_facts);
+            }
+            ProofTactic::CertifiedAlternatives(alternatives) => {
+                let base = ProofReplayContext {
+                    state: state.clone(),
+                    pure_facts: requirement_pure_facts.clone(),
+                    replay: replay.clone(),
+                    branch_path: branch_path.clone(),
+                };
+                let mut completed = Vec::new();
+                for alternative in alternatives {
+                    let result = replay_execution_tactic_certificate(
+                        base.clone(),
+                        function_block,
+                        parsed_function,
+                        claims,
+                        claim_label,
+                        function_environment,
+                        predicate_environment,
+                        click_function_environment,
+                        resource_environment,
+                        theorem_environment,
+                        function,
+                        arguments,
+                        tactic_index,
+                        alternative,
+                    )?;
+                    completed.push(BoundedProofFrontier {
+                        replay: result.replay,
+                        state: result.state,
+                        pure_facts: result.pure_facts,
+                    });
+                }
+                merge_bounded_execution_frontiers(
+                    &mut replay,
+                    &mut state,
+                    &mut requirement_pure_facts,
+                    function,
+                    arguments,
+                    completed,
+                    claim_label,
+                    tactic_index,
+                )?;
+                assumptions = assumptions_from_propositions(&requirement_pure_facts);
+            }
             ProofTactic::ExecuteStep => {
                 let mut planning_replay = replay.clone();
                 planning_replay.planned_tactics.clear();
@@ -4926,10 +4993,14 @@ fn replay_linear_tactics(
                 assumptions = assumptions_from_propositions(&requirement_pure_facts);
             }
             ProofTactic::BoundedExecute => {
+                let mut planning_replay = replay.clone();
+                planning_replay.planned_tactics.clear();
+                let mut planning_state = state.clone();
+                let mut planning_facts = requirement_pure_facts.clone();
                 bounded_execute_from_execution_point(
-                    &mut replay,
-                    &mut state,
-                    &mut requirement_pure_facts,
+                    &mut planning_replay,
+                    &mut planning_state,
+                    &mut planning_facts,
                     function_block,
                     function,
                     parsed_function.parameters(),
@@ -4937,7 +5008,41 @@ fn replay_linear_tactics(
                     function_environment,
                     claim_label,
                     tactic_index,
+                    StatementPrerequisitePolicy::Planning,
                 )?;
+                let certificate =
+                    TacticCertificate::from_proof_tactics(&planning_replay.planned_tactics)
+                        .map_err(|error| {
+                            ClickError::new(format!(
+                                "`{claim_label}` tactic {tactic_index}: `bounded_execute` planned a non-certificate tactic {:?}",
+                                error.smart_tactic()
+                            ))
+                        })?;
+                let result = replay_execution_tactic_certificate(
+                    ProofReplayContext {
+                        state,
+                        pure_facts: requirement_pure_facts,
+                        replay,
+                        branch_path,
+                    },
+                    function_block,
+                    parsed_function,
+                    claims,
+                    claim_label,
+                    function_environment,
+                    predicate_environment,
+                    click_function_environment,
+                    resource_environment,
+                    theorem_environment,
+                    function,
+                    arguments,
+                    tactic_index,
+                    &certificate,
+                )?;
+                state = result.state;
+                requirement_pure_facts = result.pure_facts;
+                replay = result.replay;
+                branch_path = result.branch_path;
                 assumptions = assumptions_from_propositions(&requirement_pure_facts);
             }
             ProofTactic::Frame(region_ref) => {
@@ -6074,6 +6179,16 @@ fn execute_branch_step_from_execution_point(
         )));
     }
 
+    if matches!(branch_step_policy, BranchStepPolicy::Explore)
+        && matches!(prerequisite_policy, StatementPrerequisitePolicy::Planning)
+    {
+        replay
+            .planned_tactics
+            .push(ProofTactic::CertifiedPathAssumption {
+                facts: condition_transition.path_facts.clone(),
+                theorem: condition_transition.theorem.clone(),
+            });
+    }
     if matches!(prerequisite_policy, StatementPrerequisitePolicy::Planning) {
         append_condition_transition_certificate(replay, &condition_transition);
     }
@@ -6820,6 +6935,7 @@ fn bounded_execute_from_execution_point(
     function_environment: &CExecutionEnvironment,
     claim_label: &str,
     tactic_index: usize,
+    prerequisite_policy: StatementPrerequisitePolicy,
 ) -> Result<(), ClickError> {
     let mut pending = vec![BoundedProofFrontier {
         replay: replay.clone(),
@@ -6868,7 +6984,7 @@ fn bounded_execute_from_execution_point(
                     tactic_index,
                     Some(take_then),
                     &[],
-                    StatementPrerequisitePolicy::Contextual,
+                    prerequisite_policy,
                     StatementFactTransportPolicy::Automatic,
                     BranchStepPolicy::Explore,
                 )?;
@@ -6894,7 +7010,7 @@ fn bounded_execute_from_execution_point(
             tactic_index,
             "bounded_execute",
             &[],
-            StatementPrerequisitePolicy::Contextual,
+            prerequisite_policy,
             StatementFactTransportPolicy::Automatic,
             LoopStepPolicy::EnterBody,
         )
@@ -6907,6 +7023,24 @@ fn bounded_execute_from_execution_point(
         pending.push(frontier);
     }
 
+    let alternatives = if matches!(prerequisite_policy, StatementPrerequisitePolicy::Planning) {
+        Some(
+            completed
+                .iter()
+                .map(|frontier| {
+                    TacticCertificate::from_proof_tactics(&frontier.replay.planned_tactics)
+                        .map_err(|error| {
+                            ClickError::new(format!(
+                                "`{claim_label}` tactic {tactic_index}: `bounded_execute` path planned a non-certificate tactic {:?}",
+                                error.smart_tactic()
+                            ))
+                        })
+                })
+                .collect::<Result<Vec<_>, _>>()?,
+        )
+    } else {
+        None
+    };
     merge_bounded_execution_frontiers(
         replay,
         state,
@@ -6916,7 +7050,11 @@ fn bounded_execute_from_execution_point(
         completed,
         claim_label,
         tactic_index,
-    )
+    )?;
+    if let Some(alternatives) = alternatives {
+        replay.planned_tactics = vec![ProofTactic::CertifiedAlternatives(alternatives)];
+    }
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]

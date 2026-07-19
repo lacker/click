@@ -2209,6 +2209,8 @@ fn validate_pure_theorem_tactics(
             | ProofTactic::ResetOpaqueCallCounter
             | ProofTactic::CertifiedFactTransport { .. }
             | ProofTactic::FinishCertifiedFactTransports(_)
+            | ProofTactic::CertifiedPathAssumption { .. }
+            | ProofTactic::CertifiedAlternatives(_)
             | ProofTactic::ExecuteStep
             | ProofTactic::ExecuteThenStep
             | ProofTactic::ExecuteElseStep
@@ -2263,6 +2265,8 @@ pub(super) fn tactic_name(tactic: &ProofTactic) -> &'static str {
         ProofTactic::ExactPropositionDerivation(_) => "exact_proposition_derivation",
         ProofTactic::CertifiedFactTransport { .. } => "certified_fact_transport",
         ProofTactic::FinishCertifiedFactTransports(_) => "finish_certified_fact_transports",
+        ProofTactic::CertifiedPathAssumption { .. } => "certified_path_assumption",
+        ProofTactic::CertifiedAlternatives(_) => "certified_alternatives",
         ProofTactic::Simp => "simp",
     }
 }
