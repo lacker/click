@@ -61,6 +61,21 @@ alone does not make a tactic simple.
 Click does not yet expose a tactic that expands a smart tactic into its simple
 certificate. Until that exists, smart tactics remain part of stored proofs.
 
+## Tactic Certificates
+
+The internal certificate foundation is deliberately narrower than smart-tactic
+expansion. A `TacticCertificate` wraps an existing tactic script only after a
+recursive validator establishes that every leaf is a simple tactic. `have`,
+proof-level `if`, and `advance` may remain as control-flow nodes, but none of
+their nested proof scopes may contain a smart tactic. An omitted nested proof is
+treated as `auto` and is therefore rejected.
+
+Certificate replay starts from ordinary proof inputs and delegates each leaf to
+the existing deterministic simple-tactic executor. Failed replay does not
+mutate those inputs. The foundation currently has focused validation and pure
+replay tests; no smart tactic uses it yet, and normal proof behavior is
+unchanged.
+
 ## Statement Execution
 
 `step()` and `execute_step()` advance the same execution frontier by one small C

@@ -248,18 +248,16 @@ fn verify_theorem_ensure(
                     "`{claim_label}` has an empty explicit proof script"
                 )));
             }
-            for proof_case in expand_proof_if_cases(tactics, claim_label)? {
-                prove_pure_theorem_tactics(
-                    claim_label,
-                    &context.requires,
-                    &goal,
-                    predicate_environment,
-                    click_function_environment,
-                    theorem_environment,
-                    context,
-                    &proof_case,
-                )?;
-            }
+            prove_pure_theorem_script(
+                claim_label,
+                &context.requires,
+                &goal,
+                predicate_environment,
+                click_function_environment,
+                theorem_environment,
+                context,
+                tactics,
+            )?;
             Ok(VerifiedPureTheorem {
                 theorem_definition: theorem.clone(),
                 ensure_index,
@@ -270,6 +268,125 @@ fn verify_theorem_ensure(
                 conclusion: goal,
             })
         }
+    }
+}
+
+/// Replay is kept separate from ordinary script verification until the first
+/// smart tactic is migrated to produce certificates.
+#[allow(dead_code)]
+#[allow(clippy::too_many_arguments)]
+fn replay_pure_theorem_certificate(
+    claim_label: &str,
+    requires: &[Proposition],
+    goal: &Proposition,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    theorem_environment: &TheoremEnvironment,
+    context: &PureTheoremContext,
+    certificate: &TacticCertificate,
+) -> Result<(), ClickError> {
+    prove_pure_theorem_script(
+        claim_label,
+        requires,
+        goal,
+        predicate_environment,
+        click_function_environment,
+        theorem_environment,
+        context,
+        certificate.tactics(),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn prove_pure_theorem_script(
+    claim_label: &str,
+    requires: &[Proposition],
+    goal: &Proposition,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    theorem_environment: &TheoremEnvironment,
+    context: &PureTheoremContext,
+    tactics: &[ProofTactic],
+) -> Result<(), ClickError> {
+    for proof_case in expand_proof_if_cases(tactics, claim_label)? {
+        prove_pure_theorem_tactics(
+            claim_label,
+            requires,
+            goal,
+            predicate_environment,
+            click_function_environment,
+            theorem_environment,
+            context,
+            &proof_case,
+        )?;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod certificate_tests {
+    use super::*;
+
+    #[test]
+    fn pure_certificate_replay_is_transactional() {
+        let file = parse(
+            r#"
+                theorem reflexive(x: int32) {
+                    ensures x == x by auto;
+                }
+            "#,
+        )
+        .expect("theorem should parse");
+        let predicate_environment = PredicateEnvironment::new(file.predicate_definitions());
+        let click_function_environment =
+            ClickFunctionEnvironment::new(file.click_function_definitions());
+        let theorem_environment = TheoremEnvironment::new(&[]);
+        let theorem = &file.theorem_definitions()[0];
+        let context =
+            pure_theorem_context(theorem, &predicate_environment, &click_function_environment)
+                .expect("theorem context should lower");
+        let Ensure::Proposition(surface_goal) = theorem.ensures()[0].ensure() else {
+            panic!("expected proposition goal");
+        };
+        let goal = lower_pure_theorem_proposition(
+            theorem.name(),
+            surface_goal,
+            &context.values,
+            &context.array_refs,
+            &context.memory,
+            &predicate_environment,
+            &click_function_environment,
+        )
+        .expect("goal should lower");
+        let failing = TacticCertificate::from_proof_tactics(&[ProofTactic::Assumption])
+            .expect("assumption is a simple tactic");
+        let succeeding = TacticCertificate::from_proof_tactics(&[ProofTactic::Normalize])
+            .expect("normalize is a simple tactic");
+
+        assert!(
+            replay_pure_theorem_certificate(
+                "reflexive.ensures_0",
+                &context.requires,
+                &goal,
+                &predicate_environment,
+                &click_function_environment,
+                &theorem_environment,
+                &context,
+                &failing,
+            )
+            .is_err()
+        );
+        replay_pure_theorem_certificate(
+            "reflexive.ensures_0",
+            &context.requires,
+            &goal,
+            &predicate_environment,
+            &click_function_environment,
+            &theorem_environment,
+            &context,
+            &succeeding,
+        )
+        .expect("failed replay must not mutate the shared proof inputs");
     }
 }
 

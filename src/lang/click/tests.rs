@@ -1322,6 +1322,101 @@ fn parses_and_classifies_simple_and_smart_tactics() {
 }
 
 #[test]
+fn tactic_certificate_accepts_only_simple_tactics() {
+    let tactics = vec![
+        ProofTactic::Rewrite(ClickProposition::Comparison {
+            left: current_var("x"),
+            operator: ComparisonOperator::Equal,
+            right: current_var("y"),
+        }),
+        ProofTactic::Normalize,
+    ];
+
+    let certificate =
+        TacticCertificate::from_proof_tactics(&tactics).expect("simple tactics form a certificate");
+
+    assert_eq!(certificate.tactics(), tactics);
+}
+
+#[test]
+fn tactic_certificate_rejects_a_direct_smart_tactic() {
+    let error = TacticCertificate::from_proof_tactics(&[ProofTactic::Simp])
+        .expect_err("a smart tactic cannot be a certificate leaf");
+
+    assert_eq!(error.smart_tactic(), SmartTacticKind::Simp);
+    assert_eq!(error.path(), &[CertificatePathSegment::Tactic(0)]);
+}
+
+#[test]
+fn tactic_certificate_rejects_smart_tactics_in_nested_control_flow() {
+    let condition = ClickProposition::Comparison {
+        left: current_var("x"),
+        operator: ComparisonOperator::Equal,
+        right: current_var("x"),
+    };
+    let tactics = [ProofTactic::Advance(ProofAdvance {
+        target: ProgramPointRef {
+            region: CodeRegionRef::Function,
+            kind: ProgramPointKind::Exit,
+        },
+        assertions: Vec::new(),
+        tactics: vec![ProofTactic::If(ProofIf {
+            condition,
+            then_tactics: vec![ProofTactic::Have(ProofHave {
+                proposition: ClickProposition::Comparison {
+                    left: current_var("x"),
+                    operator: ComparisonOperator::Equal,
+                    right: current_var("x"),
+                },
+                proof: Proof::Script(vec![ProofTactic::Simp]),
+            })],
+            else_tactics: vec![ProofTactic::Normalize],
+        })],
+    })];
+
+    let error = TacticCertificate::from_proof_tactics(&tactics)
+        .expect_err("nested smart tactics cannot be hidden in a certificate");
+
+    assert_eq!(error.smart_tactic(), SmartTacticKind::Simp);
+    assert_eq!(
+        error.path(),
+        &[
+            CertificatePathSegment::Tactic(0),
+            CertificatePathSegment::AdvanceBody,
+            CertificatePathSegment::Tactic(0),
+            CertificatePathSegment::ThenBranch,
+            CertificatePathSegment::Tactic(0),
+            CertificatePathSegment::HaveBody,
+            CertificatePathSegment::Tactic(0),
+        ]
+    );
+}
+
+#[test]
+fn tactic_certificate_treats_an_omitted_nested_proof_as_auto() {
+    let tactics = [ProofTactic::Have(ProofHave {
+        proposition: ClickProposition::Comparison {
+            left: current_var("x"),
+            operator: ComparisonOperator::Equal,
+            right: current_var("x"),
+        },
+        proof: Proof::Default,
+    })];
+
+    let error = TacticCertificate::from_proof_tactics(&tactics)
+        .expect_err("an omitted nested proof is smart auto");
+
+    assert_eq!(error.smart_tactic(), SmartTacticKind::Auto);
+    assert_eq!(
+        error.path(),
+        &[
+            CertificatePathSegment::Tactic(0),
+            CertificatePathSegment::HaveBody,
+        ]
+    );
+}
+
+#[test]
 fn defined_fact_makes_simple_statement_step_explicit() {
     let c_source = r#"
             int32 increment(int32 x) {

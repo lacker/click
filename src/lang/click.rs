@@ -556,12 +556,14 @@ pub enum SimpleTactic {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SmartTacticKind {
+    Auto,
     ExecuteStep,
     ExecuteThenStep,
     ExecuteElseStep,
     ExecuteRest,
     ExecuteUntil,
     BoundedExecute,
+    Frame,
     Simp,
 }
 
@@ -577,6 +579,124 @@ pub enum TacticClass {
     Simple(SimpleTactic),
     Smart(SmartTacticKind),
     ControlFlow(ControlFlowTactic),
+}
+
+/// A validated proof artifact containing no smart tactics.
+///
+/// Control-flow tactics remain in the existing proof AST, but validation walks
+/// every nested proof scope. Constructing a certificate therefore establishes
+/// that replay reaches only simple tactics and control flow.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TacticCertificate {
+    tactics: Vec<ProofTactic>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CertificatePathSegment {
+    Tactic(usize),
+    HaveBody,
+    ThenBranch,
+    ElseBranch,
+    AdvanceBody,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CertificateError {
+    smart_tactic: SmartTacticKind,
+    path: Vec<CertificatePathSegment>,
+}
+
+impl TacticCertificate {
+    pub fn from_proof_tactics(tactics: &[ProofTactic]) -> Result<Self, CertificateError> {
+        validate_certificate_tactics(tactics, &mut Vec::new())?;
+        Ok(Self {
+            tactics: tactics.to_vec(),
+        })
+    }
+
+    pub fn tactics(&self) -> &[ProofTactic] {
+        &self.tactics
+    }
+}
+
+impl CertificateError {
+    pub fn smart_tactic(&self) -> SmartTacticKind {
+        self.smart_tactic
+    }
+
+    pub fn path(&self) -> &[CertificatePathSegment] {
+        &self.path
+    }
+}
+
+fn validate_certificate_tactics(
+    tactics: &[ProofTactic],
+    path: &mut Vec<CertificatePathSegment>,
+) -> Result<(), CertificateError> {
+    for (index, tactic) in tactics.iter().enumerate() {
+        path.push(CertificatePathSegment::Tactic(index));
+        let result = match tactic.class() {
+            TacticClass::Simple(_) => Ok(()),
+            TacticClass::Smart(smart_tactic) => Err(CertificateError {
+                smart_tactic,
+                path: path.clone(),
+            }),
+            TacticClass::ControlFlow(ControlFlowTactic::Have) => {
+                let ProofTactic::Have(proof_have) = tactic else {
+                    unreachable!("tactic class and variant must agree")
+                };
+                path.push(CertificatePathSegment::HaveBody);
+                let result = validate_certificate_proof(&proof_have.proof, path);
+                path.pop();
+                result
+            }
+            TacticClass::ControlFlow(ControlFlowTactic::If) => {
+                let ProofTactic::If(proof_if) = tactic else {
+                    unreachable!("tactic class and variant must agree")
+                };
+                path.push(CertificatePathSegment::ThenBranch);
+                let then_result = validate_certificate_tactics(&proof_if.then_tactics, path);
+                path.pop();
+                if then_result.is_err() {
+                    then_result
+                } else {
+                    path.push(CertificatePathSegment::ElseBranch);
+                    let else_result = validate_certificate_tactics(&proof_if.else_tactics, path);
+                    path.pop();
+                    else_result
+                }
+            }
+            TacticClass::ControlFlow(ControlFlowTactic::Advance) => {
+                let ProofTactic::Advance(proof_advance) = tactic else {
+                    unreachable!("tactic class and variant must agree")
+                };
+                path.push(CertificatePathSegment::AdvanceBody);
+                let result = validate_certificate_tactics(&proof_advance.tactics, path);
+                path.pop();
+                result
+            }
+        };
+        path.pop();
+        result?;
+    }
+    Ok(())
+}
+
+fn validate_certificate_proof(
+    proof: &Proof,
+    path: &mut Vec<CertificatePathSegment>,
+) -> Result<(), CertificateError> {
+    match proof {
+        Proof::Default => Err(CertificateError {
+            smart_tactic: SmartTacticKind::Auto,
+            path: path.clone(),
+        }),
+        Proof::Tactic(smart_tactic) => Err(CertificateError {
+            smart_tactic: smart_tactic.kind(),
+            path: path.clone(),
+        }),
+        Proof::Script(tactics) => validate_certificate_tactics(tactics, path),
+    }
 }
 
 impl ProofTactic {
@@ -605,6 +725,16 @@ impl ProofTactic {
             Self::Have(_) => TacticClass::ControlFlow(ControlFlowTactic::Have),
             Self::If(_) => TacticClass::ControlFlow(ControlFlowTactic::If),
             Self::Advance(_) => TacticClass::ControlFlow(ControlFlowTactic::Advance),
+        }
+    }
+}
+
+impl SmartTactic {
+    pub fn kind(self) -> SmartTacticKind {
+        match self {
+            Self::Auto => SmartTacticKind::Auto,
+            Self::Frame => SmartTacticKind::Frame,
+            Self::Simp => SmartTacticKind::Simp,
         }
     }
 }
