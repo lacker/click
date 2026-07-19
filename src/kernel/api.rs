@@ -163,19 +163,135 @@ fn transport_framed_atomic_bitvector(
                 term.clone()
             }
         }
-        Bitvector32Term::Add(_, _)
-        | Bitvector32Term::Subtract(_, _)
-        | Bitvector32Term::Multiply(_, _)
-        | Bitvector32Term::Divide(_, _)
-        | Bitvector32Term::Remainder(_, _)
-        | Bitvector32Term::ShiftLeft(_, _)
-        | Bitvector32Term::ArithmeticShiftRight(_, _)
-        | Bitvector32Term::BitwiseAnd(_, _)
-        | Bitvector32Term::BitwiseOr(_, _)
-        | Bitvector32Term::BitwiseXor(_, _)
-        | Bitvector32Term::BitwiseNot(_)
-        | Bitvector32Term::If { .. }
-        | Bitvector32Term::RangeFold { .. } => return None,
+        Bitvector32Term::Add(left, right) => Bitvector32Term::Add(
+            Box::new(transport_framed_atomic_bitvector(left, after, assumptions)?),
+            Box::new(transport_framed_atomic_bitvector(
+                right,
+                after,
+                assumptions,
+            )?),
+        ),
+        Bitvector32Term::Subtract(left, right) => Bitvector32Term::Subtract(
+            Box::new(transport_framed_atomic_bitvector(left, after, assumptions)?),
+            Box::new(transport_framed_atomic_bitvector(
+                right,
+                after,
+                assumptions,
+            )?),
+        ),
+        Bitvector32Term::Multiply(left, right) => Bitvector32Term::Multiply(
+            Box::new(transport_framed_atomic_bitvector(left, after, assumptions)?),
+            Box::new(transport_framed_atomic_bitvector(
+                right,
+                after,
+                assumptions,
+            )?),
+        ),
+        Bitvector32Term::Divide(left, right) => Bitvector32Term::Divide(
+            Box::new(transport_framed_atomic_bitvector(left, after, assumptions)?),
+            Box::new(transport_framed_atomic_bitvector(
+                right,
+                after,
+                assumptions,
+            )?),
+        ),
+        Bitvector32Term::Remainder(left, right) => Bitvector32Term::Remainder(
+            Box::new(transport_framed_atomic_bitvector(left, after, assumptions)?),
+            Box::new(transport_framed_atomic_bitvector(
+                right,
+                after,
+                assumptions,
+            )?),
+        ),
+        Bitvector32Term::ShiftLeft(left, right) => Bitvector32Term::ShiftLeft(
+            Box::new(transport_framed_atomic_bitvector(left, after, assumptions)?),
+            Box::new(transport_framed_atomic_bitvector(
+                right,
+                after,
+                assumptions,
+            )?),
+        ),
+        Bitvector32Term::ArithmeticShiftRight(left, right) => {
+            Bitvector32Term::ArithmeticShiftRight(
+                Box::new(transport_framed_atomic_bitvector(left, after, assumptions)?),
+                Box::new(transport_framed_atomic_bitvector(
+                    right,
+                    after,
+                    assumptions,
+                )?),
+            )
+        }
+        Bitvector32Term::BitwiseAnd(left, right) => Bitvector32Term::BitwiseAnd(
+            Box::new(transport_framed_atomic_bitvector(left, after, assumptions)?),
+            Box::new(transport_framed_atomic_bitvector(
+                right,
+                after,
+                assumptions,
+            )?),
+        ),
+        Bitvector32Term::BitwiseOr(left, right) => Bitvector32Term::BitwiseOr(
+            Box::new(transport_framed_atomic_bitvector(left, after, assumptions)?),
+            Box::new(transport_framed_atomic_bitvector(
+                right,
+                after,
+                assumptions,
+            )?),
+        ),
+        Bitvector32Term::BitwiseXor(left, right) => Bitvector32Term::BitwiseXor(
+            Box::new(transport_framed_atomic_bitvector(left, after, assumptions)?),
+            Box::new(transport_framed_atomic_bitvector(
+                right,
+                after,
+                assumptions,
+            )?),
+        ),
+        Bitvector32Term::BitwiseNot(term) => Bitvector32Term::BitwiseNot(Box::new(
+            transport_framed_atomic_bitvector(term, after, assumptions)?,
+        )),
+        Bitvector32Term::If {
+            condition,
+            then_term,
+            else_term,
+        } => Bitvector32Term::If {
+            condition: Box::new(transport_framed_atomic_condition(
+                condition,
+                after,
+                assumptions,
+            )?),
+            then_term: Box::new(transport_framed_atomic_bitvector(
+                then_term,
+                after,
+                assumptions,
+            )?),
+            else_term: Box::new(transport_framed_atomic_bitvector(
+                else_term,
+                after,
+                assumptions,
+            )?),
+        },
+        Bitvector32Term::RangeFold {
+            start,
+            end,
+            initial,
+            accumulator,
+            item,
+            body,
+        } => Bitvector32Term::RangeFold {
+            start: Box::new(transport_framed_atomic_bitvector(
+                start,
+                after,
+                assumptions,
+            )?),
+            end: Box::new(transport_framed_atomic_bitvector(end, after, assumptions)?),
+            initial: Box::new(transport_framed_atomic_bitvector(
+                initial,
+                after,
+                assumptions,
+            )?),
+            accumulator: *accumulator,
+            item: *item,
+            body: Box::new(transport_framed_atomic_bitvector(body, after, assumptions)?),
+        },
     })
 }
 

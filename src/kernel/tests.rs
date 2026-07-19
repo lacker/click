@@ -3465,7 +3465,66 @@ fn atomic_condition_fact_transport_uses_certified_effect_summary() {
 }
 
 #[test]
-fn condition_fact_transport_rejects_arithmetic_terms() {
+fn atomic_condition_fact_transport_uses_exact_separate_range() {
+    let before = CMemory::new();
+    let after = before.clone().with_block("call-havoc:0", 0);
+    let left = Pointer {
+        block: "arg-memory".into(),
+        offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(90)), 4),
+    };
+    let right = Pointer {
+        block: "arg-memory".into(),
+        offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(91)), 4),
+    };
+    let fact = Proposition::ConditionIs(
+        ConditionTerm::equal(
+            Bitvector32Term::MemoryLoad(Box::new(before.clone()), Box::new(left.clone())),
+            Bitvector32Term::Constant(0),
+        ),
+        true,
+    );
+    let assumptions = Assumptions::new()
+        .assume_proposition(Proposition::CResourceSeparate {
+            left: CResource::Memory(CMemoryRange::new(
+                left.clone(),
+                Bitvector32Term::Constant(0),
+                Bitvector32Term::Constant(4),
+            )),
+            right: CResource::Memory(CMemoryRange::new(
+                right.clone(),
+                Bitvector32Term::Constant(0),
+                Bitvector32Term::Constant(4),
+            )),
+        })
+        .assume_proposition(Proposition::CMemoryEffectSummary {
+            before,
+            after: after.clone(),
+            mutable_ranges: vec![CMemoryRange::new(
+                right,
+                Bitvector32Term::Constant(0),
+                Bitvector32Term::Constant(1),
+            )],
+        });
+
+    let theorem = prove_c_condition_fact_transport(&fact, &after, &assumptions)
+        .expect("the exact separate range should frame the left load");
+    assert_eq!(
+        theorem.proposition(),
+        &Proposition::Implies(
+            Box::new(fact),
+            Box::new(Proposition::ConditionIs(
+                ConditionTerm::equal(
+                    Bitvector32Term::MemoryLoad(Box::new(after), Box::new(left)),
+                    Bitvector32Term::Constant(0),
+                ),
+                true,
+            )),
+        )
+    );
+}
+
+#[test]
+fn condition_fact_transport_preserves_arithmetic_structure() {
     let before = CMemory::new().with_block("stable", 4);
     let after = before.clone().with_block("local:value", 4);
     let stable = Pointer {
@@ -3475,7 +3534,7 @@ fn condition_fact_transport_rejects_arithmetic_terms() {
     let fact = Proposition::ConditionIs(
         ConditionTerm::equal(
             Bitvector32Term::add(
-                Bitvector32Term::MemoryLoad(Box::new(before), Box::new(stable)),
+                Bitvector32Term::MemoryLoad(Box::new(before), Box::new(stable.clone())),
                 Bitvector32Term::Constant(1),
             ),
             Bitvector32Term::Constant(8),
@@ -3483,7 +3542,24 @@ fn condition_fact_transport_rejects_arithmetic_terms() {
         true,
     );
 
-    assert!(prove_c_condition_fact_transport(&fact, &after, &Assumptions::new()).is_none());
+    let theorem = prove_c_condition_fact_transport(&fact, &after, &Assumptions::new())
+        .expect("arithmetic around a framed load should transport structurally");
+    assert_eq!(
+        theorem.proposition(),
+        &Proposition::Implies(
+            Box::new(fact),
+            Box::new(Proposition::ConditionIs(
+                ConditionTerm::equal(
+                    Bitvector32Term::add(
+                        Bitvector32Term::MemoryLoad(Box::new(after), Box::new(stable)),
+                        Bitvector32Term::Constant(1),
+                    ),
+                    Bitvector32Term::Constant(8),
+                ),
+                true,
+            )),
+        )
+    );
 }
 
 #[test]

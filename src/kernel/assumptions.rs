@@ -3660,6 +3660,41 @@ impl Assumptions {
         if range.base.blocks_proven_distinct(pointer) {
             return true;
         }
+        if pointer_in_memory_range_shallow(pointer, range) {
+            return false;
+        }
+
+        if self.prop_facts.iter().any(|proposition| match proposition {
+            Proposition::CMemoryDisjoint {
+                left_base,
+                left_start,
+                left_end,
+                right_base,
+                right_start,
+                right_end,
+            } => {
+                memory_range_shallowly_contained_in_parts(range, left_base, left_start, left_end)
+                    && pointer_in_range_shallow(pointer, right_base, right_start, right_end)
+                    || memory_range_shallowly_contained_in_parts(
+                        range,
+                        right_base,
+                        right_start,
+                        right_end,
+                    ) && pointer_in_range_shallow(pointer, left_base, left_start, left_end)
+            }
+            Proposition::CResourceSeparate {
+                left: CResource::Memory(left_range),
+                right: CResource::Memory(right_range),
+            } => {
+                memory_range_shallowly_contained(range, left_range)
+                    && pointer_in_memory_range_shallow(pointer, right_range)
+                    || memory_range_shallowly_contained(range, right_range)
+                        && pointer_in_memory_range_shallow(pointer, left_range)
+            }
+            _ => false,
+        }) {
+            return true;
+        }
 
         if let PointerOffsetTerm::Add(left, right) = &range.base.offset {
             let forward_offset = if self.decide(&ConditionTerm::pointer_offset_equal(
@@ -3996,6 +4031,30 @@ fn memory_range_length_term(range: &CMemoryRange) -> Bitvector32Term {
         }
         end => Bitvector32Term::subtract(end.clone(), range.start().clone()),
     }
+}
+
+fn memory_range_shallowly_contained_in_parts(
+    range: &CMemoryRange,
+    base: &Pointer,
+    start: &Bitvector32Term,
+    end: &Bitvector32Term,
+) -> bool {
+    memory_range_shallowly_contained(
+        range,
+        &CMemoryRange::new(base.clone(), start.clone(), end.clone()),
+    )
+}
+
+fn memory_range_shallowly_contained(range: &CMemoryRange, parent: &CMemoryRange) -> bool {
+    let Some(base_index) = range.base().element_index_from_base(parent.base()) else {
+        return false;
+    };
+    let range_start = Bitvector32Term::add(base_index.clone(), range.start().clone());
+    let range_end = Bitvector32Term::add(base_index, range.end().clone());
+    affine_bitvector_difference_constant(&range_start, parent.start())
+        .is_some_and(|delta| delta >= 0)
+        && affine_bitvector_difference_constant(parent.end(), &range_end)
+            .is_some_and(|delta| delta >= 0)
 }
 
 fn pointer_in_memory_range_shallow(pointer: &Pointer, range: &CMemoryRange) -> bool {
