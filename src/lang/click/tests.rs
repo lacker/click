@@ -1595,14 +1595,6 @@ fn parses_and_classifies_simple_and_smart_tactics() {
         TacticClass::Simple(SimpleTactic::CertifiedLoopSummaryTransition)
     ));
     assert!(matches!(
-        ProofTactic::RecordExecutionPoint.class(),
-        TacticClass::Simple(SimpleTactic::ExecutionPointRecord)
-    ));
-    assert!(matches!(
-        ProofTactic::ResetOpaqueCallCounter.class(),
-        TacticClass::Simple(SimpleTactic::OpaqueCallCounterReset)
-    ));
-    assert!(matches!(
         ProofTactic::CertifiedAlternatives(Vec::new()).class(),
         TacticClass::ControlFlow(ControlFlowTactic::CertifiedAlternatives)
     ));

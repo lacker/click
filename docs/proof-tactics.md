@@ -153,8 +153,8 @@ enters that arm.
 
 `execute_until` plans a finite sequence of certified statement transitions.
 Crossing a verified loop uses a distinct certified loop-summary transition;
-the certificate ends with a simple execution-point record so snapshots at the
-requested frontier are replayed rather than committed by the planner.
+each transition records the entry of the frontier it reaches, so reaching the
+requested frontier requires no separate bookkeeping tactic.
 
 `bounded_execute` produces an explicit certificate alternative for every
 explored execution path. Each alternative records its condition-path facts,

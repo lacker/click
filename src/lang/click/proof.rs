@@ -2998,6 +2998,13 @@ fn verify_one_loop_preservation_proof(
         surface_propositions: environment.surface_propositions.clone(),
         ..TacticReplayState::default()
     };
+    record_statement_program_point_state(
+        &mut replay,
+        environment.function_block,
+        loop_body_statement_index,
+        ProgramPointKind::Entry,
+        preservation.state().clone(),
+    );
     replay.program_point_states.insert(
         ProgramPointRef {
             region: CodeRegionRef::Loop(loop_index),
@@ -3930,17 +3937,28 @@ pub(super) fn prove_claim_by_tactics(
         resource_environment,
     )?;
     let proof_claims = [*claim];
+    let mut replay = TacticReplayState {
+        source_layout: SourceExecutionLayout::new(parsed_function.body()),
+        ordered_finalization: true,
+        surface_propositions,
+        ..TacticReplayState::default()
+    };
+    record_current_statement_entry(
+        &mut replay,
+        &state,
+        function_block,
+        &function,
+        &arguments,
+        claim_label,
+        0,
+        "proof entry",
+    )?;
     let contexts = execute_internal_proof(
         &program,
         ProofReplayContext {
             state,
             pure_facts,
-            replay: TacticReplayState {
-                source_layout: SourceExecutionLayout::new(parsed_function.body()),
-                ordered_finalization: true,
-                surface_propositions,
-                ..TacticReplayState::default()
-            },
+            replay,
             branch_path: Vec::new(),
         },
         function_block,
@@ -4023,18 +4041,29 @@ pub(super) fn prove_claims_by_grouped_tactics(
         click_function_environment,
         resource_environment,
     )?;
+    let mut replay = TacticReplayState {
+        source_layout: SourceExecutionLayout::new(parsed_function.body()),
+        ordered_finalization: true,
+        grouped_contract: true,
+        surface_propositions,
+        ..TacticReplayState::default()
+    };
+    record_current_statement_entry(
+        &mut replay,
+        &state,
+        function_block,
+        &function,
+        &arguments,
+        &proof_label,
+        0,
+        "proof entry",
+    )?;
     let contexts = execute_internal_proof(
         &program,
         ProofReplayContext {
             state,
             pure_facts,
-            replay: TacticReplayState {
-                source_layout: SourceExecutionLayout::new(parsed_function.body()),
-                ordered_finalization: true,
-                grouped_contract: true,
-                surface_propositions,
-                ..TacticReplayState::default()
-            },
+            replay,
             branch_path: Vec::new(),
         },
         function_block,
@@ -5053,13 +5082,12 @@ fn record_surface_replay_tactic(
             tactic_offset: replay.surface_replay.tactics.len(),
         }),
         ProofTactic::CertifiedAlternatives(_) => {}
-        ProofTactic::RecordExecutionPoint
-        | ProofTactic::ResetOpaqueCallCounter
-        | ProofTactic::ExactPropositionDerivation(_)
-        | ProofTactic::CertifiedFrame(_) => replay.surface_replay.block(format!(
-            "surface lowering is not implemented for internal replay tactic `{}`",
-            tactic_name(tactic)
-        )),
+        ProofTactic::ExactPropositionDerivation(_) | ProofTactic::CertifiedFrame(_) => {
+            replay.surface_replay.block(format!(
+                "surface lowering is not implemented for internal replay tactic `{}`",
+                tactic_name(tactic)
+            ))
+        }
         _ => match tactic.class() {
             TacticClass::Simple(simple) if simple.is_surface_expressible() => {
                 replay.surface_replay.push(tactic.clone())
@@ -5436,21 +5464,6 @@ fn replay_linear_tactics(
                     loop_step_policy,
                 )?;
                 assumptions = assumptions_from_propositions(&requirement_pure_facts);
-            }
-            ProofTactic::RecordExecutionPoint => {
-                record_current_statement_entry(
-                    &mut replay,
-                    &state,
-                    function_block,
-                    function,
-                    arguments,
-                    claim_label,
-                    tactic_index,
-                    "record_execution_point",
-                )?;
-            }
-            ProofTactic::ResetOpaqueCallCounter => {
-                replay.next_opaque_call = 0;
             }
             ProofTactic::CertifiedPathAssumption { facts, theorem, .. } => {
                 if !matches!(
@@ -7154,6 +7167,16 @@ fn execute_branch_step_from_execution_point(
         remaining: selected_branch,
     };
     *state = current_state;
+    record_current_statement_entry(
+        replay,
+        state,
+        function_block,
+        function,
+        arguments,
+        claim_label,
+        tactic_index,
+        tactic_name,
+    )?;
     Ok(true)
 }
 
@@ -7286,6 +7309,13 @@ fn execute_concrete_loop_head_step(
             .loop_body_entry(loop_index)
             .expect("source loop should have a body entry");
         replay.frontier.point = ProofExecutionPoint::StatementEntry { remaining: *body };
+        record_statement_program_point_state(
+            replay,
+            function_block,
+            replay.frontier.next_statement_index,
+            ProgramPointKind::Entry,
+            current_state,
+        );
         return Ok(());
     }
 
@@ -7315,6 +7345,13 @@ fn execute_concrete_loop_head_step(
         )));
     };
     replay.frontier.point = ProofExecutionPoint::StatementEntry { remaining };
+    record_statement_program_point_state(
+        replay,
+        function_block,
+        replay.frontier.next_statement_index,
+        ProgramPointKind::Entry,
+        current_state,
+    );
     Ok(())
 }
 
@@ -7710,7 +7747,14 @@ fn execute_step_from_execution_point(
             *available_pure_facts = successor_pure_facts;
             replay.frontier.execution_start_state = Some(execution_start_state);
             replay.frontier.point = ProofExecutionPoint::StatementEntry { remaining };
-            *state = next_state;
+            *state = next_state.clone();
+            record_statement_program_point_state(
+                replay,
+                function_block,
+                replay.frontier.next_statement_index,
+                ProgramPointKind::Entry,
+                next_state,
+            );
         }
         CStatementOutcome::Return { .. } => {
             if let CStatementOutcome::Return {
@@ -8123,10 +8167,6 @@ fn execute_rest_from_execution_point(
         }
 
         let assumptions = assumptions_from_propositions(available_pure_facts);
-        replay
-            .planned_tactics
-            .push(ProofTactic::ResetOpaqueCallCounter);
-        replay.next_opaque_call = 0;
         execute_step_from_execution_point(
             replay,
             state,
@@ -8202,12 +8242,6 @@ fn execute_until_statement(
     while replay.frontier.next_statement_index != statement_index {
         let region_start = replay.frontier.next_statement_index;
         let assumptions = assumptions_from_propositions(available_pure_facts);
-        if matches!(prerequisite_policy, StatementPrerequisitePolicy::Planning) {
-            replay
-                .planned_tactics
-                .push(ProofTactic::ResetOpaqueCallCounter);
-        }
-        replay.next_opaque_call = 0;
         execute_step_from_execution_point(
             replay,
             state,
@@ -8238,27 +8272,6 @@ fn execute_until_statement(
             )));
         }
     }
-    if matches!(prerequisite_policy, StatementPrerequisitePolicy::Planning) {
-        replay
-            .planned_tactics
-            .push(ProofTactic::ResetOpaqueCallCounter);
-    }
-    replay.next_opaque_call = 0;
-    if matches!(prerequisite_policy, StatementPrerequisitePolicy::Planning) {
-        replay
-            .planned_tactics
-            .push(ProofTactic::RecordExecutionPoint);
-    }
-    record_current_statement_entry(
-        replay,
-        state,
-        function_block,
-        function,
-        arguments,
-        claim_label,
-        tactic_index,
-        "execute_until",
-    )?;
     Ok(())
 }
 

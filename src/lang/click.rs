@@ -595,8 +595,6 @@ pub enum ProofTactic {
     },
     CertifiedStatementStep(Vec<PropositionDerivation>),
     CertifiedLoopSummaryStep(Vec<PropositionDerivation>),
-    RecordExecutionPoint,
-    ResetOpaqueCallCounter,
     ExecuteStep,
     ExecuteThenStep,
     ExecuteElseStep,
@@ -655,8 +653,6 @@ pub enum SimpleTactic {
     LoopSummaryTransition,
     CertifiedStatementTransition,
     CertifiedLoopSummaryTransition,
-    ExecutionPointRecord,
-    OpaqueCallCounterReset,
     UnfoldPredicate,
     UnfoldResource,
     ObserveResource,
@@ -962,8 +958,6 @@ impl SimpleTactic {
             self,
             Self::CertifiedStatementTransition
                 | Self::CertifiedLoopSummaryTransition
-                | Self::ExecutionPointRecord
-                | Self::OpaqueCallCounterReset
                 | Self::ExactPropositionDerivation
                 | Self::CertifiedFactTransport
                 | Self::CertifiedFactTransportFinish
@@ -986,10 +980,6 @@ impl ProofTactic {
             }
             Self::CertifiedLoopSummaryStep(_) => {
                 TacticClass::Simple(SimpleTactic::CertifiedLoopSummaryTransition)
-            }
-            Self::RecordExecutionPoint => TacticClass::Simple(SimpleTactic::ExecutionPointRecord),
-            Self::ResetOpaqueCallCounter => {
-                TacticClass::Simple(SimpleTactic::OpaqueCallCounterReset)
             }
             Self::UnfoldPredicate(_) => TacticClass::Simple(SimpleTactic::UnfoldPredicate),
             Self::UnfoldResource(_) => TacticClass::Simple(SimpleTactic::UnfoldResource),
