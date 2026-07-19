@@ -4266,8 +4266,11 @@ fn finish_ordered_proof_replay(
         }
         let pre_state = replay.execution_start_state(&state);
         let mut verified = Vec::new();
+        let mut surface_closers_by_claim = vec![Vec::new(); claims.len()];
+        let mut surface_closer_blockers = vec![None; claims.len()];
 
         for (path_index, path) in execution.paths().iter().enumerate() {
+            let mut path_surface_closers = vec![Vec::new(); claims.len()];
             if !path.obligations().is_empty() {
                 return Err(ClickError::new(format!(
                     "execution proof failed for `{proof_label}` path {path_index}: {}",
@@ -4712,11 +4715,12 @@ fn finish_ordered_proof_replay(
                     }
                     PostExecutionTactic::Simp => {
                         for (claim_index, claim) in claims.iter().enumerate() {
-                            if closed_claims[claim_index]
-                                || !matches!(claim, FunctionClaimRef::Ensure(_, _))
-                            {
+                            if closed_claims[claim_index] {
                                 continue;
                             }
+                            let FunctionClaimRef::Ensure(_, ensure_clause) = claim else {
+                                continue;
+                            };
                             let claim_label =
                                 function_claim_label(function_block.signature().name(), claim);
                             let result = if let Some(goal) = &rewritten_claim_goals[claim_index] {
@@ -4786,6 +4790,78 @@ fn finish_ordered_proof_replay(
                                 Ok(()) => {
                                     closed_claims[claim_index] = true;
                                     closer_errors[claim_index] = None;
+                                    if existence_tactics.is_empty() {
+                                        let surface_tactic = match (
+                                            &rewritten_claim_goals[claim_index],
+                                            ensure_clause.ensure(),
+                                            &outcome,
+                                        ) {
+                                            (
+                                                None,
+                                                Ensure::Proposition(surface_goal),
+                                                CFunctionOutcome::Return {
+                                                    value: result,
+                                                    state: post_state,
+                                                },
+                                            ) => {
+                                                let goal = lower_ensure_proposition_goal(
+                                                    &path_requirements,
+                                                    surface_goal,
+                                                    parsed_function.parameters(),
+                                                    arguments,
+                                                    pre_state,
+                                                    &outcome,
+                                                    predicate_environment,
+                                                    click_function_environment,
+                                                    &replay.program_point_states,
+                                                    &unfolded_predicates,
+                                                )
+                                                .and_then(|goal| {
+                                                    lower_outcome_simp_tactic(
+                                                        &replay,
+                                                        surface_goal,
+                                                        &goal,
+                                                        &path_requirements,
+                                                        parsed_function.parameters(),
+                                                        arguments,
+                                                        pre_state,
+                                                        post_state,
+                                                        result,
+                                                        predicate_environment,
+                                                        click_function_environment,
+                                                    )
+                                                    .map_err(|error| {
+                                                        error.message().to_string()
+                                                    })
+                                                });
+                                                goal
+                                            }
+                                            (Some(_), _, _) => Err(
+                                                "surface lowering after `rewrite` is not implemented"
+                                                    .to_string(),
+                                            ),
+                                            _ => Err(
+                                                "surface `simp` lowering requires a proposition return goal"
+                                                    .to_string(),
+                                            ),
+                                        };
+                                        match surface_tactic {
+                                            Ok(tactic) => {
+                                                path_surface_closers[claim_index].push(tactic)
+                                            }
+                                            Err(message) => {
+                                                surface_closer_blockers[claim_index]
+                                                    .get_or_insert(message);
+                                            }
+                                        }
+                                    } else {
+                                        surface_closer_blockers[claim_index].get_or_insert_with(
+                                            || {
+                                                "surface `simp` lowering with existential tactics is not implemented"
+                                                    .to_string()
+                                            },
+                                        );
+                                    }
                                 }
                                 Err(error) => {
                                     closer_errors[claim_index] = Some(error.message().to_string());
@@ -4897,6 +4973,32 @@ fn finish_ordered_proof_replay(
                     specification: specification.clone(),
                     theorem: theorem.clone(),
                 });
+            }
+            for (claim_index, closers) in path_surface_closers.into_iter().enumerate() {
+                surface_closers_by_claim[claim_index].push(closers);
+            }
+        }
+        for (claim_index, claim) in claims.iter().enumerate() {
+            let mut expanded = replay.surface_replay.clone();
+            if let Some(blocker) = &surface_closer_blockers[claim_index] {
+                expanded.block(format!("could not lower post-execution `simp`: {blocker}"));
+            } else if surface_closers_by_claim[claim_index]
+                .iter()
+                .any(|tactics| !tactics.is_empty())
+                && let Err(message) = append_surface_tactics_by_leaf(
+                    &mut expanded.tactics,
+                    &surface_closers_by_claim[claim_index],
+                )
+            {
+                expanded.block(message);
+            }
+            let verified_claim = claim.verified_claim();
+            for theorem in &mut verified {
+                if theorem.claim == verified_claim {
+                    theorem.expanded_proof_tactics =
+                        expanded.blocker.is_none().then(|| expanded.tactics.clone());
+                    theorem.expansion_blocker = expanded.blocker.clone();
+                }
             }
         }
         Ok(verified)
@@ -5147,6 +5249,87 @@ fn lower_surface_atomic_derivation(
         )));
     };
     Ok((conclusion, Proof::Script(vec![proof_tactic])))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn lower_outcome_simp_tactic(
+    replay: &TacticReplayState,
+    surface_goal: &ClickProposition,
+    goal: &Proposition,
+    available: &[Proposition],
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    pre_state: &CState,
+    post_state: &CState,
+    result: &CValue,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+) -> Result<ProofTactic, ClickError> {
+    if matches!(normalize_proposition(goal), SimpProposition::True) {
+        return Ok(ProofTactic::Normalize);
+    }
+
+    let check = |surface: &ClickProposition| {
+        lower_outcome_proposition_with_program_points(
+            parameters,
+            arguments,
+            pre_state,
+            post_state,
+            result,
+            available,
+            surface,
+            predicate_environment,
+            click_function_environment,
+            &replay.program_point_states,
+        )
+    };
+    let mut premise_pairs = Vec::new();
+    for fact in available {
+        let surface = replay
+            .surface_propositions
+            .surface(fact)
+            .ok()
+            .cloned()
+            .or_else(|| synthesize_surface_proposition(fact, parameters, arguments));
+        let Some(surface) = surface else {
+            continue;
+        };
+        if check(&surface).ok().as_ref() == Some(fact) {
+            premise_pairs.push((fact.clone(), surface));
+        }
+    }
+    if premise_pairs.iter().any(|(fact, _)| fact == goal) {
+        return Ok(ProofTactic::Assumption);
+    }
+    let kernel_premises = premise_pairs
+        .iter()
+        .map(|(kernel, _)| kernel.clone())
+        .collect::<Vec<_>>();
+    let surface_premises = premise_pairs
+        .into_iter()
+        .map(|(_, surface)| surface)
+        .collect::<Vec<_>>();
+    if surface_premises.is_empty() {
+        return Err(ClickError::new(format!(
+            "postcondition has no expressible premises for surface `simp` lowering: {goal:?}"
+        )));
+    }
+    let assumptions = assumptions_from_propositions(&kernel_premises);
+    if assumptions.derive_atomic_proposition(goal).is_some() {
+        Ok(ProofTactic::Derive(ProofDerive {
+            proposition: surface_goal.clone(),
+            premises: surface_premises,
+        }))
+    } else if assumptions.derive_simp_atomic_proposition(goal).is_some() {
+        Ok(ProofTactic::Calculate(ProofDerive {
+            proposition: surface_goal.clone(),
+            premises: surface_premises,
+        }))
+    } else {
+        Err(ClickError::new(format!(
+            "expressible path facts do not replay the postcondition derivation: {goal:?}"
+        )))
+    }
 }
 
 fn comparison_at_program_point(

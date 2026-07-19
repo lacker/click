@@ -2553,6 +2553,60 @@ fn verifies_simp_normalizes_simple_postconditions() {
 }
 
 #[test]
+fn smart_simp_expansion_replays_as_surface_click() {
+    let c_source = r#"
+            int32 identity(int32 x) {
+                return x;
+            }
+        "#;
+    let click_source = r#"
+            verifying "identity.c";
+
+            int32 identity(int32 x) {
+                ensures result == x by simp;
+            }
+        "#;
+
+    let verified = verify_c0_sources(click_source, &[("identity.c", c_source)])
+        .expect("smart simp should verify");
+    let expanded = verified[0]
+        .expanded_proof_source()
+        .expect("smart simp should lower to surface tactics");
+    let expanded_source = click_source.replacen("by simp;", &expanded, 1);
+    verify_c0_sources(&expanded_source, &[("identity.c", c_source)])
+        .expect("printed smart simp expansion should replay");
+}
+
+#[test]
+fn branched_smart_simp_expansion_replays_as_surface_click() {
+    let c_source = r#"
+            int32 choose(int32 flag) {
+                if (flag) {
+                    return 1;
+                } else {
+                    return 2;
+                }
+            }
+        "#;
+    let click_source = r#"
+            verifying "choose.c";
+
+            int32 choose(int32 flag) {
+                ensures result == 1 or result == 2 by simp;
+            }
+        "#;
+
+    let verified = verify_c0_sources(click_source, &[("choose.c", c_source)])
+        .expect("branched smart simp should verify");
+    let expanded = verified[0]
+        .expanded_proof_source()
+        .expect("branched smart simp should lower to surface tactics");
+    let expanded_source = click_source.replacen("by simp;", &expanded, 1);
+    verify_c0_sources(&expanded_source, &[("choose.c", c_source)])
+        .expect("printed branched smart simp expansion should replay");
+}
+
+#[test]
 fn verifies_simple_postcondition_with_proof_tactics() {
     let c_source = r#"
             int32 identity(int32 x) {
