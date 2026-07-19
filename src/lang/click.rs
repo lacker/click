@@ -35,12 +35,14 @@ use crate::lang::c::syntax::{self, C0Expression, C0Type};
 
 mod checking;
 mod diagnostics;
+mod expansion;
 mod lowering;
 mod parser;
 mod printing;
 mod proof;
 mod validation;
 use checking::*;
+pub use expansion::{CProofClaim, expand_c0_claim_source, verifying_source_paths};
 use lowering::*;
 use parser::ContractLetBinding;
 pub use printing::{format_proof_tactics, format_tactic_certificate};

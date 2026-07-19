@@ -1353,7 +1353,7 @@ fn execute_step_records_a_point_checked_surface_expansion() {
         .expanded_proof_tactics()
         .expect("the linear smart step should have a surface expansion");
 
-    assert_eq!(expanded[0], ProofTactic::Step);
+    assert!(matches!(expanded[0], ProofTactic::StepUsing(_)));
     assert_eq!(expanded[1], ProofTactic::Normalize);
     assert_eq!(verified[0].expansion_blocker(), None);
     TacticCertificate::from_proof_tactics(expanded)
@@ -1361,7 +1361,7 @@ fn execute_step_records_a_point_checked_surface_expansion() {
     let source = verified[0]
         .expanded_proof_source()
         .expect("checked expansion should have canonical source");
-    assert!(source.contains("step();"));
+    assert!(source.contains("step using"));
     assert!(source.contains("normalize();"));
 }
 
@@ -2604,6 +2604,103 @@ fn branched_smart_simp_expansion_replays_as_surface_click() {
     let expanded_source = click_source.replacen("by simp;", &expanded, 1);
     verify_c0_sources(&expanded_source, &[("choose.c", c_source)])
         .expect("printed branched smart simp expansion should replay");
+}
+
+#[test]
+fn source_expander_replaces_only_the_selected_claim_proof() {
+    let c_source = r#"
+            int32 identity(int32 x) {
+                return x;
+            }
+        "#;
+    let click_source = r#"
+            verifying "identity.c";
+
+            int32 identity(int32 x) {
+                ensures first: result == x by simp;
+                ensures second: result == x + 0 by simp;
+            }
+        "#;
+
+    let expanded = expand_c0_claim_source(
+        click_source,
+        &[("identity.c", c_source)],
+        "identity",
+        CProofClaim::Ensure(1),
+    )
+    .expect("selected smart proof should expand");
+    assert_eq!(expanded.matches("by simp;").count(), 1);
+    assert!(expanded.contains("ensures first: result == x by simp;"));
+    verify_c0_sources(&expanded, &[("identity.c", c_source)]).unwrap_or_else(|error| {
+        panic!(
+            "source-expanded sidecar should re-verify: {}\n{expanded}",
+            error.message()
+        )
+    });
+}
+
+#[test]
+fn source_expander_replaces_and_replays_grouped_proof() {
+    let c_source = r#"
+            int32 identity(int32 x) {
+                return x;
+            }
+        "#;
+    let click_source = r#"
+            verifying "identity.c";
+
+            int32 identity(int32 x) {
+                ensures first: result == x;
+                ensures second: result == x + 0;
+            } by {
+                execute_rest();
+                simp();
+            }
+        "#;
+
+    let expanded = expand_c0_claim_source(
+        click_source,
+        &[("identity.c", c_source)],
+        "identity",
+        CProofClaim::Grouped,
+    )
+    .expect("grouped proof should expand");
+    assert!(!expanded.contains("execute_rest();"));
+    verify_c0_sources(&expanded, &[("identity.c", c_source)])
+        .expect("expanded grouped proof should re-verify");
+}
+
+#[test]
+fn source_expander_replaces_and_replays_contextual_frame() {
+    let c_source = r#"
+            int32 write_in_bounds(int32 p[], int32 i, int32 n) {
+                p[i] = 9;
+                return 0;
+            }
+        "#;
+    let click_source = r#"
+            verifying "write_in_bounds.c";
+
+            int32 write_in_bounds(int32 p[], int32 i, int32 n) {
+                requires n >= 0;
+                requires n <= 2147483647;
+                requires i >= 0;
+                requires i < n;
+                consumes p[0..n];
+                mutable p[0..n] by frame;
+            }
+        "#;
+
+    let expanded = expand_c0_claim_source(
+        click_source,
+        &[("write_in_bounds.c", c_source)],
+        "write_in_bounds",
+        CProofClaim::Effect(0),
+    )
+    .expect("contextual frame should expand");
+    assert!(!expanded.contains("by frame;"));
+    verify_c0_sources(&expanded, &[("write_in_bounds.c", c_source)])
+        .expect("expanded contextual frame should re-verify");
 }
 
 #[test]

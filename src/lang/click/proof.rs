@@ -1831,6 +1831,7 @@ struct SurfacePathChoice {
     condition: ClickProposition,
     value: bool,
     tactic_offset: usize,
+    kernel_facts: Vec<Proposition>,
 }
 
 impl SurfaceReplay {
@@ -4978,26 +4979,55 @@ fn finish_ordered_proof_replay(
                 surface_closers_by_claim[claim_index].push(closers);
             }
         }
-        for (claim_index, claim) in claims.iter().enumerate() {
+        if replay.grouped_contract {
             let mut expanded = replay.surface_replay.clone();
-            if let Some(blocker) = &surface_closer_blockers[claim_index] {
+            if let Some(blocker) = surface_closer_blockers.iter().flatten().next() {
                 expanded.block(format!("could not lower post-execution `simp`: {blocker}"));
-            } else if surface_closers_by_claim[claim_index]
-                .iter()
-                .any(|tactics| !tactics.is_empty())
-                && let Err(message) = append_surface_tactics_by_leaf(
-                    &mut expanded.tactics,
-                    &surface_closers_by_claim[claim_index],
-                )
-            {
-                expanded.block(message);
+            } else {
+                let mut combined = vec![Vec::new(); execution.paths().len()];
+                for claim_paths in &surface_closers_by_claim {
+                    for (path_index, tactics) in claim_paths.iter().enumerate() {
+                        for tactic in tactics {
+                            if !combined[path_index].contains(tactic) {
+                                combined[path_index].push(tactic.clone());
+                            }
+                        }
+                    }
+                }
+                if combined.iter().any(|tactics| !tactics.is_empty())
+                    && let Err(message) =
+                        append_surface_tactics_by_leaf(&mut expanded.tactics, &combined)
+                {
+                    expanded.block(message);
+                }
             }
-            let verified_claim = claim.verified_claim();
             for theorem in &mut verified {
-                if theorem.claim == verified_claim {
-                    theorem.expanded_proof_tactics =
-                        expanded.blocker.is_none().then(|| expanded.tactics.clone());
-                    theorem.expansion_blocker = expanded.blocker.clone();
+                theorem.expanded_proof_tactics =
+                    expanded.blocker.is_none().then(|| expanded.tactics.clone());
+                theorem.expansion_blocker = expanded.blocker.clone();
+            }
+        } else {
+            for (claim_index, claim) in claims.iter().enumerate() {
+                let mut expanded = replay.surface_replay.clone();
+                if let Some(blocker) = &surface_closer_blockers[claim_index] {
+                    expanded.block(format!("could not lower post-execution `simp`: {blocker}"));
+                } else if surface_closers_by_claim[claim_index]
+                    .iter()
+                    .any(|tactics| !tactics.is_empty())
+                    && let Err(message) = append_surface_tactics_by_leaf(
+                        &mut expanded.tactics,
+                        &surface_closers_by_claim[claim_index],
+                    )
+                {
+                    expanded.block(message);
+                }
+                let verified_claim = claim.verified_claim();
+                for theorem in &mut verified {
+                    if theorem.claim == verified_claim {
+                        theorem.expanded_proof_tactics =
+                            expanded.blocker.is_none().then(|| expanded.tactics.clone());
+                        theorem.expansion_blocker = expanded.blocker.clone();
+                    }
                 }
             }
         }
@@ -5398,7 +5428,7 @@ fn record_surface_replay_tactic(
         return;
     }
     let contextual_step = |replay: &TacticReplayState, needed: &[Proposition]| {
-        needed
+        let mut premises = needed
             .iter()
             .map(|fact| {
                 checked_surface_fact_at_point(
@@ -5412,7 +5442,32 @@ fn record_surface_replay_tactic(
                     click_function_environment,
                 )
             })
-            .collect::<Result<Vec<_>, _>>()
+            .collect::<Result<Vec<_>, _>>()?;
+        for fact in available {
+            if needed.contains(fact)
+                || replay
+                    .surface_replay
+                    .path_choices
+                    .iter()
+                    .any(|choice| choice.kernel_facts.contains(fact))
+            {
+                continue;
+            }
+            if let Ok(surface) = checked_surface_fact_at_point(
+                replay,
+                fact,
+                available,
+                parameters,
+                arguments,
+                state,
+                predicate_environment,
+                click_function_environment,
+            ) && !premises.contains(&surface)
+            {
+                premises.push(surface);
+            }
+        }
+        Ok::<_, ClickError>(premises)
     };
     match tactic {
         ProofTactic::CertifiedStatementStep(derivations) => {
@@ -5545,11 +5600,15 @@ fn record_surface_replay_tactic(
         }
         ProofTactic::FinishCertifiedFactTransports(_) => {}
         ProofTactic::CertifiedPathAssumption {
-            condition, value, ..
+            condition,
+            value,
+            facts,
+            ..
         } => replay.surface_replay.path_choices.push(SurfacePathChoice {
             condition: condition.clone(),
             value: *value,
             tactic_offset: replay.surface_replay.tactics.len(),
+            kernel_facts: facts.clone(),
         }),
         ProofTactic::CertifiedAlternatives(_) => {}
         ProofTactic::ExactPropositionDerivation(derivation) => {
