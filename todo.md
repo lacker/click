@@ -41,8 +41,14 @@ options until the correctness and corpus audit below are complete.
 ### User-facing command
 
 ```text
-click-expand <sidecar.click> <function> <ensure:N|effect:N|grouped>
+click-expand [--time-limit <DURATION>] \
+  <sidecar.click> <function> <ensure:N|effect:N|grouped>
 ```
+
+`--time-limit` is a wall-clock watchdog for the entire expansion. Durations may
+use `ms`, `s`, or `m`; a bare integer means seconds. The command performs timed
+work in a child process, kills it at the deadline, and buffers stdout so a
+timeout cannot emit partial rewritten source.
 
 The command:
 
