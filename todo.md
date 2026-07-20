@@ -29,6 +29,10 @@ These are deliberate properties of the current tool, not TODOs:
 
 - Expand one selected C function proof unit at a time: an ensure, an effect, or
   a grouped proof.
+- For performance work, optionally select one zero-based top-level tactic inside
+  that proof. This prefix-only mode may lower orchestration tactics such as
+  `execute_until` into individual `execute_step()` calls so they can be selected
+  and expanded again.
 - Print the complete rewritten sidecar to standard output.
 - Allow expansion itself to be slower than replaying expanded source.
 - Keep `click-expand` as a separate binary rather than a proof-language tactic.
@@ -42,7 +46,7 @@ options until the correctness and corpus audit below are complete.
 
 ```text
 click-expand [--time-limit <DURATION>] \
-  <sidecar.click> <function> <ensure:N|effect:N|grouped>
+  <sidecar.click> <function> <ensure:N|effect:N|grouped> [tactic:N]
 ```
 
 `--time-limit` is a wall-clock watchdog for the entire expansion. Durations may
@@ -67,6 +71,21 @@ not remain only a test property.
 
 Claim indices are zero-based.
 
+With `tactic:N`, verification stops immediately after the selected top-level
+tactic. It verifies only the selected function and the transitive C-call
+dependencies reached by the execution prefix through that tactic; unrelated
+earlier sidecar functions are skipped. This is the fast diagnostic/edit loop:
+
+1. Expand one orchestration tactic, for example `grouped tactic:0`.
+2. Replace it with the emitted per-statement `execute_step()` sequence.
+3. Select one of those resulting statements and expand it again.
+4. Fix the first local certificate blocker without running the proof suffix or
+   the full example corpus.
+
+The claim-level mode still requires a complete simple/control-flow certificate.
+The tactic-level mode is deliberately a partial expansion boundary: its output
+may contain lower-level smart tactics intended for another iteration.
+
 ### Public Rust API
 
 The source API is in `src/lang/click/expansion.rs`:
@@ -85,6 +104,14 @@ pub fn expand_c0_claim_source(
     c_sources: &[(&str, &str)],
     function_name: &str,
     claim: CProofClaim,
+) -> Result<String, ClickError>;
+
+pub fn expand_c0_tactic_source(
+    click_source: &str,
+    c_sources: &[(&str, &str)],
+    function_name: &str,
+    claim: CProofClaim,
+    tactic_index: usize,
 ) -> Result<String, ClickError>;
 ```
 
@@ -199,6 +226,37 @@ explicit follow-up work; do not use these slow examples as ordinary inner-loop
 regressions. A stack sample of the owned-vector run showed most time in modular
 call setup while pruning symbolic memory cells and proving separation, not in a
 deadlock or an unbounded call-identity loop.
+
+### 1a. Add prefix-only single-tactic expansion (completed 2026-07-20)
+
+`click-expand ... <claim> tactic:N` now replays only the proof prefix through
+the selected top-level tactic and replaces exactly that source statement. The
+wall-clock watchdog is forwarded to the child process in this mode. Source
+location handles both semicolon tactics and block-shaped tactics.
+
+The first owned-vector probe,
+`vector_pipeline grouped tactic:0`, completes in about 2.5 seconds after
+dependency pruning and replaces
+`execute_until(statement(3))` with three `execute_step()` statements. The three
+steps are the two declarations and the `vector_init` call; all later proof
+tactics remain untouched. Selecting the first resulting `execute_step()` under
+a 10-second deadline succeeds and lowers it to a checked `step using { ... }`
+statement.
+
+This probe exposed two source-certificate details that are now handled:
+
+- statement-local opaque-call facts are not incorrectly demanded as entry
+  `using` premises;
+- basic current-local and direct pointer-load comparisons can be reconstructed
+  as Click propositions.
+
+One important boundary remains explicit. A modular call can transport a fact
+across a private cloned-memory mutation whose source is not any source program
+point. Tactic-level expansion therefore keeps the enclosing statement as
+`execute_step()` instead of falsely spelling that source as
+`at(statement(...).entry, ...)`. Fully expanding such an individual call step
+requires a sound surface certificate form for that clone transport. This is a
+focused expansion bug, not a reason to run the rest of the grouped proof.
 
 ### 2. Make source rewriting total and canonical
 

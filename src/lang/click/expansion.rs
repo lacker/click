@@ -49,6 +49,39 @@ pub fn expand_c0_claim_source(
     Ok(expanded)
 }
 
+pub fn expand_c0_tactic_source(
+    click_source: &str,
+    c_sources: &[(&str, &str)],
+    function_name: &str,
+    claim: CProofClaim,
+    tactic_index: usize,
+) -> Result<String, ClickError> {
+    let replacement_tactics = super::proof::capture_c0_tactic_expansion(
+        click_source,
+        c_sources,
+        function_name,
+        claim,
+        tactic_index,
+    )?;
+    let replacement = super::printing::format_partial_tactic_sequence(&replacement_tactics);
+    let tokens = scan_source_tokens(click_source)?;
+    let function = find_function(&tokens, function_name)?;
+    let proof = match claim {
+        CProofClaim::Grouped => find_grouped_proof_span(&tokens, &function)?,
+        CProofClaim::Ensure(_) | CProofClaim::Effect(_) => {
+            find_claim_proof_span(&tokens, &function, claim)?
+        }
+    };
+    let span = find_tactic_span(&tokens, &proof, tactic_index)?;
+    let replacement = indent_replacement(click_source, span.start, &replacement);
+    let mut expanded =
+        String::with_capacity(click_source.len() - (span.end - span.start) + replacement.len());
+    expanded.push_str(&click_source[..span.start]);
+    expanded.push_str(&replacement);
+    expanded.push_str(&click_source[span.end..]);
+    Ok(expanded)
+}
+
 fn select_expansion_theorem<'a>(
     verified: &'a [VerifiedCTheorem],
     function_name: &str,
@@ -246,6 +279,76 @@ fn proof_span(tokens: &[SourceToken], by: usize) -> Result<Range<usize>, ClickEr
     Ok(start..end)
 }
 
+fn find_tactic_span(
+    tokens: &[SourceToken],
+    proof_span: &Range<usize>,
+    wanted: usize,
+) -> Result<Range<usize>, ClickError> {
+    let by = tokens
+        .iter()
+        .position(|token| token.span.start == proof_span.start && token.text == "by")
+        .ok_or_else(|| ClickError::new("could not locate selected source proof"))?;
+    let open = by + 1;
+    if tokens.get(open).map(|token| token.text.as_str()) != Some("{") {
+        return Err(ClickError::new(
+            "individual tactic expansion requires an explicit `by { ... }` proof",
+        ));
+    }
+    let close = matching_delimiter(tokens, open, "{", "}")?;
+    let mut tactic_index = 0;
+    let mut start = open + 1;
+    while start < close {
+        let mut cursor = start;
+        let mut braces = 0_usize;
+        let mut parentheses = 0_usize;
+        let mut brackets = 0_usize;
+        let end = loop {
+            if cursor >= close {
+                return Err(ClickError::new(
+                    "unterminated tactic in selected source proof",
+                ));
+            }
+            match tokens[cursor].text.as_str() {
+                "{" => braces += 1,
+                "}" => {
+                    braces = braces.checked_sub(1).ok_or_else(|| {
+                        ClickError::new("unbalanced tactic block in selected source proof")
+                    })?;
+                    if braces == 0 && parentheses == 0 && brackets == 0 {
+                        let continuation = tokens.get(cursor + 1).map(|token| token.text.as_str());
+                        if !matches!(continuation, Some("else" | "by")) {
+                            break cursor;
+                        }
+                    }
+                }
+                "(" => parentheses += 1,
+                ")" => {
+                    parentheses = parentheses.checked_sub(1).ok_or_else(|| {
+                        ClickError::new("unbalanced tactic call in selected source proof")
+                    })?;
+                }
+                "[" => brackets += 1,
+                "]" => {
+                    brackets = brackets.checked_sub(1).ok_or_else(|| {
+                        ClickError::new("unbalanced tactic index in selected source proof")
+                    })?;
+                }
+                ";" if braces == 0 && parentheses == 0 && brackets == 0 => break cursor,
+                _ => {}
+            }
+            cursor += 1;
+        };
+        if tactic_index == wanted {
+            return Ok(tokens[start].span.start..tokens[end].span.end);
+        }
+        tactic_index += 1;
+        start = end + 1;
+    }
+    Err(ClickError::new(format!(
+        "selected source proof has no tactic {wanted}"
+    )))
+}
+
 fn matching_delimiter(
     tokens: &[SourceToken],
     open: usize,
@@ -274,4 +377,117 @@ fn indent_replacement(source: &str, start: usize, replacement: &str) -> String {
     let indent_length = line_prefix.len() - line_prefix.trim_start().len();
     let indent = &line_prefix[..indent_length];
     replacement.replace('\n', &format!("\n{indent}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn expands_one_grouped_tactic_without_running_the_suffix() {
+        let c_source = "int32 identity(int32 x) { return x; }";
+        let click_source = r#"
+verifying "identity.c";
+
+int32 identity(int32 x) {
+    ensures result == x;
+} by {
+    execute_rest();
+    simp();
+}
+"#;
+
+        let expanded = expand_c0_tactic_source(
+            click_source,
+            &[("identity.c", c_source)],
+            "identity",
+            CProofClaim::Grouped,
+            0,
+        )
+        .expect("the first grouped tactic should expand");
+
+        assert!(!expanded.contains("execute_rest();"));
+        assert!(expanded.contains("    execute_step();\n    simp();"));
+        verify_c0_sources(&expanded, &[("identity.c", c_source)])
+            .expect("the source with one expanded tactic should re-verify");
+    }
+
+    #[test]
+    fn locates_a_block_tactic_as_one_source_statement() {
+        let source = "by { have x == x by { simp(); } simp(); }";
+        let tokens = scan_source_tokens(source).expect("source should scan");
+        let proof = proof_span(&tokens, 0).expect("proof should have a span");
+
+        let first = find_tactic_span(&tokens, &proof, 0).expect("first tactic should exist");
+        let second = find_tactic_span(&tokens, &proof, 1).expect("second tactic should exist");
+
+        assert_eq!(&source[first], "have x == x by { simp(); }");
+        assert_eq!(&source[second], "simp();");
+    }
+
+    #[test]
+    fn hides_statement_local_opaque_call_facts_from_surface_premises() {
+        let zero_c = "int32 zero() { return 0; }";
+        let caller_c = "int32 caller() { int32 value; value = zero(); return value; }";
+        let click_source = r#"
+verifying "zero.c";
+verifying "caller.c";
+
+int32 zero() {
+    ensures result == 0;
+} by {
+    execute_rest();
+    simp();
+}
+
+int32 caller() {
+    ensures result == 0;
+} by {
+    execute_rest();
+    simp();
+}
+"#;
+        let sources = [("zero.c", zero_c), ("caller.c", caller_c)];
+
+        let expanded =
+            expand_c0_tactic_source(click_source, &sources, "caller", CProofClaim::Grouped, 0)
+                .expect("opaque call internals should not become surface premises");
+
+        assert_eq!(expanded.matches("execute_rest();").count(), 1);
+        verify_c0_sources(&expanded, &sources)
+            .expect("the caller with one expanded tactic should re-verify");
+    }
+
+    #[test]
+    fn selected_tactic_skips_unreached_call_dependencies_and_proof_suffix() {
+        let zero_c = "int32 zero() { return 1; }";
+        let caller_c = "int32 caller() { int32 value; value = zero(); return value; }";
+        let click_source = r#"
+verifying "zero.c";
+verifying "caller.c";
+
+int32 zero() {
+    ensures result == 0;
+} by {
+    execute_rest();
+    simp();
+}
+
+int32 caller() {
+    ensures result == 0;
+} by {
+    execute_step();
+    execute_rest();
+    simp();
+}
+"#;
+        let sources = [("zero.c", zero_c), ("caller.c", caller_c)];
+
+        let expanded =
+            expand_c0_tactic_source(click_source, &sources, "caller", CProofClaim::Grouped, 0)
+                .expect("the declaration prefix should not verify an unreached callee or suffix");
+
+        assert!(expanded.contains("step();\n    execute_rest();"));
+        assert!(verify_c0_sources(&expanded, &sources).is_err());
+    }
 }

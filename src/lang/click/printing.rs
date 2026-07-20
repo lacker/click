@@ -9,6 +9,13 @@ pub fn format_proof_tactics(tactics: &[ProofTactic]) -> Result<String, Certifica
     Ok(format_tactic_certificate(&certificate))
 }
 
+pub(super) fn format_partial_tactic_sequence(tactics: &[ProofTactic]) -> String {
+    let mut output = String::new();
+    write_tactics(&mut output, tactics, 0);
+    output.pop();
+    output
+}
+
 pub fn format_tactic_certificate(certificate: &TacticCertificate) -> String {
     let mut output = String::from("by {\n");
     write_tactics(&mut output, certificate.tactics(), 1);
@@ -176,9 +183,9 @@ fn write_tactic(output: &mut String, tactic: &ProofTactic, indent: usize) {
                     .unwrap_or_default()
             ),
         ),
+        ProofTactic::ExecuteStep => line(output, &prefix, "execute_step();"),
         ProofTactic::CertifiedStatementStep(_)
         | ProofTactic::CertifiedLoopSummaryStep(_)
-        | ProofTactic::ExecuteStep
         | ProofTactic::ExecuteThenStep
         | ProofTactic::ExecuteElseStep
         | ProofTactic::ExecuteRest

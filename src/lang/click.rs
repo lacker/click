@@ -42,7 +42,9 @@ mod printing;
 mod proof;
 mod validation;
 use checking::*;
-pub use expansion::{CProofClaim, expand_c0_claim_source, verifying_source_paths};
+pub use expansion::{
+    CProofClaim, expand_c0_claim_source, expand_c0_tactic_source, verifying_source_paths,
+};
 use lowering::*;
 use parser::ContractLetBinding;
 pub use printing::{format_proof_tactics, format_tactic_certificate};
@@ -1674,6 +1676,9 @@ pub fn verify_c0_sources(
     let struct_layouts = parse_c_struct_layouts(&c_sources)?;
     let file = parser::parse_with_struct_layouts(click_source, struct_layouts)?;
     let parsed_sources = parse_verified_sources(&file, &c_sources)?;
+    let tactic_expansion_functions = proof::active_c0_tactic_expansion_request()
+        .map(|request| tactic_expansion_required_functions(&file, &parsed_sources, request))
+        .transpose()?;
     let predicate_definitions = combined_predicate_definitions(&file)?;
     let click_function_definitions = combined_click_function_definitions(&file)?;
     let resource_definitions = combined_resource_definitions(&file)?;
@@ -1697,6 +1702,12 @@ pub fn verify_c0_sources(
     let mut verified = Vec::new();
 
     for function_block in file.function_blocks {
+        if tactic_expansion_functions
+            .as_ref()
+            .is_some_and(|functions| !functions.contains(function_block.signature.name()))
+        {
+            continue;
+        }
         let (source_path, parsed_function) = parsed_sources
             .get(function_block.signature.name())
             .ok_or_else(|| {
@@ -1879,6 +1890,119 @@ pub fn verify_c0_sources(
     }
 
     Ok(verified)
+}
+
+fn tactic_expansion_required_functions(
+    file: &ClickFile,
+    parsed_sources: &BTreeMap<String, (String, syntax::C0Function)>,
+    (function_name, claim, tactic_index): (String, CProofClaim, usize),
+) -> Result<BTreeSet<String>, ClickError> {
+    let function_block = file
+        .function_blocks()
+        .iter()
+        .find(|function| function.signature().name() == function_name)
+        .ok_or_else(|| ClickError::new(format!("unknown function `{function_name}`")))?;
+    let tactics = match claim {
+        CProofClaim::Grouped => function_block.grouped_proof().and_then(Proof::tactics),
+        CProofClaim::Ensure(index) => function_block
+            .ensures()
+            .get(index)
+            .and_then(|clause| clause.proof().tactics()),
+        CProofClaim::Effect(index) => function_block
+            .effects()
+            .get(index)
+            .and_then(|clause| clause.proof().tactics()),
+    }
+    .ok_or_else(|| {
+        ClickError::new(format!(
+            "selected {claim:?} proof for `{function_name}` is not an explicit tactic script"
+        ))
+    })?;
+    let parsed_function = &parsed_sources
+        .get(&function_name)
+        .ok_or_else(|| ClickError::new(format!("no C source defines `{function_name}`")))?
+        .1;
+    let statement_calls = c0_statement_calls(parsed_function.body());
+    let touched_end = proof_statement_prefix_end(tactics, tactic_index, statement_calls.len());
+    let mut required = BTreeSet::from([function_name]);
+    let mut pending = statement_calls
+        .iter()
+        .take(touched_end)
+        .flatten()
+        .cloned()
+        .collect::<Vec<_>>();
+    while let Some(dependency) = pending.pop() {
+        if !required.insert(dependency.clone()) {
+            continue;
+        }
+        if let Some((_, parsed)) = parsed_sources.get(&dependency) {
+            pending.extend(c0_statement_calls(parsed.body()).into_iter().flatten());
+        }
+    }
+    Ok(required)
+}
+
+fn proof_statement_prefix_end(
+    tactics: &[ProofTactic],
+    selected_tactic: usize,
+    statement_count: usize,
+) -> usize {
+    let mut cursor = 0_usize;
+    let Some(prefix) = tactics.get(..=selected_tactic) else {
+        return statement_count;
+    };
+    for tactic in prefix {
+        match tactic {
+            ProofTactic::ExecuteStep => cursor = cursor.saturating_add(1),
+            ProofTactic::ExecuteUntil(CodeRegionRef::Statement(target)) => cursor = *target,
+            ProofTactic::ExecuteRest | ProofTactic::BoundedExecute => cursor = statement_count,
+            ProofTactic::ExecuteThenStep
+            | ProofTactic::ExecuteElseStep
+            | ProofTactic::If(_)
+            | ProofTactic::Advance(_)
+            | ProofTactic::ExecuteUntil(CodeRegionRef::Function | CodeRegionRef::Loop(_)) => {
+                return statement_count;
+            }
+            ProofTactic::ExecuteUntil(CodeRegionRef::Label(_)) => return statement_count,
+            _ => {}
+        }
+    }
+    cursor.min(statement_count)
+}
+
+fn c0_statement_calls(statement: &syntax::C0Statement) -> Vec<BTreeSet<String>> {
+    fn visit(statement: &syntax::C0Statement, calls: &mut Vec<BTreeSet<String>>) {
+        match statement {
+            syntax::C0Statement::Seq(first, second) => {
+                visit(first, calls);
+                visit(second, calls);
+            }
+            syntax::C0Statement::If {
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                calls.push(BTreeSet::new());
+                visit(then_branch, calls);
+                visit(else_branch, calls);
+            }
+            syntax::C0Statement::While { body, .. } => {
+                calls.push(BTreeSet::new());
+                visit(body, calls);
+            }
+            syntax::C0Statement::CallAssign { function_name, .. } => {
+                calls.push(BTreeSet::from([function_name.clone()]));
+            }
+            syntax::C0Statement::Declare { .. }
+            | syntax::C0Statement::Assign { .. }
+            | syntax::C0Statement::Return(_)
+            | syntax::C0Statement::Store { .. } => calls.push(BTreeSet::new()),
+        }
+    }
+
+    let mut calls = Vec::new();
+    visit(statement, &mut calls);
+    calls
 }
 
 fn parse_c_struct_layouts(

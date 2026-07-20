@@ -6,9 +6,11 @@ use std::process::{Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use click::lang::click::{CProofClaim, expand_c0_claim_source, verifying_source_paths};
+use click::lang::click::{
+    CProofClaim, expand_c0_claim_source, expand_c0_tactic_source, verifying_source_paths,
+};
 
-const USAGE: &str = "usage: click-expand [--time-limit <DURATION>] <sidecar.click> <function> <ensure:N|effect:N|grouped>";
+const USAGE: &str = "usage: click-expand [--time-limit <DURATION>] <sidecar.click> <function> <ensure:N|effect:N|grouped> [tactic:N]";
 
 fn main() {
     if let Err(message) = entry() {
@@ -22,6 +24,7 @@ struct Arguments {
     click_path: String,
     function_name: String,
     claim: String,
+    tactic_index: Option<usize>,
     time_limit: Option<Duration>,
 }
 
@@ -53,13 +56,21 @@ fn parse_arguments(arguments: impl IntoIterator<Item = String>) -> Result<Argume
             positional.push(argument);
         }
     }
-    let [click_path, function_name, claim] = positional.as_slice() else {
-        return Err(USAGE.to_string());
+    let (click_path, function_name, claim, tactic_index) = match positional.as_slice() {
+        [click_path, function_name, claim] => (click_path, function_name, claim, None),
+        [click_path, function_name, claim, tactic] => (
+            click_path,
+            function_name,
+            claim,
+            Some(parse_tactic_selector(tactic)?),
+        ),
+        _ => return Err(USAGE.to_string()),
     };
     Ok(Arguments {
         click_path: click_path.clone(),
         function_name: function_name.clone(),
         claim: claim.clone(),
+        tactic_index,
         time_limit,
     })
 }
@@ -91,10 +102,15 @@ fn parse_duration(source: &str) -> Result<Duration, String> {
 fn run_with_time_limit(arguments: &Arguments, time_limit: Duration) -> Result<(), String> {
     let executable = env::current_exe()
         .map_err(|error| format!("failed to locate click-expand executable: {error}"))?;
-    let mut child = Command::new(executable)
+    let mut command = Command::new(executable);
+    command
         .arg(&arguments.click_path)
         .arg(&arguments.function_name)
-        .arg(&arguments.claim)
+        .arg(&arguments.claim);
+    if let Some(tactic_index) = arguments.tactic_index {
+        command.arg(format!("tactic:{tactic_index}"));
+    }
+    let mut child = command
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
@@ -202,10 +218,28 @@ fn run(arguments: &Arguments) -> Result<(), String> {
         .map(|(path, source)| (path.as_str(), source.as_str()))
         .collect::<Vec<_>>();
     let claim = parse_claim(&arguments.claim)?;
-    let expanded = expand_c0_claim_source(&click_source, &sources, &arguments.function_name, claim)
-        .map_err(|error| error.message().to_string())?;
+    let expanded = match arguments.tactic_index {
+        Some(tactic_index) => expand_c0_tactic_source(
+            &click_source,
+            &sources,
+            &arguments.function_name,
+            claim,
+            tactic_index,
+        ),
+        None => expand_c0_claim_source(&click_source, &sources, &arguments.function_name, claim),
+    }
+    .map_err(|error| error.message().to_string())?;
     print!("{expanded}");
     Ok(())
+}
+
+fn parse_tactic_selector(source: &str) -> Result<usize, String> {
+    let index = source
+        .strip_prefix("tactic:")
+        .ok_or_else(|| format!("invalid tactic selector `{source}`; use `tactic:N`"))?;
+    index
+        .parse::<usize>()
+        .map_err(|_| format!("invalid tactic index `{index}`"))
 }
 
 fn parse_claim(source: &str) -> Result<CProofClaim, String> {
@@ -266,5 +300,24 @@ mod tests {
 
         assert_eq!(before, after);
         assert_eq!(before.time_limit, Some(Duration::from_secs(30)));
+    }
+
+    #[test]
+    fn parses_single_tactic_selector() {
+        let arguments = parse_arguments(
+            [
+                "example.click",
+                "pipeline",
+                "grouped",
+                "tactic:7",
+                "--time-limit",
+                "30s",
+            ]
+            .map(str::to_string),
+        )
+        .expect("single tactic selector should parse");
+
+        assert_eq!(arguments.tactic_index, Some(7));
+        assert_eq!(arguments.time_limit, Some(Duration::from_secs(30)));
     }
 }

@@ -1826,6 +1826,156 @@ struct SurfaceReplay {
     path_choices: Vec<SurfacePathChoice>,
 }
 
+const TACTIC_EXPANSION_COMPLETE: &str = "internal: selected tactic expansion complete";
+
+struct TacticExpansionProbe {
+    function_name: String,
+    claim: CProofClaim,
+    tactic_index: usize,
+    active: bool,
+    smart_step_fallback: bool,
+    result: Option<Result<Vec<ProofTactic>, String>>,
+}
+
+thread_local! {
+    static TACTIC_EXPANSION_PROBE: std::cell::RefCell<Option<TacticExpansionProbe>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+pub(super) fn capture_c0_tactic_expansion(
+    click_source: &str,
+    c_sources: &[(&str, &str)],
+    function_name: &str,
+    claim: CProofClaim,
+    tactic_index: usize,
+) -> Result<Vec<ProofTactic>, ClickError> {
+    TACTIC_EXPANSION_PROBE.with(|probe| {
+        let mut probe = probe.borrow_mut();
+        if probe.is_some() {
+            return Err(ClickError::new(
+                "cannot nest selected-tactic expansion requests",
+            ));
+        }
+        *probe = Some(TacticExpansionProbe {
+            function_name: function_name.to_string(),
+            claim,
+            tactic_index,
+            active: false,
+            smart_step_fallback: false,
+            result: None,
+        });
+        Ok(())
+    })?;
+
+    let verification = verify_c0_sources(click_source, c_sources);
+    let captured = TACTIC_EXPANSION_PROBE.with(|probe| probe.borrow_mut().take());
+    let Some(captured) = captured else {
+        return Err(ClickError::new("selected-tactic expansion probe was lost"));
+    };
+    if let Some(result) = captured.result {
+        return result.map_err(ClickError::new);
+    }
+    match verification {
+        Err(error) if error.message() != TACTIC_EXPANSION_COMPLETE => Err(error),
+        Err(_) => Err(ClickError::new(
+            "selected tactic completed without recording an expansion",
+        )),
+        Ok(_) => Err(ClickError::new(format!(
+            "function `{function_name}` has no tactic {tactic_index} in the selected {claim:?} proof"
+        ))),
+    }
+}
+
+pub(super) fn active_c0_tactic_expansion_request() -> Option<(String, CProofClaim, usize)> {
+    TACTIC_EXPANSION_PROBE.with(|probe| {
+        probe
+            .borrow()
+            .as_ref()
+            .map(|probe| (probe.function_name.clone(), probe.claim, probe.tactic_index))
+    })
+}
+
+fn probe_matches_claim(
+    probe: &TacticExpansionProbe,
+    function_block: &FunctionBlock,
+    claims: &[FunctionClaimRef<'_>],
+    grouped_contract: bool,
+) -> bool {
+    if function_block.signature().name() != probe.function_name {
+        return false;
+    }
+    match probe.claim {
+        CProofClaim::Grouped => grouped_contract,
+        CProofClaim::Ensure(wanted) if !grouped_contract => matches!(
+            claims,
+            [FunctionClaimRef::Ensure(found, _)] if *found == wanted
+        ),
+        CProofClaim::Effect(wanted) if !grouped_contract => matches!(
+            claims,
+            [FunctionClaimRef::Effect(found, _)] if *found == wanted
+        ),
+        CProofClaim::Ensure(_) | CProofClaim::Effect(_) => false,
+    }
+}
+
+fn begin_tactic_expansion_capture(
+    function_block: &FunctionBlock,
+    claims: &[FunctionClaimRef<'_>],
+    tactic_index: usize,
+    tactic: &ProofTactic,
+    replay: &mut TacticReplayState,
+) -> bool {
+    TACTIC_EXPANSION_PROBE.with(|probe| {
+        let mut slot = probe.borrow_mut();
+        let Some(probe) = slot.as_mut() else {
+            return false;
+        };
+        if probe.active
+            || probe.tactic_index != tactic_index
+            || !probe_matches_claim(probe, function_block, claims, replay.grouped_contract)
+        {
+            return false;
+        }
+        probe.active = true;
+        probe.smart_step_fallback = matches!(
+            tactic,
+            ProofTactic::ExecuteUntil(_) | ProofTactic::ExecuteRest | ProofTactic::BoundedExecute
+        );
+        let last_step_entry = replay.surface_replay.last_step_entry.clone();
+        replay.surface_replay = SurfaceReplay {
+            last_step_entry,
+            ..SurfaceReplay::default()
+        };
+        true
+    })
+}
+
+fn tactic_expansion_uses_smart_step_fallback() -> bool {
+    TACTIC_EXPANSION_PROBE.with(|probe| {
+        probe
+            .borrow()
+            .as_ref()
+            .is_some_and(|probe| probe.active && probe.smart_step_fallback)
+    })
+}
+
+fn finish_tactic_expansion_capture(surface_replay: &SurfaceReplay) -> ClickError {
+    TACTIC_EXPANSION_PROBE.with(|probe| {
+        let mut slot = probe.borrow_mut();
+        let probe = slot
+            .as_mut()
+            .expect("finishing a selected tactic requires an active probe");
+        probe.result = Some(match &surface_replay.blocker {
+            Some(blocker) => Err(format!("could not expand selected tactic: {blocker}")),
+            None if surface_replay.tactics.is_empty() => {
+                Err("selected tactic produced no standalone surface expansion".to_string())
+            }
+            None => Ok(surface_replay.tactics.clone()),
+        });
+    });
+    ClickError::new(TACTIC_EXPANSION_COMPLETE)
+}
+
 #[derive(Clone)]
 struct SurfacePathChoice {
     condition: ClickProposition,
@@ -5064,8 +5214,8 @@ fn checked_surface_fact_at_point(
     if let Ok(surface) = replay.surface_propositions.checked_surface(kernel, check) {
         return Ok(surface);
     }
-    let candidate =
-        synthesize_surface_proposition(kernel, parameters, arguments).ok_or_else(|| {
+    let candidate = synthesize_surface_proposition(kernel, parameters, arguments, state)
+        .ok_or_else(|| {
             ClickError::new(format!(
                 "kernel fact has no recorded or structurally synthesized Click spelling: {kernel:?}"
             ))
@@ -5084,10 +5234,11 @@ fn synthesize_surface_proposition(
     proposition: &Proposition,
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
+    state: &CState,
 ) -> Option<ClickProposition> {
     if let Proposition::Not(body) = proposition {
         return Some(ClickProposition::Not(Box::new(
-            synthesize_surface_proposition(body, parameters, arguments)?,
+            synthesize_surface_proposition(body, parameters, arguments, state)?,
         )));
     }
     let Proposition::ConditionIs(condition, value) = proposition else {
@@ -5133,9 +5284,9 @@ fn synthesize_surface_proposition(
         }
     };
     Some(ClickProposition::Comparison {
-        left: synthesize_surface_bitvector(left, parameters, arguments)?,
+        left: synthesize_surface_bitvector(left, parameters, arguments, state)?,
         operator,
-        right: synthesize_surface_bitvector(right, parameters, arguments)?,
+        right: synthesize_surface_bitvector(right, parameters, arguments, state)?,
     })
 }
 
@@ -5143,14 +5294,26 @@ fn synthesize_surface_bitvector(
     term: &Bitvector32Term,
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
+    state: &CState,
 ) -> Option<ContractExpression> {
+    if let Some((name, _)) = state.locals().object_values().find(
+        |(_, value)| matches!(value, CValue::Int32(local) | CValue::UInt8(local) if local == term),
+    ) {
+        return Some(ContractExpression::CFragment(CExpression::Variable(
+            name.to_string(),
+        )));
+    }
     if let Some(name) = describe_parameter_bitvector(term, parameters, arguments) {
         return Some(ContractExpression::CFragment(CExpression::Variable(name)));
     }
     let binary = |left: &Bitvector32Term, right: &Bitvector32Term| {
         Some((
-            Box::new(synthesize_surface_bitvector(left, parameters, arguments)?),
-            Box::new(synthesize_surface_bitvector(right, parameters, arguments)?),
+            Box::new(synthesize_surface_bitvector(
+                left, parameters, arguments, state,
+            )?),
+            Box::new(synthesize_surface_bitvector(
+                right, parameters, arguments, state,
+            )?),
         ))
     };
     match term {
@@ -5198,12 +5361,27 @@ fn synthesize_surface_bitvector(
             Some(ContractExpression::BitwiseXor(left, right))
         }
         Bitvector32Term::BitwiseNot(value) => Some(ContractExpression::BitwiseNot(Box::new(
-            synthesize_surface_bitvector(value, parameters, arguments)?,
+            synthesize_surface_bitvector(value, parameters, arguments, state)?,
         ))),
+        Bitvector32Term::MemoryLoad(_, pointer) => {
+            let pointer = parameters
+                .iter()
+                .zip(arguments)
+                .find_map(|(parameter, argument)| match argument {
+                    CExpression::Value(CValue::Pointer(argument_pointer))
+                        if argument_pointer == pointer.as_ref() =>
+                    {
+                        Some(CExpression::Variable(parameter.name().to_string()))
+                    }
+                    _ => None,
+                })?;
+            Some(ContractExpression::CFragment(CExpression::Load(Box::new(
+                pointer,
+            ))))
+        }
         Bitvector32Term::Variable(_)
         | Bitvector32Term::If { .. }
-        | Bitvector32Term::RangeFold { .. }
-        | Bitvector32Term::MemoryLoad(_, _) => None,
+        | Bitvector32Term::RangeFold { .. } => None,
     }
 }
 
@@ -5324,7 +5502,7 @@ fn lower_outcome_simp_tactic(
             .surface(fact)
             .ok()
             .cloned()
-            .or_else(|| synthesize_surface_proposition(fact, parameters, arguments));
+            .or_else(|| synthesize_surface_proposition(fact, parameters, arguments, post_state));
         let Some(surface) = surface else {
             continue;
         };
@@ -5508,10 +5686,14 @@ fn record_surface_replay_tactic(
         return;
     }
     let contextual_step = |replay: &TacticReplayState, needed: &[Proposition]| {
+        // A planned derivation can also mention facts produced internally by
+        // the statement itself (for example an opaque call result). Only facts
+        // already available at the statement entry belong in surface `using`
+        // premises; replay reconstructs the statement-local facts on its own.
         let mut premises = needed
             .iter()
-            .map(|fact| {
-                let fact = available
+            .filter_map(|fact| {
+                let available_fact = available
                     .iter()
                     .find(|available| *available == fact)
                     .or_else(|| {
@@ -5525,18 +5707,17 @@ fn record_surface_replay_tactic(
                             assumptions_from_propositions(std::slice::from_ref(*available))
                                 .proves(fact)
                         })
-                    })
-                    .unwrap_or(fact);
-                checked_surface_fact_at_point(
+                    })?;
+                Some(checked_surface_fact_at_point(
                     replay,
-                    fact,
+                    available_fact,
                     available,
                     parameters,
                     arguments,
                     state,
                     predicate_environment,
                     click_function_environment,
-                )
+                ))
             })
             .collect::<Result<Vec<_>, _>>()?;
         for fact in available {
@@ -5564,6 +5745,10 @@ fn record_surface_replay_tactic(
     };
     match tactic {
         ProofTactic::CertifiedStatementStep(derivations) => {
+            if tactic_expansion_uses_smart_step_fallback() {
+                replay.surface_replay.push(ProofTactic::ExecuteStep);
+                return;
+            }
             replay.surface_replay.last_step_entry = Some(ProgramPointRef {
                 region: CodeRegionRef::Statement(replay.frontier.next_statement_index),
                 kind: ProgramPointKind::Entry,
@@ -5630,6 +5815,9 @@ fn record_surface_replay_tactic(
             }
         }
         ProofTactic::CertifiedFactTransport { source, target, .. } => {
+            if tactic_expansion_uses_smart_step_fallback() {
+                return;
+            }
             let Some(step_entry) = replay.surface_replay.last_step_entry.clone() else {
                 replay
                     .surface_replay
@@ -5640,11 +5828,13 @@ fn record_surface_replay_tactic(
                 .surface_propositions
                 .surface(source)
                 .or_else(|_| replay.surface_propositions.surface(target))
-                .cloned();
-            let Ok(base_surface) = base_surface else {
-                replay
-                    .surface_replay
-                    .block("fact transport has no recorded Click comparison spelling");
+                .ok()
+                .cloned()
+                .or_else(|| synthesize_surface_proposition(target, parameters, arguments, state));
+            let Some(base_surface) = base_surface else {
+                replay.surface_replay.block(format!(
+                    "fact transport has no recorded or synthesized Click comparison spelling\n  source: {source:?}\n  target: {target:?}"
+                ));
                 return;
             };
             let Some(source_surface) = comparison_at_program_point(&base_surface, &step_entry)
@@ -5807,6 +5997,13 @@ fn replay_linear_tactics(
     for indexed_tactic in tactics {
         let tactic_index = indexed_tactic.index;
         let tactic = &indexed_tactic.tactic;
+        let capture_this_tactic = begin_tactic_expansion_capture(
+            function_block,
+            claims,
+            tactic_index,
+            tactic,
+            &mut replay,
+        );
         record_surface_replay_tactic(
             &mut replay,
             &state,
@@ -6679,6 +6876,9 @@ fn replay_linear_tactics(
                         .post_execution_tactics
                         .push((tactic_index, PostExecutionTactic::Frame));
                     replay.frames.insert(region_ref.clone());
+                    if capture_this_tactic {
+                        return Err(finish_tactic_expansion_capture(&replay.surface_replay));
+                    }
                     continue;
                 }
                 let effect_claims = claims
@@ -6741,6 +6941,9 @@ fn replay_linear_tactics(
                         tactic_index,
                         PostExecutionTactic::UnfoldPredicate(name.clone()),
                     ));
+                    if capture_this_tactic {
+                        return Err(finish_tactic_expansion_capture(&replay.surface_replay));
+                    }
                     continue;
                 }
                 if !replay.unfolded_predicates.contains(name) {
@@ -6834,6 +7037,9 @@ fn replay_linear_tactics(
                             "`{claim_label}` tactic {tactic_index}: post-execution `have` is not available in this region proof"
                         )));
                     }
+                    if capture_this_tactic {
+                        return Err(finish_tactic_expansion_capture(&replay.surface_replay));
+                    }
                     continue;
                 }
                 let mut have_facts = requirement_pure_facts.clone();
@@ -6882,6 +7088,9 @@ fn replay_linear_tactics(
                     replay
                         .post_execution_tactics
                         .push((tactic_index, PostExecutionTactic::Witness(witness.clone())));
+                    if capture_this_tactic {
+                        return Err(finish_tactic_expansion_capture(&replay.surface_replay));
+                    }
                     continue;
                 }
                 require_function_exit(&replay, claim_label, tactic_index, "witness")?;
@@ -6899,6 +7108,9 @@ fn replay_linear_tactics(
                     replay
                         .post_execution_tactics
                         .push((tactic_index, PostExecutionTactic::Choose(choice.clone())));
+                    if capture_this_tactic {
+                        return Err(finish_tactic_expansion_capture(&replay.surface_replay));
+                    }
                     continue;
                 }
                 require_function_exit(&replay, claim_label, tactic_index, "choose")?;
@@ -6986,6 +7198,9 @@ fn replay_linear_tactics(
                         .push((tactic_index, PostExecutionTactic::Simp));
                 }
             }
+        }
+        if capture_this_tactic {
+            return Err(finish_tactic_expansion_capture(&replay.surface_replay));
         }
     }
 
