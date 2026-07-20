@@ -55,6 +55,50 @@ fn current_int(value: u32) -> ContractExpression {
     current(CExpression::Value(int32(value)))
 }
 
+#[test]
+fn parses_expanded_typed_loads_and_old_loadability() {
+    let source = r#"
+        int32 example(int32 owner[], int32 data[]) {
+            ensures result == 0;
+        } by {
+            step using {
+                fact loadable(old(owner[0..6]));
+                fact load_int32_pointer((owner + 2)) == data;
+            }
+        }
+    "#;
+    let file = parser::parse(source).expect("expanded step syntax should parse");
+    let Proof::Script(tactics) = file.function_blocks[0]
+        .grouped_proof()
+        .expect("example should have a grouped proof")
+    else {
+        panic!("expected a proof script");
+    };
+    let ProofTactic::StepUsing(premises) = &tactics[0] else {
+        panic!("expected a step using tactic");
+    };
+    assert!(matches!(
+        &premises[0],
+        ClickProposition::Loadable { segment }
+            if segment.state == ContractSegmentState::Old
+    ));
+    assert_eq!(
+        diagnostics::describe_click_proposition(&premises[0]),
+        "loadable(old(owner[0..6]))"
+    );
+    assert!(matches!(
+        &premises[1],
+        ClickProposition::Comparison {
+            left: ContractExpression::CFragment(CExpression::TypedLoad {
+                value_type: CType::Int32Pointer,
+                ..
+            }),
+            operator: ComparisonOperator::Equal,
+            ..
+        }
+    ));
+}
+
 fn current_index(base: &str, index: u32) -> ContractExpression {
     ContractExpression::Index(Box::new(current_var(base)), Box::new(current_int(index)))
 }

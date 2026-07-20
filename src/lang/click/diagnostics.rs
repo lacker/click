@@ -543,17 +543,16 @@ pub(super) fn describe_c_value(
 }
 
 pub(super) fn describe_contract_segment(segment: &ContractSegment) -> String {
-    let prefix = match segment.state {
-        ContractSegmentState::Current => "",
-        ContractSegmentState::Old => "old ",
-    };
-    format!(
-        "{}{}[{}..{}]",
-        prefix,
+    let current = format!(
+        "{}[{}..{}]",
         describe_c_expression(&segment.base),
         describe_c_expression(&segment.start),
         describe_c_expression(&segment.end)
-    )
+    );
+    match segment.state {
+        ContractSegmentState::Current => current,
+        ContractSegmentState::Old => format!("old({current})"),
+    }
 }
 
 pub(super) fn describe_evaluated_segments(segments: &[EvaluatedContractSegment]) -> String {
@@ -612,7 +611,21 @@ pub(super) fn describe_c_expression(expression: &CExpression) -> String {
         CExpression::BitwiseXor(left, right) => describe_binary_c_expression(left, "^", right),
         CExpression::BitwiseNot(expression) => format!("~{}", describe_c_expression(expression)),
         CExpression::Load(pointer) => format!("*{}", describe_c_expression(pointer)),
-        CExpression::TypedLoad { pointer, .. } => format!("*{}", describe_c_expression(pointer)),
+        CExpression::TypedLoad {
+            pointer,
+            value_type,
+        } => {
+            let name = match value_type {
+                CType::Int32 => "load_int32",
+                CType::UInt8 => "load_uint8",
+                CType::Int32Pointer => "load_int32_pointer",
+                CType::UInt8Pointer => "load_uint8_pointer",
+                CType::Int32Array(_) | CType::UInt8Array(_) => {
+                    return format!("*{}", describe_c_expression(pointer));
+                }
+            };
+            format!("{name}({})", describe_c_expression(pointer))
+        }
         CExpression::Index(base, index) => {
             format!(
                 "{}[{}]",

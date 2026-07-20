@@ -1708,6 +1708,7 @@ pub fn verify_c0_sources(
         {
             continue;
         }
+        let function_timing_start = std::time::Instant::now();
         let (source_path, parsed_function) = parsed_sources
             .get(function_block.signature.name())
             .ok_or_else(|| {
@@ -1887,6 +1888,13 @@ pub fn verify_c0_sources(
                 })?;
             function_environment = function_environment.with_verified_function_rule(rule);
         }
+        if std::env::var_os("CLICK_TIMINGS").is_some() {
+            eprintln!(
+                "click timing: function {} {:.3}s",
+                function_block.signature.name(),
+                function_timing_start.elapsed().as_secs_f64()
+            );
+        }
     }
 
     Ok(verified)
@@ -1953,7 +1961,9 @@ fn proof_statement_prefix_end(
     };
     for tactic in prefix {
         match tactic {
-            ProofTactic::ExecuteStep => cursor = cursor.saturating_add(1),
+            ProofTactic::Step | ProofTactic::StepUsing(_) | ProofTactic::ExecuteStep => {
+                cursor = cursor.saturating_add(1)
+            }
             ProofTactic::ExecuteUntil(CodeRegionRef::Statement(target)) => cursor = *target,
             ProofTactic::ExecuteRest | ProofTactic::BoundedExecute => cursor = statement_count,
             ProofTactic::ExecuteThenStep

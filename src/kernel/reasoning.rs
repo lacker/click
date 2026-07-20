@@ -49,6 +49,7 @@ pub(super) fn pointers_proven_distinct(
 ) -> bool {
     left.blocks_proven_distinct(right)
         || pointer_offsets_with_common_base_proven_distinct(left, right, assumptions)
+        || assumptions.pointers_proven_disjoint_by_explicit_range_shallow(left, right)
         || left.block == right.block
             && assumptions.decide(&ConditionTerm::pointer_offset_equal(
                 left.offset.clone(),

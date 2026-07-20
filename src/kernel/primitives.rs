@@ -1,4 +1,4 @@
-use super::api::{int32, uint8};
+use super::api::{int32, normalize_exact_memory_loads_in_pointer_offset, uint8};
 use super::reasoning::{
     instantiate_range_fold_step, int32_element_index_from_offset, pointers_proven_distinct,
     pointers_proven_equal, signed_bitvector_constant, signed_i64_bitvector_constant,
@@ -1091,7 +1091,7 @@ impl Bitvector32Term {
         Self::Constant(value)
     }
 
-    pub(super) fn as_const(&self) -> Option<u32> {
+    pub(crate) fn as_const(&self) -> Option<u32> {
         match self {
             Self::Constant(value) => Some(*value),
             Self::Variable(_) | Self::MemoryLoad(_, _) => None,
@@ -1697,7 +1697,7 @@ impl Pointer {
         }
     }
 
-    pub(super) fn element_index_from_base(&self, base: &Self) -> Option<Bitvector32Term> {
+    pub(crate) fn element_index_from_base(&self, base: &Self) -> Option<Bitvector32Term> {
         if self.block != base.block {
             return None;
         }
@@ -2231,10 +2231,22 @@ impl CMemory {
         pointer: &Pointer,
         assumptions: &Assumptions,
     ) -> Self {
+        let normalized_pointer = Pointer {
+            block: pointer.block.clone(),
+            offset: normalize_exact_memory_loads_in_pointer_offset(&pointer.offset, assumptions, 0),
+        };
         let mut memory = self.clone();
-        memory
-            .cells
-            .retain(|cell_pointer, _| pointers_proven_distinct(cell_pointer, pointer, assumptions));
+        memory.cells.retain(|cell_pointer, _| {
+            let normalized_cell_pointer = Pointer {
+                block: cell_pointer.block.clone(),
+                offset: normalize_exact_memory_loads_in_pointer_offset(
+                    &cell_pointer.offset,
+                    assumptions,
+                    0,
+                ),
+            };
+            pointers_proven_distinct(&normalized_cell_pointer, &normalized_pointer, assumptions)
+        });
         memory
     }
 

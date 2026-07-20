@@ -46,6 +46,12 @@ pub fn expand_c0_claim_source(
     expanded.push_str(&click_source[..span.start]);
     expanded.push_str(&replacement);
     expanded.push_str(&click_source[span.end..]);
+    verify_c0_sources(&expanded, c_sources).map_err(|error| {
+        ClickError::new(format!(
+            "expanded claim did not re-verify: {}",
+            error.message()
+        ))
+    })?;
     Ok(expanded)
 }
 
@@ -79,6 +85,20 @@ pub fn expand_c0_tactic_source(
     expanded.push_str(&click_source[..span.start]);
     expanded.push_str(&replacement);
     expanded.push_str(&click_source[span.end..]);
+    let replacement_end = tactic_index + replacement_tactics.len().saturating_sub(1);
+    super::proof::capture_c0_tactic_expansion(
+        &expanded,
+        c_sources,
+        function_name,
+        claim,
+        replacement_end,
+    )
+    .map_err(|error| {
+        ClickError::new(format!(
+            "selected tactic expansion prefix did not re-verify: {}",
+            error.message()
+        ))
+    })?;
     Ok(expanded)
 }
 

@@ -3796,8 +3796,11 @@ pub(super) fn lower_outcome_proposition_with_environment(
             let element_width =
                 contract_segment_element_width_from_array_refs(array_refs, &segment.source)
                     .unwrap_or(4);
-            loadable_segment_prop(post_state.memory(), segment, element_width)
-                .map_err(|error| error.message)
+            let memory = match segment.source.state {
+                ContractSegmentState::Current => post_state.memory(),
+                ContractSegmentState::Old => pre_state.memory(),
+            };
+            loadable_segment_prop(memory, segment, element_width).map_err(|error| error.message)
         }
         ClickProposition::Defined { expression } => {
             let expression = contract_expression_to_c_fragment(expression).ok_or_else(|| {
@@ -4258,14 +4261,15 @@ fn evaluate_contract_segment_with_environment(
     program_point_states: &ProgramPointStates,
     active_functions: &mut BTreeSet<String>,
 ) -> Result<EvaluatedContractSegment, String> {
-    if segment.state != ContractSegmentState::Current {
-        return Err("`old(...)` is not available in memory resource subjects".to_string());
-    }
+    let evaluation_post_state = match segment.state {
+        ContractSegmentState::Current => post_state,
+        ContractSegmentState::Old => pre_state,
+    };
     let base = evaluate_contract_expression_with_environment(
         parameter_values,
         array_refs,
         pre_state,
-        post_state,
+        evaluation_post_state,
         result,
         assumptions,
         &ContractExpression::CFragment(segment.base.clone()),
@@ -4281,7 +4285,7 @@ fn evaluate_contract_segment_with_environment(
         parameter_values,
         array_refs,
         pre_state,
-        post_state,
+        evaluation_post_state,
         result,
         assumptions,
         &ContractExpression::CFragment(segment.start.clone()),
@@ -4297,7 +4301,7 @@ fn evaluate_contract_segment_with_environment(
         parameter_values,
         array_refs,
         pre_state,
-        post_state,
+        evaluation_post_state,
         result,
         assumptions,
         &ContractExpression::CFragment(segment.end.clone()),

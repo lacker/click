@@ -1423,6 +1423,10 @@ impl Parser {
         if matches!(self.peek(), Some(Token::Ident(_)))
             && self.peek_ident() != Some("old")
             && self.peek_ident() != Some("at")
+            && !matches!(
+                self.peek_ident(),
+                Some("load_int32" | "load_uint8" | "load_int32_pointer" | "load_uint8_pointer")
+            )
             && self.peek_next() == Some(&Token::LParen)
         {
             let start = self.position;
@@ -2053,7 +2057,7 @@ impl Parser {
     fn parse_loadable_segment(&mut self) -> Result<ContractSegment, ClickError> {
         self.expect_ident_spelling("loadable")?;
         self.expect(Token::LParen)?;
-        let segment = self.parse_current_contract_segment()?;
+        let segment = self.parse_contract_segment()?;
         self.expect(Token::RParen)?;
         Ok(segment)
     }
@@ -2275,6 +2279,18 @@ impl Parser {
                 self.parse_contract_unary()?,
             )));
         }
+        if self.peek() == Some(&Token::Star) {
+            self.position += 1;
+            let pointer = self.parse_contract_unary()?;
+            let Some(pointer) = contract_expression_as_c_fragment(&pointer) else {
+                return Err(
+                    self.error("pointer dereference is only supported on current C fragments")
+                );
+            };
+            return Ok(ContractExpression::CFragment(CExpression::Load(Box::new(
+                pointer,
+            ))));
+        }
 
         self.parse_contract_postfix()
     }
@@ -2359,6 +2375,28 @@ impl Parser {
                 selector,
                 expression: Box::new(expression),
             });
+        }
+
+        let typed_load = match self.peek_ident() {
+            Some("load_int32") => Some(CType::Int32),
+            Some("load_uint8") => Some(CType::UInt8),
+            Some("load_int32_pointer") => Some(CType::Int32Pointer),
+            Some("load_uint8_pointer") => Some(CType::UInt8Pointer),
+            _ => None,
+        };
+        if self.peek_next() == Some(&Token::LParen)
+            && let Some(value_type) = typed_load
+        {
+            self.position += 2;
+            let pointer = self.parse_contract_expression()?;
+            self.expect(Token::RParen)?;
+            let Some(pointer) = contract_expression_as_c_fragment(&pointer) else {
+                return Err(self.error("typed load expects a current C pointer expression"));
+            };
+            return Ok(ContractExpression::CFragment(CExpression::TypedLoad {
+                pointer: Box::new(pointer),
+                value_type,
+            }));
         }
 
         if matches!(self.peek(), Some(Token::Ident(_))) && self.peek_next() == Some(&Token::LParen)

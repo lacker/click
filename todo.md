@@ -64,6 +64,33 @@ owned examples should become similarly direct once their orchestration tactics
 are replaced with bounded simple steps and the remaining simple-step hot paths
 are fixed.
 
+Set `CLICK_TIMINGS=1` to print verifier time for each function and each tactic.
+Combine it with the focused project filter and `--nocapture` to find the next
+local target without running the corpus:
+
+```sh
+CLICK_TIMINGS=1 CLICK_EXAMPLE=owned-segmented-buffer \
+  cargo test --test examples -- --nocapture
+```
+
+The first statement-level optimization on 2026-07-20 targeted the second
+`owned_segmented_buffer_set_second` call in
+`owned_segmented_buffer_pipeline`. Replacing its 14.3-second
+`execute_step()` search with a checked `step using { ... }` certificate reduced
+that statement to about 0.025 seconds. Explicit certified transports preserve
+the seven entry facts needed after the separate clone mutation, including two
+pointer-valued owner fields. The focused project improved from 34.05 seconds to
+about 22.2 seconds (35 percent) without expanding the rest of the proof.
+
+The remaining time is now visible rather than hidden in that call: the seven
+explicit `transport` tactics total about 6.8 seconds, standalone
+`owned_segmented_buffer_set_second` takes about 5.9 seconds, and standalone
+`owned_segmented_buffer_get_first` takes about 3.7 seconds. The next iteration
+should make one explicit transport cheap, then teach statement expansion to
+surface the resource prerequisites needed by the standalone read/store steps.
+Repeat from the new timing profile; do not run the full corpus between these
+focused iterations.
+
 Use three milestones while closing the gap, always working on one focused
 project or tactic rather than running the full slow suite:
 
@@ -97,10 +124,10 @@ The command:
 6. Replaces the selected source proof.
 7. Prints the complete rewritten sidecar to stdout.
 
-The implementation currently verifies the original sidecar and validates the
-certificate, but it does not re-verify the rewritten sidecar before returning
-it. The round-trip check below should become part of the production source API,
-not remain only a test property.
+Claim expansion re-verifies the complete rewritten sidecar before returning it.
+Single-tactic expansion instead re-verifies the proof prefix through the last
+replacement tactic. This catches an invalid local expansion without running an
+unrelated slow suffix, and preserves the prefix-only dependency pruning.
 
 Claim indices are zero-based.
 
@@ -510,8 +537,9 @@ Treat the work above as five mergeable milestones:
    derivation, then run every example. Stop and repair any additional baseline
    failure before changing expansion behavior.
 2. **Transactional source rewrite:** support omitted ensure/effect proofs under
-   the canonical semicolon policy, re-verify output in the production API, and
-   land the focused span/idempotence tests.
+   the canonical semicolon policy and land the focused span/idempotence tests.
+   Complete claim rewrites already re-verify before being returned; keep that
+   invariant while adding omitted-proof source edits.
 3. **Audit harness:** share the example loader, enumerate every selectable
    proof from a fresh sidecar, and land the audit even if it initially reports a
    small explicit list of known expansion blockers. Do not weaken assertions to

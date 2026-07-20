@@ -132,6 +132,10 @@ fn transport_framed_atomic_condition(
             let (left, right) = binary(left, right)?;
             ConditionTerm::equal(left, right)
         }
+        ConditionTerm::PointerOffsetEqual(left, right) => ConditionTerm::pointer_offset_equal(
+            transport_framed_atomic_pointer_offset(left, after, assumptions)?,
+            transport_framed_atomic_pointer_offset(right, after, assumptions)?,
+        ),
         ConditionTerm::Constant(_)
         | ConditionTerm::Variable(_)
         | ConditionTerm::Bitvector32SignedAddOverflows(_, _)
@@ -139,8 +143,25 @@ fn transport_framed_atomic_condition(
         | ConditionTerm::Bitvector32SignedMultiplyOverflows(_, _)
         | ConditionTerm::Bitvector32SignedDivideOverflows(_, _)
         | ConditionTerm::Bitvector32SignedShiftLeftOverflows(_, _)
-        | ConditionTerm::PointerOffsetEqual(_, _)
         | ConditionTerm::PointerEqual(_, _) => return None,
+    })
+}
+
+fn transport_framed_atomic_pointer_offset(
+    offset: &PointerOffsetTerm,
+    after: &CMemory,
+    assumptions: &Assumptions,
+) -> Option<PointerOffsetTerm> {
+    Some(match offset {
+        PointerOffsetTerm::Constant(_) | PointerOffsetTerm::Variable(_) => offset.clone(),
+        PointerOffsetTerm::Add(left, right) => PointerOffsetTerm::add(
+            transport_framed_atomic_pointer_offset(left, after, assumptions)?,
+            transport_framed_atomic_pointer_offset(right, after, assumptions)?,
+        ),
+        PointerOffsetTerm::Int32Scaled { value, byte_width } => PointerOffsetTerm::scale_int32(
+            transport_framed_atomic_bitvector(value, after, assumptions)?,
+            *byte_width,
+        ),
     })
 }
 
@@ -325,7 +346,7 @@ pub(crate) fn c_pointer_offsets_proven_equal_for_effect(
         ))
 }
 
-fn normalize_exact_memory_loads_in_pointer_offset(
+pub(super) fn normalize_exact_memory_loads_in_pointer_offset(
     offset: &PointerOffsetTerm,
     assumptions: &Assumptions,
     depth: usize,

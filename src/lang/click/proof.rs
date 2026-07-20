@@ -5222,12 +5222,21 @@ fn checked_surface_fact_at_point(
         })?;
     let lowered = check(&candidate)?;
     if lowered == *kernel {
-        Ok(candidate)
-    } else {
-        Err(ClickError::new(format!(
-            "synthesized Click fact does not lower to the kernel fact at this proof point\n  Click: {candidate:?}\n  lowered: {lowered:?}\n  kernel: {kernel:?}"
-        )))
+        return Ok(candidate);
     }
+    if let ClickProposition::Loadable { segment } = &candidate {
+        let mut old_segment = segment.clone();
+        old_segment.state = ContractSegmentState::Old;
+        let old_candidate = ClickProposition::Loadable {
+            segment: old_segment,
+        };
+        if check(&old_candidate).ok().as_ref() == Some(kernel) {
+            return Ok(old_candidate);
+        }
+    }
+    Err(ClickError::new(format!(
+        "synthesized Click fact does not lower to the kernel fact at this proof point\n  Click: {candidate:?}\n  lowered: {lowered:?}\n  kernel: {kernel:?}"
+    )))
 }
 
 fn synthesize_surface_proposition(
@@ -5236,6 +5245,20 @@ fn synthesize_surface_proposition(
     arguments: &[CExpression],
     state: &CState,
 ) -> Option<ClickProposition> {
+    if let Proposition::CMemoryLoadable { base, bytes, .. } = proposition {
+        let byte_count = bytes.as_const()?;
+        if !byte_count.is_multiple_of(4) {
+            return None;
+        }
+        return Some(ClickProposition::Loadable {
+            segment: ContractSegment {
+                state: ContractSegmentState::Current,
+                base: synthesize_surface_pointer(base, parameters, arguments, state)?,
+                start: CExpression::Value(int32(0)),
+                end: CExpression::Value(int32(byte_count / 4)),
+            },
+        });
+    }
     if let Proposition::Not(body) = proposition {
         return Some(ClickProposition::Not(Box::new(
             synthesize_surface_proposition(body, parameters, arguments, state)?,
@@ -5364,17 +5387,7 @@ fn synthesize_surface_bitvector(
             synthesize_surface_bitvector(value, parameters, arguments, state)?,
         ))),
         Bitvector32Term::MemoryLoad(_, pointer) => {
-            let pointer = parameters
-                .iter()
-                .zip(arguments)
-                .find_map(|(parameter, argument)| match argument {
-                    CExpression::Value(CValue::Pointer(argument_pointer))
-                        if argument_pointer == pointer.as_ref() =>
-                    {
-                        Some(CExpression::Variable(parameter.name().to_string()))
-                    }
-                    _ => None,
-                })?;
+            let pointer = synthesize_surface_pointer(pointer, parameters, arguments, state)?;
             Some(ContractExpression::CFragment(CExpression::Load(Box::new(
                 pointer,
             ))))
@@ -5383,6 +5396,32 @@ fn synthesize_surface_bitvector(
         | Bitvector32Term::If { .. }
         | Bitvector32Term::RangeFold { .. } => None,
     }
+}
+
+fn synthesize_surface_pointer(
+    pointer: &Pointer,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    state: &CState,
+) -> Option<CExpression> {
+    parameters
+        .iter()
+        .zip(arguments)
+        .find_map(|(parameter, argument)| {
+            let CExpression::Value(CValue::Pointer(base)) = argument else {
+                return None;
+            };
+            let index = pointer.element_index_from_base(base)?;
+            let base = CExpression::Variable(parameter.name().to_string());
+            if index == Bitvector32Term::Constant(0) {
+                return Some(base);
+            }
+            let index = synthesize_surface_bitvector(&index, parameters, arguments, state)?;
+            let ContractExpression::CFragment(index) = index else {
+                return None;
+            };
+            Some(CExpression::Add(Box::new(base), Box::new(index)))
+        })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -5595,82 +5634,6 @@ fn lower_surface_candidate_at_point(
     .map_err(ClickError::new)
 }
 
-fn condition_term_contains_memory_load(condition: &ConditionTerm) -> bool {
-    match condition {
-        ConditionTerm::Constant(_) | ConditionTerm::Variable(_) => false,
-        ConditionTerm::Bitvector32SignedLessThan(left, right)
-        | ConditionTerm::Bitvector32SignedLessEqual(left, right)
-        | ConditionTerm::Bitvector32SignedGreaterThan(left, right)
-        | ConditionTerm::Bitvector32SignedGreaterEqual(left, right)
-        | ConditionTerm::Bitvector32Equal(left, right)
-        | ConditionTerm::Bitvector32SignedAddOverflows(left, right)
-        | ConditionTerm::Bitvector32SignedSubtractOverflows(left, right)
-        | ConditionTerm::Bitvector32SignedMultiplyOverflows(left, right)
-        | ConditionTerm::Bitvector32SignedDivideOverflows(left, right)
-        | ConditionTerm::Bitvector32SignedShiftLeftOverflows(left, right) => {
-            bitvector_term_contains_memory_load(left) || bitvector_term_contains_memory_load(right)
-        }
-        ConditionTerm::PointerOffsetEqual(left, right) => {
-            pointer_offset_contains_memory_load(left) || pointer_offset_contains_memory_load(right)
-        }
-        ConditionTerm::PointerEqual(left, right) => {
-            pointer_offset_contains_memory_load(&left.offset)
-                || pointer_offset_contains_memory_load(&right.offset)
-        }
-    }
-}
-
-fn bitvector_term_contains_memory_load(term: &Bitvector32Term) -> bool {
-    match term {
-        Bitvector32Term::Constant(_) | Bitvector32Term::Variable(_) => false,
-        Bitvector32Term::Add(left, right)
-        | Bitvector32Term::Subtract(left, right)
-        | Bitvector32Term::Multiply(left, right)
-        | Bitvector32Term::Divide(left, right)
-        | Bitvector32Term::Remainder(left, right)
-        | Bitvector32Term::ShiftLeft(left, right)
-        | Bitvector32Term::ArithmeticShiftRight(left, right)
-        | Bitvector32Term::BitwiseAnd(left, right)
-        | Bitvector32Term::BitwiseOr(left, right)
-        | Bitvector32Term::BitwiseXor(left, right) => {
-            bitvector_term_contains_memory_load(left) || bitvector_term_contains_memory_load(right)
-        }
-        Bitvector32Term::BitwiseNot(term) => bitvector_term_contains_memory_load(term),
-        Bitvector32Term::If {
-            condition,
-            then_term,
-            else_term,
-        } => {
-            condition_term_contains_memory_load(condition)
-                || bitvector_term_contains_memory_load(then_term)
-                || bitvector_term_contains_memory_load(else_term)
-        }
-        Bitvector32Term::RangeFold {
-            start,
-            end,
-            initial,
-            body,
-            ..
-        } => {
-            bitvector_term_contains_memory_load(start)
-                || bitvector_term_contains_memory_load(end)
-                || bitvector_term_contains_memory_load(initial)
-                || bitvector_term_contains_memory_load(body)
-        }
-        Bitvector32Term::MemoryLoad(_, _) => true,
-    }
-}
-
-fn pointer_offset_contains_memory_load(offset: &PointerOffsetTerm) -> bool {
-    match offset {
-        PointerOffsetTerm::Constant(_) | PointerOffsetTerm::Variable(_) => false,
-        PointerOffsetTerm::Add(left, right) => {
-            pointer_offset_contains_memory_load(left) || pointer_offset_contains_memory_load(right)
-        }
-        PointerOffsetTerm::Int32Scaled { value, .. } => bitvector_term_contains_memory_load(value),
-    }
-}
-
 #[allow(clippy::too_many_arguments)]
 fn record_surface_replay_tactic(
     replay: &mut TacticReplayState,
@@ -5690,43 +5653,38 @@ fn record_surface_replay_tactic(
         // the statement itself (for example an opaque call result). Only facts
         // already available at the statement entry belong in surface `using`
         // premises; replay reconstructs the statement-local facts on its own.
-        let mut premises = needed
+        let normalized_needed = needed
             .iter()
-            .filter_map(|fact| {
-                let available_fact = available
-                    .iter()
-                    .find(|available| *available == fact)
-                    .or_else(|| {
-                        let normalized = normalize_proposition(fact);
-                        available
-                            .iter()
-                            .find(|available| normalize_proposition(available) == normalized)
-                    })
-                    .or_else(|| {
-                        available.iter().find(|available| {
-                            assumptions_from_propositions(std::slice::from_ref(*available))
-                                .proves(fact)
-                        })
-                    })?;
-                Some(checked_surface_fact_at_point(
-                    replay,
-                    available_fact,
-                    available,
-                    parameters,
-                    arguments,
-                    state,
-                    predicate_environment,
-                    click_function_environment,
-                ))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        for fact in available {
-            let Proposition::ConditionIs(condition, _) = fact else {
-                continue;
-            };
-            if condition_term_contains_memory_load(condition) {
-                continue;
+            .map(|fact| (fact, normalize_proposition(fact)))
+            .collect::<Vec<_>>();
+        let mut premises = Vec::new();
+        for (fact, normalized) in normalized_needed {
+            let candidates = available.iter().filter(|available| {
+                *available == fact
+                    || normalize_proposition(available) == normalized
+                    || assumptions_from_propositions(std::slice::from_ref(*available)).proves(fact)
+            });
+            if let Some(surface) = candidates
+                .filter_map(|available_fact| {
+                    checked_surface_fact_at_point(
+                        replay,
+                        available_fact,
+                        available,
+                        parameters,
+                        arguments,
+                        state,
+                        predicate_environment,
+                        click_function_environment,
+                    )
+                    .ok()
+                })
+                .next()
+                && !premises.contains(&surface)
+            {
+                premises.push(surface);
             }
+        }
+        for fact in available {
             if let Ok(surface) = checked_surface_fact_at_point(
                 replay,
                 fact,
@@ -5816,6 +5774,16 @@ fn record_surface_replay_tactic(
         }
         ProofTactic::CertifiedFactTransport { source, target, .. } => {
             if tactic_expansion_uses_smart_step_fallback() {
+                return;
+            }
+            let is_reflexive = |proposition: &Proposition| {
+                matches!(
+                    proposition,
+                    Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), true)
+                        if left == right
+                )
+            };
+            if is_reflexive(source) && is_reflexive(target) {
                 return;
             }
             let Some(step_entry) = replay.surface_replay.last_step_entry.clone() else {
@@ -5970,6 +5938,36 @@ fn record_surface_replay_tactic(
     }
 }
 
+struct TacticTiming {
+    claim_label: String,
+    tactic_index: usize,
+    tactic_name: String,
+    start: std::time::Instant,
+}
+
+impl TacticTiming {
+    fn new(claim_label: &str, tactic_index: usize, tactic: &ProofTactic) -> Option<Self> {
+        std::env::var_os("CLICK_TIMINGS").is_some().then(|| Self {
+            claim_label: claim_label.to_string(),
+            tactic_index,
+            tactic_name: tactic_name(tactic).to_string(),
+            start: std::time::Instant::now(),
+        })
+    }
+}
+
+impl Drop for TacticTiming {
+    fn drop(&mut self) {
+        eprintln!(
+            "click timing: tactic {} {} {} {:.3}s",
+            self.claim_label,
+            self.tactic_index,
+            self.tactic_name,
+            self.start.elapsed().as_secs_f64()
+        );
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn replay_linear_tactics(
     context: ProofReplayContext,
@@ -5997,6 +5995,7 @@ fn replay_linear_tactics(
     for indexed_tactic in tactics {
         let tactic_index = indexed_tactic.index;
         let tactic = &indexed_tactic.tactic;
+        let _timing = TacticTiming::new(claim_label, tactic_index, tactic);
         let capture_this_tactic = begin_tactic_expansion_capture(
             function_block,
             claims,
@@ -6118,14 +6117,12 @@ fn replay_linear_tactics(
                 replay
                     .surface_propositions
                     .record_lowering(surface_target, &target)?;
-                let mut transport_facts = requirement_pure_facts.clone();
-                transport_facts.extend(
-                    replay
-                        .effect_facts
-                        .iter()
-                        .map(|fact| fact.proposition().clone()),
-                );
-                let transport_assumptions = assumptions_from_propositions(&transport_facts);
+                let transport_assumptions = replay
+                    .effect_facts
+                    .iter()
+                    .fold(assumptions.clone(), |assumptions, fact| {
+                        assumptions.assume_proposition(fact.proposition().clone())
+                    });
                 let theorem = prove_c_condition_fact_transport(
                     &source,
                     state.memory(),
@@ -6149,9 +6146,9 @@ fn replay_linear_tactics(
                     )));
                 }
                 if !requirement_pure_facts.contains(&target) {
-                    requirement_pure_facts.push(target);
+                    requirement_pure_facts.push(target.clone());
+                    assumptions = assumptions.assume_proposition(target);
                 }
-                assumptions = assumptions_from_propositions(&requirement_pure_facts);
             }
             ProofTactic::StepUsing(premises)
             | ProofTactic::ApplyLoopSummaryUsing { premises, .. } => {
@@ -7068,9 +7065,9 @@ fn replay_linear_tactics(
                     .surface_propositions
                     .record_lowering(&have.proposition, &fact)?;
                 if !requirement_pure_facts.contains(&fact) {
-                    requirement_pure_facts.push(fact);
+                    requirement_pure_facts.push(fact.clone());
+                    assumptions = assumptions.assume_proposition(fact);
                 }
-                assumptions = assumptions_from_propositions(&requirement_pure_facts);
             }
             ProofTactic::If(_) | ProofTactic::Advance(_) => {
                 unreachable!("structured tactics are represented by internal proof nodes")

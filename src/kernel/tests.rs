@@ -3465,6 +3465,61 @@ fn atomic_condition_fact_transport_uses_certified_effect_summary() {
 }
 
 #[test]
+fn atomic_condition_fact_transport_preserves_pointer_offset_equality() {
+    let before = CMemory::new()
+        .with_block("stable", 4)
+        .with_block("mutated", 4);
+    let after = before.clone().with_block("call-havoc:0", 0);
+    let stable = Pointer {
+        block: "stable".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let mutated = Pointer {
+        block: "mutated".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let expected = PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(345)), 4);
+    let fact = Proposition::ConditionIs(
+        ConditionTerm::pointer_offset_equal(
+            PointerOffsetTerm::scale_int32(
+                Bitvector32Term::MemoryLoad(Box::new(before.clone()), Box::new(stable.clone())),
+                4,
+            ),
+            expected.clone(),
+        ),
+        true,
+    );
+    let assumptions = Assumptions::new().assume_proposition(Proposition::CMemoryEffectSummary {
+        before,
+        after: after.clone(),
+        mutable_ranges: vec![CMemoryRange::new(
+            mutated,
+            Bitvector32Term::Constant(0),
+            Bitvector32Term::Constant(1),
+        )],
+    });
+
+    let theorem = prove_c_condition_fact_transport(&fact, &after, &assumptions)
+        .expect("the framed pointer-valued field should transport");
+    assert_eq!(
+        theorem.proposition(),
+        &Proposition::Implies(
+            Box::new(fact),
+            Box::new(Proposition::ConditionIs(
+                ConditionTerm::pointer_offset_equal(
+                    PointerOffsetTerm::scale_int32(
+                        Bitvector32Term::MemoryLoad(Box::new(after), Box::new(stable)),
+                        4,
+                    ),
+                    expected,
+                ),
+                true,
+            )),
+        )
+    );
+}
+
+#[test]
 fn equality_fact_matching_transports_both_pointer_offset_endpoints() {
     let left = Pointer {
         block: "arg-memory".into(),
