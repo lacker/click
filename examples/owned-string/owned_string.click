@@ -1,3 +1,60 @@
+theorem incremented_zero_is_one(before: int32, after: int32) {
+    requires before == 0;
+    requires after == before + 1;
+
+    ensures after == 1 by {
+        rewrite(after == before + 1);
+        rewrite(before == 0);
+        simp();
+    }
+}
+
+theorem decremented_one_is_zero(before: int32, after: int32) {
+    requires before == 1;
+    requires after == before - 1;
+
+    ensures after == 0 by {
+        rewrite(after == before - 1);
+        rewrite(before == 1);
+        simp();
+    }
+}
+
+theorem int32_equality_transitive(first: int32, second: int32, third: int32) {
+    requires first == second;
+    requires second == third;
+
+    ensures first == third by {
+        simp();
+    }
+}
+
+theorem pointer_equality_transitive(
+    first: int32*,
+    second: int32*,
+    third: int32*
+) {
+    requires first == second;
+    requires second == third;
+
+    ensures first == third by {
+        simp();
+    }
+}
+
+theorem pointer_add_zero_equals(
+    base: int32*,
+    offset: int32,
+    target: int32*
+) {
+    requires base == target;
+    requires offset == 0;
+
+    ensures base + offset == target by {
+        simp();
+    }
+}
+
 predicate terminated_at(int32 data[], int32 length) {
     data[length] == 0
 }
@@ -251,6 +308,96 @@ int32 owned_string_pipeline(
     ensures owner->len == 0;
     ensures result == first;
 } by {
+    execute_until(statement(3));
+    have owner->len == 0 by {
+        simp();
+    }
+    have owner->cap == capacity by {
+        simp();
+    }
+    have owner->len + 1 < owner->cap by {
+        simp();
+    }
+    execute_until(statement(4));
+    have at(statement(3).entry, owner->len) == 0 by {
+        simp();
+    }
+    have at(statement(3).exit, owner->len) ==
+        at(statement(3).entry, owner->len) + 1 by {
+        simp();
+    }
+    apply(incremented_zero_is_one(
+        at(statement(3).entry, owner->len),
+        at(statement(3).exit, owner->len)
+    ));
+    have owner->len == at(statement(3).exit, owner->len) by {
+        simp();
+    }
+    have owner->len == 1 by {
+        simp();
+    }
+    have owner->data == at(statement(3).entry, owner->data) by {
+        simp();
+    }
+    have at(statement(3).entry, owner->data) == data by {
+        simp();
+    }
+    apply(pointer_equality_transitive(
+        owner->data,
+        at(statement(3).entry, owner->data),
+        data
+    ));
+    apply(pointer_add_zero_equals(
+        owner->data,
+        at(statement(3).entry, owner->len),
+        data
+    ));
+    have data[0] == first by {
+        simp();
+    }
+    have 0 < owner->len by {
+        simp();
+    }
+    execute_until(statement(5));
+    have owner->len == 1 by {
+        simp();
+    }
+    have owner->data == data by {
+        simp();
+    }
+    apply(pointer_add_zero_equals(owner->data, 0, data));
+    have observed == data[0] by {
+        simp();
+    }
+    apply(int32_equality_transitive(
+        observed,
+        data[0],
+        first
+    ));
+    have 1 <= owner->len by {
+        simp();
+    }
+    execute_until(statement(6));
+    have at(statement(5).entry, owner->len) == 1 by {
+        simp();
+    }
+    have at(statement(5).exit, owner->len) ==
+        at(statement(5).entry, owner->len) - 1 by {
+        simp();
+    }
+    apply(decremented_one_is_zero(
+        at(statement(5).entry, owner->len),
+        at(statement(5).exit, owner->len)
+    ));
+    have owner->len == at(statement(5).exit, owner->len) by {
+        simp();
+    }
+    have owner->len == 0 by {
+        simp();
+    }
+    have observed == first by {
+        simp();
+    }
     execute_rest();
     simp();
 }

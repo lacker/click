@@ -144,6 +144,14 @@ pub(super) fn pointers_proven_equal_for_memory_resolution(
     pointers_proven_equal_for_memory_resolution_with_depth(left, right, assumptions, 0)
 }
 
+pub(super) fn pointer_offsets_proven_equal_for_memory_resolution(
+    left: &PointerOffsetTerm,
+    right: &PointerOffsetTerm,
+    assumptions: &Assumptions,
+) -> bool {
+    pointer_offsets_equal_for_memory_resolution(left, right, assumptions, 0) == Some(true)
+}
+
 fn pointers_proven_equal_for_memory_resolution_with_depth(
     left: &Pointer,
     right: &Pointer,
@@ -203,6 +211,14 @@ fn bitvector_terms_equal_for_memory_resolution(
     depth: usize,
 ) -> bool {
     if left == right || assumptions.bitvector_terms_equal_from_facts(left, right) {
+        return true;
+    }
+    if [1, 4].into_iter().any(|byte_width| {
+        assumptions.exact_condition_value(&ConditionTerm::pointer_offset_equal(
+            PointerOffsetTerm::scale_int32(left.clone(), byte_width),
+            PointerOffsetTerm::scale_int32(right.clone(), byte_width),
+        )) == Some(true)
+    }) {
         return true;
     }
     if depth > MEMORY_RESOLUTION_ALIAS_DEPTH_LIMIT {
@@ -290,7 +306,10 @@ pub(super) fn memory_load_terms_equal_for_fact_transport(
     else {
         return false;
     };
-    pointers_proven_equal_for_memory_resolution(left_pointer, right_pointer, assumptions)
+    (pointers_proven_equal_for_memory_resolution(left_pointer, right_pointer, assumptions)
+        || left_pointer.block == right_pointer.block
+            && assumptions
+                .has_pointer_offset_snapshot_fact(&left_pointer.offset, &right_pointer.offset))
         && memory_snapshots_match_for_resolution(
             left_memory,
             right_memory,

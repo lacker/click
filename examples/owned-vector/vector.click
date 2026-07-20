@@ -1,3 +1,12 @@
+theorem int32_equality_transitive(first: int32, second: int32, third: int32) {
+    requires first == second;
+    requires second == third;
+
+    ensures first == third by {
+        simp();
+    }
+}
+
 resource empty_vector(owner: struct vector*) {
     owns owner->len;
     owns owner->cap;
@@ -58,7 +67,12 @@ int32 vector_get(struct vector* owner, int32 index) {
     views nonempty_vector(owner);
     immutable;
 
-    ensures result == (owner->data)[index] by auto;
+    ensures result == (owner->data)[index];
+    ensures result == old((owner->data)[index]);
+} by {
+    execute_rest();
+    frame();
+    simp();
 }
 
 int32 vector_set(struct vector* owner, int32 index, int32 value) {
@@ -218,8 +232,61 @@ int32 vector_pipeline(
     produces empty_vector(owner);
     ensures result == replacement;
 } by {
+    execute_until(statement(3));
+    have owner->len == 0 by {
+        simp();
+    }
+    have owner->cap == capacity by {
+        simp();
+    }
+    execute_until(statement(4));
+    have owner->len == 1 by {
+        simp();
+    }
+    have 0 < owner->len by {
+        simp();
+    }
+    execute_until(statement(5));
+    have owner->len == 1 by {
+        simp();
+    }
+    have 0 < owner->len by {
+        simp();
+    }
     execute_until(read_replacement);
+    have at(statement(5).entry, owner->len) == 1 by {
+        simp();
+    }
+    have owner->len == at(statement(5).entry, owner->len) by {
+        simp();
+    }
+    apply(int32_equality_transitive(
+        owner->len,
+        at(statement(5).entry, owner->len),
+        1
+    ));
+    have owner->len == 1 by {
+        simp();
+    }
     observe(nonempty_vector(owner));
+    have (owner->data)[0] == replacement by {
+        simp();
+    }
+    execute_until(statement(7));
+    have observed == at(statement(6).entry, (owner->data)[0]) by {
+        simp();
+    }
+    have at(statement(6).entry, (owner->data)[0]) == replacement by {
+        simp();
+    }
+    apply(int32_equality_transitive(
+        observed,
+        at(statement(6).entry, (owner->data)[0]),
+        replacement
+    ));
+    have observed == replacement by {
+        simp();
+    }
     execute_rest();
     simp();
 }

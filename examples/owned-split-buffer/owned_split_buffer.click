@@ -1,3 +1,23 @@
+theorem incremented_one_is_two(before: int32, after: int32) {
+    requires before == 1;
+    requires after == before + 1;
+
+    ensures after == 2 by {
+        rewrite(after == before + 1);
+        rewrite(before == 1);
+        simp();
+    }
+}
+
+theorem int32_equality_transitive(first: int32, second: int32, third: int32) {
+    requires first == second;
+    requires second == third;
+
+    ensures first == third by {
+        simp();
+    }
+}
+
 resource owned_split_buffer(owner: struct owned_split_buffer*) {
     owns owner->split;
     owns owner->len;
@@ -53,6 +73,9 @@ int32 owned_split_buffer_set_left(
     mutable (owner->data)[index..index + 1];
     ensures result == value;
     ensures (owner->data)[index] == value;
+    ensures owner->split == old(owner->split);
+    ensures owner->len == old(owner->len);
+    ensures owner->data == old(owner->data);
 } by {
     unfold(owned_split_buffer(owner));
     execute_rest();
@@ -73,6 +96,9 @@ int32 owned_split_buffer_set_right(
     mutable (owner->data)[index..index + 1];
     ensures result == value;
     ensures (owner->data)[index] == value;
+    ensures owner->split == old(owner->split);
+    ensures owner->len == old(owner->len);
+    ensures owner->data == old(owner->data);
 } by {
     unfold(owned_split_buffer(owner));
     execute_rest();
@@ -136,17 +162,91 @@ int32 owned_split_buffer_pipeline(
     ensures result == right_value;
 } by {
     execute_until(statement(4));
+    have owner->data == data by {
+        simp();
+    }
+    have data[0] == left_value by {
+        simp();
+    }
     have 1 < owner->len by {
         simp();
     }
     execute_until(statement(5));
+    have owner->data == data by {
+        simp();
+    }
+    have data[0] == left_value by {
+        simp();
+    }
+    have data[1] == right_value by {
+        simp();
+    }
     have owner->split < owner->len by {
         simp();
     }
     execute_until(statement(6));
+    have owner->data == data by {
+        simp();
+    }
+    have data[0] == left_value by {
+        simp();
+    }
+    have data[1] == right_value by {
+        simp();
+    }
+    have at(statement(5).entry, owner->split) == 1 by {
+        simp();
+    }
+    have at(statement(5).exit, owner->split) ==
+        at(statement(5).entry, owner->split) + 1 by {
+        simp();
+    }
+    apply(incremented_one_is_two(
+        at(statement(5).entry, owner->split),
+        at(statement(5).exit, owner->split)
+    ));
+    have owner->split == 2 by {
+        simp();
+    }
     have 1 < owner->split by {
         simp();
     }
+    have owner->len == length by {
+        simp();
+    }
+    have owner->data == data by {
+        simp();
+    }
+    have data[0] == left_value by {
+        simp();
+    }
+    have data[1] == right_value by {
+        simp();
+    }
+    execute_step();
+    have owner->split == 2 by {
+        simp();
+    }
+    have owner->len == length by {
+        simp();
+    }
+    have owner->data == data by {
+        simp();
+    }
+    have data[0] == left_value by {
+        simp();
+    }
+    have data[1] == right_value by {
+        simp();
+    }
+    have read_value == data[1] by {
+        simp();
+    }
+    apply(int32_equality_transitive(
+        read_value,
+        data[1],
+        right_value
+    ));
     execute_rest();
     simp();
 }

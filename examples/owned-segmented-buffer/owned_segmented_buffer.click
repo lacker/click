@@ -1,3 +1,12 @@
+theorem int32_equality_transitive(first: int32, second: int32, third: int32) {
+    requires first == second;
+    requires second == third;
+
+    ensures first == third by {
+        simp();
+    }
+}
+
 resource owned_segment(data: int32*, length: int32) {
     owns data[0..length];
     fact 0 <= length;
@@ -83,6 +92,10 @@ int32 owned_segmented_buffer_set_first(
     mutable (owner->first_data)[index..index + 1];
     ensures result == value;
     ensures (owner->first_data)[index] == value;
+    ensures owner->first_len == old(owner->first_len);
+    ensures owner->second_len == old(owner->second_len);
+    ensures owner->first_data == old(owner->first_data);
+    ensures owner->second_data == old(owner->second_data);
 } by {
     unfold(owned_segmented_buffer(owner));
     unfold(owned_segment(owner->first_data, owner->first_len));
@@ -108,6 +121,10 @@ int32 owned_segmented_buffer_set_second(
     mutable (owner->second_data)[index..index + 1];
     ensures result == value;
     ensures (owner->second_data)[index] == value;
+    ensures owner->first_len == old(owner->first_len);
+    ensures owner->second_len == old(owner->second_len);
+    ensures owner->first_data == old(owner->first_data);
+    ensures owner->second_data == old(owner->second_data);
 } by {
     unfold(owned_segmented_buffer(owner));
     unfold(owned_segment(owner->second_data, owner->second_len));
@@ -165,6 +182,54 @@ int32 owned_segmented_buffer_pipeline(
     ensures second_data[0] == second_value;
     ensures result == first_value;
 } by {
+    execute_until(statement(3));
+    have 0 < owner->first_len by {
+        simp();
+    }
+    have 0 < owner->second_len by {
+        simp();
+    }
+    have owner->first_data == first_data by {
+        simp();
+    }
+    have owner->second_data == second_data by {
+        simp();
+    }
+    execute_step();
+    have 0 < owner->second_len by {
+        simp();
+    }
+    have owner->first_data == first_data by {
+        simp();
+    }
+    have owner->second_data == second_data by {
+        simp();
+    }
+    have first_data[0] == first_value by {
+        simp();
+    }
+    execute_step();
+    have 0 < owner->first_len by {
+        simp();
+    }
+    have owner->first_data == first_data by {
+        simp();
+    }
+    have owner->second_data == second_data by {
+        simp();
+    }
+    have second_data[0] == second_value by {
+        simp();
+    }
+    execute_step();
+    have read_value == first_data[0] by {
+        simp();
+    }
+    apply(int32_equality_transitive(
+        read_value,
+        first_data[0],
+        first_value
+    ));
     execute_rest();
     simp();
 }

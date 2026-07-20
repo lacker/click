@@ -1,3 +1,36 @@
+theorem incremented_zero_is_one(before: int32, after: int32) {
+    requires before == 0;
+    requires after == before + 1;
+
+    ensures after == 1 by {
+        rewrite(after == before + 1);
+        rewrite(before == 0);
+        simp();
+    }
+}
+
+theorem pointer_equality_transitive(
+    first: int32*,
+    second: int32*,
+    third: int32*
+) {
+    requires first == second;
+    requires second == third;
+
+    ensures first == third by {
+        simp();
+    }
+}
+
+theorem int32_equality_transitive(first: int32, second: int32, third: int32) {
+    requires first == second;
+    requires second == third;
+
+    ensures first == third by {
+        simp();
+    }
+}
+
 resource readable_input(data: int32*, length: int32) {
     views data[0..length];
     fact 0 <= length;
@@ -143,6 +176,58 @@ int32 input_cursor_shared_pipeline(
     ) by {
         simp();
     }
+    have left->pos < left->len by {
+        simp();
+    }
+    have left->pos == 0 by {
+        simp();
+    }
+    have left->data == data by {
+        simp();
+    }
+    execute_step();
+    have right->pos < right->len by {
+        simp();
+    }
+    have right->pos == 0 by {
+        simp();
+    }
+    have right->data == left->data by {
+        simp();
+    }
+    have left->data == data by {
+        simp();
+    }
+    apply(pointer_equality_transitive(right->data, left->data, data));
+    execute_step();
+    have at(statement(5).entry, left->pos) == 0 by {
+        simp();
+    }
+    have left->pos == at(statement(5).entry, left->pos) + 1 by {
+        simp();
+    }
+    apply(incremented_zero_is_one(
+        at(statement(5).entry, left->pos),
+        left->pos
+    ));
+    execute_step();
+    have right->pos == 0 by {
+        simp();
+    }
+    have right->data == data by {
+        simp();
+    }
+    have right_value == (right->data)[right->pos] by {
+        simp();
+    }
+    have (right->data)[right->pos] == data[0] by {
+        simp();
+    }
+    apply(int32_equality_transitive(
+        right_value,
+        (right->data)[right->pos],
+        data[0]
+    ));
     execute_rest();
     frame();
     simp();

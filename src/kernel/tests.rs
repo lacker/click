@@ -3465,6 +3465,127 @@ fn atomic_condition_fact_transport_uses_certified_effect_summary() {
 }
 
 #[test]
+fn equality_fact_matching_transports_both_pointer_offset_endpoints() {
+    let left = Pointer {
+        block: "arg-memory".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let right = Pointer {
+        block: "arg-memory".into(),
+        offset: PointerOffsetTerm::Constant(4),
+    };
+    let local = Pointer {
+        block: "local:value".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let before = CMemory::new()
+        .with_block("arg-memory", 8)
+        .with_block("local:value", 4);
+    let after = before
+        .clone()
+        .store(local, CValue::Int32(Bitvector32Term::Constant(7)));
+    let load_offset = |memory: &CMemory, pointer: &Pointer| {
+        PointerOffsetTerm::scale_int32(
+            Bitvector32Term::MemoryLoad(Box::new(memory.clone()), Box::new(pointer.clone())),
+            4,
+        )
+    };
+    let fact = Proposition::ConditionIs(
+        ConditionTerm::pointer_offset_equal(
+            load_offset(&before, &left),
+            load_offset(&before, &right),
+        ),
+        true,
+    );
+    let target = Proposition::ConditionIs(
+        ConditionTerm::pointer_offset_equal(
+            load_offset(&after, &left),
+            load_offset(&after, &right),
+        ),
+        true,
+    );
+    let assumptions = Assumptions::new().assume_proposition(fact);
+
+    assert!(assumptions.proves(&target));
+}
+
+#[test]
+fn memory_load_equality_combines_equal_pointer_base_and_zero_index() {
+    let memory = CMemory::new().with_block("arg-memory", 64);
+    let owner = Bitvector32Term::Variable(Variable(90));
+    let data = Bitvector32Term::Variable(Variable(91));
+    let owner_offset = PointerOffsetTerm::scale_int32(owner, 4);
+    let data_field = Pointer {
+        block: "arg-memory".into(),
+        offset: PointerOffsetTerm::add(owner_offset.clone(), PointerOffsetTerm::Constant(8)),
+    };
+    let pos_field = Pointer {
+        block: "arg-memory".into(),
+        offset: owner_offset,
+    };
+    let data_load = Bitvector32Term::MemoryLoad(Box::new(memory.clone()), Box::new(data_field));
+    let pos_load = Bitvector32Term::MemoryLoad(Box::new(memory.clone()), Box::new(pos_field));
+    let indexed = Pointer {
+        block: "arg-memory".into(),
+        offset: PointerOffsetTerm::add(
+            PointerOffsetTerm::scale_int32(data_load.clone(), 4),
+            PointerOffsetTerm::scale_int32(pos_load.clone(), 4),
+        ),
+    };
+    let direct = Pointer {
+        block: "arg-memory".into(),
+        offset: PointerOffsetTerm::scale_int32(data.clone(), 4),
+    };
+    let assumptions = Assumptions::new()
+        .assume_proposition(Proposition::ConditionIs(
+            ConditionTerm::pointer_offset_equal(
+                PointerOffsetTerm::scale_int32(data_load, 4),
+                PointerOffsetTerm::scale_int32(data, 4),
+            ),
+            true,
+        ))
+        .assume_proposition(Proposition::ConditionIs(
+            ConditionTerm::equal(pos_load, Bitvector32Term::Constant(0)),
+            true,
+        ));
+    let target = Proposition::ConditionIs(
+        ConditionTerm::equal(
+            Bitvector32Term::MemoryLoad(Box::new(memory.clone()), Box::new(indexed)),
+            Bitvector32Term::MemoryLoad(Box::new(memory), Box::new(direct)),
+        ),
+        true,
+    );
+
+    assert!(assumptions.proves(&target));
+}
+
+#[test]
+fn pointer_offset_equality_combines_equal_base_and_zero_index() {
+    let base = Bitvector32Term::Variable(Variable(90));
+    let target = Bitvector32Term::Variable(Variable(91));
+    let index = Bitvector32Term::Variable(Variable(92));
+    let base_offset = PointerOffsetTerm::scale_int32(base, 4);
+    let target_offset = PointerOffsetTerm::scale_int32(target, 4);
+    let assumptions = Assumptions::new()
+        .assume_condition(
+            ConditionTerm::pointer_offset_equal(base_offset.clone(), target_offset.clone()),
+            true,
+        )
+        .assume_condition(
+            ConditionTerm::equal(index.clone(), Bitvector32Term::Constant(0)),
+            true,
+        );
+
+    assert_eq!(
+        assumptions.decide(&ConditionTerm::pointer_offset_equal(
+            PointerOffsetTerm::add(base_offset, PointerOffsetTerm::scale_int32(index, 4),),
+            target_offset,
+        )),
+        Some(true),
+    );
+}
+
+#[test]
 fn atomic_condition_fact_transport_uses_exact_separate_range() {
     let before = CMemory::new();
     let after = before.clone().with_block("call-havoc:0", 0);

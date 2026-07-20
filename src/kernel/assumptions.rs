@@ -1,4 +1,35 @@
 use super::prelude::*;
+use std::cell::Cell;
+
+// Global equality resolution can re-enter itself through snapshot and alias
+// facts. Two levels retain the framed symbolic-load cases while making failed
+// searches terminate conservatively instead of overflowing the stack.
+const MEMORY_LOAD_EQUALITY_DEPTH_LIMIT: usize = 2;
+
+thread_local! {
+    static MEMORY_LOAD_EQUALITY_DEPTH: Cell<usize> = const { Cell::new(0) };
+}
+
+struct MemoryLoadEqualityDepthGuard;
+
+impl MemoryLoadEqualityDepthGuard {
+    fn enter() -> Option<Self> {
+        MEMORY_LOAD_EQUALITY_DEPTH.with(|depth| {
+            let current = depth.get();
+            if current >= MEMORY_LOAD_EQUALITY_DEPTH_LIMIT {
+                return None;
+            }
+            depth.set(current + 1);
+            Some(Self)
+        })
+    }
+}
+
+impl Drop for MemoryLoadEqualityDepthGuard {
+    fn drop(&mut self) {
+        MEMORY_LOAD_EQUALITY_DEPTH.with(|depth| depth.set(depth.get() - 1));
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum SignedConstantResolution {
@@ -679,6 +710,9 @@ impl Assumptions {
             }
             ConditionTerm::PointerOffsetEqual(left, right) if left == right => Some(true),
             ConditionTerm::PointerOffsetEqual(left, right) => {
+                if pointer_offsets_proven_equal_for_memory_resolution(left, right, self) {
+                    return Some(true);
+                }
                 match (left.as_ref().as_const(), right.as_ref().as_const()) {
                     (Some(left), Some(right)) => Some(left == right),
                     _ => {
@@ -1630,6 +1664,12 @@ impl Assumptions {
         left: &Bitvector32Term,
         right: &Bitvector32Term,
     ) -> bool {
+        let Some(_depth_guard) = MemoryLoadEqualityDepthGuard::enter() else {
+            return false;
+        };
+        if memory_load_terms_equal_for_fact_transport(left, right, self) {
+            return true;
+        }
         if let Some(left) = self.resolve_memory_load_term(left) {
             return self.bitvector_terms_proven_equal(&left, right);
         }
@@ -2647,6 +2687,10 @@ impl Assumptions {
                         && self.pointer_offset_terms_equal_for_transport(fact_right, target_left)
                     || fact_left == target_left
                         && self.pointer_offset_terms_equal_for_transport(fact_right, target_right)
+                    || self.pointer_offset_terms_snapshot_equivalent(fact_left, target_left)
+                        && self.pointer_offset_terms_snapshot_equivalent(fact_right, target_right)
+                    || self.pointer_offset_terms_snapshot_equivalent(fact_left, target_right)
+                        && self.pointer_offset_terms_snapshot_equivalent(fact_right, target_left)
             }
             (
                 ConditionTerm::Bitvector32SignedLessThan(fact_left, fact_right),
@@ -2787,6 +2831,85 @@ impl Assumptions {
                     && self.pointer_offset_terms_equal_for_transport(left_b, right_b)
                     || self.pointer_offset_terms_equal_for_transport(left_a, right_b)
                         && self.pointer_offset_terms_equal_for_transport(left_b, right_a)
+            }
+            _ => false,
+        }
+    }
+
+    fn pointer_offset_terms_snapshot_equivalent(
+        &self,
+        left: &PointerOffsetTerm,
+        right: &PointerOffsetTerm,
+    ) -> bool {
+        if left == right {
+            return true;
+        }
+        match (left, right) {
+            (
+                PointerOffsetTerm::Int32Scaled {
+                    value: left,
+                    byte_width: left_width,
+                },
+                PointerOffsetTerm::Int32Scaled {
+                    value: right,
+                    byte_width: right_width,
+                },
+            ) => left_width == right_width && self.bitvector_terms_snapshot_equivalent(left, right),
+            (PointerOffsetTerm::Add(left_a, left_b), PointerOffsetTerm::Add(right_a, right_b)) => {
+                self.pointer_offset_terms_snapshot_equivalent(left_a, right_a)
+                    && self.pointer_offset_terms_snapshot_equivalent(left_b, right_b)
+                    || self.pointer_offset_terms_snapshot_equivalent(left_a, right_b)
+                        && self.pointer_offset_terms_snapshot_equivalent(left_b, right_a)
+            }
+            _ => false,
+        }
+    }
+
+    pub(super) fn has_pointer_offset_snapshot_fact(
+        &self,
+        left: &PointerOffsetTerm,
+        right: &PointerOffsetTerm,
+    ) -> bool {
+        // Keep this deliberately structural and one-hop. Callers use it only
+        // to move an already-certified address equality between framed memory
+        // snapshots, never to synthesize a new alias relationship.
+        self.condition_facts.iter().any(|(condition, value)| {
+            if !*value {
+                return false;
+            }
+            let ConditionTerm::PointerOffsetEqual(fact_left, fact_right) = condition else {
+                return false;
+            };
+            self.pointer_offset_terms_snapshot_equivalent(fact_left, left)
+                && self.pointer_offset_terms_snapshot_equivalent(fact_right, right)
+                || self.pointer_offset_terms_snapshot_equivalent(fact_left, right)
+                    && self.pointer_offset_terms_snapshot_equivalent(fact_right, left)
+        })
+    }
+
+    fn bitvector_terms_snapshot_equivalent(
+        &self,
+        left: &Bitvector32Term,
+        right: &Bitvector32Term,
+    ) -> bool {
+        if left == right {
+            return true;
+        }
+        match (left, right) {
+            (Bitvector32Term::MemoryLoad(_, _), Bitvector32Term::MemoryLoad(_, _)) => {
+                memory_load_terms_equal_for_fact_transport(left, right, self)
+            }
+            (Bitvector32Term::Add(left_a, left_b), Bitvector32Term::Add(right_a, right_b))
+            | (
+                Bitvector32Term::Subtract(left_a, left_b),
+                Bitvector32Term::Subtract(right_a, right_b),
+            )
+            | (
+                Bitvector32Term::Multiply(left_a, left_b),
+                Bitvector32Term::Multiply(right_a, right_b),
+            ) => {
+                self.bitvector_terms_snapshot_equivalent(left_a, right_a)
+                    && self.bitvector_terms_snapshot_equivalent(left_b, right_b)
             }
             _ => false,
         }
