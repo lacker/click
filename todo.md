@@ -42,6 +42,39 @@ options until the correctness and corpus audit below are complete.
 
 ## Current Implementation
 
+### Example-suite performance target
+
+Treat example verification as an interactive operation, not a batch workload.
+The corpus currently contains seven projects and eight Click sidecars, and the
+test harness runs the projects sequentially.
+
+The target is:
+
+- every example project verifies in at most **1.0 second**;
+- the complete warm debug example test finishes in at most **8 seconds**;
+- compilation, Cargo startup, and cold filesystem time are excluded;
+- measure the verifier time reported by the test harness from
+  `cargo test --test examples --quiet`;
+- retain `CLICK_EXAMPLE=<project>` for focused measurements.
+
+The 2026-07-19 baseline was 2,330.65 seconds for the full suite. The small
+`jsonc-refcount` project already takes 0.02 seconds of test time, confirming
+that one-second projects are realistic rather than merely aspirational. The
+owned examples should become similarly direct once their orchestration tactics
+are replaced with bounded simple steps and the remaining simple-step hot paths
+are fixed.
+
+Use three milestones while closing the gap, always working on one focused
+project or tactic rather than running the full slow suite:
+
+1. No individual project over 60 seconds.
+2. No individual project over 10 seconds and the suite under 60 seconds.
+3. No individual project over 1 second and the suite under 8 seconds.
+
+Do not add a permanent 2,330-second performance test. Once milestone 2 is
+reached, add per-project timing diagnostics and enforce a temporary 10-second
+ceiling; tighten that ceiling to one second at milestone 3.
+
 ### User-facing command
 
 ```text
