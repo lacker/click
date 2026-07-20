@@ -5942,16 +5942,34 @@ struct TacticTiming {
     claim_label: String,
     tactic_index: usize,
     tactic_name: String,
+    statement_index: usize,
     start: std::time::Instant,
 }
 
 impl TacticTiming {
-    fn new(claim_label: &str, tactic_index: usize, tactic: &ProofTactic) -> Option<Self> {
-        std::env::var_os("CLICK_TIMINGS").is_some().then(|| Self {
-            claim_label: claim_label.to_string(),
-            tactic_index,
-            tactic_name: tactic_name(tactic).to_string(),
-            start: std::time::Instant::now(),
+    fn new(
+        claim_label: &str,
+        tactic_index: usize,
+        tactic: &ProofTactic,
+        statement_index: usize,
+    ) -> Option<Self> {
+        std::env::var_os("CLICK_TIMINGS").is_some().then(|| {
+            if std::env::var_os("CLICK_TIMING_STARTS").is_some() {
+                eprintln!(
+                    "click timing: started tactic {} {} {} statement {}",
+                    claim_label,
+                    tactic_index,
+                    tactic_name(tactic),
+                    statement_index
+                );
+            }
+            Self {
+                claim_label: claim_label.to_string(),
+                tactic_index,
+                tactic_name: tactic_name(tactic).to_string(),
+                statement_index,
+                start: std::time::Instant::now(),
+            }
         })
     }
 }
@@ -5959,10 +5977,11 @@ impl TacticTiming {
 impl Drop for TacticTiming {
     fn drop(&mut self) {
         eprintln!(
-            "click timing: tactic {} {} {} {:.3}s",
+            "click timing: tactic {} {} {} statement {} {:.6}s",
             self.claim_label,
             self.tactic_index,
             self.tactic_name,
+            self.statement_index,
             self.start.elapsed().as_secs_f64()
         );
     }
@@ -5995,7 +6014,12 @@ fn replay_linear_tactics(
     for indexed_tactic in tactics {
         let tactic_index = indexed_tactic.index;
         let tactic = &indexed_tactic.tactic;
-        let _timing = TacticTiming::new(claim_label, tactic_index, tactic);
+        let _timing = TacticTiming::new(
+            claim_label,
+            tactic_index,
+            tactic,
+            replay.frontier.next_statement_index,
+        );
         let capture_this_tactic = begin_tactic_expansion_capture(
             function_block,
             claims,

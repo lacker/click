@@ -62,6 +62,28 @@ child directory.
 Use example projects for larger library-shaped fixtures. Keep them small enough
 that a reader can understand the proof boundary.
 
+### Profiling slow proof steps
+
+Use `click-profile` to find proof steps slower than a threshold without letting
+one project run indefinitely:
+
+```sh
+cargo run --quiet --bin click-profile -- \
+  --threshold 1s --time-limit 25s examples
+```
+
+Pass either one example-project directory or the complete `examples`
+directory. The time limit applies separately to each project. Completed slow
+steps are sorted by duration. If a project reaches its limit, the report names
+the active function, tactic, and zero-based source-statement index, so the next
+profiling run can advance after that local bottleneck is fixed.
+
+The bounded report is intentionally a frontier rather than an exhaustive
+profile beyond timed-out work. Fix or expand the first slow statements and run
+the same command again. For raw function and tactic timing, set
+`CLICK_TIMINGS=1`; add `CLICK_TIMING_STARTS=1` when an externally interrupted
+run should identify its active statement.
+
 ## Unit Tests
 
 Rust unit tests are appropriate when the behavior is lower-level than a sidecar

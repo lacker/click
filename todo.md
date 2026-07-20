@@ -73,6 +73,45 @@ CLICK_TIMINGS=1 CLICK_EXAMPLE=owned-segmented-buffer \
   cargo test --test examples -- --nocapture
 ```
 
+Each tactic line includes the next source-statement index at its entry. For a
+bounded profiling run, also set `CLICK_TIMING_STARTS=1`; if the process is
+stopped while a tactic is still running, the final `started tactic` line names
+the active function, tactic, and statement instead of losing that sample.
+
+For the normal optimization loop, use the dedicated profiler instead of the
+raw timing stream:
+
+```sh
+cargo run --quiet --bin click-profile -- \
+  --threshold 1s --time-limit 25s examples
+```
+
+The path may be one example project or the `examples` directory. The threshold
+filters completed proof steps, and the time limit applies separately to each
+project. Results are sorted slowest first. When a project reaches its limit,
+the report includes the active function, tactic, and source-statement index.
+This makes the intended workflow bounded: fix the reported frontier, rerun the
+profiler, and let it advance farther through that project.
+
+The first 25-second-per-project census on 2026-07-20 changed the immediate
+priority order. The segmented-buffer transports are not the largest global
+targets. The first slow frontiers are:
+
+1. The branch-local `vector_set` calls in `vector_replace_if`, statements 4 and
+   5, measured at about 24 and 27 seconds in the longer focused probe.
+2. The store at statement 0 of `owned_string_set`, whose `execute_step()` took
+   21.0 seconds (10.5 seconds for certified replay alone).
+3. `input_cursor_clone`'s field-copy proof, 20.0 seconds overall, with
+   statements 1 and 2 individually taking 3.7 and 4.0 seconds.
+4. The `owned_split_buffer_set_right` call at statement 4 of the split-buffer
+   pipeline, which was still active at that project's 25-second cutoff.
+
+The largest completed segmented-buffer transports were 1.36, 1.18, and 1.06
+seconds. They remain worthwhile, but follow the frontiers above unless a shared
+transport fix is expected to benefit several projects. A bounded census is not
+an exhaustive ranking of code beyond a timed-out frontier; rerunning after each
+fix is how the tool discovers the next layer without a full slow pass.
+
 The first statement-level optimization on 2026-07-20 targeted the second
 `owned_segmented_buffer_set_second` call in
 `owned_segmented_buffer_pipeline`. Replacing its 14.3-second
@@ -82,14 +121,15 @@ the seven entry facts needed after the separate clone mutation, including two
 pointer-valued owner fields. The focused project improved from 34.05 seconds to
 about 22.2 seconds (35 percent) without expanding the rest of the proof.
 
-The remaining time is now visible rather than hidden in that call: the seven
-explicit `transport` tactics total about 6.8 seconds, standalone
+The remaining local time is now visible rather than hidden in that call: the
+seven explicit `transport` tactics total about 6.8 seconds, standalone
 `owned_segmented_buffer_set_second` takes about 5.9 seconds, and standalone
 `owned_segmented_buffer_get_first` takes about 3.7 seconds. The next iteration
-should make one explicit transport cheap, then teach statement expansion to
-surface the resource prerequisites needed by the standalone read/store steps.
-Repeat from the new timing profile; do not run the full corpus between these
-focused iterations.
+within this project should make one explicit transport cheap, then teach
+statement expansion to surface the resource prerequisites needed by the
+standalone read/store steps. Globally, use the profiler ranking above instead.
+Repeat from the new timing profile; do not run the full corpus between focused
+iterations.
 
 Use three milestones while closing the gap, always working on one focused
 project or tactic rather than running the full slow suite:
