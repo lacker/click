@@ -101,8 +101,26 @@ int32 owned_split_buffer_set_right(
     ensures owner->data == old(owner->data);
 } by {
     unfold(owned_split_buffer(owner));
-    execute_step();
-    execute_step();
+    step using {
+        fact load_int32(owner) <= index;
+        fact index < load_int32((owner + 1));
+        fact loadable(owner[0..1]);
+        fact loadable((owner + 1)[0..1]);
+        fact loadable((owner + 2)[0..2]);
+        fact 0 <= load_int32(owner);
+        fact load_int32(owner) <= load_int32((owner + 1));
+        fact separate(memory(owner[0..4]), memory(load_int32_pointer((owner + 2))[0..load_int32((owner + 1))]));
+    }
+    step using {
+        fact load_int32(owner) <= index;
+        fact index < load_int32((owner + 1));
+        fact loadable(old(owner[0..1]));
+        fact loadable(old((owner + 1)[0..1]));
+        fact loadable(old((owner + 2)[0..2]));
+        fact 0 <= load_int32(owner);
+        fact load_int32(owner) <= load_int32((owner + 1));
+        fact separate(memory(owner[0..4]), memory(load_int32_pointer((owner + 2))[0..load_int32((owner + 1))]));
+    }
     fold(owned_split_buffer(owner));
     have index < index + 1 by { simp(); }
     frame();
