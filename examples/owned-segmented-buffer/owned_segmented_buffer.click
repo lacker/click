@@ -100,7 +100,17 @@ int32 owned_segmented_buffer_set_first(
     unfold(owned_segmented_buffer(owner));
     unfold(owned_segment(owner->first_data, owner->first_len));
     execute_step();
-    execute_step();
+    step using {
+        fact 0 <= index;
+        fact index < load_int32(owner);
+        fact loadable(old(owner[0..1]));
+        fact loadable(old((owner + 1)[0..1]));
+        fact loadable(old((owner + 2)[0..2]));
+        fact loadable(old((owner + 4)[0..2]));
+        fact 1 <= load_int32(owner);
+        fact 1 <= load_int32((owner + 1));
+        fact 0 <= load_int32(owner);
+    }
     have 0 <= owner->first_len by { simp(); }
     fold(owned_segment(owner->first_data, owner->first_len));
     have 1 <= owner->first_len by { simp(); }
