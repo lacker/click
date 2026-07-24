@@ -123,6 +123,57 @@ roughly 21 + 20 seconds with the incomplete certificate to a 3.2-second step
 with the following proof below the two-second reporting threshold. Treat cost
 migration into the suffix as an expansion bug, not as successful progress.
 
+### 2026-07-24 focused expansion pass
+
+The two-second slow-step pass now has durable, one-change-at-a-time checkpoints
+on `master`:
+
+- `input_cursor_clone`: split the six-statement execution (`d54f46c`) and
+  expanded the return statement (`e050622`).
+- `owned_string_set`: expanded the store (`2071717`), with unfolded-fact
+  preservation fixed in `9595d7e`; `owned_string_push` is split into six
+  sub-two-second statements (`a78ab85`).
+- `vector_set`: split its execution (`27b2b62`) and expanded the expensive
+  store (`9dac00b`). `vector_replace_if`'s three-statement prefix is split
+  (`4ab99ae`) and statement 2 is explicit (`57cb0cc`).
+- Split-buffer: `move_right` (`1b4346d`) and `set_right` (`ad109e5`) no longer
+  report completed steps over two seconds before the pipeline frontier.
+- Segmented-buffer: both setters are split, and both store statements have
+  explicit checked certificates (`826d33f`, `067dd96`). The complete focused
+  example test remains green.
+
+Do not interpret a project timeout as a regression by itself: the profiler's
+limit applies to the whole project, and successful frontier work causes it to
+spend the same budget later in the file. Compare the named completed steps and
+active frontier.
+
+The remaining high-value blockers found during this pass are:
+
+1. `vector_replace_if` has a branch-local `execute_step` (statement 4, and
+   symmetrically statement 5) that consumes the 20-second focused budget. The
+   CLI can select only top-level tactics, so it cannot yet expand tactics nested
+   inside `advance`.
+2. `input_cursor_clone` statements 1 and 2 still take roughly 7–8 seconds.
+   Their generated transport certificates do not replay because the transported
+   source fact is not an exact fact at the later snapshot. Preserve distinct
+   call identities and explicitly certify the left-cursor bound across the
+   separate clone mutation before accepting these expansions.
+3. Expanding `owned_string_push_preserves_first`, `vector_fill`, and the first
+   split-buffer pipeline `execute_until` exceeds the CLI watchdog (25 seconds;
+   the first and pipeline also exceeded 60 seconds). The watchdog bounds hangs,
+   but the expander needs cheaper prefix replay or finer selection to make these
+   targets practical.
+4. Expanding the immutable `owned_segmented_buffer_get_first` read to
+   `step using` fails prefix replay with seven statement successors. This is an
+   expansion ambiguity bug, not a certificate to hand-edit around.
+
+The next implementation priority is nested tactic selection inside `advance`,
+because it unlocks the largest known smart-tactic cost. After that, fix the
+snapshot-aware input-cursor transports, then the immutable-read successor
+ambiguity. Keep using a two-second reporting threshold while optimizing the
+examples; simple tactics above the threshold are engine-performance bugs rather
+than expansion candidates.
+
 The first statement-level optimization on 2026-07-20 targeted the second
 `owned_segmented_buffer_set_second` call in
 `owned_segmented_buffer_pipeline`. Replacing its 14.3-second
