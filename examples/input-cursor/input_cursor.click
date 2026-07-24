@@ -144,7 +144,10 @@ int32 input_cursor_clone(
     ensures target->data == source->data;
 } by {
     observe(input_cursor(source));
-    execute_rest();
+    execute_step();
+    execute_step();
+    execute_step();
+    execute_step();
     fold(input_cursor(target));
     frame();
     simp();
