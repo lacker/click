@@ -118,7 +118,8 @@ int32 owned_split_buffer_move_right(struct owned_split_buffer* owner) {
     ensures owner->data == old(owner->data);
 } by {
     unfold(owned_split_buffer(owner));
-    execute_rest();
+    execute_step();
+    execute_step();
     have 0 <= owner->split by { simp(); }
     have owner->split <= owner->len by { simp(); }
     have separate(
