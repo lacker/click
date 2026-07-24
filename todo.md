@@ -207,8 +207,7 @@ ceiling; tighten that ceiling to one second at milestone 3.
 ### User-facing command
 
 ```text
-click-expand [--time-limit <DURATION>] \
-  <sidecar.click> <function> <ensure:N|effect:N|grouped> [tactic:N]
+click-expand [--time-limit <DURATION>] <sidecar.click>:<line>:<column>
 ```
 
 `--time-limit` is a wall-clock watchdog for the entire expansion. Durations may
@@ -221,32 +220,31 @@ The command:
 1. Reads the Click sidecar.
 2. Resolves its `verifying` C files relative to the sidecar.
 3. Verifies the original sidecar.
-4. Selects one ensure, effect, or grouped proof.
-5. Obtains and validates its surface tactic certificate.
-6. Replaces the selected source proof.
+4. Resolves the tactic beginning at the one-based line and column, inferring
+   its function and grouped/ensure/effect proof.
+5. Obtains and validates that tactic's surface certificate.
+6. Replaces the selected source tactic.
 7. Prints the complete rewritten sidecar to stdout.
 
-Claim expansion re-verifies the complete rewritten sidecar before returning it.
-Single-tactic expansion instead re-verifies the proof prefix through the last
-replacement tactic. This catches an invalid local expansion without running an
-unrelated slow suffix, and preserves the prefix-only dependency pruning.
+Verification stops immediately after the selected tactic and re-verifies the
+rewritten proof prefix through the last replacement tactic. This catches an
+invalid local expansion without running an unrelated slow suffix and preserves
+prefix-only dependency pruning. It verifies only the inferred function and the
+transitive C-call dependencies reached by that prefix; unrelated earlier
+sidecar functions are skipped.
 
-Claim indices are zero-based.
+The profiler emits the same pasteable location syntax, including for tactics
+nested inside proof `if` and `advance`. This is the fast diagnostic/edit loop:
 
-With `tactic:N`, verification stops immediately after the selected top-level
-tactic. It verifies only the selected function and the transitive C-call
-dependencies reached by the execution prefix through that tactic; unrelated
-earlier sidecar functions are skipped. This is the fast diagnostic/edit loop:
-
-1. Expand one orchestration tactic, for example `grouped tactic:0`.
+1. Copy a `path.click:line:column` location from `click-profile`.
 2. Replace it with the emitted per-statement `execute_step()` sequence.
 3. Select one of those resulting statements and expand it again.
 4. Fix the first local certificate blocker without running the proof suffix or
    the full example corpus.
 
-The claim-level mode still requires a complete simple/control-flow certificate.
-The tactic-level mode is deliberately a partial expansion boundary: its output
-may contain lower-level smart tactics intended for another iteration.
+The CLI is deliberately a partial expansion boundary: its output may contain
+lower-level smart tactics intended for another iteration. The Rust claim-level
+API remains available for programmatic whole-proof expansion.
 
 ### Public Rust API
 
@@ -268,12 +266,11 @@ pub fn expand_c0_claim_source(
     claim: CProofClaim,
 ) -> Result<String, ClickError>;
 
-pub fn expand_c0_tactic_source(
+pub fn expand_c0_tactic_source_at(
     click_source: &str,
     c_sources: &[(&str, &str)],
-    function_name: &str,
-    claim: CProofClaim,
-    tactic_index: usize,
+    line: usize,
+    column: usize,
 ) -> Result<String, ClickError>;
 ```
 
@@ -389,15 +386,16 @@ regressions. A stack sample of the owned-vector run showed most time in modular
 call setup while pruning symbolic memory cells and proving separation, not in a
 deadlock or an unbounded call-identity loop.
 
-### 1a. Add prefix-only single-tactic expansion (completed 2026-07-20)
+### 1a. Add prefix-only single-tactic expansion (completed 2026-07-20,
+location selector completed 2026-07-24)
 
-`click-expand ... <claim> tactic:N` now replays only the proof prefix through
-the selected top-level tactic and replaces exactly that source statement. The
-wall-clock watchdog is forwarded to the child process in this mode. Source
-location handles both semicolon tactics and block-shaped tactics.
+`click-expand path.click:line:column` replays only the proof prefix through the
+selected tactic and replaces exactly that source statement. The wall-clock
+watchdog is forwarded to the child process. Locations handle semicolon tactics,
+block-shaped tactics, and tactics nested inside proof `if` and `advance`.
 
-The first owned-vector probe,
-`vector_pipeline grouped tactic:0`, completes in about 2.5 seconds after
+The first owned-vector probe at the source location of
+`vector_pipeline`'s initial `execute_until` completes in about 2.5 seconds after
 dependency pruning and replaces
 `execute_until(statement(3))` with three `execute_step()` statements. The three
 steps are the two declarations and the `vector_init` call; all later proof
@@ -735,7 +733,7 @@ Manual CLI smoke test:
 
 ```sh
 cargo run --quiet --bin click-expand -- \
-  path/to/example.click function_name ensure:0
+  path/to/example.click:112:13
 ```
 
 Redirect its stdout to a temporary `.click` file and verify that file using the

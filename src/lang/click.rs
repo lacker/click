@@ -43,7 +43,8 @@ mod proof;
 mod validation;
 use checking::*;
 pub use expansion::{
-    CProofClaim, expand_c0_claim_source, expand_c0_tactic_source, verifying_source_paths,
+    CProofClaim, SourcePosition, c0_tactic_source_position, expand_c0_claim_source,
+    expand_c0_tactic_source_at, verifying_source_paths,
 };
 use lowering::*;
 use parser::ContractLetBinding;

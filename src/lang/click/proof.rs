@@ -733,6 +733,7 @@ fn expand_structured_proof_cases(
 #[derive(Clone)]
 struct IndexedTactic {
     index: usize,
+    source_index: usize,
     tactic: ProofTactic,
 }
 
@@ -763,7 +764,7 @@ fn build_internal_proof(
     claim_label: &str,
 ) -> Result<InternalProofNode, ClickError> {
     let mut next_join_id = 0;
-    build_internal_proof_at(tactics, claim_label, &mut next_join_id, 0)
+    build_internal_proof_at(tactics, claim_label, &mut next_join_id, 0, 0)
 }
 
 fn build_internal_proof_at(
@@ -771,6 +772,7 @@ fn build_internal_proof_at(
     claim_label: &str,
     next_join_id: &mut usize,
     index_offset: usize,
+    source_index_offset: usize,
 ) -> Result<InternalProofNode, ClickError> {
     let Some((control_index, control_tactic)) = tactics
         .iter()
@@ -787,6 +789,7 @@ fn build_internal_proof_at(
                 .enumerate()
                 .map(|(index, tactic)| IndexedTactic {
                     index: index_offset + index,
+                    source_index: source_index_offset + index,
                     tactic,
                 })
                 .collect(),
@@ -795,6 +798,7 @@ fn build_internal_proof_at(
     };
 
     let index = index_offset + control_index;
+    let source_index = source_index_offset + control_index;
     let control = match control_tactic {
         ProofTactic::If(proof_if) => {
             if control_index + 1 != tactics.len() {
@@ -802,6 +806,7 @@ fn build_internal_proof_at(
                     "`{claim_label}` tactic {index}: proof-level `if` must be the final tactic because both branches prove the current claim; use `advance(...)` to join C execution before a shared suffix"
                 )));
             }
+            let then_width = source_tactic_count(&proof_if.then_tactics);
             InternalProofNode::If {
                 index,
                 condition: proof_if.condition.clone(),
@@ -810,12 +815,14 @@ fn build_internal_proof_at(
                     claim_label,
                     next_join_id,
                     index + 1,
+                    source_index + 1,
                 )?),
                 else_branch: Box::new(build_internal_proof_at(
                     &proof_if.else_tactics,
                     claim_label,
                     next_join_id,
                     index + 1,
+                    source_index + 1 + then_width,
                 )?),
             }
         }
@@ -832,12 +839,14 @@ fn build_internal_proof_at(
                     claim_label,
                     next_join_id,
                     index + 1,
+                    source_index + 1,
                 )?),
                 continuation: Box::new(build_internal_proof_at(
                     &tactics[control_index + 1..],
                     claim_label,
                     next_join_id,
                     index + 1,
+                    source_index + source_tactic_width(control_tactic),
                 )?),
             }
         }
@@ -854,11 +863,27 @@ fn build_internal_proof_at(
                 .enumerate()
                 .map(|(prefix_index, tactic)| IndexedTactic {
                     index: index_offset + prefix_index,
+                    source_index: source_index_offset + prefix_index,
                     tactic,
                 })
                 .collect(),
             continuation: Box::new(control),
         })
+    }
+}
+
+pub(super) fn source_tactic_count(tactics: &[ProofTactic]) -> usize {
+    tactics.iter().map(source_tactic_width).sum()
+}
+
+fn source_tactic_width(tactic: &ProofTactic) -> usize {
+    match tactic {
+        ProofTactic::If(proof_if) => {
+            1 + source_tactic_count(&proof_if.then_tactics)
+                + source_tactic_count(&proof_if.else_tactics)
+        }
+        ProofTactic::Advance(advance) => 1 + source_tactic_count(&advance.tactics),
+        _ => 1,
     }
 }
 
@@ -1831,7 +1856,7 @@ const TACTIC_EXPANSION_COMPLETE: &str = "internal: selected tactic expansion com
 struct TacticExpansionProbe {
     function_name: String,
     claim: CProofClaim,
-    tactic_index: usize,
+    source_index: usize,
     active: bool,
     smart_step_fallback: bool,
     result: Option<Result<Vec<ProofTactic>, String>>,
@@ -1847,7 +1872,7 @@ pub(super) fn capture_c0_tactic_expansion(
     c_sources: &[(&str, &str)],
     function_name: &str,
     claim: CProofClaim,
-    tactic_index: usize,
+    source_index: usize,
 ) -> Result<Vec<ProofTactic>, ClickError> {
     TACTIC_EXPANSION_PROBE.with(|probe| {
         let mut probe = probe.borrow_mut();
@@ -1859,7 +1884,7 @@ pub(super) fn capture_c0_tactic_expansion(
         *probe = Some(TacticExpansionProbe {
             function_name: function_name.to_string(),
             claim,
-            tactic_index,
+            source_index,
             active: false,
             smart_step_fallback: false,
             result: None,
@@ -1881,7 +1906,7 @@ pub(super) fn capture_c0_tactic_expansion(
             "selected tactic completed without recording an expansion",
         )),
         Ok(_) => Err(ClickError::new(format!(
-            "function `{function_name}` has no tactic {tactic_index} in the selected {claim:?} proof"
+            "function `{function_name}` has no source tactic {source_index} in the selected {claim:?} proof"
         ))),
     }
 }
@@ -1891,7 +1916,7 @@ pub(super) fn active_c0_tactic_expansion_request() -> Option<(String, CProofClai
         probe
             .borrow()
             .as_ref()
-            .map(|probe| (probe.function_name.clone(), probe.claim, probe.tactic_index))
+            .map(|probe| (probe.function_name.clone(), probe.claim, probe.source_index))
     })
 }
 
@@ -1921,7 +1946,7 @@ fn probe_matches_claim(
 fn begin_tactic_expansion_capture(
     function_block: &FunctionBlock,
     claims: &[FunctionClaimRef<'_>],
-    tactic_index: usize,
+    source_index: usize,
     tactic: &ProofTactic,
     replay: &mut TacticReplayState,
 ) -> bool {
@@ -1931,7 +1956,7 @@ fn begin_tactic_expansion_capture(
             return false;
         };
         if probe.active
-            || probe.tactic_index != tactic_index
+            || probe.source_index != source_index
             || !probe_matches_claim(probe, function_block, claims, replay.grouped_contract)
         {
             return false;
@@ -5941,6 +5966,7 @@ fn record_surface_replay_tactic(
 struct TacticTiming {
     claim_label: String,
     tactic_index: usize,
+    source_index: usize,
     tactic_name: String,
     statement_index: usize,
     start: std::time::Instant,
@@ -5950,22 +5976,25 @@ impl TacticTiming {
     fn new(
         claim_label: &str,
         tactic_index: usize,
+        source_index: usize,
         tactic: &ProofTactic,
         statement_index: usize,
     ) -> Option<Self> {
         std::env::var_os("CLICK_TIMINGS").is_some().then(|| {
             if std::env::var_os("CLICK_TIMING_STARTS").is_some() {
                 eprintln!(
-                    "click timing: started tactic {} {} {} statement {}",
+                    "click timing: started tactic {} {} {} statement {} source {}",
                     claim_label,
                     tactic_index,
                     tactic_name(tactic),
-                    statement_index
+                    statement_index,
+                    source_index
                 );
             }
             Self {
                 claim_label: claim_label.to_string(),
                 tactic_index,
+                source_index,
                 tactic_name: tactic_name(tactic).to_string(),
                 statement_index,
                 start: std::time::Instant::now(),
@@ -5977,11 +6006,12 @@ impl TacticTiming {
 impl Drop for TacticTiming {
     fn drop(&mut self) {
         eprintln!(
-            "click timing: tactic {} {} {} statement {} {:.6}s",
+            "click timing: tactic {} {} {} statement {} source {} {:.6}s",
             self.claim_label,
             self.tactic_index,
             self.tactic_name,
             self.statement_index,
+            self.source_index,
             self.start.elapsed().as_secs_f64()
         );
     }
@@ -6013,17 +6043,19 @@ fn replay_linear_tactics(
 
     for indexed_tactic in tactics {
         let tactic_index = indexed_tactic.index;
+        let source_index = indexed_tactic.source_index;
         let tactic = &indexed_tactic.tactic;
         let _timing = TacticTiming::new(
             claim_label,
             tactic_index,
+            source_index,
             tactic,
             replay.frontier.next_statement_index,
         );
         let capture_this_tactic = begin_tactic_expansion_capture(
             function_block,
             claims,
-            tactic_index,
+            source_index,
             tactic,
             &mut replay,
         );
@@ -6402,6 +6434,7 @@ fn replay_linear_tactics(
                         function,
                         arguments,
                         tactic_index,
+                        source_index,
                         alternative,
                     )?;
                     surface_paths.push(result.replay.surface_replay.clone());
@@ -6484,6 +6517,7 @@ fn replay_linear_tactics(
                     function,
                     arguments,
                     tactic_index,
+                    source_index,
                     &certificate,
                 )?;
                 state = result.state;
@@ -6542,6 +6576,7 @@ fn replay_linear_tactics(
                     function,
                     arguments,
                     tactic_index,
+                    source_index,
                     &certificate,
                 )?;
                 state = result.state;
@@ -6600,6 +6635,7 @@ fn replay_linear_tactics(
                     function,
                     arguments,
                     tactic_index,
+                    source_index,
                     &certificate,
                 )?;
                 state = result.state;
@@ -6652,6 +6688,7 @@ fn replay_linear_tactics(
                     function,
                     arguments,
                     tactic_index,
+                    source_index,
                     &certificate,
                 )?;
                 state = result.state;
@@ -6713,6 +6750,7 @@ fn replay_linear_tactics(
                     function,
                     arguments,
                     tactic_index,
+                    source_index,
                     &certificate,
                 )?;
                 state = result.state;
@@ -6766,6 +6804,7 @@ fn replay_linear_tactics(
                     function,
                     arguments,
                     tactic_index,
+                    source_index,
                     &certificate,
                 )?;
                 state = result.state;
@@ -6843,6 +6882,7 @@ fn replay_linear_tactics(
                     function,
                     arguments,
                     tactic_index,
+                    source_index,
                     &certificate,
                 )?;
                 state = result.state;
@@ -7288,6 +7328,7 @@ fn replay_execution_tactic_certificate(
     function: &CFunction,
     arguments: &[CExpression],
     tactic_index: usize,
+    source_index: usize,
     certificate: &ProofReplayPlan,
 ) -> Result<ProofReplayContext, ClickError> {
     let tactics = certificate
@@ -7296,6 +7337,7 @@ fn replay_execution_tactic_certificate(
         .cloned()
         .map(|tactic| IndexedTactic {
             index: tactic_index,
+            source_index,
             tactic,
         })
         .collect::<Vec<_>>();

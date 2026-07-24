@@ -6,11 +6,9 @@ use std::process::{Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use click::lang::click::{
-    CProofClaim, expand_c0_claim_source, expand_c0_tactic_source, verifying_source_paths,
-};
+use click::lang::click::{expand_c0_tactic_source_at, verifying_source_paths};
 
-const USAGE: &str = "usage: click-expand [--time-limit <DURATION>] <sidecar.click> <function> <ensure:N|effect:N|grouped> [tactic:N]";
+const USAGE: &str = "usage: click-expand [--time-limit <DURATION>] <sidecar.click>:<line>:<column>";
 
 fn main() {
     if let Err(message) = entry() {
@@ -22,9 +20,8 @@ fn main() {
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct Arguments {
     click_path: String,
-    function_name: String,
-    claim: String,
-    tactic_index: Option<usize>,
+    line: usize,
+    column: usize,
     time_limit: Option<Duration>,
 }
 
@@ -56,21 +53,14 @@ fn parse_arguments(arguments: impl IntoIterator<Item = String>) -> Result<Argume
             positional.push(argument);
         }
     }
-    let (click_path, function_name, claim, tactic_index) = match positional.as_slice() {
-        [click_path, function_name, claim] => (click_path, function_name, claim, None),
-        [click_path, function_name, claim, tactic] => (
-            click_path,
-            function_name,
-            claim,
-            Some(parse_tactic_selector(tactic)?),
-        ),
+    let (click_path, line, column) = match positional.as_slice() {
+        [location] => parse_source_location(location)?,
         _ => return Err(USAGE.to_string()),
     };
     Ok(Arguments {
-        click_path: click_path.clone(),
-        function_name: function_name.clone(),
-        claim: claim.clone(),
-        tactic_index,
+        click_path,
+        line,
+        column,
         time_limit,
     })
 }
@@ -103,13 +93,10 @@ fn run_with_time_limit(arguments: &Arguments, time_limit: Duration) -> Result<()
     let executable = env::current_exe()
         .map_err(|error| format!("failed to locate click-expand executable: {error}"))?;
     let mut command = Command::new(executable);
-    command
-        .arg(&arguments.click_path)
-        .arg(&arguments.function_name)
-        .arg(&arguments.claim);
-    if let Some(tactic_index) = arguments.tactic_index {
-        command.arg(format!("tactic:{tactic_index}"));
-    }
+    command.arg(format!(
+        "{}:{}:{}",
+        arguments.click_path, arguments.line, arguments.column
+    ));
     let mut child = command
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -217,46 +204,33 @@ fn run(arguments: &Arguments) -> Result<(), String> {
         .iter()
         .map(|(path, source)| (path.as_str(), source.as_str()))
         .collect::<Vec<_>>();
-    let claim = parse_claim(&arguments.claim)?;
-    let expanded = match arguments.tactic_index {
-        Some(tactic_index) => expand_c0_tactic_source(
-            &click_source,
-            &sources,
-            &arguments.function_name,
-            claim,
-            tactic_index,
-        ),
-        None => expand_c0_claim_source(&click_source, &sources, &arguments.function_name, claim),
-    }
-    .map_err(|error| error.message().to_string())?;
+    let expanded =
+        expand_c0_tactic_source_at(&click_source, &sources, arguments.line, arguments.column)
+            .map_err(|error| error.message().to_string())?;
     print!("{expanded}");
     Ok(())
 }
 
-fn parse_tactic_selector(source: &str) -> Result<usize, String> {
-    let index = source
-        .strip_prefix("tactic:")
-        .ok_or_else(|| format!("invalid tactic selector `{source}`; use `tactic:N`"))?;
-    index
-        .parse::<usize>()
-        .map_err(|_| format!("invalid tactic index `{index}`"))
-}
-
-fn parse_claim(source: &str) -> Result<CProofClaim, String> {
-    if source == "grouped" {
-        return Ok(CProofClaim::Grouped);
+fn parse_source_location(source: &str) -> Result<(String, usize, usize), String> {
+    let (path_and_line, column) = source
+        .rsplit_once(':')
+        .ok_or_else(|| format!("invalid source location `{source}`; expected PATH:LINE:COLUMN"))?;
+    let (path, line) = path_and_line
+        .rsplit_once(':')
+        .ok_or_else(|| format!("invalid source location `{source}`; expected PATH:LINE:COLUMN"))?;
+    if path.is_empty() {
+        return Err("source path must not be empty".to_string());
     }
-    let (kind, index) = source
-        .split_once(':')
-        .ok_or_else(|| "claim must be `ensure:N`, `effect:N`, or `grouped`".to_string())?;
-    let index = index
+    let line = line
         .parse::<usize>()
-        .map_err(|_| format!("invalid claim index `{index}`"))?;
-    match kind {
-        "ensure" => Ok(CProofClaim::Ensure(index)),
-        "effect" => Ok(CProofClaim::Effect(index)),
-        _ => Err(format!("unknown claim kind `{kind}`")),
+        .map_err(|_| format!("invalid source line `{line}`"))?;
+    let column = column
+        .parse::<usize>()
+        .map_err(|_| format!("invalid source column `{column}`"))?;
+    if line == 0 || column == 0 {
+        return Err("source lines and columns are one-based".to_string());
     }
+    Ok((path.to_string(), line, column))
 }
 
 #[cfg(test)]
@@ -275,49 +249,27 @@ mod tests {
 
     #[test]
     fn parses_time_limit_before_or_after_positionals() {
-        let before = parse_arguments(
-            [
-                "--time-limit",
-                "30s",
-                "example.click",
-                "pipeline",
-                "grouped",
-            ]
-            .map(str::to_string),
-        )
-        .expect("leading time limit should parse");
-        let after = parse_arguments(
-            [
-                "example.click",
-                "pipeline",
-                "grouped",
-                "--time-limit",
-                "30s",
-            ]
-            .map(str::to_string),
-        )
-        .expect("trailing time limit should parse");
+        let before =
+            parse_arguments(["--time-limit", "30s", "example.click:12:5"].map(str::to_string))
+                .expect("leading time limit should parse");
+        let after =
+            parse_arguments(["example.click:12:5", "--time-limit", "30s"].map(str::to_string))
+                .expect("trailing time limit should parse");
 
         assert_eq!(before, after);
         assert_eq!(before.time_limit, Some(Duration::from_secs(30)));
     }
 
     #[test]
-    fn parses_single_tactic_selector() {
+    fn parses_source_location_with_colons_in_path() {
         let arguments = parse_arguments(
-            [
-                "example.click",
-                "pipeline",
-                "grouped",
-                "tactic:7",
-                "--time-limit",
-                "30s",
-            ]
-            .map(str::to_string),
+            ["volume:name/example.click:12:7", "--time-limit", "30s"].map(str::to_string),
         )
-        .expect("single tactic selector should parse");
+        .expect("source location should parse");
 
-        assert_eq!(arguments.tactic_index, Some(7));
+        assert_eq!(arguments.click_path, "volume:name/example.click");
+        assert_eq!(arguments.line, 12);
+        assert_eq!(arguments.column, 7);
         assert_eq!(arguments.time_limit, Some(Duration::from_secs(30)));
     }
 }

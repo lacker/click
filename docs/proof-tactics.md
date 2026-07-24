@@ -115,10 +115,12 @@ as expanded Click source.
 `expanded_proof_source()` validates and prints it in one call. Both report the
 recorded expansion blocker instead of returning partial source.
 
-`click-expand <sidecar.click> <function> <ensure:N|effect:N|grouped>` verifies
-the sidecar, replaces exactly the selected proof with its checked expansion,
-and writes the complete expanded sidecar to standard output. Source files from
-`verifying` declarations are resolved relative to the sidecar.
+`click-expand <sidecar.click>:<line>:<column>` verifies the sidecar, infers the
+enclosing function and proof from the one-based source location, replaces
+exactly the tactic beginning there with its checked expansion, and writes the
+complete expanded sidecar to standard output. Nested branch and `advance`
+tactics use the same location scheme. Source files from `verifying`
+declarations are resolved relative to the sidecar.
 One-step execution uses only the context premises named by its recorded
 proposition derivations. Atomic comparison transport is emitted as an explicit
 `transport` whose source is named at the preceding statement-entry snapshot;

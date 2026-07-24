@@ -55,37 +55,53 @@ pub fn expand_c0_claim_source(
     Ok(expanded)
 }
 
-pub fn expand_c0_tactic_source(
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SourcePosition {
+    pub line: usize,
+    pub column: usize,
+}
+
+pub fn expand_c0_tactic_source_at(
+    click_source: &str,
+    c_sources: &[(&str, &str)],
+    line: usize,
+    column: usize,
+) -> Result<String, ClickError> {
+    let selected = locate_source_tactic(click_source, c_sources, line, column)?;
+    expand_c0_tactic_source_index(
+        click_source,
+        c_sources,
+        &selected.function_name,
+        selected.claim,
+        selected.source_index,
+        selected.span,
+    )
+}
+
+fn expand_c0_tactic_source_index(
     click_source: &str,
     c_sources: &[(&str, &str)],
     function_name: &str,
     claim: CProofClaim,
-    tactic_index: usize,
+    source_index: usize,
+    span: Range<usize>,
 ) -> Result<String, ClickError> {
     let replacement_tactics = super::proof::capture_c0_tactic_expansion(
         click_source,
         c_sources,
         function_name,
         claim,
-        tactic_index,
+        source_index,
     )?;
     let replacement = super::printing::format_partial_tactic_sequence(&replacement_tactics);
-    let tokens = scan_source_tokens(click_source)?;
-    let function = find_function(&tokens, function_name)?;
-    let proof = match claim {
-        CProofClaim::Grouped => find_grouped_proof_span(&tokens, &function)?,
-        CProofClaim::Ensure(_) | CProofClaim::Effect(_) => {
-            find_claim_proof_span(&tokens, &function, claim)?
-        }
-    };
-    let span = find_tactic_span(&tokens, &proof, tactic_index)?;
     let replacement = indent_replacement(click_source, span.start, &replacement);
     let mut expanded =
         String::with_capacity(click_source.len() - (span.end - span.start) + replacement.len());
     expanded.push_str(&click_source[..span.start]);
     expanded.push_str(&replacement);
     expanded.push_str(&click_source[span.end..]);
-    let replacement_end = tactic_index + replacement_tactics.len().saturating_sub(1);
+    let replacement_end =
+        source_index + super::proof::source_tactic_count(&replacement_tactics).saturating_sub(1);
     super::proof::capture_c0_tactic_expansion(
         &expanded,
         c_sources,
@@ -282,6 +298,216 @@ fn find_claim_proof_span(
     )))
 }
 
+#[derive(Clone, Debug)]
+struct LocatedSourceTactic {
+    function_name: String,
+    claim: CProofClaim,
+    source_index: usize,
+    span: Range<usize>,
+}
+
+fn locate_source_tactic(
+    click_source: &str,
+    c_sources: &[(&str, &str)],
+    line: usize,
+    column: usize,
+) -> Result<LocatedSourceTactic, ClickError> {
+    let wanted = offset_at_position(click_source, line, column)?;
+    let tokens = scan_source_tokens(click_source)?;
+    let file = parse_source_with_c_layouts(click_source, c_sources)?;
+    for function_block in file.function_blocks() {
+        let function_name = function_block.signature().name();
+        let function = find_function(&tokens, function_name)?;
+        if let Some(proof) = function_block.grouped_proof() {
+            let proof_span = find_grouped_proof_span(&tokens, &function)?;
+            if let Some(found) = locate_tactic_in_proof(
+                &tokens,
+                &proof_span,
+                proof,
+                wanted,
+                function_name,
+                CProofClaim::Grouped,
+            )? {
+                return Ok(found);
+            }
+            continue;
+        }
+        for (index, ensure) in function_block.ensures().iter().enumerate() {
+            let claim = CProofClaim::Ensure(index);
+            let Ok(proof_span) = find_claim_proof_span(&tokens, &function, claim) else {
+                continue;
+            };
+            if let Some(found) = locate_tactic_in_proof(
+                &tokens,
+                &proof_span,
+                ensure.proof(),
+                wanted,
+                function_name,
+                claim,
+            )? {
+                return Ok(found);
+            }
+        }
+        for (index, effect) in function_block.effects().iter().enumerate() {
+            let claim = CProofClaim::Effect(index);
+            let Ok(proof_span) = find_claim_proof_span(&tokens, &function, claim) else {
+                continue;
+            };
+            if let Some(found) = locate_tactic_in_proof(
+                &tokens,
+                &proof_span,
+                effect.proof(),
+                wanted,
+                function_name,
+                claim,
+            )? {
+                return Ok(found);
+            }
+        }
+    }
+    Err(ClickError::new(format!(
+        "no explicit C proof tactic starts at {line}:{column}"
+    )))
+}
+
+fn locate_tactic_in_proof(
+    tokens: &[SourceToken],
+    proof_span: &Range<usize>,
+    proof: &Proof,
+    wanted: usize,
+    function_name: &str,
+    claim: CProofClaim,
+) -> Result<Option<LocatedSourceTactic>, ClickError> {
+    let Some(tactics) = proof.tactics() else {
+        return Ok(None);
+    };
+    let spans = collect_source_tactic_spans(tokens, proof_span, tactics)?;
+    Ok(spans
+        .into_iter()
+        .enumerate()
+        .find(|(_, span)| span.start == wanted)
+        .map(|(source_index, span)| LocatedSourceTactic {
+            function_name: function_name.to_string(),
+            claim,
+            source_index,
+            span,
+        }))
+}
+
+pub fn c0_tactic_source_position(
+    click_source: &str,
+    c_sources: &[(&str, &str)],
+    claim_label: &str,
+    source_index: usize,
+) -> Result<SourcePosition, ClickError> {
+    let tokens = scan_source_tokens(click_source)?;
+    let file = parse_source_with_c_layouts(click_source, c_sources)?;
+    for function_block in file.function_blocks() {
+        let function_name = function_block.signature().name();
+        let function = find_function(&tokens, function_name)?;
+        let selected = if claim_label == format!("{function_name}.contract") {
+            function_block
+                .grouped_proof()
+                .map(|proof| (CProofClaim::Grouped, proof))
+        } else {
+            function_block
+                .ensures()
+                .iter()
+                .enumerate()
+                .find_map(|(index, ensure)| {
+                    let label = ensure.name().map_or_else(
+                        || format!("{function_name}.ensures_{index}"),
+                        |name| format!("{function_name}.{name}"),
+                    );
+                    (label == claim_label).then_some((CProofClaim::Ensure(index), ensure.proof()))
+                })
+                .or_else(|| {
+                    function_block
+                        .effects()
+                        .iter()
+                        .enumerate()
+                        .find_map(|(index, effect)| {
+                            let kind = match effect.effect() {
+                                Effect::Immutable => "immutable",
+                                Effect::Mutable(_) => "mutable",
+                            };
+                            (claim_label == format!("{function_name}.{kind}_{index}"))
+                                .then_some((CProofClaim::Effect(index), effect.proof()))
+                        })
+                })
+        };
+        let Some((claim, proof)) = selected else {
+            continue;
+        };
+        let proof_span = match claim {
+            CProofClaim::Grouped => find_grouped_proof_span(&tokens, &function)?,
+            CProofClaim::Ensure(_) | CProofClaim::Effect(_) => {
+                find_claim_proof_span(&tokens, &function, claim)?
+            }
+        };
+        let Some(tactics) = proof.tactics() else {
+            break;
+        };
+        let spans = collect_source_tactic_spans(&tokens, &proof_span, tactics)?;
+        let span = spans.get(source_index).ok_or_else(|| {
+            ClickError::new(format!(
+                "`{claim_label}` has no source tactic occurrence {source_index}"
+            ))
+        })?;
+        return Ok(position_at_offset(click_source, span.start));
+    }
+    Err(ClickError::new(format!(
+        "could not locate source proof `{claim_label}`"
+    )))
+}
+
+fn parse_source_with_c_layouts(
+    click_source: &str,
+    c_sources: &[(&str, &str)],
+) -> Result<ClickFile, ClickError> {
+    let sources = c_sources.iter().copied().collect::<BTreeMap<_, _>>();
+    let layouts = parse_c_struct_layouts(&sources)?;
+    parser::parse_with_struct_layouts(click_source, layouts)
+}
+
+fn offset_at_position(source: &str, line: usize, column: usize) -> Result<usize, ClickError> {
+    if line == 0 || column == 0 {
+        return Err(ClickError::new("source lines and columns are one-based"));
+    }
+    let mut line_start = 0;
+    for current_line in 1..line {
+        let Some(newline) = source[line_start..].find('\n') else {
+            return Err(ClickError::new(format!("source has no line {line}")));
+        };
+        line_start += newline + 1;
+        if current_line + 1 == line {
+            break;
+        }
+    }
+    let line_end = source[line_start..]
+        .find('\n')
+        .map_or(source.len(), |newline| line_start + newline);
+    let line_source = &source[line_start..line_end];
+    let byte_in_line = if column == 1 {
+        0
+    } else {
+        line_source
+            .char_indices()
+            .nth(column - 1)
+            .map(|(offset, _)| offset)
+            .ok_or_else(|| ClickError::new(format!("line {line} has no column {column}")))?
+    };
+    Ok(line_start + byte_in_line)
+}
+
+fn position_at_offset(source: &str, offset: usize) -> SourcePosition {
+    let prefix = &source[..offset];
+    let line = prefix.bytes().filter(|byte| *byte == b'\n').count() + 1;
+    let line_start = prefix.rfind('\n').map_or(0, |newline| newline + 1);
+    let column = source[line_start..offset].chars().count() + 1;
+    SourcePosition { line, column }
+}
+
 fn proof_span(tokens: &[SourceToken], by: usize) -> Result<Range<usize>, ClickError> {
     let start = tokens[by].span.start;
     let body = by + 1;
@@ -299,11 +525,11 @@ fn proof_span(tokens: &[SourceToken], by: usize) -> Result<Range<usize>, ClickEr
     Ok(start..end)
 }
 
-fn find_tactic_span(
+fn collect_source_tactic_spans(
     tokens: &[SourceToken],
     proof_span: &Range<usize>,
-    wanted: usize,
-) -> Result<Range<usize>, ClickError> {
+    tactics: &[ProofTactic],
+) -> Result<Vec<Range<usize>>, ClickError> {
     let by = tokens
         .iter()
         .position(|token| token.span.start == proof_span.start && token.text == "by")
@@ -315,7 +541,63 @@ fn find_tactic_span(
         ));
     }
     let close = matching_delimiter(tokens, open, "{", "}")?;
-    let mut tactic_index = 0;
+    let mut spans = Vec::new();
+    collect_tactic_block_spans(tokens, open, close, tactics, &mut spans)?;
+    Ok(spans)
+}
+
+fn collect_tactic_block_spans(
+    tokens: &[SourceToken],
+    open: usize,
+    close: usize,
+    tactics: &[ProofTactic],
+    spans: &mut Vec<Range<usize>>,
+) -> Result<(), ClickError> {
+    let direct = direct_tactic_token_ranges(tokens, open, close)?;
+    if direct.len() != tactics.len() {
+        return Err(ClickError::new(format!(
+            "source proof has {} direct tactic(s), but the parsed proof has {}",
+            direct.len(),
+            tactics.len()
+        )));
+    }
+    for (tactic, token_range) in tactics.iter().zip(direct) {
+        spans.push(tokens[token_range.start].span.start..tokens[token_range.end - 1].span.end);
+        match tactic {
+            ProofTactic::If(proof_if) => {
+                let (then_open, then_close, else_open, else_close) =
+                    find_if_branch_blocks(tokens, &token_range)?;
+                collect_tactic_block_spans(
+                    tokens,
+                    then_open,
+                    then_close,
+                    &proof_if.then_tactics,
+                    spans,
+                )?;
+                collect_tactic_block_spans(
+                    tokens,
+                    else_open,
+                    else_close,
+                    &proof_if.else_tactics,
+                    spans,
+                )?;
+            }
+            ProofTactic::Advance(advance) => {
+                let (body_open, body_close) = find_advance_body(tokens, &token_range)?;
+                collect_tactic_block_spans(tokens, body_open, body_close, &advance.tactics, spans)?;
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+fn direct_tactic_token_ranges(
+    tokens: &[SourceToken],
+    open: usize,
+    close: usize,
+) -> Result<Vec<Range<usize>>, ClickError> {
+    let mut ranges = Vec::new();
     let mut start = open + 1;
     while start < close {
         let mut cursor = start;
@@ -358,11 +640,95 @@ fn find_tactic_span(
             }
             cursor += 1;
         };
-        if tactic_index == wanted {
-            return Ok(tokens[start].span.start..tokens[end].span.end);
-        }
-        tactic_index += 1;
+        ranges.push(start..end + 1);
         start = end + 1;
+    }
+    Ok(ranges)
+}
+
+fn find_if_branch_blocks(
+    tokens: &[SourceToken],
+    tactic: &Range<usize>,
+) -> Result<(usize, usize, usize, usize), ClickError> {
+    let mut depth = 0_usize;
+    let mut outer_open = None;
+    let mut then_block = None;
+    for cursor in tactic.start + 1..tactic.end {
+        match tokens[cursor].text.as_str() {
+            "{" => {
+                if depth == 0 {
+                    outer_open = Some(cursor);
+                }
+                depth += 1;
+            }
+            "}" => {
+                depth = depth
+                    .checked_sub(1)
+                    .ok_or_else(|| ClickError::new("unbalanced `if` tactic source block"))?;
+                if depth == 0
+                    && tokens.get(cursor + 1).map(|token| token.text.as_str()) == Some("else")
+                {
+                    then_block = outer_open.map(|open| (open, cursor));
+                }
+            }
+            _ => {}
+        }
+    }
+    let (then_open, then_close) =
+        then_block.ok_or_else(|| ClickError::new("could not locate proof `if` then branch"))?;
+    let else_keyword = then_close + 1;
+    let else_open = else_keyword + 1;
+    if tokens.get(else_open).map(|token| token.text.as_str()) != Some("{") {
+        return Err(ClickError::new("could not locate proof `if` else branch"));
+    }
+    let else_close = matching_delimiter(tokens, else_open, "{", "}")?;
+    Ok((then_open, then_close, else_open, else_close))
+}
+
+fn find_advance_body(
+    tokens: &[SourceToken],
+    tactic: &Range<usize>,
+) -> Result<(usize, usize), ClickError> {
+    let mut depth = 0_usize;
+    for cursor in tactic.start + 1..tactic.end {
+        match tokens[cursor].text.as_str() {
+            "{" => depth += 1,
+            "}" => {
+                depth = depth
+                    .checked_sub(1)
+                    .ok_or_else(|| ClickError::new("unbalanced `advance` tactic source block"))?
+            }
+            "by" if depth == 0
+                && tokens.get(cursor + 1).map(|token| token.text.as_str()) == Some("{") =>
+            {
+                let open = cursor + 1;
+                return Ok((open, matching_delimiter(tokens, open, "{", "}")?));
+            }
+            _ => {}
+        }
+    }
+    Err(ClickError::new("could not locate `advance` proof body"))
+}
+
+#[cfg(test)]
+fn find_tactic_span(
+    tokens: &[SourceToken],
+    proof_span: &Range<usize>,
+    wanted: usize,
+) -> Result<Range<usize>, ClickError> {
+    let by = tokens
+        .iter()
+        .position(|token| token.span.start == proof_span.start && token.text == "by")
+        .ok_or_else(|| ClickError::new("could not locate selected source proof"))?;
+    let open = by + 1;
+    if tokens.get(open).map(|token| token.text.as_str()) != Some("{") {
+        return Err(ClickError::new(
+            "individual tactic expansion requires an explicit `by { ... }` proof",
+        ));
+    }
+    let close = matching_delimiter(tokens, open, "{", "}")?;
+    if let Some(range) = direct_tactic_token_ranges(tokens, open, close)?.get(wanted) {
+        return Ok(tokens[range.start].span.start..tokens[range.end - 1].span.end);
     }
     Err(ClickError::new(format!(
         "selected source proof has no tactic {wanted}"
@@ -403,6 +769,26 @@ fn indent_replacement(source: &str, start: usize, replacement: &str) -> String {
 mod tests {
     use super::*;
 
+    fn expand_top_level_tactic_for_test(
+        click_source: &str,
+        c_sources: &[(&str, &str)],
+        function_name: &str,
+        claim: CProofClaim,
+        tactic_index: usize,
+    ) -> Result<String, ClickError> {
+        let tokens = scan_source_tokens(click_source)?;
+        let function = find_function(&tokens, function_name)?;
+        let proof = match claim {
+            CProofClaim::Grouped => find_grouped_proof_span(&tokens, &function)?,
+            CProofClaim::Ensure(_) | CProofClaim::Effect(_) => {
+                find_claim_proof_span(&tokens, &function, claim)?
+            }
+        };
+        let span = find_tactic_span(&tokens, &proof, tactic_index)?;
+        let position = position_at_offset(click_source, span.start);
+        expand_c0_tactic_source_at(click_source, c_sources, position.line, position.column)
+    }
+
     #[test]
     fn expands_one_grouped_tactic_without_running_the_suffix() {
         let c_source = "int32 identity(int32 x) { return x; }";
@@ -417,7 +803,7 @@ int32 identity(int32 x) {
 }
 "#;
 
-        let expanded = expand_c0_tactic_source(
+        let expanded = expand_top_level_tactic_for_test(
             click_source,
             &[("identity.c", c_source)],
             "identity",
@@ -430,6 +816,43 @@ int32 identity(int32 x) {
         assert!(expanded.contains("    execute_step();\n    simp();"));
         verify_c0_sources(&expanded, &[("identity.c", c_source)])
             .expect("the source with one expanded tactic should re-verify");
+    }
+
+    #[test]
+    fn expands_nested_branch_tactic_by_source_location() {
+        let c_source = "int32 identity(int32 x) { return x; }";
+        let click_source = r#"
+verifying "identity.c";
+
+int32 identity(int32 x) {
+    ensures result == x;
+} by {
+    if x == x {
+        execute_rest();
+        simp();
+    } else {
+        execute_rest();
+        simp();
+    }
+}
+"#;
+        let then_offset = click_source
+            .find("        execute_rest();")
+            .expect("then tactic should exist")
+            + 8;
+        let position = position_at_offset(click_source, then_offset);
+        let expanded = expand_c0_tactic_source_at(
+            click_source,
+            &[("identity.c", c_source)],
+            position.line,
+            position.column,
+        )
+        .expect("the nested then tactic should expand");
+
+        assert_eq!(expanded.matches("execute_rest();").count(), 1);
+        assert!(expanded.contains("    if x == x {\n        execute_step();"));
+        verify_c0_sources(&expanded, &[("identity.c", c_source)])
+            .expect("the source with one nested expansion should re-verify");
     }
 
     #[test]
@@ -469,9 +892,14 @@ int32 caller() {
 "#;
         let sources = [("zero.c", zero_c), ("caller.c", caller_c)];
 
-        let expanded =
-            expand_c0_tactic_source(click_source, &sources, "caller", CProofClaim::Grouped, 0)
-                .expect("opaque call internals should not become surface premises");
+        let expanded = expand_top_level_tactic_for_test(
+            click_source,
+            &sources,
+            "caller",
+            CProofClaim::Grouped,
+            0,
+        )
+        .expect("opaque call internals should not become surface premises");
 
         assert_eq!(expanded.matches("execute_rest();").count(), 1);
         verify_c0_sources(&expanded, &sources)
@@ -503,9 +931,14 @@ int32 caller() {
 "#;
         let sources = [("zero.c", zero_c), ("caller.c", caller_c)];
 
-        let expanded =
-            expand_c0_tactic_source(click_source, &sources, "caller", CProofClaim::Grouped, 0)
-                .expect("the declaration prefix should not verify an unreached callee or suffix");
+        let expanded = expand_top_level_tactic_for_test(
+            click_source,
+            &sources,
+            "caller",
+            CProofClaim::Grouped,
+            0,
+        )
+        .expect("the declaration prefix should not verify an unreached callee or suffix");
 
         assert!(expanded.contains("step();\n    execute_rest();"));
         assert!(verify_c0_sources(&expanded, &sources).is_err());
@@ -558,7 +991,7 @@ int32 inspect(struct box* owner) {
 }
 "#;
 
-        let expanded = expand_c0_tactic_source(
+        let expanded = expand_top_level_tactic_for_test(
             click_source,
             &[("inspect.c", c_source)],
             "inspect",

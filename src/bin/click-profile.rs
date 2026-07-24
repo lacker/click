@@ -6,7 +6,7 @@ use std::process::{Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use click::lang::click::verify_c0_sources;
+use click::lang::click::{SourcePosition, c0_tactic_source_position, verify_c0_sources};
 
 const USAGE: &str = "usage: click-profile [--threshold <DURATION>] [--time-limit <DURATION>] <example-project|examples-directory>";
 
@@ -27,15 +27,17 @@ struct Arguments {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct StepKey {
+    source_path: PathBuf,
     claim: String,
     tactic_index: usize,
+    source_index: usize,
     tactic_name: String,
     statement_index: usize,
+    position: Option<SourcePosition>,
 }
 
 #[derive(Clone, Debug)]
 struct SlowStep {
-    project: String,
     key: StepKey,
     elapsed: Duration,
 }
@@ -236,12 +238,14 @@ fn profile_project(
         .and_then(|name| name.to_str())
         .unwrap_or_else(|| project.as_os_str().to_str().unwrap_or("example"))
         .to_string();
-    Ok(parse_profile(
+    let mut profile = parse_profile(
         &project_name,
         &String::from_utf8_lossy(&stderr),
         threshold,
         status.is_none(),
-    ))
+    );
+    resolve_source_positions(&mut profile)?;
+    Ok(profile)
 }
 
 fn parse_profile(
@@ -252,19 +256,18 @@ fn parse_profile(
 ) -> ProjectProfile {
     let mut slow_steps = Vec::new();
     let mut active = Vec::new();
+    let mut source_path = PathBuf::new();
     for line in output.lines() {
-        if let Some(key) = parse_started_step(line) {
+        if let Some(path) = line.strip_prefix("click timing: source ") {
+            source_path = PathBuf::from(path);
+        } else if let Some(key) = parse_started_step(line, &source_path) {
             active.push(key);
-        } else if let Some((key, elapsed)) = parse_finished_step(line) {
+        } else if let Some((key, elapsed)) = parse_finished_step(line, &source_path) {
             if let Some(index) = active.iter().rposition(|candidate| candidate == &key) {
                 active.remove(index);
             }
             if elapsed >= threshold {
-                slow_steps.push(SlowStep {
-                    project: project.to_string(),
-                    key,
-                    elapsed,
-                });
+                slow_steps.push(SlowStep { key, elapsed });
             }
         }
     }
@@ -276,36 +279,77 @@ fn parse_profile(
     }
 }
 
-fn parse_started_step(line: &str) -> Option<StepKey> {
+fn parse_started_step(line: &str, source_path: &Path) -> Option<StepKey> {
     let fields = line.split_whitespace().collect::<Vec<_>>();
-    if fields.len() != 9 || fields[..4] != ["click", "timing:", "started", "tactic"] {
+    if fields.len() != 11 || fields[..4] != ["click", "timing:", "started", "tactic"] {
         return None;
     }
-    parse_step_key(&fields[4..])
+    parse_step_key(&fields[4..], source_path)
 }
 
-fn parse_finished_step(line: &str) -> Option<(StepKey, Duration)> {
+fn parse_finished_step(line: &str, source_path: &Path) -> Option<(StepKey, Duration)> {
     let fields = line.split_whitespace().collect::<Vec<_>>();
-    if fields.len() != 9 || fields[..3] != ["click", "timing:", "tactic"] {
+    if fields.len() != 11 || fields[..3] != ["click", "timing:", "tactic"] {
         return None;
     }
-    let elapsed = fields[8].strip_suffix('s')?.parse::<f64>().ok()?;
+    let elapsed = fields[10].strip_suffix('s')?.parse::<f64>().ok()?;
     Some((
-        parse_step_key(&fields[3..8])?,
+        parse_step_key(&fields[3..10], source_path)?,
         Duration::from_secs_f64(elapsed),
     ))
 }
 
-fn parse_step_key(fields: &[&str]) -> Option<StepKey> {
-    if fields.len() != 5 || fields[3] != "statement" {
+fn parse_step_key(fields: &[&str], source_path: &Path) -> Option<StepKey> {
+    if fields.len() != 7 || fields[3] != "statement" || fields[5] != "source" {
         return None;
     }
     Some(StepKey {
+        source_path: source_path.to_path_buf(),
         claim: fields[0].to_string(),
         tactic_index: fields[1].parse().ok()?,
         tactic_name: fields[2].to_string(),
         statement_index: fields[4].parse().ok()?,
+        source_index: fields[6].parse().ok()?,
+        position: None,
     })
+}
+
+fn resolve_source_positions(profile: &mut ProjectProfile) -> Result<(), String> {
+    for key in profile
+        .slow_steps
+        .iter_mut()
+        .map(|step| &mut step.key)
+        .chain(profile.active.iter_mut())
+    {
+        if key.source_path.as_os_str().is_empty() {
+            return Err("timing event had no Click source path".to_string());
+        }
+        let source = fs::read_to_string(&key.source_path)
+            .map_err(|error| format!("failed to read `{}`: {error}", key.source_path.display()))?;
+        let parent = key.source_path.parent().unwrap_or_else(|| Path::new("."));
+        let c_sources = files_with_extension(parent, "c")?
+            .into_iter()
+            .map(|path| {
+                let name = path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .ok_or_else(|| format!("invalid UTF-8 path `{}`", path.display()))?
+                    .to_string();
+                let source = fs::read_to_string(&path)
+                    .map_err(|error| format!("failed to read `{}`: {error}", path.display()))?;
+                Ok((name, source))
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        let source_refs = c_sources
+            .iter()
+            .map(|(name, source)| (name.as_str(), source.as_str()))
+            .collect::<Vec<_>>();
+        key.position = Some(
+            c0_tactic_source_position(&source, &source_refs, &key.claim, key.source_index)
+                .map_err(|error| error.message().to_string())?,
+        );
+    }
+    Ok(())
 }
 
 fn print_profiles(profiles: &[ProjectProfile], threshold: Duration, time_limit: Duration) {
@@ -322,12 +366,17 @@ fn print_profiles(profiles: &[ProjectProfile], threshold: Duration, time_limit: 
         println!("  none completed");
     }
     for step in slow_steps {
+        let position = step
+            .key
+            .position
+            .expect("profiled steps have resolved source positions");
         println!(
-            "  {:>10}  {}  {}  tactic {} {}  statement {}",
+            "  {:>10}  {}:{}:{}  {}  {}  statement {}",
             format_duration(step.elapsed),
-            step.project,
+            step.key.source_path.display(),
+            position.line,
+            position.column,
             step.key.claim,
-            step.key.tactic_index,
             step.key.tactic_name,
             step.key.statement_index,
         );
@@ -339,9 +388,17 @@ fn print_profiles(profiles: &[ProjectProfile], threshold: Duration, time_limit: 
             format_duration(time_limit)
         );
         for key in &profile.active {
+            let position = key
+                .position
+                .expect("active steps have resolved source positions");
             println!(
-                "    active: {} tactic {} {} statement {}",
-                key.claim, key.tactic_index, key.tactic_name, key.statement_index
+                "    active: {}:{}:{}  {}  {}  statement {}",
+                key.source_path.display(),
+                position.line,
+                position.column,
+                key.claim,
+                key.tactic_name,
+                key.statement_index
             );
         }
     }
@@ -378,6 +435,9 @@ fn verify_project(project: &Path) -> Result<(), String> {
     for click_path in click_paths {
         let click_source = fs::read_to_string(&click_path)
             .map_err(|error| format!("failed to read `{}`: {error}", click_path.display()))?;
+        if env::var_os("CLICK_TIMINGS").is_some() {
+            eprintln!("click timing: source {}", click_path.display());
+        }
         verify_c0_sources(&click_source, &source_refs).map_err(|error| {
             format!(
                 "example sidecar `{}` failed: {}",
@@ -430,9 +490,10 @@ mod tests {
     #[test]
     fn parses_timing_events_and_keeps_the_active_stack() {
         let output = r#"
-click timing: started tactic example.contract 2 execute_step statement 4
-click timing: started tactic example.contract 2 certified_statement_step statement 4
-click timing: tactic example.contract 2 certified_statement_step statement 4 1.250000s
+click timing: source examples/sample.click
+click timing: started tactic example.contract 2 execute_step statement 4 source 5
+click timing: started tactic example.contract 2 certified_statement_step statement 4 source 5
+click timing: tactic example.contract 2 certified_statement_step statement 4 source 5 1.250000s
 "#;
         let profile = parse_profile("sample", output, Duration::from_secs(1), true);
         assert_eq!(profile.slow_steps.len(), 1);
