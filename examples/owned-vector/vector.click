@@ -87,7 +87,10 @@ int32 vector_set(struct vector* owner, int32 index, int32 value) {
     ensures owner->data == old(owner->data);
 } by {
     unfold(nonempty_vector(owner));
-    execute_rest();
+    execute_step();
+    execute_step();
+    execute_step();
+    execute_step();
     fold(nonempty_vector(owner));
     have index < index + 1 by { simp(); }
     frame();
