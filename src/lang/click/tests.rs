@@ -64,6 +64,10 @@ fn parses_expanded_typed_loads_and_old_loadability() {
             step using {
                 fact loadable(old(owner[0..6]));
                 fact load_int32_pointer((owner + 2)) == data;
+                fact separate(
+                    memory(owner[0..6]),
+                    memory(load_int32_pointer((owner + 2))[0..load_int32(owner)])
+                );
             }
         }
     "#;
@@ -97,6 +101,7 @@ fn parses_expanded_typed_loads_and_old_loadability() {
             ..
         }
     ));
+    assert!(matches!(&premises[2], ClickProposition::Separate { .. }));
 }
 
 fn current_index(base: &str, index: u32) -> ContractExpression {

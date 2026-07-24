@@ -155,8 +155,11 @@ int32 owned_string_set(
         fact loadable(owner[0..1]);
         fact loadable((owner + 1)[0..1]);
         fact loadable((owner + 2)[0..2]);
-        fact 0 <= *owner;
-        fact *owner < *(owner + 1);
+        fact 0 <= load_int32(owner);
+        fact load_int32(owner) < load_int32((owner + 1));
+        fact terminated_at(load_int32_pointer((owner + 2)), load_int32(owner));
+        fact separate(memory(owner[0..4]), memory(load_int32_pointer((owner + 2))[0..load_int32((owner + 1))]));
+        fact load_int32_pointer((owner + 2))[load_int32(owner)] == 0;
     }
     have terminated_at(owner->data, owner->len) by {
         unfold(terminated_at);

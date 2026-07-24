@@ -510,4 +510,71 @@ int32 caller() {
         assert!(expanded.contains("step();\n    execute_rest();"));
         assert!(verify_c0_sources(&expanded, &sources).is_err());
     }
+
+    #[test]
+    fn expansion_preserves_unfolded_resource_and_predicate_fact_spellings() {
+        let c_source = r#"
+struct box {
+    int32 len;
+    int32 cap;
+    int32* data;
+};
+
+int32 inspect(struct box* owner) {
+    int32 ignored;
+    return 0;
+}
+"#;
+        let click_source = r#"
+predicate terminated_at(int32 data[], int32 length) {
+    data[length] == 0
+}
+
+resource owned_box(owner: struct box*) {
+    owns owner->len;
+    owns owner->cap;
+    owns owner->data;
+    owns (owner->data)[0..owner->cap];
+    fact 0 <= owner->len;
+    fact owner->len < owner->cap;
+    fact terminated_at(owner->data, owner->len);
+    fact separate(
+        memory(owner[0..3]),
+        memory((owner->data)[0..owner->cap])
+    );
+}
+
+verifying "inspect.c";
+
+int32 inspect(struct box* owner) {
+    owns owned_box(owner);
+    ensures result == 0;
+} by {
+    unfold(owned_box(owner));
+    unfold(terminated_at);
+    execute_step();
+    execute_rest();
+    simp();
+}
+"#;
+
+        let expanded = expand_c0_tactic_source(
+            click_source,
+            &[("inspect.c", c_source)],
+            "inspect",
+            CProofClaim::Grouped,
+            2,
+        )
+        .expect("the declaration should expand with unfolded surface facts");
+
+        assert!(
+            expanded.contains(
+                "fact terminated_at(load_int32_pointer((owner + 2)), load_int32(owner));"
+            )
+        );
+        assert!(expanded.contains(
+            "fact separate(memory(owner[0..3]), memory(load_int32_pointer((owner + 2))[0..load_int32((owner + 1))]));"
+        ));
+        assert!(expanded.contains("fact load_int32_pointer((owner + 2))[load_int32(owner)] == 0;"));
+    }
 }

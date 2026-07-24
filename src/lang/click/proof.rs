@@ -6051,6 +6051,7 @@ fn replay_linear_tactics(
                     arguments,
                     state,
                     &mut requirement_pure_facts,
+                    &mut replay.surface_propositions,
                     predicate_environment,
                     click_function_environment,
                     claim_label,
@@ -6970,6 +6971,40 @@ fn replay_linear_tactics(
                 if !replay.unfolded_predicates.contains(name) {
                     replay.unfolded_predicates.push(name.clone());
                 }
+                let surface_unfoldings = requirement_pure_facts
+                    .iter()
+                    .filter_map(|kernel| {
+                        let Proposition::Predicate {
+                            name: kernel_name, ..
+                        } = kernel
+                        else {
+                            return None;
+                        };
+                        if kernel_name != name {
+                            return None;
+                        }
+                        let ClickProposition::PredicateCall {
+                            name: surface_name,
+                            arguments: surface_arguments,
+                        } = replay.surface_propositions.surface(kernel).ok()?
+                        else {
+                            return None;
+                        };
+                        let definition = predicate_environment.get(surface_name)?;
+                        let surface =
+                            instantiate_click_predicate_definition(definition, surface_arguments)
+                                .ok()?;
+                        let unfolded = unfold_predicates_in_proposition(
+                            predicate_environment,
+                            click_function_environment,
+                            std::slice::from_ref(name),
+                            kernel,
+                            &assumptions,
+                        )
+                        .ok()?;
+                        Some((surface, unfolded))
+                    })
+                    .collect::<Vec<_>>();
                 requirement_pure_facts = unfold_available_predicate_facts(
                     predicate_environment,
                     click_function_environment,
@@ -6979,6 +7014,11 @@ fn replay_linear_tactics(
                 .map_err(|message| {
                     ClickError::new(format!("`{claim_label}` tactic {tactic_index}: {message}"))
                 })?;
+                for (surface, kernel) in surface_unfoldings {
+                    replay
+                        .surface_propositions
+                        .record_lowering(&surface, &kernel)?;
+                }
                 assumptions = assumptions_from_propositions(&requirement_pure_facts);
             }
             ProofTactic::ApplyTheorem(application) => {
@@ -10080,6 +10120,7 @@ fn unfold_composite_resource(
     arguments: &[CExpression],
     mut state: CState,
     available_pure_facts: &mut Vec<Proposition>,
+    surface_propositions: &mut SurfacePropositionMap,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
     claim_label: &str,
@@ -10202,6 +10243,7 @@ fn unfold_composite_resource(
                 )
             ))
         })?;
+        surface_propositions.record_lowering(&fact, &lowered_fact)?;
         available_pure_facts.push(lowered_fact);
     }
 

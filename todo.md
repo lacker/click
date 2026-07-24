@@ -112,6 +112,17 @@ transport fix is expected to benefit several projects. A bounded census is not
 an exhaustive ranking of code beyond a timed-out frontier; rerunning after each
 fix is how the tool discovers the next layer without a full slow pass.
 
+The first owned-string expansion exposed an important performance-certificate
+rule. A minimal `step using` that only proves the store can discard symbolic
+memory cells which the smart step retained using unfolded predicate and
+separation facts. The store then looks fast while the next `simp()` repeats the
+same alias reasoning. Expansion now records surface spellings created by
+resource and predicate unfolds and includes them as step premises. For
+`owned_string_set`, this changed the store-plus-following-proof frontier from
+roughly 21 + 20 seconds with the incomplete certificate to a 3.2-second step
+with the following proof below the two-second reporting threshold. Treat cost
+migration into the suffix as an expansion bug, not as successful progress.
+
 The first statement-level optimization on 2026-07-20 targeted the second
 `owned_segmented_buffer_set_second` call in
 `owned_segmented_buffer_pipeline`. Replacing its 14.3-second

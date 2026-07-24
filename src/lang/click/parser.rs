@@ -2063,16 +2063,31 @@ impl Parser {
     }
 
     fn parse_current_contract_segment(&mut self) -> Result<ContractSegment, ClickError> {
-        let base = self.parse_ensure_primary()?.to_kernel_expression();
+        let base = if matches!(
+            self.peek_ident(),
+            Some("load_int32" | "load_uint8" | "load_int32_pointer" | "load_uint8_pointer")
+        ) && self.peek_next() == Some(&Token::LParen)
+        {
+            let expression = self.parse_contract_primary()?;
+            contract_expression_as_c_fragment(&expression).ok_or_else(|| {
+                self.error("memory segment base must be a current C pointer expression")
+            })?
+        } else {
+            self.parse_ensure_primary()?.to_kernel_expression()
+        };
         if self.peek() == Some(&Token::Arrow) {
             self.position += 1;
             let field_name = self.expect_ident("field name")?;
             return self.resolve_field_segment(base, &field_name);
         }
         self.expect(Token::LBracket)?;
-        let start = self.parse_ensure_expression()?.to_kernel_expression();
+        let start_expression = self.parse_contract_expression()?;
+        let start = contract_expression_as_c_fragment(&start_expression)
+            .ok_or_else(|| self.error("memory segment start must be a current C expression"))?;
         self.expect(Token::DotDot)?;
-        let end = self.parse_ensure_expression()?.to_kernel_expression();
+        let end_expression = self.parse_contract_expression()?;
+        let end = contract_expression_as_c_fragment(&end_expression)
+            .ok_or_else(|| self.error("memory segment end must be a current C expression"))?;
         self.expect(Token::RBracket)?;
         Ok(ContractSegment {
             state: ContractSegmentState::Current,
