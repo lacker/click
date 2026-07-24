@@ -31,9 +31,10 @@ These are deliberate properties of the current tool, not TODOs:
   a grouped proof.
 - For performance work, optionally select one tactic by its source line and
   column inside that proof, including tactics nested in proof `if` and
-  `advance` blocks. This prefix-only mode may lower orchestration tactics such
-  as `execute_until` into individual `execute_step()` calls so they can be
-  selected and expanded again.
+  `advance` blocks. This mode may lower orchestration tactics such as
+  `execute_until` into individual `execute_step()` calls so they can be
+  selected and expanded again. The tactic certificate is captured from the
+  prefix, but the complete rewritten sidecar must re-verify before output.
 - Print the complete rewritten sidecar to standard output.
 - Allow expansion itself to be slower than replaying expanded source.
 - Keep `click-expand` as a separate binary rather than a proof-language tactic.
@@ -155,9 +156,9 @@ limit applies to the whole project, and successful frontier work causes it to
 spend the same budget later in the file. Compare the named completed steps and
 active frontier.
 
-The remaining high-value blockers found during this pass are:
+The high-value blockers found during this pass, with their current status, are:
 
-1. Already-explicit tactics are now the first performance frontier.
+1. **Fixed 2026-07-24.** Already-explicit tactics were the first performance frontier.
    `owned_string_set` takes about 3.3 seconds in its explicit store `step`,
    1.1 seconds in the following `have`, and 5.7 seconds in `fold`. The focused
    regression
@@ -168,22 +169,29 @@ The remaining high-value blockers found during this pass are:
    range coverage and recursive order/memory-load reasoning. Investigate
    deferring normalization until all fold inputs are consumed, plus cheap
    exact/base-mismatch fast paths; preserve overlap and residual-resource
-   checks. The regression is temporarily ignored so it does not add 16 seconds
-   to every library run; run it explicitly with
-   `cargo test explicit_store_step_with_unfolded_resource_facts_verifies
-   -- --ignored`.
-2. Expansion currently validates the selected prefix, not the edited suffix.
+   checks. Resource consumption now batches removals before normalization,
+   memory checks have exact structural fast paths, and loadability tries
+   materialized/structural candidates first. The regression is unignored: the
+   whole function fell from about 16.2 seconds to 3.0 seconds, with its store at
+   about 675 ms and fold at about 1.1 seconds.
+2. **Fixed 2026-07-24.** Expansion previously validated the selected prefix, not the edited suffix.
    Expanding the first store step of `owned_segmented_buffer_set_second`
    produced a locally valid fast certificate but dropped the exact
    `index < owner->second_len` snapshot spelling needed by the following
    statement. Applying the output made the next explicit step fail. Full edited
    source verification (or at minimum verification through the enclosing proof)
-   must reject this cost/correctness migration before output.
-3. `input_cursor_clone` statements 1 and 2 still take roughly 7–8 seconds.
+   now re-verifies the complete edited sidecar and rejects this
+   cost/correctness migration before output.
+3. **Certificate correctness fixed 2026-07-24; performance remains.**
+   `input_cursor_clone` statements 1 and 2 still take roughly 5 seconds.
    Their generated transport certificates do not replay because the transported
-   source fact is not an exact fact at the later snapshot. Preserve distinct
-   call identities and explicitly certify the left-cursor bound across the
-   separate clone mutation before accepting these expansions.
+   source fact is not stored as a standalone exact fact at the later snapshot.
+   Distinct call identities remain preserved. Explicit `transport` now accepts
+   a source backed by a replayed kernel derivation from exact snapshot facts,
+   which makes the generated three-transport certificate sound and replayable.
+   Full-sidecar suffix verification currently exceeds a 60-second expansion
+   watchdog because it also rechecks the later slow pipeline; that is now a
+   performance problem rather than a transport-certificate correctness gap.
 4. Expanding `owned_string_push_preserves_first`, `vector_fill`, and the first
    split-buffer pipeline `execute_until` exceeds the CLI watchdog (25 seconds;
    the first and pipeline also exceeded 60 seconds). The watchdog bounds hangs,
@@ -192,18 +200,21 @@ The remaining high-value blockers found during this pass are:
 5. Expanding the immutable `owned_segmented_buffer_get_first` read to
    `step using` fails prefix replay with seven statement successors. This is an
    expansion ambiguity bug, not a certificate to hand-edit around.
-6. `click-profile` cannot yet source-map loop `initialize`/`preserve` proofs,
-   and a timeout in a default `by auto` proof can also fail source resolution.
-   These reporting gaps hide the active frontier after earlier fixes.
+6. **Fixed 2026-07-24.** `click-profile` now source-maps loop
+   `initialize`/`preserve` proofs, explicit one-token smart proofs such as
+   `by auto`, and implicit default proofs. Automatic loop phases fall back to
+   the `for loop(N)` header. A 12-second owned-vector probe now reports
+   `vector_fill.loop(0).preserve` at its exact tactic location instead of
+   failing the report.
 
-The next implementation priority is the focused resource-normalization
-performance regression: it affects both explicit `step` replay and `fold`, so
-it blocks the intended fast-certificate model. Then make edited-suffix
-verification an enforced expander invariant, fix the snapshot-aware
-input-cursor transports, and close the profiler source-mapping gaps before
-resuming the two-second expansion sweep. Keep using a two-second reporting
-threshold while optimizing the examples; simple tactics above the threshold
-are engine-performance bugs rather than expansion candidates.
+The four correctness/tooling prerequisites above are complete. Pause here for
+review before resuming the two-second expansion sweep. The remaining known
+implementation bugs are the long expansion cases in item 4 and the
+multi-successor immutable-read ambiguity in item 5. The profiler also shows
+that `input_cursor_clone`'s explicit replay still needs engine optimization.
+Keep using a two-second reporting threshold while optimizing the examples;
+simple tactics above the threshold are engine-performance bugs rather than
+expansion candidates.
 
 The first statement-level optimization on 2026-07-20 targeted the second
 `owned_segmented_buffer_set_second` call in
@@ -257,12 +268,11 @@ The command:
 6. Replaces the selected source tactic.
 7. Prints the complete rewritten sidecar to stdout.
 
-Verification stops immediately after the selected tactic and re-verifies the
-rewritten proof prefix through the last replacement tactic. This catches an
-invalid local expansion without running an unrelated slow suffix and preserves
-prefix-only dependency pruning. It verifies only the inferred function and the
-transitive C-call dependencies reached by that prefix; unrelated earlier
-sidecar functions are skipped.
+Certificate capture stops immediately after the selected tactic, so smart
+tactic planning does not run the proof suffix. After applying the edit,
+`verify_c0_sources` verifies the complete rewritten sidecar before anything is
+printed. This catches snapshot facts or resources that a locally valid
+replacement accidentally drops before a later tactic.
 
 The profiler emits the same pasteable location syntax, including for tactics
 nested inside proof `if` and `advance`. This is the fast diagnostic/edit loop:
@@ -270,8 +280,8 @@ nested inside proof `if` and `advance`. This is the fast diagnostic/edit loop:
 1. Copy a `path.click:line:column` location from `click-profile`.
 2. Replace it with the emitted per-statement `execute_step()` sequence.
 3. Select one of those resulting statements and expand it again.
-4. Fix the first local certificate blocker without running the proof suffix or
-   the full example corpus.
+4. Fix the first local certificate blocker. The watchdog bounds the final
+   full-sidecar verification when the remaining suffix is still slow.
 
 The CLI is deliberately a partial expansion boundary: its output may contain
 lower-level smart tactics intended for another iteration. The Rust claim-level
@@ -417,13 +427,14 @@ regressions. A stack sample of the owned-vector run showed most time in modular
 call setup while pruning symbolic memory cells and proving separation, not in a
 deadlock or an unbounded call-identity loop.
 
-### 1a. Add prefix-only single-tactic expansion (completed 2026-07-20,
+### 1a. Add single-tactic expansion (completed 2026-07-20,
 location selector completed 2026-07-24)
 
-`click-expand path.click:line:column` replays only the proof prefix through the
-selected tactic and replaces exactly that source statement. The wall-clock
-watchdog is forwarded to the child process. Locations handle semicolon tactics,
-block-shaped tactics, and tactics nested inside proof `if` and `advance`.
+`click-expand path.click:line:column` captures from the proof prefix through the
+selected tactic and replaces exactly that source statement, then verifies the
+complete edited sidecar. The wall-clock watchdog is forwarded to the child
+process. Locations handle semicolon tactics, block-shaped tactics, and tactics
+nested inside proof `if` and `advance`.
 
 The first owned-vector probe at the source location of
 `vector_pipeline`'s initial `execute_until` completes in about 2.5 seconds after

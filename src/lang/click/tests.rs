@@ -1247,6 +1247,41 @@ fn simple_step_supports_explicit_fact_transport() {
 }
 
 #[test]
+fn explicit_fact_transport_can_certify_a_derived_source() {
+    let c_source = r#"
+            int32 set_third_return_second(int32 p[3]) {
+                p[2] = 9;
+                return p[1];
+            }
+        "#;
+    let click_source = r#"
+            verifying "transport.c";
+
+            predicate ordered(int32 p[]) {
+                0 <= p[0] and p[0] <= p[1]
+            }
+
+            int32 set_third_return_second(int32 p[3]) {
+                requires ordered(p);
+                consumes p[0..3];
+                mutable p[2..3];
+                produces p[0..3];
+                ensures result >= 0;
+            } by {
+                unfold(ordered);
+                step();
+                transport(0 <= old(p[1]), 0 <= p[1]);
+                step();
+                frame();
+                simp();
+            }
+        "#;
+
+    verify_c0_sources(click_source, &[("transport.c", c_source)])
+        .expect("transport should certify a source derived from exact snapshot facts");
+}
+
+#[test]
 fn simple_statement_transition_does_not_transport_facts_automatically() {
     let base_memory = CMemory::new();
     let first = Pointer {

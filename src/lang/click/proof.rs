@@ -6141,9 +6141,11 @@ fn replay_linear_tactics(
                 replay
                     .surface_propositions
                     .record_lowering(surface_source, &source)?;
-                if !requirement_pure_facts.contains(&source) {
+                if !exact_fact_is_available(&source, &requirement_pure_facts)
+                    && assumptions.derive_proposition(&source).is_none()
+                {
                     return Err(ClickError::new(format!(
-                        "`{claim_label}` tactic {tactic_index}: `transport` requires an exact source fact: {}",
+                        "`{claim_label}` tactic {tactic_index}: `transport` requires an exact or certified source fact: {}",
                         describe_missing_pure_fact(
                             &source,
                             &requirement_pure_facts,

@@ -396,6 +396,36 @@ pub fn c0_tactic_source_position(
     for function_block in file.function_blocks() {
         let function_name = function_block.signature().name();
         let function = find_function(&tokens, function_name)?;
+        if let Some(rest) = claim_label
+            .strip_prefix(function_name)
+            .and_then(|rest| rest.strip_prefix(".loop("))
+        {
+            if let Some((loop_index, phase)) = rest.split_once(").")
+                && matches!(phase, "initialize" | "preserve")
+                && let Ok(loop_index) = loop_index.parse::<usize>()
+                && let Some(clause) = function_block
+                    .structural_clauses()
+                    .iter()
+                    .find(|clause| clause.region() == &CodeRegion::Loop(loop_index))
+            {
+                let proof = if phase == "initialize" {
+                    clause.initialize_proof()
+                } else {
+                    clause.preserve_proof()
+                };
+                let (fallback, proof_span) =
+                    find_loop_phase_proof_span(&tokens, &function, loop_index, phase)?;
+                return proof_source_position(
+                    click_source,
+                    &tokens,
+                    proof_span.as_ref(),
+                    proof,
+                    fallback,
+                    claim_label,
+                    source_index,
+                );
+            }
+        }
         let selected = if claim_label == format!("{function_name}.contract") {
             function_block
                 .grouped_proof()
@@ -430,16 +460,49 @@ pub fn c0_tactic_source_position(
         let Some((claim, proof)) = selected else {
             continue;
         };
-        let proof_span = match claim {
-            CProofClaim::Grouped => find_grouped_proof_span(&tokens, &function)?,
+        let fallback = match claim {
+            CProofClaim::Grouped => tokens[function.body_close].span.start,
             CProofClaim::Ensure(_) | CProofClaim::Effect(_) => {
-                find_claim_proof_span(&tokens, &function, claim)?
+                find_claim_clause_offset(&tokens, &function, claim)?
             }
         };
-        let Some(tactics) = proof.tactics() else {
-            break;
+        let proof_span = match claim {
+            CProofClaim::Grouped => Some(find_grouped_proof_span(&tokens, &function)?),
+            CProofClaim::Ensure(_) | CProofClaim::Effect(_) => {
+                find_claim_proof_span(&tokens, &function, claim).ok()
+            }
         };
-        let spans = collect_source_tactic_spans(&tokens, &proof_span, tactics)?;
+        return proof_source_position(
+            click_source,
+            &tokens,
+            proof_span.as_ref(),
+            Some(proof),
+            fallback,
+            claim_label,
+            source_index,
+        );
+    }
+    Err(ClickError::new(format!(
+        "could not locate source proof `{claim_label}`"
+    )))
+}
+
+fn proof_source_position(
+    click_source: &str,
+    tokens: &[SourceToken],
+    proof_span: Option<&Range<usize>>,
+    proof: Option<&Proof>,
+    fallback: usize,
+    claim_label: &str,
+    source_index: usize,
+) -> Result<SourcePosition, ClickError> {
+    if let Some(tactics) = proof.and_then(Proof::tactics) {
+        let proof_span = proof_span.ok_or_else(|| {
+            ClickError::new(format!(
+                "`{claim_label}` has no explicit source proof clause"
+            ))
+        })?;
+        let spans = collect_source_tactic_spans(tokens, proof_span, tactics)?;
         let span = spans.get(source_index).ok_or_else(|| {
             ClickError::new(format!(
                 "`{claim_label}` has no source tactic occurrence {source_index}"
@@ -447,8 +510,114 @@ pub fn c0_tactic_source_position(
         })?;
         return Ok(position_at_offset(click_source, span.start));
     }
+    if source_index != 0 {
+        return Err(ClickError::new(format!(
+            "`{claim_label}` has no source tactic occurrence {source_index}"
+        )));
+    }
+    if let Some(proof_span) = proof_span {
+        let by = tokens
+            .iter()
+            .position(|token| token.span.start == proof_span.start && token.text == "by")
+            .ok_or_else(|| ClickError::new("could not locate source `by` clause"))?;
+        if let Some(tactic) = tokens.get(by + 1) {
+            return Ok(position_at_offset(click_source, tactic.span.start));
+        }
+    }
+    Ok(position_at_offset(click_source, fallback))
+}
+
+fn find_claim_clause_offset(
+    tokens: &[SourceToken],
+    function: &FunctionSource,
+    claim: CProofClaim,
+) -> Result<usize, ClickError> {
+    let (keyword, wanted) = match claim {
+        CProofClaim::Ensure(index) => ("ensures", index),
+        CProofClaim::Effect(index) => ("effect", index),
+        CProofClaim::Grouped => unreachable!(),
+    };
+    let mut depth = 0;
+    let mut found = 0;
+    for token in &tokens[function.body_open + 1..function.body_close] {
+        match token.text.as_str() {
+            "{" => depth += 1,
+            "}" => depth -= 1,
+            text if depth == 0
+                && (text == keyword
+                    || keyword == "effect" && matches!(text, "immutable" | "mutable")) =>
+            {
+                if found == wanted {
+                    return Ok(token.span.start);
+                }
+                found += 1;
+            }
+            _ => {}
+        }
+    }
     Err(ClickError::new(format!(
-        "could not locate source proof `{claim_label}`"
+        "could not locate source clause for {claim:?}"
+    )))
+}
+
+fn find_loop_phase_proof_span(
+    tokens: &[SourceToken],
+    function: &FunctionSource,
+    wanted_loop: usize,
+    phase: &str,
+) -> Result<(usize, Option<Range<usize>>), ClickError> {
+    let mut depth = 0;
+    let mut index = function.body_open + 1;
+    while index < function.body_close {
+        match tokens[index].text.as_str() {
+            "{" => depth += 1,
+            "}" => depth -= 1,
+            "for"
+                if depth == 0
+                    && tokens.get(index + 1).map(|token| token.text.as_str()) == Some("loop")
+                    && tokens.get(index + 2).map(|token| token.text.as_str()) == Some("(") =>
+            {
+                let loop_index = tokens
+                    .get(index + 3)
+                    .and_then(|token| token.text.parse::<usize>().ok());
+                let mut open = index + 5;
+                if tokens.get(open).map(|token| token.text.as_str()) == Some("as") {
+                    open += 2;
+                }
+                if loop_index == Some(wanted_loop)
+                    && tokens.get(index + 4).map(|token| token.text.as_str()) == Some(")")
+                    && tokens.get(open).map(|token| token.text.as_str()) == Some("{")
+                {
+                    let close = matching_delimiter(tokens, open, "{", "}")?;
+                    let mut nested = 0;
+                    for cursor in open + 1..close {
+                        match tokens[cursor].text.as_str() {
+                            "{" => nested += 1,
+                            "}" => nested -= 1,
+                            text if nested == 0 && text == phase => {
+                                let by = cursor + 1;
+                                if tokens.get(by).map(|token| token.text.as_str()) != Some("by") {
+                                    return Err(ClickError::new(format!(
+                                        "`{phase}` has no source `by` clause"
+                                    )));
+                                }
+                                return Ok((
+                                    tokens[index].span.start,
+                                    Some(proof_span(tokens, by)?),
+                                ));
+                            }
+                            _ => {}
+                        }
+                    }
+                    return Ok((tokens[index].span.start, None));
+                }
+            }
+            _ => {}
+        }
+        index += 1;
+    }
+    Err(ClickError::new(format!(
+        "could not locate source loop({wanted_loop})"
     )))
 }
 
@@ -1005,5 +1174,84 @@ int32 inspect(struct box* owner) {
             "fact separate(memory(owner[0..3]), memory(load_int32_pointer((owner + 2))[0..load_int32((owner + 1))]));"
         ));
         assert!(expanded.contains("fact load_int32_pointer((owner + 2))[load_int32(owner)] == 0;"));
+    }
+
+    #[test]
+    fn source_position_maps_smart_and_implicit_default_proofs() {
+        let c_source = "int32 identity(int32 x) { return x; }";
+        let explicit = r#"verifying "identity.c";
+int32 identity(int32 x) {
+    ensures result == x;
+} by auto;
+"#;
+        assert_eq!(
+            c0_tactic_source_position(
+                explicit,
+                &[("identity.c", c_source)],
+                "identity.contract",
+                0,
+            )
+            .unwrap(),
+            SourcePosition { line: 4, column: 6 }
+        );
+
+        let implicit = r#"verifying "identity.c";
+int32 identity(int32 x) {
+    ensures result == x;
+}
+"#;
+        assert_eq!(
+            c0_tactic_source_position(
+                implicit,
+                &[("identity.c", c_source)],
+                "identity.ensures_0",
+                0,
+            )
+            .unwrap(),
+            SourcePosition { line: 3, column: 5 }
+        );
+    }
+
+    #[test]
+    fn source_position_maps_loop_phase_proofs() {
+        let c_source = "int32 count(int32 n) { while (n > 0) { n = n - 1; } return n; }";
+        let click_source = r#"verifying "count.c";
+int32 count(int32 n) {
+    for loop(0) as countdown {
+        invariant n == n;
+        initialize by simp;
+        preserve by {
+            simp();
+        }
+    }
+    ensures result == result;
+}
+"#;
+        assert_eq!(
+            c0_tactic_source_position(
+                click_source,
+                &[("count.c", c_source)],
+                "count.loop(0).initialize",
+                0,
+            )
+            .unwrap(),
+            SourcePosition {
+                line: 5,
+                column: 23
+            }
+        );
+        assert_eq!(
+            c0_tactic_source_position(
+                click_source,
+                &[("count.c", c_source)],
+                "count.loop(0).preserve",
+                0,
+            )
+            .unwrap(),
+            SourcePosition {
+                line: 7,
+                column: 13
+            }
+        );
     }
 }
