@@ -3144,6 +3144,27 @@ impl Assumptions {
             return true;
         }
 
+        if self.prop_facts.iter().any(|proposition| {
+            let Proposition::CMemoryLoadable {
+                memory: range_memory,
+                base: range_base,
+                bytes: range_bytes,
+            } = proposition
+            else {
+                return false;
+            };
+
+            memory_range_still_available(range_memory, memory, range_base)
+                && self.proves_loadable_region_from_structural_range(
+                    range_base,
+                    range_bytes,
+                    base,
+                    bytes,
+                )
+        }) {
+            return true;
+        }
+
         self.prop_facts.iter().any(|proposition| {
             let Proposition::CMemoryLoadable {
                 memory: range_memory,
@@ -3157,6 +3178,42 @@ impl Assumptions {
             memory_range_still_available(range_memory, memory, range_base)
                 && self.proves_loadable_region_from_range(range_base, range_bytes, base, bytes)
         })
+    }
+
+    fn proves_loadable_region_from_structural_range(
+        &self,
+        range_base: &Pointer,
+        range_bytes: &Bitvector32Term,
+        base: &Pointer,
+        bytes: &Bitvector32Term,
+    ) -> bool {
+        if range_base == base && range_bytes == bytes {
+            return true;
+        }
+        if let Some(byte_width) = bytes.as_const()
+            && byte_width == 4
+            && let Some(index) = base.element_index_from_base(range_base)
+            && let Some(element_count) = int32_element_count_from_bytes(range_bytes)
+        {
+            return self.decide(&ConditionTerm::signed_greater_equal(
+                index.clone(),
+                Bitvector32Term::Constant(0),
+            )) == Some(true)
+                && self.decide(&ConditionTerm::signed_less_than(index, element_count))
+                    == Some(true);
+        }
+        let Some(byte_offset) = pointer_byte_offset_from_base(base, range_base) else {
+            return false;
+        };
+        let access_end = Bitvector32Term::add(byte_offset.clone(), bytes.clone());
+        self.decide(&ConditionTerm::signed_greater_equal(
+            byte_offset,
+            Bitvector32Term::Constant(0),
+        )) == Some(true)
+            && self.decide(&ConditionTerm::signed_less_equal(
+                access_end,
+                range_bytes.clone(),
+            )) == Some(true)
     }
 
     pub(super) fn proves_loadable_region_from_range(

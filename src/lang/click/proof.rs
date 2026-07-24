@@ -10392,6 +10392,7 @@ fn fold_composite_resources_on_outcome(
         };
         let mut post_state = state;
         let assumptions = assumptions_from_propositions(available_pure_facts);
+        let mut lowered_contained = Vec::new();
         for contained in composite_body.contains() {
             let contained =
                 instantiate_resource_clause(contained, &substitutions).map_err(|message| {
@@ -10402,26 +10403,40 @@ fn fold_composite_resources_on_outcome(
                 })?;
             let lowered =
                 lower_resource_clause(&contained, parameters, arguments, post_state.memory())?;
-            let resources = post_state
-                .resources()
-                .clone()
-                .without_fact(&lowered, &assumptions)
-                .ok_or_else(|| {
-                    ClickError::new(format!(
+            lowered_contained.push(lowered);
+        }
+        let resources = if let Some(resources) = post_state
+            .resources()
+            .clone()
+            .without_facts(&lowered_contained, &assumptions)
+        {
+            resources
+        } else {
+            // Preserve the precise missing-resource diagnostic on the slow
+            // failure path.
+            let mut diagnostic_resources = post_state.resources().clone();
+            for lowered in &lowered_contained {
+                let diagnostic_facts = diagnostic_resources.facts().to_vec();
+                let Some(resources) = diagnostic_resources.without_fact(lowered, &assumptions)
+                else {
+                    return Err(ClickError::new(format!(
                         "`{claim_label}` path {path_index}: `fold({})` failed: {}",
                         describe_resource_clause(resource),
                         describe_missing_resource_fact(
-                            &lowered,
+                            lowered,
                             available_pure_facts,
-                            post_state.resources().facts(),
+                            &diagnostic_facts,
                             parameters,
                             arguments,
                             execution_pure_facts
                         )
-                    ))
-                })?;
-            post_state = post_state.with_resource_context(resources);
-        }
+                    )));
+                };
+                diagnostic_resources = resources;
+            }
+            unreachable!("batch and sequential resource consumption disagreed")
+        };
+        post_state = post_state.with_resource_context(resources);
 
         let abstract_resource =
             lower_resource_clause(resource, parameters, arguments, post_state.memory())?;

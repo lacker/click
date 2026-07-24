@@ -257,6 +257,44 @@ fn exact_resource_views_are_preserved_when_satisfied() {
 }
 
 #[test]
+fn batch_resource_consumption_splits_without_repeated_normalization() {
+    let base = Pointer {
+        block: "p".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let context = ResourceContext::new()
+        .unchecked_with_fact(CResourceFact::own_memory(memory_range(base.clone(), 0, 3)));
+    let required = [
+        CResourceFact::own_memory(memory_range(base.clone(), 0, 1)),
+        CResourceFact::own_memory(memory_range(base, 1, 3)),
+    ];
+
+    let remaining = context
+        .without_facts(&required, &Assumptions::new())
+        .expect("both subranges should be consumable");
+
+    assert!(remaining.is_empty());
+}
+
+#[test]
+fn batch_resource_consumption_normalizes_when_a_requirement_needs_a_merge() {
+    let base = Pointer {
+        block: "p".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let context = ResourceContext::new()
+        .unchecked_with_fact(CResourceFact::own_memory(memory_range(base.clone(), 0, 1)))
+        .unchecked_with_fact(CResourceFact::own_memory(memory_range(base.clone(), 1, 2)));
+    let required = [CResourceFact::own_memory(memory_range(base, 0, 2))];
+
+    let remaining = context
+        .without_facts(&required, &Assumptions::new())
+        .expect("adjacent ranges should merge before consumption");
+
+    assert!(remaining.is_empty());
+}
+
+#[test]
 fn resource_context_observes_write_separation() {
     let base = Pointer {
         block: "p".into(),

@@ -830,6 +830,31 @@ pub(super) fn evaluate_c_memory_load_paths(
     assumptions: &Assumptions,
     has_external_read_resource: bool,
 ) -> Vec<CExpressionPath> {
+    // An exact materialized cell is already the authoritative value for this
+    // pointer. Avoid proving every other symbolic cell distinct before the
+    // direct map lookup.
+    if let Some(value) = memory.known_value(&pointer) {
+        if let Some(value) = symbolic_pointer_value_from_int_cell(&pointer, &value, value_type) {
+            return vec![CExpressionPath {
+                outcome: CExpressionOutcome::Value(value),
+                facts,
+                obligations,
+            }];
+        }
+        if !value_type.accepts(&value) {
+            return vec![CExpressionPath {
+                outcome: CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+                facts,
+                obligations,
+            }];
+        }
+        return vec![CExpressionPath {
+            outcome: CExpressionOutcome::Value(value),
+            facts,
+            obligations,
+        }];
+    }
+
     let memory = memory.without_proven_distinct_cells(&pointer, assumptions);
 
     if let Some(value) = memory.known_value(&pointer) {

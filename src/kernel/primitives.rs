@@ -2526,26 +2526,51 @@ impl ResourceContext {
     }
 
     pub fn without_fact(self, fact: &CResourceFact, assumptions: &Assumptions) -> Option<Self> {
-        let algebra = resource_family_algebra(fact.family());
         let mut context = self;
-        for index in 0..context.facts.len() {
-            let available = &context.facts[index];
+        if !context.consume_fact_without_normalizing(fact, assumptions) {
+            return None;
+        }
+        Some(context.normalized(assumptions))
+    }
+
+    /// Consumes several facts while postponing whole-context normalization
+    /// until the end. If a required fact is only available after adjacent
+    /// resources are merged, normalize once at that point and retry it.
+    pub fn without_facts(self, facts: &[CResourceFact], assumptions: &Assumptions) -> Option<Self> {
+        let mut context = self;
+        for fact in facts {
+            if context.consume_fact_without_normalizing(fact, assumptions) {
+                continue;
+            }
+            context = context.normalized(assumptions);
+            if !context.consume_fact_without_normalizing(fact, assumptions) {
+                return None;
+            }
+        }
+        Some(context.normalized(assumptions))
+    }
+
+    fn consume_fact_without_normalizing(
+        &mut self,
+        fact: &CResourceFact,
+        assumptions: &Assumptions,
+    ) -> bool {
+        let algebra = resource_family_algebra(fact.family());
+        for index in 0..self.facts.len() {
+            let available = &self.facts[index];
             if available.family() != fact.family() {
                 continue;
             }
             let Some(consumption) = algebra.consume(available, fact, assumptions) else {
                 continue;
             };
-            match consumption {
-                ResourceFactConsumption::Preserve => {}
-                ResourceFactConsumption::Replace(residual) => {
-                    context.facts.remove(index);
-                    context.facts.extend(residual);
-                }
+            if let ResourceFactConsumption::Replace(residual) = consumption {
+                self.facts.remove(index);
+                self.facts.extend(residual);
             }
-            return Some(context.normalized(assumptions));
+            return true;
         }
-        None
+        false
     }
 
     pub(super) fn normalized(mut self, assumptions: &Assumptions) -> Self {
@@ -2609,6 +2634,9 @@ fn memory_resource_fact_entails(
     required: &CResourceFact,
     assumptions: &Assumptions,
 ) -> bool {
+    if available == required {
+        return true;
+    }
     match (available, required) {
         (_, _) if required.memory_view_range().is_some() => {
             let required = required.memory_view_range().expect("checked above");
@@ -2902,12 +2930,65 @@ fn memory_range_covers(
     required: &CMemoryRange,
     assumptions: &Assumptions,
 ) -> bool {
+    if available == required {
+        return true;
+    }
+    if available.base().blocks_proven_distinct(required.base()) {
+        return false;
+    }
+    if let Some(covers) = memory_range_structurally_covers(available, required) {
+        return covers;
+    }
     assumptions.range_covered_by_fact_range(
         required,
         available.base(),
         available.start(),
         available.end(),
     )
+}
+
+fn memory_resource_fact_range(fact: &CResourceFact) -> Option<&CMemoryRange> {
+    match fact {
+        CResourceFact::Own(CResource::Memory(range))
+        | CResourceFact::View(CResource::Memory(range)) => Some(range),
+        CResourceFact::Own(CResource::Composite { .. } | CResource::Token { .. })
+        | CResourceFact::View(CResource::Composite { .. } | CResource::Token { .. }) => None,
+    }
+}
+
+fn memory_range_structurally_covers(
+    available: &CMemoryRange,
+    required: &CMemoryRange,
+) -> Option<bool> {
+    let base_delta = required.base().element_index_from_base(available.base())?;
+    let available_start = available.start().as_const()? as i32;
+    let available_end = available.end().as_const()? as i32;
+    let required_start =
+        Bitvector32Term::add(base_delta.clone(), required.start().clone()).as_const()? as i32;
+    let required_end = Bitvector32Term::add(base_delta, required.end().clone()).as_const()? as i32;
+    Some(available_start <= required_start && required_end <= available_end)
+}
+
+fn memory_ranges_structurally_disjoint(left: &CMemoryRange, right: &CMemoryRange) -> bool {
+    if left.base().blocks_proven_distinct(right.base()) {
+        return true;
+    }
+    let Some(base_delta) = right.base().element_index_from_base(left.base()) else {
+        return false;
+    };
+    let (Some(left_start), Some(left_end), Some(right_start), Some(right_end)) = (
+        left.start().as_const().map(|value| value as i32),
+        left.end().as_const().map(|value| value as i32),
+        Bitvector32Term::add(base_delta.clone(), right.start().clone())
+            .as_const()
+            .map(|value| value as i32),
+        Bitvector32Term::add(base_delta, right.end().clone())
+            .as_const()
+            .map(|value| value as i32),
+    ) else {
+        return false;
+    };
+    left_end < right_start || right_end < left_start
 }
 
 fn split_memory_range(
@@ -3059,6 +3140,13 @@ fn combine_memory_resource_facts(
     right: &CResourceFact,
     assumptions: &Assumptions,
 ) -> Option<CResourceFact> {
+    if let (Some(left_range), Some(right_range)) = (
+        memory_resource_fact_range(left),
+        memory_resource_fact_range(right),
+    ) && memory_ranges_structurally_disjoint(left_range, right_range)
+    {
+        return None;
+    }
     match (left, right) {
         _ if memory_resource_fact_entails(left, right, assumptions) => Some(left.clone()),
         _ if memory_resource_fact_entails(right, left, assumptions) => Some(right.clone()),
@@ -3082,14 +3170,18 @@ fn merge_memory_ranges(
     if left.base() != right.base() {
         return None;
     }
-    if bitvector_terms_proven_equal(left.end(), right.start(), assumptions) {
+    if left.end() == right.start()
+        || bitvector_terms_proven_equal(left.end(), right.start(), assumptions)
+    {
         return Some(CMemoryRange::new(
             left.base().clone(),
             left.start().clone(),
             right.end().clone(),
         ));
     }
-    if bitvector_terms_proven_equal(right.end(), left.start(), assumptions) {
+    if right.end() == left.start()
+        || bitvector_terms_proven_equal(right.end(), left.start(), assumptions)
+    {
         return Some(CMemoryRange::new(
             left.base().clone(),
             right.start().clone(),

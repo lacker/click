@@ -5155,7 +5155,6 @@ fn failed_memory_postcondition_reports_loaded_value() {
 }
 
 #[test]
-#[ignore = "focused performance regression; enable after resource normalization is fast"]
 fn explicit_store_step_with_unfolded_resource_facts_verifies() {
     let c_source = r#"
         struct owned_string {
