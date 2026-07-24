@@ -99,7 +99,8 @@ int32 owned_segmented_buffer_set_first(
 } by {
     unfold(owned_segmented_buffer(owner));
     unfold(owned_segment(owner->first_data, owner->first_len));
-    execute_rest();
+    execute_step();
+    execute_step();
     have 0 <= owner->first_len by { simp(); }
     fold(owned_segment(owner->first_data, owner->first_len));
     have 1 <= owner->first_len by { simp(); }
