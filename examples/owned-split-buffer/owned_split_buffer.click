@@ -101,7 +101,8 @@ int32 owned_split_buffer_set_right(
     ensures owner->data == old(owner->data);
 } by {
     unfold(owned_split_buffer(owner));
-    execute_rest();
+    execute_step();
+    execute_step();
     fold(owned_split_buffer(owner));
     have index < index + 1 by { simp(); }
     frame();
