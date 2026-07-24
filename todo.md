@@ -29,10 +29,11 @@ These are deliberate properties of the current tool, not TODOs:
 
 - Expand one selected C function proof unit at a time: an ensure, an effect, or
   a grouped proof.
-- For performance work, optionally select one zero-based top-level tactic inside
-  that proof. This prefix-only mode may lower orchestration tactics such as
-  `execute_until` into individual `execute_step()` calls so they can be selected
-  and expanded again.
+- For performance work, optionally select one tactic by its source line and
+  column inside that proof, including tactics nested in proof `if` and
+  `advance` blocks. This prefix-only mode may lower orchestration tactics such
+  as `execute_until` into individual `execute_step()` calls so they can be
+  selected and expanded again.
 - Print the complete rewritten sidecar to standard output.
 - Allow expansion itself to be slower than replaying expanded source.
 - Keep `click-expand` as a separate binary rather than a proof-language tactic.
@@ -135,12 +136,19 @@ on `master`:
   sub-two-second statements (`a78ab85`).
 - `vector_set`: split its execution (`27b2b62`) and expanded the expensive
   store (`9dac00b`). `vector_replace_if`'s three-statement prefix is split
-  (`4ab99ae`) and statement 2 is explicit (`57cb0cc`).
+  (`4ab99ae`), statement 2 is explicit (`57cb0cc`), and both branch-local
+  stores are explicit (`90fcbf1`, `7bc0887`).
 - Split-buffer: `move_right` (`1b4346d`) and `set_right` (`ad109e5`) no longer
-  report completed steps over two seconds before the pipeline frontier.
+  report completed steps over two seconds before the pipeline frontier. The
+  two `set_right` statements are now explicit and its former 2.4-second first
+  step replays in about 250 ms (`df846f6`).
 - Segmented-buffer: both setters are split, and both store statements have
   explicit checked certificates (`826d33f`, `067dd96`). The complete focused
   example test remains green.
+- Source-location selection, including nested tactics, replaced the old tactic
+  ordinal selector (`bfc7c50`). `vector_push_first` is split into eight
+  statement steps and its final one-statement execution is reduced
+  (`31884ec`).
 
 Do not interpret a project timeout as a regression by itself: the profiler's
 limit applies to the whole project, and successful frontier work causes it to
@@ -149,30 +157,53 @@ active frontier.
 
 The remaining high-value blockers found during this pass are:
 
-1. `vector_replace_if` has a branch-local `execute_step` (statement 4, and
-   symmetrically statement 5) that consumes the 20-second focused budget. The
-   CLI can select only top-level tactics, so it cannot yet expand tactics nested
-   inside `advance`.
-2. `input_cursor_clone` statements 1 and 2 still take roughly 7–8 seconds.
+1. Already-explicit tactics are now the first performance frontier.
+   `owned_string_set` takes about 3.3 seconds in its explicit store `step`,
+   1.1 seconds in the following `have`, and 5.7 seconds in `fold`. The focused
+   regression
+   `explicit_store_step_with_unfolded_resource_facts_verifies` reproduces this
+   in one function. A stack sample of the fold spent 80 percent of its samples
+   in `ResourceContext::without_fact` re-normalizing the complete resource
+   context after a consumption. Pair normalization repeatedly calls memory
+   range coverage and recursive order/memory-load reasoning. Investigate
+   deferring normalization until all fold inputs are consumed, plus cheap
+   exact/base-mismatch fast paths; preserve overlap and residual-resource
+   checks. The regression is temporarily ignored so it does not add 16 seconds
+   to every library run; run it explicitly with
+   `cargo test explicit_store_step_with_unfolded_resource_facts_verifies
+   -- --ignored`.
+2. Expansion currently validates the selected prefix, not the edited suffix.
+   Expanding the first store step of `owned_segmented_buffer_set_second`
+   produced a locally valid fast certificate but dropped the exact
+   `index < owner->second_len` snapshot spelling needed by the following
+   statement. Applying the output made the next explicit step fail. Full edited
+   source verification (or at minimum verification through the enclosing proof)
+   must reject this cost/correctness migration before output.
+3. `input_cursor_clone` statements 1 and 2 still take roughly 7–8 seconds.
    Their generated transport certificates do not replay because the transported
    source fact is not an exact fact at the later snapshot. Preserve distinct
    call identities and explicitly certify the left-cursor bound across the
    separate clone mutation before accepting these expansions.
-3. Expanding `owned_string_push_preserves_first`, `vector_fill`, and the first
+4. Expanding `owned_string_push_preserves_first`, `vector_fill`, and the first
    split-buffer pipeline `execute_until` exceeds the CLI watchdog (25 seconds;
    the first and pipeline also exceeded 60 seconds). The watchdog bounds hangs,
    but the expander needs cheaper prefix replay or finer selection to make these
    targets practical.
-4. Expanding the immutable `owned_segmented_buffer_get_first` read to
+5. Expanding the immutable `owned_segmented_buffer_get_first` read to
    `step using` fails prefix replay with seven statement successors. This is an
    expansion ambiguity bug, not a certificate to hand-edit around.
+6. `click-profile` cannot yet source-map loop `initialize`/`preserve` proofs,
+   and a timeout in a default `by auto` proof can also fail source resolution.
+   These reporting gaps hide the active frontier after earlier fixes.
 
-The next implementation priority is nested tactic selection inside `advance`,
-because it unlocks the largest known smart-tactic cost. After that, fix the
-snapshot-aware input-cursor transports, then the immutable-read successor
-ambiguity. Keep using a two-second reporting threshold while optimizing the
-examples; simple tactics above the threshold are engine-performance bugs rather
-than expansion candidates.
+The next implementation priority is the focused resource-normalization
+performance regression: it affects both explicit `step` replay and `fold`, so
+it blocks the intended fast-certificate model. Then make edited-suffix
+verification an enforced expander invariant, fix the snapshot-aware
+input-cursor transports, and close the profiler source-mapping gaps before
+resuming the two-second expansion sweep. Keep using a two-second reporting
+threshold while optimizing the examples; simple tactics above the threshold
+are engine-performance bugs rather than expansion candidates.
 
 The first statement-level optimization on 2026-07-20 targeted the second
 `owned_segmented_buffer_set_second` call in

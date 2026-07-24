@@ -5153,3 +5153,91 @@ fn failed_memory_postcondition_reports_loaded_value() {
         error.message()
     );
 }
+
+#[test]
+#[ignore = "focused performance regression; enable after resource normalization is fast"]
+fn explicit_store_step_with_unfolded_resource_facts_verifies() {
+    let c_source = r#"
+        struct owned_string {
+            int32 len;
+            int32 cap;
+            int32* data;
+        };
+
+        int32 owned_string_set(
+            struct owned_string* owner,
+            int32 index,
+            int32 value
+        ) {
+            owner->data[index] = value;
+            return value;
+        }
+    "#;
+    let click_source = r#"
+        predicate terminated_at(int32 data[], int32 length) {
+            data[length] == 0
+        }
+
+        resource owned_string(owner: struct owned_string*) {
+            owns owner->len;
+            owns owner->cap;
+            owns owner->data;
+            owns (owner->data)[0..owner->cap];
+            fact 0 <= owner->len;
+            fact owner->len < owner->cap;
+            fact terminated_at(owner->data, owner->len);
+            fact separate(
+                memory(owner[0..4]),
+                memory((owner->data)[0..owner->cap])
+            );
+        }
+
+        verifying "owned_string_set.c";
+
+        int32 owned_string_set(
+            struct owned_string* owner,
+            int32 index,
+            int32 value
+        ) {
+            requires 0 <= index;
+            requires index < owner->len;
+            owns owned_string(owner);
+            ensures result == value;
+            ensures (owner->data)[index] == value;
+        } by {
+            unfold(owned_string(owner));
+            unfold(terminated_at);
+            step using {
+                fact 0 <= index;
+                fact index < load_int32(owner);
+                fact loadable(owner[0..1]);
+                fact loadable((owner + 1)[0..1]);
+                fact loadable((owner + 2)[0..2]);
+                fact 0 <= load_int32(owner);
+                fact load_int32(owner) < load_int32((owner + 1));
+                fact terminated_at(load_int32_pointer((owner + 2)), load_int32(owner));
+                fact separate(memory(owner[0..4]), memory(load_int32_pointer((owner + 2))[0..load_int32((owner + 1))]));
+                fact load_int32_pointer((owner + 2))[load_int32(owner)] == 0;
+            }
+            have terminated_at(owner->data, owner->len) by {
+                unfold(terminated_at);
+                simp();
+            }
+            have (owner->data)[owner->len] == 0 by simp;
+            have 0 <= owner->len by simp;
+            have owner->len < owner->cap by simp;
+            have separate(
+                memory(owner[0..4]),
+                memory((owner->data)[0..owner->cap])
+            ) by {
+                simp();
+            }
+            fold(owned_string(owner));
+            execute_step();
+            simp();
+        }
+    "#;
+
+    verify_c0_sources(click_source, &[("owned_string_set.c", c_source)])
+        .expect("explicit store certificate should verify");
+}
