@@ -103,8 +103,10 @@ targets. The first slow frontiers are:
    5, measured at about 24 and 27 seconds in the longer focused probe.
 2. The store at statement 0 of `owned_string_set`, whose `execute_step()` took
    21.0 seconds (10.5 seconds for certified replay alone).
-3. `input_cursor_clone`'s field-copy proof, 20.0 seconds overall, with
-   statements 1 and 2 individually taking 3.7 and 4.0 seconds.
+3. `input_cursor_clone`'s field-copy proof, formerly 20.0 seconds overall, with
+   statements 1 and 2 individually taking 3.7 and 4.0 seconds. This frontier
+   was fixed on 2026-07-24 by short-circuiting exact-equality pointer
+   distinctness checks; the focused clone now verifies in about 0.34 seconds.
 4. The `owned_split_buffer_set_right` call at statement 4 of the split-buffer
    pipeline, which was still active at that project's 25-second cutoff.
 
@@ -182,16 +184,19 @@ The high-value blockers found during this pass, with their current status, are:
    source verification (or at minimum verification through the enclosing proof)
    now re-verifies the complete edited sidecar and rejects this
    cost/correctness migration before output.
-3. **Certificate correctness fixed 2026-07-24; performance remains.**
-   `input_cursor_clone` statements 1 and 2 still take roughly 5 seconds.
-   Their generated transport certificates do not replay because the transported
+3. **Certificate correctness and clone performance fixed 2026-07-24.**
+   `input_cursor_clone` statements 1 and 2 formerly took roughly 5 seconds.
+   Their generated transport certificates initially did not replay because the transported
    source fact is not stored as a standalone exact fact at the later snapshot.
    Distinct call identities remain preserved. Explicit `transport` now accepts
    a source backed by a replayed kernel derivation from exact snapshot facts,
    which makes the generated three-transport certificate sound and replayable.
-   Full-sidecar suffix verification currently exceeds a 60-second expansion
-   watchdog because it also rechecks the later slow pipeline; that is now a
-   performance problem rather than a transport-certificate correctness gap.
+   Profiling then showed the field stores repeatedly asking whether a pointer
+   was distinct from itself, sending an obviously false query through the full
+   resource/range solver. An exact-equality guard reduced the focused clone from
+   about 11.2 seconds to 0.34 seconds. The next bounded profiler frontier is the
+   shared-pipeline statement at `input_cursor.click:212:5`, at about 7.8 seconds
+   including 3.8 seconds of certified replay.
 4. Expanding `owned_string_push_preserves_first`, `vector_fill`, and the first
    split-buffer pipeline `execute_until` exceeds the CLI watchdog (25 seconds;
    the first and pipeline also exceeded 60 seconds). The watchdog bounds hangs,
@@ -207,11 +212,11 @@ The high-value blockers found during this pass, with their current status, are:
    `vector_fill.loop(0).preserve` at its exact tactic location instead of
    failing the report.
 
-The four correctness/tooling prerequisites above are complete. Pause here for
-review before resuming the two-second expansion sweep. The remaining known
-implementation bugs are the long expansion cases in item 4 and the
-multi-successor immutable-read ambiguity in item 5. The profiler also shows
-that `input_cursor_clone`'s explicit replay still needs engine optimization.
+The four correctness/tooling prerequisites above are complete. The remaining
+known implementation bugs are the long expansion cases in item 4 and the
+multi-successor immutable-read ambiguity in item 5. The first engine
+optimization eliminated `input_cursor_clone` from the slow list; continue from
+the shared-pipeline frontier reported above.
 Keep using a two-second reporting threshold while optimizing the examples;
 simple tactics above the threshold are engine-performance bugs rather than
 expansion candidates.

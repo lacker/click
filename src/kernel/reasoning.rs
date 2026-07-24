@@ -47,6 +47,9 @@ pub(super) fn pointers_proven_distinct(
     right: &Pointer,
     assumptions: &Assumptions,
 ) -> bool {
+    if left == right {
+        return false;
+    }
     left.blocks_proven_distinct(right)
         || pointer_offsets_with_common_base_proven_distinct(left, right, assumptions)
         || assumptions.pointers_proven_disjoint_by_explicit_range_shallow(left, right)
@@ -77,6 +80,9 @@ fn pointers_proven_distinct_for_memory_resolution_with_depth(
     assumptions: &Assumptions,
     depth: usize,
 ) -> bool {
+    if left == right {
+        return false;
+    }
     left.blocks_proven_distinct(right)
         || assumptions.pointers_proven_disjoint_by_explicit_range_shallow(left, right)
         || pointer_offsets_with_common_base_proven_distinct_for_memory_resolution(

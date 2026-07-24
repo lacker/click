@@ -1282,6 +1282,68 @@ fn explicit_fact_transport_can_certify_a_derived_source() {
 }
 
 #[test]
+fn clone_field_stores_with_observed_source_resource_verify() {
+    let c_source = r#"
+        struct cursor {
+            int32 pos;
+            int32 len;
+            int32* data;
+        };
+
+        int32 clone_cursor(struct cursor* target, struct cursor* source) {
+            target->pos = source->pos;
+            target->len = source->len;
+            target->data = source->data;
+            return target->pos;
+        }
+    "#;
+    let click_source = r#"
+        resource readable(data: int32*, length: int32) {
+            views data[0..length];
+            fact 0 <= length;
+        }
+
+        resource cursor(owner: struct cursor*) {
+            owns owner->pos;
+            owns owner->len;
+            owns owner->data;
+            views readable(owner->data, owner->len);
+            fact 0 <= owner->pos;
+            fact owner->pos <= owner->len;
+            fact separate(
+                memory(owner[0..4]),
+                memory((owner->data)[0..owner->len])
+            );
+        }
+
+        verifying "clone_cursor.c";
+
+        int32 clone_cursor(struct cursor* target, struct cursor* source) {
+            requires separate(memory(target[0..4]), memory(source[0..4]));
+            requires separate(
+                memory(target[0..4]),
+                memory((source->data)[0..source->len])
+            );
+            consumes target[0..4];
+            views cursor(source);
+            mutable target[0..4];
+            ensures result == source->pos;
+        } by {
+            observe(cursor(source));
+            execute_step();
+            execute_step();
+            execute_step();
+            step();
+            frame();
+            simp();
+        }
+    "#;
+
+    verify_c0_sources(click_source, &[("clone_cursor.c", c_source)])
+        .expect("clone field stores should verify");
+}
+
+#[test]
 fn simple_statement_transition_does_not_transport_facts_automatically() {
     let base_memory = CMemory::new();
     let first = Pointer {
