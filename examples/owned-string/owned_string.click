@@ -193,7 +193,12 @@ int32 owned_string_push(struct owned_string* owner, int32 value) {
     ensures (owner->data)[owner->len] == 0;
 } by {
     unfold(owned_string(owner));
-    execute_rest();
+    execute_step();
+    execute_step();
+    execute_step();
+    execute_step();
+    execute_step();
+    execute_step();
     have terminated_at(owner->data, owner->len) by {
         unfold(terminated_at);
         simp();
