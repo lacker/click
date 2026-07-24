@@ -147,7 +147,14 @@ int32 input_cursor_clone(
     execute_step();
     execute_step();
     execute_step();
-    execute_step();
+    step using {
+        fact separate(memory(target[0..4]), memory(source[0..4]));
+        fact separate(memory(target[0..4]), memory(load_int32_pointer((source + 2))[0..load_int32((source + 1))]));
+        fact loadable(old(target[0..4]));
+        fact loadable(old(source[0..1]));
+        fact loadable(old((source + 1)[0..1]));
+        fact loadable(old((source + 2)[0..2]));
+    }
     fold(input_cursor(target));
     frame();
     simp();
