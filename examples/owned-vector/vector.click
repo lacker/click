@@ -153,7 +153,9 @@ int32 vector_replace_if(
 
     ensures replace != 0 implies result == replacement;
 } by {
-    execute_until(choose_replacement);
+    execute_step();
+    execute_step();
+    execute_step();
     advance(choose_replacement.exit)
     ensuring {
         fact replace != 0 implies selected == replacement;
