@@ -155,7 +155,15 @@ int32 vector_replace_if(
 } by {
     execute_step();
     execute_step();
-    execute_step();
+    step using {
+        fact index < load_int32(owner);
+        fact 0 <= index;
+        fact 1 <= *owner;
+        fact *owner <= *(owner + 1);
+        fact loadable(old((owner + 1)[0..1]));
+        fact loadable(old((owner + 2)[0..2]));
+        fact loadable(old(owner[0..1]));
+    }
     advance(choose_replacement.exit)
     ensuring {
         fact replace != 0 implies selected == replacement;
