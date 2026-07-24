@@ -224,7 +224,14 @@ int32 vector_push_first(struct vector* owner, int32 value) {
     have owner->len < owner->cap by simp;
     have 0 <= owner->len by simp;
     have owner->len < 1 by simp;
-    execute_until(statement(8));
+    execute_step();
+    execute_step();
+    execute_step();
+    execute_step();
+    execute_step();
+    execute_step();
+    execute_step();
+    execute_step();
     have owner->len == 1 by simp;
     have 1 <= owner->len by simp;
     have owner->len <= owner->cap by simp;
@@ -232,7 +239,7 @@ int32 vector_push_first(struct vector* owner, int32 value) {
         simp();
     }
     fold(nonempty_vector(owner));
-    execute_rest();
+    execute_step();
     frame();
     simp();
 }
