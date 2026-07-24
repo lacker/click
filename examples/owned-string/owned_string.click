@@ -149,7 +149,15 @@ int32 owned_string_set(
 } by {
     unfold(owned_string(owner));
     unfold(terminated_at);
-    execute_step();
+    step using {
+        fact 0 <= index;
+        fact index < load_int32(owner);
+        fact loadable(owner[0..1]);
+        fact loadable((owner + 1)[0..1]);
+        fact loadable((owner + 2)[0..2]);
+        fact 0 <= *owner;
+        fact *owner < *(owner + 1);
+    }
     have terminated_at(owner->data, owner->len) by {
         unfold(terminated_at);
         simp();
