@@ -100,18 +100,9 @@ fn expand_c0_tactic_source_index(
     expanded.push_str(&click_source[..span.start]);
     expanded.push_str(&replacement);
     expanded.push_str(&click_source[span.end..]);
-    let replacement_end =
-        source_index + super::proof::source_tactic_count(&replacement_tactics).saturating_sub(1);
-    super::proof::capture_c0_tactic_expansion(
-        &expanded,
-        c_sources,
-        function_name,
-        claim,
-        replacement_end,
-    )
-    .map_err(|error| {
+    verify_c0_sources(&expanded, c_sources).map_err(|error| {
         ClickError::new(format!(
-            "selected tactic expansion prefix did not re-verify: {}",
+            "expanded tactic did not re-verify with its suffix: {}",
             error.message()
         ))
     })?;
@@ -907,7 +898,7 @@ int32 caller() {
     }
 
     #[test]
-    fn selected_tactic_skips_unreached_call_dependencies_and_proof_suffix() {
+    fn selected_tactic_rejects_an_invalid_proof_suffix() {
         let zero_c = "int32 zero() { return 1; }";
         let caller_c = "int32 caller() { int32 value; value = zero(); return value; }";
         let click_source = r#"
@@ -931,17 +922,22 @@ int32 caller() {
 "#;
         let sources = [("zero.c", zero_c), ("caller.c", caller_c)];
 
-        let expanded = expand_top_level_tactic_for_test(
+        let error = expand_top_level_tactic_for_test(
             click_source,
             &sources,
             "caller",
             CProofClaim::Grouped,
             0,
         )
-        .expect("the declaration prefix should not verify an unreached callee or suffix");
+        .expect_err("the completed edit must verify its suffix");
 
-        assert!(expanded.contains("step();\n    execute_rest();"));
-        assert!(verify_c0_sources(&expanded, &sources).is_err());
+        assert!(
+            error
+                .message()
+                .contains("expanded tactic did not re-verify with its suffix"),
+            "{}",
+            error.message()
+        );
     }
 
     #[test]
@@ -980,7 +976,7 @@ resource owned_box(owner: struct box*) {
 verifying "inspect.c";
 
 int32 inspect(struct box* owner) {
-    owns owned_box(owner);
+    consumes owned_box(owner);
     ensures result == 0;
 } by {
     unfold(owned_box(owner));
