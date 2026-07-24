@@ -174,7 +174,17 @@ int32 vector_replace_if(
     by {
         if replace != 0 {
             execute_then_step();
-            execute_step();
+            step using {
+                fact index < load_int32(owner);
+                fact 0 <= index;
+                fact 1 <= *owner;
+                fact *owner <= *(owner + 1);
+                fact replace != 0;
+                fact original == *(owner + 1);
+                fact loadable(old((owner + 1)[0..1]));
+                fact loadable(old((owner + 2)[0..2]));
+                fact loadable(old(owner[0..1]));
+            }
             have replace != 0 implies selected == replacement by simp;
             have not (replace != 0) implies selected == original by simp;
             have index < index + 1 by simp;
