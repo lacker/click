@@ -243,13 +243,41 @@ int32 owned_segmented_buffer_pipeline(
         fact load_int32_pointer((owner + 2)) == first_data;
         fact load_int32_pointer((owner + 4)) == second_data;
     }
-    transport(at(statement(4).entry, *owner) == at(statement(4).entry, first_len), *owner == first_len);
-    transport(at(statement(4).entry, *(owner + 1)) == at(statement(4).entry, second_len), *(owner + 1) == second_len);
-    transport(at(statement(4).entry, read_value) < at(statement(4).entry, *owner), read_value < *owner);
-    transport(at(statement(4).entry, 0) < at(statement(4).entry, load_int32((owner + 1))), 0 < load_int32((owner + 1)));
-    transport(at(statement(4).entry, first_data[0]) == at(statement(4).entry, first_value), first_data[0] == first_value);
-    transport(at(statement(4).entry, load_int32_pointer((owner + 2))) == at(statement(4).entry, first_data), load_int32_pointer((owner + 2)) == first_data);
-    transport(at(statement(4).entry, load_int32_pointer((owner + 4))) == at(statement(4).entry, second_data), load_int32_pointer((owner + 4)) == second_data);
+    transport(at(statement(4).entry, *owner) == at(statement(4).entry, first_len), *owner == first_len) using {
+        fact 1 <= second_len;
+        fact at(statement(4).entry, *owner) == first_len;
+        fact at(statement(4).entry, load_int32_pointer((owner + 4))) == second_data;
+    }
+    transport(at(statement(4).entry, *(owner + 1)) == at(statement(4).entry, second_len), *(owner + 1) == second_len) using {
+        fact 1 <= second_len;
+        fact at(statement(4).entry, *(owner + 1)) == second_len;
+        fact at(statement(4).entry, load_int32_pointer((owner + 4))) == second_data;
+    }
+    transport(at(statement(4).entry, read_value) < at(statement(4).entry, *owner), read_value < *owner) using {
+        fact read_value < at(statement(4).entry, *owner);
+        fact 1 <= second_len;
+        fact at(statement(4).entry, load_int32_pointer((owner + 4))) == second_data;
+    }
+    transport(at(statement(4).entry, 0) < at(statement(4).entry, load_int32((owner + 1))), 0 < load_int32((owner + 1))) using {
+        fact 0 < at(statement(4).entry, load_int32((owner + 1)));
+        fact at(statement(4).entry, *(owner + 1)) == second_len;
+        fact at(statement(4).entry, load_int32_pointer((owner + 4))) == second_data;
+    }
+    transport(at(statement(4).entry, first_data[0]) == at(statement(4).entry, first_value), first_data[0] == first_value) using {
+        fact 1 <= first_len;
+        fact 1 <= second_len;
+        fact at(statement(4).entry, first_data[0]) == first_value;
+        fact at(statement(4).entry, load_int32_pointer((owner + 4))) == second_data;
+    }
+    transport(at(statement(4).entry, load_int32_pointer((owner + 2))) == at(statement(4).entry, first_data), load_int32_pointer((owner + 2)) == first_data) using {
+        fact 1 <= second_len;
+        fact at(statement(4).entry, load_int32_pointer((owner + 2))) == first_data;
+        fact at(statement(4).entry, load_int32_pointer((owner + 4))) == second_data;
+    }
+    transport(at(statement(4).entry, load_int32_pointer((owner + 4))) == at(statement(4).entry, second_data), load_int32_pointer((owner + 4)) == second_data) using {
+        fact at(statement(4).entry, load_int32_pointer((owner + 4))) == at(statement(4).entry, second_data);
+        fact 1 <= second_len;
+    }
     have 0 < owner->first_len by {
         simp();
     }

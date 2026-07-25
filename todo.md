@@ -256,15 +256,9 @@ the seven entry facts needed after the separate clone mutation, including two
 pointer-valued owner fields. The focused project improved from 34.05 seconds to
 about 22.2 seconds (35 percent) without expanding the rest of the proof.
 
-The remaining local time is now visible rather than hidden in that call: the
-seven explicit `transport` tactics total about 6.8 seconds, standalone
-`owned_segmented_buffer_set_second` takes about 5.9 seconds, and standalone
-`owned_segmented_buffer_get_first` takes about 3.7 seconds. The next iteration
-within this project should make one explicit transport cheap, then teach
-statement expansion to surface the resource prerequisites needed by the
-standalone read/store steps. Globally, use the profiler ranking above instead.
-Repeat from the new timing profile; do not run the full corpus between focused
-iterations.
+The remaining local time was then visible rather than hidden in that call: the
+seven bare `transport` tactics totaled about 6.8 seconds. This made them the
+next focused expansion targets.
 
 That transport-engine iteration completed on 2026-07-24. Bare
 `transport(source, target)` is now a smart tactic. Expansion emits
@@ -274,9 +268,19 @@ retaining the kernel-certified resource frame and the one execution transition
 whose before-memory occurs in the source proposition. This preserves distinct
 opaque-call identities without searching every fact accumulated by earlier
 calls. In the focused segmented-buffer probe, the first transport changed from
-a 2.37-second smart expansion to an 8-millisecond simple replay. The remaining
-bare transports are correctly reported as smart candidates rather than slow
-simple tactics.
+a 2.37-second smart expansion to an 8-millisecond simple replay.
+
+On 2026-07-25 all seven transports in the pipeline were expanded independently,
+with the complete rewritten sidecar re-verified after each change. The focused
+project now finishes in about 6.6 seconds and reports no smart tactic over two
+seconds, no simple tactic over 500 milliseconds, and no control step over two
+seconds. A new ten-second-per-project corpus profile reports no completed slow
+smart or simple tactics. Its only smart timeout is
+`owned_string_push_preserves_first.contract` at
+`examples/owned-string/owned_string.click:235:5`; a direct expansion attempt
+again reached the 60-second watchdog without producing output. This is the next
+expander-performance problem. The watchdog terminated it cleanly, and the
+attempt left no new verifier process running.
 
 The next simple-tactic pass on 2026-07-24 removed the remaining owned-string
 hotspots. The expanded `owned_string_set` store was missing the direct
@@ -290,9 +294,9 @@ falling back to recursive coverage reasoning. In the focused debug profile,
 the store fell from about 676 ms to 404 ms and `fold(owned_string(owner))`
 fell from about 980 ms to 384 ms. A subsequent ten-second-per-project corpus
 profile reported no completed simple tactic over the default 500 ms threshold.
-The next completed candidates are smart segmented-buffer transports; the
-remaining project cutoffs are smart or control frontiers, not known slow-simple
-bugs.
+The segmented-buffer smart transports are now expanded as described above; the
+remaining project cutoffs are one smart owned-string frontier and control
+frontiers, not known slow-simple bugs.
 
 Use three milestones while closing the gap, always working on one focused
 project or tactic rather than running the full slow suite:
