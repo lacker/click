@@ -180,11 +180,12 @@ int32 input_cursor_shared_pipeline(
     ensures result == data[0];
 } by {
     execute_until(statement(4));
-    have separate(
-        memory(right[0..4]),
-        memory((left->data)[0..left->len])
-    ) by {
-        simp();
+    have separate(memory(right[0..4]), memory(load_int32_pointer((left + 2))[0..load_int32((left + 1))])) by {
+        derive(separate(memory(right[0..4]), memory(load_int32_pointer((left + 2))[0..load_int32((left + 1))]))) using {
+            fact *(left + 1) == length;
+            fact load_int32_pointer((left + 2)) == data;
+            fact separate(memory(right[0..4]), memory(data[0..length]));
+        }
     }
     have left->pos < left->len by {
         simp();
