@@ -76,6 +76,39 @@ impl Assumptions {
         Self::default()
     }
 
+    /// Keep contextual consequences as explicit proof obligations instead of
+    /// silently discharging them while symbolic execution is being planned.
+    ///
+    /// Condition reasoning is unchanged: this flag only controls the
+    /// obligation boundary used by the evaluator.
+    pub(crate) fn defer_non_exact_obligations(mut self) -> Self {
+        self.defer_non_exact_obligations = true;
+        self
+    }
+
+    pub(super) fn should_defer_non_exact_obligations(&self) -> bool {
+        self.defer_non_exact_obligations
+    }
+
+    pub(super) fn proves_exact(&self, proposition: &Proposition) -> bool {
+        if solve_builtin_prop(proposition) {
+            return true;
+        }
+        match proposition {
+            Proposition::ConditionIs(condition, value) => {
+                self.condition_facts.get(condition) == Some(value)
+            }
+            Proposition::And(left, right) => self.proves_exact(left) && self.proves_exact(right),
+            Proposition::Not(body) => match body.as_ref() {
+                Proposition::ConditionIs(condition, value) => {
+                    self.condition_facts.get(condition) == Some(&!*value)
+                }
+                _ => self.prop_facts.contains(proposition),
+            },
+            _ => self.prop_facts.contains(proposition),
+        }
+    }
+
     pub fn assume_condition(mut self, condition: ConditionTerm, value: bool) -> Self {
         if let ConditionTerm::Bitvector32Equal(left, right) = &condition
             && let Some((left, right)) = bitvector_equality_after_additive_cancellation(left, right)
@@ -2070,16 +2103,58 @@ impl Assumptions {
         proposition: &Proposition,
         for_simp: bool,
     ) -> Option<PropositionDerivation> {
-        self.proves_atomic_for_derivation(proposition, for_simp)
-            .then(|| {
+        self.atomic_derivation_premises(proposition, for_simp)
+            .map(|premises| {
                 proposition_derivation(
                     proposition,
-                    PropositionDerivationRule::ContextualAtomic {
-                        premises: self.clone(),
-                        for_simp,
-                    },
+                    PropositionDerivationRule::ContextualAtomic { premises, for_simp },
                 )
             })
+    }
+
+    /// Select the range fact that justified a memory-access consequence.
+    ///
+    /// General solving may inspect several loadability ranges while planning.
+    /// A derivation must retain the successful choice so replay does not repeat
+    /// that candidate search. Other fact kinds remain available because
+    /// pointer/snapshot equality can depend on explicit frame facts.
+    fn atomic_derivation_premises(
+        &self,
+        proposition: &Proposition,
+        for_simp: bool,
+    ) -> Option<Assumptions> {
+        let candidate_family = |fact: &Proposition| match proposition {
+            Proposition::CMemoryLoadable { .. } | Proposition::CMemoryCanStore { .. } => {
+                matches!(fact, Proposition::CMemoryLoadable { .. })
+            }
+            Proposition::CResourceSeparate { .. } => matches!(
+                fact,
+                Proposition::CResourceSeparate { .. } | Proposition::CMemoryDisjoint { .. }
+            ),
+            Proposition::CMemoryDisjoint { .. } => matches!(
+                fact,
+                Proposition::CMemoryDisjoint { .. } | Proposition::CResourceSeparate { .. }
+            ),
+            _ => false,
+        };
+        let candidates = self
+            .prop_facts
+            .iter()
+            .filter(|fact| candidate_family(fact))
+            .cloned()
+            .collect::<Vec<_>>();
+        if candidates.len() > 1 {
+            for selected in candidates {
+                let mut candidate = self.clone();
+                candidate.prop_facts.retain(|fact| !candidate_family(fact));
+                candidate.prop_facts.insert(selected);
+                if candidate.proves_atomic_for_derivation(proposition, for_simp) {
+                    return Some(candidate);
+                }
+            }
+        }
+        self.proves_atomic_for_derivation(proposition, for_simp)
+            .then(|| self.clone())
     }
 
     fn derive_proposition_using(
@@ -2121,13 +2196,12 @@ impl Assumptions {
                 Proposition::Not(inner) => self
                     .derive_proposition_using(inner, for_simp)
                     .map(|proof| PropositionDerivationRule::DoubleNegation(Box::new(proof))),
-                _ if self.proves_atomic_for_derivation(proposition, for_simp) => {
-                    Some(PropositionDerivationRule::ContextualAtomic {
-                        premises: self.clone(),
+                _ => self
+                    .atomic_derivation_premises(proposition, for_simp)
+                    .map(|premises| PropositionDerivationRule::ContextualAtomic {
+                        premises,
                         for_simp,
-                    })
-                }
-                _ => None,
+                    }),
             },
             Proposition::Implies(left, right) => {
                 let antecedent = left.as_ref().clone();
@@ -2154,13 +2228,9 @@ impl Assumptions {
                     self.derive_proposition_using(body, for_simp)
                         .map(|proof| PropositionDerivationRule::ForAllBody(Box::new(proof)))
                 }),
-            _ if self.proves_atomic_for_derivation(proposition, for_simp) => {
-                Some(PropositionDerivationRule::ContextualAtomic {
-                    premises: self.clone(),
-                    for_simp,
-                })
-            }
-            _ => None,
+            _ => self
+                .atomic_derivation_premises(proposition, for_simp)
+                .map(|premises| PropositionDerivationRule::ContextualAtomic { premises, for_simp }),
         };
         if let Some(rule) = direct {
             return Some(proposition_derivation(proposition, rule));

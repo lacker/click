@@ -1342,6 +1342,75 @@ fn builtin_obligation_solver_proves_trivial_props() {
 }
 
 #[test]
+fn deferred_obligations_keep_contextual_memory_proofs_explicit() {
+    let memory = CMemory::new();
+    let base = Pointer {
+        block: "data".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let range = Proposition::CMemoryLoadable {
+        memory: memory.clone(),
+        base: base.clone(),
+        bytes: Bitvector32Term::Constant(8),
+    };
+    let element = Proposition::CMemoryLoadable {
+        memory,
+        base: base.offset_by_int32_elements(Bitvector32Term::Constant(1)),
+        bytes: Bitvector32Term::Constant(4),
+    };
+    let assumptions = Assumptions::new().assume_proposition(range);
+
+    let mut ordinary = Vec::new();
+    assert!(add_proof_obligation(&mut ordinary, &assumptions, element.clone()).is_some());
+    assert!(
+        ordinary.is_empty(),
+        "ordinary execution may solve the range"
+    );
+
+    let mut deferred = Vec::new();
+    let deferred_assumptions = assumptions.defer_non_exact_obligations();
+    assert!(add_proof_obligation(&mut deferred, &deferred_assumptions, element.clone()).is_some());
+    assert_eq!(deferred.len(), 1);
+    assert_eq!(deferred[0].proposition(), &element);
+}
+
+#[test]
+fn memory_derivation_records_the_selected_range_candidate() {
+    let memory = CMemory::new();
+    let data = Pointer {
+        block: "data".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let unrelated = Proposition::CMemoryLoadable {
+        memory: memory.clone(),
+        base: Pointer {
+            block: "unrelated".into(),
+            offset: PointerOffsetTerm::Constant(0),
+        },
+        bytes: Bitvector32Term::Constant(64),
+    };
+    let selected = Proposition::CMemoryLoadable {
+        memory: memory.clone(),
+        base: data.clone(),
+        bytes: Bitvector32Term::Constant(8),
+    };
+    let target = Proposition::CMemoryLoadable {
+        memory,
+        base: data.offset_by_int32_elements(Bitvector32Term::Constant(1)),
+        bytes: Bitvector32Term::Constant(4),
+    };
+    let assumptions = Assumptions::new()
+        .assume_proposition(unrelated)
+        .assume_proposition(selected.clone());
+    let derivation = assumptions
+        .derive_atomic_proposition(&target)
+        .expect("the selected range should establish the element access");
+
+    assert!(derivation.replay(&assumptions));
+    assert_eq!(derivation.context_premises(), vec![selected]);
+}
+
+#[test]
 fn proposition_derivation_replay_requires_its_context() {
     let x = Bitvector32Term::Variable(Variable(86));
     let proposition = Proposition::ConditionIs(

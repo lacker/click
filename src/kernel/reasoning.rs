@@ -3898,7 +3898,8 @@ pub(super) fn add_proof_obligation_with_context(
         return add_condition_obligation(obligations, assumptions, condition, value, context);
     }
 
-    if assumptions.proves(&proposition)
+    if assumptions.proves_exact(&proposition)
+        || !assumptions.should_defer_non_exact_obligations() && assumptions.proves(&proposition)
         || obligations
             .iter()
             .any(|obligation| obligation.proposition == proposition)
@@ -3974,7 +3975,15 @@ pub(super) fn add_condition_obligation(
     value: bool,
     context: Option<&str>,
 ) -> Option<()> {
-    if let Some(known) = assumptions.decide(&condition) {
+    if assumptions.proves_exact(&Proposition::ConditionIs(condition.clone(), value)) {
+        return Some(());
+    }
+    if assumptions.proves_exact(&Proposition::ConditionIs(condition.clone(), !value)) {
+        return None;
+    }
+    if !assumptions.should_defer_non_exact_obligations()
+        && let Some(known) = assumptions.decide(&condition)
+    {
         return (known == value).then_some(());
     }
 

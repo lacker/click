@@ -2622,12 +2622,23 @@ pub(super) fn certified_statement_transitions(
     fact_transport_policy: StatementFactTransportPolicy,
     certified_prerequisites: &[PropositionDerivation],
 ) -> Result<(Vec<CertifiedStatementTransition>, Option<CVerifiedLoopRule>), ClickError> {
-    let assumptions = match prerequisite_policy {
+    let mut assumptions = match prerequisite_policy {
         StatementPrerequisitePolicy::Exact => Assumptions::new(),
         StatementPrerequisitePolicy::Certified
         | StatementPrerequisitePolicy::Contextual
         | StatementPrerequisitePolicy::Planning => assumptions_from_propositions(pure_facts),
     };
+    if matches!(prerequisite_policy, StatementPrerequisitePolicy::Certified) {
+        let available = assumptions.clone();
+        for derivation in certified_prerequisites {
+            if derivation.replay(&available) {
+                assumptions = assumptions.assume_proposition(derivation.conclusion().clone());
+            }
+        }
+        assumptions = assumptions.defer_non_exact_obligations();
+    } else if matches!(prerequisite_policy, StatementPrerequisitePolicy::Planning) {
+        assumptions = assumptions.defer_non_exact_obligations();
+    }
     let mut budget = ExecutionBudget::default().with_next_opaque_call(*next_opaque_call);
     let (execution, loop_rule) =
         prove_symbolic_c_statement_verification_paths_with_environment_and_loop_rule_using_budget(

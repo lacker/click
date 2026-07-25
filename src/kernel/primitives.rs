@@ -938,6 +938,7 @@ pub(super) enum PropositionDerivationRule {
 pub struct Assumptions {
     pub(super) condition_facts: BTreeMap<ConditionTerm, bool>,
     pub(super) prop_facts: BTreeSet<Proposition>,
+    pub(super) defer_non_exact_obligations: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
