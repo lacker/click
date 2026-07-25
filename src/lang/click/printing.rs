@@ -201,6 +201,7 @@ fn write_tactic(output: &mut String, tactic: &ProofTactic, indent: usize) {
         ProofTactic::ExecuteStep => line(output, &prefix, "execute_step();"),
         ProofTactic::CertifiedStatementStep(_)
         | ProofTactic::CertifiedLoopSummaryStep(_)
+        | ProofTactic::CertifiedStatementReplay(_)
         | ProofTactic::ExecuteThenStep
         | ProofTactic::ExecuteElseStep
         | ProofTactic::ExecuteRest

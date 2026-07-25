@@ -586,6 +586,34 @@ pub enum Proof {
     Script(Vec<ProofTactic>),
 }
 
+#[doc(hidden)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CertifiedStatementTransition {
+    pub(crate) theorem: Theorem,
+    pub(crate) outcome: CStatementOutcome,
+    pub(crate) execution_facts: Vec<ExecutionPureFact>,
+    pub(crate) path_facts: Vec<Proposition>,
+    pub(crate) obligations: Vec<ProofObligation>,
+    pub(crate) pure_facts: Vec<Proposition>,
+    pub(crate) prerequisite_derivations: Vec<PropositionDerivation>,
+    pub(crate) fact_transports: Vec<CertifiedFactTransport>,
+}
+
+#[doc(hidden)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CertifiedFactTransport {
+    pub(crate) source: Proposition,
+    pub(crate) target: Proposition,
+    pub(crate) theorem: Theorem,
+}
+
+#[doc(hidden)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CertifiedStatementReplay {
+    pub(crate) transition: CertifiedStatementTransition,
+    pub(crate) next_opaque_call: u64,
+}
+
 /// A tactic in an explicit `.click` proof script.
 ///
 /// Tactics are classified by [`ProofTactic::class`]. A `Proof::Script`
@@ -602,6 +630,7 @@ pub enum ProofTactic {
     },
     CertifiedStatementStep(Vec<PropositionDerivation>),
     CertifiedLoopSummaryStep(Vec<PropositionDerivation>),
+    CertifiedStatementReplay(Box<CertifiedStatementReplay>),
     ExecuteStep,
     ExecuteThenStep,
     ExecuteElseStep,
@@ -982,6 +1011,9 @@ impl ProofTactic {
                 TacticClass::Simple(SimpleTactic::LoopSummaryTransition)
             }
             Self::CertifiedStatementStep(_) => {
+                TacticClass::Simple(SimpleTactic::CertifiedStatementTransition)
+            }
+            Self::CertifiedStatementReplay(_) => {
                 TacticClass::Simple(SimpleTactic::CertifiedStatementTransition)
             }
             Self::CertifiedLoopSummaryStep(_) => {

@@ -2338,23 +2338,6 @@ struct CertifiedConditionTransition {
     prerequisite_derivations: Vec<PropositionDerivation>,
 }
 
-#[derive(Clone)]
-pub(super) struct CertifiedStatementTransition {
-    pub(super) outcome: CStatementOutcome,
-    pub(super) execution_facts: Vec<ExecutionPureFact>,
-    pub(super) obligations: Vec<ProofObligation>,
-    pub(super) pure_facts: Vec<Proposition>,
-    pub(super) prerequisite_derivations: Vec<PropositionDerivation>,
-    pub(super) fact_transports: Vec<CertifiedFactTransport>,
-}
-
-#[derive(Clone)]
-pub(super) struct CertifiedFactTransport {
-    pub(super) source: Proposition,
-    pub(super) target: Proposition,
-    pub(super) theorem: Theorem,
-}
-
 fn append_statement_transition_certificate(
     replay: &mut TacticReplayState,
     transition: &CertifiedStatementTransition,
@@ -2362,7 +2345,10 @@ fn append_statement_transition_certificate(
 ) {
     replay.planned_tactics.push(match loop_step_policy {
         LoopStepPolicy::EnterBody => {
-            ProofTactic::CertifiedStatementStep(transition.prerequisite_derivations.clone())
+            ProofTactic::CertifiedStatementReplay(Box::new(CertifiedStatementReplay {
+                transition: transition.clone(),
+                next_opaque_call: replay.next_opaque_call,
+            }))
         }
         LoopStepPolicy::ApplyVerifiedRule => {
             ProofTactic::CertifiedLoopSummaryStep(transition.prerequisite_derivations.clone())
@@ -2837,8 +2823,14 @@ fn certified_transitions_from_execution(
                     }
                 }
                 return Ok(CertifiedStatementTransition {
+                    theorem: path.theorem().clone(),
                     outcome: outcome.clone(),
                     execution_facts,
+                    path_facts: path
+                        .facts()
+                        .iter()
+                        .map(|fact| fact.proposition().clone())
+                        .collect(),
                     obligations: path.obligations().to_vec(),
                     pure_facts: successor_facts,
                     prerequisite_derivations,
@@ -2846,8 +2838,14 @@ fn certified_transitions_from_execution(
                 });
             }
             Ok(CertifiedStatementTransition {
+                theorem: path.theorem().clone(),
                 outcome: outcome.clone(),
                 execution_facts,
+                path_facts: path
+                    .facts()
+                    .iter()
+                    .map(|fact| fact.proposition().clone())
+                    .collect(),
                 obligations: path.obligations().to_vec(),
                 pure_facts: successor_facts,
                 prerequisite_derivations,
@@ -6006,6 +6004,20 @@ fn record_surface_replay_tactic(
         Ok::<_, ClickError>(premises)
     };
     match tactic {
+        ProofTactic::CertifiedStatementReplay(evidence) => {
+            record_surface_replay_tactic(
+                replay,
+                state,
+                available,
+                parameters,
+                arguments,
+                predicate_environment,
+                click_function_environment,
+                &ProofTactic::CertifiedStatementStep(
+                    evidence.transition.prerequisite_derivations.clone(),
+                ),
+            );
+        }
         ProofTactic::CertifiedStatementStep(derivations) => {
             if tactic_expansion_uses_smart_step_fallback() {
                 replay.surface_replay.push(ProofTactic::ExecuteStep);
@@ -6600,6 +6612,7 @@ fn replay_linear_tactics(
                     tactic_index,
                     tactic_name,
                     &[],
+                    None,
                     StatementPrerequisitePolicy::Contextual,
                     StatementFactTransportPolicy::None,
                     loop_step_policy,
@@ -6615,12 +6628,18 @@ fn replay_linear_tactics(
             ProofTactic::Step
             | ProofTactic::ApplyLoopSummary(_)
             | ProofTactic::CertifiedStatementStep(_)
-            | ProofTactic::CertifiedLoopSummaryStep(_) => {
-                let (prerequisite_policy, certified_prerequisites, loop_step_policy) = match tactic
-                {
+            | ProofTactic::CertifiedLoopSummaryStep(_)
+            | ProofTactic::CertifiedStatementReplay(_) => {
+                let (
+                    prerequisite_policy,
+                    certified_prerequisites,
+                    certified_replay,
+                    loop_step_policy,
+                ) = match tactic {
                     ProofTactic::Step => (
                         StatementPrerequisitePolicy::Exact,
                         &[][..],
+                        None,
                         LoopStepPolicy::EnterBody,
                     ),
                     ProofTactic::ApplyLoopSummary(region_ref) => {
@@ -6651,18 +6670,27 @@ fn replay_linear_tactics(
                         (
                             StatementPrerequisitePolicy::Exact,
                             &[][..],
+                            None,
                             LoopStepPolicy::ApplyVerifiedRule,
                         )
                     }
                     ProofTactic::CertifiedStatementStep(derivations) => (
                         StatementPrerequisitePolicy::Certified,
                         derivations.as_slice(),
+                        None,
                         LoopStepPolicy::EnterBody,
                     ),
                     ProofTactic::CertifiedLoopSummaryStep(derivations) => (
                         StatementPrerequisitePolicy::Certified,
                         derivations.as_slice(),
+                        None,
                         LoopStepPolicy::ApplyVerifiedRule,
+                    ),
+                    ProofTactic::CertifiedStatementReplay(evidence) => (
+                        StatementPrerequisitePolicy::Certified,
+                        evidence.transition.prerequisite_derivations.as_slice(),
+                        Some(evidence.as_ref()),
+                        LoopStepPolicy::EnterBody,
                     ),
                     _ => unreachable!(),
                 };
@@ -6680,6 +6708,7 @@ fn replay_linear_tactics(
                     tactic_index,
                     tactic_name(tactic),
                     certified_prerequisites,
+                    certified_replay,
                     prerequisite_policy,
                     StatementFactTransportPolicy::None,
                     loop_step_policy,
@@ -6781,6 +6810,7 @@ fn replay_linear_tactics(
                     tactic_index,
                     "execute_step",
                     &[],
+                    None,
                     StatementPrerequisitePolicy::Planning,
                     StatementFactTransportPolicy::Automatic,
                     LoopStepPolicy::EnterBody,
@@ -8898,6 +8928,62 @@ fn record_statement_program_point_state(
     }
 }
 
+fn replay_certified_statement_transition(
+    evidence: &CertifiedStatementReplay,
+    current_state: &CState,
+    statement: &CStatement,
+    available_pure_facts: &[Proposition],
+    context_label: &str,
+) -> Result<Option<CertifiedStatementTransition>, ClickError> {
+    let assumptions = assumptions_from_propositions(available_pure_facts);
+    let mut proposition = evidence.transition.theorem.proposition();
+    while let Proposition::Implies(premise, body) = proposition {
+        let certified = exact_fact_is_available(premise, available_pure_facts)
+            || matches!(normalize_proposition(premise), SimpProposition::True)
+            || evidence
+                .transition
+                .prerequisite_derivations
+                .iter()
+                .any(|derivation| {
+                    derivation.conclusion() == premise.as_ref() && derivation.replay(&assumptions)
+                });
+        if !certified {
+            return Ok(None);
+        }
+        proposition = body;
+    }
+    let Proposition::CStatementExecutes {
+        state: theorem_state,
+        statement: theorem_statement,
+        outcome,
+    } = proposition
+    else {
+        return Err(ClickError::new(format!(
+            "{context_label} certificate has an unexpected theorem body: {proposition:?}"
+        )));
+    };
+    if theorem_state != current_state || theorem_statement != statement {
+        return Err(ClickError::new(format!(
+            "{context_label} certificate does not match the current statement execution"
+        )));
+    }
+    if outcome != &evidence.transition.outcome {
+        return Err(ClickError::new(format!(
+            "{context_label} certificate outcome does not match its execution theorem"
+        )));
+    }
+
+    let mut transition = evidence.transition.clone();
+    transition.pure_facts = available_pure_facts.to_vec();
+    for fact in &transition.path_facts {
+        if !transition.pure_facts.contains(fact) {
+            transition.pure_facts.push(fact.clone());
+        }
+    }
+    transition.fact_transports.clear();
+    Ok(Some(transition))
+}
+
 #[allow(clippy::too_many_arguments)]
 fn execute_step_from_execution_point(
     replay: &mut TacticReplayState,
@@ -8913,6 +8999,7 @@ fn execute_step_from_execution_point(
     tactic_index: usize,
     tactic_name: &str,
     certified_prerequisites: &[PropositionDerivation],
+    certified_replay: Option<&CertifiedStatementReplay>,
     prerequisite_policy: StatementPrerequisitePolicy,
     fact_transport_policy: StatementFactTransportPolicy,
     loop_step_policy: LoopStepPolicy,
@@ -9015,18 +9102,38 @@ fn execute_step_from_execution_point(
     }
     let current_resources = current_state.resources().facts().to_vec();
     let transition_label = format!("`{claim_label}` tactic {tactic_index}: `{tactic_name}`");
-    let (transitions, _) = certified_statement_transitions(
-        &current_state,
-        available_pure_facts,
-        &step_statement,
-        function_environment,
-        CExecutionSemantics::APPLY_VERIFIED_RULES,
-        &transition_label,
-        &mut replay.next_opaque_call,
-        prerequisite_policy,
-        fact_transport_policy,
-        certified_prerequisites,
-    )?;
+    let direct_transition = certified_replay
+        .map(|evidence| {
+            replay_certified_statement_transition(
+                evidence,
+                &current_state,
+                &step_statement,
+                available_pure_facts,
+                &transition_label,
+            )
+        })
+        .transpose()?
+        .flatten();
+    let transitions = if let Some(transition) = direct_transition {
+        replay.next_opaque_call = certified_replay
+            .expect("a direct transition requires replay evidence")
+            .next_opaque_call;
+        vec![transition]
+    } else {
+        certified_statement_transitions(
+            &current_state,
+            available_pure_facts,
+            &step_statement,
+            function_environment,
+            CExecutionSemantics::APPLY_VERIFIED_RULES,
+            &transition_label,
+            &mut replay.next_opaque_call,
+            prerequisite_policy,
+            fact_transport_policy,
+            certified_prerequisites,
+        )?
+        .0
+    };
     if transitions.len() != 1 {
         if matches!(prerequisite_policy, StatementPrerequisitePolicy::Exact) {
             let safe = transitions
@@ -9405,6 +9512,7 @@ fn bounded_execute_from_execution_point(
             tactic_index,
             "bounded_execute",
             &[],
+            None,
             prerequisite_policy,
             StatementFactTransportPolicy::Automatic,
             LoopStepPolicy::EnterBody,
@@ -9594,6 +9702,7 @@ fn execute_rest_from_execution_point(
             tactic_index,
             "execute_rest",
             &[],
+            None,
             StatementPrerequisitePolicy::Planning,
             StatementFactTransportPolicy::Automatic,
             LoopStepPolicy::ApplyVerifiedRule,
@@ -9669,6 +9778,7 @@ fn execute_until_statement(
             tactic_index,
             "execute_until",
             &[],
+            None,
             prerequisite_policy,
             StatementFactTransportPolicy::Automatic,
             LoopStepPolicy::ApplyVerifiedRule,

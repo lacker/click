@@ -2243,6 +2243,7 @@ fn validate_pure_theorem_tactics(
             | ProofTactic::ApplyLoopSummaryUsing { .. }
             | ProofTactic::CertifiedStatementStep(_)
             | ProofTactic::CertifiedLoopSummaryStep(_)
+            | ProofTactic::CertifiedStatementReplay(_)
             | ProofTactic::CertifiedFactTransport { .. }
             | ProofTactic::FinishCertifiedFactTransports(_)
             | ProofTactic::CertifiedPathAssumption { .. }
@@ -2282,6 +2283,7 @@ pub(super) fn tactic_name(tactic: &ProofTactic) -> &'static str {
         }
         ProofTactic::CertifiedStatementStep(_) => "certified_statement_step",
         ProofTactic::CertifiedLoopSummaryStep(_) => "certified_loop_summary_step",
+        ProofTactic::CertifiedStatementReplay(_) => "certified_statement_step",
         ProofTactic::ExecuteStep => "execute_step",
         ProofTactic::ExecuteThenStep => "execute_then_step",
         ProofTactic::ExecuteElseStep => "execute_else_step",
