@@ -3232,6 +3232,61 @@ fn source_expander_lowers_smart_simp_inside_have() {
 }
 
 #[test]
+fn source_expander_preserves_pointer_spelling_inside_smart_have() {
+    let c_source = r#"
+            struct holder {
+                int32* data;
+            };
+
+            int32 holder_zero(struct holder* owner, int32 data[]) {
+                return 0;
+            }
+        "#;
+    let click_source = r#"
+            verifying "holder.c";
+
+            int32 holder_zero(struct holder* owner, int32 data[]) {
+                requires owner->data == data;
+                views owner[0..2];
+                immutable;
+                ensures result == 0;
+            } by {
+                have owner->data == data by {
+                    simp();
+                }
+                execute_rest();
+                frame();
+                simp();
+            }
+        "#;
+    let have_offset = click_source
+        .find("have owner->data == data")
+        .expect("proof should contain the selected pointer have");
+    let line = click_source[..have_offset]
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count()
+        + 1;
+    let column = have_offset
+        - click_source[..have_offset]
+            .rfind('\n')
+            .map(|offset| offset + 1)
+            .unwrap_or(0)
+        + 1;
+
+    let expanded =
+        expand_c0_tactic_source_at(click_source, &[("holder.c", c_source)], line, column)
+            .expect("the pointer-valued smart have should expand");
+    assert!(
+        expanded.contains("have load_int32_pointer(owner) == data by {"),
+        "{expanded}"
+    );
+    assert!(expanded.contains("assumption();"), "{expanded}");
+    verify_c0_sources(&expanded, &[("holder.c", c_source)])
+        .expect("the expanded pointer-valued have should replay");
+}
+
+#[test]
 fn branched_smart_simp_expansion_replays_as_surface_click() {
     let c_source = r#"
             int32 choose(int32 flag) {

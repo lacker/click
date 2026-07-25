@@ -6090,7 +6090,7 @@ fn lower_surface_atomic_derivation(
     } else {
         return Err(ClickError::new(format!(
             "surface premises do not replay the atomic derivation of {:?}",
-            derivation.conclusion()
+            derivation.conclusion(),
         )));
     };
     Ok((conclusion, Proof::Script(vec![proof_tactic])))
@@ -6607,6 +6607,87 @@ fn have_proof_is_smart_simp(proof: &Proof) -> bool {
 }
 
 #[allow(clippy::too_many_arguments)]
+fn plan_surface_smart_have_transport(
+    replay: &TacticReplayState,
+    state: &CState,
+    available: &[Proposition],
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    surface_target: &ClickProposition,
+    target: &Proposition,
+) -> Result<ProofTactic, ClickError> {
+    let recorded_points = replay
+        .program_point_states
+        .keys()
+        .cloned()
+        .collect::<Vec<_>>();
+    let Some(surface_sources) = comparison_program_point_variants(surface_target, &recorded_points)
+    else {
+        return Err(ClickError::new(
+            "smart `have` transport fallback supports comparisons only",
+        ));
+    };
+    for surface_source in surface_sources {
+        let Ok(source) = lower_surface_candidate_at_point(
+            replay,
+            &surface_source,
+            available,
+            parameters,
+            arguments,
+            state,
+            predicate_environment,
+            click_function_environment,
+        ) else {
+            continue;
+        };
+        if !exact_fact_is_available(&source, available) {
+            continue;
+        }
+        let transition_facts = fact_transport_transition_facts(&replay.effect_facts, &source);
+        let transport_assumptions = transition_facts.iter().fold(
+            assumptions_from_propositions(available),
+            |assumptions, fact| assumptions.assume_proposition(fact.proposition().clone()),
+        );
+        let Some(theorem) =
+            prove_c_condition_fact_transport(&source, state.memory(), &transport_assumptions)
+        else {
+            continue;
+        };
+        let Proposition::Implies(_, conclusion) = theorem.proposition() else {
+            continue;
+        };
+        if normalize_direct_atomic_memory_loads(conclusion)
+            != normalize_direct_atomic_memory_loads(target)
+        {
+            continue;
+        }
+        let premises = plan_explicit_fact_transport(
+            &surface_source,
+            &source,
+            target,
+            available,
+            &transition_facts,
+            parameters,
+            arguments,
+            replay,
+            state,
+            predicate_environment,
+            click_function_environment,
+        )?;
+        return Ok(ProofTactic::TransportUsing {
+            source: surface_source,
+            target: surface_target.clone(),
+            premises,
+        });
+    }
+    Err(ClickError::new(
+        "no available surface fact transports to the smart `have` conclusion",
+    ))
+}
+
+#[allow(clippy::too_many_arguments)]
 fn record_surface_smart_have(
     replay: &mut TacticReplayState,
     state: &CState,
@@ -6619,6 +6700,13 @@ fn record_surface_smart_have(
     fact: &Proposition,
 ) {
     if replay.surface_replay.blocker.is_some() {
+        return;
+    }
+    if available.contains(fact) {
+        replay.surface_replay.push(ProofTactic::Have(ProofHave {
+            proposition: have.proposition.clone(),
+            proof: Proof::Script(vec![ProofTactic::Assumption]),
+        }));
         return;
     }
     let assumptions = assumptions_from_propositions(available);
@@ -6643,10 +6731,24 @@ fn record_surface_smart_have(
             ) {
                 Ok((_, proof)) => proof,
                 Err(error) => {
-                    replay.surface_replay.block(format!(
-                        "could not lower smart `have` certificate: {}",
-                        error.message()
-                    ));
+                    match plan_surface_smart_have_transport(
+                        replay,
+                        state,
+                        available,
+                        parameters,
+                        arguments,
+                        predicate_environment,
+                        click_function_environment,
+                        &have.proposition,
+                        fact,
+                    ) {
+                        Ok(tactic) => replay.surface_replay.push(tactic),
+                        Err(transport_error) => replay.surface_replay.block(format!(
+                            "could not lower smart `have` certificate: {}; transport fallback failed: {}",
+                            error.message(),
+                            transport_error.message()
+                        )),
+                    }
                     return;
                 }
             }
@@ -8115,6 +8217,9 @@ fn replay_linear_tactics(
                     click_function_environment,
                     function_block.requires(),
                 )?;
+                replay
+                    .surface_propositions
+                    .record_lowering(&have.proposition, &fact)?;
                 if have_proof_is_smart_simp(&have.proof) {
                     record_surface_smart_have(
                         &mut replay,
@@ -8128,9 +8233,6 @@ fn replay_linear_tactics(
                         &fact,
                     );
                 }
-                replay
-                    .surface_propositions
-                    .record_lowering(&have.proposition, &fact)?;
                 if !requirement_pure_facts.contains(&fact) {
                     requirement_pure_facts.push(fact.clone());
                     assumptions = assumptions.assume_proposition(fact);
