@@ -135,16 +135,30 @@ Completed one-at-a-time rewrites:
 
 The next known correctness gaps are precise:
 
-1. A smart `have at(statement(5).entry, owner->len) == 1` in owned-vector can
-   inspect the recorded program-point state, but there is no surface simple
-   certificate for that known snapshot value.
-2. Input-cursor's separation proof can derive a smaller separated range from
+1. Input-cursor's separation proof can derive a smaller separated range from
    ambient resource and equality facts, but the surface derivation printer
-   cannot yet spell that `CResourceSeparate` certificate.
-3. The next owned-split-buffer bound proof is selectable, but smart planning
+   cannot yet spell that `CResourceSeparate` certificate. More precisely, it
+   must first transport the left cursor's `len`, `pos`, and `data` facts across
+   the separate right-cursor mutation, then use those transported comparisons
+   with the original right/data separation fact. Individual comparison
+   transports are printable; composing them as premises of the separation
+   derivation is not.
+2. The next owned-split-buffer bound proof is selectable, but smart planning
    itself exceeded a one-off 120-second expansion budget. Do not repeatedly
-   rerun it; fix one of the two certificate gaps above or reduce this smart
-   solver case first.
+   rerun it; reduce this smart solver case first.
+3. Owned-vector's next smart fact,
+   `have (owner->data)[0] == replacement`, exceeded a 60-second expansion
+   budget. An exact `assumption` probe is invalid, so this is not a hidden slow
+   simple tactic; the smart derivation really composes call facts and snapshot
+   transport.
+
+The prior owned-vector snapshot gap is fixed. `SurfacePropositionMap` now keeps
+all checked aliases for the same kernel proposition, and pure `have` replay can
+recall previously recorded, still-valid snapshot facts (`9a5101d`). The
+statement-5 entry fact now expands to `assumption()` (`cdbd874`). The profiler
+also classifies a `have` containing only simple tactics as SIMPLE rather than
+CONTROL (`c6aa257`), so a future slow exact proof will not be hidden as a
+container.
 
 At the default thresholds, jsonc-refcount, owned-segmented-buffer, and
 owned-string have no reached smart step over two seconds or simple step over
