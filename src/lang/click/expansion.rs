@@ -23,6 +23,9 @@ pub fn verifying_source_paths(click_source: &str) -> Result<Vec<String>, ClickEr
     Ok(paths)
 }
 
+/// Expands one claim and returns the rewritten source.
+///
+/// The caller is responsible for verifying the returned sidecar.
 pub fn expand_c0_claim_source(
     click_source: &str,
     c_sources: &[(&str, &str)],
@@ -46,12 +49,6 @@ pub fn expand_c0_claim_source(
     expanded.push_str(&click_source[..span.start]);
     expanded.push_str(&replacement);
     expanded.push_str(&click_source[span.end..]);
-    verify_c0_sources(&expanded, c_sources).map_err(|error| {
-        ClickError::new(format!(
-            "expanded claim did not re-verify: {}",
-            error.message()
-        ))
-    })?;
     Ok(expanded)
 }
 
@@ -61,6 +58,10 @@ pub struct SourcePosition {
     pub column: usize,
 }
 
+/// Expands one tactic and returns the rewritten source.
+///
+/// Certificate capture verifies the selected proof prefix. The caller is
+/// responsible for verifying the returned sidecar and its proof suffix.
 pub fn expand_c0_tactic_source_at(
     click_source: &str,
     c_sources: &[(&str, &str)],
@@ -100,12 +101,6 @@ fn expand_c0_tactic_source_index(
     expanded.push_str(&click_source[..span.start]);
     expanded.push_str(&replacement);
     expanded.push_str(&click_source[span.end..]);
-    verify_c0_sources(&expanded, c_sources).map_err(|error| {
-        ClickError::new(format!(
-            "expanded tactic did not re-verify with its suffix: {}",
-            error.message()
-        ))
-    })?;
     Ok(expanded)
 }
 
@@ -1099,7 +1094,7 @@ int32 caller() {
     }
 
     #[test]
-    fn selected_tactic_rejects_an_invalid_proof_suffix() {
+    fn selected_tactic_emits_before_the_normal_verifier_checks_the_suffix() {
         let zero_c = "int32 zero() { return 1; }";
         let caller_c = "int32 caller() { int32 value; value = zero(); return value; }";
         let click_source = r#"
@@ -1123,22 +1118,18 @@ int32 caller() {
 "#;
         let sources = [("zero.c", zero_c), ("caller.c", caller_c)];
 
-        let error = expand_top_level_tactic_for_test(
+        let expanded = expand_top_level_tactic_for_test(
             click_source,
             &sources,
             "caller",
             CProofClaim::Grouped,
             0,
         )
-        .expect_err("the completed edit must verify its suffix");
+        .expect("capture should emit without running the ordinary full verifier");
 
-        assert!(
-            error
-                .message()
-                .contains("expanded tactic did not re-verify with its suffix"),
-            "{}",
-            error.message()
-        );
+        let error = verify_c0_sources(&expanded, &sources)
+            .expect_err("the separate verification step should reject the invalid sidecar");
+        assert!(error.message().contains("left `zero.ensures_0` unproved"));
     }
 
     #[test]

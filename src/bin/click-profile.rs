@@ -516,7 +516,7 @@ fn render_profiles(
         &slow_steps,
         TacticCategory::Smart,
         "SMART — EXPAND TO TRADE PROOF SIZE FOR SPEED",
-        "Expand one location, apply the verified rewritten sidecar, then profile again.",
+        "Expand one location, apply the rewritten sidecar, then verify by profiling again.",
     );
     render_category(
         &mut output,
@@ -602,7 +602,7 @@ fn render_profiles(
     } else if has_smart_candidate {
         writeln!(
             output,
-            "\nNEXT: expand one SMART location, apply its verified output, and rerun this profile."
+            "\nNEXT: expand one SMART location, apply its output, and rerun this profile to verify the rewrite."
         )
         .expect("writing a String cannot fail");
     } else if has_control_problem {

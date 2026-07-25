@@ -34,7 +34,8 @@ These are deliberate properties of the current tool, not TODOs:
   `advance` blocks. This mode may lower orchestration tactics such as
   `execute_until` into individual `execute_step()` calls so they can be
   selected and expanded again. The tactic certificate is captured from the
-  prefix, but the complete rewritten sidecar must re-verify before output.
+  prefix. Expansion emits the rewrite immediately; the caller must run the
+  ordinary verifier or profiler after applying it.
 - Print the complete rewritten sidecar to standard output.
 - Allow expansion itself to be slower than replaying expanded source.
 - Keep `click-expand` as a separate binary rather than a proof-language tactic.
@@ -97,8 +98,8 @@ prescriptive:
 - `SIMPLE — FIX THE ENGINE; DO NOT EXPAND`: deterministic certificate replay
   is slow. Reduce and fix this path before doing more expansion work.
 - `SMART — EXPAND TO TRADE PROOF SIZE FOR SPEED`: expand one location using
-  the pasteable `click-expand` command, apply the verified output, and profile
-  again.
+  the pasteable `click-expand` command, apply its output, and profile again to
+  verify the rewrite.
 - `CONTROL — INSPECT NESTED STEPS`: use the nested simple/smart timings rather
   than treating the proof container itself as an optimization target.
 
@@ -190,14 +191,15 @@ The high-value blockers found during this pass, with their current status, are:
    materialized/structural candidates first. The regression is unignored: the
    whole function fell from about 16.2 seconds to 3.0 seconds, with its store at
    about 675 ms and fold at about 1.1 seconds.
-2. **Fixed 2026-07-24.** Expansion previously validated the selected prefix, not the edited suffix.
+2. **Fixed 2026-07-24; workflow simplified 2026-07-25.** Expansion previously
+   omitted facts needed by the edited suffix.
    Expanding the first store step of `owned_segmented_buffer_set_second`
    produced a locally valid fast certificate but dropped the exact
    `index < owner->second_len` snapshot spelling needed by the following
-   statement. Applying the output made the next explicit step fail. Full edited
-   source verification (or at minimum verification through the enclosing proof)
-   now re-verifies the complete edited sidecar and rejects this
-   cost/correctness migration before output.
+   statement. The certificate-surfacing bug is regression-covered. The command
+   no longer runs a second verifier internally; applying an expansion must
+   always be followed by the normal profiler/verifier, which catches suffix
+   correctness or cost migration.
 3. **Certificate correctness and clone performance fixed 2026-07-24.**
    `input_cursor_clone` statements 1 and 2 formerly took roughly 5 seconds.
    Their generated transport certificates initially did not replay because the transported
@@ -278,9 +280,12 @@ seconds. A new ten-second-per-project corpus profile reports no completed slow
 smart or simple tactics. Its only smart timeout is
 `owned_string_push_preserves_first.contract` at
 `examples/owned-string/owned_string.click:235:5`; a direct expansion attempt
-again reached the 60-second watchdog without producing output. This is the next
-expander-performance problem. The watchdog terminated it cleanly, and the
-attempt left no new verifier process running.
+originally reached the 60-second watchdog because `click-expand` captured the
+rewrite and then started a second full-sidecar verification. On 2026-07-25 that
+second verifier was removed from the expansion component. The same bounded
+command now emits the three `execute_step()` statements in about 38 seconds.
+Apply that split and run the ordinary profiler next; expansion itself no longer
+duplicates the verification phase.
 
 The next simple-tactic pass on 2026-07-24 removed the remaining owned-string
 hotspots. The expanded `owned_string_set` store was missing the direct
@@ -324,18 +329,19 @@ The command:
 
 1. Reads the Click sidecar.
 2. Resolves its `verifying` C files relative to the sidecar.
-3. Verifies the original sidecar.
-4. Resolves the tactic beginning at the one-based line and column, inferring
+3. Resolves the tactic beginning at the one-based line and column, inferring
    its function and grouped/ensure/effect proof.
-5. Obtains and validates that tactic's surface certificate.
-6. Replaces the selected source tactic.
-7. Prints the complete rewritten sidecar to stdout.
+4. Runs enough of the selected proof prefix to obtain and validate that tactic's
+   surface certificate.
+5. Replaces the selected source tactic.
+6. Prints the complete rewritten sidecar to stdout.
 
 Certificate capture stops immediately after the selected tactic, so smart
-tactic planning does not run the proof suffix. After applying the edit,
-`verify_c0_sources` verifies the complete rewritten sidecar before anything is
-printed. This catches snapshot facts or resources that a locally valid
-replacement accidentally drops before a later tactic.
+tactic planning does not run the proof suffix. The command deliberately does
+not re-verify the rewritten sidecar. This keeps certificate construction and
+ordinary verification as separate bounded components. After applying the
+output, rerun `click-profile` (or the ordinary verifier); a failure or cost
+migration at that point is an expansion bug.
 
 The profiler emits the same pasteable location syntax, including for tactics
 nested inside proof `if` and `advance`. This is the fast diagnostic/edit loop:
@@ -583,9 +589,9 @@ Implementation direction:
    represents the function as independent claim proofs, each possibly default.
    Keep a precise error for selector `grouped` when no grouped proof exists and
    add a test for it.
-6. After applying the edit, call `verify_c0_sources` on the rewritten sidecar
-   before returning it. A bad span, malformed layout, or unreplayable printed
-   certificate must therefore fail without emitting source.
+6. After applying the edit, verify the rewritten sidecar as a separate audit
+   step. A bad span, malformed layout, or unreplayable printed certificate is
+   an expansion bug even though source emission itself has completed.
 7. Verify semantic selection as well as string shape: the selected proof is
    explicit and contains no smart tactic after reparsing, while neighboring
    claims remain byte-for-byte unchanged.
@@ -603,13 +609,13 @@ Tests to add or update in `src/lang/click/tests.rs`:
 - Confirm that expanding one omitted claim leaves neighboring claims unchanged.
 - Confirm that `grouped` gives a precise error for a function with only
   individual/default proofs.
-- Confirm that a source edit which does not re-verify is never returned.
+- Confirm that the ordinary verifier rejects an invalid emitted edit.
 
 Acceptance criteria:
 
 - Every syntactically valid implicit smart proof can be expanded.
-- `expand_c0_claim_source` itself re-verifies the expanded sidecar before
-  returning it.
+- The audit separately verifies every sidecar returned by
+  `expand_c0_claim_source`.
 - Expanding the same claim again produces byte-identical source.
 - Source outside the selected proof edit is byte-identical.
 
@@ -674,7 +680,8 @@ call the original smart tactic.
 Acceptance criteria:
 
 - Every selectable proof in every green example project has a certificate.
-- Every selected expansion re-verifies from normal inputs.
+- Every selected expansion separately re-verifies from normal inputs in the
+  audit.
 - Every selected expansion is idempotent.
 - Failures identify the exact project, sidecar, function, and claim.
 - Out-of-scope proof-bearing sites are explicitly inventoried and are not
@@ -718,8 +725,9 @@ Update it after omitted-clause support and the audit blockers are settled:
 4. Add one small before/after example, including an omitted/default proof.
 5. State the reducibility invariant: successful smart tactics inside a selected
    proof must yield surface-expressible simple/control-flow certificates.
-6. Explain that `expansion_blocker()` is a defect-oriented diagnostic and that
-   partial or non-verifying source is never emitted.
+6. Explain that `expansion_blocker()` is a defect-oriented diagnostic, partial
+   certificates are never emitted, and emitted source must be checked with the
+   ordinary verifier.
 7. Document the exact scope boundary: ensures, effects, and grouped C function
    proofs are selectable; theorem, loop-phase, and structural-item proof source
    is not yet selectable.
@@ -743,8 +751,8 @@ Treat the work above as five mergeable milestones:
    failure before changing expansion behavior.
 2. **Transactional source rewrite:** support omitted ensure/effect proofs under
    the canonical semicolon policy and land the focused span/idempotence tests.
-   Complete claim rewrites already re-verify before being returned; keep that
-   invariant while adding omitted-proof source edits.
+   Keep expansion and the audit's separate verification step distinct while
+   adding omitted-proof source edits.
 3. **Audit harness:** share the example loader, enumerate every selectable
    proof from a fresh sidecar, and land the audit even if it initially reports a
    small explicit list of known expansion blockers. Do not weaken assertions to
@@ -779,8 +787,9 @@ Preserve these constraints while completing the roadmap:
   not reuse planner-only state.
 - **No partial output:** one unsupported node rejects the whole expansion with
   a useful blocker.
-- **Verified output:** the source API re-verifies its completed edit before
-  returning it; source-location bugs must not escape as CLI output.
+- **Separate verification:** source expansion captures and prints one rewrite;
+  the profiler, audit, or caller then verifies the applied sidecar. A failure
+  there is an expansion bug.
 - **Canonical output:** formatting is parseable and stable enough for
   byte-identical re-expansion.
 - **Control flow stays explicit:** `have`, proof `if`, and `advance` may organize
@@ -867,9 +876,10 @@ of the following are true:
   every smart tactic nested within it is lowered.
 - Every selected example proof can be source-expanded and reverified.
 - Re-expansion is byte-identical.
-- The production source API re-verifies the edited sidecar before returning it.
-- Expansion failures identify a precise unsupported item and emit no partial or
-  non-verifying source.
+- The production source API emits the captured edit without starting a second
+  verifier; the audit separately verifies every emitted sidecar.
+- Expansion failures identify a precise unsupported item and emit no partial
+  certificate; ordinary verification diagnoses invalid emitted source.
 - The full unit, mdtest, and example suites pass.
 - Documentation accurately describes the command and the smart-to-simple
   invariant.
