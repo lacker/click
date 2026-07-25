@@ -979,6 +979,38 @@ int32 identity(int32 x) {
     }
 
     #[test]
+    fn expands_grouped_immutable_read_with_multiple_claim_successors() {
+        let c_source = "int32 read_first(int32 p[1]) { return p[0]; }";
+        let click_source = r#"
+verifying "read.c";
+
+int32 read_first(int32 p[1]) {
+    views p[0..1];
+    immutable;
+    ensures result == p[0];
+} by {
+    execute_rest();
+    frame();
+    simp();
+}
+"#;
+
+        let expanded = expand_top_level_tactic_for_test(
+            click_source,
+            &[("read.c", c_source)],
+            "read_first",
+            CProofClaim::Grouped,
+            0,
+        )
+        .expect("the grouped immutable read should have one common expansion");
+
+        assert!(!expanded.contains("execute_rest();"));
+        assert!(expanded.contains("execute_step();"));
+        verify_c0_sources(&expanded, &[("read.c", c_source)])
+            .expect("the expanded immutable read should re-verify every grouped claim");
+    }
+
+    #[test]
     fn expands_nested_branch_tactic_by_source_location() {
         let c_source = "int32 identity(int32 x) { return x; }";
         let click_source = r#"

@@ -202,9 +202,11 @@ The high-value blockers found during this pass, with their current status, are:
    the first and pipeline also exceeded 60 seconds). The watchdog bounds hangs,
    but the expander needs cheaper prefix replay or finer selection to make these
    targets practical.
-5. Expanding the immutable `owned_segmented_buffer_get_first` read to
-   `step using` fails prefix replay with seven statement successors. This is an
-   expansion ambiguity bug, not a certificate to hand-edit around.
+5. **Fixed and regression-covered 2026-07-24.** Expanding the immutable
+   `owned_segmented_buffer_get_first` read now selects the common checked
+   `execute_step()` expansion across all grouped claim successors. A minimal
+   grouped immutable-read regression verifies that the rewritten suffix
+   rechecks every claim.
 6. **Fixed 2026-07-24.** `click-profile` now source-maps loop
    `initialize`/`preserve` proofs, explicit one-token smart proofs such as
    `by auto`, and implicit default proofs. Automatic loop phases fall back to
@@ -212,14 +214,24 @@ The high-value blockers found during this pass, with their current status, are:
    `vector_fill.loop(0).preserve` at its exact tactic location instead of
    failing the report.
 
-The four correctness/tooling prerequisites above are complete. The remaining
-known implementation bugs are the long expansion cases in item 4 and the
-multi-successor immutable-read ambiguity in item 5. The first engine
-optimization eliminated `input_cursor_clone` from the slow list; continue from
-the shared-pipeline frontier reported above.
+The correctness/tooling prerequisites above are complete. The long expansion
+cases in item 4 remain bounded performance limitations, not known certificate
+correctness failures. The first engine optimization eliminated
+`input_cursor_clone` from the slow list; continue from the shared-pipeline
+frontier reported above.
 Keep using a two-second reporting threshold while optimizing the examples;
 simple tactics above the threshold are engine-performance bugs rather than
 expansion candidates.
+
+The shared-pipeline sweep exposed and fixed another certificate-surfacing gap
+on 2026-07-24. A transported comparison may mix memory snapshots independently
+across its two operands, and a later transport may retain a snapshot from an
+even earlier statement. Surface reconstruction now searches every recorded
+program point for each comparison operand and accepts a spelling only when it
+lowers exactly to the certified source or target. Pointer and pointer-offset
+equalities also receive structural Click comparison spellings. Focused
+regressions cover mixed current/entry snapshots, transport across multiple
+statements, pointer-offset synthesis, and the original atomic transport case.
 
 The first statement-level optimization on 2026-07-20 targeted the second
 `owned_segmented_buffer_set_second` call in

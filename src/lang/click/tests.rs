@@ -1562,6 +1562,176 @@ fn execute_step_expands_atomic_snapshot_transport() {
 }
 
 #[test]
+fn execute_step_expands_mixed_snapshot_transport() {
+    let c_source = r#"
+            int32 replace_first(int32 p[2]) {
+                p[0] = 9;
+                return p[1];
+            }
+        "#;
+    let click_source = r#"
+            verifying "transport.c";
+
+            predicate first_less_than_second(int32 p[]) {
+                p[0] < p[1]
+            }
+
+            int32 replace_first(int32 p[2]) {
+                requires first_less_than_second(p);
+                consumes p[0..2];
+                mutable p[0..1] by {
+                    unfold(first_less_than_second);
+                    execute_step();
+                    execute_step();
+                    frame();
+                }
+                produces p[0..2];
+            }
+        "#;
+
+    let verified = verify_c0_sources(click_source, &[("transport.c", c_source)])
+        .expect("mixed snapshot transport should verify");
+    let expanded = verified[0].expanded_proof_tactics().unwrap_or_else(|| {
+        panic!(
+            "mixed snapshot transport should have a surface expansion: {:?}",
+            verified[0].expansion_blocker()
+        )
+    });
+
+    assert!(
+        expanded.iter().any(|tactic| matches!(
+            tactic,
+            ProofTactic::Transport {
+                source: ClickProposition::Comparison {
+                    left: ContractExpression::At { .. },
+                    ..
+                },
+                target: ClickProposition::Comparison {
+                    left: ContractExpression::At { .. },
+                    right,
+                    ..
+                },
+            } if !matches!(right, ContractExpression::At { .. })
+        )),
+        "{expanded:#?}"
+    );
+    TacticCertificate::from_proof_tactics(expanded)
+        .expect("the mixed transport expansion should be a surface certificate");
+}
+
+#[test]
+fn execute_step_expands_transport_across_multiple_statement_snapshots() {
+    let c_source = r#"
+            int32 replace_first_then_touch_other(int32 p[2], int32 q[1]) {
+                p[0] = 9;
+                q[0] = 1;
+                return p[1];
+            }
+        "#;
+    let click_source = r#"
+            verifying "transport.c";
+
+            predicate first_less_than_second(int32 p[]) {
+                p[0] < p[1]
+            }
+
+            int32 replace_first_then_touch_other(int32 p[2], int32 q[1]) {
+                requires first_less_than_second(p);
+                requires separate(memory(p[0..2]), memory(q[0..1]));
+                consumes p[0..2];
+                consumes q[0..1];
+                mutable p[0..1], q[0..1] by {
+                    unfold(first_less_than_second);
+                    execute_step();
+                    execute_step();
+                    execute_step();
+                    frame();
+                }
+                produces p[0..2];
+                produces q[0..1];
+            }
+        "#;
+
+    let verified = verify_c0_sources(click_source, &[("transport.c", c_source)])
+        .expect("multi-statement snapshot transport should verify");
+    let expanded = verified[0].expanded_proof_tactics().unwrap_or_else(|| {
+        panic!(
+            "multi-statement transport should have a surface expansion: {:?}",
+            verified[0].expansion_blocker()
+        )
+    });
+
+    assert_eq!(
+        expanded
+            .iter()
+            .filter(|tactic| matches!(tactic, ProofTactic::Transport { .. }))
+            .count(),
+        2,
+        "{expanded:#?}"
+    );
+    TacticCertificate::from_proof_tactics(expanded)
+        .expect("the multi-statement transport expansion should be a surface certificate");
+}
+
+#[test]
+fn synthesizes_pointer_offset_equality_as_pointer_comparison() {
+    let owner_offset = PointerOffsetTerm::Int32Scaled {
+        value: Box::new(Bitvector32Term::Variable(Variable(41))),
+        byte_width: 4,
+    };
+    let data_offset = PointerOffsetTerm::Int32Scaled {
+        value: Box::new(Bitvector32Term::Variable(Variable(42))),
+        byte_width: 4,
+    };
+    let owner = Pointer {
+        block: "arg-memory".into(),
+        offset: owner_offset,
+    };
+    let data = Pointer {
+        block: "arg-memory".into(),
+        offset: data_offset.clone(),
+    };
+    let proposition = Proposition::ConditionIs(
+        ConditionTerm::PointerOffsetEqual(
+            Box::new(PointerOffsetTerm::Int32Scaled {
+                value: Box::new(Bitvector32Term::MemoryLoad(
+                    Box::new(CMemory::new()),
+                    Box::new(owner.clone()),
+                )),
+                byte_width: 4,
+            }),
+            Box::new(data_offset),
+        ),
+        true,
+    );
+    let parameters = [
+        syntax::C0Parameter::new(C0Type::Int32Pointer, "owner".to_string(), None),
+        syntax::C0Parameter::new(C0Type::Int32Pointer, "data".to_string(), None),
+    ];
+    let arguments = [
+        CExpression::Value(CValue::Pointer(owner)),
+        CExpression::Value(CValue::Pointer(data)),
+    ];
+
+    let surface = super::proof::synthesize_surface_proposition(
+        &proposition,
+        &parameters,
+        &arguments,
+        &CState::new(),
+    )
+    .expect("pointer-offset equality should have a Click spelling");
+
+    assert!(matches!(
+        surface,
+        ClickProposition::Comparison {
+            left: ContractExpression::CFragment(CExpression::Load(_)),
+            operator: ComparisonOperator::Equal,
+            right: ContractExpression::CFragment(CExpression::Variable(name)),
+        } if name == "data"
+    ));
+}
+
+#[test]
 fn parses_explicit_branch_execution_tactics() {
     let source = FILL3_CLICK.replace(
         "by auto;",

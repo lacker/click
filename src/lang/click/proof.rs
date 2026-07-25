@@ -5264,7 +5264,7 @@ fn checked_surface_fact_at_point(
     )))
 }
 
-fn synthesize_surface_proposition(
+pub(super) fn synthesize_surface_proposition(
     proposition: &Proposition,
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
@@ -5303,6 +5303,32 @@ fn synthesize_surface_proposition(
             right: ContractExpression::CFragment(CExpression::Value(int32(0))),
         });
     }
+    if let ConditionTerm::PointerOffsetEqual(left, right) = condition {
+        return Some(ClickProposition::Comparison {
+            left: synthesize_surface_pointer_offset(left, parameters, arguments, state)?,
+            operator: if *value {
+                ComparisonOperator::Equal
+            } else {
+                ComparisonOperator::NotEqual
+            },
+            right: synthesize_surface_pointer_offset(right, parameters, arguments, state)?,
+        });
+    }
+    if let ConditionTerm::PointerEqual(left, right) = condition {
+        return Some(ClickProposition::Comparison {
+            left: ContractExpression::CFragment(synthesize_surface_pointer(
+                left, parameters, arguments, state,
+            )?),
+            operator: if *value {
+                ComparisonOperator::Equal
+            } else {
+                ComparisonOperator::NotEqual
+            },
+            right: ContractExpression::CFragment(synthesize_surface_pointer(
+                right, parameters, arguments, state,
+            )?),
+        });
+    }
     let (left, operator, right) = match condition {
         ConditionTerm::Bitvector32SignedLessThan(left, right) => {
             (left, ComparisonOperator::LessThan, right)
@@ -5336,6 +5362,32 @@ fn synthesize_surface_proposition(
         operator,
         right: synthesize_surface_bitvector(right, parameters, arguments, state)?,
     })
+}
+
+fn synthesize_surface_pointer_offset(
+    term: &PointerOffsetTerm,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    state: &CState,
+) -> Option<ContractExpression> {
+    for (parameter, argument) in parameters.iter().zip(arguments) {
+        if let CExpression::Value(CValue::Pointer(pointer)) = argument
+            && pointer.offset == *term
+        {
+            return Some(ContractExpression::CFragment(CExpression::Variable(
+                parameter.name().to_string(),
+            )));
+        }
+    }
+    match term {
+        PointerOffsetTerm::Int32Scaled { value, byte_width } if matches!(*byte_width, 1 | 4) => {
+            synthesize_surface_bitvector(value, parameters, arguments, state)
+        }
+        PointerOffsetTerm::Constant(_)
+        | PointerOffsetTerm::Variable(_)
+        | PointerOffsetTerm::Add(_, _)
+        | PointerOffsetTerm::Int32Scaled { .. } => None,
+    }
 }
 
 fn synthesize_surface_bitvector(
@@ -5608,10 +5660,10 @@ fn lower_outcome_simp_tactic(
     }
 }
 
-fn comparison_at_program_point(
+fn comparison_program_point_variants(
     proposition: &ClickProposition,
-    point: &ProgramPointRef,
-) -> Option<ClickProposition> {
+    points: &[ProgramPointRef],
+) -> Option<Vec<ClickProposition>> {
     let ClickProposition::Comparison {
         left,
         operator,
@@ -5620,17 +5672,33 @@ fn comparison_at_program_point(
     else {
         return None;
     };
-    Some(ClickProposition::Comparison {
-        left: ContractExpression::At {
+    let at_point =
+        |expression: &ContractExpression, point: &ProgramPointRef| ContractExpression::At {
             selector: VisitSelector::ProgramPoint(point.clone()),
-            expression: Box::new(left.clone()),
-        },
+            expression: Box::new(expression.clone()),
+        };
+    let comparison = |left, right| ClickProposition::Comparison {
+        left,
         operator: *operator,
-        right: ContractExpression::At {
-            selector: VisitSelector::ProgramPoint(point.clone()),
-            expression: Box::new(right.clone()),
-        },
-    })
+        right,
+    };
+    let mut left_variants = vec![left.clone()];
+    let mut right_variants = vec![right.clone()];
+    for point in points.iter().rev() {
+        left_variants.push(at_point(left, point));
+        right_variants.push(at_point(right, point));
+    }
+    Some(
+        left_variants
+            .into_iter()
+            .flat_map(|left| {
+                right_variants
+                    .iter()
+                    .cloned()
+                    .map(move |right| comparison(left.clone(), right))
+            })
+            .collect(),
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -5830,47 +5898,48 @@ fn record_surface_replay_tactic(
                 ));
                 return;
             };
-            let Some(source_surface) = comparison_at_program_point(&base_surface, &step_entry)
-            else {
+            let mut points = replay
+                .program_point_states
+                .keys()
+                .cloned()
+                .collect::<Vec<_>>();
+            if !points.contains(&step_entry) {
+                points.push(step_entry);
+            }
+            let Some(candidates) = comparison_program_point_variants(&base_surface, &points) else {
                 replay
                     .surface_replay
                     .block("fact transport surface lowering currently supports comparisons only");
                 return;
             };
-            let source_lowered = lower_surface_candidate_at_point(
-                replay,
-                &source_surface,
-                available,
-                parameters,
-                arguments,
-                state,
-                predicate_environment,
-                click_function_environment,
-            );
-            let target_lowered = lower_surface_candidate_at_point(
-                replay,
-                &base_surface,
-                available,
-                parameters,
-                arguments,
-                state,
-                predicate_environment,
-                click_function_environment,
-            );
-            match (source_lowered, target_lowered) {
-                (Ok(lowered_source), Ok(lowered_target))
-                    if normalize_direct_atomic_memory_loads(&lowered_source)
-                        == normalize_direct_atomic_memory_loads(source)
-                        && normalize_direct_atomic_memory_loads(&lowered_target)
-                            == normalize_direct_atomic_memory_loads(target) =>
-                {
+            let find_candidate = |expected: &Proposition| {
+                candidates.iter().find_map(|candidate| {
+                    let actual = lower_surface_candidate_at_point(
+                        replay,
+                        candidate,
+                        available,
+                        parameters,
+                        arguments,
+                        state,
+                        predicate_environment,
+                        click_function_environment,
+                    )
+                    .ok()?;
+                    (normalize_direct_atomic_memory_loads(&actual)
+                        == normalize_direct_atomic_memory_loads(expected))
+                    .then(|| candidate.clone())
+                })
+            };
+            match (find_candidate(source), find_candidate(target)) {
+                (Some(source), Some(target)) => {
                     replay.surface_replay.push(ProofTactic::Transport {
-                        source: source_surface,
-                        target: base_surface,
+                        source,
+                        target,
                     });
                 }
-                (source_result, target_result) => replay.surface_replay.block(format!(
-                    "fact transport spellings did not lower to the certified source and target\n  source result: {source_result:?}\n  certified source: {source:?}\n  target result: {target_result:?}\n  certified target: {target:?}"
+                _ => replay.surface_replay.block(format!(
+                    "no placement of the comparison operands at the {} recorded program points lowered to the certified fact transport\n  certified source: {source:?}\n  certified target: {target:?}",
+                    points.len()
                 )),
             }
         }
