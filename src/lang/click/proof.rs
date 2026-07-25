@@ -507,6 +507,20 @@ mod certificate_tests {
     use super::*;
 
     #[test]
+    fn timing_classifies_a_have_with_only_simple_tactics_as_simple() {
+        let have = ProofTactic::Have(ProofHave {
+            proposition: ClickProposition::Comparison {
+                left: ContractExpression::CFragment(CExpression::Value(int32(1))),
+                operator: ComparisonOperator::Equal,
+                right: ContractExpression::CFragment(CExpression::Value(int32(1))),
+            },
+            proof: Proof::Script(vec![ProofTactic::Assumption]),
+        });
+
+        assert_eq!(timing_tactic_class(&have), "simple");
+    }
+
+    #[test]
     fn pure_certificate_replay_is_transactional() {
         let file = parse(
             r#"
@@ -6783,10 +6797,18 @@ struct TacticTiming {
 }
 
 fn timing_tactic_class(tactic: &ProofTactic) -> &'static str {
-    if let ProofTactic::Have(have) = tactic
-        && have_proof_is_smart_simp(&have.proof)
-    {
-        return "smart";
+    if let ProofTactic::Have(have) = tactic {
+        if have_proof_is_smart_simp(&have.proof) {
+            return "smart";
+        }
+        if let Proof::Script(tactics) = &have.proof
+            && !tactics.is_empty()
+            && tactics
+                .iter()
+                .all(|tactic| matches!(tactic.class(), TacticClass::Simple(_)))
+        {
+            return "simple";
+        }
     }
     match tactic.class() {
         TacticClass::Simple(_) => "simple",
