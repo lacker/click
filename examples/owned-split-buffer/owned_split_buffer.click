@@ -188,8 +188,18 @@ int32 owned_split_buffer_pipeline(
     have data[0] == left_value by {
         simp();
     }
-    have 1 < owner->len by {
-        simp();
+    have 1 < load_int32((owner + 1)) by {
+        calculate(1 < *(owner + 1)) using {
+            fact 2 <= length;
+            fact ignored == left_value;
+            fact *(owner + 1) == length;
+            fact *(owner + 1) == *(owner + 1);
+            fact *owner == 1;
+            fact *owner == *owner;
+            fact data[0] == left_value;
+            fact load_int32_pointer((owner + 2)) == data;
+            fact loadable(old(owner[0..4]));
+        }
     }
     step using {
         fact 1 < load_int32((owner + 1));
