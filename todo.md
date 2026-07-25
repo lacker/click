@@ -153,6 +153,18 @@ The next known correctness/performance gaps are precise:
    transported current-state fact as an exact assumption. If direct lowering
    is incomplete, expansion reports that blocker instead of enumerating
    program points in search of a different proof.
+   A subsequent profiler pass exposed two 5.5–6.1-second
+   `certified_fact_transport` steps in `owned_string_push`. These were not
+   semantic transports: the statement had only materialized unchanged
+   symbolic loads, so normalizing the source and target produced the same
+   proposition. Surface lowering nevertheless searched for explicit premises
+   and printed identical-looking `transport(source, target)` commands. That
+   was both slow and non-replayable. Materialization-only transports now stay
+   inside the statement certificate and emit no surface tactic. Three focused
+   source-rewrite regressions cover atomic, mixed-snapshot, and multi-statement
+   cases. The complete owned-string project now reports no smart tactic over
+   two seconds and no simple tactic over 500 milliseconds before the next
+   project frontier.
 2. The next owned-split-buffer bound proof is selectable, but smart planning
    itself exceeded a one-off 120-second expansion budget. Do not repeatedly
    rerun it; reduce this smart solver case first.

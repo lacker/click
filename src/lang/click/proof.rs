@@ -6555,6 +6555,17 @@ fn record_surface_replay_tactic(
             if tactic_expansion_uses_smart_step_fallback() {
                 return;
             }
+            // Materializing an unchanged symbolic load gives the kernel a new
+            // memory term, but it does not create a new surface proposition:
+            // evaluating the same Click expression at the new point reduces
+            // back to the original load. Keep that representational transport
+            // inside the statement certificate instead of printing a
+            // redundant (and potentially identical-looking) `transport`.
+            if normalize_direct_atomic_memory_loads(source)
+                == normalize_direct_atomic_memory_loads(target)
+            {
+                return;
+            }
             let is_reflexive = |proposition: &Proposition| {
                 matches!(
                     proposition,

@@ -1571,7 +1571,7 @@ fn execute_step_records_a_point_checked_surface_expansion() {
 }
 
 #[test]
-fn execute_step_expands_atomic_snapshot_transport() {
+fn execute_step_omits_materialization_only_transport() {
     let c_source = r#"
             int32 set_second_return_first(int32 p[2]) {
                 p[1] = 9;
@@ -1610,14 +1610,14 @@ fn execute_step_expands_atomic_snapshot_transport() {
         )
     });
 
-    assert!(expanded.iter().any(|tactic| matches!(
-        tactic,
-        ProofTactic::TransportUsing { source, target, .. }
-            if matches!(source, ClickProposition::Comparison { .. })
-                && matches!(target, ClickProposition::Comparison { .. })
-    )));
+    assert!(
+        !expanded
+            .iter()
+            .any(|tactic| matches!(tactic, ProofTactic::TransportUsing { .. })),
+        "{expanded:#?}"
+    );
     TacticCertificate::from_proof_tactics(expanded)
-        .expect("the transport expansion should be a surface certificate");
+        .expect("the materialization-free expansion should be a surface certificate");
     let execute_offset = click_source
         .find("execute_step()")
         .expect("proof should contain execute_step");
@@ -1634,13 +1634,14 @@ fn execute_step_expands_atomic_snapshot_transport() {
         + 1;
     let expanded_source =
         expand_c0_tactic_source_at(click_source, &[("transport.c", c_source)], line, column)
-            .expect("transport expansion should print and replay as surface Click");
-    assert!(expanded_source.contains("transport("));
-    assert!(expanded_source.contains(") using {"));
+            .expect("the statement expansion should print as surface Click");
+    assert!(!expanded_source.contains("transport("), "{expanded_source}");
+    verify_c0_sources(&expanded_source, &[("transport.c", c_source)])
+        .expect("the statement expansion should replay without representational transport");
 }
 
 #[test]
-fn execute_step_expands_mixed_snapshot_transport() {
+fn execute_step_omits_materialized_mixed_snapshot_transport() {
     let c_source = r#"
             int32 replace_first(int32 p[2]) {
                 p[0] = 9;
@@ -1677,29 +1678,36 @@ fn execute_step_expands_mixed_snapshot_transport() {
     });
 
     assert!(
-        expanded.iter().any(|tactic| matches!(
-            tactic,
-            ProofTactic::TransportUsing {
-                source: ClickProposition::Comparison {
-                    left: ContractExpression::At { .. },
-                    ..
-                },
-                target: ClickProposition::Comparison {
-                    left: ContractExpression::At { .. },
-                    right,
-                    ..
-                },
-                ..
-            } if !matches!(right, ContractExpression::At { .. })
-        )),
+        !expanded
+            .iter()
+            .any(|tactic| matches!(tactic, ProofTactic::TransportUsing { .. })),
         "{expanded:#?}"
     );
     TacticCertificate::from_proof_tactics(expanded)
-        .expect("the mixed transport expansion should be a surface certificate");
+        .expect("the mixed-snapshot expansion should be a surface certificate");
+    let execute_offset = click_source
+        .find("execute_step()")
+        .expect("proof should contain execute_step");
+    let line = click_source[..execute_offset]
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count()
+        + 1;
+    let column = execute_offset
+        - click_source[..execute_offset]
+            .rfind('\n')
+            .map(|offset| offset + 1)
+            .unwrap_or(0)
+        + 1;
+    let expanded_source =
+        expand_c0_tactic_source_at(click_source, &[("transport.c", c_source)], line, column)
+            .expect("the mixed-snapshot statement should expand");
+    verify_c0_sources(&expanded_source, &[("transport.c", c_source)])
+        .expect("the mixed-snapshot expansion should replay without representational transport");
 }
 
 #[test]
-fn execute_step_expands_transport_across_multiple_statement_snapshots() {
+fn execute_step_omits_materialization_transport_across_statements() {
     let c_source = r#"
             int32 replace_first_then_touch_other(int32 p[2], int32 q[1]) {
                 p[0] = 9;
@@ -1745,11 +1753,30 @@ fn execute_step_expands_transport_across_multiple_statement_snapshots() {
             .iter()
             .filter(|tactic| matches!(tactic, ProofTactic::TransportUsing { .. }))
             .count(),
-        2,
+        0,
         "{expanded:#?}"
     );
     TacticCertificate::from_proof_tactics(expanded)
-        .expect("the multi-statement transport expansion should be a surface certificate");
+        .expect("the multi-statement expansion should be a surface certificate");
+    let execute_offset = click_source
+        .find("execute_step()")
+        .expect("proof should contain execute_step");
+    let line = click_source[..execute_offset]
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count()
+        + 1;
+    let column = execute_offset
+        - click_source[..execute_offset]
+            .rfind('\n')
+            .map(|offset| offset + 1)
+            .unwrap_or(0)
+        + 1;
+    let expanded_source =
+        expand_c0_tactic_source_at(click_source, &[("transport.c", c_source)], line, column)
+            .expect("the first multi-statement step should expand");
+    verify_c0_sources(&expanded_source, &[("transport.c", c_source)])
+        .expect("the multi-statement expansion should replay without representational transport");
 }
 
 #[test]
