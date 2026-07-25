@@ -48,7 +48,7 @@ options until the correctness and corpus audit below are complete.
 ### Example-suite performance target
 
 Treat example verification as an interactive operation, not a batch workload.
-The corpus currently contains seven projects and eight Click sidecars, and the
+The corpus currently contains six projects and eight Click sidecars, and the
 test harness runs the projects sequentially.
 
 The target is:
@@ -109,6 +109,47 @@ for setting all three equally. When a project reaches its limit, active steps
 carry the same classification and advice. This makes the intended workflow
 bounded: fix a simple frontier or expand one smart frontier, rerun the
 profiler, and let it advance farther through that project.
+
+### Sweep checkpoint: 2026-07-25
+
+The current `master` checkpoint has no known slow simple tactic in the reached
+profile prefixes. Contextual `step using` replay now defers non-exact
+obligations until its explicit prerequisite check (`eff152d`), removing the
+1.1-second input-cursor replay without adding another fast path to the general
+solver.
+
+Inline `have ... by { simp(); }` is now treated as a selectable smart unit
+rather than an opaque control container. `click-expand` lowers a successful
+inline simp to `normalize`, `assumption`, `derive`/`calculate`, or an explicit
+snapshot `transport` when that is the actual certificate (`dff62e0`,
+`2eebbd7`). This made the profiler's source-location advice actionable for
+input-cursor, owned-vector, and owned-split-buffer.
+
+Completed one-at-a-time rewrites:
+
+- owned-string's remaining call steps and the input-cursor peek call;
+- owned-split-buffer's right-set statement, its 9.9-second length proof, and
+  its pointer equality across the statement-4 mutation;
+- the call-assign expander now keeps internal call snapshots statement-local,
+  rather than emitting an unsound surface program point (`426d0f6`).
+
+The next known correctness gaps are precise:
+
+1. A smart `have at(statement(5).entry, owner->len) == 1` in owned-vector can
+   inspect the recorded program-point state, but there is no surface simple
+   certificate for that known snapshot value.
+2. Input-cursor's separation proof can derive a smaller separated range from
+   ambient resource and equality facts, but the surface derivation printer
+   cannot yet spell that `CResourceSeparate` certificate.
+3. The next owned-split-buffer bound proof is selectable, but smart planning
+   itself exceeded a one-off 120-second expansion budget. Do not repeatedly
+   rerun it; fix one of the two certificate gaps above or reduce this smart
+   solver case first.
+
+At the default thresholds, jsonc-refcount, owned-segmented-buffer, and
+owned-string have no reached smart step over two seconds or simple step over
+500 milliseconds. The other three projects now stop at the explicit smart
+frontiers above, rather than at misclassified control containers.
 
 The first 25-second-per-project census on 2026-07-20 changed the immediate
 priority order. The segmented-buffer transports are not the largest global
