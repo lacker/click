@@ -4908,6 +4908,10 @@ fn verified_function_rule_applies_contract_without_executing_body() {
         .iter()
         .map(|fact| fact.proposition().clone())
         .collect::<Vec<_>>();
+    assert!(
+        path.facts().iter().any(ExecutionPureFact::is_certified),
+        "verified-call ensures should be marked as kernel-certified facts"
+    );
     let assumptions = assumptions_with_propositions(&Assumptions::new(), &propositions);
     let CValue::Int32(result) = value else {
         panic!("opaque helper should return int32")

@@ -952,6 +952,7 @@ pub struct ProofObligation {
 pub struct ExecutionPureFact {
     pub(super) proposition: Proposition,
     pub(super) public: bool,
+    pub(super) certified: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

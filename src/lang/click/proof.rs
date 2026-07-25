@@ -8935,11 +8935,24 @@ fn replay_certified_statement_transition(
     available_pure_facts: &[Proposition],
     context_label: &str,
 ) -> Result<Option<CertifiedStatementTransition>, ClickError> {
-    let assumptions = assumptions_from_propositions(available_pure_facts);
+    let assumptions = evidence
+        .transition
+        .execution_facts
+        .iter()
+        .filter(|fact| fact.is_certified())
+        .fold(
+            assumptions_from_propositions(available_pure_facts),
+            |assumptions, fact| assumptions.assume_proposition(fact.proposition().clone()),
+        );
     let mut proposition = evidence.transition.theorem.proposition();
     while let Proposition::Implies(premise, body) = proposition {
         let certified = exact_fact_is_available(premise, available_pure_facts)
             || matches!(normalize_proposition(premise), SimpProposition::True)
+            || evidence
+                .transition
+                .execution_facts
+                .iter()
+                .any(|fact| fact.is_certified() && fact.proposition() == premise.as_ref())
             || evidence
                 .transition
                 .prerequisite_derivations

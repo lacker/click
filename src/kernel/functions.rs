@@ -509,7 +509,7 @@ fn execute_verified_function_rule(
             )?;
             for ensure_path in ensure_paths.into_iter().take(1) {
                 facts.extend(ensure_path.facts);
-                facts.push(ExecutionPureFact::new(ensure_path.proposition));
+                facts.push(ExecutionPureFact::certified(ensure_path.proposition));
             }
         }
 

@@ -4451,6 +4451,7 @@ impl ExecutionPureFact {
         Self {
             proposition,
             public: true,
+            certified: false,
         }
     }
 
@@ -4458,6 +4459,15 @@ impl ExecutionPureFact {
         Self {
             proposition,
             public: false,
+            certified: false,
+        }
+    }
+
+    pub(super) fn certified(proposition: Proposition) -> Self {
+        Self {
+            proposition,
+            public: true,
+            certified: true,
         }
     }
 
@@ -4471,6 +4481,10 @@ impl ExecutionPureFact {
 
     pub(super) fn is_public(&self) -> bool {
         self.public
+    }
+
+    pub(crate) fn is_certified(&self) -> bool {
+        self.certified
     }
 }
 
