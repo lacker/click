@@ -304,7 +304,7 @@ int32 vector_pipeline(
     }
     execute_until(read_replacement);
     have at(statement(5).entry, owner->len) == 1 by {
-        simp();
+        assumption();
     }
     have owner->len == at(statement(5).entry, owner->len) by {
         simp();
