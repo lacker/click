@@ -187,6 +187,23 @@ fn write_tactic(output: &mut String, tactic: &ProofTactic, indent: usize) {
                 describe_click_proposition(target)
             ),
         ),
+        ProofTactic::TransportUsing {
+            source,
+            target,
+            premises,
+        } => {
+            line(
+                output,
+                &prefix,
+                &format!(
+                    "transport({}, {}) using {{",
+                    describe_click_proposition(source),
+                    describe_click_proposition(target)
+                ),
+            );
+            write_fact_list(output, premises, indent + 1);
+            line(output, &prefix, "}");
+        }
         ProofTactic::Frame(region) => line(
             output,
             &prefix,

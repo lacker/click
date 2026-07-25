@@ -17,9 +17,10 @@ use crate::kernel::{
     ExecutionPureFact, Pointer, PointerOffsetTerm, ProofObligation, Proposition,
     PropositionDerivation, ResourceContext, ResourceContextValidityError, Sort, SpecExpression,
     SpecMemory, SpecPredicateArgument, SpecProposition, SpecResource, SymbolicCExecution, Term,
-    Theorem, Variable, abstract_c_state_for_join, c_expression_definedness_proposition, c_function,
-    c_function_entry_state, c_function_outcome_from_statement_outcome, c_function_specification,
-    c_if, c_labeled_assert, c_loop_effects_hold_at_back_edge, c_loop_invariants_hold_at_back_edge,
+    Theorem, Variable, abstract_c_state_for_join, c_condition_fact_memories,
+    c_expression_definedness_proposition, c_function, c_function_entry_state,
+    c_function_outcome_from_statement_outcome, c_function_specification, c_if, c_labeled_assert,
+    c_loop_effects_hold_at_back_edge, c_loop_invariants_hold_at_back_edge,
     c_loop_invariants_hold_at_entry, c_loop_preservation_contexts,
     c_pointer_offsets_proven_equal_for_effect, c_pointer_value, c_seq,
     c_verified_function_contract_claim, c_verified_function_rule,
@@ -669,6 +670,11 @@ pub enum ProofTactic {
         source: ClickProposition,
         target: ClickProposition,
     },
+    TransportUsing {
+        source: ClickProposition,
+        target: ClickProposition,
+        premises: Vec<ClickProposition>,
+    },
     ExactPropositionDerivation(PropositionDerivation),
     CertifiedFactTransport {
         source: Proposition,
@@ -725,6 +731,7 @@ pub enum SimpleTactic {
 pub enum SmartTacticKind {
     Auto,
     ApplyTheorem,
+    FactTransport,
     ExecuteStep,
     ExecuteThenStep,
     ExecuteElseStep,
@@ -1038,7 +1045,8 @@ impl ProofTactic {
             Self::Derive(_) => TacticClass::Simple(SimpleTactic::Derive),
             Self::Calculate(_) => TacticClass::Simple(SimpleTactic::Calculate),
             Self::Rewrite(_) => TacticClass::Simple(SimpleTactic::Rewrite),
-            Self::Transport { .. } => TacticClass::Simple(SimpleTactic::FactTransport),
+            Self::Transport { .. } => TacticClass::Smart(SmartTacticKind::FactTransport),
+            Self::TransportUsing { .. } => TacticClass::Simple(SimpleTactic::FactTransport),
             Self::ExactPropositionDerivation(_) => {
                 TacticClass::Simple(SimpleTactic::ExactPropositionDerivation)
             }

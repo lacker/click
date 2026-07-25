@@ -1235,7 +1235,9 @@ fn simple_step_supports_explicit_fact_transport() {
             } by {
                 unfold(first_is_seven);
                 step();
-                transport(old(p[0]) == 7, p[0] == 7);
+                transport(old(p[0]) == 7, p[0] == 7) using {
+                    fact old(p[0]) == 7;
+                }
                 step();
                 frame();
                 simp();
@@ -1244,6 +1246,22 @@ fn simple_step_supports_explicit_fact_transport() {
 
     verify_c0_sources(click_source, &[("transport.c", c_source)])
         .expect("explicit fact transport should verify");
+
+    let missing_source = click_source.replace(
+        "transport(old(p[0]) == 7, p[0] == 7) using {
+                    fact old(p[0]) == 7;
+                }",
+        "transport(old(p[0]) == 7, p[0] == 7) using {}",
+    );
+    let error = verify_c0_sources(&missing_source, &[("transport.c", c_source)])
+        .expect_err("explicit transport must not borrow its logical source from ambient facts");
+    assert!(
+        error
+            .message()
+            .contains("requires a source derivable from its explicit facts"),
+        "{}",
+        error.message()
+    );
 }
 
 #[test]
@@ -1553,12 +1571,31 @@ fn execute_step_expands_atomic_snapshot_transport() {
 
     assert!(expanded.iter().any(|tactic| matches!(
         tactic,
-        ProofTactic::Transport { source, target }
+        ProofTactic::TransportUsing { source, target, .. }
             if matches!(source, ClickProposition::Comparison { .. })
                 && matches!(target, ClickProposition::Comparison { .. })
     )));
     TacticCertificate::from_proof_tactics(expanded)
         .expect("the transport expansion should be a surface certificate");
+    let execute_offset = click_source
+        .find("execute_step()")
+        .expect("proof should contain execute_step");
+    let line = click_source[..execute_offset]
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count()
+        + 1;
+    let column = execute_offset
+        - click_source[..execute_offset]
+            .rfind('\n')
+            .map(|offset| offset + 1)
+            .unwrap_or(0)
+        + 1;
+    let expanded_source =
+        expand_c0_tactic_source_at(click_source, &[("transport.c", c_source)], line, column)
+            .expect("transport expansion should print and replay as surface Click");
+    assert!(expanded_source.contains("transport("));
+    assert!(expanded_source.contains(") using {"));
 }
 
 #[test]
@@ -1601,7 +1638,7 @@ fn execute_step_expands_mixed_snapshot_transport() {
     assert!(
         expanded.iter().any(|tactic| matches!(
             tactic,
-            ProofTactic::Transport {
+            ProofTactic::TransportUsing {
                 source: ClickProposition::Comparison {
                     left: ContractExpression::At { .. },
                     ..
@@ -1611,6 +1648,7 @@ fn execute_step_expands_mixed_snapshot_transport() {
                     right,
                     ..
                 },
+                ..
             } if !matches!(right, ContractExpression::At { .. })
         )),
         "{expanded:#?}"
@@ -1664,7 +1702,7 @@ fn execute_step_expands_transport_across_multiple_statement_snapshots() {
     assert_eq!(
         expanded
             .iter()
-            .filter(|tactic| matches!(tactic, ProofTactic::Transport { .. }))
+            .filter(|tactic| matches!(tactic, ProofTactic::TransportUsing { .. }))
             .count(),
         2,
         "{expanded:#?}"
@@ -1884,6 +1922,28 @@ fn parses_apply_theorem_with_explicit_premises() {
 }
 
 #[test]
+fn parses_transport_with_explicit_premises() {
+    let source = FILL3_CLICK.replace(
+        "by auto;",
+        "by {
+            step();
+            transport(old(p[0]) == 0, p[0] == 0) using {
+                fact old(p[0]) == 0;
+            }
+            execute_rest();
+            simp();
+        }",
+    );
+    let file = parse(&source).expect("explicit-premise transport should parse");
+    let ensure = &file.function_blocks()[0].ensures()[0];
+
+    assert!(matches!(
+        &ensure.proof().tactics().expect("expected tactics")[1],
+        ProofTactic::TransportUsing { premises, .. } if premises.len() == 1
+    ));
+}
+
+#[test]
 fn parses_and_classifies_simple_and_smart_tactics() {
     let source = r#"
             theorem rewritten(x: int32, y: int32) {
@@ -1933,6 +1993,29 @@ fn parses_and_classifies_simple_and_smart_tactics() {
         }
         .class(),
         TacticClass::Simple(SimpleTactic::ApplyTheorem)
+    ));
+    let transport_source = ClickProposition::Defined {
+        expression: current_int(0),
+    };
+    let transport_target = ClickProposition::Defined {
+        expression: current_int(1),
+    };
+    assert!(matches!(
+        ProofTactic::Transport {
+            source: transport_source.clone(),
+            target: transport_target.clone(),
+        }
+        .class(),
+        TacticClass::Smart(SmartTacticKind::FactTransport)
+    ));
+    assert!(matches!(
+        ProofTactic::TransportUsing {
+            source: transport_source,
+            target: transport_target,
+            premises: Vec::new(),
+        }
+        .class(),
+        TacticClass::Simple(SimpleTactic::FactTransport)
     ));
     assert!(matches!(
         ProofTactic::Step.class(),

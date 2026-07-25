@@ -100,6 +100,100 @@ pub(crate) fn prove_c_condition_fact_transport(
     )))
 }
 
+pub(crate) fn c_condition_fact_memories(fact: &Proposition) -> Vec<CMemory> {
+    let Proposition::ConditionIs(condition, _) = fact else {
+        return Vec::new();
+    };
+    let mut memories = Vec::new();
+    collect_condition_memories(condition, &mut memories);
+    memories
+}
+
+fn collect_condition_memories(condition: &ConditionTerm, memories: &mut Vec<CMemory>) {
+    let mut collect_binary = |left: &Bitvector32Term, right: &Bitvector32Term| {
+        collect_bitvector_memories(left, memories);
+        collect_bitvector_memories(right, memories);
+    };
+    match condition {
+        ConditionTerm::Bitvector32SignedLessThan(left, right)
+        | ConditionTerm::Bitvector32SignedLessEqual(left, right)
+        | ConditionTerm::Bitvector32SignedGreaterThan(left, right)
+        | ConditionTerm::Bitvector32SignedGreaterEqual(left, right)
+        | ConditionTerm::Bitvector32Equal(left, right)
+        | ConditionTerm::Bitvector32SignedAddOverflows(left, right)
+        | ConditionTerm::Bitvector32SignedSubtractOverflows(left, right)
+        | ConditionTerm::Bitvector32SignedMultiplyOverflows(left, right)
+        | ConditionTerm::Bitvector32SignedDivideOverflows(left, right)
+        | ConditionTerm::Bitvector32SignedShiftLeftOverflows(left, right) => {
+            collect_binary(left, right)
+        }
+        ConditionTerm::PointerOffsetEqual(left, right) => {
+            collect_pointer_offset_memories(left, memories);
+            collect_pointer_offset_memories(right, memories);
+        }
+        ConditionTerm::Constant(_)
+        | ConditionTerm::Variable(_)
+        | ConditionTerm::PointerEqual(_, _) => {}
+    }
+}
+
+fn collect_pointer_offset_memories(offset: &PointerOffsetTerm, memories: &mut Vec<CMemory>) {
+    match offset {
+        PointerOffsetTerm::Constant(_) | PointerOffsetTerm::Variable(_) => {}
+        PointerOffsetTerm::Add(left, right) => {
+            collect_pointer_offset_memories(left, memories);
+            collect_pointer_offset_memories(right, memories);
+        }
+        PointerOffsetTerm::Int32Scaled { value, .. } => collect_bitvector_memories(value, memories),
+    }
+}
+
+fn collect_bitvector_memories(term: &Bitvector32Term, memories: &mut Vec<CMemory>) {
+    match term {
+        Bitvector32Term::Constant(_) | Bitvector32Term::Variable(_) => {}
+        Bitvector32Term::MemoryLoad(memory, _) => {
+            if !memories.contains(memory) {
+                memories.push(memory.as_ref().clone());
+            }
+        }
+        Bitvector32Term::Add(left, right)
+        | Bitvector32Term::Subtract(left, right)
+        | Bitvector32Term::Multiply(left, right)
+        | Bitvector32Term::Divide(left, right)
+        | Bitvector32Term::Remainder(left, right)
+        | Bitvector32Term::ShiftLeft(left, right)
+        | Bitvector32Term::ArithmeticShiftRight(left, right)
+        | Bitvector32Term::BitwiseAnd(left, right)
+        | Bitvector32Term::BitwiseOr(left, right)
+        | Bitvector32Term::BitwiseXor(left, right) => {
+            collect_bitvector_memories(left, memories);
+            collect_bitvector_memories(right, memories);
+        }
+        Bitvector32Term::BitwiseNot(term) => collect_bitvector_memories(term, memories),
+        Bitvector32Term::If {
+            condition,
+            then_term,
+            else_term,
+        } => {
+            collect_condition_memories(condition, memories);
+            collect_bitvector_memories(then_term, memories);
+            collect_bitvector_memories(else_term, memories);
+        }
+        Bitvector32Term::RangeFold {
+            start,
+            end,
+            initial,
+            body,
+            ..
+        } => {
+            collect_bitvector_memories(start, memories);
+            collect_bitvector_memories(end, memories);
+            collect_bitvector_memories(initial, memories);
+            collect_bitvector_memories(body, memories);
+        }
+    }
+}
+
 fn transport_framed_atomic_condition(
     condition: &ConditionTerm,
     after: &CMemory,

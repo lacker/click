@@ -2259,6 +2259,7 @@ fn validate_pure_theorem_tactics(
             | ProofTactic::Frame(_)
             | ProofTactic::ObserveResource(_)
             | ProofTactic::Transport { .. }
+            | ProofTactic::TransportUsing { .. }
             | ProofTactic::UnfoldResource(_)
             | ProofTactic::FoldResource(_)
             | ProofTactic::Have(_)
@@ -2313,7 +2314,7 @@ pub(super) fn tactic_name(tactic: &ProofTactic) -> &'static str {
         ProofTactic::Derive(_) => "derive",
         ProofTactic::Calculate(_) => "calculate",
         ProofTactic::Rewrite(_) => "rewrite",
-        ProofTactic::Transport { .. } => "transport",
+        ProofTactic::Transport { .. } | ProofTactic::TransportUsing { .. } => "transport",
         ProofTactic::ExactPropositionDerivation(_) => "exact_proposition_derivation",
         ProofTactic::CertifiedFactTransport { .. } => "certified_fact_transport",
         ProofTactic::FinishCertifiedFactTransports(_) => "finish_certified_fact_transports",

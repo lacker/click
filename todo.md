@@ -266,6 +266,18 @@ standalone read/store steps. Globally, use the profiler ranking above instead.
 Repeat from the new timing profile; do not run the full corpus between focused
 iterations.
 
+That transport-engine iteration completed on 2026-07-24. Bare
+`transport(source, target)` is now a smart tactic. Expansion emits
+`transport(source, target) using { fact ...; }`, and only the explicit-premise
+form is simple. Replay restricts logical reasoning to those listed facts while
+retaining the kernel-certified resource frame and the one execution transition
+whose before-memory occurs in the source proposition. This preserves distinct
+opaque-call identities without searching every fact accumulated by earlier
+calls. In the focused segmented-buffer probe, the first transport changed from
+a 2.37-second smart expansion to an 8-millisecond simple replay. The remaining
+bare transports are correctly reported as smart candidates rather than slow
+simple tactics.
+
 Use three milestones while closing the gap, always working on one focused
 project or tactic rather than running the full slow suite:
 

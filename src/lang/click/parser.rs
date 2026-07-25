@@ -1920,7 +1920,27 @@ impl Parser {
                 self.expect(Token::Comma)?;
                 let target = self.parse_proposition()?;
                 self.expect(Token::RParen)?;
-                ProofTactic::Transport { source, target }
+                if self.peek_ident() != Some("using") {
+                    ProofTactic::Transport { source, target }
+                } else {
+                    self.position += 1;
+                    self.expect(Token::LBrace)?;
+                    let mut premises = Vec::new();
+                    while self.peek() != Some(&Token::RBrace) {
+                        self.expect_ident_spelling("fact")?;
+                        premises.push(self.parse_proposition()?);
+                        self.expect(Token::Semicolon)?;
+                    }
+                    self.expect(Token::RBrace)?;
+                    if self.peek() == Some(&Token::Semicolon) {
+                        self.position += 1;
+                    }
+                    return Ok(ProofTactic::TransportUsing {
+                        source,
+                        target,
+                        premises,
+                    });
+                }
             }
             "simp" => {
                 self.expect_empty_tactic_args(&name)?;
