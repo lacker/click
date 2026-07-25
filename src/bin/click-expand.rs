@@ -131,10 +131,17 @@ fn run_with_time_limit(arguments: &Arguments, time_limit: Duration) -> Result<()
     let stdout = join_reader(stdout_reader, "output")?;
     let stderr = join_reader(stderr_reader, "diagnostics")?;
     let Some(status) = status else {
-        return Err(format!(
-            "time limit of {} exceeded",
-            format_duration(time_limit)
-        ));
+        let diagnostics = String::from_utf8_lossy(&stderr);
+        let diagnostics = diagnostics.trim();
+        return Err(if diagnostics.is_empty() {
+            format!("time limit of {} exceeded", format_duration(time_limit))
+        } else {
+            format!(
+                "time limit of {} exceeded\nlast diagnostics:\n{}",
+                format_duration(time_limit),
+                diagnostics
+            )
+        });
     };
     if !status.success() {
         let message = String::from_utf8_lossy(&stderr);

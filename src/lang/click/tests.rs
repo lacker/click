@@ -1863,6 +1863,27 @@ fn parses_apply_theorem_proof_tactic() {
 }
 
 #[test]
+fn parses_apply_theorem_with_explicit_premises() {
+    let source = FILL3_CLICK.replace(
+        "by auto;",
+        "by {
+            execute_rest();
+            apply(nonnegative(result)) using {
+                fact result >= 0;
+            }
+            simp();
+        }",
+    );
+    let file = parse(&source).expect("explicit-premise theorem application should parse");
+    let ensure = &file.function_blocks()[0].ensures()[0];
+
+    assert!(matches!(
+        &ensure.proof().tactics().expect("expected tactics")[1],
+        ProofTactic::ApplyTheoremUsing { premises, .. } if premises.len() == 1
+    ));
+}
+
+#[test]
 fn parses_and_classifies_simple_and_smart_tactics() {
     let source = r#"
             theorem rewritten(x: int32, y: int32) {
@@ -1894,6 +1915,24 @@ fn parses_and_classifies_simple_and_smart_tactics() {
     assert!(matches!(
         ProofTactic::ExecuteStep.class(),
         TacticClass::Smart(SmartTacticKind::ExecuteStep)
+    ));
+    let application = TheoremApplication {
+        name: "rewritten".to_string(),
+        arguments: vec![current_int(0), current_int(0)],
+    };
+    assert!(matches!(
+        ProofTactic::ApplyTheorem(application.clone()).class(),
+        TacticClass::Smart(SmartTacticKind::ApplyTheorem)
+    ));
+    assert!(matches!(
+        ProofTactic::ApplyTheoremUsing {
+            application,
+            premises: vec![ClickProposition::Defined {
+                expression: current_int(0),
+            }],
+        }
+        .class(),
+        TacticClass::Simple(SimpleTactic::ApplyTheorem)
     ));
     assert!(matches!(
         ProofTactic::Step.class(),
@@ -2148,6 +2187,94 @@ fn defined_fact_makes_simple_statement_step_explicit() {
 
     verify_c0_sources(click_source, &[("increment.c", c_source)])
         .expect("an explicit definedness theorem should satisfy simple tactic");
+}
+
+#[test]
+fn apply_using_replays_only_with_its_explicit_premises() {
+    let c_source = r#"
+            int32 increment(int32 x) {
+                return x + 1;
+            }
+        "#;
+    let click_source = r#"
+            verifying "increment.c";
+
+            theorem increment_is_defined(x: int32) {
+                requires x < 2147483647;
+                ensures defined(x + 1) by {
+                    simp();
+                }
+            }
+
+            int32 increment(int32 x) {
+                requires x < 2147483647;
+                ensures result == x + 1;
+            } by {
+                apply(increment_is_defined(x)) using {
+                    fact x < 2147483647;
+                }
+                step();
+                simp();
+            }
+        "#;
+
+    verify_c0_sources(click_source, &[("increment.c", c_source)])
+        .expect("explicit theorem premises should replay");
+
+    let missing_premise = click_source.replace(
+        "apply(increment_is_defined(x)) using {
+                    fact x < 2147483647;
+                }",
+        "apply(increment_is_defined(x)) using {}",
+    );
+    let error = verify_c0_sources(&missing_premise, &[("increment.c", c_source)])
+        .expect_err("apply using must not search ambient facts for an omitted premise");
+    assert!(
+        error.message().contains("required exact fact"),
+        "{}",
+        error.message()
+    );
+}
+
+#[test]
+fn source_expander_makes_theorem_application_premises_explicit() {
+    let c_source = r#"
+            int32 increment(int32 x) {
+                return x + 1;
+            }
+        "#;
+    let click_source = r#"
+            verifying "increment.c";
+
+            theorem increment_is_defined(x: int32) {
+                requires x < 2147483647;
+                ensures defined(x + 1) by {
+                    simp();
+                }
+            }
+
+            int32 increment(int32 x) {
+                requires x < 2147483647;
+                ensures result == x + 1;
+            } by {
+                apply(increment_is_defined(x));
+                step();
+                simp();
+            }
+        "#;
+
+    let expanded = expand_c0_claim_source(
+        click_source,
+        &[("increment.c", c_source)],
+        "increment",
+        CProofClaim::Grouped,
+    )
+    .expect("bare theorem application should expand");
+
+    assert!(expanded.contains("apply(increment_is_defined(x)) using {"));
+    assert!(expanded.contains("fact x < 2147483647;"));
+    verify_c0_sources(&expanded, &[("increment.c", c_source)])
+        .expect("expanded theorem application should replay");
 }
 
 #[test]

@@ -73,6 +73,21 @@ fn write_tactic(output: &mut String, tactic: &ProofTactic, indent: usize) {
             &prefix,
             &format!("apply({});", format_theorem_application(application)),
         ),
+        ProofTactic::ApplyTheoremUsing {
+            application,
+            premises,
+        } => {
+            line(
+                output,
+                &prefix,
+                &format!(
+                    "apply({}) using {{",
+                    format_theorem_application(application)
+                ),
+            );
+            write_fact_list(output, premises, indent + 1);
+            line(output, &prefix, "}");
+        }
         ProofTactic::Have(have) => {
             output.push_str(&prefix);
             output.push_str("have ");

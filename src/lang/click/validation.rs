@@ -2213,6 +2213,7 @@ fn validate_pure_theorem_tactics(
         match tactic {
             ProofTactic::UnfoldPredicate(_)
             | ProofTactic::ApplyTheorem(_)
+            | ProofTactic::ApplyTheoremUsing { .. }
             | ProofTactic::Assumption
             | ProofTactic::Normalize
             | ProofTactic::Intro
@@ -2291,7 +2292,7 @@ pub(super) fn tactic_name(tactic: &ProofTactic) -> &'static str {
         ProofTactic::Frame(_) => "frame",
         ProofTactic::UnfoldPredicate(_) | ProofTactic::UnfoldResource(_) => "unfold",
         ProofTactic::FoldResource(_) => "fold",
-        ProofTactic::ApplyTheorem(_) => "apply",
+        ProofTactic::ApplyTheorem(_) | ProofTactic::ApplyTheoremUsing { .. } => "apply",
         ProofTactic::Have(_) => "have",
         ProofTactic::If(_) => "if",
         ProofTactic::Advance(_) => "advance",

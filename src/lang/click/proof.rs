@@ -3367,6 +3367,206 @@ fn apply_theorem_at_current_point(
 }
 
 #[allow(clippy::too_many_arguments)]
+fn lower_theorem_application_requirements(
+    theorem_environment: &TheoremEnvironment,
+    application: &TheoremApplication,
+    context: &TheoremApplicationContext<'_>,
+    premises: &[Proposition],
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    unfolded_predicates: &[String],
+) -> Result<Vec<Proposition>, String> {
+    let theorem = theorem_environment
+        .get(&application.name)
+        .ok_or_else(|| format!("unknown theorem `{}`", application.name))?;
+    let assumptions = assumptions_from_propositions(premises);
+    let (values, array_refs) = theorem_application_bindings(
+        theorem,
+        application,
+        context,
+        &assumptions,
+        predicate_environment,
+        click_function_environment,
+    )?;
+    let mut lowerer = KernelPropositionLowerer::new(
+        values,
+        array_refs,
+        context.post_state.memory().clone(),
+        predicate_environment,
+        click_function_environment,
+    );
+    theorem
+        .requires()
+        .iter()
+        .map(|requirement| {
+            let requirement = requirement.proposition().ok_or_else(|| {
+                format!(
+                    "theorem `{}` has a non-proposition requirement",
+                    theorem.name()
+                )
+            })?;
+            let lowered = lowerer
+                .lower_requirement_proposition(requirement)
+                .map_err(|error| error.message().to_string())?;
+            unfold_predicates_in_proposition(
+                predicate_environment,
+                click_function_environment,
+                unfolded_predicates,
+                &lowered,
+                &assumptions,
+            )
+        })
+        .collect()
+}
+
+#[allow(clippy::too_many_arguments)]
+fn plan_explicit_theorem_application(
+    theorem_environment: &TheoremEnvironment,
+    application: &TheoremApplication,
+    claim_label: &str,
+    tactic_index: usize,
+    available: &[Proposition],
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    replay: &TacticReplayState,
+    state: &CState,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+) -> Result<Vec<ClickProposition>, ClickError> {
+    let candidates = available
+        .iter()
+        .filter_map(|kernel| {
+            checked_surface_fact_at_point(
+                replay,
+                kernel,
+                available,
+                parameters,
+                arguments,
+                state,
+                predicate_environment,
+                click_function_environment,
+            )
+            .ok()
+            .map(|surface| (kernel.clone(), surface))
+        })
+        .collect::<Vec<_>>();
+    let pre_state = replay.execution_start_state(state);
+    let values = parameter_values(parameters, arguments).map_err(|error| {
+        ClickError::new(format!(
+            "`{claim_label}` tactic {tactic_index}: {}",
+            error.message
+        ))
+    })?;
+    let array_refs = array_refs_for_parameters(parameters, &values, state.memory());
+    let (values, array_refs) = contract_environment_at_state(&values, &array_refs, state);
+    let context = TheoremApplicationContext {
+        values: &values,
+        array_refs: &array_refs,
+        pre_state,
+        post_state: state,
+        result: None,
+        program_point_states: &replay.program_point_states,
+    };
+    let application_replays = |selected: &[(Proposition, ClickProposition)]| {
+        apply_theorem_at_current_point(
+            theorem_environment,
+            application,
+            claim_label,
+            tactic_index,
+            selected.iter().map(|(kernel, _)| kernel.clone()).collect(),
+            parameters,
+            arguments,
+            pre_state,
+            state,
+            &replay.program_point_states,
+            predicate_environment,
+            click_function_environment,
+            &replay.unfolded_predicates,
+        )
+        .is_ok()
+    };
+    let is_loadability = |proposition: &Proposition| {
+        matches!(
+            proposition,
+            Proposition::CMemoryLoadable { .. } | Proposition::CMemoryCanStore { .. }
+        )
+    };
+    let is_memory_effect = |proposition: &Proposition| {
+        matches!(
+            proposition,
+            Proposition::CMemoryMutatesOnly { .. } | Proposition::CMemoryEffectSummary { .. }
+        )
+    };
+    let is_condition =
+        |proposition: &Proposition| matches!(proposition, Proposition::ConditionIs(_, _));
+
+    let mut selected = None;
+    for tier in 0..4 {
+        let mut tier_candidates = candidates
+            .iter()
+            .filter(|(kernel, _)| match tier {
+                0 => is_loadability(kernel),
+                1 => is_loadability(kernel) || is_memory_effect(kernel),
+                2 => is_loadability(kernel) || is_memory_effect(kernel) || is_condition(kernel),
+                _ => true,
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        let Ok(requirements) = lower_theorem_application_requirements(
+            theorem_environment,
+            application,
+            &context,
+            &tier_candidates
+                .iter()
+                .map(|(kernel, _)| kernel.clone())
+                .collect::<Vec<_>>(),
+            predicate_environment,
+            click_function_environment,
+            &replay.unfolded_predicates,
+        ) else {
+            continue;
+        };
+        let mut complete = true;
+        for requirement in requirements {
+            if matches!(normalize_proposition(&requirement), SimpProposition::True) {
+                continue;
+            }
+            let Some(pair) = candidates
+                .iter()
+                .find(|(kernel, _)| kernel == &requirement)
+                .cloned()
+            else {
+                complete = false;
+                break;
+            };
+            if !tier_candidates.contains(&pair) {
+                tier_candidates.push(pair);
+            }
+        }
+        if complete && application_replays(&tier_candidates) {
+            selected = Some(tier_candidates);
+            break;
+        }
+    }
+    let mut selected = selected.ok_or_else(|| {
+        ClickError::new(
+            "theorem application depends on an ambient fact with no checked Click spelling",
+        )
+    })?;
+    let mut index = 0;
+    while index < selected.len() {
+        let mut reduced = selected.clone();
+        reduced.remove(index);
+        if application_replays(&reduced) {
+            selected = reduced;
+        } else {
+            index += 1;
+        }
+    }
+    Ok(selected.into_iter().map(|(_, surface)| surface).collect())
+}
+
+#[allow(clippy::too_many_arguments)]
 fn fold_composite_resource_at_current_point(
     resource_environment: &ResourceEnvironment,
     resource: &ResourceClause,
@@ -7175,6 +7375,30 @@ fn replay_linear_tactics(
                         )));
                     }
                 } else {
+                    match plan_explicit_theorem_application(
+                        theorem_environment,
+                        application,
+                        claim_label,
+                        tactic_index,
+                        &requirement_pure_facts,
+                        parsed_function.parameters(),
+                        arguments,
+                        &replay,
+                        &state,
+                        predicate_environment,
+                        click_function_environment,
+                    ) {
+                        Ok(premises) => {
+                            replay.surface_replay.push(ProofTactic::ApplyTheoremUsing {
+                                application: application.clone(),
+                                premises,
+                            });
+                        }
+                        Err(error) => replay.surface_replay.block(format!(
+                            "could not make theorem application premises explicit: {}",
+                            error.message()
+                        )),
+                    }
                     requirement_pure_facts = apply_theorem_at_current_point(
                         theorem_environment,
                         application,
@@ -7192,6 +7416,82 @@ fn replay_linear_tactics(
                     )?;
                     assumptions = assumptions_from_propositions(&requirement_pure_facts);
                 }
+            }
+            ProofTactic::ApplyTheoremUsing {
+                application,
+                premises,
+            } => {
+                if theorem_environment.get(&application.name).is_none() {
+                    return Err(ClickError::new(format!(
+                        "`{claim_label}` tactic {tactic_index}: unknown theorem `{}`",
+                        application.name
+                    )));
+                }
+                if replay.is_at_function_exit() {
+                    return Err(ClickError::new(format!(
+                        "`{claim_label}` tactic {tactic_index}: `apply using` is not yet available after function execution"
+                    )));
+                }
+                let all_pure_facts = requirement_pure_facts.clone();
+                let pre_state = replay.execution_start_state(&state).clone();
+                let mut explicit_premises = Vec::new();
+                for surface_premise in premises {
+                    let premise = lower_point_proposition(
+                        surface_premise,
+                        &explicit_premises,
+                        parsed_function.parameters(),
+                        arguments,
+                        &pre_state,
+                        &state,
+                        None,
+                        &replay.program_point_states,
+                        predicate_environment,
+                        click_function_environment,
+                    )
+                    .map_err(|message| {
+                        ClickError::new(format!(
+                            "`{claim_label}` tactic {tactic_index}: could not lower `apply using` premise: {message}"
+                        ))
+                    })?;
+                    if !exact_fact_is_available(&premise, &all_pure_facts) {
+                        return Err(ClickError::new(format!(
+                            "`{claim_label}` tactic {tactic_index}: `apply using` requires an exact premise: {}",
+                            describe_missing_pure_fact(
+                                &premise,
+                                &all_pure_facts,
+                                state.resources().facts(),
+                                parsed_function.parameters(),
+                                arguments,
+                                &replay.effect_facts,
+                            )
+                        )));
+                    }
+                    if !explicit_premises.contains(&premise) {
+                        explicit_premises.push(premise);
+                    }
+                }
+                let mut applied = apply_theorem_at_current_point(
+                    theorem_environment,
+                    application,
+                    claim_label,
+                    tactic_index,
+                    explicit_premises,
+                    parsed_function.parameters(),
+                    arguments,
+                    &pre_state,
+                    &state,
+                    &replay.program_point_states,
+                    predicate_environment,
+                    click_function_environment,
+                    &replay.unfolded_predicates,
+                )?;
+                for fact in all_pure_facts {
+                    if !applied.contains(&fact) {
+                        applied.push(fact);
+                    }
+                }
+                requirement_pure_facts = applied;
+                assumptions = assumptions_from_propositions(&requirement_pure_facts);
             }
             ProofTactic::FoldResource(resource) => {
                 if replay.is_at_function_exit() {

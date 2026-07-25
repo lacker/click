@@ -1826,7 +1826,26 @@ impl Parser {
                 self.expect(Token::LParen)?;
                 let application = self.parse_theorem_application()?;
                 self.expect(Token::RParen)?;
-                ProofTactic::ApplyTheorem(application)
+                if self.peek_ident() != Some("using") {
+                    ProofTactic::ApplyTheorem(application)
+                } else {
+                    self.position += 1;
+                    self.expect(Token::LBrace)?;
+                    let mut premises = Vec::new();
+                    while self.peek() != Some(&Token::RBrace) {
+                        self.expect_ident_spelling("fact")?;
+                        premises.push(self.parse_proposition()?);
+                        self.expect(Token::Semicolon)?;
+                    }
+                    self.expect(Token::RBrace)?;
+                    if self.peek() == Some(&Token::Semicolon) {
+                        self.position += 1;
+                    }
+                    return Ok(ProofTactic::ApplyTheoremUsing {
+                        application,
+                        premises,
+                    });
+                }
             }
             "observe" => {
                 self.expect(Token::LParen)?;

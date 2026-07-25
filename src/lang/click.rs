@@ -614,6 +614,10 @@ pub enum ProofTactic {
     UnfoldResource(ResourceClause),
     FoldResource(ResourceClause),
     ApplyTheorem(TheoremApplication),
+    ApplyTheoremUsing {
+        application: TheoremApplication,
+        premises: Vec<ClickProposition>,
+    },
     Have(ProofHave),
     If(ProofIf),
     Advance(ProofAdvance),
@@ -691,6 +695,7 @@ pub enum SimpleTactic {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SmartTacticKind {
     Auto,
+    ApplyTheorem,
     ExecuteStep,
     ExecuteThenStep,
     ExecuteElseStep,
@@ -985,7 +990,8 @@ impl ProofTactic {
             Self::UnfoldPredicate(_) => TacticClass::Simple(SimpleTactic::UnfoldPredicate),
             Self::UnfoldResource(_) => TacticClass::Simple(SimpleTactic::UnfoldResource),
             Self::ObserveResource(_) => TacticClass::Simple(SimpleTactic::ObserveResource),
-            Self::ApplyTheorem(_) => TacticClass::Simple(SimpleTactic::ApplyTheorem),
+            Self::ApplyTheorem(_) => TacticClass::Smart(SmartTacticKind::ApplyTheorem),
+            Self::ApplyTheoremUsing { .. } => TacticClass::Simple(SimpleTactic::ApplyTheorem),
             Self::Witness(_) => TacticClass::Simple(SimpleTactic::Witness),
             Self::Choose(_) => TacticClass::Simple(SimpleTactic::Choose),
             Self::Assumption => TacticClass::Simple(SimpleTactic::Assumption),
