@@ -2632,7 +2632,10 @@ pub(super) fn certified_statement_transitions(
             }
         }
         assumptions = assumptions.defer_non_exact_obligations();
-    } else if matches!(prerequisite_policy, StatementPrerequisitePolicy::Planning) {
+    } else if matches!(
+        prerequisite_policy,
+        StatementPrerequisitePolicy::Contextual | StatementPrerequisitePolicy::Planning
+    ) {
         assumptions = assumptions.defer_non_exact_obligations();
     }
     let mut budget = ExecutionBudget::default().with_next_opaque_call(*next_opaque_call);
