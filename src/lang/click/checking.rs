@@ -2268,9 +2268,27 @@ pub(super) fn normalize_direct_atomic_memory_loads(proposition: &Proposition) ->
             let (left, right) = binary(left, right);
             ConditionTerm::Bitvector32Equal(Box::new(left), Box::new(right))
         }
+        ConditionTerm::PointerOffsetEqual(left, right) => ConditionTerm::PointerOffsetEqual(
+            Box::new(normalize_direct_atomic_pointer_offset_loads(left)),
+            Box::new(normalize_direct_atomic_pointer_offset_loads(right)),
+        ),
         _ => return proposition.clone(),
     };
     Proposition::ConditionIs(condition, *value)
+}
+
+fn normalize_direct_atomic_pointer_offset_loads(term: &PointerOffsetTerm) -> PointerOffsetTerm {
+    match term {
+        PointerOffsetTerm::Constant(_) | PointerOffsetTerm::Variable(_) => term.clone(),
+        PointerOffsetTerm::Add(left, right) => PointerOffsetTerm::Add(
+            Box::new(normalize_direct_atomic_pointer_offset_loads(left)),
+            Box::new(normalize_direct_atomic_pointer_offset_loads(right)),
+        ),
+        PointerOffsetTerm::Int32Scaled { value, byte_width } => PointerOffsetTerm::Int32Scaled {
+            value: Box::new(normalize_direct_atomic_memory_load(value)),
+            byte_width: *byte_width,
+        },
+    }
 }
 
 fn normalize_direct_atomic_memory_load(term: &Bitvector32Term) -> Bitvector32Term {

@@ -14,7 +14,9 @@ pub(crate) fn c_memory_load_is_unchanged(
     pointer: &Pointer,
     assumptions: &Assumptions,
 ) -> bool {
-    if memories_match_for_pointer_load(before, after, pointer) {
+    if memories_match_for_pointer_load(before, after, pointer)
+        || memories_match_for_pointer_load_under_assumptions(before, after, pointer, assumptions)
+    {
         return true;
     }
     // Predicate framing is deliberately bounded: use exact certified writes

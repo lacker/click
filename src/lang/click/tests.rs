@@ -1881,7 +1881,10 @@ fn synthesizes_pointer_offset_equality_as_pointer_comparison() {
     assert!(matches!(
         surface,
         ClickProposition::Comparison {
-            left: ContractExpression::CFragment(CExpression::Load(_)),
+            left: ContractExpression::CFragment(CExpression::TypedLoad {
+                value_type: CType::Int32Pointer,
+                ..
+            }),
             operator: ComparisonOperator::Equal,
             right: ContractExpression::CFragment(CExpression::Variable(name)),
         } if name == "data"
@@ -3399,6 +3402,118 @@ fn source_expander_recalls_a_fact_at_a_recorded_statement_entry() {
         .expect("the snapshot have should expand");
     assert!(expanded.contains("assumption();"), "{expanded}");
     verify_c0_sources(&expanded, &c_sources).expect("the expanded snapshot have should replay");
+}
+
+#[test]
+fn source_expander_derives_separation_from_call_postconditions() {
+    let init_c_source = r#"
+            struct cursor {
+                int32 pos;
+                int32 len;
+                int32* data;
+            };
+
+            int32 init(struct cursor* owner, int32 data[], int32 length) {
+                owner->pos = 0;
+                owner->len = length;
+                owner->data = data;
+                return 0;
+            }
+        "#;
+    let pipeline_c_source = r#"
+            struct cursor {
+                int32 pos;
+                int32 len;
+                int32* data;
+            };
+
+            int32 pipeline(
+                struct cursor* left,
+                struct cursor* right,
+                int32 data[],
+                int32 length
+            ) {
+                int32 ignored;
+                ignored = init(left, data, length);
+                return 0;
+            }
+        "#;
+    let click_source = r#"
+            verifying "init.c";
+            verifying "pipeline.c";
+
+            int32 init(
+                struct cursor* owner,
+                int32 data[],
+                int32 length
+            ) {
+                requires 0 <= length;
+                requires separate(memory(owner[0..4]), memory(data[0..length]));
+                consumes owner[0..4];
+                views data[0..length];
+                mutable owner[0..4];
+                produces owner[0..4];
+                ensures result == 0;
+                ensures owner->pos == 0;
+                ensures owner->len == length;
+                ensures owner->data == data;
+            } by {
+                execute_rest();
+                frame();
+                simp();
+            }
+
+            int32 pipeline(
+                struct cursor* left,
+                struct cursor* right,
+                int32 data[],
+                int32 length
+            ) {
+                requires 1 <= length;
+                requires separate(memory(left[0..4]), memory(data[0..length]));
+                requires separate(memory(right[0..4]), memory(data[0..length]));
+                consumes left[0..4];
+                consumes right[0..4];
+                views data[0..length];
+                mutable left[0..4], right[0..4];
+                produces left[0..4];
+                produces right[0..4];
+                ensures result == 0;
+            } by {
+                execute_until(statement(2));
+                have separate(
+                    memory(right[0..4]),
+                    memory((left->data)[0..left->len])
+                ) by {
+                    simp();
+                }
+                execute_rest();
+                frame();
+                simp();
+            }
+        "#;
+    let have_offset = click_source
+        .find("have separate(")
+        .expect("proof should contain the selected separation have");
+    let line = click_source[..have_offset]
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count()
+        + 1;
+    let column = have_offset
+        - click_source[..have_offset]
+            .rfind('\n')
+            .map(|offset| offset + 1)
+            .unwrap_or(0)
+        + 1;
+    let c_sources = [("init.c", init_c_source), ("pipeline.c", pipeline_c_source)];
+
+    let expanded = expand_c0_tactic_source_at(click_source, &c_sources, line, column)
+        .expect("call postconditions should expand into an explicit separation derivation");
+    assert!(expanded.contains("load_int32_pointer"), "{expanded}");
+    assert!(expanded.contains("derive(separate("), "{expanded}");
+    verify_c0_sources(&expanded, &c_sources)
+        .expect("the expanded separation derivation should replay");
 }
 
 #[test]

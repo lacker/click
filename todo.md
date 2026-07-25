@@ -133,16 +133,19 @@ Completed one-at-a-time rewrites:
 - the call-assign expander now keeps internal call snapshots statement-local,
   rather than emitting an unsound surface program point (`426d0f6`).
 
-The next known correctness gaps are precise:
+The next known correctness/performance gaps are precise:
 
-1. Input-cursor's separation proof can derive a smaller separated range from
-   ambient resource and equality facts, but the surface derivation printer
-   cannot yet spell that `CResourceSeparate` certificate. More precisely, it
-   must first transport the left cursor's `len`, `pos`, and `data` facts across
-   the separate right-cursor mutation, then use those transported comparisons
-   with the original right/data separation fact. Individual comparison
-   transports are printable; composing them as premises of the separation
-   derivation is not.
+1. **Fixed 2026-07-25.** Input-cursor's separation proof now expands to a
+   three-premise `derive(separate(...))`. No composed transport planner was
+   needed. The actual bug was at statement exit: preserved cells for the
+   separately mutated right cursor were materialized into the shared argument
+   memory, but atomic fact transport only recognized byte-identical cell maps.
+   It did not use the existing certified separation assumptions to prove that
+   those distinct cells leave loads through the left cursor unchanged.
+   Statement-exit transport now performs that checked comparison. Pointer-load
+   synthesis emits `load_int32_pointer(...)`, and comparison normalization
+   handles pointer-offset equalities, so the call's `len` and `data`
+   postconditions remain surface-expressible at the following statement.
 2. The next owned-split-buffer bound proof is selectable, but smart planning
    itself exceeded a one-off 120-second expansion budget. Do not repeatedly
    rerun it; reduce this smart solver case first.
@@ -910,13 +913,18 @@ same C sources when manually checking source layout.
 
 ## Current Test State
 
-Last known results after the soundness fix:
+The 2026-07-25 input-cursor expander fix is covered at two levels:
 
-- the two focused kernel snapshot/pointer regressions pass;
-- `CLICK_EXAMPLE=input-cursor cargo test --test examples
-  example_projects -- --nocapture`: passed in 689 seconds;
-- the complete unit, mdtest, and example suites still need their final
-  post-change run before committing.
+- a kernel regression proves that materializing a certified-distinct cell does
+  not invalidate an atomic load fact;
+- an end-to-end source-expander regression lowers the call-postcondition
+  separation proof and re-verifies the emitted Click;
+- the real `examples/input-cursor/input_cursor.click:183:5` command emits the
+  explicit three-premise separation derivation in about six seconds.
+
+The complete library suite passes after this fix. The slower mdtest and example
+suites remain the next full-corpus validation; use focused profiling rather
+than repeatedly running them while reducing the two remaining smart frontiers.
 
 Do not claim corpus-wide expansion support until the full examples are green
 and the expansion audit itself passes.

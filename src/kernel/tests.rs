@@ -3572,6 +3572,47 @@ fn atomic_condition_fact_transport_uses_certified_effect_summary() {
 }
 
 #[test]
+fn atomic_condition_fact_transport_ignores_distinct_materialized_cell() {
+    let before = CMemory::new()
+        .with_block("arg-memory", 8)
+        .with_block("call-havoc:0", 0);
+    let preserved = Pointer {
+        block: "arg-memory".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let materialized = Pointer {
+        block: "arg-memory".into(),
+        offset: PointerOffsetTerm::Constant(4),
+    };
+    let after = before
+        .clone()
+        .store(materialized, CValue::Int32(Bitvector32Term::Constant(9)));
+    let fact = Proposition::ConditionIs(
+        ConditionTerm::equal(
+            Bitvector32Term::MemoryLoad(Box::new(before.clone()), Box::new(preserved.clone())),
+            Bitvector32Term::Constant(7),
+        ),
+        true,
+    );
+
+    let theorem = prove_c_condition_fact_transport(&fact, &after, &Assumptions::new())
+        .expect("a distinct materialized cell must not change the framed load");
+    assert_eq!(
+        theorem.proposition(),
+        &Proposition::Implies(
+            Box::new(fact),
+            Box::new(Proposition::ConditionIs(
+                ConditionTerm::equal(
+                    Bitvector32Term::MemoryLoad(Box::new(after), Box::new(preserved)),
+                    Bitvector32Term::Constant(7),
+                ),
+                true,
+            )),
+        )
+    );
+}
+
+#[test]
 fn atomic_condition_fact_transport_preserves_pointer_offset_equality() {
     let before = CMemory::new()
         .with_block("stable", 4)

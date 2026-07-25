@@ -3745,15 +3745,10 @@ fn plan_explicit_fact_transport(
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<Vec<ClickProposition>, ClickError> {
-    let recorded_points = replay
-        .program_point_states
-        .keys()
-        .cloned()
-        .collect::<Vec<_>>();
     let mut candidates = available
         .iter()
         .filter_map(|kernel| {
-            let surface = checked_surface_fact_at_point(
+            let surface = checked_surface_comparison_fact_at_point(
                 replay,
                 kernel,
                 available,
@@ -3763,35 +3758,7 @@ fn plan_explicit_fact_transport(
                 predicate_environment,
                 click_function_environment,
             )
-            .ok()
-            .or_else(|| {
-                let base = replay
-                    .surface_propositions
-                    .surface(kernel)
-                    .ok()
-                    .cloned()
-                    .or_else(|| {
-                        synthesize_surface_proposition(kernel, parameters, arguments, state)
-                    })?;
-                comparison_program_point_variants(&base, &recorded_points)?
-                    .into_iter()
-                    .find(|candidate| {
-                        lower_surface_candidate_at_point(
-                            replay,
-                            candidate,
-                            available,
-                            parameters,
-                            arguments,
-                            state,
-                            predicate_environment,
-                            click_function_environment,
-                        )
-                        .is_ok_and(|lowered| {
-                            normalize_direct_atomic_memory_loads(&lowered)
-                                == normalize_direct_atomic_memory_loads(kernel)
-                        })
-                    })
-            });
+            .ok();
             surface.map(|surface| (kernel.clone(), surface))
         })
         .collect::<Vec<_>>();
@@ -5795,6 +5762,74 @@ fn checked_surface_fact_at_point(
     )))
 }
 
+#[allow(clippy::too_many_arguments)]
+fn checked_surface_comparison_fact_at_point(
+    replay: &TacticReplayState,
+    kernel: &Proposition,
+    available: &[Proposition],
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    state: &CState,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+) -> Result<ClickProposition, ClickError> {
+    if let Ok(surface) = checked_surface_fact_at_point(
+        replay,
+        kernel,
+        available,
+        parameters,
+        arguments,
+        state,
+        predicate_environment,
+        click_function_environment,
+    ) {
+        return Ok(surface);
+    }
+
+    let mut bases = Vec::new();
+    if let Ok(surface) = replay.surface_propositions.surface(kernel)
+        && !bases.contains(surface)
+    {
+        bases.push(surface.clone());
+    }
+    if let Some(surface) = synthesize_surface_proposition(kernel, parameters, arguments, state)
+        && !bases.contains(&surface)
+    {
+        bases.push(surface);
+    }
+    let points = replay
+        .program_point_states
+        .keys()
+        .cloned()
+        .collect::<Vec<_>>();
+    for base in bases {
+        let Some(variants) = comparison_program_point_variants(&base, &points) else {
+            continue;
+        };
+        for candidate in variants {
+            if lower_surface_candidate_at_point(
+                replay,
+                &candidate,
+                available,
+                parameters,
+                arguments,
+                state,
+                predicate_environment,
+                click_function_environment,
+            )
+            .is_ok_and(|lowered| {
+                normalize_direct_atomic_memory_loads(&lowered)
+                    == normalize_direct_atomic_memory_loads(kernel)
+            }) {
+                return Ok(candidate);
+            }
+        }
+    }
+    Err(ClickError::new(format!(
+        "comparison fact has no checked Click spelling at this proof point: {kernel:?}"
+    )))
+}
+
 pub(super) fn synthesize_surface_proposition(
     proposition: &Proposition,
     parameters: &[syntax::C0Parameter],
@@ -5911,6 +5946,20 @@ fn synthesize_surface_pointer_offset(
         }
     }
     match term {
+        PointerOffsetTerm::Int32Scaled {
+            value,
+            byte_width: 4,
+        } if matches!(value.as_ref(), Bitvector32Term::MemoryLoad(_, _)) => {
+            let Bitvector32Term::MemoryLoad(_, pointer) = value.as_ref() else {
+                unreachable!()
+            };
+            Some(ContractExpression::CFragment(CExpression::TypedLoad {
+                pointer: Box::new(synthesize_surface_pointer(
+                    pointer, parameters, arguments, state,
+                )?),
+                value_type: CType::Int32Pointer,
+            }))
+        }
         PointerOffsetTerm::Int32Scaled { value, byte_width } if matches!(*byte_width, 1 | 4) => {
             synthesize_surface_bitvector(value, parameters, arguments, state)
         }
@@ -6053,11 +6102,11 @@ fn lower_surface_atomic_derivation(
         predicate_environment,
         click_function_environment,
     )?;
-    let premise_pairs = derivation
+    let mut premise_pairs = derivation
         .context_premises()
         .into_iter()
         .filter_map(|premise| {
-            checked_surface_fact_at_point(
+            checked_surface_comparison_fact_at_point(
                 replay,
                 &premise,
                 available,
@@ -6071,41 +6120,70 @@ fn lower_surface_atomic_derivation(
             .map(|surface| (premise, surface))
         })
         .collect::<Vec<_>>();
-    let kernel_premises = premise_pairs
-        .iter()
-        .map(|(kernel, _)| kernel.clone())
-        .collect::<Vec<_>>();
+    let replay_kind = |pairs: &[(Proposition, ClickProposition)]| {
+        let kernel_premises = pairs
+            .iter()
+            .map(|(kernel, _)| kernel.clone())
+            .collect::<Vec<_>>();
+        let assumptions = assumptions_from_propositions(&kernel_premises);
+        if assumptions
+            .derive_atomic_proposition(derivation.conclusion())
+            .is_some()
+        {
+            Some(false)
+        } else if assumptions
+            .derive_simp_atomic_proposition(derivation.conclusion())
+            .is_some()
+        {
+            Some(true)
+        } else {
+            None
+        }
+    };
+    if !matches!(
+        normalize_proposition(derivation.conclusion()),
+        SimpProposition::True
+    ) && replay_kind(&premise_pairs).is_none()
+    {
+        return Err(ClickError::new(format!(
+            "surface premises do not replay the atomic derivation of {:?}",
+            derivation.conclusion(),
+        )));
+    }
+    let mut index = 0;
+    while index < premise_pairs.len() {
+        let mut reduced = premise_pairs.clone();
+        reduced.remove(index);
+        if matches!(
+            normalize_proposition(derivation.conclusion()),
+            SimpProposition::True
+        ) || replay_kind(&reduced).is_some()
+        {
+            premise_pairs = reduced;
+        } else {
+            index += 1;
+        }
+    }
+    let kind = replay_kind(&premise_pairs);
     let surface_premises = premise_pairs
         .into_iter()
         .map(|(_, surface)| surface)
         .collect::<Vec<_>>();
-    let assumptions = assumptions_from_propositions(&kernel_premises);
     let proof_tactic = if matches!(
         normalize_proposition(derivation.conclusion()),
         SimpProposition::True
     ) {
         ProofTactic::Normalize
-    } else if assumptions
-        .derive_atomic_proposition(derivation.conclusion())
-        .is_some()
-    {
+    } else if kind == Some(false) {
         ProofTactic::Derive(ProofDerive {
             proposition: conclusion.clone(),
             premises: surface_premises,
         })
-    } else if assumptions
-        .derive_simp_atomic_proposition(derivation.conclusion())
-        .is_some()
-    {
+    } else {
         ProofTactic::Calculate(ProofDerive {
             proposition: conclusion.clone(),
             premises: surface_premises,
         })
-    } else {
-        return Err(ClickError::new(format!(
-            "surface premises do not replay the atomic derivation of {:?}",
-            derivation.conclusion(),
-        )));
     };
     Ok((conclusion, Proof::Script(vec![proof_tactic])))
 }
