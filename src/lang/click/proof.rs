@@ -6506,6 +6506,18 @@ fn record_surface_replay_tactic(
             tactic_offset: replay.surface_replay.tactics.len(),
         }),
         ProofTactic::CertifiedAlternatives(_) => {}
+        ProofTactic::Have(have) => {
+            match TacticCertificate::from_proof_tactics(std::slice::from_ref(tactic)) {
+                Ok(_) => replay.surface_replay.push(tactic.clone()),
+                Err(_) if have_proof_is_smart_simp(&have.proof) => {
+                    // The successful smart proof is lowered after it has
+                    // produced its checked kernel fact.
+                }
+                Err(error) => replay
+                    .surface_replay
+                    .block(format!("could not lower control-flow tactic: {error:?}")),
+            }
+        }
         ProofTactic::ExactPropositionDerivation(derivation) => {
             match lower_surface_atomic_derivation(
                 replay,
@@ -6586,6 +6598,78 @@ fn record_surface_replay_tactic(
     }
 }
 
+fn have_proof_is_smart_simp(proof: &Proof) -> bool {
+    match proof {
+        Proof::Default | Proof::Tactic(SmartTactic::Auto | SmartTactic::Simp) => true,
+        Proof::Script(tactics) => matches!(tactics.as_slice(), [ProofTactic::Simp]),
+        Proof::Tactic(SmartTactic::Frame) => false,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn record_surface_smart_have(
+    replay: &mut TacticReplayState,
+    state: &CState,
+    available: &[Proposition],
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    have: &ProofHave,
+    fact: &Proposition,
+) {
+    if replay.surface_replay.blocker.is_some() {
+        return;
+    }
+    let assumptions = assumptions_from_propositions(available);
+    let Some(certificate) = plan_simp_certificate(fact, &assumptions) else {
+        replay
+            .surface_replay
+            .block("successful smart `have` did not produce a replayable simp certificate");
+        return;
+    };
+    let proof = match certificate.tactics() {
+        [ProofTactic::Normalize] => Proof::Script(vec![ProofTactic::Normalize]),
+        [ProofTactic::ExactPropositionDerivation(derivation)] => {
+            match lower_surface_atomic_derivation(
+                replay,
+                derivation,
+                available,
+                parameters,
+                arguments,
+                state,
+                predicate_environment,
+                click_function_environment,
+            ) {
+                Ok((_, proof)) => proof,
+                Err(error) => {
+                    replay.surface_replay.block(format!(
+                        "could not lower smart `have` certificate: {}",
+                        error.message()
+                    ));
+                    return;
+                }
+            }
+        }
+        _ => {
+            replay
+                .surface_replay
+                .block("smart `have` planned an unexpected simp certificate");
+            return;
+        }
+    };
+    let tactic = ProofTactic::Have(ProofHave {
+        proposition: have.proposition.clone(),
+        proof,
+    });
+    match TacticCertificate::from_proof_tactics(std::slice::from_ref(&tactic)) {
+        Ok(_) => replay.surface_replay.push(tactic),
+        Err(error) => replay.surface_replay.block(format!(
+            "smart `have` produced an invalid certificate: {error:?}"
+        )),
+    }
+}
+
 struct TacticTiming {
     claim_label: String,
     tactic_index: usize,
@@ -6597,6 +6681,11 @@ struct TacticTiming {
 }
 
 fn timing_tactic_class(tactic: &ProofTactic) -> &'static str {
+    if let ProofTactic::Have(have) = tactic
+        && have_proof_is_smart_simp(&have.proof)
+    {
+        return "smart";
+    }
     match tactic.class() {
         TacticClass::Simple(_) => "simple",
         TacticClass::Smart(_) => "smart",
@@ -8026,6 +8115,19 @@ fn replay_linear_tactics(
                     click_function_environment,
                     function_block.requires(),
                 )?;
+                if have_proof_is_smart_simp(&have.proof) {
+                    record_surface_smart_have(
+                        &mut replay,
+                        &state,
+                        &have_facts,
+                        parsed_function.parameters(),
+                        arguments,
+                        predicate_environment,
+                        click_function_environment,
+                        have,
+                        &fact,
+                    );
+                }
                 replay
                     .surface_propositions
                     .record_lowering(&have.proposition, &fact)?;

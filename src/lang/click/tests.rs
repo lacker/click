@@ -3182,6 +3182,56 @@ fn smart_simp_expansion_replays_as_surface_click() {
 }
 
 #[test]
+fn source_expander_lowers_smart_simp_inside_have() {
+    let c_source = r#"
+            int32 identity(int32 x) {
+                return x;
+            }
+        "#;
+    let click_source = r#"
+            verifying "identity.c";
+
+            int32 identity(int32 x) {
+                ensures result == x;
+            } by {
+                have x == x by {
+                    simp();
+                }
+                execute_rest();
+                simp();
+            }
+        "#;
+    let have_offset = click_source
+        .find("have x == x")
+        .expect("proof should contain the selected have");
+    let line = click_source[..have_offset]
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count()
+        + 1;
+    let column = have_offset
+        - click_source[..have_offset]
+            .rfind('\n')
+            .map(|offset| offset + 1)
+            .unwrap_or(0)
+        + 1;
+
+    let expanded =
+        expand_c0_tactic_source_at(click_source, &[("identity.c", c_source)], line, column)
+            .expect("the selected smart have should expand");
+    let expanded_have = &expanded[expanded
+        .find("have x == x")
+        .expect("expanded proof should retain the selected have")
+        ..expanded
+            .find("execute_rest()")
+            .expect("expanded proof should retain its suffix")];
+    assert!(expanded_have.contains("normalize();"), "{expanded_have}");
+    assert!(!expanded_have.contains("simp();"), "{expanded_have}");
+    verify_c0_sources(&expanded, &[("identity.c", c_source)])
+        .expect("the expanded smart have should replay");
+}
+
+#[test]
 fn branched_smart_simp_expansion_replays_as_surface_click() {
     let c_source = r#"
             int32 choose(int32 flag) {
