@@ -1712,6 +1712,84 @@ fn execute_step_expands_transport_across_multiple_statement_snapshots() {
 }
 
 #[test]
+fn execute_step_expands_call_assign_fact_from_internal_snapshot() {
+    let increment_c_source = r#"
+            int32 set_seven(int32 p[1]) {
+                p[0] = 7;
+                return 7;
+            }
+        "#;
+    let caller_c_source = r#"
+            int32 call_set_seven(int32 p[1]) {
+                int32 result;
+                result = set_seven(p);
+                return result;
+            }
+        "#;
+    let click_source = r#"
+            verifying "set_seven.c";
+            verifying "call_set_seven.c";
+
+            int32 set_seven(int32 p[1]) {
+                consumes p[0..1];
+                mutable p[0..1];
+                produces p[0..1];
+                ensures result == 7;
+                ensures p[0] == 7;
+            } by {
+                execute_step();
+                execute_step();
+                frame();
+                simp();
+            }
+
+            int32 call_set_seven(int32 p[1]) {
+                consumes p[0..1];
+                mutable p[0..1];
+                produces p[0..1];
+                ensures result == 7;
+                ensures p[0] == 7;
+            } by {
+                execute_step();
+                execute_step();
+                frame();
+                simp();
+            }
+        "#;
+
+    let caller_offset = click_source
+        .find("int32 call_set_seven")
+        .expect("caller should be present");
+    let execute_offset = caller_offset
+        + click_source[caller_offset..]
+            .find("execute_step()")
+            .expect("caller should execute its call");
+    let line = click_source[..execute_offset]
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count()
+        + 1;
+    let column = execute_offset
+        - click_source[..execute_offset]
+            .rfind('\n')
+            .map(|offset| offset + 1)
+            .unwrap_or(0)
+        + 1;
+
+    let expanded = expand_c0_tactic_source_at(
+        click_source,
+        &[
+            ("set_seven.c", increment_c_source),
+            ("call_set_seven.c", caller_c_source),
+        ],
+        line,
+        column,
+    )
+    .expect("call-assign facts should normalize to the source statement exit");
+    assert!(expanded.contains("step using {"), "{expanded}");
+}
+
+#[test]
 fn synthesizes_pointer_offset_equality_as_pointer_comparison() {
     let owner_offset = PointerOffsetTerm::Int32Scaled {
         value: Box::new(Bitvector32Term::Variable(Variable(41))),

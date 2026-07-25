@@ -606,6 +606,7 @@ pub struct CertifiedFactTransport {
     pub(crate) source: Proposition,
     pub(crate) target: Proposition,
     pub(crate) theorem: Theorem,
+    pub(crate) statement_local: bool,
 }
 
 #[doc(hidden)]

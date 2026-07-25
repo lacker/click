@@ -232,7 +232,16 @@ int32 owned_string_push_preserves_first(
     ensures result == old(owner->len) + 1;
     ensures data[0] == old(data[0]);
 } by {
-    execute_rest();
+    execute_step();
+    step using {
+        fact (load_int32(owner) + 1) < load_int32((owner + 1));
+        fact *owner < *(owner + 1);
+        fact 1 <= load_int32(owner);
+        fact loadable(old((owner + 1)[0..1]));
+        fact loadable(old((owner + 2)[0..2]));
+        fact loadable(old(owner[0..1]));
+    }
+    execute_step();
     frame();
     simp();
 }
@@ -282,7 +291,15 @@ int32 owned_string_pop_preserves_first(struct owned_string* owner) {
     ensures result == old((owner->data)[owner->len - 1]);
     ensures data[0] == old(data[0]);
 } by {
-    execute_rest();
+    execute_step();
+    step using {
+        fact *owner < *(owner + 1);
+        fact 2 <= load_int32(owner);
+        fact loadable(old((owner + 1)[0..1]));
+        fact loadable(old((owner + 2)[0..2]));
+        fact loadable(old(owner[0..1]));
+    }
+    execute_step();
     frame();
     simp();
 }
@@ -336,7 +353,15 @@ int32 owned_string_pipeline(
     have owner->len + 1 < owner->cap by {
         simp();
     }
-    execute_until(statement(4));
+    step using {
+        fact (load_int32(owner) + 1) < load_int32((owner + 1));
+        fact 2 <= capacity;
+        fact ignored == observed;
+        fact load_int32((owner + 1)) == capacity;
+        fact load_int32(owner) == 0;
+        fact *data == observed;
+        fact loadable(old(owner[0..4]));
+    }
     have at(statement(3).entry, owner->len) == 0 by {
         simp();
     }
@@ -395,7 +420,19 @@ int32 owned_string_pipeline(
     have 1 <= owner->len by {
         simp();
     }
-    execute_until(statement(6));
+    step using {
+        fact load_int32(owner) == 1;
+        fact 2 <= capacity;
+        fact observed == first;
+        fact observed == data[0];
+        fact *data == first;
+        fact load_int32_pointer((owner + 2)) == data;
+        fact at(statement(3).entry, load_int32_pointer((owner + 2))) == data;
+        fact loadable(old(owner[0..4]));
+        fact *owner == *owner;
+        fact 0 < *owner;
+        fact 1 <= load_int32(owner);
+    }
     have at(statement(5).entry, owner->len) == 1 by {
         simp();
     }

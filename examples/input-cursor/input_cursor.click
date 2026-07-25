@@ -220,7 +220,21 @@ int32 input_cursor_shared_pipeline(
         at(statement(5).entry, left->pos),
         left->pos
     ));
-    execute_step();
+    step using {
+        fact *right < *(right + 1);
+        fact 1 <= length;
+        fact *(right + 1) == *(left + 1);
+        fact *left == 1;
+        fact load_int32(left) == (at(statement(5).entry, load_int32(left)) + 1);
+        fact *right == right_value;
+        fact at(statement(5).entry, load_int32(left)) == 0;
+        fact loadable(old(left[0..4]));
+        fact loadable(old(right[0..4]));
+        fact separate(memory(left[0..4]), memory(data[0..length]));
+        fact separate(memory(right[0..4]), memory(data[0..length]));
+        fact right_value <= length;
+        fact *(left + 1) == *(left + 1);
+    }
     have right->pos == 0 by {
         simp();
     }

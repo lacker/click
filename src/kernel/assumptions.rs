@@ -168,6 +168,9 @@ impl Assumptions {
         match condition {
             ConditionTerm::Constant(value) => Some(*value),
             _ => {
+                if let Some(value) = self.exact_condition_value(condition) {
+                    return Some(value);
+                }
                 let simplified = self.simplify_condition_under_assumptions(condition);
                 if simplified != *condition {
                     return match simplified {
@@ -1991,7 +1994,7 @@ impl Assumptions {
             return true;
         }
 
-        if self.is_inconsistent() {
+        if self.prop_facts.contains(proposition) {
             return true;
         }
 
@@ -2058,6 +2061,7 @@ impl Assumptions {
             _ => self.prop_facts.contains(proposition),
         };
         direct
+            || self.is_inconsistent()
             || self.proves_by_finite_context_split(proposition)
             || self.proves_by_disjunction_cases(proposition)
     }
@@ -3906,11 +3910,27 @@ impl Assumptions {
         start: &Bitvector32Term,
         end: &Bitvector32Term,
     ) -> bool {
+        if byte_width == 4
+            && let Some(index) = pointer.element_index_from_base(base)
+            && self.decide(&ConditionTerm::signed_less_equal(
+                start.clone(),
+                index.clone(),
+            )) == Some(true)
+            && self.decide(&ConditionTerm::signed_less_than(index, end.clone())) == Some(true)
+        {
+            return true;
+        }
+
         if byte_width.is_multiple_of(4) {
             let range_base = base.offset_by_int32_elements(start.clone());
+            let access_length = Bitvector32Term::Constant(byte_width / 4);
+            if pointer == &range_base
+                && end == &Bitvector32Term::add(start.clone(), access_length.clone())
+            {
+                return true;
+            }
             if let Some(index) = self.pointer_element_index_from_base(pointer, &range_base) {
                 let range_length = Bitvector32Term::subtract(end.clone(), start.clone());
-                let access_length = Bitvector32Term::Constant(byte_width / 4);
                 let access_end = Bitvector32Term::add(index.clone(), access_length);
                 if self.decide(&ConditionTerm::signed_less_equal(
                     Bitvector32Term::Constant(0),

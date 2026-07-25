@@ -2354,21 +2354,31 @@ fn append_statement_transition_certificate(
             ProofTactic::CertifiedLoopSummaryStep(transition.prerequisite_derivations.clone())
         }
     });
+    // Facts produced by the statement are not available until the certified
+    // statement replay has run. Their transports are checked as part of that
+    // replay; only facts that existed at statement entry need separate
+    // transport tactics.
+    let external_transports = transition
+        .fact_transports
+        .iter()
+        .filter(|transport| !transport.statement_local)
+        .collect::<Vec<_>>();
     replay
         .planned_tactics
-        .extend(transition.fact_transports.iter().map(|transport| {
-            ProofTactic::CertifiedFactTransport {
-                source: transport.source.clone(),
-                target: transport.target.clone(),
-                theorem: transport.theorem.clone(),
-            }
-        }));
-    if !transition.fact_transports.is_empty() {
+        .extend(
+            external_transports
+                .iter()
+                .map(|transport| ProofTactic::CertifiedFactTransport {
+                    source: transport.source.clone(),
+                    target: transport.target.clone(),
+                    theorem: transport.theorem.clone(),
+                }),
+        );
+    if !external_transports.is_empty() {
         replay
             .planned_tactics
             .push(ProofTactic::FinishCertifiedFactTransports(
-                transition
-                    .fact_transports
+                external_transports
                     .iter()
                     .map(|transport| transport.source.clone())
                     .collect(),
@@ -2644,6 +2654,7 @@ pub(super) fn certified_statement_transitions(
         prerequisite_policy,
         fact_transport_policy,
         certified_prerequisites,
+        statement_contains_call_assign(statement),
     )
 }
 
@@ -2677,7 +2688,64 @@ fn certified_loop_exit_transitions_with_proven_phases(
         StatementPrerequisitePolicy::Contextual,
         StatementFactTransportPolicy::Automatic,
         &[],
+        statement_contains_call_assign(statement),
     )
+}
+
+fn statement_contains_call_assign(statement: &CStatement) -> bool {
+    match statement {
+        CStatement::CallAssign { .. } => true,
+        CStatement::Seq(first, second) => {
+            statement_contains_call_assign(first) || statement_contains_call_assign(second)
+        }
+        CStatement::If {
+            then_branch,
+            else_branch,
+            ..
+        } => {
+            statement_contains_call_assign(then_branch)
+                || statement_contains_call_assign(else_branch)
+        }
+        CStatement::While { body, .. } => statement_contains_call_assign(body),
+        CStatement::Declare { .. }
+        | CStatement::Assign { .. }
+        | CStatement::Assert { .. }
+        | CStatement::Return(_)
+        | CStatement::Store { .. }
+        | CStatement::TypedStore { .. } => false,
+    }
+}
+
+fn statement_fact_collapses_to_snapshot_reflexivity(fact: &Proposition) -> bool {
+    let Proposition::ConditionIs(condition, true) = fact else {
+        return false;
+    };
+    let same_memory_load = |left: &Bitvector32Term, right: &Bitvector32Term| {
+        matches!(
+            (left, right),
+            (
+                Bitvector32Term::MemoryLoad(_, left_pointer),
+                Bitvector32Term::MemoryLoad(_, right_pointer),
+            ) if left_pointer == right_pointer
+        )
+    };
+    match condition {
+        ConditionTerm::Bitvector32Equal(left, right) => same_memory_load(left, right),
+        ConditionTerm::PointerOffsetEqual(left, right) => matches!(
+            (left.as_ref(), right.as_ref()),
+            (
+                PointerOffsetTerm::Int32Scaled {
+                    value: left,
+                    byte_width: left_width,
+                },
+                PointerOffsetTerm::Int32Scaled {
+                    value: right,
+                    byte_width: right_width,
+                },
+            ) if left_width == right_width && same_memory_load(left, right)
+        ),
+        _ => false,
+    }
 }
 
 fn certified_transitions_from_execution(
@@ -2688,6 +2756,7 @@ fn certified_transitions_from_execution(
     prerequisite_policy: StatementPrerequisitePolicy,
     fact_transport_policy: StatementFactTransportPolicy,
     certified_prerequisites: &[PropositionDerivation],
+    normalize_statement_facts_to_exit: bool,
 ) -> Result<(Vec<CertifiedStatementTransition>, Option<CVerifiedLoopRule>), ClickError> {
     if let Some(limit) = execution.limit() {
         return Err(ClickError::new(format!(
@@ -2709,7 +2778,13 @@ fn certified_transitions_from_execution(
         })
         .map(|path| {
             let mut successor_facts = pure_facts.to_vec();
-            successor_facts.extend(path.facts().iter().map(|fact| fact.proposition().clone()));
+            let statement_facts = path
+                .facts()
+                .iter()
+                .map(|fact| fact.proposition().clone())
+                .collect::<Vec<_>>();
+            let statement_fact_sources = statement_facts.clone();
+            successor_facts.extend(statement_facts.iter().cloned());
             let execution_facts = path.execution_facts();
             let mut transport_facts = successor_facts.clone();
             transport_facts.extend(
@@ -2790,31 +2865,106 @@ fn certified_transitions_from_execution(
                     "{context_label} saw an unexpected execution theorem"
                 )));
             };
-            if matches!(
-                fact_transport_policy,
-                StatementFactTransportPolicy::Automatic
-            ) && let CStatementOutcome::Normal(post_state)
+            if let CStatementOutcome::Normal(post_state)
             | CStatementOutcome::Return {
                 state: post_state, ..
             } = outcome
             {
+                // A compound source statement can produce a fact before its
+                // final internal state change. For example, a verified call
+                // produces postcondition facts before CallAssign stores the
+                // return value in a stack local. That intermediate snapshot
+                // has no source-level program point, so normalize facts
+                // produced by the statement itself to the statement exit as
+                // part of the statement step. Surface transports remain
+                // responsible only for facts that predated the statement.
                 let mut transported_facts = Vec::new();
-                for fact in successor_facts.clone() {
-                    let Some(theorem) = prove_c_condition_fact_transport(
-                        &fact,
-                        post_state.memory(),
-                        &transport_assumptions,
-                    ) else {
-                        continue;
+                if normalize_statement_facts_to_exit {
+                    for fact in statement_facts {
+                        if matches!(fact_transport_policy, StatementFactTransportPolicy::None)
+                            && statement_fact_collapses_to_snapshot_reflexivity(&fact)
+                        {
+                            successor_facts.retain(|available| available != &fact);
+                            continue;
+                        }
+                        let Some(theorem) = prove_c_condition_fact_transport(
+                            &fact,
+                            post_state.memory(),
+                            &transport_assumptions,
+                        ) else {
+                            continue;
+                        };
+                        let Proposition::Implies(_, conclusion) = theorem.proposition() else {
+                            unreachable!("condition transport must produce an implication")
+                        };
+                        let target = conclusion.as_ref();
+                        if target == &fact {
+                            continue;
+                        }
+                        successor_facts.retain(|available| available != &fact);
+                        if !successor_facts.contains(target) {
+                            successor_facts.push(target.clone());
+                        }
+                        transported_facts.push(CertifiedFactTransport {
+                            source: fact,
+                            target: target.clone(),
+                            theorem,
+                            statement_local: true,
+                        });
+                    }
+                }
+                if normalize_statement_facts_to_exit
+                    && matches!(fact_transport_policy, StatementFactTransportPolicy::None)
+                {
+                    for fact in pure_facts {
+                        let Some(theorem) = prove_c_condition_fact_transport(
+                            fact,
+                            post_state.memory(),
+                            &transport_assumptions,
+                        ) else {
+                            continue;
+                        };
+                        let Proposition::Implies(_, conclusion) = theorem.proposition() else {
+                            unreachable!("condition transport must produce an implication")
+                        };
+                        transported_facts.push(CertifiedFactTransport {
+                            source: fact.clone(),
+                            target: conclusion.as_ref().clone(),
+                            theorem,
+                            statement_local: true,
+                        });
+                    }
+                }
+
+                if matches!(
+                    fact_transport_policy,
+                    StatementFactTransportPolicy::Automatic
+                ) {
+                    let automatic_sources = if normalize_statement_facts_to_exit {
+                        pure_facts.to_vec()
+                    } else {
+                        successor_facts.clone()
                     };
-                    let Proposition::Implies(_, conclusion) = theorem.proposition() else {
-                        unreachable!("condition transport must produce an implication")
-                    };
-                    transported_facts.push(CertifiedFactTransport {
-                        source: fact,
-                        target: conclusion.as_ref().clone(),
-                        theorem,
-                    });
+                    for fact in automatic_sources {
+                        let statement_local = normalize_statement_facts_to_exit
+                            || exact_fact_is_available(&fact, &statement_fact_sources);
+                        let Some(theorem) = prove_c_condition_fact_transport(
+                            &fact,
+                            post_state.memory(),
+                            &transport_assumptions,
+                        ) else {
+                            continue;
+                        };
+                        let Proposition::Implies(_, conclusion) = theorem.proposition() else {
+                            unreachable!("condition transport must produce an implication")
+                        };
+                        transported_facts.push(CertifiedFactTransport {
+                            source: fact,
+                            target: conclusion.as_ref().clone(),
+                            theorem,
+                            statement_local,
+                        });
+                    }
                 }
                 for transport in &transported_facts {
                     successor_facts.retain(|fact| fact != &transport.source);
@@ -9314,6 +9464,44 @@ fn replay_certified_statement_transition(
     for fact in &transition.path_facts {
         if !transition.pure_facts.contains(fact) {
             transition.pure_facts.push(fact.clone());
+        }
+    }
+    let internal_transports = transition
+        .fact_transports
+        .iter()
+        .filter(|transport| transport.statement_local)
+        .collect::<Vec<_>>();
+    for transport in &internal_transports {
+        if !exact_fact_is_available(&transport.source, &transition.pure_facts) {
+            return Err(ClickError::new(format!(
+                "{context_label} internal fact transport is missing exact statement-produced source {:?}",
+                transport.source
+            )));
+        }
+        let Proposition::Implies(theorem_source, theorem_target) = transport.theorem.proposition()
+        else {
+            return Err(ClickError::new(format!(
+                "{context_label} internal fact transport theorem is not an implication"
+            )));
+        };
+        if theorem_source.as_ref() != &transport.source
+            || theorem_target.as_ref() != &transport.target
+        {
+            return Err(ClickError::new(format!(
+                "{context_label} internal fact transport theorem does not match its source and target"
+            )));
+        }
+    }
+    let internal_sources = internal_transports
+        .iter()
+        .map(|transport| &transport.source)
+        .collect::<Vec<_>>();
+    transition
+        .pure_facts
+        .retain(|fact| !internal_sources.contains(&fact));
+    for transport in internal_transports {
+        if !transition.pure_facts.contains(&transport.target) {
+            transition.pure_facts.push(transport.target.clone());
         }
     }
     transition.fact_transports.clear();

@@ -2524,6 +2524,16 @@ impl ResourceContext {
         byte_width: u32,
         assumptions: &Assumptions,
     ) -> bool {
+        for resource in &self.facts {
+            let CResourceFact::Own(CResource::Memory(range)) = resource else {
+                continue;
+            };
+            if pointer_has_structural_range_base(pointer, range.base())
+                && memory_resource_fact_permits_write(resource, pointer, byte_width, assumptions)
+            {
+                return true;
+            }
+        }
         self.facts.iter().any(|resource| {
             memory_resource_fact_permits_write(resource, pointer, byte_width, assumptions)
         })
@@ -2927,6 +2937,20 @@ fn memory_resource_fact_permits_write(
         CResourceFact::Own(CResource::Composite { .. } | CResource::Token { .. })
         | CResourceFact::View(_) => false,
     }
+}
+
+fn pointer_has_structural_range_base(pointer: &Pointer, base: &Pointer) -> bool {
+    if pointer.block != base.block {
+        return false;
+    }
+    if pointer.offset == base.offset {
+        return true;
+    }
+    matches!(
+        &pointer.offset,
+        PointerOffsetTerm::Add(left, right)
+            if left.as_ref() == &base.offset || right.as_ref() == &base.offset
+    )
 }
 
 fn memory_range_covers(
