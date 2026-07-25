@@ -213,8 +213,9 @@ int32 owned_split_buffer_pipeline(
         fact *owner == *owner;
         fact *(owner + 1) == *(owner + 1);
     }
-    have owner->data == data by {
-        simp();
+    transport(at(statement(4).entry, load_int32_pointer((owner + 2))) == data, load_int32_pointer((owner + 2)) == data) using {
+        fact at(statement(4).entry, load_int32_pointer((owner + 2))) == data;
+        fact 2 <= length;
     }
     have data[0] == left_value by {
         simp();
