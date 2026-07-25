@@ -123,6 +123,7 @@ struct ProjectProfile {
     slow_steps: Vec<SlowStep>,
     active: Vec<StepKey>,
     timed_out: bool,
+    verification_failure: Option<String>,
 }
 
 fn entry() -> Result<(), String> {
@@ -146,7 +147,17 @@ fn entry() -> Result<(), String> {
         )?);
     }
     print_profiles(&profiles, arguments.thresholds, arguments.time_limit);
-    Ok(())
+    let failed = profiles
+        .iter()
+        .filter(|profile| profile.verification_failure.is_some())
+        .count();
+    if failed == 0 {
+        Ok(())
+    } else {
+        Err(format!(
+            "{failed} project(s) failed verification; partial profile printed above"
+        ))
+    }
 }
 
 fn parse_arguments(arguments: impl IntoIterator<Item = String>) -> Result<Arguments, String> {
@@ -338,30 +349,45 @@ fn profile_project(
     };
     let stdout = join_reader(stdout_reader, "output")?;
     let stderr = join_reader(stderr_reader, "diagnostics")?;
-    if status.is_some_and(|status| !status.success()) {
-        let stdout = String::from_utf8_lossy(&stdout);
-        let stderr = String::from_utf8_lossy(&stderr);
-        return Err(format!(
-            "verification failed for `{}`\n{}{}",
-            project.display(),
-            stdout,
-            stderr
-        ));
-    }
-
     let project_name = project
         .file_name()
         .and_then(|name| name.to_str())
         .unwrap_or_else(|| project.as_os_str().to_str().unwrap_or("example"))
         .to_string();
-    let mut profile = parse_profile(
-        &project_name,
-        &String::from_utf8_lossy(&stderr),
-        thresholds,
-        status.is_none(),
-    );
+    let stderr = String::from_utf8_lossy(&stderr);
+    let mut profile = parse_profile(&project_name, &stderr, thresholds, status.is_none());
+    if status.is_some_and(|status| !status.success()) {
+        profile.verification_failure = Some(extract_verification_failure(
+            &String::from_utf8_lossy(&stdout),
+            &stderr,
+            status.expect("failed status should be present"),
+        ));
+    }
     resolve_source_positions(&mut profile)?;
     Ok(profile)
+}
+
+fn extract_verification_failure(
+    stdout: &str,
+    stderr: &str,
+    status: std::process::ExitStatus,
+) -> String {
+    let diagnostics = stderr
+        .lines()
+        .filter(|line| !line.starts_with("click timing:"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let diagnostics = diagnostics
+        .trim()
+        .strip_prefix("click-profile: ")
+        .unwrap_or(diagnostics.trim());
+    if !diagnostics.is_empty() {
+        diagnostics.to_string()
+    } else if !stdout.trim().is_empty() {
+        stdout.trim().to_string()
+    } else {
+        format!("profiler child exited with {status}")
+    }
 }
 
 fn parse_profile(
@@ -392,6 +418,7 @@ fn parse_profile(
         slow_steps,
         active,
         timed_out,
+        verification_failure: None,
     }
 }
 
@@ -526,6 +553,25 @@ fn render_profiles(
         "This is a proof container. Use its nested SMART/SIMPLE timings; do not optimize or expand it based on the container row alone.",
     );
 
+    let failed = profiles
+        .iter()
+        .filter_map(|profile| {
+            profile
+                .verification_failure
+                .as_deref()
+                .map(|failure| (profile, failure))
+        })
+        .collect::<Vec<_>>();
+    if !failed.is_empty() {
+        writeln!(output, "\nVERIFICATION FAILURES").expect("writing a String cannot fail");
+    }
+    for (profile, failure) in failed {
+        writeln!(output, "  {}:", profile.project).expect("writing a String cannot fail");
+        for line in failure.lines() {
+            writeln!(output, "    {line}").expect("writing a String cannot fail");
+        }
+    }
+
     let timed_out = profiles
         .iter()
         .filter(|profile| profile.timed_out)
@@ -593,7 +639,16 @@ fn render_profiles(
                     .iter()
                     .any(|key| key.category == TacticCategory::Control)
         });
-    if has_simple_problem {
+    let has_verification_failure = profiles
+        .iter()
+        .any(|profile| profile.verification_failure.is_some());
+    if has_verification_failure {
+        writeln!(
+            output,
+            "\nNEXT: fix the verification failure first. Timings from other projects are preserved, but the failed project profile is incomplete."
+        )
+        .expect("writing a String cannot fail");
+    } else if has_simple_problem {
         writeln!(
             output,
             "\nNEXT: fix or reduce the SIMPLE bottleneck first. Expanding surrounding SMART tactics can only move or expose this deterministic cost."
@@ -881,5 +936,57 @@ click timing: tactic example.contract 0 have class control statement 1 source 10
 
         assert!(report.contains("NEXT: inspect the nested timings inside the CONTROL container"));
         assert!(!report.contains("expand: cargo run"));
+    }
+
+    #[test]
+    fn report_preserves_timings_when_another_project_fails_verification() {
+        let mut successful = parse_profile(
+            "successful",
+            r#"
+click timing: source examples/successful.click
+click timing: tactic example.contract 0 execute_step class smart statement 1 source 10 2.500000s
+"#,
+            Thresholds::default(),
+            false,
+        );
+        successful.slow_steps[0].key.position = Some(SourcePosition {
+            line: 12,
+            column: 5,
+        });
+        let mut failed = parse_profile(
+            "failed",
+            "click timing: source examples/failed.click",
+            Thresholds::default(),
+            false,
+        );
+        failed.verification_failure =
+            Some("example sidecar failed: certificate did not replay".to_string());
+
+        let report = render_profiles(
+            &[failed, successful],
+            Thresholds::default(),
+            DEFAULT_TIME_LIMIT,
+        );
+
+        assert!(report.contains("VERIFICATION FAILURES"));
+        assert!(report.contains("certificate did not replay"));
+        assert!(report.contains("examples/successful.click:12:5"));
+        assert!(report.contains("fix the verification failure first"));
+    }
+
+    #[test]
+    fn failure_diagnostic_omits_timing_stream() {
+        let status = std::process::Command::new("sh")
+            .arg("-c")
+            .arg("exit 1")
+            .status()
+            .expect("test shell should run");
+        let diagnostic = extract_verification_failure(
+            "",
+            "click timing: source example.click\nclick-profile: proof failed",
+            status,
+        );
+
+        assert_eq!(diagnostic, "proof failed");
     }
 }

@@ -149,7 +149,7 @@ expander mismatches:
   probe, preventing generated certificate-local source indices from capturing
   the wrong user tactic.
 
-All 353 library tests pass with this boundary enabled. The updated expansion
+All 354 library tests pass with this boundary enabled. The updated expansion
 tests now require `execute_rest` to become actual `step`/`step using`
 certificates rather than another smart `execute_step`. A selected
 post-execution `simp` also remains active until claim finalization produces its
@@ -177,11 +177,42 @@ certificate boundary. The slow-frontier sweep can resume; if the slow simple
 `derive` is reached, fix it separately rather than hiding it with another
 smart fallback.
 
-The current `master` checkpoint has no known slow simple tactic in the reached
-profile prefixes. Contextual `step using` replay now defers non-exact
-obligations until its explicit prerequisite check (`eff152d`), removing the
-1.1-second input-cursor replay without adding another fast path to the general
-solver.
+The 2026-07-25 post-boundary profile found and fixed an input-cursor replay
+mismatch: observation projected resource facts into the kernel without
+retaining their exact Click spellings, so a generated `step using` omitted the
+data-range loadability and separation needed to select one memory-read
+transition. Explicit observation and initial folded-resource projection now
+record declared facts, loadability, containment, and separation spellings.
+Pure `derive` replay canonicalizes only definitionally identical
+materialization-cache wrappers, matching the existing rule that such wrappers
+do not require a source-level transport. A focused cursor regression covers
+both the read step and the post-execution `have` sequence.
+
+`click-profile` now preserves timings from successful and timed-out projects
+when another project fails verification. It prints a `VERIFICATION FAILURES`
+section, continues through the corpus, and exits nonzero after printing the
+partial report.
+
+The subsequent ten-second-per-project profile has two known certificate
+failures, three bounded smart frontiers, and one completed slow simple step:
+
+- `owned_segmented_buffer_pipeline` loses a loadability fact while lowering a
+  late post-execution `apply using` premise.
+- `owned_string_push` emits a statement certificate without the numeric fact
+  needed to rule out signed overflow.
+- The pre-existing `bubble_sort3_loop_permutation` Markdown regression lowers
+  a nested branch condition at `j + 1` without first proving that the fourth
+  element is loadable. The unchanged `c0790fa` checkpoint fails in the same
+  place; generated-certificate diagnostics now expose the attempted replay.
+- input-cursor, split-buffer, and owned-vector time out at smart tactics at
+  `input_cursor.click:199:5`, `owned_split_buffer.click:226:5`, and
+  `vector.click:206:13`.
+- `owned_segmented_buffer_get_first` has a 774 ms simple read step, above the
+  default 500 ms engine threshold.
+
+Fix the three certificate/branch-lowering failures before resuming performance
+expansion. Then reduce the 774 ms simple read before expanding the three smart
+frontiers.
 
 Inline `have ... by { simp(); }` is now treated as a selectable smart unit
 rather than an opaque control container. `click-expand` lowers a successful
