@@ -436,9 +436,50 @@ fn records_checked_surface_spellings_for_lowered_propositions() {
         .checked_surface(&kernel, |_| Ok(kernel_left.as_ref().clone()))
         .expect_err("a spelling from another proof point must not be reused");
     assert!(
-        error.message().contains("different proposition"),
+        error
+            .message()
+            .contains("none of the recorded Click spellings"),
         "{}",
         error.message()
+    );
+}
+
+#[test]
+fn retains_distinct_surface_spellings_for_the_same_kernel_fact() {
+    let current = ClickProposition::Comparison {
+        left: current_var("x"),
+        operator: ComparisonOperator::Equal,
+        right: current_int(1),
+    };
+    let snapshot = ClickProposition::Comparison {
+        left: ContractExpression::At {
+            selector: VisitSelector::ProgramPoint(ProgramPointRef {
+                region: CodeRegionRef::Statement(5),
+                kind: ProgramPointKind::Entry,
+            }),
+            expression: Box::new(current_var("x")),
+        },
+        operator: ComparisonOperator::Equal,
+        right: current_int(1),
+    };
+    let kernel = Proposition::ConditionIs(ConditionTerm::Constant(true), true);
+    let wrong = Proposition::ConditionIs(ConditionTerm::Constant(false), true);
+    let mut spellings = SurfacePropositionMap::default();
+    spellings.record_lowering(&current, &kernel).unwrap();
+    spellings.record_lowering(&snapshot, &kernel).unwrap();
+
+    assert_eq!(spellings.surface(&kernel).unwrap(), &snapshot);
+    assert_eq!(
+        spellings
+            .checked_surface(&kernel, |surface| {
+                Ok(if surface == &current {
+                    kernel.clone()
+                } else {
+                    wrong.clone()
+                })
+            })
+            .unwrap(),
+        current
     );
 }
 
@@ -3284,6 +3325,80 @@ fn source_expander_preserves_pointer_spelling_inside_smart_have() {
     assert!(expanded.contains("assumption();"), "{expanded}");
     verify_c0_sources(&expanded, &[("holder.c", c_source)])
         .expect("the expanded pointer-valued have should replay");
+}
+
+#[test]
+fn source_expander_recalls_a_fact_at_a_recorded_statement_entry() {
+    let preserve_c_source = r#"
+            int32 preserve(int32 p[1]) {
+                return p[0];
+            }
+        "#;
+    let pipeline_c_source = r#"
+            int32 pipeline(int32 p[1]) {
+                int32 ignored;
+                ignored = preserve(p);
+                return p[0];
+            }
+        "#;
+    let click_source = r#"
+            verifying "preserve.c";
+            verifying "snapshot.c";
+
+            resource one(p: int32*) {
+                owns p[0..1];
+                fact p[0] == 1;
+            }
+
+            int32 preserve(int32 p[1]) {
+                views one(p);
+                immutable;
+                ensures result == 1;
+            } by {
+                observe(one(p));
+                execute_rest();
+                frame();
+                simp();
+            }
+
+            int32 pipeline(int32 p[1]) {
+                views one(p);
+                immutable;
+                ensures result == 1;
+            } by {
+                observe(one(p));
+                execute_until(statement(2));
+                have at(statement(1).entry, p[0]) == 1 by {
+                    simp();
+                }
+                execute_rest();
+                frame();
+                simp();
+            }
+        "#;
+    let have_offset = click_source
+        .find("have at(statement(1).entry")
+        .expect("proof should contain the selected snapshot have");
+    let line = click_source[..have_offset]
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count()
+        + 1;
+    let column = have_offset
+        - click_source[..have_offset]
+            .rfind('\n')
+            .map(|offset| offset + 1)
+            .unwrap_or(0)
+        + 1;
+
+    let c_sources = [
+        ("preserve.c", preserve_c_source),
+        ("snapshot.c", pipeline_c_source),
+    ];
+    let expanded = expand_c0_tactic_source_at(click_source, &c_sources, line, column)
+        .expect("the snapshot have should expand");
+    assert!(expanded.contains("assumption();"), "{expanded}");
+    verify_c0_sources(&expanded, &c_sources).expect("the expanded snapshot have should replay");
 }
 
 #[test]

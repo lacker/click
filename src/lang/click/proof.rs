@@ -8202,6 +8202,11 @@ fn replay_linear_tactics(
                         .iter()
                         .map(|fact| fact.proposition().clone()),
                 );
+                for fact in replay.surface_propositions.kernel_facts() {
+                    if !have_facts.contains(fact) {
+                        have_facts.push(fact.clone());
+                    }
+                }
                 let fact = prove_have_at_current_point(
                     have,
                     theorem_environment,

@@ -321,7 +321,7 @@ pub enum ClickProposition {
 /// to in one proof context.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct SurfacePropositionMap {
-    by_kernel: BTreeMap<Proposition, ClickProposition>,
+    by_kernel: BTreeMap<Proposition, Vec<ClickProposition>>,
 }
 
 impl SurfacePropositionMap {
@@ -330,9 +330,10 @@ impl SurfacePropositionMap {
         surface: &ClickProposition,
         kernel: &Proposition,
     ) -> Result<(), ClickError> {
-        self.by_kernel
-            .entry(kernel.clone())
-            .or_insert_with(|| surface.clone());
+        let spellings = self.by_kernel.entry(kernel.clone()).or_default();
+        if !spellings.contains(surface) {
+            spellings.push(surface.clone());
+        }
         match (surface, kernel) {
             (ClickProposition::And(surface_left, surface_right), Proposition::And(left, right))
             | (ClickProposition::Or(surface_left, surface_right), Proposition::Or(left, right))
@@ -371,11 +372,18 @@ impl SurfacePropositionMap {
     }
 
     pub fn surface(&self, kernel: &Proposition) -> Result<&ClickProposition, ClickError> {
-        self.by_kernel.get(kernel).ok_or_else(|| {
-            ClickError::new(format!(
-                "kernel proposition has no recorded Click surface spelling: {kernel:?}"
-            ))
-        })
+        self.by_kernel
+            .get(kernel)
+            .and_then(|spellings| spellings.last())
+            .ok_or_else(|| {
+                ClickError::new(format!(
+                    "kernel proposition has no recorded Click surface spelling: {kernel:?}"
+                ))
+            })
+    }
+
+    pub fn kernel_facts(&self) -> impl Iterator<Item = &Proposition> {
+        self.by_kernel.keys()
     }
 
     pub fn checked_surface<F>(
@@ -386,14 +394,25 @@ impl SurfacePropositionMap {
     where
         F: FnMut(&ClickProposition) -> Result<Proposition, ClickError>,
     {
-        let surface = self.surface(kernel)?;
-        let lowered = lower_at_current_point(surface)?;
-        if &lowered != kernel {
-            return Err(ClickError::new(format!(
-                "recorded Click spelling lowers to a different proposition at the current proof point: {surface:?} -> {lowered:?}, expected {kernel:?}"
-            )));
+        let spellings = self.by_kernel.get(kernel).ok_or_else(|| {
+            ClickError::new(format!(
+                "kernel proposition has no recorded Click surface spelling: {kernel:?}"
+            ))
+        })?;
+        let mut last_mismatch = None;
+        for surface in spellings.iter().rev() {
+            match lower_at_current_point(surface) {
+                Ok(lowered) if &lowered == kernel => return Ok(surface.clone()),
+                Ok(lowered) => last_mismatch = Some(format!("{surface:?} -> {lowered:?}")),
+                Err(error) => last_mismatch = Some(format!("{surface:?} -> {}", error.message())),
+            }
         }
-        Ok(surface.clone())
+        Err(ClickError::new(format!(
+            "none of the recorded Click spellings lower to the proposition at the current proof point{}; expected {kernel:?}",
+            last_mismatch
+                .map(|mismatch| format!(" (last mismatch: {mismatch})"))
+                .unwrap_or_default()
+        )))
     }
 }
 
