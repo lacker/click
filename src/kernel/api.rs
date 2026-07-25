@@ -538,7 +538,12 @@ fn normalize_exact_memory_loads_in_bitvector(
             )),
         },
         Bitvector32Term::RangeFold { .. } => term.clone(),
-        Bitvector32Term::MemoryLoad(_, _) => {
+        Bitvector32Term::MemoryLoad(memory, pointer) => {
+            if let Some(CValue::Int32(value)) = memory.known_value(pointer)
+                && &value != term
+            {
+                return normalize_exact_memory_loads_in_bitvector(&value, assumptions, depth + 1);
+            }
             let Some(value) = assumptions.resolve_memory_load_term(term) else {
                 return term.clone();
             };

@@ -51,8 +51,8 @@ pub(super) fn pointers_proven_distinct(
         return false;
     }
     left.blocks_proven_distinct(right)
+        || assumptions.pointers_proven_disjoint_by_explicit_range_for_memory_resolution(left, right)
         || pointer_offsets_with_common_base_proven_distinct(left, right, assumptions)
-        || assumptions.pointers_proven_disjoint_by_explicit_range_shallow(left, right)
         || left.block == right.block
             && assumptions.decide(&ConditionTerm::pointer_offset_equal(
                 left.offset.clone(),
@@ -231,6 +231,20 @@ fn bitvector_terms_equal_for_memory_resolution(
     if depth > MEMORY_RESOLUTION_ALIAS_DEPTH_LIMIT {
         return false;
     }
+    if let Bitvector32Term::MemoryLoad(memory, pointer) = left
+        && let Some(CValue::Int32(value)) = memory.known_value(pointer)
+        && &value != left
+        && bitvector_terms_equal_for_memory_resolution(&value, right, assumptions, depth + 1)
+    {
+        return true;
+    }
+    if let Bitvector32Term::MemoryLoad(memory, pointer) = right
+        && let Some(CValue::Int32(value)) = memory.known_value(pointer)
+        && &value != right
+        && bitvector_terms_equal_for_memory_resolution(left, &value, assumptions, depth + 1)
+    {
+        return true;
+    }
     if let Some((left, right)) = bitvector_equality_after_additive_cancellation(left, right) {
         return bitvector_terms_equal_for_memory_resolution(&left, &right, assumptions, depth + 1);
     }
@@ -301,6 +315,14 @@ fn bitvector_terms_equal_for_memory_resolution(
     }
 }
 
+pub(super) fn bitvector_terms_proven_equal_for_memory_resolution(
+    left: &Bitvector32Term,
+    right: &Bitvector32Term,
+    assumptions: &Assumptions,
+) -> bool {
+    bitvector_terms_equal_for_memory_resolution(left, right, assumptions, 0)
+}
+
 pub(super) fn memory_load_terms_equal_for_fact_transport(
     left: &Bitvector32Term,
     right: &Bitvector32Term,
@@ -339,6 +361,11 @@ fn memory_snapshots_match_for_resolution(
     if depth > MEMORY_RESOLUTION_ALIAS_DEPTH_LIMIT || pointer.block.starts_with("local:") {
         return false;
     }
+    if memory_has_materialized_load_from(left, right, pointer, assumptions, depth + 1)
+        || memory_has_materialized_load_from(right, left, pointer, assumptions, depth + 1)
+    {
+        return true;
+    }
     if !left
         .blocks
         .iter()
@@ -362,6 +389,26 @@ fn memory_snapshots_match_for_resolution(
                 depth + 1,
             )
         })
+}
+
+fn memory_has_materialized_load_from(
+    source: &CMemory,
+    materialized: &CMemory,
+    pointer: &Pointer,
+    assumptions: &Assumptions,
+    depth: usize,
+) -> bool {
+    let Some(CValue::Int32(Bitvector32Term::MemoryLoad(snapshot, load_pointer))) =
+        materialized.known_value(pointer)
+    else {
+        return false;
+    };
+    pointers_proven_equal_for_memory_resolution_with_depth(
+        &load_pointer,
+        pointer,
+        assumptions,
+        depth + 1,
+    ) && memory_snapshots_match_for_resolution(source, &snapshot, pointer, assumptions, depth + 1)
 }
 
 pub(super) fn pointer_offsets_with_common_base_proven_distinct(

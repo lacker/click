@@ -3444,6 +3444,71 @@ impl Assumptions {
         })
     }
 
+    pub(super) fn pointers_proven_disjoint_by_explicit_range_for_memory_resolution(
+        &self,
+        left: &Pointer,
+        right: &Pointer,
+    ) -> bool {
+        self.prop_facts.iter().any(|proposition| match proposition {
+            Proposition::CMemoryDisjoint {
+                left_base,
+                left_start,
+                left_end,
+                right_base,
+                right_start,
+                right_end,
+            } => {
+                pointer_in_range_for_memory_resolution(left, left_base, left_start, left_end, self)
+                    && pointer_in_range_for_memory_resolution(
+                        right,
+                        right_base,
+                        right_start,
+                        right_end,
+                        self,
+                    )
+                    || pointer_in_range_for_memory_resolution(
+                        right, left_base, left_start, left_end, self,
+                    ) && pointer_in_range_for_memory_resolution(
+                        left,
+                        right_base,
+                        right_start,
+                        right_end,
+                        self,
+                    )
+            }
+            Proposition::CResourceSeparate {
+                left: CResource::Memory(left_range),
+                right: CResource::Memory(right_range),
+            } => {
+                pointer_in_memory_range_for_memory_resolution(left, left_range, self)
+                    && pointer_in_memory_range_for_memory_resolution(right, right_range, self)
+                    || pointer_in_memory_range_for_memory_resolution(right, left_range, self)
+                        && pointer_in_memory_range_for_memory_resolution(left, right_range, self)
+            }
+            _ => false,
+        })
+    }
+
+    pub(super) fn memory_ranges_proven_disjoint_by_explicit_separation_for_memory_resolution(
+        &self,
+        left: &CMemoryRange,
+        right: &CMemoryRange,
+    ) -> bool {
+        self.prop_facts.iter().any(|proposition| {
+            let Proposition::CResourceSeparate {
+                left: CResource::Memory(fact_left),
+                right: CResource::Memory(fact_right),
+            } = proposition
+            else {
+                return false;
+            };
+            memory_range_contained_for_memory_resolution(left, fact_left, self)
+                && memory_range_contained_for_memory_resolution(right, fact_right, self)
+                || memory_range_contained_for_memory_resolution(right, fact_left, self)
+                    && memory_range_contained_for_memory_resolution(left, fact_right, self)
+        })
+    }
+
     fn pointer_element_index_from_base(
         &self,
         pointer: &Pointer,
@@ -4307,8 +4372,107 @@ fn memory_range_shallowly_contained(range: &CMemoryRange, parent: &CMemoryRange)
             .is_some_and(|delta| delta >= 0)
 }
 
+fn memory_range_contained_for_memory_resolution(
+    range: &CMemoryRange,
+    parent: &CMemoryRange,
+    assumptions: &Assumptions,
+) -> bool {
+    memory_range_shallowly_contained(range, parent)
+        || pointers_proven_equal_for_memory_resolution(range.base(), parent.base(), assumptions)
+            && bitvector_terms_proven_equal_for_memory_resolution(
+                range.start(),
+                parent.start(),
+                assumptions,
+            )
+            && bitvector_terms_proven_equal_for_memory_resolution(
+                range.end(),
+                parent.end(),
+                assumptions,
+            )
+}
+
 fn pointer_in_memory_range_shallow(pointer: &Pointer, range: &CMemoryRange) -> bool {
     pointer_in_range_shallow(pointer, range.base(), range.start(), range.end())
+}
+
+fn pointer_in_memory_range_for_memory_resolution(
+    pointer: &Pointer,
+    range: &CMemoryRange,
+    assumptions: &Assumptions,
+) -> bool {
+    pointer_in_range_for_memory_resolution(
+        pointer,
+        range.base(),
+        range.start(),
+        range.end(),
+        assumptions,
+    )
+}
+
+fn pointer_in_range_for_memory_resolution(
+    pointer: &Pointer,
+    base: &Pointer,
+    start: &Bitvector32Term,
+    end: &Bitvector32Term,
+    assumptions: &Assumptions,
+) -> bool {
+    if pointer.block != base.block {
+        return false;
+    }
+    let mut indexes = pointer
+        .element_index_from_base(base)
+        .into_iter()
+        .collect::<Vec<_>>();
+    if let PointerOffsetTerm::Add(left, right) = &pointer.offset {
+        if pointer_offsets_proven_equal_for_memory_resolution(left, &base.offset, assumptions)
+            && let Some(index) = int32_element_index_from_offset(right)
+            && !indexes.contains(&index)
+        {
+            indexes.push(index);
+        }
+        if pointer_offsets_proven_equal_for_memory_resolution(right, &base.offset, assumptions)
+            && let Some(index) = int32_element_index_from_offset(left)
+            && !indexes.contains(&index)
+        {
+            indexes.push(index);
+        }
+    }
+    indexes
+        .iter()
+        .any(|index| bitvector_index_in_range_shallow(index, start, end, assumptions))
+}
+
+fn bitvector_index_in_range_shallow(
+    index: &Bitvector32Term,
+    start: &Bitvector32Term,
+    end: &Bitvector32Term,
+    assumptions: &Assumptions,
+) -> bool {
+    if let (Some(index), Some(start), Some(end)) = (
+        signed_bitvector_constant(index),
+        signed_bitvector_constant(start),
+        signed_bitvector_constant(end),
+    ) {
+        return start <= index && index < end;
+    }
+    if assumptions.exact_condition_value(&ConditionTerm::signed_less_equal(
+        start.clone(),
+        index.clone(),
+    )) == Some(true)
+        && assumptions
+            .exact_condition_value(&ConditionTerm::signed_less_than(index.clone(), end.clone()))
+            == Some(true)
+    {
+        return true;
+    }
+
+    let (Some(offset), Some(length)) = (
+        affine_bitvector_difference_constant(&index, start),
+        affine_bitvector_difference_constant(end, start),
+    ) else {
+        return false;
+    };
+    0 <= offset && offset < length
 }
 
 fn pointer_in_range_shallow(

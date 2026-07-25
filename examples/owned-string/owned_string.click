@@ -149,9 +149,11 @@ int32 owned_string_set(
 } by {
     unfold(owned_string(owner));
     unfold(terminated_at);
+    have index < load_int32((owner + 1)) by { simp(); }
     step using {
         fact 0 <= index;
         fact index < load_int32(owner);
+        fact index < load_int32((owner + 1));
         fact loadable(owner[0..1]);
         fact loadable((owner + 1)[0..1]);
         fact loadable((owner + 2)[0..2]);

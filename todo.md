@@ -278,6 +278,22 @@ a 2.37-second smart expansion to an 8-millisecond simple replay. The remaining
 bare transports are correctly reported as smart candidates rather than slow
 simple tactics.
 
+The next simple-tactic pass on 2026-07-24 removed the remaining owned-string
+hotspots. The expanded `owned_string_set` store was missing the direct
+`index < capacity` bound needed to place its write inside the explicitly
+separated data range; spelling that derived fact before `step using` lets the
+mutation path use bounded snapshot-aware range checks instead of the general
+alias solver. Materialized memory-load cache entries are now canonicalized
+during exact comparison. Resource folding likewise rejects explicitly
+separated candidate ranges and recognizes snapshot-equivalent ranges before
+falling back to recursive coverage reasoning. In the focused debug profile,
+the store fell from about 676 ms to 404 ms and `fold(owned_string(owner))`
+fell from about 980 ms to 384 ms. A subsequent ten-second-per-project corpus
+profile reported no completed simple tactic over the default 500 ms threshold.
+The next completed candidates are smart segmented-buffer transports; the
+remaining project cutoffs are smart or control frontiers, not known slow-simple
+bugs.
+
 Use three milestones while closing the gap, always working on one focused
 project or tactic rather than running the full slow suite:
 

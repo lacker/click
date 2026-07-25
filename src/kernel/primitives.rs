@@ -1,7 +1,9 @@
 use super::api::{int32, normalize_exact_memory_loads_in_pointer_offset, uint8};
 use super::reasoning::{
-    instantiate_range_fold_step, int32_element_index_from_offset, pointers_proven_distinct,
-    pointers_proven_equal, signed_bitvector_constant, signed_i64_bitvector_constant,
+    bitvector_terms_proven_equal_for_memory_resolution, instantiate_range_fold_step,
+    int32_element_index_from_offset, pointers_proven_distinct, pointers_proven_equal,
+    pointers_proven_equal_for_memory_resolution, signed_bitvector_constant,
+    signed_i64_bitvector_constant,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -2937,6 +2939,25 @@ fn memory_range_covers(
     }
     if available.base().blocks_proven_distinct(required.base()) {
         return false;
+    }
+    if assumptions.memory_ranges_proven_disjoint_by_explicit_separation_for_memory_resolution(
+        available, required,
+    ) {
+        return false;
+    }
+    if pointers_proven_equal_for_memory_resolution(available.base(), required.base(), assumptions)
+        && bitvector_terms_proven_equal_for_memory_resolution(
+            available.start(),
+            required.start(),
+            assumptions,
+        )
+        && bitvector_terms_proven_equal_for_memory_resolution(
+            available.end(),
+            required.end(),
+            assumptions,
+        )
+    {
+        return true;
     }
     if let Some(covers) = memory_range_structurally_covers(available, required) {
         return covers;
