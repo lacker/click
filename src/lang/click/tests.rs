@@ -445,6 +445,31 @@ fn records_checked_surface_spellings_for_lowered_propositions() {
 }
 
 #[test]
+fn proof_source_printing_preserves_proposition_precedence() {
+    let comparison = |operator, value| ClickProposition::Comparison {
+        left: current_var("x"),
+        operator,
+        right: current_int(value),
+    };
+    let proposition = ClickProposition::And(
+        Box::new(ClickProposition::Or(
+            Box::new(comparison(ComparisonOperator::Equal, 0)),
+            Box::new(comparison(ComparisonOperator::Equal, 1)),
+        )),
+        Box::new(comparison(ComparisonOperator::LessThan, 2)),
+    );
+    let source = super::printing::format_partial_tactic_sequence(&[ProofTactic::Have(ProofHave {
+        proposition,
+        proof: Proof::Script(vec![ProofTactic::Assumption]),
+    })]);
+
+    assert!(
+        source.contains("have (x == 0 or x == 1) and x < 2 by"),
+        "{source}"
+    );
+}
+
+#[test]
 fn retains_distinct_surface_spellings_for_the_same_kernel_fact() {
     let current = ClickProposition::Comparison {
         left: current_var("x"),
@@ -3294,6 +3319,217 @@ fn selected_post_execution_simp_waits_for_its_surface_closer() {
     );
     verify_c0_sources(&expanded, &[("identity.c", c_source)])
         .expect("selected post-execution simp expansion should replay");
+}
+
+#[test]
+fn selected_post_execution_smart_have_uses_its_path_certificate() {
+    let c_source = r#"
+            int32 identity(int32 x) {
+                return x;
+            }
+        "#;
+    let click_source = r#"
+            verifying "identity.c";
+
+            int32 identity(int32 x) {
+                ensures result == x;
+            } by {
+                execute_rest();
+                have result == x by simp;
+                simp();
+            }
+        "#;
+    let have_offset = click_source
+        .find("have result")
+        .expect("proof should contain the selected have");
+    let line = click_source[..have_offset]
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count()
+        + 1;
+    let column = have_offset
+        - click_source[..have_offset]
+            .rfind('\n')
+            .map(|offset| offset + 1)
+            .unwrap_or(0)
+        + 1;
+
+    let expanded =
+        expand_c0_tactic_source_at(click_source, &[("identity.c", c_source)], line, column)
+            .expect("selected post-execution smart have should expand after finalization");
+    assert!(!expanded.contains("have result == x by simp"), "{expanded}");
+    assert!(expanded.contains("have result == x by {"), "{expanded}");
+    verify_c0_sources(&expanded, &[("identity.c", c_source)])
+        .expect("selected post-execution have certificate should replay");
+}
+
+#[test]
+fn selected_post_execution_smart_apply_uses_exact_path_premises() {
+    let c_source = r#"
+            int32 identity(int32 x) {
+                return x;
+            }
+        "#;
+    let click_source = r#"
+            theorem int32_equality_symmetric(first: int32, second: int32) {
+                requires first == second;
+                ensures second == first by {
+                    simp();
+                }
+            }
+
+            verifying "identity.c";
+
+            int32 identity(int32 x) {
+                ensures x == result;
+            } by {
+                execute_rest();
+                apply(int32_equality_symmetric(result, x));
+                simp();
+            }
+        "#;
+    let apply_offset = click_source
+        .find("apply(int32")
+        .expect("proof should contain the selected apply");
+    let line = click_source[..apply_offset]
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count()
+        + 1;
+    let column = apply_offset
+        - click_source[..apply_offset]
+            .rfind('\n')
+            .map(|offset| offset + 1)
+            .unwrap_or(0)
+        + 1;
+
+    let expanded =
+        expand_c0_tactic_source_at(click_source, &[("identity.c", c_source)], line, column)
+            .expect("selected post-execution smart apply should expand after finalization");
+    assert!(!expanded.contains("apply(int32_equality_symmetric(result, x));"));
+    assert!(
+        expanded.contains("apply(int32_equality_symmetric(result, x)) using {"),
+        "{expanded}"
+    );
+    verify_c0_sources(&expanded, &[("identity.c", c_source)])
+        .expect("selected post-execution apply certificate should replay");
+}
+
+#[test]
+fn selected_branched_post_execution_apply_merges_path_certificates() {
+    let c_source = r#"
+            int32 choose(int32 flag) {
+                if (flag) {
+                    return 1;
+                } else {
+                    return 2;
+                }
+            }
+        "#;
+    let click_source = r#"
+            theorem retain_one_or_two(value: int32) {
+                requires value == 1 or value == 2;
+                ensures value == 1 or value == 2 by {
+                    assumption();
+                }
+            }
+
+            verifying "choose.c";
+
+            int32 choose(int32 flag) {
+                ensures result == 1 or result == 2;
+            } by {
+                execute_rest();
+                apply(retain_one_or_two(result));
+                simp();
+            }
+        "#;
+    let apply_offset = click_source
+        .find("apply(retain_one")
+        .expect("proof should contain the selected apply");
+    let line = click_source[..apply_offset]
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count()
+        + 1;
+    let column = apply_offset
+        - click_source[..apply_offset]
+            .rfind('\n')
+            .map(|offset| offset + 1)
+            .unwrap_or(0)
+        + 1;
+
+    let expanded =
+        expand_c0_tactic_source_at(click_source, &[("choose.c", c_source)], line, column)
+            .expect("branched post-execution apply should produce path certificates");
+    assert!(!expanded.contains("apply(retain_one_or_two(result));"));
+    assert!(expanded.contains("if flag != 0 {"), "{expanded}");
+    assert_eq!(
+        expanded
+            .matches("apply(retain_one_or_two(result)) using {")
+            .count(),
+        2,
+        "{expanded}"
+    );
+    verify_c0_sources(&expanded, &[("choose.c", c_source)]).unwrap_or_else(|error| {
+        panic!(
+            "branched post-execution apply certificates should replay: {}\n{expanded}",
+            error.message()
+        )
+    });
+}
+
+#[test]
+fn selected_branched_post_execution_have_merges_path_certificates() {
+    let c_source = r#"
+            int32 choose(int32 flag) {
+                if (flag) {
+                    return 1;
+                } else {
+                    return 2;
+                }
+            }
+        "#;
+    let click_source = r#"
+            verifying "choose.c";
+
+            int32 choose(int32 flag) {
+                ensures result == 1 or result == 2;
+            } by {
+                execute_rest();
+                have result == 1 or result == 2 by simp;
+                simp();
+            }
+        "#;
+    let have_offset = click_source
+        .find("have result")
+        .expect("proof should contain the selected have");
+    let line = click_source[..have_offset]
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count()
+        + 1;
+    let column = have_offset
+        - click_source[..have_offset]
+            .rfind('\n')
+            .map(|offset| offset + 1)
+            .unwrap_or(0)
+        + 1;
+
+    let expanded =
+        expand_c0_tactic_source_at(click_source, &[("choose.c", c_source)], line, column)
+            .expect("branched post-execution have should produce path certificates");
+    assert!(!expanded.contains("have result == 1 or result == 2 by simp"));
+    assert!(expanded.contains("if flag != 0 {"), "{expanded}");
+    assert_eq!(
+        expanded
+            .matches("have result == 1 or result == 2 by {")
+            .count(),
+        2,
+        "{expanded}"
+    );
+    verify_c0_sources(&expanded, &[("choose.c", c_source)])
+        .expect("branched post-execution have certificates should replay");
 }
 
 #[test]

@@ -1,8 +1,43 @@
 use super::diagnostics::{
-    describe_click_proposition, describe_code_region_ref, describe_contract_expression,
-    describe_contract_segment, describe_program_point_ref,
+    describe_code_region_ref, describe_contract_expression, describe_contract_segment,
+    describe_program_point_ref,
 };
 use super::*;
+
+fn source_click_proposition(proposition: &ClickProposition) -> String {
+    fn at_precedence(proposition: &ClickProposition, required: u8) -> String {
+        let (precedence, source) = match proposition {
+            ClickProposition::Implies(left, right) => (
+                1,
+                format!(
+                    "{} implies {}",
+                    at_precedence(left, 2),
+                    at_precedence(right, 1)
+                ),
+            ),
+            ClickProposition::Or(left, right) => (
+                2,
+                format!("{} or {}", at_precedence(left, 2), at_precedence(right, 3)),
+            ),
+            ClickProposition::And(left, right) => (
+                3,
+                format!("{} and {}", at_precedence(left, 3), at_precedence(right, 4)),
+            ),
+            ClickProposition::Not(body) => (4, format!("not {}", at_precedence(body, 4))),
+            proposition => (
+                5,
+                super::diagnostics::describe_click_proposition(proposition),
+            ),
+        };
+        if precedence < required {
+            format!("({source})")
+        } else {
+            source
+        }
+    }
+
+    at_precedence(proposition, 0)
+}
 
 pub fn format_proof_tactics(tactics: &[ProofTactic]) -> Result<String, CertificateError> {
     let certificate = TacticCertificate::from_proof_tactics(tactics)?;
@@ -91,7 +126,7 @@ fn write_tactic(output: &mut String, tactic: &ProofTactic, indent: usize) {
         ProofTactic::Have(have) => {
             output.push_str(&prefix);
             output.push_str("have ");
-            output.push_str(&describe_click_proposition(&have.proposition));
+            output.push_str(&source_click_proposition(&have.proposition));
             output.push_str(" ");
             write_proof(output, &have.proof, indent);
             output.push('\n');
@@ -99,7 +134,7 @@ fn write_tactic(output: &mut String, tactic: &ProofTactic, indent: usize) {
         ProofTactic::If(proof_if) => {
             output.push_str(&prefix);
             output.push_str("if ");
-            output.push_str(&describe_click_proposition(&proof_if.condition));
+            output.push_str(&source_click_proposition(&proof_if.condition));
             output.push_str(" {\n");
             write_tactics(output, &proof_if.then_tactics, indent + 1);
             line(output, &prefix, "} else {");
@@ -118,7 +153,7 @@ fn write_tactic(output: &mut String, tactic: &ProofTactic, indent: usize) {
             for assertion in &advance.assertions {
                 let text = match assertion {
                     ProofAssertion::Fact(fact) => {
-                        format!("fact {};", describe_click_proposition(fact))
+                        format!("fact {};", source_click_proposition(fact))
                     }
                     ProofAssertion::Resource(resource) => format!(
                         "{} {};",
@@ -169,22 +204,22 @@ fn write_tactic(output: &mut String, tactic: &ProofTactic, indent: usize) {
         ProofTactic::Contradiction(fact) => line(
             output,
             &prefix,
-            &format!("contradiction({});", describe_click_proposition(fact)),
+            &format!("contradiction({});", source_click_proposition(fact)),
         ),
         ProofTactic::Derive(derive) => write_derivation(output, "derive", derive, indent),
         ProofTactic::Calculate(derive) => write_derivation(output, "calculate", derive, indent),
         ProofTactic::Rewrite(equality) => line(
             output,
             &prefix,
-            &format!("rewrite({});", describe_click_proposition(equality)),
+            &format!("rewrite({});", source_click_proposition(equality)),
         ),
         ProofTactic::Transport { source, target } => line(
             output,
             &prefix,
             &format!(
                 "transport({}, {});",
-                describe_click_proposition(source),
-                describe_click_proposition(target)
+                source_click_proposition(source),
+                source_click_proposition(target)
             ),
         ),
         ProofTactic::TransportUsing {
@@ -197,8 +232,8 @@ fn write_tactic(output: &mut String, tactic: &ProofTactic, indent: usize) {
                 &prefix,
                 &format!(
                     "transport({}, {}) using {{",
-                    describe_click_proposition(source),
-                    describe_click_proposition(target)
+                    source_click_proposition(source),
+                    source_click_proposition(target)
                 ),
             );
             write_fact_list(output, premises, indent + 1);
@@ -252,7 +287,7 @@ fn write_derivation(output: &mut String, name: &str, derive: &ProofDerive, inden
         &prefix,
         &format!(
             "{name}({}) using {{",
-            describe_click_proposition(&derive.proposition)
+            source_click_proposition(&derive.proposition)
         ),
     );
     write_fact_list(output, &derive.premises, indent + 1);
@@ -265,7 +300,7 @@ fn write_fact_list(output: &mut String, facts: &[ClickProposition], indent: usiz
         line(
             output,
             &prefix,
-            &format!("fact {};", describe_click_proposition(fact)),
+            &format!("fact {};", source_click_proposition(fact)),
         );
     }
 }

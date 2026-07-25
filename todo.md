@@ -149,24 +149,33 @@ expander mismatches:
   probe, preventing generated certificate-local source indices from capturing
   the wrong user tactic.
 
-All 348 library tests pass with this boundary enabled. The updated expansion
+All 353 library tests pass with this boundary enabled. The updated expansion
 tests now require `execute_rest` to become actual `step`/`step using`
 certificates rather than another smart `execute_step`. A selected
 post-execution `simp` also remains active until claim finalization produces its
 checked `assumption`/`normalize`/derivation closer; capture no longer ends
 early with an empty expansion.
 
-Post-hoc reconstruction still exists outside this gateway.
-Smart inline `have` and post-execution `simp` use family-specific checked
-lowerers because replaying the inline certificate currently re-enters a known
-pathologically slow simple `derive`. Post-execution smart `have` and `apply`
-still need path-local surface certificates before those tactics can be
-expanded independently at their source locations. Default proof selection and
-loop-verification plumbing are proof orchestration rather than selectable
-smart tactics and should not be forced through a one-tactic certificate
-boundary. Keep the slow-frontier sweep paused until the two post-execution
-families are complete; fix the slow simple `derive` separately rather than
-hiding it with another smart fallback.
+Post-execution smart `have` and `apply` now cross the same boundary at the
+point where their required information exists. Finalization lowers each smart
+`have` to a path-local simple proof and replays that exact proof; it lowers each
+smart `apply` to `apply ... using` and executes the theorem with exactly those
+listed premises. All post-execution surface tactics are assembled in source
+order per execution path, and selected expansion returns only the selected
+path certificates. Branched replacements use proof `if`; proof `if` now runs a
+shared suffix independently in each branch context instead of imposing the
+obsolete rule that it must be the final tactic.
+
+This completes the known selectable smart-tactic boundary. Smart inline
+`have` and post-execution `simp` retain family-specific checked lowerers
+because replaying the inline certificate currently re-enters a known
+pathologically slow simple `derive`, but their emitted certificate is checked
+against the same goal and premises before it is accepted. Default proof
+selection and loop-verification plumbing are proof orchestration rather than
+selectable smart tactics and are intentionally outside the one-tactic
+certificate boundary. The slow-frontier sweep can resume; if the slow simple
+`derive` is reached, fix it separately rather than hiding it with another
+smart fallback.
 
 The current `master` checkpoint has no known slow simple tactic in the reached
 profile prefixes. Contextual `step using` replay now defers non-exact
