@@ -3253,6 +3253,50 @@ fn smart_simp_expansion_replays_as_surface_click() {
 }
 
 #[test]
+fn selected_post_execution_simp_waits_for_its_surface_closer() {
+    let c_source = r#"
+            int32 identity(int32 x) {
+                return x;
+            }
+        "#;
+    let click_source = r#"
+            verifying "identity.c";
+
+            int32 identity(int32 x) {
+                ensures result == x;
+            } by {
+                execute_rest();
+                simp();
+            }
+        "#;
+    let simp_offset = click_source
+        .find("simp();")
+        .expect("proof should contain the selected simp");
+    let line = click_source[..simp_offset]
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count()
+        + 1;
+    let column = simp_offset
+        - click_source[..simp_offset]
+            .rfind('\n')
+            .map(|offset| offset + 1)
+            .unwrap_or(0)
+        + 1;
+
+    let expanded =
+        expand_c0_tactic_source_at(click_source, &[("identity.c", c_source)], line, column)
+            .expect("selected post-execution simp should expand after finalization");
+    assert!(!expanded.contains("simp();"), "{expanded}");
+    assert!(
+        expanded.contains("assumption();") || expanded.contains("normalize();"),
+        "{expanded}"
+    );
+    verify_c0_sources(&expanded, &[("identity.c", c_source)])
+        .expect("selected post-execution simp expansion should replay");
+}
+
+#[test]
 fn source_expander_lowers_smart_simp_inside_have() {
     let c_source = r#"
             int32 identity(int32 x) {

@@ -968,7 +968,7 @@ int32 identity(int32 x) {
         .expect("the first grouped tactic should expand");
 
         assert!(!expanded.contains("execute_rest();"));
-        assert!(expanded.contains("    execute_step();\n    simp();"));
+        assert!(expanded.contains("    step();\n    simp();"));
         verify_c0_sources(&expanded, &[("identity.c", c_source)])
             .expect("the source with one expanded tactic should re-verify");
     }
@@ -1000,7 +1000,7 @@ int32 read_first(int32 p[1]) {
         .expect("the grouped immutable read should have one common expansion");
 
         assert!(!expanded.contains("execute_rest();"));
-        assert!(expanded.contains("execute_step();"));
+        assert!(expanded.contains("step using {"));
         verify_c0_sources(&expanded, &[("read.c", c_source)])
             .expect("the expanded immutable read should re-verify every grouped claim");
     }
@@ -1037,7 +1037,7 @@ int32 identity(int32 x) {
         .expect("the nested then tactic should expand");
 
         assert_eq!(expanded.matches("execute_rest();").count(), 1);
-        assert!(expanded.contains("    if x == x {\n        execute_step();"));
+        assert!(expanded.contains("    if x == x {\n        step using {"));
         verify_c0_sources(&expanded, &[("identity.c", c_source)])
             .expect("the source with one nested expansion should re-verify");
     }

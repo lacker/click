@@ -112,6 +112,62 @@ profiler, and let it advance farther through that project.
 
 ### Sweep checkpoint: 2026-07-25
 
+#### Strict smart/surface boundary checkpoint
+
+The performance sweep is paused while the certificate boundary is made
+structural rather than observational.
+
+Execution-style smart tactics now cross one strict gateway:
+`execute_step`, the explicit then/else variants, `execute_rest`,
+`execute_until`, `bounded_execute`, and contextual `frame` first produce an
+internal replay plan; that plan is lowered to a smart-free
+`TacticCertificate`; and the resulting surface certificate is replayed through
+the ordinary structured proof executor before the smart tactic may succeed.
+The selected-tactic expander consumes that same certificate. It no longer has
+the fallback that emitted another `execute_step()` when a real statement
+certificate could not be expressed.
+
+Pre-execution smart `apply` and fact `transport` now use the same gateway:
+they plan the explicit `... using` form first, replay that surface certificate,
+and commit only the replay result. They no longer execute through one path
+while independently asking the surface recorder to reconstruct another.
+
+Making this check mandatory exposed and fixed several previously latent
+expander mismatches:
+
+- C branch conditions preserve their comparison/boolean structure instead of
+  printing nested truthiness comparisons that the proof reader cannot lower.
+- Proof-`if` branch facts are part of the branch replay context, so a
+  branch-local `step using` does not have to rediscover or restate its enclosing
+  condition.
+- Loop-summary certificates make invariants, predicate unfolds, symbolic
+  loadability, snapshot spellings, and resource separation explicit enough for
+  ordinary replay.
+- Branched contextual frames retain the existing branch skeleton and certify
+  each leaf independently.
+- Strict certificate verification is isolated from the selected-tactic capture
+  probe, preventing generated certificate-local source indices from capturing
+  the wrong user tactic.
+
+All 348 library tests pass with this boundary enabled. The updated expansion
+tests now require `execute_rest` to become actual `step`/`step using`
+certificates rather than another smart `execute_step`. A selected
+post-execution `simp` also remains active until claim finalization produces its
+checked `assumption`/`normalize`/derivation closer; capture no longer ends
+early with an empty expansion.
+
+Post-hoc reconstruction still exists outside this gateway.
+Smart inline `have` and post-execution `simp` use family-specific checked
+lowerers because replaying the inline certificate currently re-enters a known
+pathologically slow simple `derive`. Post-execution smart `have` and `apply`
+still need path-local surface certificates before those tactics can be
+expanded independently at their source locations. Default proof selection and
+loop-verification plumbing are proof orchestration rather than selectable
+smart tactics and should not be forced through a one-tactic certificate
+boundary. Keep the slow-frontier sweep paused until the two post-execution
+families are complete; fix the slow simple `derive` separately rather than
+hiding it with another smart fallback.
+
 The current `master` checkpoint has no known slow simple tactic in the reached
 profile prefixes. Contextual `step using` replay now defers non-exact
 obligations until its explicit prerequisite check (`eff152d`), removing the
