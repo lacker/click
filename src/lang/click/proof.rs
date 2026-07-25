@@ -6037,8 +6037,17 @@ struct TacticTiming {
     tactic_index: usize,
     source_index: usize,
     tactic_name: String,
+    tactic_class: &'static str,
     statement_index: usize,
     start: std::time::Instant,
+}
+
+fn timing_tactic_class(tactic: &ProofTactic) -> &'static str {
+    match tactic.class() {
+        TacticClass::Simple(_) => "simple",
+        TacticClass::Smart(_) => "smart",
+        TacticClass::ControlFlow(_) => "control",
+    }
 }
 
 impl TacticTiming {
@@ -6050,12 +6059,14 @@ impl TacticTiming {
         statement_index: usize,
     ) -> Option<Self> {
         std::env::var_os("CLICK_TIMINGS").is_some().then(|| {
+            let tactic_class = timing_tactic_class(tactic);
             if std::env::var_os("CLICK_TIMING_STARTS").is_some() {
                 eprintln!(
-                    "click timing: started tactic {} {} {} statement {} source {}",
+                    "click timing: started tactic {} {} {} class {} statement {} source {}",
                     claim_label,
                     tactic_index,
                     tactic_name(tactic),
+                    tactic_class,
                     statement_index,
                     source_index
                 );
@@ -6065,6 +6076,7 @@ impl TacticTiming {
                 tactic_index,
                 source_index,
                 tactic_name: tactic_name(tactic).to_string(),
+                tactic_class,
                 statement_index,
                 start: std::time::Instant::now(),
             }
@@ -6075,10 +6087,11 @@ impl TacticTiming {
 impl Drop for TacticTiming {
     fn drop(&mut self) {
         eprintln!(
-            "click timing: tactic {} {} {} statement {} source {} {:.6}s",
+            "click timing: tactic {} {} {} class {} statement {} source {} {:.6}s",
             self.claim_label,
             self.tactic_index,
             self.tactic_name,
+            self.tactic_class,
             self.statement_index,
             self.source_index,
             self.start.elapsed().as_secs_f64()

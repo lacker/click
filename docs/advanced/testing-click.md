@@ -64,25 +64,41 @@ that a reader can understand the proof boundary.
 
 ### Profiling slow proof steps
 
-Use `click-profile` to find proof steps slower than a threshold without letting
-one project run indefinitely:
+Use `click-profile` to find slow proof steps without letting one project run
+indefinitely:
 
 ```sh
-cargo run --quiet --bin click-profile -- \
-  --threshold 1s --time-limit 25s examples
+cargo run --quiet --bin click-profile -- examples
 ```
 
 Pass either one example-project directory or the complete `examples`
-directory. The time limit applies separately to each project. Completed slow
-steps are sorted by duration. If a project reaches its limit, the report names
-the active function, tactic, and zero-based source-statement index, so the next
-profiling run can advance after that local bottleneck is fixed.
+directory. The defaults report smart tactics at 2 seconds, simple tactics at
+500 milliseconds, control-flow containers at 2 seconds, and stop each project
+after 30 seconds. Override them with `--smart-threshold`,
+`--simple-threshold`, `--control-threshold`, and `--time-limit`;
+`--threshold` is shorthand for setting all three class thresholds equally.
+
+The verifier emits each tactic's class into the timing stream. The report uses
+that class to prescribe the next action:
+
+- `SMART` steps are expansion candidates. The report prints a pasteable
+  `click-expand` command for each one.
+- `SIMPLE` steps are deterministic certificate replay. Do not expand them;
+  reduce and fix the verifier bottleneck first.
+- `CONTROL` steps are proof containers. Inspect their nested smart and simple
+  timings rather than optimizing the container row by itself.
+
+If a project reaches its limit, the report classifies every active step and
+applies the same advice. This prevents a slow internal certificate replay from
+being mistaken for smart search merely because it is nested inside a smart
+tactic.
 
 The bounded report is intentionally a frontier rather than an exhaustive
-profile beyond timed-out work. Fix or expand the first slow statements and run
-the same command again. For raw function and tactic timing, set
-`CLICK_TIMINGS=1`; add `CLICK_TIMING_STARTS=1` when an externally interrupted
-run should identify its active statement.
+profile beyond timed-out work. Fix simple bottlenecks before expanding one
+smart location, then run the same command again. For raw function and tactic
+timing, set `CLICK_TIMINGS=1`; add `CLICK_TIMING_STARTS=1` when an externally
+interrupted run should identify its active statement. Raw tactic events include
+`class simple`, `class smart`, or `class control`.
 
 ## Unit Tests
 

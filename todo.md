@@ -84,15 +84,29 @@ For the normal optimization loop, use the dedicated profiler instead of the
 raw timing stream:
 
 ```sh
-cargo run --quiet --bin click-profile -- \
-  --threshold 1s --time-limit 25s examples
+cargo run --quiet --bin click-profile -- examples
 ```
 
-The path may be one example project or the `examples` directory. The threshold
-filters completed proof steps, and the time limit applies separately to each
-project. Results are sorted slowest first. When a project reaches its limit,
-the report includes the active function, tactic, and source-statement index.
-This makes the intended workflow bounded: fix the reported frontier, rerun the
+The path may be one example project or the `examples` directory. The profiler
+defaults to a 2-second smart-tactic threshold, a 500-millisecond simple-tactic
+threshold, a 2-second control-flow threshold, and a 30-second limit per
+project. The verifier records the actual tactic class in every timing event;
+the profiler does not guess from tactic names. Its output is deliberately
+prescriptive:
+
+- `SIMPLE — FIX THE ENGINE; DO NOT EXPAND`: deterministic certificate replay
+  is slow. Reduce and fix this path before doing more expansion work.
+- `SMART — EXPAND TO TRADE PROOF SIZE FOR SPEED`: expand one location using
+  the pasteable `click-expand` command, apply the verified output, and profile
+  again.
+- `CONTROL — INSPECT NESTED STEPS`: use the nested simple/smart timings rather
+  than treating the proof container itself as an optimization target.
+
+Class-specific thresholds are configurable with `--simple-threshold`,
+`--smart-threshold`, and `--control-threshold`; `--threshold` remains shorthand
+for setting all three equally. When a project reaches its limit, active steps
+carry the same classification and advice. This makes the intended workflow
+bounded: fix a simple frontier or expand one smart frontier, rerun the
 profiler, and let it advance farther through that project.
 
 The first 25-second-per-project census on 2026-07-20 changed the immediate
@@ -218,10 +232,10 @@ The correctness/tooling prerequisites above are complete. The long expansion
 cases in item 4 remain bounded performance limitations, not known certificate
 correctness failures. The first engine optimization eliminated
 `input_cursor_clone` from the slow list; continue from the shared-pipeline
-frontier reported above.
-Keep using a two-second reporting threshold while optimizing the examples;
-simple tactics above the threshold are engine-performance bugs rather than
-expansion candidates.
+frontier reported above. Use the profiler defaults while optimizing the
+examples: smart tactics over two seconds are expansion candidates, while
+simple tactics over 500 milliseconds are engine-performance bugs and take
+priority over further expansion.
 
 The shared-pipeline sweep exposed and fixed another certificate-surfacing gap
 on 2026-07-24. A transported comparison may mix memory snapshots independently
