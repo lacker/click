@@ -6413,6 +6413,105 @@ fn failed_memory_postcondition_reports_loaded_value() {
 }
 
 #[test]
+fn observed_cursor_facts_produce_replayable_surface_certificates() {
+    let c_source = r#"
+        struct input_cursor {
+            int32 pos;
+            int32 len;
+            int32* data;
+        };
+
+        int32 input_cursor_peek(struct input_cursor* owner) {
+            return owner->data[owner->pos];
+        }
+    "#;
+    let take_c_source = r#"
+        struct input_cursor {
+            int32 pos;
+            int32 len;
+            int32* data;
+        };
+
+        int32 input_cursor_take(struct input_cursor* owner) {
+            int32 value;
+            value = owner->data[owner->pos];
+            owner->pos = owner->pos + 1;
+            return value;
+        }
+    "#;
+    let click_source = r#"
+        resource readable_input(data: int32*, length: int32) {
+            views data[0..length];
+            fact 0 <= length;
+        }
+
+        resource input_cursor(owner: struct input_cursor*) {
+            owns owner->pos;
+            owns owner->len;
+            owns owner->data;
+            views readable_input(owner->data, owner->len);
+            fact 0 <= owner->pos;
+            fact owner->pos <= owner->len;
+            fact separate(
+                memory(owner[0..4]),
+                memory((owner->data)[0..owner->len])
+            );
+        }
+
+        verifying "input_cursor_peek.c";
+        verifying "input_cursor_take.c";
+
+        int32 input_cursor_peek(struct input_cursor* owner) {
+            requires owner->pos < owner->len;
+            views input_cursor(owner);
+            immutable;
+            ensures result == (owner->data)[owner->pos];
+        } by {
+            observe(input_cursor(owner));
+            observe(readable_input(owner->data, owner->len));
+            execute_rest();
+            frame();
+            simp();
+        }
+
+        int32 input_cursor_take(struct input_cursor* owner) {
+            requires owner->pos < owner->len;
+            owns input_cursor(owner);
+            mutable_field(owner->pos);
+            ensures result == old((owner->data)[owner->pos]);
+            ensures owner->pos == old(owner->pos) + 1;
+            ensures owner->len == old(owner->len);
+            ensures owner->data == old(owner->data);
+        } by {
+            unfold(input_cursor(owner));
+            observe(readable_input(owner->data, owner->len));
+            execute_rest();
+            have 0 <= owner->pos by { simp(); }
+            have owner->pos <= owner->len by { simp(); }
+            have separate(
+                memory(owner[0..4]),
+                memory((owner->data)[0..owner->len])
+            ) by {
+                simp();
+            }
+            fold(input_cursor(owner));
+            frame();
+            simp();
+        }
+
+    "#;
+
+    verify_c0_sources(
+        click_source,
+        &[
+            ("input_cursor_peek.c", c_source),
+            ("input_cursor_take.c", take_c_source),
+        ],
+    )
+    .expect("the smart step's exact surface premises should select one read transition");
+}
+
+#[test]
 fn explicit_store_step_with_unfolded_resource_facts_verifies() {
     let c_source = r#"
         struct owned_string {

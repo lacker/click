@@ -128,20 +128,30 @@ fn check_atomic_derivation_goal(
             tactic_name(tactic)
         ));
     }
-    if let Some(missing) = premises.iter().find(|premise| !available.contains(premise)) {
+    if let Some(missing) = premises.iter().find(|premise| {
+        let normalized = normalize_direct_atomic_memory_loads(premise);
+        !available
+            .iter()
+            .any(|available| normalize_direct_atomic_memory_loads(available) == normalized)
+    }) {
         return Err(format!(
             "`{}` is missing an exact listed premise: {missing:?}",
             tactic_name(tactic)
         ));
     }
-    let assumptions = assumptions_from_propositions(&premises);
+    let normalized_premises = premises
+        .iter()
+        .map(normalize_direct_atomic_memory_loads)
+        .collect::<Vec<_>>();
+    let normalized_target = normalize_direct_atomic_memory_loads(&target);
+    let assumptions = assumptions_from_propositions(&normalized_premises);
     let derivation = match tactic {
         ProofTactic::Derive(_) => assumptions
-            .derive_atomic_proposition(&target)
-            .or_else(|| assumptions.derive_proposition(&target)),
+            .derive_atomic_proposition(&normalized_target)
+            .or_else(|| assumptions.derive_proposition(&normalized_target)),
         ProofTactic::Calculate(_) => assumptions
-            .derive_simp_atomic_proposition(&target)
-            .or_else(|| assumptions.derive_simp_proposition(&target)),
+            .derive_simp_atomic_proposition(&normalized_target)
+            .or_else(|| assumptions.derive_simp_proposition(&normalized_target)),
         _ => return Err("not a derivation tactic".to_string()),
     };
     if derivation.is_none() {
@@ -1717,6 +1727,28 @@ fn initial_claim_context(
         click_function_environment,
         claim_label,
     )?;
+    for requirement in function_block.requires() {
+        let Requirement::Resource(resource) = requirement.inner() else {
+            continue;
+        };
+        record_initial_composite_surface_facts(
+            resource_environment,
+            resource,
+            parsed_function.parameters(),
+            &arguments,
+            &state,
+            &requirement_pure_facts,
+            &mut surface_propositions,
+            predicate_environment,
+            click_function_environment,
+            &mut BTreeSet::new(),
+        )
+        .map_err(|message| {
+            ClickError::new(format!(
+                "`{claim_label}` setup failed while recording resource facts: {message}"
+            ))
+        })?;
+    }
     Ok((
         state,
         arguments,
@@ -2603,7 +2635,7 @@ fn certified_condition_transitions(
         .filter(|path| {
             matches!(
                 prerequisite_policy,
-                StatementPrerequisitePolicy::Contextual | StatementPrerequisitePolicy::Planning
+                StatementPrerequisitePolicy::Planning
             )
                 || !path.facts().iter().any(|path_fact| {
                     pure_facts.iter().any(|available| {
@@ -2737,10 +2769,7 @@ pub(super) fn certified_statement_transitions(
             }
         }
         assumptions = assumptions.defer_non_exact_obligations();
-    } else if matches!(
-        prerequisite_policy,
-        StatementPrerequisitePolicy::Contextual | StatementPrerequisitePolicy::Planning
-    ) {
+    } else if matches!(prerequisite_policy, StatementPrerequisitePolicy::Planning) {
         assumptions = assumptions.defer_non_exact_obligations();
     }
     let mut budget = ExecutionBudget::default().with_next_opaque_call(*next_opaque_call);
@@ -2875,14 +2904,12 @@ fn certified_transitions_from_execution(
         .paths()
         .iter()
         .filter(|path| {
-            matches!(
-                prerequisite_policy,
-                StatementPrerequisitePolicy::Contextual | StatementPrerequisitePolicy::Planning
-            ) || !path.facts().iter().any(|path_fact| {
-                pure_facts.iter().any(|available| {
-                    exact_facts_directly_conflict(available, path_fact.proposition())
+            matches!(prerequisite_policy, StatementPrerequisitePolicy::Planning)
+                || !path.facts().iter().any(|path_fact| {
+                    pure_facts.iter().any(|available| {
+                        exact_facts_directly_conflict(available, path_fact.proposition())
+                    })
                 })
-            })
         })
         .map(|path| {
             let mut successor_facts = pure_facts.to_vec();
@@ -3852,6 +3879,33 @@ fn checked_surface_fact_at_outcome(
     };
     if let Ok(surface) = replay.surface_propositions.checked_surface(kernel, check) {
         return Ok(surface);
+    }
+    let mut bases = Vec::new();
+    if let Ok(surface) = replay.surface_propositions.surface(kernel) {
+        bases.push(surface.clone());
+    }
+    if let Some(surface) = synthesize_surface_proposition(kernel, parameters, arguments, post_state)
+        && !bases.contains(&surface)
+    {
+        bases.push(surface);
+    }
+    let points = replay
+        .program_point_states
+        .keys()
+        .cloned()
+        .collect::<Vec<_>>();
+    for base in bases {
+        let Some(variants) = comparison_program_point_variants(&base, &points) else {
+            continue;
+        };
+        for candidate in variants {
+            if check(&candidate).is_ok_and(|lowered| {
+                normalize_direct_atomic_memory_loads(&lowered)
+                    == normalize_direct_atomic_memory_loads(kernel)
+            }) {
+                return Ok(candidate);
+            }
+        }
     }
     let surface = synthesize_surface_proposition(kernel, parameters, arguments, post_state)
         .ok_or_else(|| {
@@ -6986,16 +7040,24 @@ fn lower_outcome_simp_tactic(
     };
     let mut premise_pairs = Vec::new();
     for fact in available {
-        let surface = replay
-            .surface_propositions
-            .surface(fact)
-            .ok()
-            .cloned()
-            .or_else(|| synthesize_surface_proposition(fact, parameters, arguments, post_state));
-        let Some(surface) = surface else {
+        let Ok(surface) = checked_surface_fact_at_outcome(
+            replay,
+            fact,
+            available,
+            parameters,
+            arguments,
+            pre_state,
+            post_state,
+            result,
+            predicate_environment,
+            click_function_environment,
+        ) else {
             continue;
         };
-        if check(&surface).ok().as_ref() == Some(fact) {
+        if check(&surface).is_ok_and(|lowered| {
+            normalize_direct_atomic_memory_loads(&lowered)
+                == normalize_direct_atomic_memory_loads(fact)
+        }) {
             premise_pairs.push((fact.clone(), surface));
         }
     }
@@ -7036,7 +7098,12 @@ fn lower_outcome_simp_tactic(
         }))
     } else {
         Err(ClickError::new(format!(
-            "expressible path facts do not replay the postcondition derivation: {goal:?}"
+            "expressible path facts do not replay the postcondition derivation: {goal:?}\n  surface premises: {}",
+            surface_premises
+                .iter()
+                .map(describe_click_proposition)
+                .collect::<Vec<_>>()
+                .join(", ")
         )))
     }
 }
@@ -7065,6 +7132,12 @@ fn comparison_program_point_variants(
     };
     let mut left_variants = vec![left.clone()];
     let mut right_variants = vec![right.clone()];
+    if !matches!(left, ContractExpression::Old(_)) {
+        left_variants.push(ContractExpression::Old(Box::new(left.clone())));
+    }
+    if !matches!(right, ContractExpression::Old(_)) {
+        right_variants.push(ContractExpression::Old(Box::new(right.clone())));
+    }
     for point in points.iter().rev() {
         left_variants.push(at_point(left, point));
         right_variants.push(at_point(right, point));
@@ -8192,6 +8265,7 @@ fn replay_linear_tactics(
                     arguments,
                     state,
                     &mut requirement_pure_facts,
+                    &mut replay.surface_propositions,
                     predicate_environment,
                     click_function_environment,
                     claim_label,
@@ -9929,7 +10003,14 @@ fn replay_smart_plan(
         tactic_index,
         source_index,
         &certificate,
-    )?;
+    )
+    .map_err(|error| {
+        ClickError::new(format!(
+            "`{claim_label}` tactic {tactic_index}: generated surface certificate failed replay:\n{}\n{}",
+            format_tactic_certificate(&certificate),
+            error.message()
+        ))
+    })?;
     let last_step_entry = internal_result
         .replay
         .surface_replay
@@ -12474,6 +12555,7 @@ fn observe_composite_resource(
     arguments: &[CExpression],
     state: CState,
     available_pure_facts: &mut Vec<Proposition>,
+    surface_propositions: &mut SurfacePropositionMap,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
     claim_label: &str,
@@ -12514,6 +12596,9 @@ fn observe_composite_resource(
             "`{claim_label}` tactic {tactic_index}: `observe` expects a composite resource"
         )));
     };
+    let surface_substitutions =
+        resource_argument_substitutions(definition, resource, claim_label, tactic_index)?;
+    let observation_pre_state = state.clone();
     let (memory, contained_resources) = apply_composite_observation_law(
         definition,
         resource_arguments,
@@ -12532,6 +12617,26 @@ fn observe_composite_resource(
             describe_resource_clause(resource)
         ))
     })?;
+    let fact_state = observation_pre_state.clone().with_memory(memory.clone());
+    record_observed_composite_surface_facts(
+        definition,
+        resource,
+        &surface_substitutions,
+        parameters,
+        arguments,
+        &observation_pre_state,
+        &fact_state,
+        available_pure_facts,
+        surface_propositions,
+        predicate_environment,
+        click_function_environment,
+    )
+    .map_err(|message| {
+        ClickError::new(format!(
+            "`{claim_label}` tactic {tactic_index}: could not record observed `{}` facts: {message}",
+            describe_resource_clause(resource)
+        ))
+    })?;
     let viewed_contained_resources = contained_resources
         .facts()
         .iter()
@@ -12544,6 +12649,208 @@ fn observe_composite_resource(
         .clone()
         .unchecked_with_facts(viewed_contained_resources);
     Ok(state.with_memory(memory).with_resource_context(resources))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn record_observed_composite_surface_facts(
+    definition: &ResourceDefinition,
+    resource: &ResourceClause,
+    substitutions: &BTreeMap<String, ContractExpression>,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    pre_state: &CState,
+    fact_state: &CState,
+    available_pure_facts: &[Proposition],
+    surface_propositions: &mut SurfacePropositionMap,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+) -> Result<(), String> {
+    let composite_body = definition
+        .composite_body()
+        .expect("observing a composite resource requires a composite body");
+    let parent = lower_resource_clause(resource, parameters, arguments, fact_state.memory())
+        .map_err(|error| error.message().to_string())?;
+    let parent_subject = resource_clause_subject(resource);
+    let mut owned_children = Vec::new();
+    for contained in composite_body.contains() {
+        let contained =
+            instantiate_resource_clause(contained, substitutions).map_err(|message| {
+                format!(
+                    "could not instantiate resource `{}` contained resource: {message}",
+                    definition.name()
+                )
+            })?;
+        let lowered = lower_resource_clause(&contained, parameters, arguments, fact_state.memory())
+            .map_err(|error| error.message().to_string())?;
+        if let Some(child) = lowered.owned_resource() {
+            let child_subject = resource_clause_subject(&contained);
+            surface_propositions
+                .record_lowering(
+                    &ClickProposition::Contains {
+                        parent: parent_subject.clone(),
+                        child: child_subject.clone(),
+                    },
+                    &Proposition::CResourceContains {
+                        parent: parent.resource().clone(),
+                        child: child.clone(),
+                    },
+                )
+                .map_err(|error| error.message().to_string())?;
+            owned_children.push((child.clone(), child_subject));
+        }
+        let (ResourceClause::Read(segment) | ResourceClause::Write(segment)) = &contained else {
+            continue;
+        };
+        if let Some(kernel) =
+            resource_clause_loadable_prop(&contained, parameters, arguments, fact_state.memory())
+                .map_err(|error| error.message().to_string())?
+        {
+            surface_propositions
+                .record_lowering(
+                    &ClickProposition::Loadable {
+                        segment: segment.clone(),
+                    },
+                    &kernel,
+                )
+                .map_err(|error| error.message().to_string())?;
+        }
+    }
+    for left_index in 0..owned_children.len() {
+        for (right, right_subject) in &owned_children[left_index + 1..] {
+            let (left, left_subject) = &owned_children[left_index];
+            surface_propositions
+                .record_lowering(
+                    &ClickProposition::Separate {
+                        left: left_subject.clone(),
+                        right: right_subject.clone(),
+                    },
+                    &Proposition::CResourceSeparate {
+                        left: left.clone(),
+                        right: right.clone(),
+                    },
+                )
+                .map_err(|error| error.message().to_string())?;
+        }
+    }
+    for fact in composite_body.facts() {
+        let surface = substitute_click_proposition(fact, substitutions).map_err(|message| {
+            format!(
+                "could not instantiate resource `{}` fact: {message}",
+                definition.name()
+            )
+        })?;
+        let kernel = lower_outcome_proposition(
+            parameters,
+            arguments,
+            pre_state,
+            fact_state,
+            &CValue::Int32(Bitvector32Term::Constant(0)),
+            available_pure_facts,
+            &surface,
+            predicate_environment,
+            click_function_environment,
+        )
+        .map_err(|message| {
+            format!(
+                "could not lower resource `{}` fact `{}`: {message}",
+                definition.name(),
+                describe_click_proposition(&surface)
+            )
+        })?;
+        surface_propositions
+            .record_lowering(&surface, &kernel)
+            .map_err(|error| error.message().to_string())?;
+    }
+    Ok(())
+}
+
+fn resource_clause_subject(resource: &ResourceClause) -> ResourceSubject {
+    match resource {
+        ResourceClause::Read(segment) | ResourceClause::Write(segment) => {
+            ResourceSubject::Memory(segment.clone())
+        }
+        ResourceClause::Declared {
+            kind,
+            name,
+            arguments,
+            parameter_types,
+            ..
+        } => ResourceSubject::Declared {
+            kind: *kind,
+            name: name.clone(),
+            arguments: arguments.clone(),
+            parameter_types: parameter_types.clone(),
+        },
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn record_initial_composite_surface_facts(
+    resource_environment: &ResourceEnvironment,
+    resource: &ResourceClause,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    state: &CState,
+    available_pure_facts: &[Proposition],
+    surface_propositions: &mut SurfacePropositionMap,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    active_resources: &mut BTreeSet<String>,
+) -> Result<(), String> {
+    let ResourceClause::Declared { name, .. } = resource else {
+        return Ok(());
+    };
+    let Some(definition) = resource_environment.get(name) else {
+        return Ok(());
+    };
+    let Some(composite_body) = definition.composite_body() else {
+        return Ok(());
+    };
+    if !active_resources.insert(name.clone()) {
+        return Ok(());
+    }
+    let result = (|| {
+        let substitutions =
+            resource_argument_substitutions(definition, resource, "initial resource projection", 0)
+                .map_err(|error| error.message().to_string())?;
+        record_observed_composite_surface_facts(
+            definition,
+            resource,
+            &substitutions,
+            parameters,
+            arguments,
+            state,
+            state,
+            available_pure_facts,
+            surface_propositions,
+            predicate_environment,
+            click_function_environment,
+        )?;
+        for contained in composite_body.contains() {
+            let contained =
+                instantiate_resource_clause(contained, &substitutions).map_err(|message| {
+                    format!(
+                        "could not instantiate resource `{}` child: {message}",
+                        definition.name()
+                    )
+                })?;
+            record_initial_composite_surface_facts(
+                resource_environment,
+                &contained,
+                parameters,
+                arguments,
+                state,
+                available_pure_facts,
+                surface_propositions,
+                predicate_environment,
+                click_function_environment,
+                active_resources,
+            )?;
+        }
+        Ok(())
+    })();
+    active_resources.remove(name);
+    result
 }
 
 fn project_held_resource_observable_facts(
