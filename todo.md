@@ -146,6 +146,13 @@ The next known correctness/performance gaps are precise:
    synthesis emits `load_int32_pointer(...)`, and comparison normalization
    handles pointer-offset equalities, so the call's `len` and `data`
    postconditions remain surface-expressible at the following statement.
+   The smart-`have` expander no longer has a generic transport fallback.
+   Verification now retains the single replay plan it actually selected and
+   expansion lowers only that plan. Snapshot transport is certified and
+   surfaced at the statement mutation boundary; a later `have` sees the
+   transported current-state fact as an exact assumption. If direct lowering
+   is incomplete, expansion reports that blocker instead of enumerating
+   program points in search of a different proof.
 2. The next owned-split-buffer bound proof is selectable, but smart planning
    itself exceeded a one-off 120-second expansion budget. Do not repeatedly
    rerun it; reduce this smart solver case first.

@@ -3991,6 +3991,69 @@ fn prove_have_at_current_point(
 }
 
 #[allow(clippy::too_many_arguments)]
+fn plan_smart_have_at_current_point(
+    have: &ProofHave,
+    claim_label: &str,
+    outer_tactic_index: usize,
+    available: &[Proposition],
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    pre_state: &CState,
+    state: &CState,
+    program_point_states: &ProgramPointStates,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+) -> Result<(Proposition, ProofReplayPlan), ClickError> {
+    // Plan and replay this proof once. Surface expansion must lower this exact
+    // plan; it must not search for a different proof if lowering is incomplete.
+    // Snapshot transport belongs to the statement transition that changed the
+    // memory and reaches a later `have` as an exact current-state assumption.
+    let fact = lower_point_proposition(
+        &have.proposition,
+        available,
+        parameters,
+        arguments,
+        pre_state,
+        state,
+        None,
+        program_point_states,
+        predicate_environment,
+        click_function_environment,
+    )
+    .map_err(|message| {
+        ClickError::new(format!(
+            "`{claim_label}` have proof {outer_tactic_index}: could not lower pure goal: {message}"
+        ))
+    })?;
+    if available.contains(&fact) {
+        let plan = ProofReplayPlan::from_planned_tactics(&[ProofTactic::Assumption])
+            .expect("assumption is a simple replay tactic");
+        return Ok((fact, plan));
+    }
+
+    let assumptions = assumptions_from_propositions(available);
+    let Some(plan) = plan_simp_certificate(&fact, &assumptions) else {
+        return Err(ClickError::new(format!(
+            "`{claim_label}` tactic {outer_tactic_index}: `have` failed: {}",
+            describe_missing_pure_fact(
+                &fact,
+                available,
+                state.resources().facts(),
+                parameters,
+                arguments,
+                &[],
+            )
+        )));
+    };
+    if !replay_simp_certificate(&fact, &assumptions, &plan) {
+        return Err(ClickError::new(format!(
+            "`{claim_label}` tactic {outer_tactic_index}: planned smart `have` certificate did not replay"
+        )));
+    }
+    Ok((fact, plan))
+}
+
+#[allow(clippy::too_many_arguments)]
 fn prove_have_at_point(
     have: &ProofHave,
     theorem_environment: &TheoremEnvironment,
@@ -6699,87 +6762,6 @@ fn have_proof_is_smart_simp(proof: &Proof) -> bool {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn plan_surface_smart_have_transport(
-    replay: &TacticReplayState,
-    state: &CState,
-    available: &[Proposition],
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
-    surface_target: &ClickProposition,
-    target: &Proposition,
-) -> Result<ProofTactic, ClickError> {
-    let recorded_points = replay
-        .program_point_states
-        .keys()
-        .cloned()
-        .collect::<Vec<_>>();
-    let Some(surface_sources) = comparison_program_point_variants(surface_target, &recorded_points)
-    else {
-        return Err(ClickError::new(
-            "smart `have` transport fallback supports comparisons only",
-        ));
-    };
-    for surface_source in surface_sources {
-        let Ok(source) = lower_surface_candidate_at_point(
-            replay,
-            &surface_source,
-            available,
-            parameters,
-            arguments,
-            state,
-            predicate_environment,
-            click_function_environment,
-        ) else {
-            continue;
-        };
-        if !exact_fact_is_available(&source, available) {
-            continue;
-        }
-        let transition_facts = fact_transport_transition_facts(&replay.effect_facts, &source);
-        let transport_assumptions = transition_facts.iter().fold(
-            assumptions_from_propositions(available),
-            |assumptions, fact| assumptions.assume_proposition(fact.proposition().clone()),
-        );
-        let Some(theorem) =
-            prove_c_condition_fact_transport(&source, state.memory(), &transport_assumptions)
-        else {
-            continue;
-        };
-        let Proposition::Implies(_, conclusion) = theorem.proposition() else {
-            continue;
-        };
-        if normalize_direct_atomic_memory_loads(conclusion)
-            != normalize_direct_atomic_memory_loads(target)
-        {
-            continue;
-        }
-        let premises = plan_explicit_fact_transport(
-            &surface_source,
-            &source,
-            target,
-            available,
-            &transition_facts,
-            parameters,
-            arguments,
-            replay,
-            state,
-            predicate_environment,
-            click_function_environment,
-        )?;
-        return Ok(ProofTactic::TransportUsing {
-            source: surface_source,
-            target: surface_target.clone(),
-            premises,
-        });
-    }
-    Err(ClickError::new(
-        "no available surface fact transports to the smart `have` conclusion",
-    ))
-}
-
-#[allow(clippy::too_many_arguments)]
 fn record_surface_smart_have(
     replay: &mut TacticReplayState,
     state: &CState,
@@ -6789,26 +6771,13 @@ fn record_surface_smart_have(
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
     have: &ProofHave,
-    fact: &Proposition,
+    certificate: &ProofReplayPlan,
 ) {
     if replay.surface_replay.blocker.is_some() {
         return;
     }
-    if available.contains(fact) {
-        replay.surface_replay.push(ProofTactic::Have(ProofHave {
-            proposition: have.proposition.clone(),
-            proof: Proof::Script(vec![ProofTactic::Assumption]),
-        }));
-        return;
-    }
-    let assumptions = assumptions_from_propositions(available);
-    let Some(certificate) = plan_simp_certificate(fact, &assumptions) else {
-        replay
-            .surface_replay
-            .block("successful smart `have` did not produce a replayable simp certificate");
-        return;
-    };
     let proof = match certificate.tactics() {
+        [ProofTactic::Assumption] => Proof::Script(vec![ProofTactic::Assumption]),
         [ProofTactic::Normalize] => Proof::Script(vec![ProofTactic::Normalize]),
         [ProofTactic::ExactPropositionDerivation(derivation)] => {
             match lower_surface_atomic_derivation(
@@ -6823,24 +6792,10 @@ fn record_surface_smart_have(
             ) {
                 Ok((_, proof)) => proof,
                 Err(error) => {
-                    match plan_surface_smart_have_transport(
-                        replay,
-                        state,
-                        available,
-                        parameters,
-                        arguments,
-                        predicate_environment,
-                        click_function_environment,
-                        &have.proposition,
-                        fact,
-                    ) {
-                        Ok(tactic) => replay.surface_replay.push(tactic),
-                        Err(transport_error) => replay.surface_replay.block(format!(
-                            "could not lower smart `have` certificate: {}; transport fallback failed: {}",
-                            error.message(),
-                            transport_error.message()
-                        )),
-                    }
+                    replay.surface_replay.block(format!(
+                        "could not lower the planned smart `have` certificate: {}",
+                        error.message()
+                    ));
                     return;
                 }
             }
@@ -8307,25 +8262,46 @@ fn replay_linear_tactics(
                         have_facts.push(fact.clone());
                     }
                 }
-                let fact = prove_have_at_current_point(
-                    have,
-                    theorem_environment,
-                    claim_label,
-                    tactic_index,
-                    &have_facts,
-                    parsed_function.parameters(),
-                    arguments,
-                    replay.execution_start_state(&state),
-                    &state,
-                    &replay.program_point_states,
-                    predicate_environment,
-                    click_function_environment,
-                    function_block.requires(),
-                )?;
+                let smart_plan = if have_proof_is_smart_simp(&have.proof) {
+                    let (fact, plan) = plan_smart_have_at_current_point(
+                        have,
+                        claim_label,
+                        tactic_index,
+                        &have_facts,
+                        parsed_function.parameters(),
+                        arguments,
+                        replay.execution_start_state(&state),
+                        &state,
+                        &replay.program_point_states,
+                        predicate_environment,
+                        click_function_environment,
+                    )?;
+                    Some((fact, plan))
+                } else {
+                    None
+                };
+                let fact = match &smart_plan {
+                    Some((fact, _)) => fact.clone(),
+                    None => prove_have_at_current_point(
+                        have,
+                        theorem_environment,
+                        claim_label,
+                        tactic_index,
+                        &have_facts,
+                        parsed_function.parameters(),
+                        arguments,
+                        replay.execution_start_state(&state),
+                        &state,
+                        &replay.program_point_states,
+                        predicate_environment,
+                        click_function_environment,
+                        function_block.requires(),
+                    )?,
+                };
                 replay
                     .surface_propositions
                     .record_lowering(&have.proposition, &fact)?;
-                if have_proof_is_smart_simp(&have.proof) {
+                if let Some((_, plan)) = &smart_plan {
                     record_surface_smart_have(
                         &mut replay,
                         &state,
@@ -8335,7 +8311,7 @@ fn replay_linear_tactics(
                         predicate_environment,
                         click_function_environment,
                         have,
-                        &fact,
+                        plan,
                     );
                 }
                 if !requirement_pure_facts.contains(&fact) {
