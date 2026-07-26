@@ -3568,6 +3568,79 @@ fn smart_apply_surfaces_a_framed_comparison_after_an_immutable_call() {
 }
 
 #[test]
+fn smart_apply_preserves_statement_snapshots_in_explicit_premises() {
+    let c_source = r#"
+            int32 decrement(int32* p) {
+                p[0] = 0;
+                return p[0];
+            }
+        "#;
+    let click_source = r#"
+            theorem changed_one_to_zero(before: int32, after: int32) {
+                requires before == 1;
+                requires after == 0;
+                ensures after == 0 by {
+                    assumption();
+                }
+            }
+
+            resource one_cell(p: int32*) {
+                owns p[0..1];
+                fact p[0] == 1;
+            }
+
+            verifying "decrement.c";
+
+            int32 decrement(int32* p) {
+                consumes one_cell(p);
+                mutable p[0..1];
+                produces p[0..1];
+                ensures result == 0;
+            } by {
+                unfold(one_cell(p));
+                execute_step();
+                have at(statement(0).entry, p[0]) == 1 by {
+                    simp();
+                }
+                have at(statement(0).exit, p[0]) == 0 by {
+                    simp();
+                }
+                apply(changed_one_to_zero(
+                    at(statement(0).entry, p[0]),
+                    at(statement(0).exit, p[0])
+                ));
+                execute_rest();
+                frame();
+                simp();
+            }
+        "#;
+    let apply_offset = click_source
+        .find("apply(changed_one_to_zero")
+        .expect("proof should contain the selected apply");
+    let line = click_source[..apply_offset]
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count()
+        + 1;
+    let column = apply_offset
+        - click_source[..apply_offset]
+            .rfind('\n')
+            .map(|offset| offset + 1)
+            .unwrap_or(0)
+        + 1;
+
+    let expanded =
+        expand_c0_tactic_source_at(click_source, &[("decrement.c", c_source)], line, column)
+            .expect("the snapshot theorem application should expand");
+    assert!(
+        expanded.contains("fact at(statement(0).entry, p[0]) == 1;"),
+        "{expanded}"
+    );
+    verify_c0_sources(&expanded, &[("decrement.c", c_source)])
+        .expect("the explicit snapshot premises should replay");
+}
+
+#[test]
 fn selected_branched_post_execution_apply_merges_path_certificates() {
     let c_source = r#"
             int32 choose(int32 flag) {

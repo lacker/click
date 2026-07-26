@@ -4450,13 +4450,23 @@ fn plan_explicit_theorem_application(
                     application.name
                 ))
             })?;
-        let surface = synthesize_surface_proposition(&requirement, parameters, arguments, state)
-            .ok_or_else(|| {
-                ClickError::new(format!(
-                    "theorem application `{}` has no Click spelling for exact premise: {requirement:?}",
-                    application.name
-                ))
-            })?;
+        let surface = checked_surface_comparison_fact_at_point(
+            replay,
+            &matched,
+            available,
+            parameters,
+            arguments,
+            state,
+            predicate_environment,
+            click_function_environment,
+        )
+        .map_err(|error| {
+            ClickError::new(format!(
+                "theorem application `{}` has no checked Click spelling for exact premise `{requirement:?}`: {}",
+                application.name,
+                error.message(),
+            ))
+        })?;
         let lowered = lower_point_proposition(
             &surface,
             &lowering_facts,
