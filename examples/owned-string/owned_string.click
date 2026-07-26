@@ -531,10 +531,10 @@ int32 owned_string_pipeline(
         at(statement(3).entry, owner->len) + 1 by {
         simp();
     }
-    apply(incremented_zero_is_one(
-        at(statement(3).entry, owner->len),
-        at(statement(3).exit, owner->len)
-    ));
+    apply(incremented_zero_is_one(at(statement(3).entry, load_int32(owner)), at(statement(3).exit, load_int32(owner)))) using {
+        fact at(statement(3).entry, load_int32(owner)) == 0;
+        fact at(statement(3).exit, load_int32(owner)) == (at(statement(3).entry, load_int32(owner)) + 1);
+    }
     have owner->len == at(statement(3).exit, owner->len) by {
         simp();
     }
