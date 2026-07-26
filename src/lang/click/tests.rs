@@ -3884,6 +3884,62 @@ fn source_expander_lowers_smart_simp_inside_have() {
 }
 
 #[test]
+fn source_expander_lowers_smart_simp_after_unfold_inside_have() {
+    let c_source = r#"
+            int32 identity(int32 x) {
+                return x;
+            }
+        "#;
+    let click_source = r#"
+            predicate reflexive(int32 x) {
+                x == x
+            }
+
+            verifying "identity.c";
+
+            int32 identity(int32 x) {
+                ensures result == x;
+            } by {
+                have reflexive(x) by {
+                    unfold(reflexive);
+                    simp();
+                }
+                execute_rest();
+                simp();
+            }
+        "#;
+    let have_offset = click_source
+        .find("have reflexive(x)")
+        .expect("proof should contain the selected have");
+    let line = click_source[..have_offset]
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count()
+        + 1;
+    let column = have_offset
+        - click_source[..have_offset]
+            .rfind('\n')
+            .map(|offset| offset + 1)
+            .unwrap_or(0)
+        + 1;
+
+    let expanded =
+        expand_c0_tactic_source_at(click_source, &[("identity.c", c_source)], line, column)
+            .expect("the selected unfolded smart have should expand");
+    let expanded_have = &expanded[expanded
+        .find("have reflexive(x)")
+        .expect("expanded proof should retain the selected have")
+        ..expanded
+            .find("execute_rest()")
+            .expect("expanded proof should retain its suffix")];
+    assert!(expanded_have.contains("unfold(reflexive);"), "{expanded_have}");
+    assert!(expanded_have.contains("normalize();"), "{expanded_have}");
+    assert!(!expanded_have.contains("simp();"), "{expanded_have}");
+    verify_c0_sources(&expanded, &[("identity.c", c_source)])
+        .expect("the expanded unfolded smart have should replay");
+}
+
+#[test]
 fn source_expander_preserves_pointer_spelling_inside_smart_have() {
     let c_source = r#"
             struct holder {

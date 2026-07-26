@@ -5087,6 +5087,7 @@ fn plan_smart_have_at_current_point(
     program_point_states: &ProgramPointStates,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
+    unfolded_predicates: &[String],
 ) -> Result<(Proposition, ProofReplayPlan), ClickError> {
     // Plan and replay this proof once. Surface expansion must lower this exact
     // plan; it must not search for a different proof if lowering is incomplete.
@@ -5110,27 +5111,55 @@ fn plan_smart_have_at_current_point(
             "`{claim_label}` have proof {outer_tactic_index}: could not lower pure goal: {message}"
         ))
     })?;
-    if available.contains(&fact) {
+    let available = if unfolded_predicates.is_empty() {
+        available.to_vec()
+    } else {
+        unfold_available_predicate_facts(
+            predicate_environment,
+            click_function_environment,
+            unfolded_predicates,
+            available,
+        )
+        .map_err(|message| {
+            ClickError::new(format!(
+                "`{claim_label}` have proof {outer_tactic_index}: could not unfold available facts: {message}"
+            ))
+        })?
+    };
+    let assumptions = assumptions_from_propositions(&available);
+    let goal = unfold_predicates_in_proposition(
+        predicate_environment,
+        click_function_environment,
+        unfolded_predicates,
+        &fact,
+        &assumptions,
+    )
+    .map_err(|message| {
+        ClickError::new(format!(
+            "`{claim_label}` have proof {outer_tactic_index}: could not unfold pure goal: {message}"
+        ))
+    })?;
+    if available.contains(&goal) {
         let plan = ProofReplayPlan::from_planned_tactics(&[ProofTactic::Assumption])
             .expect("assumption is a simple replay tactic");
         return Ok((fact, plan));
     }
-    if matches!(normalize_proposition(&fact), SimpProposition::True) {
+    if matches!(normalize_proposition(&goal), SimpProposition::True) {
         let plan = ProofReplayPlan::from_planned_tactics(&[ProofTactic::Normalize])
             .expect("normalize is a simple replay tactic");
         return Ok((fact, plan));
     }
-    if materialization_equivalent_available_fact(&fact, available).is_some() {
+    if materialization_equivalent_available_fact(&goal, &available).is_some() {
         let plan = ProofReplayPlan::from_planned_tactics(&[ProofTactic::Assumption])
             .expect("assumption is a simple replay tactic");
         return Ok((fact, plan));
     }
-    let normalized_fact = normalize_direct_atomic_memory_loads(&fact);
+    let normalized_fact = normalize_direct_atomic_memory_loads(&goal);
     if let Some(equivalent) = available
         .iter()
         .find(|available| normalize_direct_atomic_memory_loads(available) == normalized_fact)
         && let Some(derivation) =
-            minimal_proposition_derivation(&fact, std::slice::from_ref(equivalent))
+            minimal_proposition_derivation(&goal, std::slice::from_ref(equivalent))
     {
         let plan =
             ProofReplayPlan::from_planned_tactics(&[ProofTactic::ExactPropositionDerivation(
@@ -5139,7 +5168,7 @@ fn plan_smart_have_at_current_point(
             .expect("a directly normalized derivation is a simple replay tactic");
         return Ok((fact, plan));
     }
-    if let Some(derivation) = bounded_condition_derivation(&fact, available) {
+    if let Some(derivation) = bounded_condition_derivation(&goal, &available) {
         let plan =
             ProofReplayPlan::from_planned_tactics(&[ProofTactic::ExactPropositionDerivation(
                 derivation,
@@ -5148,13 +5177,12 @@ fn plan_smart_have_at_current_point(
         return Ok((fact, plan));
     }
 
-    let assumptions = assumptions_from_propositions(available);
-    let Some(plan) = plan_simp_certificate(&fact, &assumptions) else {
+    let Some(plan) = plan_simp_certificate(&goal, &assumptions) else {
         return Err(ClickError::new(format!(
             "`{claim_label}` tactic {outer_tactic_index}: `have` failed: {}",
             describe_missing_pure_fact(
-                &fact,
-                available,
+                &goal,
+                &available,
                 state.resources().facts(),
                 parameters,
                 arguments,
@@ -5162,7 +5190,7 @@ fn plan_smart_have_at_current_point(
             )
         )));
     };
-    if !replay_simp_certificate(&fact, &assumptions, &plan) {
+    if !replay_simp_certificate(&goal, &assumptions, &plan) {
         return Err(ClickError::new(format!(
             "`{claim_label}` tactic {outer_tactic_index}: planned smart `have` certificate did not replay"
         )));
@@ -8610,6 +8638,7 @@ fn record_surface_replay_tactic(
                         &replay.program_point_states,
                         predicate_environment,
                         click_function_environment,
+                        &[],
                     ) else {
                         continue;
                     };
@@ -8639,6 +8668,7 @@ fn record_surface_replay_tactic(
                         click_function_environment,
                         &have,
                         &plan,
+                        &[],
                     );
                     surface_available.push(fact);
                 }
@@ -8679,6 +8709,7 @@ fn record_surface_replay_tactic(
                         &replay.program_point_states,
                         predicate_environment,
                         click_function_environment,
+                        &[],
                     );
                     let (fact, plan) = match planned {
                         Ok(planned) => planned,
@@ -8711,6 +8742,7 @@ fn record_surface_replay_tactic(
                             click_function_environment,
                             &have,
                             &plan,
+                            &[],
                         );
                         surface_available.push(fact);
                     }
@@ -8968,7 +9000,7 @@ fn record_surface_replay_tactic(
         ProofTactic::Have(have) => {
             match TacticCertificate::from_proof_tactics(std::slice::from_ref(tactic)) {
                 Ok(_) => replay.surface_replay.push(tactic.clone()),
-                Err(_) if have_proof_is_smart_simp(&have.proof) => {
+                Err(_) if smart_simp_unfold_prefix(&have.proof).is_some() => {
                     // The successful smart proof is lowered after it has
                     // produced its checked kernel fact.
                 }
@@ -9067,6 +9099,26 @@ fn have_proof_is_smart_simp(proof: &Proof) -> bool {
     }
 }
 
+fn smart_simp_unfold_prefix(proof: &Proof) -> Option<Vec<String>> {
+    if have_proof_is_smart_simp(proof) {
+        return Some(Vec::new());
+    }
+    let Proof::Script(tactics) = proof else {
+        return None;
+    };
+    let (last, prefix) = tactics.split_last()?;
+    if !matches!(last, ProofTactic::Simp) {
+        return None;
+    }
+    prefix
+        .iter()
+        .map(|tactic| match tactic {
+            ProofTactic::UnfoldPredicate(name) => Some(name.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
 #[allow(clippy::too_many_arguments)]
 fn record_surface_smart_have(
     replay: &mut TacticReplayState,
@@ -9078,6 +9130,7 @@ fn record_surface_smart_have(
     click_function_environment: &ClickFunctionEnvironment,
     have: &ProofHave,
     certificate: &ProofReplayPlan,
+    unfolded_predicates: &[String],
 ) {
     if replay.surface_replay.blocker.is_some() {
         return;
@@ -9089,7 +9142,9 @@ fn record_surface_smart_have(
             match lower_surface_atomic_derivation(
                 replay,
                 derivation,
-                Some(&have.proposition),
+                unfolded_predicates
+                    .is_empty()
+                    .then_some(&have.proposition),
                 available,
                 parameters,
                 arguments,
@@ -9113,6 +9168,23 @@ fn record_surface_smart_have(
                 .block("smart `have` planned an unexpected simp certificate");
             return;
         }
+    };
+    let proof = if unfolded_predicates.is_empty() {
+        proof
+    } else {
+        let mut tactics = unfolded_predicates
+            .iter()
+            .cloned()
+            .map(ProofTactic::UnfoldPredicate)
+            .collect::<Vec<_>>();
+        let Proof::Script(suffix) = proof else {
+            replay
+                .surface_replay
+                .block("planned smart `have` certificate was not a tactic script");
+            return;
+        };
+        tactics.extend(suffix);
+        Proof::Script(tactics)
     };
     let tactic = ProofTactic::Have(ProofHave {
         proposition: have.proposition.clone(),
@@ -9156,7 +9228,7 @@ struct TacticTiming {
 
 fn timing_tactic_class(tactic: &ProofTactic) -> &'static str {
     if let ProofTactic::Have(have) = tactic {
-        if have_proof_is_smart_simp(&have.proof) {
+        if smart_simp_unfold_prefix(&have.proof).is_some() {
             return "smart";
         }
         if let Proof::Script(tactics) = &have.proof
@@ -10932,7 +11004,8 @@ fn replay_linear_tactics(
                         have_facts.push(fact.clone());
                     }
                 }
-                let smart_plan = if have_proof_is_smart_simp(&have.proof) {
+                let smart_unfolds = smart_simp_unfold_prefix(&have.proof);
+                let smart_plan = if let Some(unfolded_predicates) = &smart_unfolds {
                     let (fact, plan) = plan_smart_have_at_current_point(
                         have,
                         claim_label,
@@ -10945,6 +11018,7 @@ fn replay_linear_tactics(
                         &replay.program_point_states,
                         predicate_environment,
                         click_function_environment,
+                        unfolded_predicates,
                     )?;
                     Some((fact, plan))
                 } else {
@@ -10982,6 +11056,7 @@ fn replay_linear_tactics(
                         click_function_environment,
                         have,
                         plan,
+                        smart_unfolds.as_deref().unwrap_or(&[]),
                     );
                 }
                 if !requirement_pure_facts.contains(&fact) {
