@@ -347,10 +347,21 @@ fn lower_pure_simp_certificate(
             if premises.is_empty() {
                 ProofTactic::Normalize
             } else {
-                ProofTactic::Derive(ProofDerive {
+                let exact_premises = derivation.context_premises();
+                let exact_assumptions = assumptions_from_propositions(&exact_premises);
+                let derive = exact_assumptions
+                    .derive_atomic_proposition(derivation.conclusion())
+                    .or_else(|| exact_assumptions.derive_proposition(derivation.conclusion()))
+                    .is_some();
+                let derivation = ProofDerive {
                     proposition: surface_goal.clone(),
                     premises,
-                })
+                };
+                if derive {
+                    ProofTactic::Derive(derivation)
+                } else {
+                    ProofTactic::Calculate(derivation)
+                }
             }
         }
         _ => return None,
@@ -390,7 +401,7 @@ fn verify_theorem_ensure(
         ))
     })?;
 
-    match ensure_clause.proof() {
+    let (proof_kind, source_tactics) = match ensure_clause.proof() {
         Proof::Default | Proof::Tactic(SmartTactic::Auto) => {
             prove_pure_theorem_goal(
                 claim_label,
@@ -405,48 +416,29 @@ fn verify_theorem_ensure(
                 &[],
                 true,
             )?;
-            Ok(VerifiedPureTheorem {
-                theorem_definition: theorem.clone(),
-                ensure_index,
-                ensure_clause: ensure_clause.clone(),
-                proof_kind: ProofKind::Pure,
-                proof_tactics: None,
-                requires: context.requires.clone(),
-                conclusion: goal,
-            })
+            (ProofKind::Pure, None)
         }
         Proof::Tactic(SmartTactic::Simp) => {
-            let assumptions = assumptions_from_propositions(&context.requires);
-            let certificate = plan_simp_certificate(&goal, &assumptions)
-                .ok_or_else(|| ClickError::new(format!("`simp` failed for `{claim_label}`")))?;
-            replay_pure_theorem_certificate(
+            prove_pure_theorem_goal(
                 claim_label,
+                "simp",
                 &context.requires,
                 &goal,
                 predicate_environment,
                 click_function_environment,
                 theorem_environment,
                 context,
-                &certificate,
+                &[],
+                &[],
+                true,
             )?;
-            Ok(VerifiedPureTheorem {
-                theorem_definition: theorem.clone(),
-                ensure_index,
-                ensure_clause: ensure_clause.clone(),
-                proof_kind: ProofKind::Simp,
-                proof_tactics: lower_pure_simp_certificate(
-                    theorem,
-                    surface_goal,
-                    context,
-                    &certificate,
-                ),
-                requires: context.requires.clone(),
-                conclusion: goal,
-            })
+            (ProofKind::Simp, None)
         }
-        Proof::Tactic(SmartTactic::Frame) => Err(ClickError::new(format!(
-            "`frame` is not available in the pure proof for theorem `{claim_label}`"
-        ))),
+        Proof::Tactic(SmartTactic::Frame) => {
+            return Err(ClickError::new(format!(
+                "`frame` is not available in the pure proof for theorem `{claim_label}`"
+            )));
+        }
         Proof::Script(tactics) => {
             if tactics.is_empty() {
                 return Err(ClickError::new(format!(
@@ -463,17 +455,169 @@ fn verify_theorem_ensure(
                 context,
                 tactics,
             )?;
-            Ok(VerifiedPureTheorem {
-                theorem_definition: theorem.clone(),
-                ensure_index,
-                ensure_clause: ensure_clause.clone(),
-                proof_kind: ProofKind::TacticScript,
-                proof_tactics: Some(tactics.to_vec()),
-                requires: context.requires.clone(),
-                conclusion: goal,
-            })
+            (ProofKind::TacticScript, Some(tactics.as_slice()))
         }
+    };
+
+    let certificate = pure_theorem_surface_certificate(
+        theorem,
+        surface_goal,
+        claim_label,
+        context,
+        &goal,
+        source_tactics,
+        predicate_environment,
+    )?;
+    replay_pure_theorem_certificate(
+        claim_label,
+        &context.requires,
+        &goal,
+        predicate_environment,
+        click_function_environment,
+        theorem_environment,
+        context,
+        &certificate,
+    )?;
+    Ok(VerifiedPureTheorem {
+        theorem_definition: theorem.clone(),
+        ensure_index,
+        ensure_clause: ensure_clause.clone(),
+        proof_kind,
+        proof_tactics: Some(certificate.tactics().to_vec()),
+        requires: context.requires.clone(),
+        conclusion: goal,
+    })
+}
+
+fn pure_theorem_surface_certificate(
+    theorem: &TheoremDefinition,
+    surface_goal: &ClickProposition,
+    claim_label: &str,
+    context: &PureTheoremContext,
+    goal: &Proposition,
+    source_tactics: Option<&[ProofTactic]>,
+    predicate_environment: &PredicateEnvironment,
+) -> Result<TacticCertificate, ClickError> {
+    if let Some(tactics) = source_tactics
+        && let Ok(certificate) = TacticCertificate::from_proof_tactics(tactics)
+    {
+        return Ok(certificate);
     }
+
+    if context.requires.contains(goal)
+        || materialization_equivalent_available_fact(goal, &context.requires).is_some()
+        || quantified_replay_equivalent_available_fact(goal, &context.requires).is_some()
+    {
+        return TacticCertificate::from_proof_tactics(&[ProofTactic::Assumption]).map_err(
+            |error| {
+                ClickError::new(format!(
+                    "smart proof for `{claim_label}` produced an invalid assumption certificate: {error:?}"
+                ))
+            },
+        );
+    }
+    if matches!(normalize_proposition(goal), SimpProposition::True) {
+        return TacticCertificate::from_proof_tactics(&[ProofTactic::Normalize]).map_err(
+            |error| {
+                ClickError::new(format!(
+                    "smart proof for `{claim_label}` produced an invalid normalization certificate: {error:?}"
+                ))
+            },
+        );
+    }
+    let assumptions = assumptions_from_propositions(&context.requires);
+    if let Some(plan) = plan_simp_certificate(goal, &assumptions)
+        && let Some(tactics) = lower_pure_simp_certificate(theorem, surface_goal, context, &plan)
+    {
+        return TacticCertificate::from_proof_tactics(&tactics).map_err(|error| {
+            ClickError::new(format!(
+                "smart proof for `{claim_label}` produced an invalid surface certificate: {error:?}"
+            ))
+        });
+    }
+
+    if let Some(tactics) = source_tactics
+        && tactics
+            .iter()
+            .any(|tactic| matches!(tactic, ProofTactic::Rewrite(_)))
+        && tactics.iter().all(|tactic| {
+            matches!(tactic.class(), TacticClass::Simple(_)) || matches!(tactic, ProofTactic::Simp)
+        })
+    {
+        let tactics = tactics
+            .iter()
+            .map(|tactic| {
+                if matches!(tactic, ProofTactic::Simp) {
+                    ProofTactic::Normalize
+                } else {
+                    tactic.clone()
+                }
+            })
+            .collect::<Vec<_>>();
+        return TacticCertificate::from_proof_tactics(&tactics).map_err(|error| {
+            ClickError::new(format!(
+                "smart proof for `{claim_label}` produced an invalid rewrite certificate: {error:?}"
+            ))
+        });
+    }
+
+    let unfolded_predicates = source_tactics
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|tactic| match tactic {
+            ProofTactic::UnfoldPredicate(name) => Some(name.clone()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    if !unfolded_predicates.is_empty() {
+        fn flatten_surface_conjunction(
+            proposition: ClickProposition,
+            flattened: &mut Vec<ClickProposition>,
+        ) {
+            match proposition {
+                ClickProposition::And(left, right) => {
+                    flatten_surface_conjunction(*left, flattened);
+                    flatten_surface_conjunction(*right, flattened);
+                }
+                proposition => flattened.push(proposition),
+            }
+        }
+
+        let unfolded = theorem
+            .requires()
+            .iter()
+            .filter_map(Requirement::proposition)
+            .map(|premise| {
+                unfold_structural_invariant_proposition(
+                    predicate_environment,
+                    premise,
+                    &unfolded_predicates,
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|message| ClickError::new(format!("`{claim_label}`: {message}")))?;
+        let mut premises = Vec::new();
+        for proposition in unfolded {
+            flatten_surface_conjunction(proposition, &mut premises);
+        }
+        let mut tactics = unfolded_predicates
+            .into_iter()
+            .map(ProofTactic::UnfoldPredicate)
+            .collect::<Vec<_>>();
+        tactics.push(ProofTactic::Derive(ProofDerive {
+            proposition: surface_goal.clone(),
+            premises,
+        }));
+        return TacticCertificate::from_proof_tactics(&tactics).map_err(|error| {
+            ClickError::new(format!(
+                "smart proof for `{claim_label}` produced an invalid unfolded certificate: {error:?}"
+            ))
+        });
+    }
+
+    Err(ClickError::new(format!(
+        "smart proof for `{claim_label}` succeeded but did not produce a pure surface certificate"
+    )))
 }
 
 /// Replay a validated certificate through the ordinary pure-tactic executor.
@@ -486,7 +630,7 @@ fn replay_pure_theorem_certificate(
     click_function_environment: &ClickFunctionEnvironment,
     theorem_environment: &TheoremEnvironment,
     context: &PureTheoremContext,
-    certificate: &ProofReplayPlan,
+    certificate: &TacticCertificate,
 ) -> Result<(), ClickError> {
     prove_pure_theorem_script(
         claim_label,
@@ -575,9 +719,9 @@ mod certificate_tests {
             &click_function_environment,
         )
         .expect("goal should lower");
-        let failing = ProofReplayPlan::from_planned_tactics(&[ProofTactic::Assumption])
+        let failing = TacticCertificate::from_proof_tactics(&[ProofTactic::Assumption])
             .expect("assumption is a simple tactic");
-        let succeeding = ProofReplayPlan::from_planned_tactics(&[ProofTactic::Normalize])
+        let succeeding = TacticCertificate::from_proof_tactics(&[ProofTactic::Normalize])
             .expect("normalize is a simple tactic");
 
         assert!(

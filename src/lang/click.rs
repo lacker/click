@@ -1747,6 +1747,29 @@ impl VerifiedCTheorem {
     }
 }
 
+impl VerifiedPureTheorem {
+    pub fn proof_certificate(&self) -> Result<TacticCertificate, ClickError> {
+        let tactics = self.proof_tactics.as_deref().ok_or_else(|| {
+            ClickError::new(format!(
+                "pure theorem `{}` ensure {} has no surface certificate",
+                self.theorem_definition.name(),
+                self.ensure_index
+            ))
+        })?;
+        TacticCertificate::from_proof_tactics(tactics).map_err(|error| {
+            ClickError::new(format!(
+                "pure theorem `{}` ensure {} recorded an invalid surface certificate: {error:?}",
+                self.theorem_definition.name(),
+                self.ensure_index
+            ))
+        })
+    }
+
+    pub fn expanded_proof_source(&self) -> Result<String, ClickError> {
+        Ok(format_tactic_certificate(&self.proof_certificate()?))
+    }
+}
+
 impl ClickError {
     fn new(message: impl Into<String>) -> Self {
         Self {
@@ -1765,6 +1788,10 @@ pub fn parse(source: &str) -> Result<ClickFile, ClickError> {
 
 pub fn verify_click_theorems(click_source: &str) -> Result<Vec<VerifiedPureTheorem>, ClickError> {
     let file = parse(click_source)?;
+    verify_click_file_theorems(&file)
+}
+
+fn verify_click_file_theorems(file: &ClickFile) -> Result<Vec<VerifiedPureTheorem>, ClickError> {
     let predicate_definitions = combined_predicate_definitions(&file)?;
     let click_function_definitions = combined_click_function_definitions(&file)?;
     let (theorem_definitions, stdlib_theorem_ensure_count) =
@@ -1780,6 +1807,16 @@ pub fn verify_click_theorems(click_source: &str) -> Result<Vec<VerifiedPureTheor
         .into_iter()
         .skip(stdlib_theorem_ensure_count)
         .collect())
+}
+
+fn verify_click_theorems_with_c_sources(
+    click_source: &str,
+    c_sources: &[(&str, &str)],
+) -> Result<Vec<VerifiedPureTheorem>, ClickError> {
+    let sources = c_sources.iter().copied().collect::<BTreeMap<_, _>>();
+    let layouts = parse_c_struct_layouts(&sources)?;
+    let file = parser::parse_with_struct_layouts(click_source, layouts)?;
+    verify_click_file_theorems(&file)
 }
 
 pub fn verify_c0_sources(

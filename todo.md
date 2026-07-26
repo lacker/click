@@ -74,7 +74,7 @@ The following items remain before that statement is true globally:
   `frame`/`auto` proofs produce explicit effect-obligation certificates.
   Back-edge effect validation should use the same explicit-obligation boundary
   as invariant preservation.
-- [ ] **Pure theorem smart proofs.** Make theorem-level default/`auto`, `simp`,
+- [x] **Pure theorem smart proofs.** Make theorem-level default/`auto`, `simp`,
   and any smart tactics nested in theorem scripts return and replay
   `TacticCertificate`; remove the separate pure-theorem smart success path.
 - [ ] **Shared pure-goal gateway.** Consolidate

@@ -80,6 +80,13 @@ pub fn expand_c0_tactic_source_at(
     column: usize,
 ) -> Result<String, ClickError> {
     let selected = locate_source_tactic(click_source, c_sources, line, column)?;
+    if let ProofSourceSite::TheoremEnsure {
+        theorem_name,
+        ensure_index,
+    } = &selected.site
+    {
+        return expand_pure_theorem_source(click_source, c_sources, theorem_name, *ensure_index);
+    }
     let (function_name, claim) = match &selected.site {
         ProofSourceSite::FunctionClaim {
             function_name,
@@ -130,6 +137,48 @@ pub fn expand_c0_tactic_source_at(
         }
     };
     let replacement = indent_replacement(click_source, span.start, &replacement);
+    let mut expanded =
+        String::with_capacity(click_source.len() - (span.end - span.start) + replacement.len());
+    expanded.push_str(&click_source[..span.start]);
+    expanded.push_str(&replacement);
+    expanded.push_str(&click_source[span.end..]);
+    Ok(expanded)
+}
+
+fn expand_pure_theorem_source(
+    click_source: &str,
+    c_sources: &[(&str, &str)],
+    theorem_name: &str,
+    ensure_index: usize,
+) -> Result<String, ClickError> {
+    let verified = verify_click_theorems_with_c_sources(click_source, c_sources)?;
+    let theorem = verified
+        .iter()
+        .find(|theorem| {
+            theorem.theorem_definition.name() == theorem_name
+                && theorem.ensure_index == ensure_index
+        })
+        .ok_or_else(|| {
+            ClickError::new(format!(
+                "verified theorem `{theorem_name}` has no ensure {ensure_index}"
+            ))
+        })?;
+    let replacement = theorem.expanded_proof_source()?;
+    let tokens = scan_source_tokens(click_source)?;
+    let source = find_theorem(&tokens, theorem_name)?;
+    let edit = find_ensure_proof_edit(&tokens, source.body_open, source.body_close, ensure_index)?;
+    let span = edit.span();
+    let replacement = indent_replacement(click_source, span.start, &replacement);
+    let replacement = match edit {
+        ProofSourceEdit::Explicit(_) => replacement,
+        ProofSourceEdit::DefaultTerminator { .. } => {
+            let separator = click_source[..span.start]
+                .chars()
+                .next_back()
+                .is_some_and(|character| !character.is_whitespace());
+            format!("{}{replacement}", if separator { " " } else { "" })
+        }
+    };
     let mut expanded =
         String::with_capacity(click_source.len() - (span.end - span.start) + replacement.len());
     expanded.push_str(&click_source[..span.start]);
@@ -1815,20 +1864,15 @@ int32 count(int32 n) {
             c0_tactic_source_position(theorem_source, &[], "reflexive.same", 0).unwrap(),
             theorem_position
         );
-        let theorem_error = expand_c0_tactic_source_at(
+        let theorem_expanded = expand_c0_tactic_source_at(
             theorem_source,
             &[],
             theorem_position.line,
             theorem_position.column,
         )
-        .expect_err("theorem certificate plumbing is added in the next chunk");
-        assert!(
-            theorem_error
-                .message()
-                .contains("theorem `reflexive` ensure 0 proof is not certificate-backed yet"),
-            "{}",
-            theorem_error.message()
-        );
+        .expect("theorem smart proof should expand through its certificate");
+        assert!(!theorem_expanded.contains("simp"));
+        verify_click_theorems(&theorem_expanded).expect("expanded theorem should re-verify");
 
         let c_source = "int32 count(int32 n) { while (n > 0) { n = n - 1; } return n; }";
         let click_source = r#"verifying "count.c";
@@ -1924,5 +1968,33 @@ int32 identity(int32 x) {
         .expect("default proof should expand from its clause coordinate");
         assert!(implicit_expanded.contains("ensures result == x by {"));
         verify_c0_sources(&implicit_expanded, &[("identity.c", c_source)]).unwrap();
+    }
+
+    #[test]
+    fn pure_theorem_expansion_is_certificate_backed_and_idempotent() {
+        let source = r#"theorem incremented_zero_is_one(before: int32, after: int32) {
+    requires before == 0;
+    requires after == before + 1;
+    ensures after == 1 by {
+        rewrite(after == before + 1);
+        rewrite(before == 0);
+        simp();
+    }
+}
+"#;
+        let expanded_once =
+            expand_pure_theorem_source(source, &[], "incremented_zero_is_one", 0)
+                .expect("smart theorem script should expand");
+        let expanded_twice =
+            expand_pure_theorem_source(&expanded_once, &[], "incremented_zero_is_one", 0)
+                .expect("expanded theorem certificate should expand again");
+
+        assert!(!expanded_once.contains("simp"));
+        assert_eq!(expanded_once, expanded_twice);
+        let verified =
+            verify_click_theorems(&expanded_once).expect("expanded theorem should re-verify");
+        verified[0]
+            .proof_certificate()
+            .expect("expanded theorem should retain a surface certificate");
     }
 }

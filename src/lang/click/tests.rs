@@ -258,6 +258,9 @@ fn verifies_pure_theorem_definition() {
         "preserves_nonnegative"
     );
     assert_eq!(verified[0].proof_kind, ProofKind::Pure);
+    verified[0]
+        .proof_certificate()
+        .expect("default pure proof should commit a surface certificate");
 }
 
 #[test]
