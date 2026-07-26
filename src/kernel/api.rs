@@ -21,6 +21,9 @@ pub(crate) fn c_memory_load_is_unchanged(
     if memories_match_for_pointer_load(before, after, pointer) {
         return true;
     }
+    if memories_match_for_pointer_load_under_assumptions(before, after, pointer, assumptions) {
+        return true;
+    }
     // Predicate framing is deliberately bounded: use exact certified writes
     // and direct address cancellation, without invoking general alias search.
     if assumptions
@@ -61,16 +64,16 @@ pub(crate) fn c_memory_load_is_unchanged(
                     memory_matches_effect_summary_endpoint(effect_before, before, pointer);
                 let after_matches =
                     memory_matches_effect_summary_endpoint(effect_after, after, pointer);
-                let framed =
-                    assumptions.ranges_proven_disjoint_from_pointer(mutable_ranges, pointer);
-                before_matches && after_matches && framed
+                before_matches
+                    && after_matches
+                    && assumptions.ranges_proven_disjoint_from_pointer(mutable_ranges, pointer)
             }
             _ => false,
         })
     {
         return true;
     }
-    memories_match_for_pointer_load_under_assumptions(before, after, pointer, assumptions)
+    false
 }
 
 fn memory_materializes_atomic_load(

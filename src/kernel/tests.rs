@@ -3342,6 +3342,64 @@ fn unrelated_external_cell_store_preserves_memory_load_with_stack_temporary() {
 }
 
 #[test]
+fn exact_changed_cell_frame_precedes_abstract_effect_search() {
+    let queried = Pointer {
+        block: "arg-memory".into(),
+        offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(40_000)), 4),
+    };
+    let materialized = Pointer {
+        block: queried.block.clone(),
+        offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(40_001)), 4),
+    };
+    let before = CMemory::new().with_block("call-havoc:0", 0);
+    let after = before.clone().store(materialized.clone(), int32(7));
+    let assumptions = Assumptions::new().assume_proposition(Proposition::CResourceSeparate {
+        left: CResource::Memory(memory_range(queried.clone(), 0, 1)),
+        right: CResource::Memory(memory_range(materialized, 0, 1)),
+    });
+
+    assert!(c_memory_load_is_unchanged(
+        &before,
+        &after,
+        &queried,
+        &assumptions,
+    ));
+}
+
+#[test]
+fn exact_separation_resolves_contained_symbolic_ranges_without_general_search() {
+    let owner = Pointer {
+        block: "arg-memory".into(),
+        offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(41_000)), 4),
+    };
+    let data = Pointer {
+        block: owner.block.clone(),
+        offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(41_001)), 4),
+    };
+    let length = Bitvector32Term::Variable(Variable(41_002));
+    let owner_range = memory_range(owner.clone(), 0, 4);
+    let data_range = memory_range(data.clone(), 0, length.clone());
+    let assumptions = Assumptions::new()
+        .assume_proposition(Proposition::CResourceSeparate {
+            left: CResource::Memory(owner_range.clone()),
+            right: CResource::Memory(data_range.clone()),
+        })
+        .assume_proposition(Proposition::ConditionIs(
+            ConditionTerm::signed_less_equal(Bitvector32Term::Constant(2), length),
+            true,
+        ));
+    let owner_field = memory_range(owner.offset_by_int32_elements(2.into()), 0, 1);
+    let data_cell = memory_range(data, 0, 1);
+
+    assert!(
+        assumptions.memory_ranges_proven_disjoint_by_explicit_separation_for_memory_resolution(
+            &owner_field,
+            &data_cell,
+        )
+    );
+}
+
+#[test]
 fn equivalent_memory_load_order_facts_can_be_inconsistent() {
     let old_memory = CMemory::new();
     let stack_memory = CMemory::new()

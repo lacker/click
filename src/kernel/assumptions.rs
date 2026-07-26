@@ -4178,6 +4178,18 @@ impl Assumptions {
             return true;
         }
 
+        let pointer_range = CMemoryRange::new(
+            pointer.clone(),
+            Bitvector32Term::Constant(0),
+            Bitvector32Term::Constant(1),
+        );
+        if self.memory_ranges_proven_disjoint_by_explicit_separation_for_memory_resolution(
+            range,
+            &pointer_range,
+        ) {
+            return true;
+        }
+
         if let PointerOffsetTerm::Add(left, right) = &range.base.offset {
             let forward_offset = if self.decide(&ConditionTerm::pointer_offset_equal(
                 pointer.offset.clone(),
@@ -4236,11 +4248,7 @@ impl Assumptions {
                     && self.pointer_in_range(pointer, left_base, left_start, left_end)
         }) || self.proves_resource_separate(
             &CResource::Memory(range.clone()),
-            &CResource::Memory(CMemoryRange::new(
-                pointer.clone(),
-                Bitvector32Term::Constant(0),
-                Bitvector32Term::Constant(1),
-            )),
+            &CResource::Memory(pointer_range),
         )
     }
 
@@ -4544,18 +4552,64 @@ fn memory_range_contained_for_memory_resolution(
     parent: &CMemoryRange,
     assumptions: &Assumptions,
 ) -> bool {
-    memory_range_shallowly_contained(range, parent)
-        || pointers_proven_equal_for_memory_resolution(range.base(), parent.base(), assumptions)
-            && bitvector_terms_proven_equal_for_memory_resolution(
-                range.start(),
-                parent.start(),
-                assumptions,
-            )
-            && bitvector_terms_proven_equal_for_memory_resolution(
-                range.end(),
-                parent.end(),
-                assumptions,
-            )
+    if memory_range_shallowly_contained(range, parent) {
+        return true;
+    }
+
+    if affine_bitvector_difference_constant(range.end(), range.start()) == Some(1) {
+        let pointer = range.base().offset_by_int32_elements(range.start().clone());
+        if pointer_in_memory_range_for_memory_resolution(&pointer, parent, assumptions) {
+            return true;
+        }
+    }
+
+    if !pointers_proven_equal_for_memory_resolution(range.base(), parent.base(), assumptions) {
+        return false;
+    }
+    exact_less_equal_for_memory_resolution(parent.start(), range.start(), assumptions)
+        && exact_less_equal_for_memory_resolution(range.end(), parent.end(), assumptions)
+}
+
+fn exact_less_equal_for_memory_resolution(
+    left: &Bitvector32Term,
+    right: &Bitvector32Term,
+    assumptions: &Assumptions,
+) -> bool {
+    if left == right
+        || bitvector_terms_proven_equal_for_memory_resolution(left, right, assumptions)
+        || assumptions.exact_condition_value(&ConditionTerm::signed_less_equal(
+            left.clone(),
+            right.clone(),
+        )) == Some(true)
+        || assumptions.has_exact_order_path(left, right, false)
+    {
+        return true;
+    }
+    let Some(left_constant) = signed_bitvector_constant(left) else {
+        return false;
+    };
+    assumptions
+        .condition_facts
+        .iter()
+        .any(|(condition, value)| {
+            if !*value {
+                return false;
+            }
+            let (fact_left, fact_right) = match condition {
+                ConditionTerm::Bitvector32SignedLessEqual(fact_left, fact_right)
+                | ConditionTerm::Bitvector32SignedLessThan(fact_left, fact_right) => {
+                    (fact_left.as_ref(), fact_right.as_ref())
+                }
+                _ => return false,
+            };
+            signed_bitvector_constant(fact_left).is_some_and(|bound| left_constant <= bound)
+                && (fact_right == right
+                    || bitvector_terms_proven_equal_for_memory_resolution(
+                        fact_right,
+                        right,
+                        assumptions,
+                    ))
+        })
 }
 
 fn pointer_in_memory_range_shallow(pointer: &Pointer, range: &CMemoryRange) -> bool {

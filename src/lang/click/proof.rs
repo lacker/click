@@ -9151,6 +9151,7 @@ fn replay_linear_tactics(
             ProofTactic::StepUsing(premises)
             | ProofTactic::ApplyLoopSummaryUsing { premises, .. } => {
                 let all_pure_facts = requirement_pure_facts.clone();
+                let all_pure_assumptions = assumptions_from_propositions(&all_pure_facts);
                 let (tactic_name, prerequisite_policy, loop_step_policy) = match tactic {
                     ProofTactic::StepUsing(_) => (
                         "step using",
@@ -9222,11 +9223,10 @@ fn replay_linear_tactics(
                     let premise_is_available =
                         materialization_equivalent_available_fact(&premise, &all_pure_facts)
                             .is_some()
-                            || assumptions_from_propositions(&all_pure_facts)
+                            || all_pure_assumptions
                                 .derive_atomic_proposition(&premise)
                                 .or_else(|| {
-                                    assumptions_from_propositions(&all_pure_facts)
-                                        .derive_simp_atomic_proposition(&premise)
+                                    all_pure_assumptions.derive_simp_atomic_proposition(&premise)
                                 })
                                 .is_some();
                     if !premise_is_available {
