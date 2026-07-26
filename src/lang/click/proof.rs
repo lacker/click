@@ -8682,13 +8682,6 @@ fn replay_linear_tactics(
         let tactic_index = indexed_tactic.index;
         let source_index = indexed_tactic.source_index;
         let tactic = &indexed_tactic.tactic;
-        let _timing = TacticTiming::new(
-            claim_label,
-            tactic_index,
-            source_index,
-            tactic,
-            replay.frontier.next_statement_index,
-        );
         let deferred_post_execution = replay.ordered_finalization
             && replay.is_at_function_exit()
             && tactic_is_deferred_post_execution(tactic);
@@ -8720,6 +8713,13 @@ fn replay_linear_tactics(
                 None,
             );
         }
+        let _timing = TacticTiming::new(
+            claim_label,
+            tactic_index,
+            source_index,
+            tactic,
+            replay.frontier.next_statement_index,
+        );
         if let ProofTactic::Transport {
             source: surface_source,
             target: surface_target,
