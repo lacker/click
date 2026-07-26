@@ -7845,6 +7845,47 @@ fn record_surface_replay_tactic(
                 },
                 Some(statement_uses_memory_context),
             );
+            let post_state = match &evidence.transition.outcome {
+                CStatementOutcome::Normal(state) | CStatementOutcome::Return { state, .. } => {
+                    Some(state)
+                }
+                CStatementOutcome::UndefinedBehavior(_) | CStatementOutcome::RuntimeError(_) => {
+                    None
+                }
+            };
+            for transport in &evidence.transition.fact_transports {
+                if !transport.statement_local
+                    || !is_internal_snapshot_frame_witness(&transport.source)
+                {
+                    continue;
+                }
+                let surface = replay
+                    .surface_propositions
+                    .surface(&transport.target)
+                    .ok()
+                    .cloned()
+                    .or_else(|| {
+                        post_state.and_then(|state| {
+                            synthesize_surface_proposition(
+                                &transport.target,
+                                parameters,
+                                arguments,
+                                state,
+                            )
+                        })
+                    });
+                let Some(surface) = surface else {
+                    replay.surface_replay.block(format!(
+                        "statement-local frame witness has no checked Click spelling: {:?}",
+                        transport.target
+                    ));
+                    continue;
+                };
+                replay.surface_replay.push(ProofTactic::Have(ProofHave {
+                    proposition: surface,
+                    proof: Proof::Script(vec![ProofTactic::Normalize]),
+                }));
+            }
         }
         ProofTactic::CertifiedLoopSummaryReplay(evidence) => {
             let exact_premises = theorem_implication_premises(&evidence.transition.theorem)
