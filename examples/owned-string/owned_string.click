@@ -165,7 +165,7 @@ int32 owned_string_set(
     }
     have terminated_at(owner->data, owner->len) by {
         unfold(terminated_at);
-        simp();
+        assumption();
     }
     have load_int32_pointer((owner + 2))[load_int32(owner)] == 0 by {
         assumption();
