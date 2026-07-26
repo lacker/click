@@ -985,7 +985,19 @@ pub(super) fn evaluate_c_memory_load_paths(
             base: pointer.clone(),
             bytes: Bitvector32Term::Constant(value_type.byte_width()),
         };
-        if add_proof_obligation(&mut obligations, assumptions, proposition).is_none() {
+        if assumptions.should_defer_non_exact_loadability_obligations() {
+            if !assumptions.proves_memory_loadable_for_memory_resolution(
+                &memory,
+                &pointer,
+                &Bitvector32Term::Constant(value_type.byte_width()),
+            ) && !assumptions.proves_exact(&proposition)
+                && !obligations
+                    .iter()
+                    .any(|obligation| obligation.proposition() == &proposition)
+            {
+                obligations.push(ProofObligation::new(proposition));
+            }
+        } else if add_proof_obligation(&mut obligations, assumptions, proposition).is_none() {
             return Vec::new();
         }
     }

@@ -377,6 +377,11 @@ fn memory_snapshots_match_for_resolution(
     {
         return true;
     }
+    if assumptions
+        .memory_snapshots_directly_proven_equal_for_memory_resolution(left, right, pointer)
+    {
+        return true;
+    }
     if depth > MEMORY_RESOLUTION_ALIAS_DEPTH_LIMIT || pointer.block.starts_with("local:") {
         return false;
     }
@@ -4077,6 +4082,26 @@ pub(super) fn add_required_proof_obligation_with_context(
     });
 }
 
+pub(super) fn add_required_proof_obligation_without_search(
+    obligations: &mut Vec<ProofObligation>,
+    assumptions: &Assumptions,
+    proposition: Proposition,
+    context: Option<&str>,
+) {
+    if assumptions.proves_exact(&proposition)
+        || obligations
+            .iter()
+            .any(|obligation| obligation.proposition == proposition)
+    {
+        return;
+    }
+    let obligation = ProofObligation::new(proposition);
+    obligations.push(match context {
+        Some(context) => obligation.with_context(context),
+        None => obligation,
+    });
+}
+
 pub(super) fn append_required_proof_obligations(
     obligations: &mut Vec<ProofObligation>,
     assumptions: &Assumptions,
@@ -4084,6 +4109,21 @@ pub(super) fn append_required_proof_obligations(
 ) {
     for obligation in new_obligations {
         add_required_proof_obligation_with_context(
+            obligations,
+            assumptions,
+            obligation.proposition().clone(),
+            obligation.context(),
+        );
+    }
+}
+
+pub(super) fn append_required_proof_obligations_without_search(
+    obligations: &mut Vec<ProofObligation>,
+    assumptions: &Assumptions,
+    new_obligations: &[ProofObligation],
+) {
+    for obligation in new_obligations {
+        add_required_proof_obligation_without_search(
             obligations,
             assumptions,
             obligation.proposition().clone(),

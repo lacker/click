@@ -176,9 +176,12 @@ pub(super) fn lower_spec_proposition_at_state_with_loop_entry(
                 proposition: Proposition::ForAll {
                     var: *variable,
                     sort: Sort::CInt32,
-                    body: Box::new(path.proposition),
+                    body: Box::new(wrap_path_context(path.proposition, &path.facts, &[])),
                 },
-                facts: path.facts,
+                // Path facts may mention the bound variable. They are guards
+                // on this quantified path, not facts in the surrounding
+                // context.
+                facts: Vec::new(),
                 obligations: path
                     .obligations
                     .into_iter()
@@ -186,7 +189,7 @@ pub(super) fn lower_spec_proposition_at_state_with_loop_entry(
                         obligation.map_proposition(|proposition| Proposition::ForAll {
                             var: *variable,
                             sort: Sort::CInt32,
-                            body: Box::new(proposition),
+                            body: Box::new(wrap_path_context(proposition, &path.facts, &[])),
                         })
                     })
                     .collect(),

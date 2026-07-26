@@ -2240,7 +2240,8 @@ impl CMemory {
         let mut memory = self.clone();
         memory.cells.retain(|cell_pointer, _| {
             !pointers_proven_distinct_for_memory_resolution(cell_pointer, pointer, assumptions)
-                && !pointers_proven_distinct(cell_pointer, pointer, assumptions)
+                && (assumptions.should_defer_non_exact_condition_reasoning()
+                    || !pointers_proven_distinct(cell_pointer, pointer, assumptions))
         });
         memory
     }
@@ -2278,8 +2279,19 @@ impl CMemory {
             .iter()
             .find(|(cell_pointer, _)| {
                 *cell_pointer != pointer
-                    && !pointers_proven_distinct(cell_pointer, pointer, assumptions)
-                    && !pointers_proven_equal(cell_pointer, pointer, assumptions)
+                    && !pointers_proven_distinct_for_memory_resolution(
+                        cell_pointer,
+                        pointer,
+                        assumptions,
+                    )
+                    && !pointers_proven_equal_for_memory_resolution(
+                        cell_pointer,
+                        pointer,
+                        assumptions,
+                    )
+                    && (assumptions.should_defer_non_exact_condition_reasoning()
+                        || !pointers_proven_distinct(cell_pointer, pointer, assumptions)
+                            && !pointers_proven_equal(cell_pointer, pointer, assumptions))
             })
             .map(|(pointer, value)| (pointer.clone(), value.clone()))
     }

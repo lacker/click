@@ -6146,7 +6146,16 @@ pub(super) fn evaluate_contract_memory_load_from_memory(
             {
                 return symbolic_contract_memory_load(memory, pointer, value_type);
             }
-            if assumptions.proves(&required) {
+            let is_loadable = if assumptions.should_defer_non_exact_loadability_obligations() {
+                assumptions.proves_memory_loadable_for_memory_resolution(
+                    memory,
+                    &pointer,
+                    &Bitvector32Term::Constant(value_type.byte_width()),
+                )
+            } else {
+                assumptions.proves(&required)
+            };
+            if is_loadable {
                 return symbolic_contract_memory_load(memory, pointer, value_type);
             }
             let pure_facts = assumptions.pure_facts();

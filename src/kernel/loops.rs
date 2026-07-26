@@ -515,13 +515,58 @@ pub(super) fn collect_invariant_check_obligations(
     assumptions: &Assumptions,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<ProofObligation>> {
+    collect_invariant_check_obligations_with_mode(
+        state,
+        loop_entry_state,
+        invariant_checks,
+        phase,
+        assumptions,
+        budget,
+        false,
+    )
+}
+
+pub(super) fn collect_invariant_check_obligations_without_search(
+    state: &CState,
+    loop_entry_state: &CState,
+    invariant_checks: &[CLoopInvariantCheck],
+    phase: InvariantPhase,
+    assumptions: &Assumptions,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<ProofObligation>> {
+    collect_invariant_check_obligations_with_mode(
+        state,
+        loop_entry_state,
+        invariant_checks,
+        phase,
+        assumptions,
+        budget,
+        true,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn collect_invariant_check_obligations_with_mode(
+    state: &CState,
+    loop_entry_state: &CState,
+    invariant_checks: &[CLoopInvariantCheck],
+    phase: InvariantPhase,
+    assumptions: &Assumptions,
+    budget: &mut ExecutionBudget,
+    without_search: bool,
+) -> ExecutionResult<Vec<ProofObligation>> {
     let mut contexts = vec![(Vec::new(), Vec::new())];
     let mut all_obligations = Vec::new();
     for check in invariant_checks {
         let mut next_contexts = Vec::new();
         for (facts, obligations) in contexts {
-            let effective_assumptions =
-                assumptions_with_path_context(assumptions, &facts, &obligations);
+            let effective_assumptions = if without_search {
+                assumptions_with_path_context(assumptions, &facts, &obligations)
+                    .defer_non_exact_condition_reasoning()
+                    .defer_non_exact_loadability_obligations()
+            } else {
+                assumptions_with_path_context(assumptions, &facts, &obligations)
+            };
             for path in lower_spec_proposition_at_state_with_loop_entry(
                 state,
                 check.proposition(),
@@ -534,7 +579,11 @@ pub(super) fn collect_invariant_check_obligations(
                     &obligations,
                     &path.facts,
                     &path.obligations,
-                    assumptions,
+                    if without_search {
+                        &effective_assumptions
+                    } else {
+                        assumptions
+                    },
                 ) else {
                     continue;
                 };
@@ -542,13 +591,31 @@ pub(super) fn collect_invariant_check_obligations(
                 let obligation_assumptions =
                     assumptions_with_path_context(assumptions, &facts, &obligations);
                 let proposition = wrap_path_context(path.proposition, &facts, &obligations);
-                add_required_proof_obligation_with_context(
-                    &mut obligations,
-                    &obligation_assumptions,
-                    proposition,
-                    invariant_context(check, phase),
-                );
-                append_required_proof_obligations(&mut all_obligations, assumptions, &obligations);
+                if without_search {
+                    add_required_proof_obligation_without_search(
+                        &mut obligations,
+                        &obligation_assumptions,
+                        proposition,
+                        invariant_context(check, phase),
+                    );
+                    append_required_proof_obligations_without_search(
+                        &mut all_obligations,
+                        assumptions,
+                        &obligations,
+                    );
+                } else {
+                    add_required_proof_obligation_with_context(
+                        &mut obligations,
+                        &obligation_assumptions,
+                        proposition,
+                        invariant_context(check, phase),
+                    );
+                    append_required_proof_obligations(
+                        &mut all_obligations,
+                        assumptions,
+                        &obligations,
+                    );
+                }
                 next_contexts.push((facts, obligations));
             }
         }

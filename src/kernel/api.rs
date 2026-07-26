@@ -935,15 +935,12 @@ pub fn c_loop_invariants_hold_at_back_edge(
     invariant_checks: &[CLoopInvariantCheck],
     assumptions: &Assumptions,
 ) -> Result<(), String> {
-    let obligations = collect_invariant_check_obligations(
+    let obligations = c_loop_invariant_obligations_at_back_edge(
         state,
         iteration_entry_state,
         invariant_checks,
-        InvariantPhase::Preservation,
         assumptions,
-        &mut ExecutionBudget::default(),
-    )
-    .map_err(|error| format!("could not lower back-edge invariants: {error:?}"))?;
+    )?;
     if let Some(obligation) = obligations.first() {
         return Err(format!(
             "missing invariant fact{}: {:?}",
@@ -955,6 +952,23 @@ pub fn c_loop_invariants_hold_at_back_edge(
         ));
     }
     Ok(())
+}
+
+pub fn c_loop_invariant_obligations_at_back_edge(
+    state: &CState,
+    iteration_entry_state: &CState,
+    invariant_checks: &[CLoopInvariantCheck],
+    assumptions: &Assumptions,
+) -> Result<Vec<ProofObligation>, String> {
+    collect_invariant_check_obligations_without_search(
+        state,
+        iteration_entry_state,
+        invariant_checks,
+        InvariantPhase::Preservation,
+        assumptions,
+        &mut ExecutionBudget::default(),
+    )
+    .map_err(|error| format!("could not lower back-edge invariants: {error:?}"))
 }
 
 pub fn c_loop_effects_hold_at_back_edge(

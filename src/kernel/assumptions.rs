@@ -31,6 +31,68 @@ impl Drop for MemoryLoadEqualityDepthGuard {
     }
 }
 
+thread_local! {
+    static SIMP_REASONING_FUEL: Cell<Option<usize>> = const { Cell::new(None) };
+    static SIMP_FACT_REASONING_DEPTH: Cell<usize> = const { Cell::new(0) };
+}
+
+const DEFAULT_SIMP_REASONING_FUEL: usize = 300;
+const MAX_SIMP_FACT_REASONING_DEPTH: usize = 8;
+
+struct SimpReasoningFuelGuard {
+    previous: Option<usize>,
+}
+
+impl SimpReasoningFuelGuard {
+    fn enter() -> Self {
+        SIMP_REASONING_FUEL.with(|fuel| {
+            let previous = fuel.get();
+            if previous.is_none() {
+                fuel.set(Some(DEFAULT_SIMP_REASONING_FUEL));
+            }
+            Self { previous }
+        })
+    }
+}
+
+impl Drop for SimpReasoningFuelGuard {
+    fn drop(&mut self) {
+        SIMP_REASONING_FUEL.with(|fuel| fuel.set(self.previous));
+    }
+}
+
+fn consume_simp_reasoning_fuel() -> bool {
+    SIMP_REASONING_FUEL.with(|fuel| match fuel.get() {
+        None => true,
+        Some(0) => false,
+        Some(remaining) => {
+            fuel.set(Some(remaining - 1));
+            true
+        }
+    })
+}
+
+struct SimpFactReasoningDepthGuard;
+
+impl SimpFactReasoningDepthGuard {
+    fn enter() -> Option<Self> {
+        SIMP_FACT_REASONING_DEPTH.with(|depth| {
+            let current = depth.get();
+            if current >= MAX_SIMP_FACT_REASONING_DEPTH {
+                return None;
+            }
+            depth.set(current + 1);
+            Some(Self)
+        })
+    }
+}
+
+impl Drop for SimpFactReasoningDepthGuard {
+    fn drop(&mut self) {
+        SIMP_FACT_REASONING_DEPTH.with(|depth| depth.set(depth.get() - 1));
+    }
+}
+
 fn bitvector_terms_equal_after_exact_materialization(
     left: &Bitvector32Term,
     right: &Bitvector32Term,
@@ -111,7 +173,7 @@ impl Assumptions {
         self
     }
 
-    pub(super) fn should_defer_non_exact_loadability_obligations(&self) -> bool {
+    pub(crate) fn should_defer_non_exact_loadability_obligations(&self) -> bool {
         self.defer_non_exact_loadability_obligations
     }
 
@@ -220,6 +282,13 @@ impl Assumptions {
     }
 
     pub(super) fn decide(&self, condition: &ConditionTerm) -> Option<bool> {
+        if !consume_simp_reasoning_fuel() {
+            return None;
+        }
+        self.decide_inner(condition)
+    }
+
+    fn decide_inner(&self, condition: &ConditionTerm) -> Option<bool> {
         match condition {
             ConditionTerm::Constant(value) => Some(*value),
             _ => {
@@ -1057,6 +1126,23 @@ impl Assumptions {
                 if right == signed_int_max_term() || left == signed_int_min_term() {
                     return Some(true);
                 }
+                if let Some(base) = left.add_const_base(1)
+                    && self.condition_facts.iter().any(|(condition, value)| {
+                        let (ConditionTerm::Bitvector32SignedLessThan(fact_left, fact_right), true) =
+                            (condition, value)
+                        else {
+                            return false;
+                        };
+                        fact_left.as_ref() == &base
+                            && bitvector_terms_proven_equal_for_memory_resolution(
+                                fact_right,
+                                &right,
+                                self,
+                            )
+                    })
+                {
+                    return Some(true);
+                }
                 if self.has_order_path(&left, &right, false)
                     || left.add_const_base(1).is_some_and(|base| {
                         self.has_condition_fact(
@@ -1163,6 +1249,19 @@ impl Assumptions {
                     return Some(result);
                 }
                 if right == signed_int_min_term() || left == signed_int_max_term() {
+                    return Some(true);
+                }
+                if right == Bitvector32Term::Constant(0)
+                    && let Some(base) = left.add_const_base(1)
+                    && (self.exact_condition_value(&ConditionTerm::signed_greater_equal(
+                        base.clone(),
+                        Bitvector32Term::Constant(0),
+                    )) == Some(true)
+                        || self.exact_condition_value(&ConditionTerm::signed_less_equal(
+                            Bitvector32Term::Constant(0),
+                            base,
+                        )) == Some(true))
+                {
                     return Some(true);
                 }
                 if self.has_order_path(&right, &left, false)
@@ -1279,16 +1378,347 @@ impl Assumptions {
         false
     }
 
+    fn has_order_path_for_memory_resolution(
+        &self,
+        left: &Bitvector32Term,
+        right: &Bitvector32Term,
+        require_strict: bool,
+    ) -> bool {
+        let order_facts = self.condition_order_facts();
+        let mut stack = vec![(left.clone(), false)];
+        let mut seen = BTreeSet::new();
+        while let Some((current, strict_so_far)) = stack.pop() {
+            if !seen.insert((current.clone(), strict_so_far)) {
+                continue;
+            }
+            if bitvector_terms_proven_equal_for_memory_resolution(&current, right, self)
+                && (!require_strict || strict_so_far)
+            {
+                return true;
+            }
+            for (edge_left, edge_right, edge_strict) in &order_facts {
+                if bitvector_terms_proven_equal_for_memory_resolution(&current, edge_left, self) {
+                    stack.push((edge_right.clone(), strict_so_far || *edge_strict));
+                }
+            }
+        }
+        false
+    }
+
     pub(crate) fn decide_condition_for_simp(&self, condition: &ConditionTerm) -> Option<bool> {
-        if let Some(value) = self.decide(condition) {
+        if let Some(value) = self.exact_condition_value(condition) {
             return Some(value);
         }
 
-        // This stronger normalization is tactic-local. Using it in `decide`
-        // would change symbolic execution paths and loop certificates.
-        let (left, right, strict) = condition_as_order_fact(condition, true)?;
-        self.has_order_path_for_simp(&left, &right, strict)
-            .then_some(true)
+        match condition {
+            ConditionTerm::Constant(value) => Some(*value),
+            ConditionTerm::PointerEqual(left, right) if left == right => Some(true),
+            ConditionTerm::PointerEqual(left, right) if left.blocks_proven_distinct(right) => {
+                Some(false)
+            }
+            ConditionTerm::PointerOffsetEqual(left, right) => {
+                if pointer_offsets_proven_equal_for_memory_resolution(left, right, self) {
+                    Some(true)
+                } else {
+                    match (left.as_ref().as_const(), right.as_ref().as_const()) {
+                        (Some(left), Some(right)) => Some(left == right),
+                        _ => None,
+                    }
+                }
+            }
+            ConditionTerm::Bitvector32Equal(left, right) => {
+                if bitvector_terms_proven_equal_for_memory_resolution(left, right, self) {
+                    Some(true)
+                } else if self.proves_condition_from_facts_for_simp(condition, true) {
+                    Some(true)
+                } else if bitvector_same_base_nonzero_const_offset(left, right) {
+                    Some(false)
+                } else {
+                    None
+                }
+            }
+            ConditionTerm::Bitvector32SignedGreaterEqual(left, right)
+                if right.as_ref() == &Bitvector32Term::Constant(0)
+                    && left.as_ref().add_const_base(1).is_some_and(|base| {
+                        self.exact_condition_value(&ConditionTerm::signed_greater_equal(
+                            base.clone(),
+                            Bitvector32Term::Constant(0),
+                        )) == Some(true)
+                            || self.exact_condition_value(&ConditionTerm::signed_less_equal(
+                                Bitvector32Term::Constant(0),
+                                base,
+                            )) == Some(true)
+                    }) =>
+            {
+                Some(true)
+            }
+            ConditionTerm::Bitvector32SignedLessEqual(left, right)
+                if left.as_ref().add_const_base(1).is_some_and(|base| {
+                    self.exact_condition_value(&ConditionTerm::signed_less_than(
+                        base,
+                        right.as_ref().clone(),
+                    )) == Some(true)
+                }) =>
+            {
+                Some(true)
+            }
+            ConditionTerm::Bitvector32SignedLessThan(left, right)
+                if self.exact_condition_value(&ConditionTerm::signed_less_than(
+                    left.as_ref().clone(),
+                    Bitvector32Term::Add(
+                        Box::new(right.as_ref().clone()),
+                        Box::new(Bitvector32Term::Constant(1)),
+                    ),
+                )) == Some(true)
+                    && self.has_exact_bitvector_inequality_after_cancellation(left, right) =>
+            {
+                Some(true)
+            }
+            _ => {
+                if self.proves_condition_from_facts_for_simp(condition, true) {
+                    return Some(true);
+                }
+                if self.proves_condition_from_facts_for_simp(condition, false) {
+                    return Some(false);
+                }
+                // This stronger normalization is tactic-local. Keep its atomic
+                // checks structural: calling the general condition solver here
+                // can recurse through fact transport and memory alias solving.
+                if let Some((left, right, strict)) = condition_as_order_fact(condition, true)
+                    && self.has_order_path_for_simp(&left, &right, strict)
+                {
+                    return Some(true);
+                }
+                if let Some((left, right, strict)) = condition_as_order_fact(condition, false)
+                    && self.has_order_path_for_simp(&left, &right, strict)
+                {
+                    return Some(false);
+                }
+                if condition_as_order_fact(condition, true).is_some() {
+                    Self::decide_intrinsically(condition)
+                } else {
+                    self.decide(condition)
+                }
+            }
+        }
+    }
+
+    fn has_exact_bitvector_inequality_after_cancellation(
+        &self,
+        left: &Bitvector32Term,
+        right: &Bitvector32Term,
+    ) -> bool {
+        self.exact_condition_value(&ConditionTerm::equal(left.clone(), right.clone()))
+            == Some(false)
+            || self.condition_facts.iter().any(|(condition, value)| {
+                if *value {
+                    return false;
+                }
+                let ConditionTerm::Bitvector32Equal(fact_left, fact_right) = condition else {
+                    return false;
+                };
+                let Some((fact_left, fact_right)) =
+                    bitvector_equality_after_additive_cancellation(fact_left, fact_right)
+                else {
+                    return false;
+                };
+                (&fact_left == left && &fact_right == right)
+                    || (&fact_left == right && &fact_right == left)
+            })
+    }
+
+    fn decide_condition_for_simp_without_prop_facts(
+        &self,
+        condition: &ConditionTerm,
+    ) -> Option<bool> {
+        if let Some(value) = self.exact_condition_value(condition) {
+            return Some(value);
+        }
+        if let ConditionTerm::Constant(value) = condition {
+            return Some(*value);
+        }
+        if let ConditionTerm::Bitvector32SignedLessThan(left, right) = condition
+            && self.exact_condition_value(&ConditionTerm::signed_less_than(
+                left.as_ref().clone(),
+                Bitvector32Term::Add(
+                    Box::new(right.as_ref().clone()),
+                    Box::new(Bitvector32Term::Constant(1)),
+                ),
+            )) == Some(true)
+            && self.has_exact_bitvector_inequality_after_cancellation(left, right)
+        {
+            return Some(true);
+        }
+        if let Some((left, right, strict)) = condition_as_order_fact(condition, true)
+            && self.has_order_path_for_simp(&left, &right, strict)
+        {
+            return Some(true);
+        }
+        if let Some((left, right, strict)) = condition_as_order_fact(condition, false)
+            && self.has_order_path_for_simp(&left, &right, strict)
+        {
+            return Some(false);
+        }
+        Self::decide_intrinsically(condition)
+    }
+
+    fn proves_condition_from_facts_for_simp(&self, condition: &ConditionTerm, value: bool) -> bool {
+        let Some(_depth) = SimpFactReasoningDepthGuard::enter() else {
+            return false;
+        };
+        self.condition_facts.iter().any(|(fact, fact_value)| {
+            *fact_value == value && self.condition_matches_for_simp(fact, condition)
+        }) || self.prop_facts.iter().any(|proposition| {
+            self.proposition_proves_condition_for_simp(proposition, condition, value)
+        })
+    }
+
+    fn proposition_proves_condition_for_simp(
+        &self,
+        proposition: &Proposition,
+        condition: &ConditionTerm,
+        value: bool,
+    ) -> bool {
+        match proposition {
+            Proposition::ConditionIs(fact, fact_value) => {
+                *fact_value == value && self.condition_matches_for_simp(fact, condition)
+            }
+            Proposition::And(left, right) => {
+                self.proposition_proves_condition_for_simp(left, condition, value)
+                    || self.proposition_proves_condition_for_simp(right, condition, value)
+            }
+            Proposition::Implies(left, right) => {
+                self.proves_proposition_for_simp_without_search(left)
+                    && self.proposition_proves_condition_for_simp(right, condition, value)
+            }
+            Proposition::ForAll { body, .. } => {
+                self.proposition_proves_condition_for_simp(body, condition, value)
+                    || self
+                        .forall_instantiations_for_condition(proposition, condition)
+                        .iter()
+                        .any(|instance| {
+                            self.proposition_proves_condition_for_simp(instance, condition, value)
+                        })
+            }
+            _ => false,
+        }
+    }
+
+    fn proves_proposition_for_simp_without_search(&self, proposition: &Proposition) -> bool {
+        if solve_builtin_prop(proposition) {
+            return true;
+        }
+        match proposition {
+            Proposition::ConditionIs(condition, value) => {
+                self.decide_condition_for_simp_without_prop_facts(condition) == Some(*value)
+            }
+            Proposition::And(left, right) => {
+                self.proves_proposition_for_simp_without_search(left)
+                    && self.proves_proposition_for_simp_without_search(right)
+            }
+            Proposition::Not(body) => match body.as_ref() {
+                Proposition::ConditionIs(condition, value) => {
+                    self.decide_condition_for_simp_without_prop_facts(condition) == Some(!*value)
+                }
+                _ => self.prop_facts.contains(proposition),
+            },
+            _ => self.proves_exact(proposition),
+        }
+    }
+
+    fn condition_matches_for_simp(&self, fact: &ConditionTerm, target: &ConditionTerm) -> bool {
+        if fact == target {
+            return true;
+        }
+        match (fact, target) {
+            (
+                ConditionTerm::Bitvector32Equal(fact_left, fact_right),
+                ConditionTerm::Bitvector32Equal(target_left, target_right),
+            ) => {
+                bitvector_terms_proven_equal_for_memory_resolution(fact_left, target_left, self)
+                    && bitvector_terms_proven_equal_for_memory_resolution(
+                        fact_right,
+                        target_right,
+                        self,
+                    )
+                    || bitvector_terms_proven_equal_for_memory_resolution(
+                        fact_left,
+                        target_right,
+                        self,
+                    ) && bitvector_terms_proven_equal_for_memory_resolution(
+                        fact_right,
+                        target_left,
+                        self,
+                    )
+            }
+            (
+                ConditionTerm::PointerOffsetEqual(fact_left, fact_right),
+                ConditionTerm::PointerOffsetEqual(target_left, target_right),
+            ) => {
+                pointer_offsets_proven_equal_for_memory_resolution(fact_left, target_left, self)
+                    && pointer_offsets_proven_equal_for_memory_resolution(
+                        fact_right,
+                        target_right,
+                        self,
+                    )
+                    || pointer_offsets_proven_equal_for_memory_resolution(
+                        fact_left,
+                        target_right,
+                        self,
+                    ) && pointer_offsets_proven_equal_for_memory_resolution(
+                        fact_right,
+                        target_left,
+                        self,
+                    )
+            }
+            (
+                ConditionTerm::Bitvector32SignedLessThan(fact_left, fact_right),
+                ConditionTerm::Bitvector32SignedLessThan(target_left, target_right),
+            )
+            | (
+                ConditionTerm::Bitvector32SignedLessEqual(fact_left, fact_right),
+                ConditionTerm::Bitvector32SignedLessEqual(target_left, target_right),
+            )
+            | (
+                ConditionTerm::Bitvector32SignedGreaterThan(fact_left, fact_right),
+                ConditionTerm::Bitvector32SignedGreaterThan(target_left, target_right),
+            )
+            | (
+                ConditionTerm::Bitvector32SignedGreaterEqual(fact_left, fact_right),
+                ConditionTerm::Bitvector32SignedGreaterEqual(target_left, target_right),
+            ) => {
+                bitvector_terms_proven_equal_for_memory_resolution(fact_left, target_left, self)
+                    && bitvector_terms_proven_equal_for_memory_resolution(
+                        fact_right,
+                        target_right,
+                        self,
+                    )
+            }
+            (
+                ConditionTerm::Bitvector32SignedLessThan(fact_left, fact_right),
+                ConditionTerm::Bitvector32SignedGreaterThan(target_left, target_right),
+            )
+            | (
+                ConditionTerm::Bitvector32SignedGreaterThan(fact_left, fact_right),
+                ConditionTerm::Bitvector32SignedLessThan(target_left, target_right),
+            )
+            | (
+                ConditionTerm::Bitvector32SignedLessEqual(fact_left, fact_right),
+                ConditionTerm::Bitvector32SignedGreaterEqual(target_left, target_right),
+            )
+            | (
+                ConditionTerm::Bitvector32SignedGreaterEqual(fact_left, fact_right),
+                ConditionTerm::Bitvector32SignedLessEqual(target_left, target_right),
+            ) => {
+                bitvector_terms_proven_equal_for_memory_resolution(fact_left, target_right, self)
+                    && bitvector_terms_proven_equal_for_memory_resolution(
+                        fact_right,
+                        target_left,
+                        self,
+                    )
+            }
+            _ => false,
+        }
     }
 
     fn has_order_path_for_simp(
@@ -1659,24 +2089,39 @@ impl Assumptions {
         left: &Bitvector32Term,
         right: &Bitvector32Term,
     ) -> bool {
+        let bound_is_above = |lower: &Bitvector32Term| {
+            if !self.should_defer_non_exact_condition_reasoning() {
+                return self.decide(&ConditionTerm::signed_greater_than(
+                    lower.clone(),
+                    right.clone(),
+                )) == Some(true);
+            }
+            match (
+                signed_bitvector_constant(lower),
+                signed_bitvector_constant(right),
+            ) {
+                (Some(lower), Some(right)) => lower > right,
+                _ => {
+                    self.exact_condition_value(&ConditionTerm::signed_greater_than(
+                        lower.clone(),
+                        right.clone(),
+                    )) == Some(true)
+                        || self.has_order_path(right, lower, true)
+                }
+            }
+        };
         self.condition_facts
             .iter()
             .any(|(fact, value)| match (fact, value) {
                 (ConditionTerm::Bitvector32SignedGreaterEqual(fact_left, lower), true)
                     if self.bitvector_terms_equal_for_transport(fact_left, left) =>
                 {
-                    self.decide(&ConditionTerm::signed_greater_than(
-                        lower.as_ref().clone(),
-                        right.clone(),
-                    )) == Some(true)
+                    bound_is_above(lower)
                 }
                 (ConditionTerm::Bitvector32SignedLessEqual(lower, fact_left), true)
                     if self.bitvector_terms_equal_for_transport(fact_left, left) =>
                 {
-                    self.decide(&ConditionTerm::signed_greater_than(
-                        lower.as_ref().clone(),
-                        right.clone(),
-                    )) == Some(true)
+                    bound_is_above(lower)
                 }
                 _ => false,
             })
@@ -1931,6 +2376,42 @@ impl Assumptions {
                     || memory_matches_effect_summary_endpoint(before, right, pointer)
                         && memory_matches_effect_summary_endpoint(after, left, pointer);
                 matches && self.ranges_proven_disjoint_from_pointer(mutable_ranges, pointer)
+            }
+            _ => false,
+        })
+    }
+
+    pub(super) fn memory_snapshots_directly_proven_equal_for_memory_resolution(
+        &self,
+        left: &CMemory,
+        right: &CMemory,
+        pointer: &Pointer,
+    ) -> bool {
+        self.prop_facts.iter().any(|proposition| match proposition {
+            Proposition::CMemoryMutatesOnly {
+                before,
+                after,
+                pointers,
+            } => {
+                let matches = memories_match_for_pointer_load(before, left, pointer)
+                    && memories_match_for_pointer_load(after, right, pointer)
+                    || memories_match_for_pointer_load(before, right, pointer)
+                        && memories_match_for_pointer_load(after, left, pointer);
+                matches
+                    && pointers.iter().all(|write| {
+                        pointers_proven_distinct_for_memory_resolution(write, pointer, self)
+                    })
+            }
+            Proposition::CMemoryEffectSummary {
+                before,
+                after,
+                mutable_ranges,
+            } => {
+                let matches = memory_matches_effect_summary_endpoint(before, left, pointer)
+                    && memory_matches_effect_summary_endpoint(after, right, pointer)
+                    || memory_matches_effect_summary_endpoint(before, right, pointer)
+                        && memory_matches_effect_summary_endpoint(after, left, pointer);
+                matches && self.ranges_directly_disjoint_from_pointer(mutable_ranges, pointer)
             }
             _ => false,
         })
@@ -2251,6 +2732,7 @@ impl Assumptions {
         &self,
         proposition: &Proposition,
     ) -> Option<PropositionDerivation> {
+        let _fuel = SimpReasoningFuelGuard::enter();
         self.derive_proposition_using(proposition, true)
     }
 
@@ -2337,21 +2819,15 @@ impl Assumptions {
         proposition: &Proposition,
         for_simp: bool,
     ) -> Option<PropositionDerivation> {
+        if !consume_simp_reasoning_fuel() {
+            return None;
+        }
         if solve_builtin_prop(proposition) {
             return Some(proposition_derivation(
                 proposition,
                 PropositionDerivationRule::ContextFree,
             ));
         }
-        if self.is_inconsistent() {
-            return Some(proposition_derivation(
-                proposition,
-                PropositionDerivationRule::Explosion {
-                    premises: self.clone(),
-                },
-            ));
-        }
-
         let direct = match proposition {
             Proposition::And(left, right) => self
                 .derive_proposition_using(left, for_simp)
@@ -2398,17 +2874,23 @@ impl Assumptions {
                     })
             }
             Proposition::ForAll { body, .. } => self
-                .derive_finite_forall(proposition, for_simp)
-                .or_else(|| {
-                    self.derive_proposition_using(body, for_simp)
-                        .map(|proof| PropositionDerivationRule::ForAllBody(Box::new(proof)))
-                }),
+                .derive_proposition_using(body, for_simp)
+                .map(|proof| PropositionDerivationRule::ForAllBody(Box::new(proof)))
+                .or_else(|| self.derive_finite_forall(proposition, for_simp)),
             _ => self
                 .atomic_derivation_premises(proposition, for_simp)
                 .map(|premises| PropositionDerivationRule::ContextualAtomic { premises, for_simp }),
         };
         if let Some(rule) = direct {
             return Some(proposition_derivation(proposition, rule));
+        }
+        if self.is_inconsistent() {
+            return Some(proposition_derivation(
+                proposition,
+                PropositionDerivationRule::Explosion {
+                    premises: self.clone(),
+                },
+            ));
         }
         if let Some(rule) = self.derive_by_finite_context_split(proposition, for_simp) {
             return Some(proposition_derivation(proposition, rule));
@@ -2481,11 +2963,19 @@ impl Assumptions {
     }
 
     fn proves_atomic_for_derivation(&self, proposition: &Proposition, for_simp: bool) -> bool {
-        if for_simp
-            && let Proposition::ConditionIs(condition, value) = proposition
-            && self.decide_condition_for_simp(condition) == Some(*value)
-        {
-            return true;
+        if for_simp {
+            return match proposition {
+                Proposition::ConditionIs(condition, value) => {
+                    self.decide_condition_for_simp(condition) == Some(*value)
+                }
+                Proposition::Not(body) => match body.as_ref() {
+                    Proposition::ConditionIs(condition, value) => {
+                        self.decide_condition_for_simp(condition) == Some(!*value)
+                    }
+                    _ => self.prop_facts.contains(proposition),
+                },
+                _ => self.proves_atomic_without_search(proposition),
+            };
         }
         self.proves_atomic_without_search(proposition)
     }
@@ -3426,6 +3916,52 @@ impl Assumptions {
 
             memory_range_still_available(range_memory, memory, range_base)
                 && self.proves_loadable_region_from_range(range_base, range_bytes, base, bytes)
+        })
+    }
+
+    pub(crate) fn proves_memory_loadable_for_memory_resolution(
+        &self,
+        memory: &CMemory,
+        base: &Pointer,
+        bytes: &Bitvector32Term,
+    ) -> bool {
+        if bytes
+            .as_const()
+            .is_some_and(|bytes| memory.access_in_bounds(base, bytes))
+        {
+            return true;
+        }
+        self.prop_facts.iter().any(|proposition| {
+            let Proposition::CMemoryLoadable {
+                memory: range_memory,
+                base: range_base,
+                bytes: range_bytes,
+            } = proposition
+            else {
+                return false;
+            };
+            if !memory_range_still_available(range_memory, memory, range_base) {
+                return false;
+            }
+            if range_base == base && range_bytes == bytes {
+                return true;
+            }
+            let Some(byte_width) = bytes.as_const() else {
+                return false;
+            };
+            if byte_width != 4 {
+                return false;
+            }
+            let Some(element_count) = int32_element_count_from_bytes(range_bytes) else {
+                return false;
+            };
+            pointer_in_range_for_memory_resolution(
+                base,
+                range_base,
+                &Bitvector32Term::Constant(0),
+                &element_count,
+                self,
+            )
         })
     }
 
@@ -4903,10 +5439,15 @@ fn bitvector_index_in_range_shallow(
         &ConditionTerm::signed_less_equal(start.clone(), index.clone()),
     ) == Some(true)
         || assumptions.has_exact_order_path(start, index, false)
+        || assumptions.should_defer_non_exact_condition_reasoning()
+            && assumptions.has_order_path_for_memory_resolution(start, index, false)
         || start == &Bitvector32Term::Constant(0)
             && index.add_const_parts().is_some_and(|(base, increment)| {
                 (increment as i32) > 0
-                    && assumptions.has_exact_order_path(start, &base, false)
+                    && (assumptions.has_exact_order_path(start, &base, false)
+                        || assumptions.should_defer_non_exact_condition_reasoning()
+                            && assumptions
+                                .has_order_path_for_memory_resolution(start, &base, false))
                     && (assumptions.exact_condition_value(&ConditionTerm::signed_add_overflows(
                         base.clone(),
                         Bitvector32Term::Constant(increment),
@@ -4919,7 +5460,9 @@ fn bitvector_index_in_range_shallow(
     let upper_bound_is_exact = assumptions
         .exact_condition_value(&ConditionTerm::signed_less_than(index.clone(), end.clone()))
         == Some(true)
-        || assumptions.has_exact_order_path(index, end, true);
+        || assumptions.has_exact_order_path(index, end, true)
+        || assumptions.should_defer_non_exact_condition_reasoning()
+            && assumptions.has_order_path_for_memory_resolution(index, end, true);
     if lower_bound_is_exact && upper_bound_is_exact {
         return true;
     }
@@ -4939,7 +5482,12 @@ fn bitvector_index_in_range_shallow(
                 &Bitvector32Term::Constant(offset as u32),
                 &length,
                 true,
-            )
+            ) || assumptions.should_defer_non_exact_condition_reasoning()
+                && assumptions.has_order_path_for_memory_resolution(
+                    &Bitvector32Term::Constant(offset as u32),
+                    &length,
+                    true,
+                )
         })
     })
 }
@@ -4957,19 +5505,15 @@ fn bitvector_index_outside_range_shallow(
     ) {
         return index < start || end <= index;
     }
-    if assumptions
-        .exact_condition_value(&ConditionTerm::signed_less_than(
-            index.clone(),
-            start.clone(),
-        ))
-        == Some(true)
+    if assumptions.exact_condition_value(&ConditionTerm::signed_less_than(
+        index.clone(),
+        start.clone(),
+    )) == Some(true)
         || assumptions.has_exact_order_path(index, start, true)
-        || assumptions
-            .exact_condition_value(&ConditionTerm::signed_less_equal(
-                end.clone(),
-                index.clone(),
-            ))
-            == Some(true)
+        || assumptions.exact_condition_value(&ConditionTerm::signed_less_equal(
+            end.clone(),
+            index.clone(),
+        )) == Some(true)
         || assumptions.has_exact_order_path(end, index, false)
     {
         return true;

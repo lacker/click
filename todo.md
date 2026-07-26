@@ -1170,6 +1170,26 @@ same C sources when manually checking source layout.
 
 ## Current Test State
 
+The 2026-07-26 `vector_fill.loop(0).preserve` fix makes loop preservation a
+strict two-stage boundary:
+
+- symbolic back-edge lowering emits explicit invariant obligations without
+  invoking the general solver;
+- the named closing tactic (`simp`, or exact assumption replay) discharges
+  those obligations under a bounded simplifier.
+
+Quantifier path facts now remain inside their `forall` binder instead of
+escaping as free ambient facts. The focused composite-vector preservation
+`simp` completes in about 1.1 seconds, and all 384 library tests pass. The same
+mdtest still exceeds a 10-second file budget later, in its separate final
+contract `simp`; that is not hidden preservation work.
+
+Loop-phase source locations are reportable by the profiler, but loop-phase
+tactics are not yet selectable through `click-expand`'s `CProofClaim` boundary.
+When that boundary is added, quantified preservation certificates must retain
+the lowering path structure; do not flatten separately guarded obligations
+into sequential unconditional `have` statements.
+
 The 2026-07-25 input-cursor expander fix is covered at two levels:
 
 - a kernel regression proves that materializing a certified-distinct cell does

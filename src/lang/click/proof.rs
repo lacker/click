@@ -2095,6 +2095,7 @@ struct TacticReplayState {
     frames: BTreeSet<Option<CodeRegionRef>>,
     unfolded_predicates: Vec<String>,
     post_execution_tactics: Vec<(usize, PostExecutionTactic)>,
+    region_simp: Option<(usize, usize)>,
     case_assumptions: Vec<ReplayCaseAssumption>,
     effect_facts: Vec<ExecutionPureFact>,
     region_proof: bool,
@@ -3033,6 +3034,31 @@ fn minimal_proposition_derivation(
         assumptions
             .derive_proposition(proposition)
             .or_else(|| assumptions.derive_simp_proposition(proposition))
+    };
+    let initial = derive(available)?;
+    let mut selected = initial.context_premises().to_vec();
+    let mut index = 0;
+    while index < selected.len() {
+        let mut reduced = selected.clone();
+        reduced.remove(index);
+        if derive(&reduced).is_some() {
+            selected = reduced;
+        } else {
+            index += 1;
+        }
+    }
+    derive(&selected)
+}
+
+fn minimal_simp_proposition_derivation(
+    proposition: &Proposition,
+    available: &[Proposition],
+) -> Option<PropositionDerivation> {
+    if !proposition_has_contextual_derivation_rules(proposition) {
+        return None;
+    }
+    let derive = |facts: &[Proposition]| {
+        assumptions_from_propositions(facts).derive_simp_proposition(proposition)
     };
     let initial = derive(available)?;
     let mut selected = initial.context_premises().to_vec();
@@ -4133,7 +4159,6 @@ fn verify_execution_proofs_forward(
                         proof,
                         clause,
                         context,
-                        invariant_checks,
                         environment,
                     )?;
                 } else {
@@ -4382,7 +4407,6 @@ fn verify_loop_initialization_pure_proof(
     proof: &Proof,
     clause: &StructuralClause,
     context: &ExecutionProofContext,
-    invariant_checks: &[CLoopInvariantCheck],
     environment: &ExecutionProofEnvironment<'_>,
 ) -> Result<(), ClickError> {
     let claim_label = format!(
@@ -4430,9 +4454,7 @@ fn verify_loop_initialization_pure_proof(
             available.push(fact);
         }
     }
-    let assumptions = assumptions_from_propositions(&available);
-    c_loop_invariants_hold_at_entry(&context.state, invariant_checks, &assumptions)
-        .map_err(|message| ClickError::new(format!("`{claim_label}`: {message}")))
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -4525,14 +4547,61 @@ fn verify_one_loop_preservation_proof(
                 "`{claim_label}` must execute exactly one complete loop-body iteration"
             )));
         }
+        let (closer_index, closer_source, closer_name, closer_class) =
+            if let Some((tactic_index, source_index)) = context.replay.region_simp {
+                (tactic_index, source_index, "simp", "smart")
+            } else {
+                (tactics.len(), tactics.len(), "assumption", "simple")
+            };
+        let _timing = std::env::var_os("CLICK_TIMINGS").is_some().then(|| {
+            if std::env::var_os("CLICK_TIMING_STARTS").is_some() {
+                eprintln!(
+                    "click timing: started tactic {} {} {} class {} statement {} source {}",
+                    claim_label,
+                    closer_index,
+                    closer_name,
+                    closer_class,
+                    context.replay.frontier.next_statement_index,
+                    closer_source
+                );
+            }
+            TacticTiming {
+                claim_label: claim_label.clone(),
+                tactic_index: closer_index,
+                source_index: closer_source,
+                tactic_name: closer_name.to_string(),
+                tactic_class: closer_class,
+                statement_index: context.replay.frontier.next_statement_index,
+                start: std::time::Instant::now(),
+            }
+        });
         let assumptions = assumptions_from_propositions(&context.pure_facts);
-        c_loop_invariants_hold_at_back_edge(
+        let obligations = c_loop_invariant_obligations_at_back_edge(
             &context.state,
             preservation.loop_entry_state(),
             invariant_checks,
             &assumptions,
         )
         .map_err(|message| ClickError::new(format!("`{claim_label}`: {message}")))?;
+        for obligation in obligations {
+            let proven = if context.replay.region_simp.is_some() {
+                assumptions
+                    .derive_simp_proposition(obligation.proposition())
+                    .is_some()
+            } else {
+                context.pure_facts.contains(obligation.proposition())
+            };
+            if !proven {
+                return Err(ClickError::new(format!(
+                    "`{claim_label}`: `{closer_name}` could not close invariant goal{}: {:?}",
+                    obligation
+                        .context()
+                        .map(|context| format!(" ({context})"))
+                        .unwrap_or_default(),
+                    obligation.proposition()
+                )));
+            }
+        }
         c_loop_effects_hold_at_back_edge(
             preservation.state(),
             &context.state,
@@ -8706,7 +8775,7 @@ fn lower_outcome_simp_tactic(
         }
     }
     if let Some(derivation) =
-        minimal_proposition_derivation(&normalized_goal, &normalized_available)
+        minimal_simp_proposition_derivation(&normalized_goal, &normalized_available)
     {
         let context = derivation.context_premises();
         let selected = context
@@ -10486,13 +10555,18 @@ fn replay_linear_tactics(
                 None,
             );
         }
-        let _timing = TacticTiming::new(
-            claim_label,
-            tactic_index,
-            source_index,
-            tactic,
-            replay.frontier.next_statement_index,
-        );
+        let _timing = (!deferred_post_execution
+            && !(replay.region_proof && matches!(tactic, ProofTactic::Simp)))
+        .then(|| {
+            TacticTiming::new(
+                claim_label,
+                tactic_index,
+                source_index,
+                tactic,
+                replay.frontier.next_statement_index,
+            )
+        })
+        .flatten();
         if let ProofTactic::Transport {
             source: surface_source,
             target: surface_target,
@@ -12410,6 +12484,9 @@ fn replay_linear_tactics(
             ProofTactic::Simp => {
                 if !replay.region_proof {
                     require_function_exit(&replay, claim_label, tactic_index, "simp")?;
+                }
+                if replay.region_proof {
+                    replay.region_simp = Some((tactic_index, source_index));
                 }
                 if replay.ordered_finalization && replay.is_at_function_exit() {
                     replay
