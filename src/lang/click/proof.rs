@@ -2343,6 +2343,8 @@ pub(super) fn prove_claim_by_simp(
 
 #[derive(Clone, Default)]
 struct TacticReplayState {
+    proof_site: Option<ProofSite>,
+    loop_effect_goal: Option<LoopEffectReplayGoal>,
     frontier: ExecutionFrontier,
     source_layout: SourceExecutionLayout,
     program_point_states: ProgramPointStates,
@@ -2364,6 +2366,13 @@ struct TacticReplayState {
     surface_propositions: SurfacePropositionMap,
     surface_replay: SurfaceReplay,
     deferred_tactic_capture: Option<DeferredTacticCapture>,
+}
+
+#[derive(Clone)]
+struct LoopEffectReplayGoal {
+    before_state: CState,
+    check: CLoopEffectCheck,
+    closed: bool,
 }
 
 #[derive(Clone)]
@@ -2392,7 +2401,7 @@ const TACTIC_EXPANSION_COMPLETE: &str = "internal: selected tactic expansion com
 
 struct TacticExpansionProbe {
     site: ProofSite,
-    source_index: usize,
+    source_index: Option<usize>,
     active: bool,
     result: Option<Result<Vec<ProofTactic>, String>>,
 }
@@ -2419,7 +2428,7 @@ pub(super) fn capture_c0_tactic_expansion(
         }
         *probe = Some(TacticExpansionProbe {
             site: site.clone(),
-            source_index,
+            source_index: Some(source_index),
             active: false,
             result: None,
         });
@@ -2451,43 +2460,95 @@ pub(super) fn active_c0_tactic_expansion_request() -> Option<(ProofSite, usize)>
         probe
             .borrow()
             .as_ref()
-            .map(|probe| (probe.site.clone(), probe.source_index))
+            .map(|probe| (probe.site.clone(), probe.source_index.unwrap_or(0)))
     })
 }
 
-fn probe_matches_claim(
-    probe: &TacticExpansionProbe,
-    function_block: &FunctionBlock,
-    claims: &[FunctionClaimRef<'_>],
-    grouped_contract: bool,
-) -> bool {
-    let ProofSite::FunctionClaim {
-        function_name,
-        claim,
-    } = &probe.site
-    else {
-        return false;
+pub(super) fn capture_c0_proof_site_expansion(
+    click_source: &str,
+    c_sources: &[(&str, &str)],
+    site: ProofSite,
+) -> Result<Vec<ProofTactic>, ClickError> {
+    TACTIC_EXPANSION_PROBE.with(|probe| {
+        let mut probe = probe.borrow_mut();
+        if probe.is_some() {
+            return Err(ClickError::new(
+                "cannot nest selected-proof expansion requests",
+            ));
+        }
+        *probe = Some(TacticExpansionProbe {
+            site: site.clone(),
+            source_index: None,
+            active: false,
+            result: None,
+        });
+        Ok(())
+    })?;
+
+    let verification = verify_c0_sources(click_source, c_sources);
+    let captured = TACTIC_EXPANSION_PROBE.with(|probe| probe.borrow_mut().take());
+    let Some(captured) = captured else {
+        return Err(ClickError::new("selected-proof expansion probe was lost"));
     };
-    if function_block.signature().name() != function_name {
-        return false;
+    if let Some(result) = captured.result {
+        return result.map_err(ClickError::new);
     }
-    match claim {
-        CProofClaim::Grouped => grouped_contract,
-        CProofClaim::Ensure(wanted) if !grouped_contract => matches!(
-            claims,
-            [FunctionClaimRef::Ensure(found, _)] if *found == *wanted
-        ),
-        CProofClaim::Effect(wanted) if !grouped_contract => matches!(
-            claims,
-            [FunctionClaimRef::Effect(found, _)] if *found == *wanted
-        ),
-        CProofClaim::Ensure(_) | CProofClaim::Effect(_) => false,
+    match verification {
+        Err(error) if error.message() != TACTIC_EXPANSION_COMPLETE => Err(error),
+        Err(_) => Err(ClickError::new(
+            "selected proof completed without recording an expansion",
+        )),
+        Ok(_) => Err(ClickError::new(format!(
+            "verification did not retain a certificate for {}",
+            site.description()
+        ))),
     }
 }
 
-fn begin_tactic_expansion_capture(
+fn finish_proof_site_expansion_capture(
+    site: &ProofSite,
+    certificate: &TacticCertificate,
+) -> Result<(), ClickError> {
+    let captured = TACTIC_EXPANSION_PROBE.with(|probe| {
+        let mut slot = probe.borrow_mut();
+        let Some(probe) = slot.as_mut() else {
+            return false;
+        };
+        if probe.site != *site || probe.source_index.is_some() {
+            return false;
+        }
+        probe.active = true;
+        probe.result = Some(Ok(certificate.tactics().to_vec()));
+        true
+    });
+    if captured {
+        Err(ClickError::new(TACTIC_EXPANSION_COMPLETE))
+    } else {
+        Ok(())
+    }
+}
+
+fn proof_site_for_claims(
     function_block: &FunctionBlock,
     claims: &[FunctionClaimRef<'_>],
+    grouped_contract: bool,
+) -> Option<ProofSite> {
+    let claim = if grouped_contract {
+        CProofClaim::Grouped
+    } else {
+        match claims {
+            [FunctionClaimRef::Ensure(index, _)] => CProofClaim::Ensure(*index),
+            [FunctionClaimRef::Effect(index, _)] => CProofClaim::Effect(*index),
+            _ => return None,
+        }
+    };
+    Some(ProofSite::FunctionClaim {
+        function_name: function_block.signature().name().to_string(),
+        claim,
+    })
+}
+
+fn begin_tactic_expansion_capture(
     source_index: usize,
     _tactic: &ProofTactic,
     replay: &mut TacticReplayState,
@@ -2501,8 +2562,8 @@ fn begin_tactic_expansion_capture(
             return false;
         };
         if probe.active
-            || probe.source_index != source_index
-            || !probe_matches_claim(probe, function_block, claims, replay.grouped_contract)
+            || probe.source_index != Some(source_index)
+            || replay.proof_site.as_ref() != Some(&probe.site)
         {
             return false;
         }
@@ -4611,6 +4672,9 @@ fn verify_execution_proofs_forward(
             });
             let mut iteration_contexts = Vec::new();
             let mut initialization_path_certificates = Vec::new();
+            let mut preservation_path_certificates = Vec::new();
+            let mut effect_path_certificates =
+                BTreeMap::<usize, Vec<PathCertificate>>::new();
             for (path_index, context) in contexts.iter().enumerate() {
                 let assumptions = assumptions_from_propositions(&context.pure_facts);
                 if let Some((clause, proof)) = initialization_proof {
@@ -4678,7 +4742,7 @@ fn verify_execution_proofs_forward(
                             tactics.push(ProofTactic::Simp);
                             tactics
                         };
-                        verify_one_loop_preservation_proof(
+                        let result = verify_one_loop_preservation_proof(
                             loop_index,
                             &preservation_tactics,
                             &preservation,
@@ -4688,6 +4752,19 @@ fn verify_execution_proofs_forward(
                             body,
                             environment,
                         )?;
+                        preservation_path_certificates.push(PathCertificate {
+                            case_path: context.case_path.clone(),
+                            certificate: result.certificate,
+                        });
+                        for (item_index, certificate) in result.effect_certificates {
+                            effect_path_certificates
+                                .entry(item_index)
+                                .or_default()
+                                .push(PathCertificate {
+                                    case_path: context.case_path.clone(),
+                                    certificate,
+                                });
+                        }
                     }
                     iteration_contexts.push(ExecutionProofContext {
                         state: preservation.state().clone(),
@@ -4699,13 +4776,60 @@ fn verify_execution_proofs_forward(
                 }
             }
             if initialization_proof.is_some() {
-                let _initialization_certificate = merge_path_aligned_certificates(
-                    &format!(
-                        "{}.loop({loop_index}).initialize",
-                        environment.function_block.signature().name()
-                    ),
+                let claim_label = format!(
+                    "{}.loop({loop_index}).initialize",
+                    environment.function_block.signature().name()
+                );
+                let initialization_certificate = merge_path_aligned_certificates(
+                    &claim_label,
                     initialization_path_certificates,
                 )?;
+                finish_proof_site_expansion_capture(
+                    &ProofSite::LoopPhase {
+                        function_name: environment
+                            .function_block
+                            .signature()
+                            .name()
+                            .to_string(),
+                        loop_index,
+                        phase: "initialize",
+                    },
+                    &initialization_certificate,
+                )?;
+            }
+            if !preservation_path_certificates.is_empty() {
+                let claim_label = format!(
+                    "{}.loop({loop_index}).preserve",
+                    environment.function_block.signature().name()
+                );
+                let preservation_certificate =
+                    merge_path_aligned_certificates(&claim_label, preservation_path_certificates)?;
+                finish_proof_site_expansion_capture(
+                    &ProofSite::LoopPhase {
+                        function_name: environment
+                            .function_block
+                            .signature()
+                            .name()
+                            .to_string(),
+                        loop_index,
+                        phase: "preserve",
+                    },
+                    &preservation_certificate,
+                )?;
+            }
+            for (item_index, paths) in effect_path_certificates {
+                let site = ProofSite::StructuralItem {
+                    function_name: environment
+                        .function_block
+                        .signature()
+                        .name()
+                        .to_string(),
+                    region: CodeRegion::Loop(loop_index),
+                    item_index,
+                };
+                let certificate =
+                    merge_path_aligned_certificates(&site.description(), paths)?;
+                finish_proof_site_expansion_capture(&site, &certificate)?;
             }
 
             if kernel_statement_contains_loop(body) {
@@ -4974,7 +5098,8 @@ fn certify_structural_assertions(
     let assertions = clause
         .items()
         .iter()
-        .filter(|item| item.kind() == StructuralItemKind::Assert)
+        .enumerate()
+        .filter(|(_, item)| item.kind() == StructuralItemKind::Assert)
         .collect::<Vec<_>>();
     if assertions.is_empty() {
         return Ok(contexts);
@@ -4985,6 +5110,7 @@ fn certify_structural_assertions(
         CodeRegion::Loop(index) => format!("loop({index})"),
         CodeRegion::Statement(index) => format!("statement({index})"),
     };
+    let mut site_certificates = vec![Vec::new(); assertions.len()];
     for context in &mut contexts {
         let mut program_point_states = ProgramPointStates::new();
         let point_region = match region {
@@ -4999,7 +5125,7 @@ fn certify_structural_assertions(
             },
             context.state.clone(),
         );
-        for (assertion_index, item) in assertions.iter().enumerate() {
+        for (assertion_index, (_, item)) in assertions.iter().enumerate() {
             let proposition = item
                 .proposition()
                 .expect("assert structural item should contain a proposition");
@@ -5048,6 +5174,10 @@ fn certify_structural_assertions(
                 },
             )?;
             debug_assert!(TacticCertificate::from_proof_tactics(certificate.tactics()).is_ok());
+            site_certificates[assertion_index].push(PathCertificate {
+                case_path: context.case_path.clone(),
+                certificate,
+            });
             if replayed_fact != planned_fact {
                 return Err(ClickError::new(format!(
                     "`{claim_label}` certificate replay changed the proved proposition"
@@ -5057,6 +5187,16 @@ fn certify_structural_assertions(
                 context.pure_facts.push(replayed_fact);
             }
         }
+    }
+    for ((item_index, _), certificates) in assertions.iter().zip(site_certificates) {
+        let site = ProofSite::StructuralItem {
+            function_name: environment.function_block.signature().name().to_string(),
+            region,
+            item_index: *item_index,
+        };
+        let certificate =
+            merge_path_aligned_certificates(&site.description(), certificates)?;
+        finish_proof_site_expansion_capture(&site, &certificate)?;
     }
     Ok(contexts)
 }
@@ -5548,6 +5688,97 @@ fn plan_automatic_loop_preservation_body(
 }
 
 #[allow(clippy::too_many_arguments)]
+fn verify_structural_effect_proof(
+    loop_index: usize,
+    item_index: usize,
+    item: &StructuralItem,
+    check: &CLoopEffectCheck,
+    before_state: &CState,
+    context: &ProofReplayContext,
+    environment: &ExecutionProofEnvironment<'_>,
+) -> Result<TacticCertificate, ClickError> {
+    let site = ProofSite::StructuralItem {
+        function_name: environment.function_block.signature().name().to_string(),
+        region: CodeRegion::Loop(loop_index),
+        item_index,
+    };
+    let claim_label = site.description();
+    let certificate = match item.proof() {
+        Proof::Default
+        | Proof::Tactic(SmartTactic::Auto)
+        | Proof::Tactic(SmartTactic::Frame) => {
+            TacticCertificate::from_proof_tactics(&[ProofTactic::Frame(None)])
+        }
+        Proof::Script(tactics) => TacticCertificate::from_proof_tactics(tactics),
+        Proof::Tactic(SmartTactic::Simp) => {
+            return Err(ClickError::new(format!(
+                "`{claim_label}` must use `auto`, `frame`, or a simple proof script"
+            )));
+        }
+    }
+    .map_err(|error| {
+        ClickError::new(format!(
+            "`{claim_label}` produced an invalid structural-effect certificate: {error:?}"
+        ))
+    })?;
+    let program = build_internal_proof(certificate.tactics(), &claim_label)?;
+    let mut replay = context.replay.clone();
+    replay.proof_site = Some(site);
+    replay.loop_effect_goal = Some(LoopEffectReplayGoal {
+        before_state: before_state.clone(),
+        check: check.clone(),
+        closed: false,
+    });
+    replay.surface_replay = SurfaceReplay::default();
+    let replayed = execute_internal_proof(
+        &program,
+        ProofReplayContext {
+            state: context.state.clone(),
+            pure_facts: context.pure_facts.clone(),
+            replay,
+            branch_path: context.branch_path.clone(),
+        },
+        environment.function_block,
+        environment.parsed_function,
+        &[],
+        &claim_label,
+        environment.function_environment,
+        environment.predicate_environment,
+        environment.click_function_environment,
+        environment.resource_environment,
+        environment.theorem_environment,
+        environment.function,
+        environment.arguments,
+    )
+    .map_err(|error| {
+        ClickError::new(format!(
+            "`{claim_label}` structural-effect certificate failed ordinary replay:\n{}\n{}",
+            format_tactic_certificate(&certificate),
+            error.message()
+        ))
+    })?;
+    if replayed.is_empty()
+        || replayed.iter().any(|context| {
+            !context
+                .replay
+                .loop_effect_goal
+                .as_ref()
+                .is_some_and(|goal| goal.closed)
+        })
+    {
+        return Err(ClickError::new(format!(
+            "`{claim_label}` structural-effect certificate did not close every replay path"
+        )));
+    }
+    Ok(certificate)
+}
+
+struct LoopPreservationProofResult {
+    certificate: TacticCertificate,
+    effect_certificates: Vec<(usize, TacticCertificate)>,
+}
+
+#[allow(clippy::too_many_arguments)]
 fn verify_one_loop_preservation_proof(
     loop_index: usize,
     tactics: &[ProofTactic],
@@ -5557,7 +5788,7 @@ fn verify_one_loop_preservation_proof(
     effect_checks: &[CLoopEffectCheck],
     body: &CStatement,
     environment: &ExecutionProofEnvironment<'_>,
-) -> Result<(), ClickError> {
+) -> Result<LoopPreservationProofResult, ClickError> {
     let claim_label = format!(
         "{}.loop({loop_index}).preserve",
         environment.function_block.signature().name()
@@ -5572,6 +5803,11 @@ fn verify_one_loop_preservation_proof(
         ClickError::new(format!("`{claim_label}` has no source loop({loop_index})"))
     })?;
     let mut replay = TacticReplayState {
+        proof_site: Some(ProofSite::LoopPhase {
+            function_name: environment.function_block.signature().name().to_string(),
+            loop_index,
+            phase: "preserve",
+        }),
         frontier: ExecutionFrontier {
             point: ProofExecutionPoint::StatementEntry { remaining },
             execution_start_state: Some(preservation.state().clone()),
@@ -5675,6 +5911,15 @@ fn verify_one_loop_preservation_proof(
             }
             vec![ProofTactic::CloseInvariants]
         };
+        if context.replay.region_simp.is_some()
+            && tactic_expansion_capture_is_active()
+        {
+            let capture = SurfaceReplay {
+                tactics: closer_tactics.clone(),
+                ..SurfaceReplay::default()
+            };
+            return Err(finish_tactic_expansion_capture(&capture));
+        }
         let case_path = context
             .replay
             .case_assumptions
@@ -5731,6 +5976,23 @@ fn verify_one_loop_preservation_proof(
             error.message()
         ))
     })?;
+    let effect_items = environment
+        .function_block
+        .structural_clauses()
+        .iter()
+        .find(|clause| clause.region() == &CodeRegion::Loop(loop_index))
+        .into_iter()
+        .flat_map(|clause| clause.items().iter().enumerate())
+        .filter(|(_, item)| item.is_effect_kind())
+        .collect::<Vec<_>>();
+    if effect_items.len() != effect_checks.len() {
+        return Err(ClickError::new(format!(
+            "`{claim_label}` has {} structural effect items but {} lowered effect checks",
+            effect_items.len(),
+            effect_checks.len()
+        )));
+    }
+    let mut effect_certificate_paths = vec![Vec::new(); effect_items.len()];
     for context in replayed {
         let at_back_edge = matches!(
             &context.replay.frontier.point,
@@ -5757,18 +6019,52 @@ fn verify_one_loop_preservation_proof(
                 ClickError::new(format!("`{claim_label}` invariant bundle: {message}"))
             })?;
         }
-        let derived_facts = context.pure_facts.clone();
-        let assumptions = assumptions_from_propositions(&derived_facts);
-        c_loop_effects_hold_at_back_edge(
-            preservation.state(),
-            &context.state,
-            effect_checks,
-            &derived_facts,
-            &assumptions,
-        )
-        .map_err(|message| ClickError::new(format!("`{claim_label}`: {message}")))?;
+        let case_path = context
+            .replay
+            .case_assumptions
+            .iter()
+            .map(|choice| ProofCaseChoice {
+                condition: choice.condition.clone(),
+                value: choice.value,
+            })
+            .collect::<Vec<_>>();
+        for (effect_index, ((item_index, item), check)) in
+            effect_items.iter().zip(effect_checks).enumerate()
+        {
+            let effect_certificate = verify_structural_effect_proof(
+                loop_index,
+                *item_index,
+                item,
+                check,
+                preservation.state(),
+                &context,
+                environment,
+            )?;
+            effect_certificate_paths[effect_index].push(PathCertificate {
+                case_path: case_path.clone(),
+                certificate: effect_certificate,
+            });
+        }
     }
-    Ok(())
+    let effect_certificates = effect_items
+        .iter()
+        .zip(effect_certificate_paths)
+        .map(|((item_index, _), paths)| {
+            let site = ProofSite::StructuralItem {
+                function_name: environment.function_block.signature().name().to_string(),
+                region: CodeRegion::Loop(loop_index),
+                item_index: *item_index,
+            };
+            Ok((
+                *item_index,
+                merge_path_aligned_certificates(&site.description(), paths)?,
+            ))
+        })
+        .collect::<Result<Vec<_>, ClickError>>()?;
+    Ok(LoopPreservationProofResult {
+        certificate,
+        effect_certificates,
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -7618,6 +7914,7 @@ pub(super) fn prove_claim_by_tactics(
     )?;
     let proof_claims = [*claim];
     let mut replay = TacticReplayState {
+        proof_site: proof_site_for_claims(function_block, &proof_claims, false),
         source_layout: SourceExecutionLayout::new(parsed_function.body()),
         ordered_finalization: true,
         surface_propositions,
@@ -7722,6 +8019,7 @@ pub(super) fn prove_claims_by_grouped_tactics(
         resource_environment,
     )?;
     let mut replay = TacticReplayState {
+        proof_site: proof_site_for_claims(function_block, claims, true),
         source_layout: SourceExecutionLayout::new(parsed_function.body()),
         ordered_finalization: true,
         grouped_contract: true,
@@ -11689,14 +11987,11 @@ fn replay_linear_tactics(
         let deferred_post_execution = replay.ordered_finalization
             && replay.is_at_function_exit()
             && tactic_is_deferred_post_execution(tactic);
+        let deferred_region_simp =
+            replay.region_proof && matches!(tactic, ProofTactic::Simp);
         let pre_capture_branch_skeleton = surface_branch_skeleton(&replay.surface_replay.tactics);
-        let capture_this_tactic = begin_tactic_expansion_capture(
-            function_block,
-            claims,
-            source_index,
-            tactic,
-            &mut replay,
-        );
+        let capture_this_tactic =
+            begin_tactic_expansion_capture(source_index, tactic, &mut replay);
         if capture_this_tactic && deferred_post_execution {
             replay.deferred_tactic_capture = Some(DeferredTacticCapture {
                 tactic_index,
@@ -13029,6 +13324,32 @@ fn replay_linear_tactics(
                 assumptions = assumptions_from_propositions(&requirement_pure_facts);
             }
             ProofTactic::Frame(region_ref) => {
+                if let Some(goal) = replay.loop_effect_goal.as_mut() {
+                    if region_ref.is_some() {
+                        return Err(ClickError::new(format!(
+                            "`{claim_label}` tactic {tactic_index}: a structural effect proof must use unqualified `frame()`"
+                        )));
+                    }
+                    if goal.closed {
+                        return Err(ClickError::new(format!(
+                            "`{claim_label}` tactic {tactic_index}: the structural effect goal was closed more than once"
+                        )));
+                    }
+                    c_loop_effects_hold_at_back_edge(
+                        &goal.before_state,
+                        &state,
+                        std::slice::from_ref(&goal.check),
+                        &requirement_pure_facts,
+                        &assumptions,
+                    )
+                    .map_err(|message| {
+                        ClickError::new(format!(
+                            "`{claim_label}` tactic {tactic_index}: `frame()` failed: {message}"
+                        ))
+                    })?;
+                    goal.closed = true;
+                    continue;
+                }
                 require_function_exit(&replay, claim_label, tactic_index, "frame")?;
                 let code_region = region_ref
                     .as_ref()
@@ -13669,7 +13990,7 @@ fn replay_linear_tactics(
                 }
             }
         }
-        if capture_this_tactic && !deferred_post_execution {
+        if capture_this_tactic && !deferred_post_execution && !deferred_region_simp {
             return Err(finish_tactic_expansion_capture(&replay.surface_replay));
         }
     }

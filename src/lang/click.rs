@@ -2591,16 +2591,28 @@ fn validate_region_proof_clauses(
 
         for item in region_proof_clause.items() {
             if item.is_effect_kind() {
-                if !item.proof().is_auto_or_frame_tactic() {
+                if !item.proof().is_auto_or_frame_tactic()
+                    && !matches!(
+                        item.proof(),
+                        Proof::Script(tactics)
+                            if TacticCertificate::from_proof_tactics(tactics).is_ok()
+                    )
+                {
                     return Err(ClickError::new(
-                        "`immutable` and `mutable` region proof clauses must use the default prover, `by auto;`, or `by frame;`",
+                        "`immutable` and `mutable` region proof clauses must use the default prover, `by auto;`, `by frame;`, or a surface certificate",
                     ));
                 }
             } else if item.kind() == StructuralItemKind::Invariant {
                 debug_assert!(item.proof().is_auto_tactic());
-            } else if !item.proof().is_auto_tactic() {
+            } else if !item.proof().is_auto_tactic()
+                && !matches!(
+                    item.proof(),
+                    Proof::Script(tactics)
+                        if TacticCertificate::from_proof_tactics(tactics).is_ok()
+                )
+            {
                 return Err(ClickError::new(
-                    "`assert` structural clauses must use the default prover or `by auto;` in this first slice",
+                    "`assert` structural clauses must use the default prover, `by auto;`, or a surface certificate",
                 ));
             }
             if item.kind() == StructuralItemKind::Assert

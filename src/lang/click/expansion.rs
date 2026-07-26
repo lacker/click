@@ -87,27 +87,29 @@ pub fn expand_c0_tactic_source_at(
     {
         return expand_pure_theorem_source(click_source, c_sources, theorem_name, *ensure_index);
     }
-    let (function_name, claim) = match &selected.site {
+    if let (
         ProofSite::FunctionClaim {
             function_name,
             claim,
-        } => (function_name.as_str(), *claim),
-        site => {
-            return Err(ClickError::new(format!(
-                "selected {} proof is not certificate-backed yet",
-                site.description()
-            )));
-        }
-    };
-    if matches!(selected.edit, TacticSourceEdit::WholeProof(_)) {
-        return expand_c0_claim_source(click_source, c_sources, function_name, claim);
+        },
+        TacticSourceEdit::WholeProof(_),
+    ) = (&selected.site, &selected.edit)
+    {
+        return expand_c0_claim_source(click_source, c_sources, function_name, *claim);
     }
-    let replacement_tactics = super::proof::capture_c0_tactic_expansion(
-        click_source,
-        c_sources,
-        selected.site.clone(),
-        selected.source_index,
-    )?;
+    let replacement_tactics = match &selected.edit {
+        TacticSourceEdit::Partial(_) => super::proof::capture_c0_tactic_expansion(
+            click_source,
+            c_sources,
+            selected.site.clone(),
+            selected.source_index,
+        )?,
+        TacticSourceEdit::WholeProof(_) => super::proof::capture_c0_proof_site_expansion(
+            click_source,
+            c_sources,
+            selected.site.clone(),
+        )?,
+    };
     let (span, replacement) = match selected.edit {
         TacticSourceEdit::Partial(span) => (
             span,
@@ -1817,6 +1819,7 @@ int32 count(int32 n) {
         invariant n == n;
         initialize by simp;
         preserve by {
+            execute_step();
             simp();
         }
     }
@@ -1849,6 +1852,24 @@ int32 count(int32 n) {
                 column: 13
             }
         );
+        let preserve_position = SourcePosition {
+            line: 7,
+            column: 13,
+        };
+        let expanded = expand_c0_tactic_source_at(
+            click_source,
+            &[("count.c", c_source)],
+            preserve_position.line,
+            preserve_position.column,
+        )
+        .expect("a smart tactic inside loop preservation should expand");
+        assert!(!expanded.contains("execute_step();"));
+        verify_c0_sources(&expanded, &[("count.c", c_source)]).unwrap_or_else(|error| {
+            panic!(
+                "expanded loop-preservation tactic should re-verify: {}\n{expanded}",
+                error.message()
+            )
+        });
     }
 
     #[test]
@@ -1885,19 +1906,10 @@ int32 count(int32 n) {
     ensures result == result;
 }
 "#;
-        for (needle, expected) in [
-            (
-                "initialize by simp",
-                "`count.loop(0).initialize` proof is not certificate-backed yet",
-            ),
-            (
-                "preserve by simp",
-                "`count.loop(0).preserve` proof is not certificate-backed yet",
-            ),
-            (
-                "assert n == n by auto",
-                "function `count` Loop(0) item 1 proof is not certificate-backed yet",
-            ),
+        for needle in [
+            "initialize by simp",
+            "preserve by simp",
+            "assert n == n by auto",
         ] {
             let offset = click_source.find(needle).unwrap()
                 + if needle.starts_with("assert") {
@@ -1906,18 +1918,15 @@ int32 count(int32 n) {
                     needle.find("simp").unwrap()
                 };
             let position = position_at_offset(click_source, offset);
-            let error = expand_c0_tactic_source_at(
+            let expanded = expand_c0_tactic_source_at(
                 click_source,
                 &[("count.c", c_source)],
                 position.line,
                 position.column,
             )
-            .expect_err("the selected non-contract site is not certificate-backed yet");
-            assert!(
-                error.message().contains(expected),
-                "expected {expected:?}, got {:?}",
-                error.message()
-            );
+            .expect("the selected proof site should expand through its retained certificate");
+            verify_c0_sources(&expanded, &[("count.c", c_source)])
+                .expect("the rewritten proof site should re-verify");
         }
         let assert_offset =
             click_source.find("assert n == n by auto").unwrap() + "assert n == n by ".len();
@@ -1931,6 +1940,44 @@ int32 count(int32 n) {
             .unwrap(),
             position_at_offset(click_source, assert_offset)
         );
+    }
+
+    #[test]
+    fn expands_whole_and_step_structural_effect_certificates() {
+        let c_source =
+            "int32 count(int32 n) { while (n > 0) { n = n - 1; } return n; }";
+        let click_source = r#"verifying "count.c";
+int32 count(int32 n) {
+    for loop(0) {
+        invariant n == n;
+        immutable by auto;
+        step {
+            immutable by frame;
+        }
+    }
+    ensures result == result;
+}
+"#;
+        for needle in ["immutable by auto", "immutable by frame"] {
+            let tactic = if needle.ends_with("auto") {
+                "auto"
+            } else {
+                "frame"
+            };
+            let offset = click_source.find(needle).unwrap() + needle.find(tactic).unwrap();
+            let position = position_at_offset(click_source, offset);
+            let expanded = expand_c0_tactic_source_at(
+                click_source,
+                &[("count.c", c_source)],
+                position.line,
+                position.column,
+            )
+            .expect("structural effect smart proof should expand");
+            assert!(expanded.contains("immutable by {\n"));
+            assert!(expanded.contains("frame();"));
+            verify_c0_sources(&expanded, &[("count.c", c_source)])
+                .expect("expanded structural effect certificate should re-verify");
+        }
     }
 
     #[test]
