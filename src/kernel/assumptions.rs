@@ -3645,6 +3645,30 @@ impl Assumptions {
         left: &CMemoryRange,
         right: &CMemoryRange,
     ) -> bool {
+        // Prefer certificates where one queried range is structurally inside
+        // one side. This gives the other side a single, directed equivalence
+        // check instead of exploring both orientations of every separation
+        // fact before reaching the structurally relevant certificate.
+        if self.prop_facts.iter().any(|proposition| {
+            let Proposition::CResourceSeparate {
+                left: CResource::Memory(fact_left),
+                right: CResource::Memory(fact_right),
+            } = proposition
+            else {
+                return false;
+            };
+            memory_range_shallowly_contained(left, fact_left)
+                && memory_range_contained_for_memory_resolution(right, fact_right, self)
+                || memory_range_shallowly_contained(right, fact_right)
+                    && memory_range_contained_for_memory_resolution(left, fact_left, self)
+                || memory_range_shallowly_contained(right, fact_left)
+                    && memory_range_contained_for_memory_resolution(left, fact_right, self)
+                || memory_range_shallowly_contained(left, fact_right)
+                    && memory_range_contained_for_memory_resolution(right, fact_left, self)
+        }) {
+            return true;
+        }
+
         self.prop_facts.iter().any(|proposition| {
             let Proposition::CResourceSeparate {
                 left: CResource::Memory(fact_left),
@@ -4134,11 +4158,7 @@ impl Assumptions {
             .all(|range| self.range_proven_disjoint_from_pointer(range, pointer))
     }
 
-    pub(super) fn range_proven_disjoint_from_pointer(
-        &self,
-        range: &CMemoryRange,
-        pointer: &Pointer,
-    ) -> bool {
+    fn range_proven_disjoint_from_pointer(&self, range: &CMemoryRange, pointer: &Pointer) -> bool {
         if range.base.blocks_proven_distinct(pointer) {
             return true;
         }
@@ -4556,6 +4576,11 @@ fn memory_range_contained_for_memory_resolution(
         return true;
     }
 
+    if pointers_proven_equal_for_memory_resolution(range.base(), parent.base(), assumptions) {
+        return exact_less_equal_for_memory_resolution(parent.start(), range.start(), assumptions)
+            && exact_less_equal_for_memory_resolution(range.end(), parent.end(), assumptions);
+    }
+
     if affine_bitvector_difference_constant(range.end(), range.start()) == Some(1) {
         let pointer = range.base().offset_by_int32_elements(range.start().clone());
         if pointer_in_memory_range_for_memory_resolution(&pointer, parent, assumptions) {
@@ -4563,11 +4588,7 @@ fn memory_range_contained_for_memory_resolution(
         }
     }
 
-    if !pointers_proven_equal_for_memory_resolution(range.base(), parent.base(), assumptions) {
-        return false;
-    }
-    exact_less_equal_for_memory_resolution(parent.start(), range.start(), assumptions)
-        && exact_less_equal_for_memory_resolution(range.end(), parent.end(), assumptions)
+    false
 }
 
 fn exact_less_equal_for_memory_resolution(
@@ -4575,6 +4596,12 @@ fn exact_less_equal_for_memory_resolution(
     right: &Bitvector32Term,
     assumptions: &Assumptions,
 ) -> bool {
+    if let (Some(left), Some(right)) = (
+        signed_bitvector_constant(left),
+        signed_bitvector_constant(right),
+    ) {
+        return left <= right;
+    }
     if left == right
         || bitvector_terms_proven_equal_for_memory_resolution(left, right, assumptions)
         || assumptions.exact_condition_value(&ConditionTerm::signed_less_equal(

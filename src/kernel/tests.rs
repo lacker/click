@@ -3385,16 +3385,44 @@ fn exact_separation_resolves_contained_symbolic_ranges_without_general_search() 
             right: CResource::Memory(data_range.clone()),
         })
         .assume_proposition(Proposition::ConditionIs(
-            ConditionTerm::signed_less_equal(Bitvector32Term::Constant(2), length),
+            ConditionTerm::signed_less_equal(Bitvector32Term::Constant(2), length.clone()),
             true,
         ));
     let owner_field = memory_range(owner.offset_by_int32_elements(2.into()), 0, 1);
-    let data_cell = memory_range(data, 0, 1);
+    let data_cell = memory_range(data.clone(), 0, 1);
 
     assert!(
         assumptions.memory_ranges_proven_disjoint_by_explicit_separation_for_memory_resolution(
             &owner_field,
             &data_cell,
+        )
+    );
+
+    let memory = CMemory::new().with_block("call-havoc:0", 0);
+    let data_field = owner.offset_by_int32_elements(2.into());
+    let loaded_data_offset = PointerOffsetTerm::scale_int32(
+        Bitvector32Term::MemoryLoad(Box::new(memory), Box::new(data_field)),
+        4,
+    );
+    let loaded_data = Pointer {
+        block: data.block.clone(),
+        offset: loaded_data_offset.clone(),
+    };
+    let assumptions = assumptions
+        .assume_proposition(Proposition::ConditionIs(
+            ConditionTerm::pointer_offset_equal(loaded_data_offset, data.offset.clone()),
+            true,
+        ))
+        .assume_proposition(Proposition::ConditionIs(
+            ConditionTerm::signed_less_than(Bitvector32Term::Constant(1), length),
+            true,
+        ));
+    let owner_len_field = memory_range(owner.offset_by_int32_elements(1.into()), 0, 1);
+    let second_data_cell = memory_range(loaded_data, 1, 2);
+    assert!(
+        assumptions.memory_ranges_proven_disjoint_by_explicit_separation_for_memory_resolution(
+            &owner_len_field,
+            &second_data_cell,
         )
     );
 }
