@@ -552,11 +552,11 @@ int32 owned_string_pipeline(
         fact load_int32_pointer((owner + 2)) == at(statement(3).entry, load_int32_pointer((owner + 2)));
         fact at(statement(3).entry, load_int32_pointer((owner + 2))) == data;
     }
-    apply(pointer_add_zero_equals(
-        owner->data,
-        at(statement(3).entry, owner->len),
-        data
-    ));
+    apply(pointer_add_zero_equals(load_int32_pointer((owner + 2)), at(statement(3).entry, load_int32(owner)), data)) using {
+        fact loadable(old(owner[0..4]));
+        fact load_int32_pointer((owner + 2)) == data;
+        fact at(statement(3).entry, load_int32(owner)) == 0;
+    }
     have data[0] == first by {
         simp();
     }
