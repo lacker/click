@@ -3651,7 +3651,7 @@ fn certified_transitions_from_execution(
                         }
                     }
                     for fact in normalization_sources {
-                        let Some(theorem) = prove_c_condition_fact_transport(
+                        let Some(theorem) = prove_c_condition_fact_direct_transport(
                             &fact,
                             post_state.memory(),
                             &transport_assumptions,
