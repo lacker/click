@@ -26,7 +26,7 @@ use crate::kernel::{
     c_verified_function_contract_claim, c_verified_function_rule,
     c_while_with_invariant_and_effect_checks, canonical_c_memory_for_pointer_load,
     certify_c_function_execution_paths_from_outcomes, int32, prove_c_condition_fact_transport,
-    prove_c_fact_snapshot_transport, prove_c_function_satisfies_specification_from_symbolic_path,
+    prove_c_function_satisfies_specification_from_symbolic_path,
     prove_symbolic_c_condition_evaluation,
     prove_symbolic_c_loop_exit_with_proven_phases_using_budget,
     prove_symbolic_c_statement_verification_paths_with_environment_and_loop_rule_using_budget,

@@ -497,7 +497,8 @@ pub(super) fn memories_match_for_pointer_load(
         return false;
     }
 
-    left.blocks.get(&pointer.block) == right.blocks.get(&pointer.block)
+    memory_havoc_markers(left).eq(memory_havoc_markers(right))
+        && left.blocks.get(&pointer.block) == right.blocks.get(&pointer.block)
         && left
             .cells
             .iter()
@@ -508,10 +509,19 @@ pub(super) fn memories_match_for_pointer_load(
                 .filter(|(cell_pointer, _)| cell_pointer.block == pointer.block))
 }
 
+fn memory_havoc_markers(memory: &CMemory) -> impl Iterator<Item = (&PointerBlock, &CBlock)> {
+    memory
+        .blocks
+        .iter()
+        .filter(|(block, _)| block.starts_with("havoc:") || block.starts_with("call-havoc:"))
+}
+
 /// Returns a canonical representation of the portion of memory observable by
 /// one atomic load. Unrelated blocks cannot affect the load. A block made only
 /// of cached loads from one common source is observationally that source, so
-/// collapse it before discarding unrelated blocks.
+/// collapse it before discarding unrelated blocks. Loop and call havoc markers
+/// are global snapshot identities, so they remain observable at every
+/// non-local pointer until an explicit effect fact frames that pointer.
 pub(super) fn canonical_memory_for_pointer_load(memory: &CMemory, pointer: &Pointer) -> CMemory {
     canonical_memory_for_pointer_load_with_depth(memory, pointer, 0)
 }
@@ -548,7 +558,9 @@ fn canonical_memory_for_pointer_load_with_depth(
             .then(|| first.clone())
     });
     let mut canonical = common_materialization_source.unwrap_or_else(|| memory.clone());
-    canonical.blocks.retain(|block, _| block == &pointer.block);
+    canonical.blocks.retain(|block, _| {
+        block == &pointer.block || block.starts_with("havoc:") || block.starts_with("call-havoc:")
+    });
     canonical
         .cells
         .retain(|cell_pointer, _| cell_pointer.block == pointer.block);

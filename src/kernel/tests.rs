@@ -3682,48 +3682,24 @@ fn atomic_condition_fact_transport_uses_certified_effect_summary() {
 }
 
 #[test]
-fn snapshot_transport_only_ignores_local_memory_differences() {
-    let external = Pointer {
+fn memory_load_equality_does_not_ignore_loop_havoc_identity() {
+    let before = CMemory::new();
+    let after = before.clone().with_block("havoc:0", 0);
+    let pointer = Pointer {
         block: "arg-memory".into(),
         offset: PointerOffsetTerm::Constant(0),
     };
-    let local = CMemory::local_pointer("result");
-    let before = CMemory::new()
-        .with_block("arg-memory", 4)
-        .with_block("local:result", 4)
-        .store(local.clone(), int32(0));
-    let after_local_store = before.clone().store(local, int32(1));
-    let fact = Proposition::ConditionIs(
+    let equality = Proposition::ConditionIs(
         ConditionTerm::equal(
-            Bitvector32Term::MemoryLoad(Box::new(before.clone()), Box::new(external.clone())),
-            Bitvector32Term::Constant(7),
+            Bitvector32Term::MemoryLoad(Box::new(after), Box::new(pointer.clone())),
+            Bitvector32Term::MemoryLoad(Box::new(before), Box::new(pointer)),
         ),
         true,
     );
 
-    let theorem = prove_c_fact_snapshot_transport(&fact, &after_local_store)
-        .expect("a local-only state change should normalize the external snapshot");
-    assert_eq!(
-        theorem.proposition(),
-        &Proposition::Implies(
-            Box::new(fact.clone()),
-            Box::new(Proposition::ConditionIs(
-                ConditionTerm::equal(
-                    Bitvector32Term::MemoryLoad(
-                        Box::new(after_local_store),
-                        Box::new(external.clone()),
-                    ),
-                    Bitvector32Term::Constant(7),
-                ),
-                true,
-            )),
-        )
-    );
-
-    let after_external_store = before.store(external, int32(9));
     assert!(
-        prove_c_fact_snapshot_transport(&fact, &after_external_store).is_none(),
-        "snapshot normalization must not invoke framed-effect reasoning"
+        !Assumptions::new().proves(&equality),
+        "a havoced snapshot requires explicit frame evidence"
     );
 }
 
@@ -4587,6 +4563,48 @@ fn memory_resolution_separation_transports_unchanged_range_base_loads() {
         &indexed_data,
         &assumptions,
     ));
+}
+
+#[test]
+fn incremented_materialized_index_transports_its_nonnegative_bound() {
+    let owner = Pointer {
+        block: "arg-memory".into(),
+        offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(931)), 4),
+    };
+    let local_index = Pointer {
+        block: "local:index".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let before = CMemory::new();
+    let old_len = Bitvector32Term::MemoryLoad(Box::new(before.clone()), Box::new(owner.clone()));
+    let materialized = before
+        .with_block("local:index", 4)
+        .store(local_index.clone(), int32(old_len.clone()));
+    let materialized_index =
+        Bitvector32Term::MemoryLoad(Box::new(materialized), Box::new(local_index));
+    let incremented = Bitvector32Term::add(materialized_index, Bitvector32Term::Constant(1));
+    let upper = Bitvector32Term::Variable(Variable(932));
+    let assumptions = Assumptions::new()
+        .assume_condition(
+            ConditionTerm::signed_less_equal(Bitvector32Term::Constant(0), old_len.clone()),
+            true,
+        )
+        .assume_condition(ConditionTerm::signed_less_than(old_len, upper), true);
+
+    assert_eq!(
+        assumptions.decide(&ConditionTerm::signed_less_equal(
+            Bitvector32Term::Constant(0),
+            incremented.clone(),
+        )),
+        Some(true)
+    );
+    assert_eq!(
+        assumptions.decide(&ConditionTerm::signed_less_than(
+            Bitvector32Term::Constant(0),
+            incremented,
+        )),
+        Some(true)
+    );
 }
 
 #[test]

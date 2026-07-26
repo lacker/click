@@ -3463,9 +3463,11 @@ fn certified_transitions_from_execution(
                         }
                     }
                     for fact in normalization_sources {
-                        let Some(theorem) =
-                            prove_c_fact_snapshot_transport(&fact, post_state.memory())
-                        else {
+                        let Some(theorem) = prove_c_condition_fact_transport(
+                            &fact,
+                            post_state.memory(),
+                            &transport_assumptions,
+                        ) else {
                             continue;
                         };
                         let Proposition::Implies(_, conclusion) = theorem.proposition() else {
@@ -8334,25 +8336,10 @@ fn record_surface_replay_tactic(
                     )
                     .ok()
                 };
-                candidates
-                    .iter()
-                    .find_map(|candidate| {
-                        let actual = lower(candidate)?;
-                        (normalize_direct_atomic_memory_loads(&actual)
-                            == normalize_direct_atomic_memory_loads(expected))
-                        .then(|| candidate.clone())
-                    })
-                    .or_else(|| {
-                        candidates.iter().find_map(|candidate| {
-                            let actual = lower(candidate)?;
-                            materialization_equivalent_available_fact(
-                                expected,
-                                std::slice::from_ref(&actual),
-                            )
-                            .is_some()
-                            .then(|| candidate.clone())
-                        })
-                    })
+                candidates.iter().find_map(|candidate| {
+                    let actual = lower(candidate)?;
+                    (&actual == expected).then(|| candidate.clone())
+                })
             };
             match (find_candidate(source), find_candidate(target)) {
                 (Some(surface_source), Some(surface_target))

@@ -31,6 +31,30 @@ impl Drop for MemoryLoadEqualityDepthGuard {
     }
 }
 
+fn bitvector_terms_equal_after_exact_materialization(
+    left: &Bitvector32Term,
+    right: &Bitvector32Term,
+) -> bool {
+    fn normalize(term: &Bitvector32Term) -> Bitvector32Term {
+        let mut current = term.clone();
+        for _ in 0..64 {
+            let Bitvector32Term::MemoryLoad(memory, pointer) = &current else {
+                break;
+            };
+            let Some(CValue::Int32(value)) = memory.known_value(pointer) else {
+                break;
+            };
+            if value == current {
+                break;
+            }
+            current = value;
+        }
+        current
+    }
+
+    normalize(left) == normalize(right)
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum SignedConstantResolution {
     Unknown,
@@ -1689,7 +1713,7 @@ impl Assumptions {
             .iter()
             .any(|(fact, value)| match (fact, value) {
                 (ConditionTerm::Bitvector32SignedGreaterEqual(fact_left, lower), true)
-                    if fact_left.as_ref() == &base =>
+                    if bitvector_terms_equal_after_exact_materialization(fact_left, &base) =>
                 {
                     let Some(lower) = signed_const_add(lower, addend) else {
                         return false;
@@ -1698,7 +1722,7 @@ impl Assumptions {
                         == Some(true)
                 }
                 (ConditionTerm::Bitvector32SignedLessEqual(lower, fact_left), true)
-                    if fact_left.as_ref() == &base =>
+                    if bitvector_terms_equal_after_exact_materialization(fact_left, &base) =>
                 {
                     let Some(lower) = signed_const_add(lower, addend) else {
                         return false;
@@ -1732,7 +1756,7 @@ impl Assumptions {
             .iter()
             .any(|(fact, value)| match (fact, value) {
                 (ConditionTerm::Bitvector32SignedGreaterEqual(fact_left, lower), true)
-                    if fact_left.as_ref() == &base =>
+                    if bitvector_terms_equal_after_exact_materialization(fact_left, &base) =>
                 {
                     let Some(lower) = signed_const_add(lower, addend) else {
                         return false;
@@ -1741,7 +1765,7 @@ impl Assumptions {
                         == Some(true)
                 }
                 (ConditionTerm::Bitvector32SignedLessEqual(lower, fact_left), true)
-                    if fact_left.as_ref() == &base =>
+                    if bitvector_terms_equal_after_exact_materialization(fact_left, &base) =>
                 {
                     let Some(lower) = signed_const_add(lower, addend) else {
                         return false;

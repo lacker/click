@@ -157,14 +157,32 @@ owned-string, and owned-vector hit the project watchdog. Resume the
 one-frontier-at-a-time smart expansion sweep from those profiler locations;
 there is currently no reached slow-simple engine path to fix first.
 
-The library suite is green at 363 tests. The focused
-`bubble_sort3_two_pass_sorted` Markdown regression is green. The complete
-Markdown corpus is not currently green:
-`field_derived_precise_effect_after_metadata_write.md` fails while proving the
-second data-cell write after the neighboring length-field mutation. The same
-focused test fails in the clean `c72a231` worktree, so this was not introduced
-by the latest statement-speed changes, but it is a real remaining correctness
-bug and takes priority if the work returns to the Markdown corpus.
+The library suite is green at 364 tests, and the complete Markdown corpus is
+green (195.06 seconds in the final debug-profile run).
+
+The final corpus failures uncovered three strict-boundary bugs, all now fixed:
+
+- Additive lower-bound reasoning now recognizes an index materialized exactly
+  into a local cell. This is a bounded, deterministic normalization of known
+  loads, not a general equality search. It fixes
+  `field_derived_precise_effect_after_metadata_write.md`.
+- Loop and call havoc marker blocks remain part of every non-local memory
+  snapshot identity. Two absent external cells are no longer declared equal
+  merely because the snapshot-specific havoc marker was discarded. Explicit
+  `CMemoryEffectSummary` frame evidence is required to cross that boundary;
+  the false tail-preservation claim in
+  `fill_tail_rejects_tail_segment_unchanged.md` is rejected again.
+- Statement-produced call facts are transported to the statement exit by the
+  same theorem-producing condition transport used by replay. The obsolete
+  snapshot-only transport path was deleted. When printing a transport,
+  `click-expand` now accepts a source or target spelling only if lowering it
+  exactly reproduces the certified proposition; it no longer substitutes an
+  `old(...)` or materialization-equivalent spelling. This fixes
+  `permission_call_split_rejoin.md`.
+
+There are currently no known correctness failures in either checked corpus.
+The roughly two-minute field-derived case remains a performance problem, not a
+correctness blocker.
 
 #### Strict smart/surface boundary checkpoint
 
@@ -770,13 +788,13 @@ This probe exposed two source-certificate details that are now handled:
 - basic current-local and direct pointer-load comparisons can be reconstructed
   as Click propositions.
 
-One important boundary remains explicit. A modular call can transport a fact
-across a private cloned-memory mutation whose source is not any source program
-point. Tactic-level expansion therefore keeps the enclosing statement as
-`execute_step()` instead of falsely spelling that source as
-`at(statement(...).entry, ...)`. Fully expanding such an individual call step
-requires a sound surface certificate form for that clone transport. This is a
-focused expansion bug, not a reason to run the rest of the grouped proof.
+The modular-call clone boundary is now explicit. A statement certificate keeps
+the producer-snapshot fact required by its execution theorem and records a
+separate theorem-backed transport to the source-statement exit. Expansion only
+prints source/target propositions that lower exactly at a recorded program
+point; it does not guess an `old(...)` or materialization-equivalent spelling.
+If no exact spelling exists, expansion stops with a boundary error instead of
+emitting a certificate that only happens to replay under broader reasoning.
 
 ### 2. Make source rewriting total and canonical
 
