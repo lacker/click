@@ -313,7 +313,10 @@ int32 owned_segmented_buffer_pipeline(
         simp();
     }
     have second_data[0] == second_value by {
-        simp();
+        derive(second_data[0] == second_value) using {
+            fact at(statement(5).entry, *load_int32_pointer((owner + 4))) == at(statement(5).entry, second_value);
+            fact load_int32_pointer((owner + 4)) == second_data;
+        }
     }
     execute_step();
     have read_value == first_data[0] by {
