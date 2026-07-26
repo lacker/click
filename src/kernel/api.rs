@@ -111,8 +111,7 @@ fn c_memory_load_is_directly_unchanged(
             } => {
                 memory_matches_effect_summary_endpoint(effect_before, before, pointer)
                     && memory_matches_effect_summary_endpoint(effect_after, after, pointer)
-                    && assumptions
-                        .ranges_directly_disjoint_from_pointer(mutable_ranges, pointer)
+                    && assumptions.ranges_directly_disjoint_from_pointer(mutable_ranges, pointer)
             }
             _ => false,
         })

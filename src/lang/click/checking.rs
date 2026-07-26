@@ -2485,10 +2485,8 @@ mod normalization_tests {
             offset: PointerOffsetTerm::Constant(8),
         };
         let dependent_load = |memory: CMemory| {
-            let loaded_pointer = Bitvector32Term::MemoryLoad(
-                Box::new(memory.clone()),
-                Box::new(field.clone()),
-            );
+            let loaded_pointer =
+                Bitvector32Term::MemoryLoad(Box::new(memory.clone()), Box::new(field.clone()));
             Bitvector32Term::MemoryLoad(
                 Box::new(memory),
                 Box::new(Pointer {
@@ -6224,11 +6222,7 @@ fn bitvector_contains_contract_load(
                 && load_pointer.block == pointer.block
                 && normalize_direct_atomic_pointer_offset_loads(&load_pointer.offset)
                     == normalize_direct_atomic_pointer_offset_loads(&pointer.offset)
-                || pointer_offset_contains_contract_load(
-                    &load_pointer.offset,
-                    memory,
-                    pointer,
-                )
+                || pointer_offset_contains_contract_load(&load_pointer.offset, memory, pointer)
         }
         Bitvector32Term::Add(left, right)
         | Bitvector32Term::Subtract(left, right)

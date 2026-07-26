@@ -4193,19 +4193,13 @@ impl Assumptions {
                 } => {
                     memory_range_shallowly_contained_in_parts(
                         range, left_base, left_start, left_end,
-                    ) && pointer_in_range_shallow(
-                        pointer,
-                        right_base,
-                        right_start,
-                        right_end,
-                    ) || memory_range_shallowly_contained_in_parts(
-                        range,
-                        right_base,
-                        right_start,
-                        right_end,
-                    ) && pointer_in_range_shallow(
-                        pointer, left_base, left_start, left_end,
-                    )
+                    ) && pointer_in_range_shallow(pointer, right_base, right_start, right_end)
+                        || memory_range_shallowly_contained_in_parts(
+                            range,
+                            right_base,
+                            right_start,
+                            right_end,
+                        ) && pointer_in_range_shallow(pointer, left_base, left_start, left_end)
                 }
                 Proposition::CResourceSeparate {
                     left: CResource::Memory(left_range),
@@ -4257,8 +4251,7 @@ impl Assumptions {
                         byte_width: right_width,
                     },
                 ) => {
-                    left_width == right_width
-                        && self.bitvector_terms_equal_from_facts(left, right)
+                    left_width == right_width && self.bitvector_terms_equal_from_facts(left, right)
                 }
                 _ => false,
             }
