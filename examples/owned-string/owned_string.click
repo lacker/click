@@ -547,11 +547,11 @@ int32 owned_string_pipeline(
     have at(statement(3).entry, owner->data) == data by {
         simp();
     }
-    apply(pointer_equality_transitive(
-        owner->data,
-        at(statement(3).entry, owner->data),
-        data
-    ));
+    apply(pointer_equality_transitive(load_int32_pointer((owner + 2)), at(statement(3).entry, load_int32_pointer((owner + 2))), data)) using {
+        fact loadable(old(owner[0..4]));
+        fact load_int32_pointer((owner + 2)) == at(statement(3).entry, load_int32_pointer((owner + 2)));
+        fact at(statement(3).entry, load_int32_pointer((owner + 2))) == data;
+    }
     apply(pointer_add_zero_equals(
         owner->data,
         at(statement(3).entry, owner->len),
