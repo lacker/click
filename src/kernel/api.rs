@@ -76,6 +76,48 @@ pub(crate) fn c_memory_load_is_unchanged(
     false
 }
 
+fn c_memory_load_is_directly_unchanged(
+    before: &CMemory,
+    after: &CMemory,
+    pointer: &Pointer,
+    assumptions: &Assumptions,
+) -> bool {
+    if memories_match_for_pointer_load(before, after, pointer) {
+        return true;
+    }
+    assumptions
+        .prop_facts
+        .iter()
+        .any(|proposition| match proposition {
+            Proposition::CMemoryMutatesOnly {
+                before: effect_before,
+                after: effect_after,
+                pointers,
+            } => {
+                (effect_before == before
+                    || memory_materializes_atomic_load(effect_before, before, pointer))
+                    && effect_after == after
+                    && pointers.iter().all(|write| {
+                        write.blocks_proven_distinct(pointer)
+                            || pointer_byte_offset_from_base(write, pointer)
+                                .and_then(|offset| offset.as_const())
+                                .is_some_and(|offset| offset != 0)
+                    })
+            }
+            Proposition::CMemoryEffectSummary {
+                before: effect_before,
+                after: effect_after,
+                mutable_ranges,
+            } => {
+                memory_matches_effect_summary_endpoint(effect_before, before, pointer)
+                    && memory_matches_effect_summary_endpoint(effect_after, after, pointer)
+                    && assumptions
+                        .ranges_directly_disjoint_from_pointer(mutable_ranges, pointer)
+            }
+            _ => false,
+        })
+}
+
 fn memory_materializes_atomic_load(
     materialized: &CMemory,
     symbolic: &CMemory,
@@ -98,13 +140,21 @@ pub(crate) fn prove_c_condition_fact_transport(
     after: &CMemory,
     assumptions: &Assumptions,
 ) -> Option<Theorem> {
-    prove_c_condition_fact_transport_with_assumptions(fact, after, Some(assumptions))
+    prove_c_condition_fact_transport_with_assumptions(fact, after, Some((assumptions, false)))
+}
+
+pub(crate) fn prove_c_condition_fact_direct_transport(
+    fact: &Proposition,
+    after: &CMemory,
+    assumptions: &Assumptions,
+) -> Option<Theorem> {
+    prove_c_condition_fact_transport_with_assumptions(fact, after, Some((assumptions, true)))
 }
 
 fn prove_c_condition_fact_transport_with_assumptions(
     fact: &Proposition,
     after: &CMemory,
-    assumptions: Option<&Assumptions>,
+    assumptions: Option<(&Assumptions, bool)>,
 ) -> Option<Theorem> {
     let Proposition::ConditionIs(condition, value) = fact else {
         return None;
@@ -217,7 +267,7 @@ fn collect_bitvector_memories(term: &Bitvector32Term, memories: &mut Vec<CMemory
 fn transport_framed_atomic_condition(
     condition: &ConditionTerm,
     after: &CMemory,
-    assumptions: Option<&Assumptions>,
+    assumptions: Option<(&Assumptions, bool)>,
 ) -> Option<ConditionTerm> {
     let binary = |left: &Bitvector32Term, right: &Bitvector32Term| {
         Some((
@@ -264,7 +314,7 @@ fn transport_framed_atomic_condition(
 fn transport_framed_atomic_pointer_offset(
     offset: &PointerOffsetTerm,
     after: &CMemory,
-    assumptions: Option<&Assumptions>,
+    assumptions: Option<(&Assumptions, bool)>,
 ) -> Option<PointerOffsetTerm> {
     Some(match offset {
         PointerOffsetTerm::Constant(_) | PointerOffsetTerm::Variable(_) => offset.clone(),
@@ -282,7 +332,7 @@ fn transport_framed_atomic_pointer_offset(
 fn transport_framed_atomic_bitvector(
     term: &Bitvector32Term,
     after: &CMemory,
-    assumptions: Option<&Assumptions>,
+    assumptions: Option<(&Assumptions, bool)>,
 ) -> Option<Bitvector32Term> {
     Some(match term {
         Bitvector32Term::Constant(_) | Bitvector32Term::Variable(_) => term.clone(),
@@ -292,8 +342,12 @@ fn transport_framed_atomic_bitvector(
             }
             if memories_match_for_pointer_load(memory, after, pointer)
                 || memory_materializes_atomic_load(after, memory, pointer)
-                || assumptions.is_some_and(|assumptions| {
-                    c_memory_load_is_unchanged(memory, after, pointer, assumptions)
+                || assumptions.is_some_and(|(assumptions, direct)| {
+                    if direct {
+                        c_memory_load_is_directly_unchanged(memory, after, pointer, assumptions)
+                    } else {
+                        c_memory_load_is_unchanged(memory, after, pointer, assumptions)
+                    }
                 })
             {
                 Bitvector32Term::MemoryLoad(Box::new(after.clone()), pointer.clone())

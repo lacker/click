@@ -2648,6 +2648,7 @@ pub(super) enum StatementPrerequisitePolicy {
 #[derive(Clone, Copy)]
 pub(super) enum StatementFactTransportPolicy {
     None,
+    Selected,
     Automatic,
 }
 
@@ -3547,10 +3548,8 @@ fn certified_transitions_from_execution(
                 let statement_memory_changed =
                     statement_pre_state.memory() != post_state.memory();
 
-                if matches!(
-                    fact_transport_policy,
-                    StatementFactTransportPolicy::Automatic
-                ) && statement_memory_changed
+                if !matches!(fact_transport_policy, StatementFactTransportPolicy::None)
+                    && statement_memory_changed
                 {
                     let automatic_sources = if normalize_statement_facts_to_exit {
                         pure_facts.to_vec()
@@ -3563,11 +3562,24 @@ fn certified_transitions_from_execution(
                         }
                         let statement_local =
                             exact_fact_is_available(&fact, &statement_fact_sources);
-                        let Some(theorem) = prove_c_condition_fact_transport(
-                            &fact,
-                            post_state.memory(),
-                            &transport_assumptions,
-                        ) else {
+                        let theorem = match fact_transport_policy {
+                            StatementFactTransportPolicy::Selected => {
+                                prove_c_condition_fact_direct_transport(
+                                    &fact,
+                                    post_state.memory(),
+                                    &transport_assumptions,
+                                )
+                            }
+                            StatementFactTransportPolicy::Automatic => {
+                                prove_c_condition_fact_transport(
+                                    &fact,
+                                    post_state.memory(),
+                                    &transport_assumptions,
+                                )
+                            }
+                            StatementFactTransportPolicy::None => unreachable!(),
+                        };
+                        let Some(theorem) = theorem else {
                             continue;
                         };
                         let Proposition::Implies(_, conclusion) = theorem.proposition() else {
@@ -9548,7 +9560,7 @@ fn replay_linear_tactics(
                     // listed facts through the certified statement effect;
                     // ambient facts are restored below at their original
                     // snapshots.
-                    StatementFactTransportPolicy::Automatic,
+                    StatementFactTransportPolicy::Selected,
                     loop_step_policy,
                 )?;
                 for fact in all_pure_facts {

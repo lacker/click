@@ -4170,6 +4170,113 @@ impl Assumptions {
             .all(|range| self.range_proven_disjoint_from_pointer(range, pointer))
     }
 
+    pub(super) fn ranges_directly_disjoint_from_pointer(
+        &self,
+        ranges: &[CMemoryRange],
+        pointer: &Pointer,
+    ) -> bool {
+        ranges.iter().all(|range| {
+            if range.base.blocks_proven_distinct(pointer) {
+                return true;
+            }
+            if pointer_in_memory_range_shallow(pointer, range) {
+                return false;
+            }
+            if self.prop_facts.iter().any(|proposition| match proposition {
+                Proposition::CMemoryDisjoint {
+                    left_base,
+                    left_start,
+                    left_end,
+                    right_base,
+                    right_start,
+                    right_end,
+                } => {
+                    memory_range_shallowly_contained_in_parts(
+                        range, left_base, left_start, left_end,
+                    ) && pointer_in_range_shallow(
+                        pointer,
+                        right_base,
+                        right_start,
+                        right_end,
+                    ) || memory_range_shallowly_contained_in_parts(
+                        range,
+                        right_base,
+                        right_start,
+                        right_end,
+                    ) && pointer_in_range_shallow(
+                        pointer, left_base, left_start, left_end,
+                    )
+                }
+                Proposition::CResourceSeparate {
+                    left: CResource::Memory(left_range),
+                    right: CResource::Memory(right_range),
+                } => {
+                    memory_range_shallowly_contained(range, left_range)
+                        && pointer_in_memory_range_shallow(pointer, right_range)
+                        || memory_range_shallowly_contained(range, right_range)
+                            && pointer_in_memory_range_shallow(pointer, left_range)
+                }
+                _ => false,
+            }) {
+                return true;
+            }
+
+            let Some(index) = self.direct_pointer_element_index_from_base(pointer, &range.base)
+            else {
+                return false;
+            };
+            self.decide(&ConditionTerm::signed_less_than(
+                index.clone(),
+                range.start.clone(),
+            )) == Some(true)
+                || self.decide(&ConditionTerm::signed_less_equal(range.end.clone(), index))
+                    == Some(true)
+        })
+    }
+
+    fn direct_pointer_element_index_from_base(
+        &self,
+        pointer: &Pointer,
+        base: &Pointer,
+    ) -> Option<Bitvector32Term> {
+        if pointer.block != base.block {
+            return None;
+        }
+        let offsets_equal = |left: &PointerOffsetTerm, right: &PointerOffsetTerm| {
+            if left == right {
+                return true;
+            }
+            match (left, right) {
+                (
+                    PointerOffsetTerm::Int32Scaled {
+                        value: left,
+                        byte_width: left_width,
+                    },
+                    PointerOffsetTerm::Int32Scaled {
+                        value: right,
+                        byte_width: right_width,
+                    },
+                ) => {
+                    left_width == right_width
+                        && self.bitvector_terms_equal_from_facts(left, right)
+                }
+                _ => false,
+            }
+        };
+        if offsets_equal(&pointer.offset, &base.offset) {
+            return Some(Bitvector32Term::Constant(0));
+        }
+        if let PointerOffsetTerm::Add(left, right) = &pointer.offset {
+            if offsets_equal(left, &base.offset) {
+                return int32_element_index_from_offset(right);
+            }
+            if offsets_equal(right, &base.offset) {
+                return int32_element_index_from_offset(left);
+            }
+        }
+        pointer.element_index_from_base(base)
+    }
+
     fn range_proven_disjoint_from_pointer(&self, range: &CMemoryRange, pointer: &Pointer) -> bool {
         if range.base.blocks_proven_distinct(pointer) {
             return true;
