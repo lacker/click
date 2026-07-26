@@ -4251,12 +4251,7 @@ impl Assumptions {
             let Some(index) = direct_index else {
                 return false;
             };
-            self.decide(&ConditionTerm::signed_less_than(
-                index.clone(),
-                range.start.clone(),
-            )) == Some(true)
-                || self.decide(&ConditionTerm::signed_less_equal(range.end.clone(), index))
-                    == Some(true)
+            bitvector_index_outside_range_shallow(&index, &range.start, &range.end, self)
         })
     }
 
@@ -4313,11 +4308,7 @@ impl Assumptions {
         ) {
             return start <= index && index < end;
         }
-        self.decide(&ConditionTerm::signed_less_equal(
-            range.start.clone(),
-            index.clone(),
-        )) == Some(true)
-            && self.decide(&ConditionTerm::signed_less_than(index, range.end.clone())) == Some(true)
+        bitvector_index_in_range_shallow(&index, &range.start, &range.end, self)
     }
 
     fn range_proven_disjoint_from_pointer(&self, range: &CMemoryRange, pointer: &Pointer) -> bool {
@@ -4930,6 +4921,40 @@ fn bitvector_index_in_range_shallow(
         return false;
     };
     0 <= offset && offset < length
+}
+
+fn bitvector_index_outside_range_shallow(
+    index: &Bitvector32Term,
+    start: &Bitvector32Term,
+    end: &Bitvector32Term,
+    assumptions: &Assumptions,
+) -> bool {
+    if let (Some(index), Some(start), Some(end)) = (
+        signed_bitvector_constant(index),
+        signed_bitvector_constant(start),
+        signed_bitvector_constant(end),
+    ) {
+        return index < start || end <= index;
+    }
+    if assumptions
+        .exact_condition_value(&ConditionTerm::signed_less_than(
+            index.clone(),
+            start.clone(),
+        ))
+        == Some(true)
+        || assumptions.has_exact_order_path(index, start, true)
+        || assumptions
+            .exact_condition_value(&ConditionTerm::signed_less_equal(
+                end.clone(),
+                index.clone(),
+            ))
+            == Some(true)
+        || assumptions.has_exact_order_path(end, index, false)
+    {
+        return true;
+    }
+    affine_bitvector_difference_constant(index, start).is_some_and(|offset| offset < 0)
+        || affine_bitvector_difference_constant(index, end).is_some_and(|offset| 0 <= offset)
 }
 
 fn pointer_in_range_shallow(
