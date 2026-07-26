@@ -265,6 +265,7 @@ int32 owned_split_buffer_pipeline(
         fact loadable(old(owner[0..4]));
         fact *owner == *owner;
         fact *(owner + 1) == *(owner + 1);
+        fact separate(memory(owner[0..4]), memory(data[0..length]));
     }
     transport(at(statement(4).entry, load_int32_pointer((owner + 2))) == data, load_int32_pointer((owner + 2)) == data) using {
         fact at(statement(4).entry, load_int32_pointer((owner + 2))) == data;
@@ -279,8 +280,11 @@ int32 owned_split_buffer_pipeline(
             fact load_int32_pointer((owner + 2)) == data;
         }
     }
-    have owner->split < owner->len by {
-        simp();
+    have load_int32(owner) < load_int32((owner + 1)) by {
+        derive(load_int32(owner) < load_int32((owner + 1))) using {
+            fact 1 < *(owner + 1);
+            fact *owner == 1;
+        }
     }
     execute_until(statement(6));
     have owner->data == data by {
