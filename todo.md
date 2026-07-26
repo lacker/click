@@ -43,6 +43,68 @@ These are deliberate properties of the current tool, not TODOs:
 Do not add expand-all, in-place editing, certificate caching, or formatting
 options until the correctness and corpus audit below are complete.
 
+## Global `TacticCertificate` Completion Checklist
+
+The selectable C-claim boundary is certificate-clean, but the intended final
+invariant applies to every proof surface:
+
+> Every successful smart tactic must produce a surface-expressible
+> `TacticCertificate`, replay that certificate through the ordinary proof
+> executor, and commit only the replay result.
+
+The following items remain before that statement is true globally:
+
+- [ ] **Loop initialization.** Route explicit `initialize by auto`/`simp` and
+  smart tactics inside initialization scripts through `TacticCertificate`.
+  The certificate must prove every lowered invariant path and replay at the
+  exact loop-entry snapshot.
+- [ ] **Loop preservation closer.** Replace the direct
+  `derive_simp_proposition` calls used by the final region `simp` with one
+  path-aware certificate for the complete back-edge obligation bundle.
+  Quantified lowering paths must remain guarded branches; they cannot be
+  flattened into sequential unconditional `have` statements.
+- [ ] **Automatic loop phases.** Treat omitted/default loop initialization and
+  preservation as smart `auto`, produce certificates for them, and replay
+  those certificates before installing a verified loop rule. Do not retain a
+  parallel kernel-only success path.
+- [ ] **Structural proposition items.** Route default/`auto` proofs for region
+  `invariant` and `assert` items through the same certificate gateway instead
+  of accepting their lowering/checking as proof plumbing.
+- [ ] **Structural effect items.** Make `immutable`, `mutable`, and step-effect
+  `frame`/`auto` proofs produce explicit effect-obligation certificates.
+  Back-edge effect validation should use the same explicit-obligation boundary
+  as invariant preservation.
+- [ ] **Pure theorem smart proofs.** Make theorem-level default/`auto`, `simp`,
+  and any smart tactics nested in theorem scripts return and replay
+  `TacticCertificate`; remove the separate pure-theorem smart success path.
+- [ ] **Shared pure-goal gateway.** Consolidate
+  `prove_pure_theorem_*`, `prove_pure_proposition_at_point`, smart `have`, and
+  loop-phase pure proofs around one planner → certificate → ordinary replay
+  implementation. A proof surface must not choose whether certificates are
+  mandatory.
+- [ ] **Remove loop dummy-claim scaffolding.** Execute loop-region certificates
+  against their real invariant/effect obligation bundle rather than a dummy
+  `0 == 0` ensure followed by a separate semantic check.
+- [ ] **Source selection for every proof surface.** Extend the source selector
+  beyond `CProofClaim` so theorem ensures, loop `initialize`/`preserve`, and
+  structural-item proofs can be selected and rewritten. Profiler locations
+  must never point at a tactic that `click-expand` cannot select.
+- [x] **Canonical omitted-proof rewriting.** Allow omitted/default proofs to be
+  replaced by canonical `by { ... }` source; this is already a known bug for
+  selectable ensures/effects and will also be required by the new proof
+  surfaces.
+- [ ] **Global certificate audit.** Enumerate every syntactic smart-tactic
+  occurrence across every proof-bearing construct. For each occurrence,
+  require certificate construction, smart-free validation, ordinary replay,
+  equivalent path count/outcomes, source emission, rewritten-source
+  verification, and idempotent re-expansion.
+- [ ] **Delete superseded bypasses.** Once the audit is green, remove direct
+  smart-success APIs and kernel-only fallback paths so a newly added smart
+  tactic cannot accidentally bypass `TacticCertificate`.
+
+Performance work remains subordinate to this invariant: a slow smart tactic
+may need a better planner, but it must not gain a non-certificate fast path.
+
 ## Current Implementation
 
 ### Example-suite performance target

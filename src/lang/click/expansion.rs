@@ -38,12 +38,23 @@ pub fn expand_c0_claim_source(
     let tokens = scan_source_tokens(click_source)?;
     let function = find_function(&tokens, function_name)?;
     let grouped = theorem.function_block.grouped_proof().is_some();
-    let span = if grouped || claim == CProofClaim::Grouped {
-        find_grouped_proof_span(&tokens, &function)?
+    let edit = if grouped || claim == CProofClaim::Grouped {
+        ProofSourceEdit::Explicit(find_grouped_proof_span(&tokens, &function)?)
     } else {
-        find_claim_proof_span(&tokens, &function, claim)?
+        find_claim_proof_edit(&tokens, &function, claim)?
     };
+    let span = edit.span();
     let replacement = indent_replacement(click_source, span.start, &replacement);
+    let replacement = match edit {
+        ProofSourceEdit::Explicit(_) => replacement,
+        ProofSourceEdit::DefaultTerminator(_) => {
+            let separator = click_source[..span.start]
+                .chars()
+                .next_back()
+                .is_some_and(|character| !character.is_whitespace());
+            format!("{}{replacement}", if separator { " " } else { "" })
+        }
+    };
     let mut expanded =
         String::with_capacity(click_source.len() - (span.end - span.start) + replacement.len());
     expanded.push_str(&click_source[..span.start]);
@@ -148,44 +159,72 @@ struct FunctionSource {
 }
 
 fn scan_source_tokens(source: &str) -> Result<Vec<SourceToken>, ClickError> {
-    let bytes = source.as_bytes();
     let mut tokens = Vec::new();
     let mut index = 0;
-    while index < bytes.len() {
-        if bytes[index].is_ascii_whitespace() {
-            index += 1;
+    while index < source.len() {
+        let character = source[index..]
+            .chars()
+            .next()
+            .expect("index is maintained at a character boundary");
+        if character.is_whitespace() {
+            index += character.len_utf8();
             continue;
         }
         let start = index;
-        if bytes[index].is_ascii_alphabetic() || bytes[index] == b'_' {
-            index += 1;
-            while index < bytes.len()
-                && (bytes[index].is_ascii_alphanumeric() || bytes[index] == b'_')
-            {
-                index += 1;
-            }
-        } else if bytes[index].is_ascii_digit() {
-            index += 1;
-            while index < bytes.len() && bytes[index].is_ascii_digit() {
-                index += 1;
-            }
-        } else if matches!(bytes[index], b'"' | b'\'') {
-            let quote = bytes[index];
-            index += 1;
-            while index < bytes.len() && bytes[index] != quote {
-                if bytes[index] == b'\\' {
-                    index += 1;
+        if character.is_ascii_alphabetic() || character == '_' {
+            index += character.len_utf8();
+            while index < source.len() {
+                let next = source[index..]
+                    .chars()
+                    .next()
+                    .expect("index is maintained at a character boundary");
+                if !next.is_ascii_alphanumeric() && next != '_' {
+                    break;
                 }
-                index += 1;
+                index += next.len_utf8();
             }
-            if index == bytes.len() {
+        } else if character.is_ascii_digit() {
+            index += character.len_utf8();
+            while index < source.len() {
+                let next = source[index..]
+                    .chars()
+                    .next()
+                    .expect("index is maintained at a character boundary");
+                if !next.is_ascii_digit() {
+                    break;
+                }
+                index += next.len_utf8();
+            }
+        } else if matches!(character, '"' | '\'') {
+            let quote = character;
+            index += character.len_utf8();
+            let mut terminated = false;
+            while index < source.len() {
+                let next = source[index..]
+                    .chars()
+                    .next()
+                    .expect("index is maintained at a character boundary");
+                index += next.len_utf8();
+                if next == '\\' {
+                    if index < source.len() {
+                        let escaped = source[index..]
+                            .chars()
+                            .next()
+                            .expect("index is maintained at a character boundary");
+                        index += escaped.len_utf8();
+                    }
+                } else if next == quote {
+                    terminated = true;
+                    break;
+                }
+            }
+            if !terminated {
                 return Err(ClickError::new(
                     "unterminated literal while locating proof source",
                 ));
             }
-            index += 1;
         } else {
-            index += 1;
+            index += character.len_utf8();
         }
         tokens.push(SourceToken {
             text: source[start..index].to_string(),
@@ -239,6 +278,33 @@ fn find_claim_proof_span(
     function: &FunctionSource,
     claim: CProofClaim,
 ) -> Result<Range<usize>, ClickError> {
+    match find_claim_proof_edit(tokens, function, claim)? {
+        ProofSourceEdit::Explicit(span) => Ok(span),
+        ProofSourceEdit::DefaultTerminator(_) => Err(ClickError::new(format!(
+            "selected {claim:?} uses a default proof and has no explicit source tactic"
+        ))),
+    }
+}
+
+#[derive(Clone, Debug)]
+enum ProofSourceEdit {
+    Explicit(Range<usize>),
+    DefaultTerminator(Range<usize>),
+}
+
+impl ProofSourceEdit {
+    fn span(&self) -> &Range<usize> {
+        match self {
+            Self::Explicit(span) | Self::DefaultTerminator(span) => span,
+        }
+    }
+}
+
+fn find_claim_proof_edit(
+    tokens: &[SourceToken],
+    function: &FunctionSource,
+    claim: CProofClaim,
+) -> Result<ProofSourceEdit, ClickError> {
     let (keyword, wanted) = match claim {
         CProofClaim::Ensure(index) => ("ensures", index),
         CProofClaim::Effect(index) => ("effect", index),
@@ -262,11 +328,13 @@ fn find_claim_proof_span(
                         match tokens[cursor].text.as_str() {
                             "{" | "(" | "[" => nested += 1,
                             "}" | ")" | "]" => nested -= 1,
-                            "by" if nested == 0 => return proof_span(tokens, cursor),
+                            "by" if nested == 0 => {
+                                return Ok(ProofSourceEdit::Explicit(proof_span(tokens, cursor)?));
+                            }
                             ";" if nested == 0 => {
-                                return Err(ClickError::new(format!(
-                                    "selected {claim:?} uses a default proof and has no source proof clause to replace"
-                                )));
+                                return Ok(ProofSourceEdit::DefaultTerminator(
+                                    tokens[cursor].span.clone(),
+                                ));
                             }
                             _ => {}
                         }

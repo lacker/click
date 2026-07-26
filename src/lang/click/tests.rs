@@ -4577,7 +4577,72 @@ fn source_expander_is_idempotent() {
 }
 
 #[test]
-fn source_expander_rejects_default_proofs_without_rewrite_spans() {
+fn source_expander_replaces_and_replays_default_ensure_proof() {
+    let c_source = r#"
+            int32 identity(int32 x) {
+                return x;
+            }
+        "#;
+    let click_source = r#"
+            verifying "identity.c";
+
+            int32 identity(int32 x) {
+                ensures result == x;
+            }
+        "#;
+
+    let expanded_once = expand_c0_claim_source(
+        click_source,
+        &[("identity.c", c_source)],
+        "identity",
+        CProofClaim::Ensure(0),
+    )
+    .expect("default proof should expand");
+    let expanded_twice = expand_c0_claim_source(
+        &expanded_once,
+        &[("identity.c", c_source)],
+        "identity",
+        CProofClaim::Ensure(0),
+    )
+    .expect("explicit expansion should expand again");
+
+    assert!(expanded_once.contains("ensures result == x by {"));
+    assert_eq!(expanded_once, expanded_twice);
+    verify_c0_sources(&expanded_once, &[("identity.c", c_source)])
+        .expect("expanded default ensure should re-verify");
+}
+
+#[test]
+fn source_expander_replaces_and_replays_default_effect_proof() {
+    let c_source = r#"
+            int32 zero() {
+                return 0;
+            }
+        "#;
+    let click_source = r#"
+            verifying "zero.c";
+
+            int32 zero() {
+                immutable;
+            }
+        "#;
+    let sources = [("zero.c", c_source)];
+
+    let expanded_once =
+        expand_c0_claim_source(click_source, &sources, "zero", CProofClaim::Effect(0))
+            .expect("default effect proof should expand");
+    let expanded_twice =
+        expand_c0_claim_source(&expanded_once, &sources, "zero", CProofClaim::Effect(0))
+            .expect("explicit effect expansion should expand again");
+
+    assert!(expanded_once.contains("immutable by {"));
+    assert_eq!(expanded_once, expanded_twice);
+    verify_c0_sources(&expanded_once, &sources)
+        .expect("expanded default effect should re-verify");
+}
+
+#[test]
+fn source_expander_reports_missing_grouped_proof_precisely() {
     let c_source = r#"
             int32 identity(int32 x) {
                 return x;
@@ -4595,12 +4660,15 @@ fn source_expander_rejects_default_proofs_without_rewrite_spans() {
         click_source,
         &[("identity.c", c_source)],
         "identity",
-        CProofClaim::Ensure(0),
+        CProofClaim::Grouped,
     )
-    .expect_err("default proof has no source clause to replace");
+    .expect_err("independent claims do not have a grouped proof");
 
-    assert!(error.message().contains("uses a default proof"));
-    assert!(error.message().contains("no source proof clause"));
+    assert!(
+        error
+            .message()
+            .contains("grouped verification but has no source `by` clause")
+    );
 }
 
 #[test]
