@@ -115,6 +115,18 @@ impl Assumptions {
         self.defer_non_exact_loadability_obligations
     }
 
+    /// Surface-certificate synthesis uses this only to structurally lower a
+    /// candidate spelling before comparing it with an already-certified
+    /// kernel proposition. Ordinary proof checking must not enable it.
+    pub(crate) fn allow_symbolic_contract_loads(mut self) -> Self {
+        self.allow_symbolic_contract_loads = true;
+        self
+    }
+
+    pub(crate) fn should_allow_symbolic_contract_loads(&self) -> bool {
+        self.allow_symbolic_contract_loads
+    }
+
     pub(crate) fn defer_non_exact_condition_reasoning(mut self) -> Self {
         self.defer_non_exact_condition_reasoning = true;
         self

@@ -2453,9 +2453,58 @@ fn normalize_direct_atomic_memory_load(term: &Bitvector32Term) -> Bitvector32Ter
             }
             _ => Bitvector32Term::MemoryLoad(
                 Box::new(canonical_c_memory_for_pointer_load(memory, pointer)),
-                pointer.clone(),
+                Box::new(Pointer {
+                    block: pointer.block.clone(),
+                    offset: normalize_direct_atomic_pointer_offset_loads(&pointer.offset),
+                }),
             ),
         },
+    }
+}
+
+#[cfg(test)]
+mod normalization_tests {
+    use super::*;
+
+    #[test]
+    fn direct_load_normalization_canonicalizes_loads_inside_the_address() {
+        let local = Pointer {
+            block: "local:ignored".into(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let before = CMemory::new()
+            .with_block("call-havoc:1", 0)
+            .with_block("local:ignored", 4)
+            .store(local.clone(), CValue::Int32(Bitvector32Term::Constant(1)));
+        let after = CMemory::new()
+            .with_block("call-havoc:1", 0)
+            .with_block("local:ignored", 4)
+            .store(local, CValue::Int32(Bitvector32Term::Constant(2)));
+        let field = Pointer {
+            block: "arg-memory".into(),
+            offset: PointerOffsetTerm::Constant(8),
+        };
+        let dependent_load = |memory: CMemory| {
+            let loaded_pointer = Bitvector32Term::MemoryLoad(
+                Box::new(memory.clone()),
+                Box::new(field.clone()),
+            );
+            Bitvector32Term::MemoryLoad(
+                Box::new(memory),
+                Box::new(Pointer {
+                    block: "arg-memory".into(),
+                    offset: PointerOffsetTerm::Int32Scaled {
+                        value: Box::new(loaded_pointer),
+                        byte_width: 4,
+                    },
+                }),
+            )
+        };
+
+        assert_eq!(
+            normalize_direct_atomic_memory_load(&dependent_load(before)),
+            normalize_direct_atomic_memory_load(&dependent_load(after)),
+        );
     }
 }
 
@@ -6083,6 +6132,15 @@ pub(super) fn evaluate_contract_memory_load_from_memory(
                 base: pointer.clone(),
                 bytes: Bitvector32Term::Constant(value_type.byte_width()),
             };
+            if assumptions.should_allow_symbolic_contract_loads()
+                || value_type == CType::Int32
+                    && assumptions
+                        .pure_facts()
+                        .iter()
+                        .any(|fact| proposition_certifies_contract_load(fact, memory, &pointer))
+            {
+                return symbolic_contract_memory_load(memory, pointer, value_type);
+            }
             if assumptions.proves(&required) {
                 return symbolic_contract_memory_load(memory, pointer, value_type);
             }
@@ -6091,6 +6149,123 @@ pub(super) fn evaluate_contract_memory_load_from_memory(
                 "{}\n  load from {pointer:?} as {value_type:?} produced {outcome:?}",
                 describe_missing_pure_fact(&required, &pure_facts, &[], &[], &[], &[])
             ))
+        }
+    }
+}
+
+fn proposition_certifies_contract_load(
+    proposition: &Proposition,
+    memory: &CMemory,
+    pointer: &Pointer,
+) -> bool {
+    let Proposition::ConditionIs(condition, _) = proposition else {
+        return false;
+    };
+    condition_contains_contract_load(condition, memory, pointer)
+}
+
+fn condition_contains_contract_load(
+    condition: &ConditionTerm,
+    memory: &CMemory,
+    pointer: &Pointer,
+) -> bool {
+    match condition {
+        ConditionTerm::Bitvector32SignedLessThan(left, right)
+        | ConditionTerm::Bitvector32SignedLessEqual(left, right)
+        | ConditionTerm::Bitvector32SignedGreaterThan(left, right)
+        | ConditionTerm::Bitvector32SignedGreaterEqual(left, right)
+        | ConditionTerm::Bitvector32Equal(left, right)
+        | ConditionTerm::Bitvector32SignedAddOverflows(left, right)
+        | ConditionTerm::Bitvector32SignedSubtractOverflows(left, right)
+        | ConditionTerm::Bitvector32SignedMultiplyOverflows(left, right)
+        | ConditionTerm::Bitvector32SignedDivideOverflows(left, right)
+        | ConditionTerm::Bitvector32SignedShiftLeftOverflows(left, right) => {
+            bitvector_contains_contract_load(left, memory, pointer)
+                || bitvector_contains_contract_load(right, memory, pointer)
+        }
+        ConditionTerm::PointerOffsetEqual(left, right) => {
+            pointer_offset_contains_contract_load(left, memory, pointer)
+                || pointer_offset_contains_contract_load(right, memory, pointer)
+        }
+        ConditionTerm::PointerEqual(left, right) => {
+            pointer_offset_contains_contract_load(&left.offset, memory, pointer)
+                || pointer_offset_contains_contract_load(&right.offset, memory, pointer)
+        }
+        ConditionTerm::Constant(_) | ConditionTerm::Variable(_) => false,
+    }
+}
+
+fn pointer_offset_contains_contract_load(
+    term: &PointerOffsetTerm,
+    memory: &CMemory,
+    pointer: &Pointer,
+) -> bool {
+    match term {
+        PointerOffsetTerm::Constant(_) | PointerOffsetTerm::Variable(_) => false,
+        PointerOffsetTerm::Add(left, right) => {
+            pointer_offset_contains_contract_load(left, memory, pointer)
+                || pointer_offset_contains_contract_load(right, memory, pointer)
+        }
+        PointerOffsetTerm::Int32Scaled { value, .. } => {
+            bitvector_contains_contract_load(value, memory, pointer)
+        }
+    }
+}
+
+fn bitvector_contains_contract_load(
+    term: &Bitvector32Term,
+    memory: &CMemory,
+    pointer: &Pointer,
+) -> bool {
+    match term {
+        Bitvector32Term::Constant(_) | Bitvector32Term::Variable(_) => false,
+        Bitvector32Term::MemoryLoad(load_memory, load_pointer) => {
+            load_memory.has_same_snapshot_markers(memory)
+                && load_pointer.block == pointer.block
+                && normalize_direct_atomic_pointer_offset_loads(&load_pointer.offset)
+                    == normalize_direct_atomic_pointer_offset_loads(&pointer.offset)
+                || pointer_offset_contains_contract_load(
+                    &load_pointer.offset,
+                    memory,
+                    pointer,
+                )
+        }
+        Bitvector32Term::Add(left, right)
+        | Bitvector32Term::Subtract(left, right)
+        | Bitvector32Term::Multiply(left, right)
+        | Bitvector32Term::Divide(left, right)
+        | Bitvector32Term::Remainder(left, right)
+        | Bitvector32Term::ShiftLeft(left, right)
+        | Bitvector32Term::ArithmeticShiftRight(left, right)
+        | Bitvector32Term::BitwiseAnd(left, right)
+        | Bitvector32Term::BitwiseOr(left, right)
+        | Bitvector32Term::BitwiseXor(left, right) => {
+            bitvector_contains_contract_load(left, memory, pointer)
+                || bitvector_contains_contract_load(right, memory, pointer)
+        }
+        Bitvector32Term::BitwiseNot(value) => {
+            bitvector_contains_contract_load(value, memory, pointer)
+        }
+        Bitvector32Term::If {
+            condition,
+            then_term,
+            else_term,
+        } => {
+            condition_contains_contract_load(condition, memory, pointer)
+                || bitvector_contains_contract_load(then_term, memory, pointer)
+                || bitvector_contains_contract_load(else_term, memory, pointer)
+        }
+        Bitvector32Term::RangeFold {
+            start,
+            end,
+            initial,
+            body,
+            ..
+        } => {
+            bitvector_contains_contract_load(start, memory, pointer)
+                || bitvector_contains_contract_load(end, memory, pointer)
+                || bitvector_contains_contract_load(initial, memory, pointer)
+                || bitvector_contains_contract_load(body, memory, pointer)
         }
     }
 }

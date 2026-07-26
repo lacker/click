@@ -7018,6 +7018,16 @@ fn checked_surface_fact_at_point(
             }
         }
     }
+    let kernel_memories = c_condition_fact_memories(kernel);
+    if !kernel_memories.is_empty()
+        && kernel_memories
+            .iter()
+            .any(|memory| !memory.has_same_snapshot_markers(state.memory()))
+    {
+        return Err(ClickError::new(format!(
+            "kernel fact belongs to a different recorded memory snapshot: {kernel:?}"
+        )));
+    }
     let candidate = synthesize_surface_proposition(kernel, parameters, arguments, state)
         .ok_or_else(|| {
             ClickError::new(format!(
@@ -7083,6 +7093,68 @@ fn checked_surface_comparison_fact_at_point(
         && !bases.contains(&surface)
     {
         bases.push(surface);
+    }
+    let kernel_memories = c_condition_fact_memories(kernel);
+    let matching_points = replay
+        .program_point_states
+        .iter()
+        .rev()
+        .filter(|(_, state)| {
+            kernel_memories
+                .iter()
+                .any(|memory| memory.has_same_snapshot_markers(state.memory()))
+        })
+        .collect::<Vec<_>>();
+    for (point, _) in matching_points {
+        for base in &bases {
+            let ClickProposition::Comparison {
+                left,
+                operator,
+                right,
+            } = base
+            else {
+                continue;
+            };
+            let at_point = |expression: &ContractExpression| ContractExpression::At {
+                selector: VisitSelector::ProgramPoint(point.clone()),
+                expression: Box::new(expression.clone()),
+            };
+            let candidates = [
+                ClickProposition::Comparison {
+                    left: at_point(left),
+                    operator: *operator,
+                    right: at_point(right),
+                },
+                ClickProposition::Comparison {
+                    left: at_point(left),
+                    operator: *operator,
+                    right: right.clone(),
+                },
+                ClickProposition::Comparison {
+                    left: left.clone(),
+                    operator: *operator,
+                    right: at_point(right),
+                },
+            ];
+            for candidate in candidates {
+                let lowered = lower_surface_candidate_at_point(
+                    replay,
+                    &candidate,
+                    available,
+                    parameters,
+                    arguments,
+                    state,
+                    predicate_environment,
+                    click_function_environment,
+                );
+                if lowered.is_ok_and(|lowered| {
+                    normalize_direct_atomic_memory_loads(&lowered)
+                        == normalize_direct_atomic_memory_loads(kernel)
+                }) {
+                    return Ok(candidate);
+                }
+            }
+        }
     }
     let points = replay
         .program_point_states
@@ -7436,7 +7508,7 @@ fn synthesize_surface_pointer(
     arguments: &[CExpression],
     state: &CState,
 ) -> Option<CExpression> {
-    parameters
+    if let Some(expression) = parameters
         .iter()
         .zip(arguments)
         .find_map(|(parameter, argument)| {
@@ -7454,6 +7526,23 @@ fn synthesize_surface_pointer(
             };
             Some(CExpression::Add(Box::new(base), Box::new(index)))
         })
+    {
+        return Some(expression);
+    }
+    if !arguments.iter().any(|argument| {
+        matches!(
+            argument,
+            CExpression::Value(CValue::Pointer(base)) if base.block == pointer.block
+        )
+    }) {
+        return None;
+    }
+    let ContractExpression::CFragment(expression) =
+        synthesize_surface_pointer_offset(&pointer.offset, parameters, arguments, state)?
+    else {
+        return None;
+    };
+    Some(expression)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -7693,29 +7782,56 @@ fn comparison_program_point_variants(
         operator: *operator,
         right,
     };
+    let old_left = (!matches!(left, ContractExpression::Old(_)))
+        .then(|| ContractExpression::Old(Box::new(left.clone())));
+    let old_right = (!matches!(right, ContractExpression::Old(_)))
+        .then(|| ContractExpression::Old(Box::new(right.clone())));
+    let point_pairs = points
+        .iter()
+        .rev()
+        .map(|point| (at_point(left, point), at_point(right, point)))
+        .collect::<Vec<_>>();
+    let mut variants = Vec::new();
+    let mut push = |left, right| {
+        let candidate = comparison(left, right);
+        if !variants.contains(&candidate) {
+            variants.push(candidate);
+        }
+    };
+    push(left.clone(), right.clone());
+    if let Some(old_left) = &old_left {
+        push(old_left.clone(), right.clone());
+    }
+    if let Some(old_right) = &old_right {
+        push(left.clone(), old_right.clone());
+    }
+    if let (Some(old_left), Some(old_right)) = (&old_left, &old_right) {
+        push(old_left.clone(), old_right.clone());
+    }
+    for (point_left, point_right) in &point_pairs {
+        push(point_left.clone(), right.clone());
+        push(left.clone(), point_right.clone());
+        push(point_left.clone(), point_right.clone());
+    }
+
     let mut left_variants = vec![left.clone()];
     let mut right_variants = vec![right.clone()];
-    if !matches!(left, ContractExpression::Old(_)) {
-        left_variants.push(ContractExpression::Old(Box::new(left.clone())));
+    if let Some(old_left) = old_left {
+        left_variants.push(old_left);
     }
-    if !matches!(right, ContractExpression::Old(_)) {
-        right_variants.push(ContractExpression::Old(Box::new(right.clone())));
+    if let Some(old_right) = old_right {
+        right_variants.push(old_right);
     }
-    for point in points.iter().rev() {
-        left_variants.push(at_point(left, point));
-        right_variants.push(at_point(right, point));
+    for (point_left, point_right) in point_pairs {
+        left_variants.push(point_left);
+        right_variants.push(point_right);
     }
-    Some(
-        left_variants
-            .into_iter()
-            .flat_map(|left| {
-                right_variants
-                    .iter()
-                    .cloned()
-                    .map(move |right| comparison(left.clone(), right))
-            })
-            .collect(),
-    )
+    for left in left_variants {
+        for right in &right_variants {
+            push(left.clone(), right.clone());
+        }
+    }
+    Some(variants)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -7729,17 +7845,26 @@ fn lower_surface_candidate_at_point(
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<Proposition, ClickError> {
-    lower_point_proposition(
-        candidate,
-        available,
-        parameters,
-        arguments,
+    let values = parameter_values(parameters, arguments)?;
+    let array_refs = array_refs_for_parameters(parameters, &values, state.memory());
+    let (mut values, array_refs) = contract_environment_at_state(&values, &array_refs, state);
+    let assumptions =
+        assumptions_from_propositions(available).allow_symbolic_contract_loads();
+    let mut next_variable = 2_000_000;
+    let mut active_functions = BTreeSet::new();
+    lower_outcome_proposition_with_environment(
+        &mut values,
+        &array_refs,
         replay.execution_start_state(state),
         state,
         None,
-        &replay.program_point_states,
+        &assumptions,
+        candidate,
+        &mut next_variable,
         predicate_environment,
         click_function_environment,
+        &replay.program_point_states,
+        &mut active_functions,
     )
     .map_err(ClickError::new)
 }

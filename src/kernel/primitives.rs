@@ -945,6 +945,7 @@ pub struct Assumptions {
     pub(super) defer_non_exact_loadability_obligations: bool,
     pub(super) defer_non_exact_condition_reasoning: bool,
     pub(super) prefer_symbolic_external_loads: bool,
+    pub(super) allow_symbolic_contract_loads: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -2155,6 +2156,10 @@ impl CBlock {
 impl CMemory {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub(crate) fn has_same_snapshot_markers(&self, other: &Self) -> bool {
+        self.blocks == other.blocks
     }
 
     pub fn with_block(mut self, block: impl Into<PointerBlock>, size: u32) -> Self {
