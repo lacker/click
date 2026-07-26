@@ -570,7 +570,10 @@ int32 owned_string_pipeline(
     have owner->data == data by {
         simp();
     }
-    apply(pointer_add_zero_equals(owner->data, 0, data));
+    apply(pointer_add_zero_equals(load_int32_pointer((owner + 2)), 0, data)) using {
+        fact loadable(old(owner[0..4]));
+        fact load_int32_pointer((owner + 2)) == data;
+    }
     have observed == data[0] by {
         simp();
     }
