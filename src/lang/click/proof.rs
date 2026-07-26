@@ -2919,7 +2919,11 @@ fn facts_for_direct_surface_lowering(propositions: &[Proposition]) -> Vec<Propos
                     | Proposition::CResourceContains { .. }
                     | Proposition::CMemoryMutatesOnly { .. }
                     | Proposition::CMemoryEffectSummary { .. }
-            )
+            ) || matches!(
+                proposition,
+                Proposition::ConditionIs(ConditionTerm::PointerOffsetEqual(_, _), _)
+            ) || matches!(proposition, Proposition::ConditionIs(_, _))
+                && !c_condition_fact_has_memory(proposition)
         })
         .cloned()
         .collect()
@@ -5420,9 +5424,12 @@ fn prove_pure_proposition_case_at_point(
             | ProofTactic::Calculate(_)
             | ProofTactic::Rewrite(_) => {
                 if goal.is_none() {
+                    let direct_lowering_facts =
+                        matches!(tactic, ProofTactic::Derive(_) | ProofTactic::Calculate(_))
+                            .then(|| facts_for_direct_surface_lowering(&available));
                     let lowered = lower_point_proposition_with_values(
                         proposition,
-                        &available,
+                        direct_lowering_facts.as_deref().unwrap_or(&available),
                         values.clone(),
                         &array_refs,
                         pre_state,
@@ -5440,19 +5447,25 @@ fn prove_pure_proposition_case_at_point(
                     fact = Some(lowered.clone());
                     goal = Some(lowered);
                 }
-                let assumptions = assumptions_from_propositions(&available);
-                let unfolded_goal = unfold_predicates_in_proposition(
-                    predicate_environment,
-                    click_function_environment,
-                    &unfolded_predicates,
-                    goal.as_ref().expect("simple tactic goal should be initialized"),
-                    &assumptions,
-                )
-                .map_err(|message| {
-                    ClickError::new(format!(
-                        "`{claim_label}` {proof_name} proof {outer_tactic_index}: could not unfold pure goal: {message}"
-                    ))
-                })?;
+                let unfolded_goal = if unfolded_predicates.is_empty() {
+                    goal.as_ref()
+                        .expect("simple tactic goal should be initialized")
+                        .clone()
+                } else {
+                    let assumptions = assumptions_from_propositions(&available);
+                    unfold_predicates_in_proposition(
+                        predicate_environment,
+                        click_function_environment,
+                        &unfolded_predicates,
+                        goal.as_ref().expect("simple tactic goal should be initialized"),
+                        &assumptions,
+                    )
+                    .map_err(|message| {
+                        ClickError::new(format!(
+                            "`{claim_label}` {proof_name} proof {outer_tactic_index}: could not unfold pure goal: {message}"
+                        ))
+                    })?
+                };
                 match tactic {
                     ProofTactic::Assumption => {
                         if !available.contains(&unfolded_goal) {
@@ -5522,9 +5535,11 @@ fn prove_pure_proposition_case_at_point(
                         goal = Some(logical_goal);
                     }
                     ProofTactic::Derive(derive) | ProofTactic::Calculate(derive) => {
+                        let derivation_lowering_facts =
+                            facts_for_direct_surface_lowering(&available);
                         let target = lower_point_proposition_with_values(
                             &derive.proposition,
-                            &available,
+                            &derivation_lowering_facts,
                             values.clone(),
                             &array_refs,
                             pre_state,
@@ -5546,7 +5561,7 @@ fn prove_pure_proposition_case_at_point(
                             .map(|premise| {
                                 lower_point_proposition_with_values(
                                     premise,
-                                    &available,
+                                    &derivation_lowering_facts,
                                     values.clone(),
                                     &array_refs,
                                     pre_state,
@@ -5658,6 +5673,9 @@ fn prove_pure_proposition_case_at_point(
             ))
         })?,
     };
+    if goal_closed {
+        return Ok(fact);
+    }
     let assumptions = assumptions_from_propositions(&available);
     let goal = unfold_predicates_in_proposition(
         predicate_environment,
@@ -5671,8 +5689,7 @@ fn prove_pure_proposition_case_at_point(
             "`{claim_label}` {proof_name} proof {outer_tactic_index}: could not unfold pure goal: {message}"
         ))
     })?;
-    if goal_closed
-        || available.contains(&goal)
+    if available.contains(&goal)
         || (use_simp && matches!(simp_proposition(&goal, &assumptions), SimpProposition::True))
     {
         return Ok(fact);

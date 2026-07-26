@@ -4220,12 +4220,12 @@ impl Assumptions {
                     left: CResource::Memory(left_range),
                     right: CResource::Memory(right_range),
                 } => {
-                    memory_range_shallowly_contained(range, left_range)
-                        && (pointer_in_memory_range_shallow(pointer, right_range)
+                    (pointer_in_memory_range_shallow(pointer, left_range)
+                        || self.pointer_directly_in_memory_range(pointer, left_range))
+                        && memory_range_contained_for_memory_resolution(range, right_range, self)
+                        || (pointer_in_memory_range_shallow(pointer, right_range)
                             || self.pointer_directly_in_memory_range(pointer, right_range))
-                        || memory_range_shallowly_contained(range, right_range)
-                            && (pointer_in_memory_range_shallow(pointer, left_range)
-                                || self.pointer_directly_in_memory_range(pointer, left_range))
+                            && memory_range_contained_for_memory_resolution(range, left_range, self)
                 }
                 _ => false,
             }) {
