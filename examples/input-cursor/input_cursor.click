@@ -336,11 +336,11 @@ int32 input_cursor_shared_pipeline(
             fact load_int32_pointer((right + 2)) == data;
         }
     }
-    apply(int32_equality_transitive(
-        right_value,
-        (right->data)[right->pos],
-        data[0]
-    ));
+    apply(int32_equality_transitive(right_value, load_int32_pointer((right + 2))[load_int32(right)], data[0])) using {
+        fact loadable(old(right[0..4]));
+        fact right_value == load_int32_pointer((right + 2))[load_int32(right)];
+        fact load_int32_pointer((right + 2))[load_int32(right)] == data[0];
+    }
     execute_rest();
     frame();
     simp();
