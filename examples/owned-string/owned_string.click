@@ -167,7 +167,9 @@ int32 owned_string_set(
         unfold(terminated_at);
         simp();
     }
-    have (owner->data)[owner->len] == 0 by { simp(); }
+    have load_int32_pointer((owner + 2))[load_int32(owner)] == 0 by {
+        assumption();
+    }
     have 0 <= owner->len by { simp(); }
     have owner->len < owner->cap by { simp(); }
     have separate(
