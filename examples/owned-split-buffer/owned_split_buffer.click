@@ -181,7 +181,57 @@ int32 owned_split_buffer_pipeline(
     ensures data[1] == right_value;
     ensures result == right_value;
 } by {
-    execute_until(statement(4));
+    step using {
+        fact 2 <= length;
+        fact loadable(owner[0..4]);
+        fact loadable(data[0..length]);
+        fact separate(memory(owner[0..4]), memory(data[0..length]));
+    }
+    step using {
+        fact 2 <= length;
+        fact loadable(old(owner[0..4]));
+        fact loadable(old(data[0..length]));
+        fact separate(memory(owner[ignored..4]), memory(data[ignored..length]));
+    }
+    step using {
+        fact 2 <= length;
+        fact loadable(old(owner[0..4]));
+        fact loadable(old(data[0..length]));
+        fact separate(memory(owner[ignored..4]), memory(data[ignored..length]));
+    }
+    step using {
+        fact 2 <= length;
+        fact loadable(old(owner[0..4]));
+        fact loadable(old(data[0..length]));
+        fact separate(memory(owner[read_value..4]), memory(data[read_value..length]));
+        fact ignored == 1;
+        fact *owner == 1;
+        fact *(owner + 1) == length;
+        fact load_int32_pointer((owner + 2)) == data;
+    }
+    have *owner == *owner by {
+        normalize();
+    }
+    have *(owner + 1) == *(owner + 1) by {
+        normalize();
+    }
+    have load_int32_pointer((owner + 2)) == load_int32_pointer((owner + 2)) by {
+        normalize();
+    }
+    transport(at(statement(3).entry, *owner) == 1, *owner == 1) using {
+        fact at(statement(3).entry, *owner) == 1;
+        fact 2 <= length;
+        fact at(statement(3).entry, load_int32_pointer((owner + 2))) == data;
+    }
+    transport(at(statement(3).entry, *(owner + 1)) == length, *(owner + 1) == length) using {
+        fact at(statement(3).entry, *(owner + 1)) == length;
+        fact 2 <= length;
+        fact at(statement(3).entry, load_int32_pointer((owner + 2))) == data;
+    }
+    transport(at(statement(3).entry, load_int32_pointer((owner + 2))) == data, load_int32_pointer((owner + 2)) == data) using {
+        fact at(statement(3).entry, load_int32_pointer((owner + 2))) == data;
+        fact 2 <= length;
+    }
     have owner->data == data by {
         simp();
     }
