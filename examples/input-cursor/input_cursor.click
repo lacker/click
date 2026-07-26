@@ -330,8 +330,11 @@ int32 input_cursor_shared_pipeline(
     have right_value == (right->data)[right->pos] by {
         simp();
     }
-    have (right->data)[right->pos] == data[0] by {
-        simp();
+    have load_int32_pointer((right + 2))[load_int32(right)] == data[0] by {
+        derive(load_int32_pointer((right + 2))[load_int32(right)] == data[0]) using {
+            fact load_int32(right) == 0;
+            fact load_int32_pointer((right + 2)) == data;
+        }
     }
     apply(int32_equality_transitive(
         right_value,
