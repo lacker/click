@@ -3768,6 +3768,49 @@ fn direct_transport_composes_framed_loads_inside_an_indexed_address() {
 }
 
 #[test]
+fn explicit_separation_contains_one_element_under_a_positive_length() {
+    let owner = Pointer {
+        block: "arg-memory".into(),
+        offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(98)), 4),
+    };
+    let data = Pointer {
+        block: "arg-memory".into(),
+        offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(99)), 4),
+    };
+    let length = Bitvector32Term::Variable(Variable(100));
+    let owner_range = CMemoryRange::new(
+        owner,
+        Bitvector32Term::Constant(0),
+        Bitvector32Term::Constant(6),
+    );
+    let data_range = CMemoryRange::new(data, Bitvector32Term::Constant(0), length.clone());
+    let assumptions = Assumptions::new()
+        .assume_condition(
+            ConditionTerm::signed_less_than(Bitvector32Term::Constant(0), length),
+            true,
+        )
+        .assume_proposition(Proposition::CResourceSeparate {
+            left: CResource::Memory(owner_range.clone()),
+            right: CResource::Memory(data_range.clone()),
+        });
+
+    assert!(
+        assumptions.memory_ranges_proven_disjoint_by_explicit_separation_for_memory_resolution(
+            &CMemoryRange::new(
+                data_range.base().clone(),
+                Bitvector32Term::Constant(0),
+                Bitvector32Term::Constant(1),
+            ),
+            &CMemoryRange::new(
+                owner_range.base().clone(),
+                Bitvector32Term::Constant(1),
+                Bitvector32Term::Constant(2),
+            ),
+        )
+    );
+}
+
+#[test]
 fn covering_disjoint_fact_handles_shifted_mutable_range() {
     let n = Variable(83);
     let k = Variable(84);

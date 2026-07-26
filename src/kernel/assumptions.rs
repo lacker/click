@@ -4784,14 +4784,17 @@ fn exact_less_equal_for_memory_resolution(
             if !*value {
                 return false;
             }
-            let (fact_left, fact_right) = match condition {
-                ConditionTerm::Bitvector32SignedLessEqual(fact_left, fact_right)
-                | ConditionTerm::Bitvector32SignedLessThan(fact_left, fact_right) => {
-                    (fact_left.as_ref(), fact_right.as_ref())
+            let (fact_left, fact_right, strict) = match condition {
+                ConditionTerm::Bitvector32SignedLessEqual(fact_left, fact_right) => {
+                    (fact_left.as_ref(), fact_right.as_ref(), false)
+                }
+                ConditionTerm::Bitvector32SignedLessThan(fact_left, fact_right) => {
+                    (fact_left.as_ref(), fact_right.as_ref(), true)
                 }
                 _ => return false,
             };
-            signed_bitvector_constant(fact_left).is_some_and(|bound| left_constant <= bound)
+            signed_bitvector_constant(fact_left)
+                .is_some_and(|bound| left_constant <= if strict { bound + 1 } else { bound })
                 && (fact_right == right
                     || bitvector_terms_proven_equal_for_memory_resolution(
                         fact_right,
