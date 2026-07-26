@@ -3811,6 +3811,45 @@ fn explicit_separation_contains_one_element_under_a_positive_length() {
 }
 
 #[test]
+fn direct_separation_contains_zero_under_a_constant_lower_bound() {
+    let owner = Pointer {
+        block: "arg-memory".into(),
+        offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(104)), 4),
+    };
+    let data = Pointer {
+        block: "arg-memory".into(),
+        offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(105)), 4),
+    };
+    let length = Bitvector32Term::Variable(Variable(106));
+    let assumptions = Assumptions::new()
+        .assume_condition(
+            ConditionTerm::signed_less_equal(Bitvector32Term::Constant(2), length.clone()),
+            true,
+        )
+        .assume_proposition(Proposition::CResourceSeparate {
+            left: CResource::Memory(CMemoryRange::new(
+                owner.clone(),
+                Bitvector32Term::Constant(0),
+                Bitvector32Term::Constant(4),
+            )),
+            right: CResource::Memory(CMemoryRange::new(
+                data.clone(),
+                Bitvector32Term::Constant(0),
+                length,
+            )),
+        });
+
+    assert!(assumptions.ranges_directly_disjoint_from_pointer(
+        &[CMemoryRange::new(
+            owner,
+            Bitvector32Term::Constant(0),
+            Bitvector32Term::Constant(1),
+        )],
+        &data,
+    ));
+}
+
+#[test]
 fn constant_field_offset_is_disjoint_from_earlier_constant_range() {
     let base = Pointer {
         block: "arg-memory".into(),

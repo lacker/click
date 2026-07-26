@@ -1236,8 +1236,16 @@ impl Assumptions {
                 return true;
             }
             for (edge_left, edge_right, edge_strict) in &order_facts {
-                if &current == edge_left {
-                    stack.push((edge_right.clone(), strict_so_far || *edge_strict));
+                let constant_connection = signed_bitvector_constant(&current)
+                    .zip(signed_bitvector_constant(edge_left))
+                    .and_then(|(current, edge_left)| {
+                        (current <= edge_left).then_some(current < edge_left)
+                    });
+                if &current == edge_left || constant_connection.is_some() {
+                    stack.push((
+                        edge_right.clone(),
+                        strict_so_far || *edge_strict || constant_connection == Some(true),
+                    ));
                 }
             }
         }
