@@ -2718,11 +2718,14 @@ pub(super) fn verify_loop_execution_proofs(
     resource_environment: &ResourceEnvironment,
     theorem_environment: &TheoremEnvironment,
 ) -> Result<Vec<CVerifiedLoopRule>, ClickError> {
-    let has_structural_loops = function_block
-        .structural_clauses()
-        .iter()
-        .any(|clause| matches!(clause.region(), CodeRegion::Loop(_)));
-    if !has_structural_loops {
+    let has_structural_proofs = function_block.structural_clauses().iter().any(|clause| {
+        matches!(clause.region(), CodeRegion::Loop(_))
+            || clause
+                .items()
+                .iter()
+                .any(|item| item.kind() == StructuralItemKind::Assert)
+    });
+    if !has_structural_proofs {
         return Ok(Vec::new());
     }
 
@@ -4276,6 +4279,31 @@ fn verify_execution_proofs_forward(
             )?);
             Ok(joined)
         }
+        CStatement::Assert {
+            label: Some(label), ..
+        } if label.starts_with("statement ") && label.ends_with(" assert 0") => {
+            let statement_index = label
+                .strip_prefix("statement ")
+                .and_then(|label| label.strip_suffix(" assert 0"))
+                .and_then(|index| index.parse::<usize>().ok())
+                .ok_or_else(|| {
+                    ClickError::new(format!("malformed structural assertion label `{label}`"))
+                })?;
+            let contexts = certify_structural_assertions(
+                CodeRegion::Statement(statement_index),
+                contexts,
+                environment,
+            )?;
+            advance_execution_proof_statement(
+                statement,
+                contexts,
+                *next_loop_index,
+                environment,
+                verified_loop_rules,
+                LoopPreservationSource::Automatic,
+                false,
+            )
+        }
         CStatement::While {
             condition,
             invariant_checks,
@@ -4285,6 +4313,8 @@ fn verify_execution_proofs_forward(
         } => {
             let loop_index = *next_loop_index;
             *next_loop_index += 1;
+            let contexts =
+                certify_structural_assertions(CodeRegion::Loop(loop_index), contexts, environment)?;
             let loop_clause = environment
                 .function_block
                 .structural_clauses()
@@ -4448,6 +4478,134 @@ fn split_execution_proof_branch_contexts(
         }
     }
     Ok((then_contexts, else_contexts))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn certify_structural_assertions(
+    region: CodeRegion,
+    mut contexts: Vec<ExecutionProofContext>,
+    environment: &ExecutionProofEnvironment<'_>,
+) -> Result<Vec<ExecutionProofContext>, ClickError> {
+    let Some(clause) = environment
+        .function_block
+        .structural_clauses()
+        .iter()
+        .find(|clause| clause.region() == &region)
+    else {
+        return Ok(contexts);
+    };
+    let assertions = clause
+        .items()
+        .iter()
+        .filter(|item| item.kind() == StructuralItemKind::Assert)
+        .collect::<Vec<_>>();
+    if assertions.is_empty() {
+        return Ok(contexts);
+    }
+
+    let region_label = match region {
+        CodeRegion::Function => "function".to_string(),
+        CodeRegion::Loop(index) => format!("loop({index})"),
+        CodeRegion::Statement(index) => format!("statement({index})"),
+    };
+    for context in &mut contexts {
+        let mut program_point_states = ProgramPointStates::new();
+        let point_region = match region {
+            CodeRegion::Function => CodeRegionRef::Function,
+            CodeRegion::Loop(index) => CodeRegionRef::Loop(index),
+            CodeRegion::Statement(index) => CodeRegionRef::Statement(index),
+        };
+        program_point_states.insert(
+            ProgramPointRef {
+                region: point_region,
+                kind: ProgramPointKind::Entry,
+            },
+            context.state.clone(),
+        );
+        for (assertion_index, item) in assertions.iter().enumerate() {
+            let proposition = item
+                .proposition()
+                .expect("assert structural item should contain a proposition");
+            let claim_label = format!(
+                "{}.{region_label}.assert_{assertion_index}",
+                environment.function_block.signature().name()
+            );
+            let have = ProofHave {
+                proposition: proposition.clone(),
+                proof: item.proof().clone(),
+            };
+            let unfolded_predicates = item.proof().unfold_tactic_names();
+            let (planned_fact, plan) = plan_smart_have_at_current_point(
+                &have,
+                &claim_label,
+                assertion_index,
+                &context.pure_facts,
+                environment.parsed_function.parameters(),
+                environment.arguments,
+                environment.initial_state,
+                &context.state,
+                &program_point_states,
+                environment.predicate_environment,
+                environment.click_function_environment,
+                &unfolded_predicates,
+            )?;
+            let mut surface_replay = TacticReplayState {
+                surface_propositions: environment.surface_propositions.clone(),
+                program_point_states: program_point_states.clone(),
+                ..TacticReplayState::default()
+            };
+            let proof = surface_simp_plan_proof(
+                &mut surface_replay,
+                &context.state,
+                &context.pure_facts,
+                environment.parsed_function.parameters(),
+                environment.arguments,
+                environment.predicate_environment,
+                environment.click_function_environment,
+                proposition,
+                &plan,
+                &unfolded_predicates,
+            )?;
+            let Proof::Script(tactics) = &proof else {
+                return Err(ClickError::new(format!(
+                    "`{claim_label}` did not lower to an explicit proof script"
+                )));
+            };
+            let certificate = TacticCertificate::from_proof_tactics(tactics).map_err(|error| {
+                ClickError::new(format!(
+                    "`{claim_label}` produced an invalid structural proposition certificate: {error:?}"
+                ))
+            })?;
+            let replayed_fact = prove_pure_proposition_at_point(
+                proposition,
+                &Proof::Script(certificate.tactics().to_vec()),
+                "assert",
+                environment.theorem_environment,
+                &claim_label,
+                assertion_index,
+                &context.pure_facts,
+                environment.parsed_function.parameters(),
+                environment.arguments,
+                environment.initial_state,
+                &context.state,
+                None,
+                &program_point_states,
+                environment.predicate_environment,
+                environment.click_function_environment,
+                environment.function_block.requires(),
+                None,
+            )?;
+            if replayed_fact != planned_fact {
+                return Err(ClickError::new(format!(
+                    "`{claim_label}` certificate replay changed the proved proposition"
+                )));
+            }
+            if !context.pure_facts.contains(&replayed_fact) {
+                context.pure_facts.push(replayed_fact);
+            }
+        }
+    }
+    Ok(contexts)
 }
 
 fn advance_execution_proof_statement(

@@ -67,9 +67,11 @@ The following items remain before that statement is true globally:
   preservation as smart `auto`, produce certificates for them, and replay
   those certificates before installing a verified loop rule. Do not retain a
   parallel kernel-only success path.
-- [ ] **Structural proposition items.** Route default/`auto` proofs for region
-  `invariant` and `assert` items through the same certificate gateway instead
-  of accepting their lowering/checking as proof plumbing.
+- [x] **Structural proposition items.** Route default/`auto` proofs for region
+  `assert` items through the same certificate gateway instead of accepting
+  their lowering/checking as proof plumbing. Region `invariant` items do not
+  own proofs; their initialization/preservation obligations remain tracked by
+  the loop-phase items above.
 - [ ] **Structural effect items.** Make `immutable`, `mutable`, and step-effect
   `frame`/`auto` proofs produce explicit effect-obligation certificates.
   Back-edge effect validation should use the same explicit-obligation boundary
