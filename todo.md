@@ -253,7 +253,7 @@ expander mismatches:
   probe, preventing generated certificate-local source indices from capturing
   the wrong user tactic.
 
-All 354 library tests pass with this boundary enabled. The updated expansion
+All 384 library tests pass with this boundary enabled. The updated expansion
 tests now require `execute_rest` to become actual `step`/`step using`
 certificates rather than another smart `execute_step`. A selected
 post-execution `simp` also remains active until claim finalization produces its
@@ -270,14 +270,30 @@ path certificates. Branched replacements use proof `if`; proof `if` now runs a
 shared suffix independently in each branch context instead of imposing the
 obsolete rule that it must be the final tactic.
 
-This completes the known selectable smart-tactic boundary. Smart inline
-`have` and post-execution `simp` retain family-specific checked lowerers
-because replaying the inline certificate currently re-enters a known
-pathologically slow simple `derive`, but their emitted certificate is checked
-against the same goal and premises before it is accepted. Default proof
+The subsequent `TacticCertificate` audit closed the remaining selectable
+smart-tactic exceptions:
+
+- current-point smart `have` constructs and replays its complete certificate
+  before adding the fact;
+- post-execution `simp` constructs a path-local `have` certificate and replays
+  it at the exact outcome;
+- post-execution smart `apply` constructs and replays `apply ... using`;
+- smart `apply` nested inside `have` constructs and replays the same explicit
+  application certificate; and
+- `auto`, including grouped contracts, must return a complete
+  `TacticCertificate` whose ordinary replay proves the same number of paths.
+
+Certificate replay is now the committed state, rather than a check followed by
+committing the smart engine's parallel internal state. Branched certificates
+merge only their certified execution paths, restore the enclosing proof
+context, and preserve exact path facts. Loop-summary replay records invariant
+spellings at the post-summary snapshot, and grouped closer planning exposes
+earlier certified ensures to later closers in the emitted source order.
+
+This completes the known selectable smart-tactic boundary. Default proof
 selection and loop-verification plumbing are proof orchestration rather than
 selectable smart tactics and are intentionally outside the one-tactic
-certificate boundary. The slow-frontier sweep can resume; if the slow simple
+certificate boundary. The slow-frontier sweep can resume; if a slow simple
 `derive` is reached, fix it separately rather than hiding it with another
 smart fallback.
 

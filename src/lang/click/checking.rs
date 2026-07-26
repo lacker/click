@@ -3,6 +3,13 @@ use super::proof::FunctionClaimRef;
 use super::*;
 use crate::kernel::memory_effect_write_pointers;
 
+fn negate_lowered_proposition(proposition: Proposition) -> Proposition {
+    match proposition {
+        Proposition::ConditionIs(condition, value) => Proposition::ConditionIs(condition, !value),
+        proposition => Proposition::Not(Box::new(proposition)),
+    }
+}
+
 pub(super) fn check_function_claim(
     claim_label: &str,
     path_index: usize,
@@ -1107,7 +1114,7 @@ pub(super) fn lower_predicate_body_proposition_with_environment(
                 active_functions,
             )?),
         )),
-        ClickProposition::Not(body) => Ok(Proposition::Not(Box::new(
+        ClickProposition::Not(body) => Ok(negate_lowered_proposition(
             lower_predicate_body_proposition_with_environment(
                 values,
                 array_refs,
@@ -1120,7 +1127,7 @@ pub(super) fn lower_predicate_body_proposition_with_environment(
                 program_point_states,
                 active_functions,
             )?,
-        ))),
+        )),
         ClickProposition::Implies(left, right) => {
             let left = lower_predicate_body_proposition_with_environment(
                 values,
@@ -4096,7 +4103,7 @@ pub(super) fn lower_outcome_proposition_with_environment(
                 active_functions,
             )?),
         )),
-        ClickProposition::Not(body) => Ok(Proposition::Not(Box::new(
+        ClickProposition::Not(body) => Ok(negate_lowered_proposition(
             lower_outcome_proposition_with_environment(
                 values,
                 array_refs,
@@ -4111,7 +4118,7 @@ pub(super) fn lower_outcome_proposition_with_environment(
                 program_point_states,
                 active_functions,
             )?,
-        ))),
+        )),
         ClickProposition::Implies(left, right) => {
             let left = lower_outcome_proposition_with_environment(
                 values,

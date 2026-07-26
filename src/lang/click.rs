@@ -363,6 +363,7 @@ impl SurfacePropositionMap {
                 self.record_lowering(surface_left, left)?;
                 self.record_lowering(surface_right, right)
             }
+            (ClickProposition::Not(_), Proposition::ConditionIs(_, false)) => Ok(()),
             (ClickProposition::Not(surface_body), Proposition::Not(body)) => {
                 self.record_lowering(surface_body, body)
             }
