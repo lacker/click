@@ -3443,12 +3443,14 @@ impl Assumptions {
             && byte_width == 4
             && let Some(index) = base.element_index_from_base(range_base)
             && let Some(element_count) = int32_element_count_from_bytes(range_bytes)
-            && let (Some(index), Some(element_count)) = (
-                signed_bitvector_constant(&index),
-                signed_bitvector_constant(&element_count),
-            )
+            && let Some(index_constant) = signed_bitvector_constant(&index)
         {
-            return 0 <= index && index < element_count;
+            if let Some(element_count) = signed_bitvector_constant(&element_count) {
+                return 0 <= index_constant && index_constant < element_count;
+            }
+            if 0 <= index_constant && self.has_exact_order_path(&index, &element_count, true) {
+                return true;
+            }
         }
         let Some(byte_offset) = pointer_byte_offset_from_base(base, range_base) else {
             return false;
@@ -4922,13 +4924,24 @@ fn bitvector_index_in_range_shallow(
         return true;
     }
 
-    let (Some(offset), Some(length)) = (
-        affine_bitvector_difference_constant(&index, start),
-        affine_bitvector_difference_constant(end, start),
-    ) else {
+    let Some(offset) = affine_bitvector_difference_constant(&index, start) else {
         return false;
     };
-    0 <= offset && offset < length
+    if offset < 0 {
+        return false;
+    }
+    if let Some(length) = affine_bitvector_difference_constant(end, start) {
+        return offset < length;
+    }
+    i32::try_from(offset).is_ok_and(|offset| {
+        affine_bitvector_difference_atom(end, start).is_some_and(|length| {
+            assumptions.has_exact_order_path(
+                &Bitvector32Term::Constant(offset as u32),
+                &length,
+                true,
+            )
+        })
+    })
 }
 
 fn bitvector_index_outside_range_shallow(
@@ -5001,6 +5014,22 @@ fn affine_bitvector_difference_constant(
     collect_affine_bitvector_terms(right, -1, &mut terms, &mut constant)?;
     terms.retain(|_, coefficient| *coefficient != 0);
     terms.is_empty().then_some(constant)
+}
+
+fn affine_bitvector_difference_atom(
+    left: &Bitvector32Term,
+    right: &Bitvector32Term,
+) -> Option<Bitvector32Term> {
+    let mut terms = BTreeMap::new();
+    let mut constant = 0i64;
+    collect_affine_bitvector_terms(left, 1, &mut terms, &mut constant)?;
+    collect_affine_bitvector_terms(right, -1, &mut terms, &mut constant)?;
+    terms.retain(|_, coefficient| *coefficient != 0);
+    if constant != 0 || terms.len() != 1 {
+        return None;
+    }
+    let (term, coefficient) = terms.into_iter().next()?;
+    (coefficient == 1).then_some(term)
 }
 
 fn collect_affine_bitvector_terms(

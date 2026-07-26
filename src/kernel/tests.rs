@@ -1695,6 +1695,35 @@ fn known_memory_block_bounds_prove_symbolic_element_access() {
 }
 
 #[test]
+fn symbolic_int32_range_directly_proves_constant_element_loadable() {
+    let memory = CMemory::new();
+    let base = Pointer {
+        block: "data".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let length = Bitvector32Term::Variable(Variable(89));
+    let assumptions = Assumptions::new()
+        .assume_condition(
+            ConditionTerm::signed_less_equal(
+                Bitvector32Term::Constant(2),
+                length.clone(),
+            ),
+            true,
+        )
+        .assume_proposition(Proposition::CMemoryLoadable {
+            memory: memory.clone(),
+            base: base.clone(),
+            bytes: Bitvector32Term::multiply(length, Bitvector32Term::Constant(4)),
+        });
+
+    assert!(assumptions.proves(&Proposition::CMemoryLoadable {
+        memory,
+        base: base.offset_by_int32_elements(Bitvector32Term::Constant(1)),
+        bytes: Bitvector32Term::Constant(4),
+    }));
+}
+
+#[test]
 fn assumptions_prove_forall_int32_array_range_body() {
     let index = Variable(90);
     let index_bits = Bitvector32Term::Variable(index);
@@ -4375,6 +4404,75 @@ fn direct_condition_transport_uses_relative_separate_range() {
             Box::new(Proposition::ConditionIs(
                 ConditionTerm::equal(
                     Bitvector32Term::MemoryLoad(Box::new(after), Box::new(data)),
+                    Bitvector32Term::Variable(Variable(94)),
+                ),
+                true,
+            )),
+        )
+    );
+}
+
+#[test]
+fn direct_condition_transport_uses_indexed_relative_separate_range() {
+    let before = CMemory::new();
+    let after = before.clone().with_block("call-havoc:0", 0);
+    let owner = Pointer {
+        block: "arg-memory".into(),
+        offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(92)), 4),
+    };
+    let data = Pointer {
+        block: "arg-memory".into(),
+        offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(93)), 4),
+    };
+    let data_one = data.offset_by_int32_elements(Bitvector32Term::Constant(1));
+    let data_index_from_owner = Bitvector32Term::subtract(
+        Bitvector32Term::Variable(Variable(93)),
+        Bitvector32Term::Variable(Variable(92)),
+    );
+    let length = Bitvector32Term::Variable(Variable(95));
+    let fact = Proposition::ConditionIs(
+        ConditionTerm::equal(
+            Bitvector32Term::MemoryLoad(Box::new(before.clone()), Box::new(data_one.clone())),
+            Bitvector32Term::Variable(Variable(94)),
+        ),
+        true,
+    );
+    let assumptions = Assumptions::new()
+        .assume_condition(
+            ConditionTerm::signed_less_equal(Bitvector32Term::Constant(2), length.clone()),
+            true,
+        )
+        .assume_proposition(Proposition::CResourceSeparate {
+            left: CResource::Memory(CMemoryRange::new(
+                owner.clone(),
+                Bitvector32Term::Constant(0),
+                Bitvector32Term::Constant(4),
+            )),
+            right: CResource::Memory(CMemoryRange::new(
+                owner.clone(),
+                data_index_from_owner.clone(),
+                Bitvector32Term::add(data_index_from_owner, length),
+            )),
+        })
+        .assume_proposition(Proposition::CMemoryEffectSummary {
+            before,
+            after: after.clone(),
+            mutable_ranges: vec![CMemoryRange::new(
+                owner,
+                Bitvector32Term::Constant(0),
+                Bitvector32Term::Constant(1),
+            )],
+        });
+
+    let theorem = prove_c_condition_fact_direct_transport(&fact, &after, &assumptions)
+        .expect("an indexed pointer in a relative separate range should be directly framed");
+    assert_eq!(
+        theorem.proposition(),
+        &Proposition::Implies(
+            Box::new(fact),
+            Box::new(Proposition::ConditionIs(
+                ConditionTerm::equal(
+                    Bitvector32Term::MemoryLoad(Box::new(after), Box::new(data_one)),
                     Bitvector32Term::Variable(Variable(94)),
                 ),
                 true,
