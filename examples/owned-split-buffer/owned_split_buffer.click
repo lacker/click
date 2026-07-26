@@ -339,7 +339,17 @@ int32 owned_split_buffer_pipeline(
     have data[1] == right_value by {
         simp();
     }
-    execute_step();
+    step using {
+        fact 1 < owner->split;
+        fact loadable(owner[0..1]);
+        fact loadable((owner + 1)[0..1]);
+        fact loadable((owner + 2)[0..2]);
+        fact owner->split == 2;
+        fact owner->len == length;
+        fact owner->data == data;
+        fact data[0] == left_value;
+        fact data[1] == right_value;
+    }
     have owner->split == 2 by {
         simp();
     }
