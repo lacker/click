@@ -4405,23 +4405,6 @@ fn plan_explicit_theorem_application(
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<Vec<ClickProposition>, ClickError> {
-    let candidates = available
-        .iter()
-        .filter_map(|kernel| {
-            checked_surface_fact_at_point(
-                replay,
-                kernel,
-                available,
-                parameters,
-                arguments,
-                state,
-                predicate_environment,
-                click_function_environment,
-            )
-            .ok()
-            .map(|surface| (kernel.clone(), surface))
-        })
-        .collect::<Vec<_>>();
     let pre_state = replay.execution_start_state(state);
     let values = parameter_values(parameters, arguments).map_err(|error| {
         ClickError::new(format!(
@@ -4439,13 +4422,116 @@ fn plan_explicit_theorem_application(
         result: None,
         program_point_states: &replay.program_point_states,
     };
+    let requirements = lower_theorem_application_requirements(
+        theorem_environment,
+        application,
+        &context,
+        available,
+        predicate_environment,
+        click_function_environment,
+        &replay.unfolded_predicates,
+    )
+    .map_err(|message| {
+        ClickError::new(format!(
+            "`{claim_label}` tactic {tactic_index}: could not lower theorem requirements: {message}"
+        ))
+    })?;
+    let mut lowering_facts = available.to_vec();
+    append_resource_context_observable_facts(state.resources(), &mut lowering_facts);
+    let mut selected = Vec::new();
+    for requirement in requirements {
+        if matches!(normalize_proposition(&requirement), SimpProposition::True) {
+            continue;
+        }
+        let matched = materialization_equivalent_available_fact(&requirement, available)
+            .ok_or_else(|| {
+                ClickError::new(format!(
+                    "theorem application `{}` requires an unavailable exact premise: {requirement:?}",
+                    application.name
+                ))
+            })?;
+        let surface = synthesize_surface_proposition(&requirement, parameters, arguments, state)
+            .ok_or_else(|| {
+                ClickError::new(format!(
+                    "theorem application `{}` has no Click spelling for exact premise: {requirement:?}",
+                    application.name
+                ))
+            })?;
+        let lowered = lower_point_proposition(
+            &surface,
+            &lowering_facts,
+            parameters,
+            arguments,
+            pre_state,
+            state,
+            None,
+            &replay.program_point_states,
+            predicate_environment,
+            click_function_environment,
+        )
+        .map_err(|message| {
+            ClickError::new(format!(
+                "theorem application `{}` could not check premise `{}`: {message}",
+                application.name,
+                describe_click_proposition(&surface),
+            ))
+        })?;
+        if materialization_equivalent_available_fact(&lowered, available).is_none() {
+            return Err(ClickError::new(format!(
+                "theorem application `{}` synthesized a premise that is not exactly available\n  Click: {}\n  lowered: {lowered:?}\n  required: {requirement:?}",
+                application.name,
+                describe_click_proposition(&surface),
+            )));
+        }
+        if !selected
+            .iter()
+            .any(|(_, selected_surface)| selected_surface == &surface)
+        {
+            selected.push((matched, surface));
+        }
+    }
     let application_replays = |selected: &[(Proposition, ClickProposition)]| {
+        let mut lowering_facts = available.to_vec();
+        append_resource_context_observable_facts(state.resources(), &mut lowering_facts);
+        let mut explicit_premises = Vec::new();
+        for (_, surface) in selected {
+            let premise = if let Some(recorded) = replay
+                .surface_propositions
+                .available_kernel(surface, available)
+            {
+                recorded.clone()
+            } else {
+                let Ok(premise) = lower_point_proposition(
+                    surface,
+                    &lowering_facts,
+                    parameters,
+                    arguments,
+                    pre_state,
+                    state,
+                    None,
+                    &replay.program_point_states,
+                    predicate_environment,
+                    click_function_environment,
+                ) else {
+                    return false;
+                };
+                premise
+            };
+            if !exact_fact_is_available(&premise, available)
+                && materialization_equivalent_available_fact(&premise, available).is_none()
+            {
+                return false;
+            }
+            if !explicit_premises.contains(&premise) {
+                explicit_premises.push(premise);
+            }
+        }
         apply_theorem_at_current_point(
             theorem_environment,
             application,
             claim_label,
             tactic_index,
-            selected.iter().map(|(kernel, _)| kernel.clone()).collect(),
+            explicit_premises,
             parameters,
             arguments,
             pre_state,
@@ -4458,83 +4544,11 @@ fn plan_explicit_theorem_application(
         )
         .is_ok()
     };
-    let is_loadability = |proposition: &Proposition| {
-        matches!(
-            proposition,
-            Proposition::CMemoryLoadable { .. } | Proposition::CMemoryCanStore { .. }
-        )
-    };
-    let is_memory_effect = |proposition: &Proposition| {
-        matches!(
-            proposition,
-            Proposition::CMemoryMutatesOnly { .. } | Proposition::CMemoryEffectSummary { .. }
-        )
-    };
-    let is_condition =
-        |proposition: &Proposition| matches!(proposition, Proposition::ConditionIs(_, _));
-
-    let mut selected = None;
-    for tier in 0..4 {
-        let mut tier_candidates = candidates
-            .iter()
-            .filter(|(kernel, _)| match tier {
-                0 => is_loadability(kernel),
-                1 => is_loadability(kernel) || is_memory_effect(kernel),
-                2 => is_loadability(kernel) || is_memory_effect(kernel) || is_condition(kernel),
-                _ => true,
-            })
-            .cloned()
-            .collect::<Vec<_>>();
-        let Ok(requirements) = lower_theorem_application_requirements(
-            theorem_environment,
-            application,
-            &context,
-            &tier_candidates
-                .iter()
-                .map(|(kernel, _)| kernel.clone())
-                .collect::<Vec<_>>(),
-            predicate_environment,
-            click_function_environment,
-            &replay.unfolded_predicates,
-        ) else {
-            continue;
-        };
-        let mut complete = true;
-        for requirement in requirements {
-            if matches!(normalize_proposition(&requirement), SimpProposition::True) {
-                continue;
-            }
-            let Some(pair) = candidates
-                .iter()
-                .find(|(kernel, _)| kernel == &requirement)
-                .cloned()
-            else {
-                complete = false;
-                break;
-            };
-            if !tier_candidates.contains(&pair) {
-                tier_candidates.push(pair);
-            }
-        }
-        if complete && application_replays(&tier_candidates) {
-            selected = Some(tier_candidates);
-            break;
-        }
-    }
-    let mut selected = selected.ok_or_else(|| {
-        ClickError::new(
-            "theorem application depends on an ambient fact with no checked Click spelling",
-        )
-    })?;
-    let mut index = 0;
-    while index < selected.len() {
-        let mut reduced = selected.clone();
-        reduced.remove(index);
-        if application_replays(&reduced) {
-            selected = reduced;
-        } else {
-            index += 1;
-        }
+    if !application_replays(&selected) {
+        return Err(ClickError::new(format!(
+            "theorem application `{}` did not replay from its exact synthesized premises",
+            application.name
+        )));
     }
     Ok(selected.into_iter().map(|(_, surface)| surface).collect())
 }
@@ -4652,7 +4666,9 @@ fn apply_theorem_using_at_outcome(
                 "`{claim_label}` path {path_index}, tactic {tactic_index}: could not lower `apply using` premise: {message}"
             ))
         })?;
-        if !exact_fact_is_available(&premise, &available) {
+        if !exact_fact_is_available(&premise, &available)
+            && materialization_equivalent_available_fact(&premise, &available).is_none()
+        {
             return Err(ClickError::new(format!(
                 "`{claim_label}` path {path_index}, tactic {tactic_index}: `apply using` requires an exact post-execution premise: {premise:?}"
             )));
@@ -10794,7 +10810,10 @@ fn replay_linear_tactics(
                             ))
                         })?
                     };
-                    if !exact_fact_is_available(&premise, &all_pure_facts) {
+                    if !exact_fact_is_available(&premise, &all_pure_facts)
+                        && materialization_equivalent_available_fact(&premise, &all_pure_facts)
+                            .is_none()
+                    {
                         return Err(ClickError::new(format!(
                             "`{claim_label}` tactic {tactic_index}: `apply using` requires an exact premise: {}",
                             describe_missing_pure_fact(

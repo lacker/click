@@ -577,11 +577,10 @@ int32 owned_string_pipeline(
     have observed == data[0] by {
         simp();
     }
-    apply(int32_equality_transitive(
-        observed,
-        data[0],
-        first
-    ));
+    apply(int32_equality_transitive(observed, data[0], first)) using {
+        fact observed == *data;
+        fact *data == first;
+    }
     have 1 <= owner->len by {
         simp();
     }

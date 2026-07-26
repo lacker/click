@@ -3510,6 +3510,64 @@ fn selected_post_execution_smart_apply_uses_exact_path_premises() {
 }
 
 #[test]
+fn smart_apply_surfaces_a_framed_comparison_after_an_immutable_call() {
+    let peek_c_source = r#"
+            int32 peek(int32* data) {
+                return data[0];
+            }
+        "#;
+    let pipeline_c_source = r#"
+            int32 pipeline(int32* data, int32 expected) {
+                int32 observed;
+                observed = peek(data);
+                return observed;
+            }
+        "#;
+    let click_source = r#"
+            theorem int32_equality_transitive(first: int32, second: int32, third: int32) {
+                requires first == second;
+                requires second == third;
+                ensures first == third by {
+                    simp();
+                }
+            }
+
+            resource equal_cell(data: int32*, expected: int32) {
+                owns data[0..1];
+                fact data[0] == expected;
+            }
+
+            verifying "pipeline.c";
+            verifying "peek.c";
+
+            int32 peek(int32* data) {
+                views data[0..1];
+                immutable;
+                ensures result == data[0] by auto;
+            }
+
+            int32 pipeline(int32* data, int32 expected) {
+                views equal_cell(data, expected);
+                immutable;
+                ensures result == expected;
+            } by {
+                observe(equal_cell(data, expected));
+                execute_until(statement(2));
+                apply(int32_equality_transitive(observed, data[0], expected));
+                execute_rest();
+                frame();
+                simp();
+            }
+        "#;
+
+    verify_c0_sources(
+        click_source,
+        &[("peek.c", peek_c_source), ("pipeline.c", pipeline_c_source)],
+    )
+    .expect("smart apply should surface the framed array equality after the call");
+}
+
+#[test]
 fn selected_branched_post_execution_apply_merges_path_certificates() {
     let c_source = r#"
             int32 choose(int32 flag) {
