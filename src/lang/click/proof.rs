@@ -2919,14 +2919,50 @@ fn facts_for_direct_surface_lowering(propositions: &[Proposition]) -> Vec<Propos
                     | Proposition::CResourceContains { .. }
                     | Proposition::CMemoryMutatesOnly { .. }
                     | Proposition::CMemoryEffectSummary { .. }
-            ) || matches!(
-                proposition,
-                Proposition::ConditionIs(ConditionTerm::PointerOffsetEqual(_, _), _)
-            ) || matches!(proposition, Proposition::ConditionIs(_, _))
-                && !c_condition_fact_has_memory(proposition)
+            )
         })
         .cloned()
         .collect()
+}
+
+fn facts_for_direct_derivation_lowering(propositions: &[Proposition]) -> Vec<Proposition> {
+    let mut facts = facts_for_direct_surface_lowering(propositions);
+    for proposition in propositions {
+        let direct_condition = matches!(
+            proposition,
+            Proposition::ConditionIs(ConditionTerm::PointerOffsetEqual(_, _), _)
+        ) || matches!(proposition, Proposition::ConditionIs(_, _))
+            && !c_condition_fact_has_memory(proposition);
+        if direct_condition && !facts.contains(proposition) {
+            facts.push(proposition.clone());
+        }
+    }
+    facts
+}
+
+fn facts_for_smart_have_lowering(propositions: &[Proposition]) -> Vec<Proposition> {
+    let mut facts = facts_for_direct_derivation_lowering(propositions);
+    for proposition in propositions {
+        let Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), true) =
+            proposition
+        else {
+            continue;
+        };
+        let is_atomic_alias = matches!(
+            (left.as_ref(), right.as_ref()),
+            (
+                Bitvector32Term::MemoryLoad(_, _),
+                Bitvector32Term::Constant(_) | Bitvector32Term::Variable(_)
+            ) | (
+                Bitvector32Term::Constant(_) | Bitvector32Term::Variable(_),
+                Bitvector32Term::MemoryLoad(_, _)
+            )
+        );
+        if is_atomic_alias && !facts.contains(proposition) {
+            facts.push(proposition.clone());
+        }
+    }
+    facts
 }
 
 #[derive(Clone, Copy)]
@@ -5014,9 +5050,10 @@ fn plan_smart_have_at_current_point(
     // plan; it must not search for a different proof if lowering is incomplete.
     // Snapshot transport belongs to the statement transition that changed the
     // memory and reaches a later `have` as an exact current-state assumption.
+    let direct_lowering_facts = facts_for_smart_have_lowering(available);
     let fact = lower_point_proposition(
         &have.proposition,
-        available,
+        &direct_lowering_facts,
         parameters,
         arguments,
         pre_state,
@@ -5034,6 +5071,11 @@ fn plan_smart_have_at_current_point(
     if available.contains(&fact) {
         let plan = ProofReplayPlan::from_planned_tactics(&[ProofTactic::Assumption])
             .expect("assumption is a simple replay tactic");
+        return Ok((fact, plan));
+    }
+    if matches!(normalize_proposition(&fact), SimpProposition::True) {
+        let plan = ProofReplayPlan::from_planned_tactics(&[ProofTactic::Normalize])
+            .expect("normalize is a simple replay tactic");
         return Ok((fact, plan));
     }
     if let Some(materialized) = materialization_equivalent_available_fact(&fact, available)
@@ -5423,13 +5465,40 @@ fn prove_pure_proposition_case_at_point(
             | ProofTactic::Derive(_)
             | ProofTactic::Calculate(_)
             | ProofTactic::Rewrite(_) => {
+                let mut prepared_derivation_lowering_facts = None;
+                if let ProofTactic::Derive(derive) | ProofTactic::Calculate(derive) = tactic {
+                    let mut lowering_facts = facts_for_direct_derivation_lowering(&available);
+                    for premise in &derive.premises {
+                        let lowered = lower_point_proposition_with_values(
+                            premise,
+                            &lowering_facts,
+                            values.clone(),
+                            &array_refs,
+                            pre_state,
+                            state,
+                            result,
+                            program_point_states,
+                            predicate_environment,
+                            click_function_environment,
+                        )
+                        .map_err(|message| {
+                            ClickError::new(format!(
+                                "`{claim_label}` {proof_name} proof {outer_tactic_index}: could not lower `{}` premise: {message}",
+                                tactic_name(tactic)
+                            ))
+                        })?;
+                        if !lowering_facts.contains(&lowered) {
+                            lowering_facts.push(lowered);
+                        }
+                    }
+                    prepared_derivation_lowering_facts = Some(lowering_facts);
+                }
                 if goal.is_none() {
-                    let direct_lowering_facts =
-                        matches!(tactic, ProofTactic::Derive(_) | ProofTactic::Calculate(_))
-                            .then(|| facts_for_direct_surface_lowering(&available));
                     let lowered = lower_point_proposition_with_values(
                         proposition,
-                        direct_lowering_facts.as_deref().unwrap_or(&available),
+                        prepared_derivation_lowering_facts
+                            .as_deref()
+                            .unwrap_or(&available),
                         values.clone(),
                         &array_refs,
                         pre_state,
@@ -5535,8 +5604,9 @@ fn prove_pure_proposition_case_at_point(
                         goal = Some(logical_goal);
                     }
                     ProofTactic::Derive(derive) | ProofTactic::Calculate(derive) => {
-                        let derivation_lowering_facts =
-                            facts_for_direct_surface_lowering(&available);
+                        let derivation_lowering_facts = prepared_derivation_lowering_facts
+                            .as_ref()
+                            .expect("derive lowering facts should be prepared");
                         let target = lower_point_proposition_with_values(
                             &derive.proposition,
                             &derivation_lowering_facts,
