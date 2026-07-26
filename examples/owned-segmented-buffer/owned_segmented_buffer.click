@@ -318,9 +318,18 @@ int32 owned_segmented_buffer_pipeline(
             fact load_int32_pointer((owner + 4)) == second_data;
         }
     }
-    execute_step();
+    step using {
+        fact 0 < owner->first_len;
+        fact loadable(owner[0..1]);
+        fact loadable((owner + 2)[0..2]);
+        fact owner->first_data == first_data;
+        fact first_data[0] == first_value;
+    }
     have read_value == first_data[0] by {
-        simp();
+        derive(read_value == first_data[0]) using {
+            fact at(statement(6).entry, read_value) == at(statement(6).entry, *load_int32_pointer((owner + 2)));
+            fact load_int32_pointer((owner + 2)) == first_data;
+        }
     }
     apply(int32_equality_transitive(
         read_value,
