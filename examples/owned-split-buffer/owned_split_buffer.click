@@ -286,7 +286,11 @@ int32 owned_split_buffer_pipeline(
             fact *owner == 1;
         }
     }
-    execute_until(statement(6));
+    step using {
+        fact load_int32(owner) < load_int32((owner + 1));
+        fact loadable(owner[0..1]);
+        fact loadable((owner + 1)[0..1]);
+    }
     have owner->data == data by {
         simp();
     }
