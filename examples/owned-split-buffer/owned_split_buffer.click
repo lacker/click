@@ -314,7 +314,7 @@ int32 owned_split_buffer_pipeline(
         assumption();
     }
     have data[1] == right_value by {
-        simp();
+        assumption();
     }
     have at(statement(5).entry, owner->split) == 1 by {
         simp();
