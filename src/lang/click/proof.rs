@@ -2737,6 +2737,39 @@ fn minimal_proposition_derivation(
     derive(&selected)
 }
 
+fn bounded_condition_derivation(
+    proposition: &Proposition,
+    available: &[Proposition],
+) -> Option<PropositionDerivation> {
+    const CANDIDATE_LIMIT: usize = 48;
+
+    let candidates = available
+        .iter()
+        .filter(|fact| matches!(fact, Proposition::ConditionIs(_, _)))
+        .take(CANDIDATE_LIMIT)
+        .cloned()
+        .collect::<Vec<_>>();
+    let derive = |facts: &[Proposition]| {
+        let assumptions = assumptions_from_propositions(facts);
+        assumptions
+            .derive_atomic_proposition(proposition)
+            .or_else(|| assumptions.derive_simp_atomic_proposition(proposition))
+    };
+    for fact in &candidates {
+        if let Some(derivation) = derive(std::slice::from_ref(fact)) {
+            return Some(derivation);
+        }
+    }
+    for (left_index, left) in candidates.iter().enumerate() {
+        for right in &candidates[left_index + 1..] {
+            if let Some(derivation) = derive(&[left.clone(), right.clone()]) {
+                return Some(derivation);
+            }
+        }
+    }
+    None
+}
+
 fn derivation_replays_with_materialized_context(
     derivation: &PropositionDerivation,
     available: &[Proposition],
@@ -4934,6 +4967,25 @@ fn plan_smart_have_at_current_point(
     if available.contains(&fact) {
         let plan = ProofReplayPlan::from_planned_tactics(&[ProofTactic::Assumption])
             .expect("assumption is a simple replay tactic");
+        return Ok((fact, plan));
+    }
+    if let Some(materialized) = materialization_equivalent_available_fact(&fact, available)
+        && let Some(derivation) =
+            minimal_proposition_derivation(&fact, std::slice::from_ref(&materialized))
+    {
+        let plan =
+            ProofReplayPlan::from_planned_tactics(&[ProofTactic::ExactPropositionDerivation(
+                derivation,
+            )])
+            .expect("an exact proposition derivation is a simple replay tactic");
+        return Ok((fact, plan));
+    }
+    if let Some(derivation) = bounded_condition_derivation(&fact, available) {
+        let plan =
+            ProofReplayPlan::from_planned_tactics(&[ProofTactic::ExactPropositionDerivation(
+                derivation,
+            )])
+            .expect("a bounded condition derivation is a simple replay tactic");
         return Ok((fact, plan));
     }
 
