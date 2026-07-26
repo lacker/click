@@ -7031,7 +7031,7 @@ fn finish_ordered_proof_replay(
                                                     &unfolded_predicates,
                                                 )
                                                 .and_then(|goal| {
-                                                    lower_outcome_simp_tactic(
+                                                    certify_outcome_simp(
                                                         &replay,
                                                         surface_goal,
                                                         &goal,
@@ -7043,6 +7043,11 @@ fn finish_ordered_proof_replay(
                                                         result,
                                                         predicate_environment,
                                                         click_function_environment,
+                                                        theorem_environment,
+                                                        function_block.requires(),
+                                                        &claim_label,
+                                                        *tactic_index,
+                                                        path_index,
                                                     )
                                                     .map_err(|error| {
                                                         error.message().to_string()
@@ -7060,20 +7065,25 @@ fn finish_ordered_proof_replay(
                                             ),
                                         };
                                         match surface_tactic {
-                                            Ok(tactic) => {
+                                            Ok(certificate) => {
                                                 if replay
                                                     .deferred_tactic_capture
                                                     .as_ref()
                                                     .is_some_and(|capture| {
                                                         capture.tactic_index == *tactic_index
                                                     })
-                                                    && !path_deferred_capture_tactics
-                                                        .contains(&tactic)
                                                 {
-                                                    path_deferred_capture_tactics
-                                                        .push(tactic.clone());
+                                                    for tactic in certificate.tactics() {
+                                                        if !path_deferred_capture_tactics
+                                                            .contains(tactic)
+                                                        {
+                                                            path_deferred_capture_tactics
+                                                                .push(tactic.clone());
+                                                        }
+                                                    }
                                                 }
-                                                path_surface_closers[claim_index].push(tactic)
+                                                path_surface_closers[claim_index]
+                                                    .extend_from_slice(certificate.tactics())
                                             }
                                             Err(message) => {
                                                 surface_closer_blockers[claim_index]
@@ -8194,6 +8204,82 @@ fn lower_outcome_simp_tactic(
                 .join(", ")
         )))
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn certify_outcome_simp(
+    replay: &TacticReplayState,
+    surface_goal: &ClickProposition,
+    goal: &Proposition,
+    available: &[Proposition],
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    pre_state: &CState,
+    post_state: &CState,
+    result: &CValue,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    theorem_environment: &TheoremEnvironment,
+    function_requires: &[Requirement],
+    claim_label: &str,
+    tactic_index: usize,
+    path_index: usize,
+) -> Result<TacticCertificate, ClickError> {
+    let proof_tactic = lower_outcome_simp_tactic(
+        replay,
+        surface_goal,
+        goal,
+        available,
+        parameters,
+        arguments,
+        pre_state,
+        post_state,
+        result,
+        predicate_environment,
+        click_function_environment,
+    )?;
+    let surface_have = ProofHave {
+        proposition: surface_goal.clone(),
+        proof: Proof::Script(vec![proof_tactic]),
+    };
+    let certificate = TacticCertificate::from_proof_tactics(&[
+        ProofTactic::Have(surface_have.clone()),
+        ProofTactic::Assumption,
+    ])
+    .map_err(|error| {
+        ClickError::new(format!(
+            "`{claim_label}` path {path_index}, tactic {tactic_index}: smart `simp` produced an invalid certificate: {error:?}"
+        ))
+    })?;
+    let replayed_goal = prove_have_at_point(
+        &surface_have,
+        theorem_environment,
+        claim_label,
+        tactic_index,
+        available,
+        parameters,
+        arguments,
+        pre_state,
+        post_state,
+        Some(result),
+        &replay.program_point_states,
+        predicate_environment,
+        click_function_environment,
+        function_requires,
+        Some(path_index),
+    )
+    .map_err(|error| {
+        ClickError::new(format!(
+            "`{claim_label}` path {path_index}, tactic {tactic_index}: smart `simp` certificate failed replay: {}",
+            error.message()
+        ))
+    })?;
+    if replayed_goal != *goal {
+        return Err(ClickError::new(format!(
+            "`{claim_label}` path {path_index}, tactic {tactic_index}: smart `simp` certificate replayed a different goal"
+        )));
+    }
+    Ok(certificate)
 }
 
 fn comparison_program_point_variants(
