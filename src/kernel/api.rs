@@ -82,7 +82,7 @@ fn c_memory_load_is_directly_unchanged(
     pointer: &Pointer,
     assumptions: &Assumptions,
 ) -> bool {
-    if memories_match_for_pointer_load(before, after, pointer) {
+    if memories_directly_match_for_pointer_load(before, after, pointer, assumptions) {
         return true;
     }
     assumptions
@@ -109,11 +109,59 @@ fn c_memory_load_is_directly_unchanged(
                 after: effect_after,
                 mutable_ranges,
             } => {
-                memory_matches_effect_summary_endpoint(effect_before, before, pointer)
-                    && memory_matches_effect_summary_endpoint(effect_after, after, pointer)
-                    && assumptions.ranges_directly_disjoint_from_pointer(mutable_ranges, pointer)
+                memories_directly_match_for_pointer_load(
+                    effect_before,
+                    before,
+                    pointer,
+                    assumptions,
+                ) && memories_directly_match_for_pointer_load(
+                    effect_after,
+                    after,
+                    pointer,
+                    assumptions,
+                ) && assumptions.ranges_directly_disjoint_from_pointer(mutable_ranges, pointer)
             }
             _ => false,
+        })
+}
+
+fn memories_directly_match_for_pointer_load(
+    left: &CMemory,
+    right: &CMemory,
+    pointer: &Pointer,
+    assumptions: &Assumptions,
+) -> bool {
+    if memories_match_for_pointer_load(left, right, pointer) {
+        return true;
+    }
+    if pointer.block.starts_with("local:")
+        || !left
+            .blocks
+            .iter()
+            .filter(|(block, _)| block.starts_with("havoc:") || block.starts_with("call-havoc:"))
+            .eq(right.blocks.iter().filter(|(block, _)| {
+                block.starts_with("havoc:") || block.starts_with("call-havoc:")
+            }))
+        || left.blocks.get(&pointer.block) != right.blocks.get(&pointer.block)
+    {
+        return false;
+    }
+    left.differing_cell_pointers(right)
+        .into_iter()
+        .filter(|cell| cell.block == pointer.block)
+        .all(|cell| {
+            cell.blocks_proven_distinct(pointer)
+                || pointer_byte_offset_from_base(&cell, pointer)
+                    .and_then(|offset| offset.as_const())
+                    .is_some_and(|offset| offset != 0)
+                || assumptions.ranges_directly_disjoint_from_pointer(
+                    &[CMemoryRange::new(
+                        cell,
+                        Bitvector32Term::Constant(0),
+                        Bitvector32Term::Constant(1),
+                    )],
+                    pointer,
+                )
         })
 }
 

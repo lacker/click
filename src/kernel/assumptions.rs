@@ -4206,9 +4206,11 @@ impl Assumptions {
                     right: CResource::Memory(right_range),
                 } => {
                     memory_range_shallowly_contained(range, left_range)
-                        && pointer_in_memory_range_shallow(pointer, right_range)
+                        && (pointer_in_memory_range_shallow(pointer, right_range)
+                            || self.pointer_directly_in_memory_range(pointer, right_range))
                         || memory_range_shallowly_contained(range, right_range)
-                            && pointer_in_memory_range_shallow(pointer, left_range)
+                            && (pointer_in_memory_range_shallow(pointer, left_range)
+                                || self.pointer_directly_in_memory_range(pointer, left_range))
                 }
                 _ => false,
             }) {
@@ -4280,6 +4282,17 @@ impl Assumptions {
             }
         }
         pointer.element_index_from_base(base)
+    }
+
+    fn pointer_directly_in_memory_range(&self, pointer: &Pointer, range: &CMemoryRange) -> bool {
+        let Some(index) = self.direct_pointer_element_index_from_base(pointer, &range.base) else {
+            return false;
+        };
+        self.decide(&ConditionTerm::signed_less_equal(
+            range.start.clone(),
+            index.clone(),
+        )) == Some(true)
+            && self.decide(&ConditionTerm::signed_less_than(index, range.end.clone())) == Some(true)
     }
 
     fn range_proven_disjoint_from_pointer(&self, range: &CMemoryRange, pointer: &Pointer) -> bool {
