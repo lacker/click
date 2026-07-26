@@ -271,7 +271,7 @@ int32 owned_split_buffer_pipeline(
         fact 2 <= length;
     }
     have data[0] == left_value by {
-        simp();
+        assumption();
     }
     have data[1] == right_value by {
         simp();
