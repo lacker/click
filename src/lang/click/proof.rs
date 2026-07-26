@@ -4838,6 +4838,59 @@ fn plan_explicit_theorem_application_at_outcome(
 }
 
 #[allow(clippy::too_many_arguments)]
+fn replay_outcome_apply_certificate(
+    certificate: &TacticCertificate,
+    theorem_environment: &TheoremEnvironment,
+    claim_label: &str,
+    path_index: usize,
+    tactic_index: usize,
+    available: Vec<Proposition>,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    pre_state: &CState,
+    post_state: &CState,
+    result: &CValue,
+    replay: &TacticReplayState,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    unfolded_predicates: &[String],
+) -> Result<Vec<Proposition>, ClickError> {
+    let [ProofTactic::ApplyTheoremUsing {
+        application,
+        premises,
+    }] = certificate.tactics()
+    else {
+        return Err(ClickError::new(format!(
+            "`{claim_label}` path {path_index}, tactic {tactic_index}: post-execution `apply` produced an unexpected certificate"
+        )));
+    };
+    apply_theorem_using_at_outcome(
+        theorem_environment,
+        application,
+        premises,
+        claim_label,
+        path_index,
+        tactic_index,
+        available,
+        parameters,
+        arguments,
+        pre_state,
+        post_state,
+        result,
+        replay,
+        predicate_environment,
+        click_function_environment,
+        unfolded_predicates,
+    )
+    .map_err(|error| {
+        ClickError::new(format!(
+            "`{claim_label}` path {path_index}, tactic {tactic_index}: post-execution `apply` certificate failed replay: {}",
+            error.message()
+        ))
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
 fn plan_explicit_fact_transport(
     surface_source: &ClickProposition,
     source: &Proposition,
@@ -6460,18 +6513,14 @@ fn finish_ordered_proof_replay(
                             application: application.clone(),
                             premises,
                         };
-                        TacticCertificate::from_proof_tactics(std::slice::from_ref(
-                            &surface_tactic,
-                        ))
-                        .expect("post-execution smart apply must lower to a simple tactic");
-                        let ProofTactic::ApplyTheoremUsing { premises, .. } = &surface_tactic
-                        else {
-                            unreachable!()
-                        };
-                        path_requirements = apply_theorem_using_at_outcome(
+                        let certificate =
+                            TacticCertificate::from_proof_tactics(std::slice::from_ref(
+                                &surface_tactic,
+                            ))
+                            .expect("post-execution smart apply must lower to a simple tactic");
+                        path_requirements = replay_outcome_apply_certificate(
+                            &certificate,
                             theorem_environment,
-                            application,
-                            premises,
                             &proof_label,
                             path_index,
                             *tactic_index,
@@ -6486,13 +6535,15 @@ fn finish_ordered_proof_replay(
                             click_function_environment,
                             &unfolded_predicates,
                         )?;
-                        record_post_execution_surface_tactic(
-                            &mut path_surface_post_tactics,
-                            &mut path_deferred_capture_tactics,
-                            replay.deferred_tactic_capture.as_ref(),
-                            *tactic_index,
-                            surface_tactic,
-                        );
+                        for tactic in certificate.tactics() {
+                            record_post_execution_surface_tactic(
+                                &mut path_surface_post_tactics,
+                                &mut path_deferred_capture_tactics,
+                                replay.deferred_tactic_capture.as_ref(),
+                                *tactic_index,
+                                tactic.clone(),
+                            );
+                        }
                     }
                     PostExecutionTactic::ApplyUsing {
                         application,
