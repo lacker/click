@@ -4215,6 +4215,18 @@ impl Assumptions {
                 return true;
             }
 
+            let pointer_range = CMemoryRange::new(
+                pointer.clone(),
+                Bitvector32Term::Constant(0),
+                Bitvector32Term::Constant(1),
+            );
+            if self.memory_ranges_proven_disjoint_by_explicit_separation_for_memory_resolution(
+                range,
+                &pointer_range,
+            ) {
+                return true;
+            }
+
             let Some(index) = self.direct_pointer_element_index_from_base(pointer, &range.base)
             else {
                 return false;

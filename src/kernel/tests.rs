@@ -4066,6 +4066,81 @@ fn atomic_condition_fact_transport_uses_exact_separate_range() {
 }
 
 #[test]
+fn direct_condition_transport_uses_equal_indirect_separate_base() {
+    let before = CMemory::new();
+    let after = before.clone().with_block("call-havoc:0", 0);
+    let owner = Pointer {
+        block: "arg-memory".into(),
+        offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(92)), 4),
+    };
+    let owner_field = owner.offset_by_int32_elements(Bitvector32Term::Constant(2));
+    let data = Pointer {
+        block: "arg-memory".into(),
+        offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(93)), 4),
+    };
+    let indirect_data = Pointer {
+        block: "arg-memory".into(),
+        offset: PointerOffsetTerm::scale_int32(
+            Bitvector32Term::MemoryLoad(Box::new(before.clone()), Box::new(owner_field.clone())),
+            4,
+        ),
+    };
+    let owner_length = owner.offset_by_int32_elements(Bitvector32Term::Constant(1));
+    let fact = Proposition::ConditionIs(
+        ConditionTerm::equal(
+            Bitvector32Term::MemoryLoad(Box::new(before.clone()), Box::new(owner_length.clone())),
+            Bitvector32Term::Variable(Variable(94)),
+        ),
+        true,
+    );
+    let assumptions = Assumptions::new()
+        .assume_condition(
+            ConditionTerm::equal(
+                Bitvector32Term::MemoryLoad(Box::new(before.clone()), Box::new(owner_field)),
+                Bitvector32Term::Variable(Variable(93)),
+            ),
+            true,
+        )
+        .assume_proposition(Proposition::CResourceSeparate {
+            left: CResource::Memory(CMemoryRange::new(
+                owner,
+                Bitvector32Term::Constant(0),
+                Bitvector32Term::Constant(4),
+            )),
+            right: CResource::Memory(CMemoryRange::new(
+                data,
+                Bitvector32Term::Constant(0),
+                Bitvector32Term::Constant(2),
+            )),
+        })
+        .assume_proposition(Proposition::CMemoryEffectSummary {
+            before,
+            after: after.clone(),
+            mutable_ranges: vec![CMemoryRange::new(
+                indirect_data,
+                Bitvector32Term::Constant(1),
+                Bitvector32Term::Constant(2),
+            )],
+        });
+
+    let theorem = prove_c_condition_fact_direct_transport(&fact, &after, &assumptions)
+        .expect("exact separation and pointer equality should directly frame the owner field");
+    assert_eq!(
+        theorem.proposition(),
+        &Proposition::Implies(
+            Box::new(fact),
+            Box::new(Proposition::ConditionIs(
+                ConditionTerm::equal(
+                    Bitvector32Term::MemoryLoad(Box::new(after), Box::new(owner_length)),
+                    Bitvector32Term::Variable(Variable(94)),
+                ),
+                true,
+            )),
+        )
+    );
+}
+
+#[test]
 fn condition_fact_transport_preserves_arithmetic_structure() {
     let before = CMemory::new().with_block("stable", 4);
     let after = before.clone().with_block("local:value", 4);
