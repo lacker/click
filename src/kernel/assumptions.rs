@@ -3814,15 +3814,17 @@ impl Assumptions {
             }
         }
 
+        let terms_equal = |left: &Bitvector32Term, right: &Bitvector32Term| {
+            self.bitvector_terms_proven_equal(left, right)
+                || self.bitvector_terms_equal_from_facts(left, right)
+        };
         for (left, right, strict) in &order_facts {
-            if *strict && self.bitvector_terms_proven_equal(left, right) {
+            if *strict && terms_equal(left, right) {
                 return true;
             }
             if equal_facts.iter().any(|(equal_left, equal_right)| {
-                (self.bitvector_terms_proven_equal(left, equal_left)
-                    && self.bitvector_terms_proven_equal(right, equal_right))
-                    || (self.bitvector_terms_proven_equal(left, equal_right)
-                        && self.bitvector_terms_proven_equal(right, equal_left))
+                (terms_equal(left, equal_left) && terms_equal(right, equal_right))
+                    || (terms_equal(left, equal_right) && terms_equal(right, equal_left))
             }) && *strict
             {
                 return true;
@@ -3830,8 +3832,8 @@ impl Assumptions {
             if order_facts
                 .iter()
                 .any(|(other_left, other_right, other_strict)| {
-                    self.bitvector_terms_proven_equal(left, other_right)
-                        && self.bitvector_terms_proven_equal(right, other_left)
+                    terms_equal(left, other_right)
+                        && terms_equal(right, other_left)
                         && (*strict || *other_strict)
                 })
             {

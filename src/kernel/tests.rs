@@ -4722,6 +4722,24 @@ fn additive_equality_cancellation_feeds_range_contradictions() {
 }
 
 #[test]
+fn equality_facts_close_signed_order_contradiction_cycles() {
+    let left = Bitvector32Term::Variable(Variable(193));
+    let right = Bitvector32Term::Variable(Variable(194));
+    let assumptions = Assumptions::new()
+        .assume_condition(ConditionTerm::equal(left.clone(), right.clone()), true)
+        .assume_condition(
+            ConditionTerm::signed_less_than(left, Bitvector32Term::Constant(1)),
+            true,
+        )
+        .assume_condition(
+            ConditionTerm::signed_greater_equal(right, Bitvector32Term::Constant(1)),
+            true,
+        );
+
+    assert!(assumptions.is_inconsistent());
+}
+
+#[test]
 fn equality_to_constant_feeds_signed_order_decisions() {
     let value = Bitvector32Term::Variable(Variable(93));
     let assumptions = Assumptions::new().assume_condition(
