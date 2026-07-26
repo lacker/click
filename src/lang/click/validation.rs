@@ -2273,6 +2273,7 @@ fn validate_pure_theorem_tactics(
                 )));
             }
             ProofTactic::Step
+            | ProofTactic::CloseInvariants
             | ProofTactic::StepUsing(_)
             | ProofTactic::ApplyLoopSummary(_)
             | ProofTactic::ApplyLoopSummaryUsing { .. }
@@ -2350,6 +2351,7 @@ pub(super) fn tactic_name(tactic: &ProofTactic) -> &'static str {
         ProofTactic::Contradiction(_) => "contradiction",
         ProofTactic::Derive(_) => "derive",
         ProofTactic::Calculate(_) => "calculate",
+        ProofTactic::CloseInvariants => "close_invariants",
         ProofTactic::Rewrite(_) => "rewrite",
         ProofTactic::Transport { .. } | ProofTactic::TransportUsing { .. } => "transport",
         ProofTactic::ExactPropositionDerivation(_) => "exact_proposition_derivation",

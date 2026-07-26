@@ -2292,6 +2292,10 @@ fn parses_and_classifies_simple_and_smart_tactics() {
         TacticClass::Simple(SimpleTactic::Frame)
     ));
     assert!(matches!(
+        ProofTactic::CloseInvariants.class(),
+        TacticClass::Simple(SimpleTactic::CloseInvariants)
+    ));
+    assert!(matches!(
         ProofTactic::ContextualFrame.class(),
         TacticClass::Smart(SmartTacticKind::Frame)
     ));
@@ -2337,6 +2341,7 @@ fn canonical_tactic_printer_round_trips_nested_surface_certificate() {
             })],
             else_tactics: vec![ProofTactic::Normalize],
         }),
+        ProofTactic::CloseInvariants,
     ];
     let certificate = TacticCertificate::from_proof_tactics(&tactics)
         .expect("test tactics should form a surface certificate");
@@ -3707,12 +3712,15 @@ fn smart_apply_uses_ambient_loadability_only_for_argument_lowering() {
             .unwrap_or(0)
         + 1;
 
-    let expanded =
-        expand_c0_tactic_source_at(click_source, &[("pointer_pipeline.c", c_source)], line, column)
-            .expect("pointer theorem arguments should lower from the ambient loadability context");
+    let expanded = expand_c0_tactic_source_at(
+        click_source,
+        &[("pointer_pipeline.c", c_source)],
+        line,
+        column,
+    )
+    .expect("pointer theorem arguments should lower from the ambient loadability context");
     assert!(
-        expanded.contains("apply(pointer_equality_transitive(")
-            && expanded.contains(" using {"),
+        expanded.contains("apply(pointer_equality_transitive(") && expanded.contains(" using {"),
         "{expanded}"
     );
     verify_c0_sources(&expanded, &[("pointer_pipeline.c", c_source)])
@@ -3990,7 +3998,10 @@ fn source_expander_lowers_smart_simp_after_unfold_inside_have() {
         ..expanded
             .find("execute_rest()")
             .expect("expanded proof should retain its suffix")];
-    assert!(expanded_have.contains("unfold(reflexive);"), "{expanded_have}");
+    assert!(
+        expanded_have.contains("unfold(reflexive);"),
+        "{expanded_have}"
+    );
     assert!(expanded_have.contains("normalize();"), "{expanded_have}");
     assert!(!expanded_have.contains("simp();"), "{expanded_have}");
     verify_c0_sources(&expanded, &[("identity.c", c_source)])
@@ -4640,8 +4651,7 @@ fn source_expander_replaces_and_replays_default_effect_proof() {
 
     assert!(expanded_once.contains("immutable by {"));
     assert_eq!(expanded_once, expanded_twice);
-    verify_c0_sources(&expanded_once, &sources)
-        .expect("expanded default effect should re-verify");
+    verify_c0_sources(&expanded_once, &sources).expect("expanded default effect should re-verify");
 }
 
 #[test]
@@ -6377,6 +6387,8 @@ fn loop_phase_proofs_can_unfold_invariant_predicates() {
                     preserve by {
                         unfold(sorted);
                         unfold(sorted_range);
+                        execute_step();
+                        close_invariants();
                     }
                     immutable by frame;
                 }
@@ -6578,7 +6590,9 @@ fn false_loop_invariant_fails() {
         .expect_err("false loop invariant should fail");
 
     assert!(
-        error.message().contains("loop 0 invariant 0 preservation"),
+        error
+            .message()
+            .contains("loop 0 invariant bundle preservation"),
         "{}",
         error.message()
     );
@@ -6741,6 +6755,39 @@ fn apply_loop_summary_advances_one_verified_loop_transition() {
 
     assert_eq!(verified.len(), 1);
     assert_eq!(verified[0].proof_kind(), ProofKind::TacticScript);
+}
+
+#[test]
+fn automatic_loop_preservation_replays_branched_body_certificate() {
+    let c_source = r#"
+            int32 branch_count(int32 flag) {
+                int32 i;
+                i = 0;
+                while (i < 1) {
+                    if (flag) {
+                        i = i + 1;
+                    } else {
+                        i = i + 1;
+                    }
+                }
+                return i;
+            }
+        "#;
+    let click_source = r#"
+            verifying "branch_count.c";
+
+            int32 branch_count(int32 flag) {
+                for loop(0) {
+                    invariant i >= 0 and i <= 1;
+                    initialize by auto;
+                    preserve by auto;
+                }
+                ensures result == 1 by auto;
+            }
+        "#;
+
+    verify_c0_sources(click_source, &[("branch_count.c", c_source)])
+        .expect("automatic preservation should replay both proof branches");
 }
 
 #[test]

@@ -208,6 +208,7 @@ fn write_tactic(output: &mut String, tactic: &ProofTactic, indent: usize) {
         ),
         ProofTactic::Derive(derive) => write_derivation(output, "derive", derive, indent),
         ProofTactic::Calculate(derive) => write_derivation(output, "calculate", derive, indent),
+        ProofTactic::CloseInvariants => line(output, &prefix, "close_invariants();"),
         ProofTactic::Rewrite(equality) => line(
             output,
             &prefix,

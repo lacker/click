@@ -2350,9 +2350,11 @@ struct TacticReplayState {
     unfolded_predicates: Vec<String>,
     post_execution_tactics: Vec<(usize, PostExecutionTactic)>,
     region_simp: Option<(usize, usize)>,
+    region_invariants_closed: bool,
     case_assumptions: Vec<ReplayCaseAssumption>,
     effect_facts: Vec<ExecutionPureFact>,
     region_proof: bool,
+    loop_invariant_region: bool,
     ordered_finalization: bool,
     grouped_contract: bool,
     next_opaque_call: u64,
@@ -3026,6 +3028,65 @@ fn merge_path_aligned_certificates(
         }
     }
     merge(claim_label, unique)
+}
+
+fn certificate_leaf_for_case_path(
+    claim_label: &str,
+    tactics: &[ProofTactic],
+    case_path: &[ProofCaseChoice],
+) -> Result<TacticCertificate, ClickError> {
+    fn select(
+        claim_label: &str,
+        tactics: &[ProofTactic],
+        case_path: &[ProofCaseChoice],
+        next_case: &mut usize,
+        selected: &mut Vec<ProofTactic>,
+    ) -> Result<(), ClickError> {
+        for tactic in tactics {
+            let ProofTactic::If(proof_if) = tactic else {
+                selected.push(tactic.clone());
+                continue;
+            };
+            let choice = case_path.get(*next_case).ok_or_else(|| {
+                ClickError::new(format!(
+                    "`{claim_label}` surface certificate has more branches than its replay path"
+                ))
+            })?;
+            if choice.condition != proof_if.condition {
+                return Err(ClickError::new(format!(
+                    "`{claim_label}` surface certificate branch condition does not match its replay path"
+                )));
+            }
+            *next_case += 1;
+            select(
+                claim_label,
+                if choice.value {
+                    &proof_if.then_tactics
+                } else {
+                    &proof_if.else_tactics
+                },
+                case_path,
+                next_case,
+                selected,
+            )?;
+        }
+        Ok(())
+    }
+
+    let mut next_case = 0;
+    let mut selected = Vec::new();
+    select(
+        claim_label,
+        tactics,
+        case_path,
+        &mut next_case,
+        &mut selected,
+    )?;
+    TacticCertificate::from_proof_tactics(&selected).map_err(|error| {
+        ClickError::new(format!(
+            "`{claim_label}` selected a non-surface certificate leaf: {error:?}"
+        ))
+    })
 }
 
 #[derive(Clone)]
@@ -4589,10 +4650,32 @@ fn verify_execution_proofs_forward(
                     pure_facts.extend_from_slice(preservation.pure_facts());
                     pure_facts.sort();
                     pure_facts.dedup();
-                    if let Some(tactics) = explicit_tactics {
+                    if let Some(clause) = loop_clause {
+                        let preservation_tactics = if let Some(tactics) = explicit_tactics {
+                            tactics.to_vec()
+                        } else {
+                            let body_certificate = plan_automatic_loop_preservation_body(
+                                loop_index,
+                                &preservation,
+                                &pure_facts,
+                                body,
+                                environment,
+                            )?;
+                            let mut tactics = clause
+                                .preserve_proof()
+                                .and_then(Proof::tactics)
+                                .unwrap_or_default()
+                                .iter()
+                                .filter(|tactic| matches!(tactic, ProofTactic::UnfoldPredicate(_)))
+                                .cloned()
+                                .collect::<Vec<_>>();
+                            tactics.extend(body_certificate.tactics().iter().cloned());
+                            tactics.push(ProofTactic::Simp);
+                            tactics
+                        };
                         verify_one_loop_preservation_proof(
                             loop_index,
-                            tactics,
+                            &preservation_tactics,
                             &preservation,
                             &pure_facts,
                             invariant_checks,
@@ -4638,7 +4721,7 @@ fn verify_execution_proofs_forward(
                 loop_index,
                 environment,
                 verified_loop_rules,
-                if explicit_tactics.is_some() {
+                if loop_clause.is_some() {
                     LoopPreservationSource::ExecutionProof
                 } else {
                     LoopPreservationSource::Automatic
@@ -4868,6 +4951,7 @@ fn plan_point_pure_goal_certificate(
     Ok((fact, certificate))
 }
 
+#[allow(clippy::too_many_arguments)]
 #[allow(clippy::too_many_arguments)]
 fn certify_structural_assertions(
     region: CodeRegion,
@@ -5297,33 +5381,17 @@ fn verify_loop_initialization_pure_proof(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn verify_one_loop_preservation_proof(
+fn plan_automatic_loop_preservation_body(
     loop_index: usize,
-    tactics: &[ProofTactic],
     preservation: &crate::kernel::CLoopPreservationContext,
     pure_facts: &[Proposition],
-    invariant_checks: &[CLoopInvariantCheck],
-    effect_checks: &[CLoopEffectCheck],
     body: &CStatement,
     environment: &ExecutionProofEnvironment<'_>,
-) -> Result<(), ClickError> {
+) -> Result<TacticCertificate, ClickError> {
     let claim_label = format!(
         "{}.loop({loop_index}).preserve",
         environment.function_block.signature().name()
     );
-
-    let dummy_ensure = EnsureClause {
-        name: None,
-        ensure: Ensure::Proposition(ClickProposition::Comparison {
-            left: ContractExpression::CFragment(CExpression::Value(int32(0))),
-            operator: ComparisonOperator::Equal,
-            right: ContractExpression::CFragment(CExpression::Value(int32(0))),
-        }),
-        proof: Proof::Tactic(SmartTactic::Auto),
-    };
-    let dummy_claim = FunctionClaimRef::Ensure(0, &dummy_ensure);
-    let proof_claims = [dummy_claim];
-    let program = build_internal_proof(tactics, &claim_label)?;
     let sentinel = CStatement::Return(CExpression::Value(int32(0)));
     let remaining = c_seq(body.clone(), sentinel.clone());
     let source_layout = SourceExecutionLayout::new(environment.parsed_function.body());
@@ -5339,6 +5407,7 @@ fn verify_one_loop_preservation_proof(
         },
         source_layout,
         region_proof: true,
+        loop_invariant_region: true,
         surface_propositions: environment.surface_propositions.clone(),
         ..TacticReplayState::default()
     };
@@ -5356,6 +5425,175 @@ fn verify_one_loop_preservation_proof(
         },
         preservation.loop_entry_state().clone(),
     );
+    let mut pending = vec![ProofReplayContext {
+        state: preservation.state().clone(),
+        pure_facts: pure_facts.to_vec(),
+        replay,
+        branch_path: Vec::new(),
+    }];
+    let mut completed = Vec::new();
+    let mut steps = 0;
+    while let Some(context) = pending.pop() {
+        let at_back_edge = matches!(
+            &context.replay.frontier.point,
+            ProofExecutionPoint::StatementEntry { remaining } if remaining == &sentinel
+        ) && context.replay.frontier.continuations.is_empty();
+        if at_back_edge {
+            completed.push(context);
+            continue;
+        }
+        if steps == BOUNDED_EXECUTE_STEP_LIMIT {
+            return Err(ClickError::new(format!(
+                "`{claim_label}` automatic preservation exhausted its {BOUNDED_EXECUTE_STEP_LIMIT}-step budget"
+            )));
+        }
+        steps += 1;
+        let is_branch = context
+            .replay
+            .source_layout
+            .statement(context.replay.frontier.next_statement_index)
+            .is_some_and(|region| matches!(region.kind, SourceStatementKind::If { .. }));
+        let candidates = if is_branch {
+            let ProofExecutionPoint::StatementEntry { remaining } = &context.replay.frontier.point
+            else {
+                return Err(ClickError::new(format!(
+                    "`{claim_label}` automatic preservation branch is not at a statement entry"
+                )));
+            };
+            let assertion_prefix_count = source_assertion_prefix_count(
+                environment.function_block,
+                context.replay.frontier.next_statement_index,
+                None,
+            );
+            let (_, source_statement, _) =
+                split_next_source_operation(remaining, assertion_prefix_count)
+                    .map_err(ClickError::new)?;
+            let CStatement::If { condition, .. } = source_statement else {
+                return Err(ClickError::new(format!(
+                    "`{claim_label}` source branch does not match the lowered statement"
+                )));
+            };
+            vec![ProofTactic::If(ProofIf {
+                condition: surface_c_condition(&condition),
+                then_tactics: vec![ProofTactic::ExecuteThenStep],
+                else_tactics: vec![ProofTactic::ExecuteElseStep],
+            })]
+        } else {
+            vec![ProofTactic::ExecuteStep]
+        };
+        let mut advanced = Vec::new();
+        let mut errors = Vec::new();
+        for tactic in candidates {
+            let program = build_internal_proof(std::slice::from_ref(&tactic), &claim_label)?;
+            match execute_internal_proof(
+                &program,
+                context.clone(),
+                environment.function_block,
+                environment.parsed_function,
+                &[],
+                &claim_label,
+                environment.function_environment,
+                environment.predicate_environment,
+                environment.click_function_environment,
+                environment.resource_environment,
+                environment.theorem_environment,
+                environment.function,
+                environment.arguments,
+            ) {
+                Ok(contexts) => advanced.extend(contexts),
+                Err(error) => errors.push(error),
+            }
+        }
+        if advanced.is_empty() {
+            return Err(errors.pop().unwrap_or_else(|| {
+                ClickError::new(format!(
+                    "`{claim_label}` automatic preservation could not advance the loop body"
+                ))
+            }));
+        }
+        pending.extend(advanced);
+    }
+    let mut paths = Vec::new();
+    for context in completed {
+        if let Some(blocker) = &context.replay.surface_replay.blocker {
+            return Err(ClickError::new(format!(
+                "`{claim_label}` automatic preservation could not lower a body step: {blocker}"
+            )));
+        }
+        let case_path = context
+            .replay
+            .case_assumptions
+            .iter()
+            .map(|choice| ProofCaseChoice {
+                condition: choice.condition.clone(),
+                value: choice.value,
+            })
+            .collect::<Vec<_>>();
+        let certificate = certificate_leaf_for_case_path(
+            &claim_label,
+            &context.replay.surface_replay.tactics,
+            &case_path,
+        )?;
+        paths.push(PathCertificate {
+            case_path,
+            certificate,
+        });
+    }
+    merge_path_aligned_certificates(&claim_label, paths)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn verify_one_loop_preservation_proof(
+    loop_index: usize,
+    tactics: &[ProofTactic],
+    preservation: &crate::kernel::CLoopPreservationContext,
+    pure_facts: &[Proposition],
+    invariant_checks: &[CLoopInvariantCheck],
+    effect_checks: &[CLoopEffectCheck],
+    body: &CStatement,
+    environment: &ExecutionProofEnvironment<'_>,
+) -> Result<(), ClickError> {
+    let claim_label = format!(
+        "{}.loop({loop_index}).preserve",
+        environment.function_block.signature().name()
+    );
+
+    let proof_claims = [];
+    let program = build_internal_proof(tactics, &claim_label)?;
+    let sentinel = CStatement::Return(CExpression::Value(int32(0)));
+    let remaining = c_seq(body.clone(), sentinel.clone());
+    let source_layout = SourceExecutionLayout::new(environment.parsed_function.body());
+    let loop_body_statement_index = source_layout.loop_body_entry(loop_index).ok_or_else(|| {
+        ClickError::new(format!("`{claim_label}` has no source loop({loop_index})"))
+    })?;
+    let mut replay = TacticReplayState {
+        frontier: ExecutionFrontier {
+            point: ProofExecutionPoint::StatementEntry { remaining },
+            execution_start_state: Some(preservation.state().clone()),
+            next_statement_index: loop_body_statement_index,
+            ..ExecutionFrontier::default()
+        },
+        source_layout,
+        region_proof: true,
+        loop_invariant_region: true,
+        surface_propositions: environment.surface_propositions.clone(),
+        ..TacticReplayState::default()
+    };
+    record_statement_program_point_state(
+        &mut replay,
+        environment.function_block,
+        loop_body_statement_index,
+        ProgramPointKind::Entry,
+        preservation.state().clone(),
+    );
+    replay.program_point_states.insert(
+        ProgramPointRef {
+            region: CodeRegionRef::Loop(loop_index),
+            kind: ProgramPointKind::Entry,
+        },
+        preservation.loop_entry_state().clone(),
+    );
+    let replay_start = replay.clone();
     let contexts = execute_internal_proof(
         &program,
         ProofReplayContext {
@@ -5376,7 +5614,8 @@ fn verify_one_loop_preservation_proof(
         environment.function,
         environment.arguments,
     )?;
-    for context in contexts {
+    let mut certificate_paths = Vec::new();
+    for context in &contexts {
         let at_back_edge = matches!(
             &context.replay.frontier.point,
             ProofExecutionPoint::StatementEntry { remaining } if remaining == &sentinel
@@ -5414,38 +5653,112 @@ fn verify_one_loop_preservation_proof(
                 start: std::time::Instant::now(),
             }
         });
-        let assumptions = assumptions_from_propositions(&context.pure_facts);
-        let obligations = c_loop_invariant_obligations_at_back_edge(
-            &context.state,
-            preservation.loop_entry_state(),
-            invariant_checks,
-            &assumptions,
-        )
-        .map_err(|message| ClickError::new(format!("`{claim_label}`: {message}")))?;
-        for obligation in obligations {
-            let proven = if context.replay.region_simp.is_some() {
-                assumptions
-                    .derive_simp_proposition(obligation.proposition())
-                    .is_some()
-            } else {
-                context.pure_facts.contains(obligation.proposition())
-            };
-            if !proven {
+        let closer_tactics = if invariant_checks.is_empty()
+            || context.replay.region_invariants_closed
+        {
+            Vec::new()
+        } else {
+            if let Err(message) = c_loop_invariants_hold_at_back_edge_using(
+                &context.state,
+                preservation.loop_entry_state(),
+                invariant_checks,
+                &assumptions_from_propositions(&context.pure_facts),
+            ) {
                 return Err(ClickError::new(format!(
-                    "`{claim_label}`: `{closer_name}` could not close invariant goal{}: {:?}",
-                    obligation
-                        .context()
-                        .map(|context| format!(" ({context})"))
-                        .unwrap_or_default(),
-                    obligation.proposition()
+                    "`{claim_label}` (loop {loop_index} invariant bundle preservation) could not certify every guarded invariant-lowering path: {message}"
                 )));
             }
+            vec![ProofTactic::CloseInvariants]
+        };
+        let case_path = context
+            .replay
+            .case_assumptions
+            .iter()
+            .map(|choice| ProofCaseChoice {
+                condition: choice.condition.clone(),
+                value: choice.value,
+            })
+            .collect::<Vec<_>>();
+        let prefix = certificate_leaf_for_case_path(
+            &claim_label,
+            &context.replay.surface_replay.tactics,
+            &case_path,
+        )?;
+        let mut leaf_tactics = prefix.tactics().to_vec();
+        leaf_tactics.extend(closer_tactics);
+        let certificate =
+            TacticCertificate::from_proof_tactics(&leaf_tactics).map_err(|error| {
+                ClickError::new(format!(
+                    "`{claim_label}` produced an invalid preservation leaf certificate: {error:?}"
+                ))
+            })?;
+        certificate_paths.push(PathCertificate {
+            case_path,
+            certificate,
+        });
+    }
+    let certificate = merge_path_aligned_certificates(&claim_label, certificate_paths)?;
+    let certificate_program = build_internal_proof(certificate.tactics(), &claim_label)?;
+    let replayed = execute_internal_proof(
+        &certificate_program,
+        ProofReplayContext {
+            state: preservation.state().clone(),
+            pure_facts: pure_facts.to_vec(),
+            replay: replay_start,
+            branch_path: Vec::new(),
+        },
+        environment.function_block,
+        environment.parsed_function,
+        &proof_claims,
+        &claim_label,
+        environment.function_environment,
+        environment.predicate_environment,
+        environment.click_function_environment,
+        environment.resource_environment,
+        environment.theorem_environment,
+        environment.function,
+        environment.arguments,
+    )
+    .map_err(|error| {
+        ClickError::new(format!(
+            "`{claim_label}` preservation certificate failed ordinary replay:\n{}\n{}",
+            format_tactic_certificate(&certificate),
+            error.message()
+        ))
+    })?;
+    for context in replayed {
+        let at_back_edge = matches!(
+            &context.replay.frontier.point,
+            ProofExecutionPoint::StatementEntry { remaining } if remaining == &sentinel
+        ) && context.replay.frontier.continuations.is_empty();
+        if !at_back_edge {
+            return Err(ClickError::new(format!(
+                "`{claim_label}` replayed certificate did not finish at the loop back edge"
+            )));
         }
+        if context.replay.region_invariants_closed != !invariant_checks.is_empty() {
+            return Err(ClickError::new(format!(
+                "`{claim_label}` replayed the wrong number of invariant-bundle closers"
+            )));
+        }
+        if !invariant_checks.is_empty() {
+            c_loop_invariants_hold_at_back_edge_using(
+                &context.state,
+                preservation.loop_entry_state(),
+                invariant_checks,
+                &assumptions_from_propositions(&context.pure_facts),
+            )
+            .map_err(|message| {
+                ClickError::new(format!("`{claim_label}` invariant bundle: {message}"))
+            })?;
+        }
+        let derived_facts = context.pure_facts.clone();
+        let assumptions = assumptions_from_propositions(&derived_facts);
         c_loop_effects_hold_at_back_edge(
             preservation.state(),
             &context.state,
             effect_checks,
-            &context.pure_facts,
+            &derived_facts,
             &assumptions,
         )
         .map_err(|message| ClickError::new(format!("`{claim_label}`: {message}")))?;
@@ -13323,6 +13636,19 @@ fn replay_linear_tactics(
             ProofTactic::FinishCertifiedFactTransports(sources) => {
                 requirement_pure_facts.retain(|fact| !sources.contains(fact));
                 assumptions = assumptions_from_propositions(&requirement_pure_facts);
+            }
+            ProofTactic::CloseInvariants => {
+                if !replay.loop_invariant_region {
+                    return Err(ClickError::new(format!(
+                        "`{claim_label}` tactic {tactic_index}: `close_invariants` is only available in a loop-region proof"
+                    )));
+                }
+                if replay.region_invariants_closed {
+                    return Err(ClickError::new(format!(
+                        "`{claim_label}` tactic {tactic_index}: the invariant bundle was closed more than once on one path"
+                    )));
+                }
+                replay.region_invariants_closed = true;
             }
             ProofTactic::Simp => {
                 if !replay.region_proof {

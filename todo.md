@@ -58,12 +58,12 @@ The following items remain before that statement is true globally:
   smart tactics inside initialization scripts through `TacticCertificate`.
   The certificate must prove every lowered invariant path and replay at the
   exact loop-entry snapshot.
-- [ ] **Loop preservation closer.** Replace the direct
+- [x] **Loop preservation closer.** Replace the direct
   `derive_simp_proposition` calls used by the final region `simp` with one
   path-aware certificate for the complete back-edge obligation bundle.
   Quantified lowering paths must remain guarded branches; they cannot be
   flattened into sequential unconditional `have` statements.
-- [ ] **Automatic loop phases.** Treat omitted/default loop initialization and
+- [x] **Automatic loop phases.** Treat omitted/default loop initialization and
   preservation as smart `auto`, produce certificates for them, and replay
   those certificates before installing a verified loop rule. Do not retain a
   parallel kernel-only success path.
@@ -86,7 +86,7 @@ The following items remain before that statement is true globally:
   engine rather than an alternate smart-success API. Loop initialization must
   still be adapted to this gateway at its exact entry snapshot, as tracked
   separately above.
-- [ ] **Remove loop dummy-claim scaffolding.** Execute loop-region certificates
+- [x] **Remove loop dummy-claim scaffolding.** Execute loop-region certificates
   against their real invariant/effect obligation bundle rather than a dummy
   `0 == 0` ensure followed by a separate semantic check.
 - [ ] **Source selection for every proof surface.** Extend the source selector
@@ -117,6 +117,21 @@ proofs per incoming execution path, replays that certificate at the exact
 loop-entry snapshot, and accepts only the replayed facts. Certificates from
 different code paths are merged through their shared proof-condition tree;
 incompatible or missing branches are rejected rather than flattened.
+
+Loop preservation now builds and ordinarily replays one path-aligned
+certificate for a complete body iteration. Program `if` statements remain
+proof `if` nodes. Each leaf ends in the surface-expressible simple tactic
+`close_invariants()`, which checks the complete declared invariant bundle while
+retaining lowering-generated guards in their own logical paths. This bundle
+boundary is necessary for quantified memory invariants: one surface invariant
+may lower to several guarded obligations and is not equivalent to one ordinary
+pure `have`. Omitted/default preservation uses the same certificate path.
+
+The preservation work also fixed equality-aware contradiction replay in the
+kernel. An equality fact such as `k == i` now participates in signed-order
+cycles such as `k < 1` and `i >= 1`; previously the boolean prover could accept
+some loop reasoning that the proof-producing derivation path could not
+certify.
 
 ## Current Implementation
 

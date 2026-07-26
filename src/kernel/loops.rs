@@ -545,6 +545,94 @@ pub(super) fn collect_invariant_check_obligations_without_search(
     )
 }
 
+pub(super) fn verify_invariant_checks_at_back_edge_using(
+    state: &CState,
+    loop_entry_state: &CState,
+    checks: &[CLoopInvariantCheck],
+    assumptions: &Assumptions,
+    budget: &mut ExecutionBudget,
+) -> Result<(), String> {
+    let mut contexts = vec![(Vec::new(), Vec::new())];
+    for (check_index, check) in checks.iter().enumerate() {
+        let mut next_contexts = Vec::new();
+        for (facts, obligations) in contexts {
+            let lowering_assumptions =
+                assumptions_with_path_context(assumptions, &facts, &obligations)
+                    .defer_non_exact_condition_reasoning()
+                    .defer_non_exact_loadability_obligations();
+            let paths = lower_spec_proposition_at_state_with_loop_entry(
+                state,
+                check.proposition(),
+                Some(loop_entry_state),
+                &lowering_assumptions,
+                budget,
+            )
+            .map_err(|error| format!("could not lower invariant paths: {error:?}"))?;
+            for path in paths {
+                let Some((mut merged_facts, merged_obligations)) =
+                    merge_execution_pure_facts_and_obligations(
+                        &facts,
+                        &obligations,
+                        &path.facts,
+                        &path.obligations,
+                        assumptions,
+                    )
+                else {
+                    continue;
+                };
+                let local =
+                    assumptions_with_path_context(assumptions, &merged_facts, &merged_obligations);
+                for obligation in merged_obligations
+                    .iter()
+                    .filter(|obligation| !obligation.is_assumable())
+                {
+                    let proposition = obligation.proposition();
+                    let Some(derivation) = local
+                        .derive_proposition(proposition)
+                        .or_else(|| local.derive_simp_proposition(proposition))
+                    else {
+                        return Err(format!(
+                            "invariant {check_index} is missing path obligation: {proposition:?}"
+                        ));
+                    };
+                    if !derivation.replay(&local) {
+                        return Err(format!(
+                            "invariant {check_index} path obligation derivation did not replay: {proposition:?}"
+                        ));
+                    }
+                }
+                let Some(derivation) = local
+                    .derive_proposition(&path.proposition)
+                    .or_else(|| local.derive_simp_proposition(&path.proposition))
+                else {
+                    return Err(format!(
+                        "invariant {check_index} is missing path goal: {:?}",
+                        path.proposition
+                    ));
+                };
+                if !derivation.replay(&local) {
+                    return Err(format!(
+                        "invariant {check_index} path derivation did not replay: {:?}",
+                        path.proposition
+                    ));
+                }
+                if !merged_facts
+                    .iter()
+                    .any(|fact| fact.proposition() == &path.proposition)
+                {
+                    merged_facts.push(ExecutionPureFact::new(path.proposition));
+                }
+                next_contexts.push((merged_facts, merged_obligations));
+            }
+        }
+        contexts = next_contexts;
+    }
+    if contexts.is_empty() {
+        return Err("invariant bundle has no reachable lowering path".to_string());
+    }
+    Ok(())
+}
+
 #[allow(clippy::too_many_arguments)]
 fn collect_invariant_check_obligations_with_mode(
     state: &CState,

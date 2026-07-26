@@ -1739,6 +1739,10 @@ impl Parser {
                     return Ok(ProofTactic::StepUsing(premises));
                 }
             }
+            "close_invariants" => {
+                self.expect_empty_tactic_args(&name)?;
+                ProofTactic::CloseInvariants
+            }
             "apply_loop_summary" => {
                 self.expect(Token::LParen)?;
                 let region_ref = self.parse_code_region_ref()?;

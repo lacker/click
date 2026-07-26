@@ -971,6 +971,22 @@ pub fn c_loop_invariant_obligations_at_back_edge(
     .map_err(|error| format!("could not lower back-edge invariants: {error:?}"))
 }
 
+pub fn c_loop_invariants_hold_at_back_edge_using(
+    state: &CState,
+    iteration_entry_state: &CState,
+    invariant_checks: &[CLoopInvariantCheck],
+    assumptions: &Assumptions,
+) -> Result<(), String> {
+    verify_invariant_checks_at_back_edge_using(
+        state,
+        iteration_entry_state,
+        invariant_checks,
+        assumptions,
+        &mut ExecutionBudget::default(),
+    )
+    .map_err(|error| format!("could not replay invariant closer: {error}"))
+}
+
 pub fn c_loop_invariant_obligations_at_entry(
     state: &CState,
     invariant_checks: &[CLoopInvariantCheck],
