@@ -3641,6 +3641,82 @@ fn smart_apply_preserves_statement_snapshots_in_explicit_premises() {
 }
 
 #[test]
+fn smart_apply_uses_ambient_loadability_only_for_argument_lowering() {
+    let c_source = r#"
+            struct pointer_pair {
+                int32* first;
+                int32* second;
+            };
+
+            int32 pointer_pipeline(struct pointer_pair* pair, int32* data) {
+                return 0;
+            }
+        "#;
+    let click_source = r#"
+            theorem pointer_equality_transitive(
+                first: int32*,
+                second: int32*,
+                third: int32*
+            ) {
+                requires first == second;
+                requires second == third;
+                ensures first == third by {
+                    simp();
+                }
+            }
+
+            resource linked_pair(pair: struct pointer_pair*, data: int32*) {
+                owns pair[0..4];
+                fact pair->first == pair->second;
+                fact pair->second == data;
+            }
+
+            verifying "pointer_pipeline.c";
+
+            int32 pointer_pipeline(struct pointer_pair* pair, int32* data) {
+                views linked_pair(pair, data);
+                immutable;
+                ensures result == 0;
+            } by {
+                observe(linked_pair(pair, data));
+                apply(pointer_equality_transitive(
+                    pair->first,
+                    pair->second,
+                    data
+                ));
+                execute_rest();
+                frame();
+                simp();
+            }
+        "#;
+    let apply_offset = click_source
+        .find("apply(pointer_equality_transitive")
+        .expect("proof should contain the selected apply");
+    let line = click_source[..apply_offset]
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count()
+        + 1;
+    let column = apply_offset
+        - click_source[..apply_offset]
+            .rfind('\n')
+            .map(|offset| offset + 1)
+            .unwrap_or(0)
+        + 1;
+
+    let expanded =
+        expand_c0_tactic_source_at(click_source, &[("pointer_pipeline.c", c_source)], line, column)
+            .expect("pointer theorem arguments should lower from the ambient loadability context");
+    assert!(
+        expanded.contains("apply(pointer_equality_transitive(")
+            && expanded.contains(" using {"),
+        "{expanded}"
+    );
+    verify_c0_sources(&expanded, &[("pointer_pipeline.c", c_source)])
+        .expect("explicit theorem premises should replay with ambient argument lowering");
+}
+
+#[test]
 fn selected_branched_post_execution_apply_merges_path_certificates() {
     let c_source = r#"
             int32 choose(int32 flag) {

@@ -4523,14 +4523,20 @@ fn plan_explicit_theorem_application(
                     predicate_environment,
                     click_function_environment,
                 ) else {
-                    return false;
+                    return Err(ClickError::new(format!(
+                        "could not lower explicit premise `{}`",
+                        describe_click_proposition(surface),
+                    )));
                 };
                 premise
             };
             if !exact_fact_is_available(&premise, available)
                 && materialization_equivalent_available_fact(&premise, available).is_none()
             {
-                return false;
+                return Err(ClickError::new(format!(
+                    "explicit premise `{}` did not lower to an available fact: {premise:?}",
+                    describe_click_proposition(surface),
+                )));
             }
             if !explicit_premises.contains(&premise) {
                 explicit_premises.push(premise);
@@ -4550,14 +4556,22 @@ fn plan_explicit_theorem_application(
             predicate_environment,
             click_function_environment,
             &replay.unfolded_predicates,
-            None,
+            Some(&lowering_facts),
         )
-        .is_ok()
     };
-    if !application_replays(&selected) {
+    if let Err(error) = application_replays(&selected) {
         return Err(ClickError::new(format!(
-            "theorem application `{}` did not replay from its exact synthesized premises",
-            application.name
+            "theorem application `{}` did not replay from its exact synthesized premises: {}\n  premises: {}",
+            application.name,
+            error.message(),
+            selected
+                .iter()
+                .map(|(kernel, surface)| format!(
+                    "{} => {kernel:?}",
+                    describe_click_proposition(surface)
+                ))
+                .collect::<Vec<_>>()
+                .join("\n            "),
         )));
     }
     Ok(selected.into_iter().map(|(_, surface)| surface).collect())
@@ -10854,7 +10868,7 @@ fn replay_linear_tactics(
                     predicate_environment,
                     click_function_environment,
                     &replay.unfolded_predicates,
-                    None,
+                    Some(&lowering_facts),
                 )?;
                 for fact in all_pure_facts {
                     if !applied.contains(&fact) {
