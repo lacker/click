@@ -250,7 +250,10 @@ int32 owned_segmented_buffer_pipeline(
         simp();
     }
     have first_data[0] == first_value by {
-        simp();
+        derive(first_data[0] == first_value) using {
+            fact at(statement(4).entry, *load_int32_pointer((owner + 2))) == at(statement(4).entry, first_value);
+            fact load_int32_pointer((owner + 2)) == first_data;
+        }
     }
     step using {
         fact loadable(old(owner[0..6]));
