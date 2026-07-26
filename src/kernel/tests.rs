@@ -3811,6 +3811,22 @@ fn explicit_separation_contains_one_element_under_a_positive_length() {
 }
 
 #[test]
+fn constant_field_offset_is_disjoint_from_earlier_constant_range() {
+    let base = Pointer {
+        block: "arg-memory".into(),
+        offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(101)), 4),
+    };
+    let first_field = CMemoryRange::new(
+        base.clone(),
+        Bitvector32Term::Constant(0),
+        Bitvector32Term::Constant(1),
+    );
+    let third_field = base.offset_by_int32_elements(Bitvector32Term::Constant(2));
+
+    assert!(Assumptions::new().ranges_proven_disjoint_from_pointer(&[first_field], &third_field));
+}
+
+#[test]
 fn covering_disjoint_fact_handles_shifted_mutable_range() {
     let n = Variable(83);
     let k = Variable(84);

@@ -4400,15 +4400,24 @@ impl Assumptions {
             }
         }
 
-        if let Some(index) = self.pointer_element_index_from_base(pointer, &range.base)
-            && (self.decide(&ConditionTerm::signed_less_than(
+        if let Some(index) = self.direct_pointer_element_index_from_base(pointer, &range.base) {
+            if let (Some(index), Some(start), Some(end)) = (
+                signed_bitvector_constant(&index),
+                signed_bitvector_constant(&range.start),
+                signed_bitvector_constant(&range.end),
+            ) && (index < start || end <= index)
+            {
+                return true;
+            }
+            if self.decide(&ConditionTerm::signed_less_than(
                 index.clone(),
                 range.start.clone(),
             )) == Some(true)
                 || self.decide(&ConditionTerm::signed_less_equal(range.end.clone(), index))
-                    == Some(true))
-        {
-            return true;
+                    == Some(true)
+            {
+                return true;
+            }
         }
 
         self.prop_facts.iter().any(|proposition| {
@@ -4428,10 +4437,7 @@ impl Assumptions {
                 && self.pointer_in_range(pointer, right_base, right_start, right_end)
                 || self.range_covered_by_fact_range(range, right_base, right_start, right_end)
                     && self.pointer_in_range(pointer, left_base, left_start, left_end)
-        }) || self.proves_resource_separate(
-            &CResource::Memory(range.clone()),
-            &CResource::Memory(pointer_range),
-        )
+        })
     }
 
     pub(super) fn range_covered_by_fact_range(
