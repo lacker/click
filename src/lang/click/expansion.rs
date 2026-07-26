@@ -80,7 +80,7 @@ pub fn expand_c0_tactic_source_at(
     column: usize,
 ) -> Result<String, ClickError> {
     let selected = locate_source_tactic(click_source, c_sources, line, column)?;
-    if let ProofSourceSite::TheoremEnsure {
+    if let ProofSite::TheoremEnsure {
         theorem_name,
         ensure_index,
     } = &selected.site
@@ -88,7 +88,7 @@ pub fn expand_c0_tactic_source_at(
         return expand_pure_theorem_source(click_source, c_sources, theorem_name, *ensure_index);
     }
     let (function_name, claim) = match &selected.site {
-        ProofSourceSite::FunctionClaim {
+        ProofSite::FunctionClaim {
             function_name,
             claim,
         } => (function_name.as_str(), *claim),
@@ -105,8 +105,7 @@ pub fn expand_c0_tactic_source_at(
     let replacement_tactics = super::proof::capture_c0_tactic_expansion(
         click_source,
         c_sources,
-        function_name,
-        claim,
+        selected.site.clone(),
         selected.source_index,
     )?;
     let (span, replacement) = match selected.edit {
@@ -519,7 +518,7 @@ fn find_claim_proof_edit(
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-enum ProofSourceSite {
+pub(super) enum ProofSite {
     FunctionClaim {
         function_name: String,
         claim: CProofClaim,
@@ -540,8 +539,8 @@ enum ProofSourceSite {
     },
 }
 
-impl ProofSourceSite {
-    fn description(&self) -> String {
+impl ProofSite {
+    pub(super) fn description(&self) -> String {
         match self {
             Self::FunctionClaim {
                 function_name,
@@ -573,7 +572,7 @@ enum TacticSourceEdit {
 
 #[derive(Clone, Debug)]
 struct LocatedSourceTactic {
-    site: ProofSourceSite,
+    site: ProofSite,
     source_index: usize,
     edit: TacticSourceEdit,
 }
@@ -592,7 +591,7 @@ fn locate_source_tactic(
         for (ensure_index, ensure) in theorem.ensures().iter().enumerate() {
             let edit =
                 find_ensure_proof_edit(&tokens, source.body_open, source.body_close, ensure_index)?;
-            let site = ProofSourceSite::TheoremEnsure {
+            let site = ProofSite::TheoremEnsure {
                 theorem_name: theorem.name().to_string(),
                 ensure_index,
             };
@@ -629,7 +628,7 @@ fn locate_source_tactic(
                     &ProofSourceEdit::Explicit(proof_span),
                     proof,
                     wanted,
-                    ProofSourceSite::LoopPhase {
+                    ProofSite::LoopPhase {
                         function_name: function_name.to_string(),
                         loop_index: *loop_index,
                         phase,
@@ -654,7 +653,7 @@ fn locate_source_tactic(
                     edit,
                     item.proof(),
                     wanted,
-                    ProofSourceSite::StructuralItem {
+                    ProofSite::StructuralItem {
                         function_name: function_name.to_string(),
                         region: *clause.region(),
                         item_index,
@@ -671,7 +670,7 @@ fn locate_source_tactic(
                 &edit,
                 proof,
                 wanted,
-                ProofSourceSite::FunctionClaim {
+                ProofSite::FunctionClaim {
                     function_name: function_name.to_string(),
                     claim: CProofClaim::Grouped,
                 },
@@ -688,7 +687,7 @@ fn locate_source_tactic(
                 &edit,
                 ensure.proof(),
                 wanted,
-                ProofSourceSite::FunctionClaim {
+                ProofSite::FunctionClaim {
                     function_name: function_name.to_string(),
                     claim,
                 },
@@ -704,7 +703,7 @@ fn locate_source_tactic(
                 &edit,
                 effect.proof(),
                 wanted,
-                ProofSourceSite::FunctionClaim {
+                ProofSite::FunctionClaim {
                     function_name: function_name.to_string(),
                     claim,
                 },
@@ -723,7 +722,7 @@ fn locate_tactic_in_proof(
     edit: &ProofSourceEdit,
     proof: &Proof,
     wanted: usize,
-    site: ProofSourceSite,
+    site: ProofSite,
 ) -> Result<Option<LocatedSourceTactic>, ClickError> {
     match proof {
         Proof::Script(tactics) => {

@@ -49,6 +49,7 @@ pub use expansion::{
     CProofClaim, SourcePosition, c0_tactic_source_position, expand_c0_claim_source,
     expand_c0_tactic_source_at, verifying_source_paths,
 };
+use expansion::ProofSite;
 use lowering::*;
 use parser::ContractLetBinding;
 pub use printing::{format_proof_tactics, format_tactic_certificate};
@@ -2058,8 +2059,19 @@ pub fn verify_c0_sources(
 fn tactic_expansion_required_functions(
     file: &ClickFile,
     parsed_sources: &BTreeMap<String, (String, syntax::C0Function)>,
-    (function_name, claim, tactic_index): (String, CProofClaim, usize),
+    (site, tactic_index): (ProofSite, usize),
 ) -> Result<BTreeSet<String>, ClickError> {
+    let ProofSite::FunctionClaim {
+        function_name,
+        claim,
+    } = site
+    else {
+        return Ok(file
+            .function_blocks()
+            .iter()
+            .map(|function| function.signature().name().to_string())
+            .collect());
+    };
     let function_block = file
         .function_blocks()
         .iter()

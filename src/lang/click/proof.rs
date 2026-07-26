@@ -2391,8 +2391,7 @@ struct DeferredTacticCapture {
 const TACTIC_EXPANSION_COMPLETE: &str = "internal: selected tactic expansion complete";
 
 struct TacticExpansionProbe {
-    function_name: String,
-    claim: CProofClaim,
+    site: ProofSite,
     source_index: usize,
     active: bool,
     result: Option<Result<Vec<ProofTactic>, String>>,
@@ -2408,8 +2407,7 @@ thread_local! {
 pub(super) fn capture_c0_tactic_expansion(
     click_source: &str,
     c_sources: &[(&str, &str)],
-    function_name: &str,
-    claim: CProofClaim,
+    site: ProofSite,
     source_index: usize,
 ) -> Result<Vec<ProofTactic>, ClickError> {
     TACTIC_EXPANSION_PROBE.with(|probe| {
@@ -2420,8 +2418,7 @@ pub(super) fn capture_c0_tactic_expansion(
             ));
         }
         *probe = Some(TacticExpansionProbe {
-            function_name: function_name.to_string(),
-            claim,
+            site: site.clone(),
             source_index,
             active: false,
             result: None,
@@ -2443,17 +2440,18 @@ pub(super) fn capture_c0_tactic_expansion(
             "selected tactic completed without recording an expansion",
         )),
         Ok(_) => Err(ClickError::new(format!(
-            "function `{function_name}` has no source tactic {source_index} in the selected {claim:?} proof"
+            "selected {} proof has no source tactic {source_index}",
+            site.description()
         ))),
     }
 }
 
-pub(super) fn active_c0_tactic_expansion_request() -> Option<(String, CProofClaim, usize)> {
+pub(super) fn active_c0_tactic_expansion_request() -> Option<(ProofSite, usize)> {
     TACTIC_EXPANSION_PROBE.with(|probe| {
         probe
             .borrow()
             .as_ref()
-            .map(|probe| (probe.function_name.clone(), probe.claim, probe.source_index))
+            .map(|probe| (probe.site.clone(), probe.source_index))
     })
 }
 
@@ -2463,18 +2461,25 @@ fn probe_matches_claim(
     claims: &[FunctionClaimRef<'_>],
     grouped_contract: bool,
 ) -> bool {
-    if function_block.signature().name() != probe.function_name {
+    let ProofSite::FunctionClaim {
+        function_name,
+        claim,
+    } = &probe.site
+    else {
+        return false;
+    };
+    if function_block.signature().name() != function_name {
         return false;
     }
-    match probe.claim {
+    match claim {
         CProofClaim::Grouped => grouped_contract,
         CProofClaim::Ensure(wanted) if !grouped_contract => matches!(
             claims,
-            [FunctionClaimRef::Ensure(found, _)] if *found == wanted
+            [FunctionClaimRef::Ensure(found, _)] if *found == *wanted
         ),
         CProofClaim::Effect(wanted) if !grouped_contract => matches!(
             claims,
-            [FunctionClaimRef::Effect(found, _)] if *found == wanted
+            [FunctionClaimRef::Effect(found, _)] if *found == *wanted
         ),
         CProofClaim::Ensure(_) | CProofClaim::Effect(_) => false,
     }
