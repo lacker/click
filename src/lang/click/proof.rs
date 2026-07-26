@@ -10621,23 +10621,30 @@ fn replay_linear_tactics(
                 let pre_state = replay.execution_start_state(&state).clone();
                 let mut explicit_premises = Vec::new();
                 for surface_premise in premises {
-                    let premise = lower_point_proposition(
-                        surface_premise,
-                        &lowering_facts,
-                        parsed_function.parameters(),
-                        arguments,
-                        &pre_state,
-                        &state,
-                        None,
-                        &replay.program_point_states,
-                        predicate_environment,
-                        click_function_environment,
-                    )
-                    .map_err(|message| {
-                        ClickError::new(format!(
-                            "`{claim_label}` tactic {tactic_index}: could not lower `apply using` premise: {message}"
-                        ))
-                    })?;
+                    let premise = if let Some(recorded) = replay
+                        .surface_propositions
+                        .available_kernel(surface_premise, &all_pure_facts)
+                    {
+                        recorded.clone()
+                    } else {
+                        lower_point_proposition(
+                            surface_premise,
+                            &lowering_facts,
+                            parsed_function.parameters(),
+                            arguments,
+                            &pre_state,
+                            &state,
+                            None,
+                            &replay.program_point_states,
+                            predicate_environment,
+                            click_function_environment,
+                        )
+                        .map_err(|message| {
+                            ClickError::new(format!(
+                                "`{claim_label}` tactic {tactic_index}: could not lower `apply using` premise: {message}"
+                            ))
+                        })?
+                    };
                     if !exact_fact_is_available(&premise, &all_pure_facts) {
                         return Err(ClickError::new(format!(
                             "`{claim_label}` tactic {tactic_index}: `apply using` requires an exact premise: {}",
@@ -10669,7 +10676,7 @@ fn replay_linear_tactics(
                     predicate_environment,
                     click_function_environment,
                     &replay.unfolded_predicates,
-                    Some(&lowering_facts),
+                    None,
                 )?;
                 for fact in all_pure_facts {
                     if !applied.contains(&fact) {

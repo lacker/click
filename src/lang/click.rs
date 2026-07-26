@@ -387,6 +387,18 @@ impl SurfacePropositionMap {
         self.by_kernel.keys()
     }
 
+    pub fn available_kernel(
+        &self,
+        surface: &ClickProposition,
+        available: &[Proposition],
+    ) -> Option<&Proposition> {
+        let mut matches = self.by_kernel.iter().filter_map(|(kernel, spellings)| {
+            (available.contains(kernel) && spellings.contains(surface)).then_some(kernel)
+        });
+        let kernel = matches.next()?;
+        matches.next().is_none().then_some(kernel)
+    }
+
     pub fn checked_surface<F>(
         &self,
         kernel: &Proposition,

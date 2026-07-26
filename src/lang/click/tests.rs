@@ -509,6 +509,26 @@ fn retains_distinct_surface_spellings_for_the_same_kernel_fact() {
 }
 
 #[test]
+fn recorded_surface_fact_resolves_only_one_available_kernel_fact() {
+    let surface = ClickProposition::Comparison {
+        left: current_var("x"),
+        operator: ComparisonOperator::Equal,
+        right: current_int(1),
+    };
+    let first = Proposition::ConditionIs(ConditionTerm::Constant(true), true);
+    let second = Proposition::ConditionIs(ConditionTerm::Constant(false), false);
+    let mut spellings = SurfacePropositionMap::default();
+    spellings.record_lowering(&surface, &first).unwrap();
+    spellings.record_lowering(&surface, &second).unwrap();
+
+    assert_eq!(
+        spellings.available_kernel(&surface, std::slice::from_ref(&first)),
+        Some(&first)
+    );
+    assert_eq!(spellings.available_kernel(&surface, &[first, second]), None);
+}
+
+#[test]
 fn parses_symbolic_loadable_bytes() {
     let source = r#"
             verifying "fill.c";
