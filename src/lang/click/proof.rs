@@ -2712,6 +2712,30 @@ fn materialization_equivalent_available_fact(
         .find_map(|fact| matching_conjunct(fact, required, &normalized_required))
 }
 
+fn directly_matching_separation_fact(
+    required: &Proposition,
+    available: &[Proposition],
+) -> Option<Proposition> {
+    let Proposition::CResourceSeparate {
+        left: required_left,
+        right: required_right,
+    } = required
+    else {
+        return None;
+    };
+    let assumptions = assumptions_from_propositions(available);
+    available.iter().find_map(|fact| {
+        let Proposition::CResourceSeparate { left, right } = fact else {
+            return None;
+        };
+        let same_orientation = c_resources_directly_match(left, required_left, &assumptions)
+            && c_resources_directly_match(right, required_right, &assumptions);
+        let reverse_orientation = c_resources_directly_match(left, required_right, &assumptions)
+            && c_resources_directly_match(right, required_left, &assumptions);
+        (same_orientation || reverse_orientation).then(|| fact.clone())
+    })
+}
+
 fn minimal_proposition_derivation(
     proposition: &Proposition,
     available: &[Proposition],
@@ -3401,6 +3425,12 @@ fn certified_transitions_from_execution(
                     | StatementPrerequisitePolicy::Explicit
                     | StatementPrerequisitePolicy::Certified => {
                         if exact_fact_is_available(proposition, pure_facts)
+                            || materialization_equivalent_available_fact(
+                                proposition,
+                                pure_facts,
+                            )
+                            .is_some()
+                            || directly_matching_separation_fact(proposition, pure_facts).is_some()
                             || matches!(normalize_proposition(proposition), SimpProposition::True)
                             || matches!(prerequisite_policy, StatementPrerequisitePolicy::Certified)
                                 && certified_prerequisites.iter().any(|derivation| {
@@ -3420,21 +3450,30 @@ fn certified_transitions_from_execution(
                             // replay independent of the ambient proof context
                             // without requiring callers to spell out internal
                             // evaluator predicates such as no-overflow facts.
-                            let exact_assumptions = if matches!(
+                            let exact_derivation = if matches!(
                                 proposition,
                                 Proposition::ConditionIs(_, _)
                             ) {
-                                &planning_condition_assumptions
+                                planning_condition_assumptions
+                                    .derive_atomic_proposition(proposition)
+                                    .or_else(|| {
+                                        planning_condition_assumptions
+                                            .derive_simp_atomic_proposition(proposition)
+                                    })
+                            } else if matches!(
+                                proposition,
+                                Proposition::CResourceSeparate { .. }
+                            ) {
+                                None
                             } else {
-                                &planning_assumptions
+                                planning_assumptions
+                                    .derive_atomic_proposition(proposition)
+                                    .or_else(|| {
+                                        planning_assumptions
+                                            .derive_simp_atomic_proposition(proposition)
+                                    })
                             };
-                            exact_assumptions
-                                .derive_atomic_proposition(proposition)
-                                .or_else(|| {
-                                    exact_assumptions
-                                        .derive_simp_atomic_proposition(proposition)
-                                })
-                                .ok_or_else(|| {
+                            exact_derivation.ok_or_else(|| {
                                     ClickError::new(format!(
                                         "{context_label} is missing exact prerequisite{}: {:?}",
                                         obligation

@@ -3428,6 +3428,50 @@ fn exact_separation_resolves_contained_symbolic_ranges_without_general_search() 
 }
 
 #[test]
+fn direct_resource_match_uses_exact_field_load_equalities() {
+    let owner = Pointer {
+        block: "arg-memory".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let memory = CMemory::new().with_block("call-havoc:0", 0);
+    let loaded_data = Pointer {
+        block: owner.block.clone(),
+        offset: PointerOffsetTerm::scale_int32(
+            Bitvector32Term::MemoryLoad(
+                Box::new(memory.clone()),
+                Box::new(owner.offset_by_int32_elements(2.into())),
+            ),
+            4,
+        ),
+    };
+    let loaded_length = Bitvector32Term::MemoryLoad(
+        Box::new(memory),
+        Box::new(owner.offset_by_int32_elements(1.into())),
+    );
+    let named_data = Pointer {
+        block: owner.block.clone(),
+        offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(41_100)), 4),
+    };
+    let named_length = Bitvector32Term::Variable(Variable(41_101));
+    let loaded = CResource::Memory(memory_range(loaded_data.clone(), 0, loaded_length.clone()));
+    let named = CResource::Memory(memory_range(named_data.clone(), 0, named_length.clone()));
+
+    assert!(!c_resources_directly_match(
+        &loaded,
+        &named,
+        &Assumptions::new()
+    ));
+
+    let assumptions = Assumptions::new()
+        .assume_condition(
+            ConditionTerm::pointer_offset_equal(loaded_data.offset, named_data.offset),
+            true,
+        )
+        .assume_condition(ConditionTerm::equal(loaded_length, named_length), true);
+    assert!(c_resources_directly_match(&loaded, &named, &assumptions));
+}
+
+#[test]
 fn equivalent_memory_load_order_facts_can_be_inconsistent() {
     let old_memory = CMemory::new();
     let stack_memory = CMemory::new()

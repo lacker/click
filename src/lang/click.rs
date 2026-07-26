@@ -22,7 +22,7 @@ use crate::kernel::{
     c_function_outcome_from_statement_outcome, c_function_specification, c_if, c_labeled_assert,
     c_loop_effects_hold_at_back_edge, c_loop_invariants_hold_at_back_edge,
     c_loop_invariants_hold_at_entry, c_loop_preservation_contexts,
-    c_pointer_offsets_proven_equal_for_effect, c_pointer_value, c_seq,
+    c_pointer_offsets_proven_equal_for_effect, c_pointer_value, c_resources_directly_match, c_seq,
     c_verified_function_contract_claim, c_verified_function_rule,
     c_while_with_invariant_and_effect_checks, canonical_c_memory_for_pointer_load,
     certify_c_function_execution_paths_from_outcomes, int32,

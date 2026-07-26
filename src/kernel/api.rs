@@ -12,6 +12,69 @@ pub(crate) fn canonical_c_memory_for_pointer_load(memory: &CMemory, pointer: &Po
     canonical_memory_for_pointer_load(memory, pointer)
 }
 
+/// Checks whether two resource spellings denote the same resource using only
+/// exact facts and the bounded memory-resolution relation. This is intended
+/// for certificate replay: it does not search for containment or separation.
+pub(crate) fn c_resources_directly_match(
+    left: &CResource,
+    right: &CResource,
+    assumptions: &Assumptions,
+) -> bool {
+    let values_match = |left: &CValue, right: &CValue| match (left, right) {
+        (CValue::Int32(left), CValue::Int32(right))
+        | (CValue::UInt8(left), CValue::UInt8(right)) => {
+            bitvector_terms_proven_equal_for_memory_resolution(left, right, assumptions)
+        }
+        (CValue::Pointer(left), CValue::Pointer(right)) => {
+            pointers_proven_equal_for_memory_resolution(left, right, assumptions)
+        }
+        _ => false,
+    };
+    match (left, right) {
+        (CResource::Memory(left), CResource::Memory(right)) => {
+            pointers_proven_equal_for_memory_resolution(left.base(), right.base(), assumptions)
+                && bitvector_terms_proven_equal_for_memory_resolution(
+                    left.start(),
+                    right.start(),
+                    assumptions,
+                )
+                && bitvector_terms_proven_equal_for_memory_resolution(
+                    left.end(),
+                    right.end(),
+                    assumptions,
+                )
+        }
+        (
+            CResource::Composite {
+                name: left_name,
+                arguments: left_arguments,
+            },
+            CResource::Composite {
+                name: right_name,
+                arguments: right_arguments,
+            },
+        )
+        | (
+            CResource::Token {
+                name: left_name,
+                arguments: left_arguments,
+            },
+            CResource::Token {
+                name: right_name,
+                arguments: right_arguments,
+            },
+        ) => {
+            left_name == right_name
+                && left_arguments.len() == right_arguments.len()
+                && left_arguments
+                    .iter()
+                    .zip(right_arguments)
+                    .all(|(left, right)| values_match(left, right))
+        }
+        _ => false,
+    }
+}
+
 pub(crate) fn c_memory_load_is_unchanged(
     before: &CMemory,
     after: &CMemory,
