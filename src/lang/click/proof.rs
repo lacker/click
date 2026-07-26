@@ -2307,6 +2307,31 @@ enum PostExecutionTactic {
     Simp,
 }
 
+fn post_execution_tactic_timing(post_tactic: &PostExecutionTactic) -> (&'static str, &'static str) {
+    match post_tactic {
+        PostExecutionTactic::Apply(_) => ("apply", "smart"),
+        PostExecutionTactic::Have(have) => (
+            "have",
+            if smart_simp_unfold_prefix(&have.proof).is_some() {
+                "smart"
+            } else {
+                "simple"
+            },
+        ),
+        PostExecutionTactic::Simp => ("simp", "smart"),
+        PostExecutionTactic::Fold(_) => ("fold", "simple"),
+        PostExecutionTactic::UnfoldPredicate(_) => ("unfold", "simple"),
+        PostExecutionTactic::ApplyUsing { .. } => ("apply", "simple"),
+        PostExecutionTactic::Choose(_) => ("choose", "simple"),
+        PostExecutionTactic::Witness(_) => ("witness", "simple"),
+        PostExecutionTactic::Assumption => ("assumption", "simple"),
+        PostExecutionTactic::Normalize => ("normalize", "simple"),
+        PostExecutionTactic::Rewrite(_) => ("rewrite", "simple"),
+        PostExecutionTactic::Frame => ("frame", "simple"),
+        PostExecutionTactic::CertifiedFrame(_) => ("certified_frame", "simple"),
+    }
+}
+
 #[derive(Clone, Default)]
 struct ExecutionFrontier {
     point: ProofExecutionPoint,
@@ -6320,6 +6345,30 @@ fn finish_ordered_proof_replay(
             let mut rewritten_claim_goals: Vec<Option<Proposition>> = vec![None; claims.len()];
             let mut existence_tactics = Vec::new();
             for (tactic_index, post_tactic) in &replay.post_execution_tactics {
+                let _timing = std::env::var_os("CLICK_TIMINGS").is_some().then(|| {
+                    let (tactic_name, tactic_class) =
+                        post_execution_tactic_timing(post_tactic);
+                    if std::env::var_os("CLICK_TIMING_STARTS").is_some() {
+                        eprintln!(
+                            "click timing: started tactic {} {} {} class {} statement {} source {}",
+                            proof_label,
+                            tactic_index,
+                            tactic_name,
+                            tactic_class,
+                            replay.frontier.next_statement_index,
+                            tactic_index
+                        );
+                    }
+                    TacticTiming {
+                        claim_label: proof_label.clone(),
+                        tactic_index: *tactic_index,
+                        source_index: *tactic_index,
+                        tactic_name: tactic_name.to_string(),
+                        tactic_class,
+                        statement_index: replay.frontier.next_statement_index,
+                        start: std::time::Instant::now(),
+                    }
+                });
                 match post_tactic {
                     PostExecutionTactic::Fold(resource) => {
                         outcome = fold_composite_resources_on_outcome(
