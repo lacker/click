@@ -604,10 +604,10 @@ int32 owned_string_pipeline(
         at(statement(5).entry, owner->len) - 1 by {
         simp();
     }
-    apply(decremented_one_is_zero(
-        at(statement(5).entry, owner->len),
-        at(statement(5).exit, owner->len)
-    ));
+    apply(decremented_one_is_zero(at(statement(5).entry, load_int32(owner)), at(statement(5).exit, load_int32(owner)))) using {
+        fact at(statement(5).entry, load_int32(owner)) == 1;
+        fact *owner == at(statement(5).entry, (*owner - 1));
+    }
     have owner->len == at(statement(5).exit, owner->len) by {
         simp();
     }
