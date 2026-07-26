@@ -76,7 +76,13 @@ int32 owned_segmented_buffer_get_first(
 } by {
     observe(owned_segmented_buffer(owner));
     observe(owned_segment(owner->first_data, owner->first_len));
-    execute_rest();
+    step using {
+        fact 0 <= index;
+        fact index < load_int32(owner);
+        fact loadable(owner[0..1]);
+        fact loadable(owner[2..4]);
+        fact loadable(load_int32_pointer((owner + 2))[0..load_int32(owner)]);
+    }
     frame();
     simp();
 }
