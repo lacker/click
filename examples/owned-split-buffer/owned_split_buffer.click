@@ -271,6 +271,12 @@ int32 owned_split_buffer_pipeline(
         fact at(statement(4).entry, load_int32_pointer((owner + 2))) == data;
         fact 2 <= length;
     }
+    transport(at(statement(4).entry, 1) < at(statement(4).entry, *(owner + 1)), 1 < *(owner + 1)) using {
+        fact at(statement(4).entry, 1) < at(statement(4).entry, *(owner + 1));
+        fact load_int32_pointer((owner + 2)) == data;
+        fact separate(memory(owner[0..4]), memory(data[0..length]));
+        fact 2 <= length;
+    }
     have data[0] == left_value by {
         assumption();
     }
