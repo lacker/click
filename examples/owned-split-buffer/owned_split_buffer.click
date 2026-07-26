@@ -366,7 +366,10 @@ int32 owned_split_buffer_pipeline(
         simp();
     }
     have read_value == data[1] by {
-        simp();
+        derive(read_value == data[1]) using {
+            fact at(statement(7).entry, read_value) == at(statement(7).entry, *(load_int32_pointer((owner + 2)) + 1));
+            fact load_int32_pointer((owner + 2)) == data;
+        }
     }
     apply(int32_equality_transitive(
         read_value,
