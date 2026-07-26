@@ -1149,7 +1149,9 @@ fn prove_pure_theorem_tactics(
                 closed = true;
             }
             ProofTactic::Assumption => {
-                if !available.contains(&goal) {
+                if !available.contains(&goal)
+                    && materialization_equivalent_available_fact(&goal, &available).is_none()
+                {
                     return Err(ClickError::new(format!(
                         "`assumption` failed for `{claim_label}`: {}",
                         describe_missing_pure_fact(&goal, &available, &[], &[], &[], &[])
@@ -5078,15 +5080,9 @@ fn plan_smart_have_at_current_point(
             .expect("normalize is a simple replay tactic");
         return Ok((fact, plan));
     }
-    if let Some(materialized) = materialization_equivalent_available_fact(&fact, available)
-        && let Some(derivation) =
-            minimal_proposition_derivation(&fact, std::slice::from_ref(&materialized))
-    {
-        let plan =
-            ProofReplayPlan::from_planned_tactics(&[ProofTactic::ExactPropositionDerivation(
-                derivation,
-            )])
-            .expect("an exact proposition derivation is a simple replay tactic");
+    if materialization_equivalent_available_fact(&fact, available).is_some() {
+        let plan = ProofReplayPlan::from_planned_tactics(&[ProofTactic::Assumption])
+            .expect("assumption is a simple replay tactic");
         return Ok((fact, plan));
     }
     let normalized_fact = normalize_direct_atomic_memory_loads(&fact);
@@ -5562,7 +5558,10 @@ fn prove_pure_proposition_case_at_point(
                 };
                 match tactic {
                     ProofTactic::Assumption => {
-                        if !available.contains(&unfolded_goal) {
+                        if !available.contains(&unfolded_goal)
+                            && materialization_equivalent_available_fact(&unfolded_goal, &available)
+                                .is_none()
+                        {
                             return Err(ClickError::new(format!(
                                 "`{claim_label}` {proof_name} proof {outer_tactic_index}: `assumption` failed: {}",
                                 describe_missing_pure_fact(

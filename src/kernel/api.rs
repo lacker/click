@@ -162,6 +162,16 @@ fn c_memory_load_is_directly_unchanged(
                     && effect_after == after
                     && pointers.iter().all(|write| {
                         write.blocks_proven_distinct(pointer)
+                            || pointer_offsets_with_common_base_proven_distinct(
+                                write,
+                                pointer,
+                                assumptions,
+                            )
+                            || pointers_proven_distinct_for_memory_resolution(
+                                write,
+                                pointer,
+                                assumptions,
+                            )
                             || pointer_byte_offset_from_base(write, pointer)
                                 .and_then(|offset| offset.as_const())
                                 .is_some_and(|offset| offset != 0)
@@ -218,6 +228,8 @@ fn memories_directly_match_for_pointer_load(
         .into_iter()
         .all(|cell| {
             cell.blocks_proven_distinct(pointer)
+                || pointer_offsets_with_common_base_proven_distinct(&cell, pointer, assumptions)
+                || pointers_proven_distinct_for_memory_resolution(&cell, pointer, assumptions)
                 || pointer_byte_offset_from_base(&cell, pointer)
                     .and_then(|offset| offset.as_const())
                     .is_some_and(|offset| offset != 0)
@@ -261,8 +273,8 @@ fn memory_materializes_atomic_load(
 }
 
 /// Certifies the narrow frame rule used by execution proofs for ordinary C
-/// conditions. Address-dependent loads and other proposition forms must be
-/// re-established explicitly.
+/// conditions. Address-dependent loads are transported from the inside out;
+/// other proposition forms must be re-established explicitly.
 pub(crate) fn prove_c_condition_fact_transport(
     fact: &Proposition,
     after: &CMemory,
@@ -536,9 +548,14 @@ fn transport_framed_atomic_bitvector(
     Some(match term {
         Bitvector32Term::Constant(_) | Bitvector32Term::Variable(_) => term.clone(),
         Bitvector32Term::MemoryLoad(memory, pointer) => {
-            if !pointer_offset_is_snapshot_independent(&pointer.offset) {
-                return None;
-            }
+            let transported_pointer = Pointer {
+                block: pointer.block.clone(),
+                offset: transport_framed_atomic_pointer_offset(
+                    &pointer.offset,
+                    after,
+                    assumptions,
+                )?,
+            };
             if memories_match_for_pointer_load(memory, after, pointer)
                 || memory_materializes_atomic_load(after, memory, pointer)
                 || assumptions.is_some_and(|(assumptions, direct)| {
@@ -549,7 +566,7 @@ fn transport_framed_atomic_bitvector(
                     }
                 })
             {
-                Bitvector32Term::MemoryLoad(Box::new(after.clone()), pointer.clone())
+                Bitvector32Term::MemoryLoad(Box::new(after.clone()), Box::new(transported_pointer))
             } else {
                 term.clone()
             }
@@ -684,22 +701,6 @@ fn transport_framed_atomic_bitvector(
             body: Box::new(transport_framed_atomic_bitvector(body, after, assumptions)?),
         },
     })
-}
-
-fn pointer_offset_is_snapshot_independent(offset: &PointerOffsetTerm) -> bool {
-    match offset {
-        PointerOffsetTerm::Constant(_) | PointerOffsetTerm::Variable(_) => true,
-        PointerOffsetTerm::Add(left, right) => {
-            pointer_offset_is_snapshot_independent(left)
-                && pointer_offset_is_snapshot_independent(right)
-        }
-        PointerOffsetTerm::Int32Scaled { value, .. } => {
-            matches!(
-                value.as_ref(),
-                Bitvector32Term::Constant(_) | Bitvector32Term::Variable(_)
-            )
-        }
-    }
 }
 
 pub(crate) fn c_pointer_offsets_proven_equal_for_effect(

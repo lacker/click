@@ -3710,6 +3710,64 @@ fn equivalent_field_derived_bases_frame_symbolic_index_store() {
 }
 
 #[test]
+fn direct_transport_composes_framed_loads_inside_an_indexed_address() {
+    let owner = Pointer {
+        block: "arg-memory".into(),
+        offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(95)), 4),
+    };
+    let owner_len_cell = owner.clone();
+    let owner_data_cell = owner.offset_by_int32_elements(Bitvector32Term::Constant(2));
+    let before = CMemory::new();
+    let data_value =
+        Bitvector32Term::MemoryLoad(Box::new(before.clone()), Box::new(owner_data_cell));
+    let length = Bitvector32Term::MemoryLoad(Box::new(before.clone()), Box::new(owner_len_cell));
+    let data = Pointer {
+        block: "arg-memory".into(),
+        offset: PointerOffsetTerm::scale_int32(data_value, 4),
+    };
+    let index = Bitvector32Term::Variable(Variable(96));
+    let capacity = Bitvector32Term::Variable(Variable(97));
+    let written_cell = data.offset_by_int32_elements(index.clone());
+    let terminator_cell = data.offset_by_int32_elements(length.clone());
+    let after = before.clone().store(written_cell.clone(), int32(7));
+    let fact = Proposition::ConditionIs(
+        ConditionTerm::equal(
+            Bitvector32Term::MemoryLoad(Box::new(before.clone()), Box::new(terminator_cell)),
+            Bitvector32Term::Constant(0),
+        ),
+        true,
+    );
+    let assumptions = Assumptions::new()
+        .assume_condition(ConditionTerm::signed_less_than(index, length), true)
+        .assume_proposition(Proposition::CResourceSeparate {
+            left: CResource::Memory(CMemoryRange::new(
+                owner,
+                Bitvector32Term::Constant(0),
+                Bitvector32Term::Constant(4),
+            )),
+            right: CResource::Memory(CMemoryRange::new(
+                data,
+                Bitvector32Term::Constant(0),
+                capacity,
+            )),
+        })
+        .assume_proposition(Proposition::CMemoryMutatesOnly {
+            before,
+            after: after.clone(),
+            pointers: vec![written_cell],
+        });
+
+    let theorem = prove_c_condition_fact_direct_transport(&fact, &after, &assumptions)
+        .expect("the address loads and then the indexed cell should transport");
+    let Proposition::Implies(source, target) = theorem.proposition() else {
+        panic!("transport theorem must be an implication");
+    };
+    assert_eq!(source.as_ref(), &fact);
+    assert_ne!(target.as_ref(), &fact);
+    assert_eq!(c_condition_fact_memories(target), vec![after]);
+}
+
+#[test]
 fn covering_disjoint_fact_handles_shifted_mutable_range() {
     let n = Variable(83);
     let k = Variable(84);
