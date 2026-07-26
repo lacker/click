@@ -3604,7 +3604,7 @@ fn certified_transitions_from_execution(
                                 )
                             }
                             StatementFactTransportPolicy::Automatic => {
-                                prove_c_condition_fact_transport(
+                                prove_c_condition_fact_direct_transport(
                                     &fact,
                                     post_state.memory(),
                                     &transport_assumptions,
