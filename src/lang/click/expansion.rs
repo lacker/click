@@ -47,7 +47,7 @@ pub fn expand_c0_claim_source(
     let replacement = indent_replacement(click_source, span.start, &replacement);
     let replacement = match edit {
         ProofSourceEdit::Explicit(_) => replacement,
-        ProofSourceEdit::DefaultTerminator(_) => {
+        ProofSourceEdit::DefaultTerminator { .. } => {
             let separator = click_source[..span.start]
                 .chars()
                 .next_back()
@@ -80,32 +80,55 @@ pub fn expand_c0_tactic_source_at(
     column: usize,
 ) -> Result<String, ClickError> {
     let selected = locate_source_tactic(click_source, c_sources, line, column)?;
-    expand_c0_tactic_source_index(
-        click_source,
-        c_sources,
-        &selected.function_name,
-        selected.claim,
-        selected.source_index,
-        selected.span,
-    )
-}
-
-fn expand_c0_tactic_source_index(
-    click_source: &str,
-    c_sources: &[(&str, &str)],
-    function_name: &str,
-    claim: CProofClaim,
-    source_index: usize,
-    span: Range<usize>,
-) -> Result<String, ClickError> {
+    let (function_name, claim) = match &selected.site {
+        ProofSourceSite::FunctionClaim {
+            function_name,
+            claim,
+        } => (function_name.as_str(), *claim),
+        site => {
+            return Err(ClickError::new(format!(
+                "selected {} proof is not certificate-backed yet",
+                site.description()
+            )));
+        }
+    };
+    if matches!(selected.edit, TacticSourceEdit::WholeProof(_)) {
+        return expand_c0_claim_source(click_source, c_sources, function_name, claim);
+    }
     let replacement_tactics = super::proof::capture_c0_tactic_expansion(
         click_source,
         c_sources,
         function_name,
         claim,
-        source_index,
+        selected.source_index,
     )?;
-    let replacement = super::printing::format_partial_tactic_sequence(&replacement_tactics);
+    let (span, replacement) = match selected.edit {
+        TacticSourceEdit::Partial(span) => (
+            span,
+            super::printing::format_partial_tactic_sequence(&replacement_tactics),
+        ),
+        TacticSourceEdit::WholeProof(edit) => {
+            let certificate =
+                TacticCertificate::from_proof_tactics(&replacement_tactics).map_err(|error| {
+                    ClickError::new(format!(
+                        "selected tactic did not produce a surface certificate: {error:?}"
+                    ))
+                })?;
+            let replacement = super::printing::format_tactic_certificate(&certificate);
+            let span = edit.span().clone();
+            let replacement = match edit {
+                ProofSourceEdit::Explicit(_) => replacement,
+                ProofSourceEdit::DefaultTerminator { .. } => {
+                    let separator = click_source[..span.start]
+                        .chars()
+                        .next_back()
+                        .is_some_and(|character| !character.is_whitespace());
+                    format!("{}{replacement}", if separator { " " } else { "" })
+                }
+            };
+            (span, replacement)
+        }
+    };
     let replacement = indent_replacement(click_source, span.start, &replacement);
     let mut expanded =
         String::with_capacity(click_source.len() - (span.end - span.start) + replacement.len());
@@ -260,6 +283,89 @@ fn find_function(tokens: &[SourceToken], name: &str) -> Result<FunctionSource, C
     )))
 }
 
+fn find_theorem(tokens: &[SourceToken], name: &str) -> Result<FunctionSource, ClickError> {
+    for (index, token) in tokens.iter().enumerate() {
+        if token.text != "theorem"
+            || tokens.get(index + 1).map(|token| token.text.as_str()) != Some(name)
+            || tokens.get(index + 2).map(|token| token.text.as_str()) != Some("(")
+        {
+            continue;
+        }
+        let parameters_close = matching_delimiter(tokens, index + 2, "(", ")")?;
+        if tokens
+            .get(parameters_close + 1)
+            .map(|token| token.text.as_str())
+            != Some("{")
+        {
+            continue;
+        }
+        let body_open = parameters_close + 1;
+        let body_close = matching_delimiter(tokens, body_open, "{", "}")?;
+        return Ok(FunctionSource {
+            body_open,
+            body_close,
+        });
+    }
+    Err(ClickError::new(format!(
+        "could not locate Click theorem `{name}`"
+    )))
+}
+
+fn find_ensure_proof_edit(
+    tokens: &[SourceToken],
+    body_open: usize,
+    body_close: usize,
+    wanted: usize,
+) -> Result<ProofSourceEdit, ClickError> {
+    let mut depth = 0;
+    let mut found = 0;
+    let mut index = body_open + 1;
+    while index < body_close {
+        match tokens[index].text.as_str() {
+            "{" => depth += 1,
+            "}" => depth -= 1,
+            "ensures" | "owns" | "produces" if depth == 0 => {
+                if found == wanted {
+                    return find_proof_edit_after(tokens, index, body_close);
+                }
+                found += 1;
+            }
+            _ => {}
+        }
+        index += 1;
+    }
+    Err(ClickError::new(format!(
+        "could not locate source ensure {wanted}"
+    )))
+}
+
+fn find_proof_edit_after(
+    tokens: &[SourceToken],
+    clause_start: usize,
+    limit: usize,
+) -> Result<ProofSourceEdit, ClickError> {
+    let mut cursor = clause_start + 1;
+    let mut nested = 0;
+    while cursor < limit {
+        match tokens[cursor].text.as_str() {
+            "{" | "(" | "[" => nested += 1,
+            "}" | ")" | "]" => nested -= 1,
+            "by" if nested == 0 => {
+                return Ok(ProofSourceEdit::Explicit(proof_span(tokens, cursor)?));
+            }
+            ";" if nested == 0 => {
+                return Ok(ProofSourceEdit::DefaultTerminator {
+                    span: tokens[cursor].span.clone(),
+                    selector: tokens[clause_start].span.start,
+                });
+            }
+            _ => {}
+        }
+        cursor += 1;
+    }
+    Err(ClickError::new("could not locate source proof terminator"))
+}
+
 fn find_grouped_proof_span(
     tokens: &[SourceToken],
     function: &FunctionSource,
@@ -280,7 +386,7 @@ fn find_claim_proof_span(
 ) -> Result<Range<usize>, ClickError> {
     match find_claim_proof_edit(tokens, function, claim)? {
         ProofSourceEdit::Explicit(span) => Ok(span),
-        ProofSourceEdit::DefaultTerminator(_) => Err(ClickError::new(format!(
+        ProofSourceEdit::DefaultTerminator { .. } => Err(ClickError::new(format!(
             "selected {claim:?} uses a default proof and has no explicit source tactic"
         ))),
     }
@@ -289,13 +395,20 @@ fn find_claim_proof_span(
 #[derive(Clone, Debug)]
 enum ProofSourceEdit {
     Explicit(Range<usize>),
-    DefaultTerminator(Range<usize>),
+    DefaultTerminator { span: Range<usize>, selector: usize },
 }
 
 impl ProofSourceEdit {
     fn span(&self) -> &Range<usize> {
         match self {
-            Self::Explicit(span) | Self::DefaultTerminator(span) => span,
+            Self::Explicit(span) | Self::DefaultTerminator { span, .. } => span,
+        }
+    }
+
+    fn selector(&self) -> usize {
+        match self {
+            Self::Explicit(span) => span.start,
+            Self::DefaultTerminator { selector, .. } => *selector,
         }
     }
 }
@@ -305,8 +418,11 @@ fn find_claim_proof_edit(
     function: &FunctionSource,
     claim: CProofClaim,
 ) -> Result<ProofSourceEdit, ClickError> {
+    if let CProofClaim::Ensure(index) = claim {
+        return find_ensure_proof_edit(tokens, function.body_open, function.body_close, index);
+    }
     let (keyword, wanted) = match claim {
-        CProofClaim::Ensure(index) => ("ensures", index),
+        CProofClaim::Ensure(_) => unreachable!(),
         CProofClaim::Effect(index) => ("effect", index),
         CProofClaim::Grouped => unreachable!(),
     };
@@ -332,9 +448,10 @@ fn find_claim_proof_edit(
                                 return Ok(ProofSourceEdit::Explicit(proof_span(tokens, cursor)?));
                             }
                             ";" if nested == 0 => {
-                                return Ok(ProofSourceEdit::DefaultTerminator(
-                                    tokens[cursor].span.clone(),
-                                ));
+                                return Ok(ProofSourceEdit::DefaultTerminator {
+                                    span: tokens[cursor].span.clone(),
+                                    selector: tokens[index].span.start,
+                                });
                             }
                             _ => {}
                         }
@@ -352,12 +469,64 @@ fn find_claim_proof_edit(
     )))
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum ProofSourceSite {
+    FunctionClaim {
+        function_name: String,
+        claim: CProofClaim,
+    },
+    TheoremEnsure {
+        theorem_name: String,
+        ensure_index: usize,
+    },
+    LoopPhase {
+        function_name: String,
+        loop_index: usize,
+        phase: &'static str,
+    },
+    StructuralItem {
+        function_name: String,
+        region: CodeRegion,
+        item_index: usize,
+    },
+}
+
+impl ProofSourceSite {
+    fn description(&self) -> String {
+        match self {
+            Self::FunctionClaim {
+                function_name,
+                claim,
+            } => format!("function `{function_name}` {claim:?}"),
+            Self::TheoremEnsure {
+                theorem_name,
+                ensure_index,
+            } => format!("theorem `{theorem_name}` ensure {ensure_index}"),
+            Self::LoopPhase {
+                function_name,
+                loop_index,
+                phase,
+            } => format!("`{function_name}.loop({loop_index}).{phase}`"),
+            Self::StructuralItem {
+                function_name,
+                region,
+                item_index,
+            } => format!("function `{function_name}` {region:?} item {item_index}"),
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+enum TacticSourceEdit {
+    Partial(Range<usize>),
+    WholeProof(ProofSourceEdit),
+}
+
 #[derive(Clone, Debug)]
 struct LocatedSourceTactic {
-    function_name: String,
-    claim: CProofClaim,
+    site: ProofSourceSite,
     source_index: usize,
-    span: Range<usize>,
+    edit: TacticSourceEdit,
 }
 
 fn locate_source_tactic(
@@ -369,18 +538,94 @@ fn locate_source_tactic(
     let wanted = offset_at_position(click_source, line, column)?;
     let tokens = scan_source_tokens(click_source)?;
     let file = parse_source_with_c_layouts(click_source, c_sources)?;
+    for theorem in file.theorem_definitions() {
+        let source = find_theorem(&tokens, theorem.name())?;
+        for (ensure_index, ensure) in theorem.ensures().iter().enumerate() {
+            let edit =
+                find_ensure_proof_edit(&tokens, source.body_open, source.body_close, ensure_index)?;
+            let site = ProofSourceSite::TheoremEnsure {
+                theorem_name: theorem.name().to_string(),
+                ensure_index,
+            };
+            if let Some(found) =
+                locate_tactic_in_proof(&tokens, &edit, ensure.proof(), wanted, site)?
+            {
+                return Ok(found);
+            }
+        }
+    }
     for function_block in file.function_blocks() {
         let function_name = function_block.signature().name();
         let function = find_function(&tokens, function_name)?;
+        for clause in function_block.structural_clauses() {
+            let CodeRegion::Loop(loop_index) = clause.region() else {
+                continue;
+            };
+            for (phase, proof) in [
+                ("initialize", clause.initialize_proof()),
+                ("preserve", clause.preserve_proof()),
+            ] {
+                let Some(proof) = proof else {
+                    continue;
+                };
+                let (_, proof_span) =
+                    find_loop_phase_proof_span(&tokens, &function, *loop_index, phase)?;
+                let proof_span = proof_span.ok_or_else(|| {
+                    ClickError::new(format!(
+                        "`{function_name}.loop({loop_index}).{phase}` has no source proof"
+                    ))
+                })?;
+                if let Some(found) = locate_tactic_in_proof(
+                    &tokens,
+                    &ProofSourceEdit::Explicit(proof_span),
+                    proof,
+                    wanted,
+                    ProofSourceSite::LoopPhase {
+                        function_name: function_name.to_string(),
+                        loop_index: *loop_index,
+                        phase,
+                    },
+                )? {
+                    return Ok(found);
+                }
+            }
+            let block = find_structural_clause_block(&tokens, &function, *clause.region())?;
+            let edits = structural_item_proof_edits(&tokens, &block)?;
+            if edits.len() != clause.items().len() {
+                return Err(ClickError::new(format!(
+                    "structural source mapping for `{function_name}` {:?} found {} items, expected {}",
+                    clause.region(),
+                    edits.len(),
+                    clause.items().len()
+                )));
+            }
+            for (item_index, (item, edit)) in clause.items().iter().zip(edits.iter()).enumerate() {
+                if let Some(found) = locate_tactic_in_proof(
+                    &tokens,
+                    edit,
+                    item.proof(),
+                    wanted,
+                    ProofSourceSite::StructuralItem {
+                        function_name: function_name.to_string(),
+                        region: *clause.region(),
+                        item_index,
+                    },
+                )? {
+                    return Ok(found);
+                }
+            }
+        }
         if let Some(proof) = function_block.grouped_proof() {
-            let proof_span = find_grouped_proof_span(&tokens, &function)?;
+            let edit = ProofSourceEdit::Explicit(find_grouped_proof_span(&tokens, &function)?);
             if let Some(found) = locate_tactic_in_proof(
                 &tokens,
-                &proof_span,
+                &edit,
                 proof,
                 wanted,
-                function_name,
-                CProofClaim::Grouped,
+                ProofSourceSite::FunctionClaim {
+                    function_name: function_name.to_string(),
+                    claim: CProofClaim::Grouped,
+                },
             )? {
                 return Ok(found);
             }
@@ -388,32 +633,32 @@ fn locate_source_tactic(
         }
         for (index, ensure) in function_block.ensures().iter().enumerate() {
             let claim = CProofClaim::Ensure(index);
-            let Ok(proof_span) = find_claim_proof_span(&tokens, &function, claim) else {
-                continue;
-            };
+            let edit = find_claim_proof_edit(&tokens, &function, claim)?;
             if let Some(found) = locate_tactic_in_proof(
                 &tokens,
-                &proof_span,
+                &edit,
                 ensure.proof(),
                 wanted,
-                function_name,
-                claim,
+                ProofSourceSite::FunctionClaim {
+                    function_name: function_name.to_string(),
+                    claim,
+                },
             )? {
                 return Ok(found);
             }
         }
         for (index, effect) in function_block.effects().iter().enumerate() {
             let claim = CProofClaim::Effect(index);
-            let Ok(proof_span) = find_claim_proof_span(&tokens, &function, claim) else {
-                continue;
-            };
+            let edit = find_claim_proof_edit(&tokens, &function, claim)?;
             if let Some(found) = locate_tactic_in_proof(
                 &tokens,
-                &proof_span,
+                &edit,
                 effect.proof(),
                 wanted,
-                function_name,
-                claim,
+                ProofSourceSite::FunctionClaim {
+                    function_name: function_name.to_string(),
+                    claim,
+                },
             )? {
                 return Ok(found);
             }
@@ -426,26 +671,58 @@ fn locate_source_tactic(
 
 fn locate_tactic_in_proof(
     tokens: &[SourceToken],
-    proof_span: &Range<usize>,
+    edit: &ProofSourceEdit,
     proof: &Proof,
     wanted: usize,
-    function_name: &str,
-    claim: CProofClaim,
+    site: ProofSourceSite,
 ) -> Result<Option<LocatedSourceTactic>, ClickError> {
-    let Some(tactics) = proof.tactics() else {
-        return Ok(None);
-    };
-    let spans = collect_source_tactic_spans(tokens, proof_span, tactics)?;
-    Ok(spans
-        .into_iter()
-        .enumerate()
-        .find(|(_, span)| span.start == wanted)
-        .map(|(source_index, span)| LocatedSourceTactic {
-            function_name: function_name.to_string(),
-            claim,
-            source_index,
-            span,
-        }))
+    match proof {
+        Proof::Script(tactics) => {
+            let ProofSourceEdit::Explicit(proof_span) = edit else {
+                return Err(ClickError::new(
+                    "an explicit proof script has no source `by` clause",
+                ));
+            };
+            let spans = collect_source_tactic_spans(tokens, proof_span, tactics)?;
+            Ok(spans
+                .into_iter()
+                .enumerate()
+                .find(|(_, span)| span.start == wanted)
+                .map(|(source_index, span)| LocatedSourceTactic {
+                    site,
+                    source_index,
+                    edit: TacticSourceEdit::Partial(span),
+                }))
+        }
+        Proof::Tactic(_) => match edit {
+            ProofSourceEdit::Explicit(proof_span) => {
+                let by = tokens
+                    .iter()
+                    .position(|token| token.span.start == proof_span.start && token.text == "by")
+                    .ok_or_else(|| ClickError::new("could not locate source `by` clause"))?;
+                Ok(tokens
+                    .get(by + 1)
+                    .filter(|token| token.span.start == wanted)
+                    .map(|_| LocatedSourceTactic {
+                        site,
+                        source_index: 0,
+                        edit: TacticSourceEdit::WholeProof(edit.clone()),
+                    }))
+            }
+            ProofSourceEdit::DefaultTerminator { .. } => {
+                Ok((edit.selector() == wanted).then(|| LocatedSourceTactic {
+                    site,
+                    source_index: 0,
+                    edit: TacticSourceEdit::WholeProof(edit.clone()),
+                }))
+            }
+        },
+        Proof::Default => Ok((edit.selector() == wanted).then(|| LocatedSourceTactic {
+            site,
+            source_index: 0,
+            edit: TacticSourceEdit::WholeProof(edit.clone()),
+        })),
+    }
 }
 
 pub fn c0_tactic_source_position(
@@ -456,9 +733,75 @@ pub fn c0_tactic_source_position(
 ) -> Result<SourcePosition, ClickError> {
     let tokens = scan_source_tokens(click_source)?;
     let file = parse_source_with_c_layouts(click_source, c_sources)?;
+    for theorem in file.theorem_definitions() {
+        let source = find_theorem(&tokens, theorem.name())?;
+        for (ensure_index, ensure) in theorem.ensures().iter().enumerate() {
+            let label = ensure.name().map_or_else(
+                || format!("{}.ensures_{ensure_index}", theorem.name()),
+                |name| format!("{}.{name}", theorem.name()),
+            );
+            if label != claim_label {
+                continue;
+            }
+            let edit =
+                find_ensure_proof_edit(&tokens, source.body_open, source.body_close, ensure_index)?;
+            return proof_source_position(
+                click_source,
+                &tokens,
+                match &edit {
+                    ProofSourceEdit::Explicit(span) => Some(span),
+                    ProofSourceEdit::DefaultTerminator { .. } => None,
+                },
+                Some(ensure.proof()),
+                edit.selector(),
+                claim_label,
+                source_index,
+            );
+        }
+    }
     for function_block in file.function_blocks() {
         let function_name = function_block.signature().name();
         let function = find_function(&tokens, function_name)?;
+        for clause in function_block.structural_clauses() {
+            let region_label = match clause.region() {
+                CodeRegion::Function => format!("{function_name}.function"),
+                CodeRegion::Loop(index) => format!("{function_name}.loop({index})"),
+                CodeRegion::Statement(index) => format!("{function_name}.statement({index})"),
+            };
+            let block = find_structural_clause_block(&tokens, &function, *clause.region())?;
+            let edits = structural_item_proof_edits(&tokens, &block)?;
+            if edits.len() != clause.items().len() {
+                return Err(ClickError::new(format!(
+                    "structural source mapping for `{function_name}` {:?} found {} items, expected {}",
+                    clause.region(),
+                    edits.len(),
+                    clause.items().len()
+                )));
+            }
+            for (item_index, (item, edit)) in clause.items().iter().zip(edits.iter()).enumerate() {
+                let kind = match item.kind() {
+                    StructuralItemKind::Invariant => "invariant",
+                    StructuralItemKind::Assert => "assert",
+                    StructuralItemKind::Effect => "effect",
+                    StructuralItemKind::StepEffect => "step_effect",
+                };
+                if claim_label != format!("{region_label}.{kind}_{item_index}") {
+                    continue;
+                }
+                return proof_source_position(
+                    click_source,
+                    &tokens,
+                    match edit {
+                        ProofSourceEdit::Explicit(span) => Some(span),
+                        ProofSourceEdit::DefaultTerminator { .. } => None,
+                    },
+                    Some(item.proof()),
+                    edit.selector(),
+                    claim_label,
+                    source_index,
+                );
+            }
+        }
         if let Some(rest) = claim_label
             .strip_prefix(function_name)
             .and_then(|rest| rest.strip_prefix(".loop("))
@@ -595,8 +938,14 @@ fn find_claim_clause_offset(
     function: &FunctionSource,
     claim: CProofClaim,
 ) -> Result<usize, ClickError> {
+    if let CProofClaim::Ensure(index) = claim {
+        return Ok(
+            find_ensure_proof_edit(tokens, function.body_open, function.body_close, index)?
+                .selector(),
+        );
+    }
     let (keyword, wanted) = match claim {
-        CProofClaim::Ensure(index) => ("ensures", index),
+        CProofClaim::Ensure(_) => unreachable!(),
         CProofClaim::Effect(index) => ("effect", index),
         CProofClaim::Grouped => unreachable!(),
     };
@@ -691,6 +1040,114 @@ fn parse_source_with_c_layouts(
     let sources = c_sources.iter().copied().collect::<BTreeMap<_, _>>();
     let layouts = parse_c_struct_layouts(&sources)?;
     parser::parse_with_struct_layouts(click_source, layouts)
+}
+
+fn find_structural_clause_block(
+    tokens: &[SourceToken],
+    function: &FunctionSource,
+    wanted: CodeRegion,
+) -> Result<Range<usize>, ClickError> {
+    let mut depth = 0;
+    let mut index = function.body_open + 1;
+    while index < function.body_close {
+        match tokens[index].text.as_str() {
+            "{" => depth += 1,
+            "}" => depth -= 1,
+            "for" if depth == 0 => {
+                let kind = tokens.get(index + 1).map(|token| token.text.as_str());
+                let region = match kind {
+                    Some("loop" | "statement")
+                        if tokens.get(index + 2).map(|token| token.text.as_str()) == Some("(") =>
+                    {
+                        let region_index = tokens
+                            .get(index + 3)
+                            .and_then(|token| token.text.parse::<usize>().ok());
+                        if tokens.get(index + 4).map(|token| token.text.as_str()) != Some(")") {
+                            None
+                        } else {
+                            region_index.map(|region_index| {
+                                if kind == Some("loop") {
+                                    CodeRegion::Loop(region_index)
+                                } else {
+                                    CodeRegion::Statement(region_index)
+                                }
+                            })
+                        }
+                    }
+                    _ => None,
+                };
+                let mut open = index + 5;
+                if tokens.get(open).map(|token| token.text.as_str()) == Some("as") {
+                    open += 2;
+                }
+                if region == Some(wanted)
+                    && tokens.get(open).map(|token| token.text.as_str()) == Some("{")
+                {
+                    let close = matching_delimiter(tokens, open, "{", "}")?;
+                    return Ok(open..close);
+                }
+            }
+            _ => {}
+        }
+        index += 1;
+    }
+    Err(ClickError::new(format!(
+        "could not locate structural source block {wanted:?}"
+    )))
+}
+
+fn structural_item_proof_edits(
+    tokens: &[SourceToken],
+    block: &Range<usize>,
+) -> Result<Vec<ProofSourceEdit>, ClickError> {
+    fn token_after_edit(tokens: &[SourceToken], edit: &ProofSourceEdit) -> usize {
+        tokens
+            .iter()
+            .position(|token| token.span.end == edit.span().end)
+            .map_or(tokens.len(), |index| index + 1)
+    }
+
+    let mut edits = Vec::new();
+    let mut cursor = block.start + 1;
+    while cursor < block.end {
+        match tokens[cursor].text.as_str() {
+            "initialize" | "preserve" => {
+                let by = cursor + 1;
+                if tokens.get(by).map(|token| token.text.as_str()) != Some("by") {
+                    return Err(ClickError::new(
+                        "loop phase is missing its source `by` clause",
+                    ));
+                }
+                let phase = ProofSourceEdit::Explicit(proof_span(tokens, by)?);
+                cursor = token_after_edit(tokens, &phase);
+            }
+            "invariant" | "assert" | "immutable" | "mutable" | "mutable_field" => {
+                let edit = find_proof_edit_after(tokens, cursor, block.end)?;
+                cursor = token_after_edit(tokens, &edit);
+                edits.push(edit);
+            }
+            "step" if tokens.get(cursor + 1).map(|token| token.text.as_str()) == Some("{") => {
+                let open = cursor + 1;
+                let close = matching_delimiter(tokens, open, "{", "}")?;
+                let mut item = open + 1;
+                while item < close {
+                    if matches!(
+                        tokens[item].text.as_str(),
+                        "immutable" | "mutable" | "mutable_field"
+                    ) {
+                        let edit = find_proof_edit_after(tokens, item, close)?;
+                        item = token_after_edit(tokens, &edit);
+                        edits.push(edit);
+                    } else {
+                        item += 1;
+                    }
+                }
+                cursor = close + 1;
+            }
+            _ => cursor += 1,
+        }
+    }
+    Ok(edits)
 }
 
 fn offset_at_position(source: &str, line: usize, column: usize) -> Result<usize, ClickError> {
@@ -1344,5 +1801,128 @@ int32 count(int32 n) {
                 column: 13
             }
         );
+    }
+
+    #[test]
+    fn source_selection_recognizes_theorem_loop_and_structural_proofs() {
+        let theorem_source = r#"theorem reflexive(x: int32) {
+    ensures same: x == x by simp;
+}
+"#;
+        let theorem_offset = theorem_source.find("simp").unwrap();
+        let theorem_position = position_at_offset(theorem_source, theorem_offset);
+        assert_eq!(
+            c0_tactic_source_position(theorem_source, &[], "reflexive.same", 0).unwrap(),
+            theorem_position
+        );
+        let theorem_error = expand_c0_tactic_source_at(
+            theorem_source,
+            &[],
+            theorem_position.line,
+            theorem_position.column,
+        )
+        .expect_err("theorem certificate plumbing is added in the next chunk");
+        assert!(
+            theorem_error
+                .message()
+                .contains("theorem `reflexive` ensure 0 proof is not certificate-backed yet"),
+            "{}",
+            theorem_error.message()
+        );
+
+        let c_source = "int32 count(int32 n) { while (n > 0) { n = n - 1; } return n; }";
+        let click_source = r#"verifying "count.c";
+int32 count(int32 n) {
+    for loop(0) {
+        invariant n == n;
+        assert n == n by auto;
+        initialize by simp;
+        preserve by simp;
+    }
+    ensures result == result;
+}
+"#;
+        for (needle, expected) in [
+            (
+                "initialize by simp",
+                "`count.loop(0).initialize` proof is not certificate-backed yet",
+            ),
+            (
+                "preserve by simp",
+                "`count.loop(0).preserve` proof is not certificate-backed yet",
+            ),
+            (
+                "assert n == n by auto",
+                "function `count` Loop(0) item 1 proof is not certificate-backed yet",
+            ),
+        ] {
+            let offset = click_source.find(needle).unwrap()
+                + if needle.starts_with("assert") {
+                    needle.find("auto").unwrap()
+                } else {
+                    needle.find("simp").unwrap()
+                };
+            let position = position_at_offset(click_source, offset);
+            let error = expand_c0_tactic_source_at(
+                click_source,
+                &[("count.c", c_source)],
+                position.line,
+                position.column,
+            )
+            .expect_err("the selected non-contract site is not certificate-backed yet");
+            assert!(
+                error.message().contains(expected),
+                "expected {expected:?}, got {:?}",
+                error.message()
+            );
+        }
+        let assert_offset =
+            click_source.find("assert n == n by auto").unwrap() + "assert n == n by ".len();
+        assert_eq!(
+            c0_tactic_source_position(
+                click_source,
+                &[("count.c", c_source)],
+                "count.loop(0).assert_1",
+                0,
+            )
+            .unwrap(),
+            position_at_offset(click_source, assert_offset)
+        );
+    }
+
+    #[test]
+    fn expands_single_smart_and_default_function_proofs_by_source_location() {
+        let c_source = "int32 identity(int32 x) { return x; }";
+        let smart = r#"verifying "identity.c";
+int32 identity(int32 x) {
+    ensures result == x by simp;
+}
+"#;
+        let smart_position = position_at_offset(smart, smart.find("simp").unwrap());
+        let smart_expanded = expand_c0_tactic_source_at(
+            smart,
+            &[("identity.c", c_source)],
+            smart_position.line,
+            smart_position.column,
+        )
+        .expect("single smart proof should expand as a whole proof");
+        assert!(!smart_expanded.contains("by simp"));
+        verify_c0_sources(&smart_expanded, &[("identity.c", c_source)]).unwrap();
+
+        let implicit = r#"verifying "identity.c";
+int32 identity(int32 x) {
+    ensures result == x;
+}
+"#;
+        let implicit_position = position_at_offset(implicit, implicit.find("ensures").unwrap());
+        let implicit_expanded = expand_c0_tactic_source_at(
+            implicit,
+            &[("identity.c", c_source)],
+            implicit_position.line,
+            implicit_position.column,
+        )
+        .expect("default proof should expand from its clause coordinate");
+        assert!(implicit_expanded.contains("ensures result == x by {"));
+        verify_c0_sources(&implicit_expanded, &[("identity.c", c_source)]).unwrap();
     }
 }
