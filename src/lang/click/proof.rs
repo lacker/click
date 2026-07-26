@@ -2857,6 +2857,27 @@ fn assumptions_from_exact_conditions(propositions: &[Proposition]) -> Assumption
     assumptions_from_propositions(&conditions)
 }
 
+fn assumptions_for_direct_fact_transport(propositions: &[Proposition]) -> Assumptions {
+    fn collect(proposition: &Proposition, facts: &mut Vec<Proposition>) {
+        match proposition {
+            Proposition::ConditionIs(_, _)
+            | Proposition::CMemoryEffectSummary { .. }
+            | Proposition::CResourceSeparate { .. } => facts.push(proposition.clone()),
+            Proposition::And(left, right) => {
+                collect(left, facts);
+                collect(right, facts);
+            }
+            _ => {}
+        }
+    }
+
+    let mut facts = Vec::new();
+    for proposition in propositions {
+        collect(proposition, &mut facts);
+    }
+    assumptions_from_propositions(&facts)
+}
+
 #[derive(Clone, Copy)]
 enum LoopPreservationSource {
     Automatic,
@@ -3292,7 +3313,7 @@ fn certified_transitions_from_execution(
                     .iter()
                     .map(|fact| fact.proposition().clone()),
             );
-            let transport_assumptions = assumptions_from_propositions(&transport_facts);
+            let transport_assumptions = assumptions_for_direct_fact_transport(&transport_facts);
             let prerequisite_assumptions = assumptions_from_propositions(&successor_facts);
             let planning_assumptions = assumptions_from_propositions(pure_facts);
             let planning_condition_assumptions =
@@ -7774,6 +7795,9 @@ fn lower_outcome_simp_tactic(
     if matches!(normalize_proposition(goal), SimpProposition::True) {
         return Ok(ProofTactic::Normalize);
     }
+    if available.iter().any(|fact| fact == goal) {
+        return Ok(ProofTactic::Assumption);
+    }
 
     let check = |surface: &ClickProposition| {
         lower_outcome_proposition_with_program_points(
@@ -7789,6 +7813,49 @@ fn lower_outcome_simp_tactic(
             &replay.program_point_states,
         )
     };
+    let normalized_goal = normalize_direct_atomic_memory_loads(goal);
+    if let Some(fact) = available
+        .iter()
+        .find(|fact| normalize_direct_atomic_memory_loads(fact) == normalized_goal)
+        && let Ok(surface) = checked_surface_fact_at_outcome(
+            replay,
+            fact,
+            available,
+            parameters,
+            arguments,
+            pre_state,
+            post_state,
+            result,
+            predicate_environment,
+            click_function_environment,
+        )
+        && check(&surface).is_ok_and(|lowered| {
+            normalize_direct_atomic_memory_loads(&lowered)
+                == normalize_direct_atomic_memory_loads(fact)
+        })
+    {
+        let assumptions = assumptions_from_propositions(std::slice::from_ref(fact));
+        if assumptions
+            .derive_atomic_proposition(goal)
+            .or_else(|| assumptions.derive_proposition(goal))
+            .is_some()
+        {
+            return Ok(ProofTactic::Derive(ProofDerive {
+                proposition: surface_goal.clone(),
+                premises: vec![surface],
+            }));
+        }
+        if assumptions
+            .derive_simp_atomic_proposition(goal)
+            .or_else(|| assumptions.derive_simp_proposition(goal))
+            .is_some()
+        {
+            return Ok(ProofTactic::Calculate(ProofDerive {
+                proposition: surface_goal.clone(),
+                premises: vec![surface],
+            }));
+        }
+    }
     let mut premise_pairs = Vec::new();
     for fact in available {
         let Ok(surface) = checked_surface_fact_at_outcome(
@@ -7811,9 +7878,6 @@ fn lower_outcome_simp_tactic(
         }) {
             premise_pairs.push((fact.clone(), surface));
         }
-    }
-    if premise_pairs.iter().any(|(fact, _)| fact == goal) {
-        return Ok(ProofTactic::Assumption);
     }
     let kernel_premises = premise_pairs
         .iter()
