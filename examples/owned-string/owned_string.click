@@ -563,7 +563,28 @@ int32 owned_string_pipeline(
     have 0 < owner->len by {
         simp();
     }
-    execute_until(statement(5));
+    step using {
+        fact loadable(old(owner[0..4]));
+        fact load_int32_pointer((owner + 2)) == data;
+        fact at(statement(3).entry, load_int32(owner)) == 0;
+        fact load_int32_pointer((owner + 2)) == at(statement(3).entry, load_int32_pointer((owner + 2)));
+        fact at(statement(3).entry, load_int32_pointer((owner + 2))) == data;
+        fact at(statement(3).exit, load_int32(owner)) == (at(statement(3).entry, load_int32(owner)) + 1);
+        fact load_int32(owner) == 1;
+        fact at(statement(3).entry, (load_int32(owner) + 1)) < at(statement(3).entry, load_int32((owner + 1)));
+        fact 2 <= capacity;
+        fact at(statement(3).entry, ignored) == observed;
+        fact at(statement(3).entry, load_int32((owner + 1))) == at(statement(3).entry, capacity);
+        fact at(statement(3).entry, *data) == at(statement(3).entry, observed);
+        fact ignored == at(statement(3).entry, (*owner + 1));
+        fact *(owner + 1) == at(statement(3).entry, *(owner + 1));
+        fact *owner == at(statement(3).entry, (*owner + 1));
+        fact loadable(old(data[0..capacity]));
+        fact separate(memory(owner[observed..4]), memory(data[observed..capacity]));
+        fact load_int32(owner) == at(statement(3).exit, load_int32(owner));
+        fact data[0] == first;
+        fact 0 < load_int32(owner);
+    }
     have owner->len == 1 by {
         simp();
     }
