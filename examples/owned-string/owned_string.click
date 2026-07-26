@@ -557,8 +557,14 @@ int32 owned_string_pipeline(
         fact load_int32_pointer((owner + 2)) == data;
         fact at(statement(3).entry, load_int32(owner)) == 0;
     }
+    have at(statement(3).exit, (owner->data)[at(statement(3).entry, owner->len)]) == first by {
+        assumption();
+    }
     have data[0] == first by {
-        simp();
+        derive(data[0] == first) using {
+            fact at(statement(3).exit, (owner->data)[at(statement(3).entry, owner->len)]) == first;
+            fact load_int32_pointer((owner + 2)) + at(statement(3).entry, load_int32(owner)) == data;
+        }
     }
     have 0 < owner->len by {
         simp();
