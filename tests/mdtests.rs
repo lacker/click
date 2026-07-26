@@ -29,6 +29,12 @@ fn mdtests() {
         })
         .filter(|path| path.extension().is_some_and(|extension| extension == "md"))
         .collect::<Vec<_>>();
+    if let Ok(filter) = std::env::var("MDTEST_FILTER") {
+        paths.retain(|path| {
+            path.file_name()
+                .is_some_and(|name| name.to_string_lossy().contains(&filter))
+        });
+    }
     paths.sort();
 
     assert!(

@@ -1471,6 +1471,7 @@ fn simple_statement_transition_does_not_transport_facts_automatically() {
         value: CExpression::Value(int32(9)),
     };
     let mut next_opaque_call = 0;
+    let mut next_verification_variable = 0;
     let (transitions, _) = certified_statement_transitions(
         &state,
         std::slice::from_ref(&fact),
@@ -1479,6 +1480,7 @@ fn simple_statement_transition_does_not_transport_facts_automatically() {
         CExecutionSemantics::APPLY_VERIFIED_RULES,
         "simple transition test",
         &mut next_opaque_call,
+        &mut next_verification_variable,
         StatementPrerequisitePolicy::Exact,
         StatementFactTransportPolicy::None,
         &[],
@@ -1584,6 +1586,10 @@ fn execute_step_records_a_point_checked_surface_expansion() {
         .expect("the linear smart step should have a surface expansion");
 
     assert!(matches!(expanded[0], ProofTactic::StepUsing(_)));
+    let ProofTactic::StepUsing(premises) = &expanded[0] else {
+        unreachable!("the first expanded tactic was checked above")
+    };
+    assert_eq!(premises.len(), 1);
     assert_eq!(expanded[1], ProofTactic::Normalize);
     assert_eq!(verified[0].expansion_blocker(), None);
     TacticCertificate::from_proof_tactics(expanded)
@@ -1593,6 +1599,27 @@ fn execute_step_records_a_point_checked_surface_expansion() {
         .expect("checked expansion should have canonical source");
     assert!(source.contains("step using"));
     assert!(source.contains("normalize();"));
+
+    let execute_offset = click_source
+        .find("execute_step()")
+        .expect("proof should contain execute_step");
+    let line = click_source[..execute_offset]
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count()
+        + 1;
+    let column = execute_offset
+        - click_source[..execute_offset]
+            .rfind('\n')
+            .map(|offset| offset + 1)
+            .unwrap_or(0)
+        + 1;
+    let rewritten =
+        expand_c0_tactic_source_at(click_source, &[("increment.c", c_source)], line, column)
+            .expect("the overflow-safe step should expand");
+    assert!(rewritten.contains("fact x < 2147483647;"), "{rewritten}");
+    verify_c0_sources(&rewritten, &[("increment.c", c_source)])
+        .expect("the emitted numeric prerequisite should replay");
 }
 
 #[test]
@@ -2207,11 +2234,19 @@ fn parses_and_classifies_simple_and_smart_tactics() {
         TacticClass::Simple(SimpleTactic::LoopSummaryTransition)
     ));
     assert!(matches!(
-        ProofTactic::CertifiedStatementStep(Vec::new()).class(),
+        ProofTactic::CertifiedStatementStep {
+            prerequisite_derivations: Vec::new(),
+            exact_premises: Vec::new(),
+        }
+        .class(),
         TacticClass::Simple(SimpleTactic::CertifiedStatementTransition)
     ));
     assert!(matches!(
-        ProofTactic::CertifiedLoopSummaryStep(Vec::new()).class(),
+        ProofTactic::CertifiedLoopSummaryStep {
+            prerequisite_derivations: Vec::new(),
+            exact_premises: Vec::new(),
+        }
+        .class(),
         TacticClass::Simple(SimpleTactic::CertifiedLoopSummaryTransition)
     ));
     assert!(matches!(
@@ -2330,9 +2365,11 @@ fn tactic_certificate_rejects_a_direct_smart_tactic() {
 
 #[test]
 fn tactic_certificate_rejects_internal_replay_evidence() {
-    let error =
-        TacticCertificate::from_proof_tactics(&[ProofTactic::CertifiedStatementStep(Vec::new())])
-            .expect_err("internal replay evidence is not a surface tactic");
+    let error = TacticCertificate::from_proof_tactics(&[ProofTactic::CertifiedStatementStep {
+        prerequisite_derivations: Vec::new(),
+        exact_premises: Vec::new(),
+    }])
+    .expect_err("internal replay evidence is not a surface tactic");
 
     assert_eq!(
         error.tactic_class(),
@@ -2490,6 +2527,43 @@ fn apply_using_replays_only_with_its_explicit_premises() {
         error.message().contains("required exact fact"),
         "{}",
         error.message()
+    );
+}
+
+#[test]
+fn apply_using_uses_ambient_loadability_only_to_lower_explicit_premises() {
+    let c_source = r#"
+            int32 first(int32* data) {
+                return data[0];
+            }
+        "#;
+    let click_source = r#"
+            verifying "first.c";
+
+            theorem preserve_equal(x: int32, y: int32) {
+                requires x == y;
+                ensures x == y by {
+                    simp();
+                }
+            }
+
+            int32 first(int32* data) {
+                views data[0..1];
+                ensures result == data[0];
+            } by {
+                have data[0] == data[0] by {
+                    simp();
+                }
+                step();
+                apply(preserve_equal(data[0], data[0])) using {
+                    fact data[0] == data[0];
+                }
+                simp();
+            }
+        "#;
+
+    verify_c0_sources(click_source, &[("first.c", c_source)]).expect(
+        "ambient loadability may lower an explicit premise without becoming a theorem premise",
     );
 }
 
@@ -6596,4 +6670,105 @@ fn explicit_store_step_with_unfolded_resource_facts_verifies() {
 
     verify_c0_sources(click_source, &[("owned_string_set.c", c_source)])
         .expect("explicit store certificate should verify");
+}
+
+#[test]
+fn expanded_read_step_keeps_named_range_separation_premises() {
+    let c_source = r#"
+        struct owned_string {
+            int32 len;
+            int32 cap;
+            int32* data;
+        };
+
+        int32 owned_string_pop(struct owned_string* owner) {
+            int32 index;
+            int32 value;
+            index = owner->len - 1;
+            value = owner->data[index];
+            owner->data[index] = 0;
+            owner->len = index;
+            return value;
+        }
+    "#;
+    let click_source = r#"
+        predicate terminated_at(int32 data[], int32 length) {
+            data[length] == 0
+        }
+
+        resource owned_string(owner: struct owned_string*) {
+            owns owner->len;
+            owns owner->cap;
+            owns owner->data;
+            owns (owner->data)[0..owner->cap];
+            fact 0 <= owner->len;
+            fact owner->len < owner->cap;
+            fact terminated_at(owner->data, owner->len);
+            fact separate(
+                memory(owner[0..4]),
+                memory((owner->data)[0..owner->cap])
+            );
+        }
+
+        verifying "owned_string_pop.c";
+
+        int32 owned_string_pop(struct owned_string* owner) {
+            requires 1 <= owner->len;
+            owns owned_string(owner);
+            mutable owner[0..1], (owner->data + (owner->len - 1))[0..1];
+            ensures result == old((owner->data)[owner->len - 1]);
+            ensures owner->len == old(owner->len) - 1;
+            ensures owner->cap == old(owner->cap);
+            ensures owner->data == old(owner->data);
+            ensures (owner->data)[owner->len] == 0;
+        } by {
+            unfold(owned_string(owner));
+            have 0 <= owner->len - 1 by {
+                simp();
+            }
+            have owner->len - 1 < owner->len by {
+                simp();
+            }
+            execute_rest();
+            have terminated_at(owner->data, owner->len) by {
+                unfold(terminated_at);
+                simp();
+            }
+            have 0 <= owner->len by { simp(); }
+            have owner->len < owner->cap by { simp(); }
+            have separate(
+                memory(owner[0..4]),
+                memory((owner->data)[0..owner->cap])
+            ) by {
+                simp();
+            }
+            fold(owned_string(owner));
+            frame();
+            simp();
+        }
+    "#;
+    let execute_offset = click_source
+        .find("execute_rest()")
+        .expect("proof should contain execute_rest");
+    let line = click_source[..execute_offset]
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count()
+        + 1;
+    let column = execute_offset
+        - click_source[..execute_offset]
+            .rfind('\n')
+            .map(|offset| offset + 1)
+            .unwrap_or(0)
+        + 1;
+    let expanded = expand_c0_tactic_source_at(
+        click_source,
+        &[("owned_string_pop.c", c_source)],
+        line,
+        column,
+    )
+    .expect("the read step's generated surface certificate should replay");
+
+    verify_c0_sources(&expanded, &[("owned_string_pop.c", c_source)])
+        .expect("the expanded read certificate should verify as a complete proof");
 }

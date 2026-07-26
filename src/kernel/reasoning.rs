@@ -84,7 +84,7 @@ fn pointers_proven_distinct_for_memory_resolution_with_depth(
         return false;
     }
     left.blocks_proven_distinct(right)
-        || assumptions.pointers_proven_disjoint_by_explicit_range_shallow(left, right)
+        || assumptions.pointers_proven_disjoint_by_explicit_range_for_memory_resolution(left, right)
         || pointer_offsets_with_common_base_proven_distinct_for_memory_resolution(
             left,
             right,
@@ -112,23 +112,37 @@ fn pointer_offsets_with_common_base_proven_distinct_for_memory_resolution(
     if depth > MEMORY_RESOLUTION_ALIAS_DEPTH_LIMIT || left.block != right.block {
         return false;
     }
-    let (
-        PointerOffsetTerm::Add(left_base, left_index),
-        PointerOffsetTerm::Add(right_base, right_index),
-    ) = (&left.offset, &right.offset)
-    else {
-        return false;
-    };
-    let index_pair = if left_base == right_base {
-        Some((left_index.as_ref(), right_index.as_ref()))
-    } else if left_base == right_index {
-        Some((left_index.as_ref(), right_base.as_ref()))
-    } else if left_index == right_base {
-        Some((left_base.as_ref(), right_index.as_ref()))
-    } else if left_index == right_index {
-        Some((left_base.as_ref(), right_base.as_ref()))
-    } else {
-        None
+    let zero = PointerOffsetTerm::Constant(0);
+    let index_pair = match (&left.offset, &right.offset) {
+        (
+            PointerOffsetTerm::Add(left_base, left_index),
+            PointerOffsetTerm::Add(right_base, right_index),
+        ) => {
+            if left_base == right_base {
+                Some((left_index.as_ref(), right_index.as_ref()))
+            } else if left_base == right_index {
+                Some((left_index.as_ref(), right_base.as_ref()))
+            } else if left_index == right_base {
+                Some((left_base.as_ref(), right_index.as_ref()))
+            } else if left_index == right_index {
+                Some((left_base.as_ref(), right_base.as_ref()))
+            } else {
+                None
+            }
+        }
+        (PointerOffsetTerm::Add(base, index), right) if base.as_ref() == right => {
+            Some((index.as_ref(), &zero))
+        }
+        (PointerOffsetTerm::Add(index, base), right) if base.as_ref() == right => {
+            Some((index.as_ref(), &zero))
+        }
+        (left, PointerOffsetTerm::Add(base, index)) if left == base.as_ref() => {
+            Some((&zero, index.as_ref()))
+        }
+        (left, PointerOffsetTerm::Add(index, base)) if left == base.as_ref() => {
+            Some((&zero, index.as_ref()))
+        }
+        _ => None,
     };
     let Some((left_index, right_index)) = index_pair else {
         return false;
@@ -358,6 +372,11 @@ fn memory_snapshots_match_for_resolution(
     if memories_match_for_pointer_load(left, right, pointer) {
         return true;
     }
+    if canonical_memory_for_pointer_load(left, pointer)
+        == canonical_memory_for_pointer_load(right, pointer)
+    {
+        return true;
+    }
     if depth > MEMORY_RESOLUTION_ALIAS_DEPTH_LIMIT || pointer.block.starts_with("local:") {
         return false;
     }
@@ -478,13 +497,7 @@ pub(super) fn memories_match_for_pointer_load(
         return false;
     }
 
-    left.blocks
-        .iter()
-        .filter(|(block, _)| !block.starts_with("local:"))
-        .eq(right
-            .blocks
-            .iter()
-            .filter(|(block, _)| !block.starts_with("local:")))
+    left.blocks.get(&pointer.block) == right.blocks.get(&pointer.block)
         && left
             .cells
             .iter()
@@ -493,6 +506,65 @@ pub(super) fn memories_match_for_pointer_load(
                 .cells
                 .iter()
                 .filter(|(cell_pointer, _)| cell_pointer.block == pointer.block))
+}
+
+/// Returns a canonical representation of the portion of memory observable by
+/// one atomic load. Unrelated blocks cannot affect the load. A block made only
+/// of cached loads from one common source is observationally that source, so
+/// collapse it before discarding unrelated blocks.
+pub(super) fn canonical_memory_for_pointer_load(memory: &CMemory, pointer: &Pointer) -> CMemory {
+    canonical_memory_for_pointer_load_with_depth(memory, pointer, 0)
+}
+
+fn canonical_memory_for_pointer_load_with_depth(
+    memory: &CMemory,
+    pointer: &Pointer,
+    depth: usize,
+) -> CMemory {
+    if depth >= MEMORY_RESOLUTION_ALIAS_DEPTH_LIMIT {
+        return memory.clone();
+    }
+    let relevant_cells = memory
+        .cells
+        .iter()
+        .filter(|(cell_pointer, _)| cell_pointer.block == pointer.block)
+        .collect::<Vec<_>>();
+    let materialization_sources = relevant_cells
+        .iter()
+        .map(|(cell_pointer, value)| {
+            let source = materialized_cell_source(cell_pointer, value)?;
+            Some(canonical_memory_for_pointer_load_with_depth(
+                source,
+                cell_pointer,
+                depth + 1,
+            ))
+        })
+        .collect::<Option<Vec<_>>>();
+    let common_materialization_source = materialization_sources.as_ref().and_then(|sources| {
+        let first = sources.first()?;
+        sources
+            .iter()
+            .all(|source| source == first)
+            .then(|| first.clone())
+    });
+    let mut canonical = common_materialization_source.unwrap_or_else(|| memory.clone());
+    canonical.blocks.retain(|block, _| block == &pointer.block);
+    canonical
+        .cells
+        .retain(|cell_pointer, _| cell_pointer.block == pointer.block);
+    canonical
+}
+
+fn materialized_cell_source<'a>(cell_pointer: &Pointer, value: &'a CValue) -> Option<&'a CMemory> {
+    match value {
+        CValue::Int32(Bitvector32Term::MemoryLoad(source, source_pointer))
+        | CValue::UInt8(Bitvector32Term::MemoryLoad(source, source_pointer))
+            if source_pointer.as_ref() == cell_pointer =>
+        {
+            Some(source)
+        }
+        CValue::Int32(_) | CValue::UInt8(_) | CValue::Pointer(_) => None,
+    }
 }
 
 pub(super) fn memories_match_for_pointer_load_under_assumptions(
@@ -3870,7 +3942,15 @@ fn add_condition_path_fact_with_visibility(
     value: bool,
     public: bool,
 ) -> Option<()> {
-    if let Some(known) = assumptions.decide(&condition) {
+    if let Some(known) = assumptions.exact_condition_value(&condition) {
+        return (known == value).then_some(());
+    }
+    if let Some(known) = Assumptions::decide_intrinsically(&condition) {
+        return (known == value).then_some(());
+    }
+    if !assumptions.should_defer_non_exact_condition_reasoning()
+        && let Some(known) = assumptions.decide(&condition)
+    {
         return (known == value).then_some(());
     }
 
@@ -3945,8 +4025,10 @@ pub(super) fn add_proof_obligation_with_context(
         return add_condition_obligation(obligations, assumptions, condition, value, context);
     }
 
+    let defer_contextual_proof = assumptions.should_defer_non_exact_loadability_obligations()
+        && matches!(proposition, Proposition::CMemoryLoadable { .. });
     if assumptions.proves_exact(&proposition)
-        || !assumptions.should_defer_non_exact_obligations() && assumptions.proves(&proposition)
+        || !defer_contextual_proof && assumptions.proves(&proposition)
         || obligations
             .iter()
             .any(|obligation| obligation.proposition == proposition)
@@ -4028,7 +4110,10 @@ pub(super) fn add_condition_obligation(
     if assumptions.proves_exact(&Proposition::ConditionIs(condition.clone(), !value)) {
         return None;
     }
-    if !assumptions.should_defer_non_exact_obligations()
+    if let Some(known) = Assumptions::decide_intrinsically(&condition) {
+        return (known == value).then_some(());
+    }
+    if !assumptions.should_defer_non_exact_condition_reasoning()
         && let Some(known) = assumptions.decide(&condition)
     {
         return (known == value).then_some(());
@@ -4096,6 +4181,13 @@ pub(super) fn merge_facts(
             fact.proposition().clone(),
             fact.is_public(),
         )?;
+        if fact.is_certified()
+            && let Some(existing) = facts
+                .iter_mut()
+                .find(|existing| existing.proposition() == fact.proposition())
+        {
+            *existing = fact.clone();
+        }
     }
     Some(facts)
 }
@@ -4117,8 +4209,17 @@ pub(super) fn decide_with_facts(
     facts: &[ExecutionPureFact],
     condition: &ConditionTerm,
 ) -> Option<bool> {
-    assumptions
-        .decide(condition)
+    [true, false]
+        .into_iter()
+        .find(|value| {
+            assumptions.proves_exact(&Proposition::ConditionIs(condition.clone(), *value))
+        })
+        .or_else(|| Assumptions::decide_intrinsically(condition))
+        .or_else(|| {
+            (!assumptions.should_defer_non_exact_condition_reasoning())
+                .then(|| assumptions.decide(condition))
+                .flatten()
+        })
         .or_else(|| {
             facts.iter().find_map(|fact| match fact.proposition() {
                 Proposition::ConditionIs(existing_condition, value)
@@ -4132,9 +4233,14 @@ pub(super) fn decide_with_facts(
         .or_else(|| {
             facts
                 .iter()
-                .fold(assumptions.clone(), |assumptions, fact| {
-                    assumptions.assume_proposition(fact.proposition().clone())
-                })
+                .fold(
+                    if assumptions.should_defer_non_exact_condition_reasoning() {
+                        Assumptions::new()
+                    } else {
+                        assumptions.clone()
+                    },
+                    |assumptions, fact| assumptions.assume_proposition(fact.proposition().clone()),
+                )
                 .decide(condition)
         })
 }

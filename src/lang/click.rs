@@ -24,9 +24,9 @@ use crate::kernel::{
     c_loop_invariants_hold_at_entry, c_loop_preservation_contexts,
     c_pointer_offsets_proven_equal_for_effect, c_pointer_value, c_seq,
     c_verified_function_contract_claim, c_verified_function_rule,
-    c_while_with_invariant_and_effect_checks, certify_c_function_execution_paths_from_outcomes,
-    int32, prove_c_condition_fact_transport,
-    prove_c_function_satisfies_specification_from_symbolic_path,
+    c_while_with_invariant_and_effect_checks, canonical_c_memory_for_pointer_load,
+    certify_c_function_execution_paths_from_outcomes, int32, prove_c_condition_fact_transport,
+    prove_c_fact_snapshot_transport, prove_c_function_satisfies_specification_from_symbolic_path,
     prove_symbolic_c_condition_evaluation,
     prove_symbolic_c_loop_exit_with_proven_phases_using_budget,
     prove_symbolic_c_statement_verification_paths_with_environment_and_loop_rule_using_budget,
@@ -633,6 +633,7 @@ pub struct CertifiedFactTransport {
 pub struct CertifiedStatementReplay {
     pub(crate) transition: CertifiedStatementTransition,
     pub(crate) next_opaque_call: u64,
+    pub(crate) next_verification_variable: u64,
 }
 
 /// A tactic in an explicit `.click` proof script.
@@ -649,9 +650,16 @@ pub enum ProofTactic {
         region: CodeRegionRef,
         premises: Vec<ClickProposition>,
     },
-    CertifiedStatementStep(Vec<PropositionDerivation>),
-    CertifiedLoopSummaryStep(Vec<PropositionDerivation>),
+    CertifiedStatementStep {
+        prerequisite_derivations: Vec<PropositionDerivation>,
+        exact_premises: Vec<Proposition>,
+    },
+    CertifiedLoopSummaryStep {
+        prerequisite_derivations: Vec<PropositionDerivation>,
+        exact_premises: Vec<Proposition>,
+    },
     CertifiedStatementReplay(Box<CertifiedStatementReplay>),
+    CertifiedLoopSummaryReplay(Box<CertifiedStatementReplay>),
     ExecuteStep,
     ExecuteThenStep,
     ExecuteElseStep,
@@ -703,6 +711,7 @@ pub enum ProofTactic {
     },
     FinishCertifiedFactTransports(Vec<Proposition>),
     CertifiedPathAssumption {
+        occurrence: usize,
         condition: ClickProposition,
         value: bool,
         facts: Vec<Proposition>,
@@ -1037,13 +1046,16 @@ impl ProofTactic {
             Self::ApplyLoopSummary(_) | Self::ApplyLoopSummaryUsing { .. } => {
                 TacticClass::Simple(SimpleTactic::LoopSummaryTransition)
             }
-            Self::CertifiedStatementStep(_) => {
+            Self::CertifiedStatementStep { .. } => {
                 TacticClass::Simple(SimpleTactic::CertifiedStatementTransition)
             }
             Self::CertifiedStatementReplay(_) => {
                 TacticClass::Simple(SimpleTactic::CertifiedStatementTransition)
             }
-            Self::CertifiedLoopSummaryStep(_) => {
+            Self::CertifiedLoopSummaryReplay(_) => {
+                TacticClass::Simple(SimpleTactic::CertifiedLoopSummaryTransition)
+            }
+            Self::CertifiedLoopSummaryStep { .. } => {
                 TacticClass::Simple(SimpleTactic::CertifiedLoopSummaryTransition)
             }
             Self::UnfoldPredicate(_) => TacticClass::Simple(SimpleTactic::UnfoldPredicate),

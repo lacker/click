@@ -1321,7 +1321,34 @@ fn apply_theorem_applications_to_available(
     theorem_applications: &[(usize, TheoremApplication)],
     claim_label: &str,
     path_index: Option<usize>,
+    available: Vec<Proposition>,
+    context: &TheoremApplicationContext<'_>,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    unfolded_predicates: &[String],
+) -> Result<Vec<Proposition>, ClickError> {
+    apply_theorem_applications_to_available_with_lowering_context(
+        theorem_environment,
+        theorem_applications,
+        claim_label,
+        path_index,
+        available,
+        None,
+        context,
+        predicate_environment,
+        click_function_environment,
+        unfolded_predicates,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn apply_theorem_applications_to_available_with_lowering_context(
+    theorem_environment: &TheoremEnvironment,
+    theorem_applications: &[(usize, TheoremApplication)],
+    claim_label: &str,
+    path_index: Option<usize>,
     mut available: Vec<Proposition>,
+    lowering_context: Option<&[Proposition]>,
     context: &TheoremApplicationContext<'_>,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
@@ -1337,6 +1364,12 @@ fn apply_theorem_applications_to_available(
         .map_err(|message| {
             theorem_application_error(claim_label, path_index, *tactic_index, message)
         })?;
+        let mut lowering_available = lowering_context.unwrap_or(&available).to_vec();
+        for fact in &available {
+            if !lowering_available.contains(fact) {
+                lowering_available.push(fact.clone());
+            }
+        }
         let conclusions = instantiate_theorem_application(
             theorem_environment,
             application,
@@ -1344,6 +1377,7 @@ fn apply_theorem_applications_to_available(
             path_index,
             *tactic_index,
             &available,
+            &lowering_available,
             context,
             predicate_environment,
             click_function_environment,
@@ -1371,6 +1405,7 @@ fn instantiate_theorem_application(
     path_index: Option<usize>,
     tactic_index: usize,
     available: &[Proposition],
+    lowering_available: &[Proposition],
     context: &TheoremApplicationContext<'_>,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
@@ -1399,11 +1434,12 @@ fn instantiate_theorem_application(
     }
 
     let assumptions = assumptions_from_propositions(available);
+    let lowering_assumptions = assumptions_from_propositions(lowering_available);
     let (values, array_refs) = theorem_application_bindings(
         theorem,
         application,
         context,
-        &assumptions,
+        &lowering_assumptions,
         predicate_environment,
         click_function_environment,
     )
@@ -1907,16 +1943,26 @@ struct TacticReplayState {
     frames: BTreeSet<Option<CodeRegionRef>>,
     unfolded_predicates: Vec<String>,
     post_execution_tactics: Vec<(usize, PostExecutionTactic)>,
-    case_assumptions: Vec<(usize, ClickProposition, bool)>,
+    case_assumptions: Vec<ReplayCaseAssumption>,
     effect_facts: Vec<ExecutionPureFact>,
     region_proof: bool,
     ordered_finalization: bool,
     grouped_contract: bool,
     next_opaque_call: u64,
+    next_verification_variable: u64,
+    next_path_choice: usize,
     planned_tactics: Vec<ProofTactic>,
     surface_propositions: SurfacePropositionMap,
     surface_replay: SurfaceReplay,
     deferred_tactic_capture: Option<DeferredTacticCapture>,
+}
+
+#[derive(Clone)]
+struct ReplayCaseAssumption {
+    tactic_index: usize,
+    condition: ClickProposition,
+    value: bool,
+    fact: Option<Proposition>,
 }
 
 #[derive(Clone, Default)]
@@ -2079,6 +2125,7 @@ fn tactic_expansion_capture_is_active() -> bool {
 
 #[derive(Clone)]
 struct SurfacePathChoice {
+    occurrence: usize,
     condition: ClickProposition,
     value: bool,
     tactic_offset: usize,
@@ -2199,7 +2246,8 @@ fn synthesize_surface_paths(paths: Vec<SurfaceReplay>) -> Result<Vec<ProofTactic
             .first()
             .ok_or_else(|| "only some certified paths contain a branch condition".to_string())?
             .clone();
-        if choice.condition != first_choice.condition
+        if choice.occurrence != first_choice.occurrence
+            || choice.condition != first_choice.condition
             || choice.tactic_offset != first_choice.tactic_offset
             || path.tactics.get(..choice.tactic_offset) != Some(prefix.as_slice())
         {
@@ -2397,6 +2445,7 @@ pub(super) fn verify_loop_execution_proofs(
             state: entry_state,
             pure_facts: requirement_facts,
             next_opaque_call: 0,
+            next_verification_variable: 0,
         }],
         &mut next_loop_index,
         &environment,
@@ -2434,6 +2483,7 @@ struct ExecutionProofContext {
     state: CState,
     pure_facts: Vec<Proposition>,
     next_opaque_call: u64,
+    next_verification_variable: u64,
 }
 
 #[derive(Clone)]
@@ -2443,6 +2493,7 @@ struct CertifiedConditionTransition {
     path_facts: Vec<Proposition>,
     theorem: Theorem,
     prerequisite_derivations: Vec<PropositionDerivation>,
+    planning_exact_premises: Vec<Proposition>,
 }
 
 fn append_statement_transition_certificate(
@@ -2455,10 +2506,15 @@ fn append_statement_transition_certificate(
             ProofTactic::CertifiedStatementReplay(Box::new(CertifiedStatementReplay {
                 transition: transition.clone(),
                 next_opaque_call: replay.next_opaque_call,
+                next_verification_variable: replay.next_verification_variable,
             }))
         }
         LoopStepPolicy::ApplyVerifiedRule => {
-            ProofTactic::CertifiedLoopSummaryStep(transition.prerequisite_derivations.clone())
+            ProofTactic::CertifiedLoopSummaryReplay(Box::new(CertifiedStatementReplay {
+                transition: transition.clone(),
+                next_opaque_call: replay.next_opaque_call,
+                next_verification_variable: replay.next_verification_variable,
+            }))
         }
     });
     // Facts produced by the statement are not available until the certified
@@ -2468,7 +2524,11 @@ fn append_statement_transition_certificate(
     let external_transports = transition
         .fact_transports
         .iter()
-        .filter(|transport| !transport.statement_local)
+        .filter(|transport| {
+            !transport.statement_local
+                && normalize_direct_atomic_memory_loads(&transport.source)
+                    != normalize_direct_atomic_memory_loads(&transport.target)
+        })
         .collect::<Vec<_>>();
     replay
         .planned_tactics
@@ -2493,23 +2553,57 @@ fn append_statement_transition_certificate(
     }
 }
 
+fn theorem_implication_premises(theorem: &Theorem) -> Vec<Proposition> {
+    let mut proposition = theorem.proposition();
+    let mut premises = Vec::new();
+    while let Proposition::Implies(premise, body) = proposition {
+        premises.push(premise.as_ref().clone());
+        proposition = body;
+    }
+    premises
+}
+
 fn append_condition_transition_certificate(
     replay: &mut TacticReplayState,
     transition: &CertifiedConditionTransition,
+    include_path_fact: bool,
 ) {
+    let mut exact_premises = if include_path_fact {
+        theorem_implication_premises(&transition.theorem)
+    } else {
+        Vec::new()
+    };
+    for premise in &transition.planning_exact_premises {
+        if !exact_premises.contains(premise) {
+            exact_premises.push(premise.clone());
+        }
+    }
+    if include_path_fact {
+        for fact in &transition.path_facts {
+            if !exact_premises.contains(fact) {
+                exact_premises.push(fact.clone());
+            }
+        }
+    }
     replay
         .planned_tactics
-        .push(ProofTactic::CertifiedStatementStep(
-            transition.prerequisite_derivations.clone(),
-        ));
+        .push(ProofTactic::CertifiedStatementStep {
+            prerequisite_derivations: transition.prerequisite_derivations.clone(),
+            exact_premises,
+        });
 }
 
 fn surface_c_condition(condition: &CExpression) -> ClickProposition {
+    fn expression(expression: &CExpression) -> ContractExpression {
+        substitute_c_fragment_as_contract(expression, &BTreeMap::new())
+            .expect("converting a C expression without substitutions cannot fail")
+    }
+
     let comparison = |left: &CExpression, operator: ComparisonOperator, right: &CExpression| {
         ClickProposition::Comparison {
-            left: ContractExpression::CFragment(left.clone()),
+            left: expression(left),
             operator,
-            right: ContractExpression::CFragment(right.clone()),
+            right: expression(right),
         }
     };
     match condition {
@@ -2535,9 +2629,9 @@ fn surface_c_condition(condition: &CExpression) -> ClickProposition {
             Box::new(surface_c_condition(right)),
         ),
         condition => ClickProposition::Comparison {
-            left: ContractExpression::CFragment(condition.clone()),
+            left: expression(condition),
             operator: ComparisonOperator::NotEqual,
-            right: ContractExpression::CFragment(CExpression::Value(int32(0))),
+            right: expression(&CExpression::Value(int32(0))),
         },
     }
 }
@@ -2545,6 +2639,7 @@ fn surface_c_condition(condition: &CExpression) -> ClickProposition {
 #[derive(Clone, Copy)]
 pub(super) enum StatementPrerequisitePolicy {
     Exact,
+    Explicit,
     Certified,
     Contextual,
     Planning,
@@ -2581,15 +2676,100 @@ fn exact_fact_contains_conjunct(fact: &Proposition, required: &Proposition) -> b
                 || exact_fact_contains_conjunct(right, required))
 }
 
+fn atomic_conjuncts<'a>(proposition: &'a Proposition, output: &mut Vec<&'a Proposition>) {
+    match proposition {
+        Proposition::And(left, right) => {
+            atomic_conjuncts(left, output);
+            atomic_conjuncts(right, output);
+        }
+        proposition => output.push(proposition),
+    }
+}
+
+fn materialization_equivalent_available_fact(
+    required: &Proposition,
+    available: &[Proposition],
+) -> Option<Proposition> {
+    fn matching_conjunct(
+        fact: &Proposition,
+        required: &Proposition,
+        normalized_required: &Proposition,
+    ) -> Option<Proposition> {
+        if fact == required || normalize_direct_atomic_memory_loads(fact) == *normalized_required {
+            return Some(fact.clone());
+        }
+        let Proposition::And(left, right) = fact else {
+            return None;
+        };
+        matching_conjunct(left, required, normalized_required)
+            .or_else(|| matching_conjunct(right, required, normalized_required))
+    }
+
+    let normalized_required = normalize_direct_atomic_memory_loads(required);
+    available
+        .iter()
+        .find_map(|fact| matching_conjunct(fact, required, &normalized_required))
+}
+
+fn minimal_proposition_derivation(
+    proposition: &Proposition,
+    available: &[Proposition],
+) -> Option<PropositionDerivation> {
+    let derive = |facts: &[Proposition]| {
+        let assumptions = assumptions_from_propositions(facts);
+        assumptions
+            .derive_proposition(proposition)
+            .or_else(|| assumptions.derive_simp_proposition(proposition))
+    };
+    let initial = derive(available)?;
+    let mut selected = initial.context_premises().to_vec();
+    let mut index = 0;
+    while index < selected.len() {
+        let mut reduced = selected.clone();
+        reduced.remove(index);
+        if derive(&reduced).is_some() {
+            selected = reduced;
+        } else {
+            index += 1;
+        }
+    }
+    derive(&selected)
+}
+
+fn derivation_replays_with_materialized_context(
+    derivation: &PropositionDerivation,
+    available: &[Proposition],
+) -> bool {
+    let assumptions = assumptions_from_propositions(available);
+    if derivation.replay(&assumptions) {
+        return true;
+    }
+    let Some(materialized_context) = derivation
+        .context_premises()
+        .iter()
+        .map(|premise| materialization_equivalent_available_fact(premise, available))
+        .collect::<Option<Vec<_>>>()
+    else {
+        return false;
+    };
+    minimal_proposition_derivation(derivation.conclusion(), &materialized_context).is_some()
+}
+
 fn exact_facts_directly_conflict(left: &Proposition, right: &Proposition) -> bool {
+    let left = normalize_direct_atomic_memory_loads(left);
+    let right = normalize_direct_atomic_memory_loads(right);
+    normalized_exact_facts_directly_conflict(&left, &right)
+}
+
+fn normalized_exact_facts_directly_conflict(left: &Proposition, right: &Proposition) -> bool {
     match (left, right) {
         (Proposition::And(first, second), _) => {
-            exact_facts_directly_conflict(first, right)
-                || exact_facts_directly_conflict(second, right)
+            normalized_exact_facts_directly_conflict(first, right)
+                || normalized_exact_facts_directly_conflict(second, right)
         }
         (_, Proposition::And(first, second)) => {
-            exact_facts_directly_conflict(left, first)
-                || exact_facts_directly_conflict(left, second)
+            normalized_exact_facts_directly_conflict(left, first)
+                || normalized_exact_facts_directly_conflict(left, second)
         }
         (
             Proposition::ConditionIs(left_condition, left_value),
@@ -2600,6 +2780,47 @@ fn exact_facts_directly_conflict(left: &Proposition, right: &Proposition) -> boo
         }
         _ => false,
     }
+}
+
+fn fact_conflicts_with_assumptions(fact: &Proposition, assumptions: &Assumptions) -> bool {
+    match fact {
+        Proposition::And(left, right) => {
+            fact_conflicts_with_assumptions(left, assumptions)
+                || fact_conflicts_with_assumptions(right, assumptions)
+        }
+        Proposition::ConditionIs(condition, value) => {
+            let opposite = Proposition::ConditionIs(condition.clone(), !value);
+            assumptions.proves(&opposite)
+                || assumptions.derive_simp_proposition(&opposite).is_some()
+        }
+        Proposition::Not(body) => {
+            assumptions.proves(body) || assumptions.derive_simp_proposition(body).is_some()
+        }
+        fact => {
+            let opposite = Proposition::Not(Box::new(fact.clone()));
+            assumptions.proves(&opposite)
+                || assumptions.derive_simp_proposition(&opposite).is_some()
+        }
+    }
+}
+
+fn assumptions_from_exact_conditions(propositions: &[Proposition]) -> Assumptions {
+    fn collect(proposition: &Proposition, conditions: &mut Vec<Proposition>) {
+        match proposition {
+            Proposition::ConditionIs(_, _) => conditions.push(proposition.clone()),
+            Proposition::And(left, right) => {
+                collect(left, conditions);
+                collect(right, conditions);
+            }
+            _ => {}
+        }
+    }
+
+    let mut conditions = Vec::new();
+    for proposition in propositions {
+        collect(proposition, &mut conditions);
+    }
+    assumptions_from_propositions(&conditions)
 }
 
 #[derive(Clone, Copy)]
@@ -2615,15 +2836,42 @@ fn certified_condition_transitions(
     context_label: &str,
     prerequisite_policy: StatementPrerequisitePolicy,
     certified_prerequisites: &[PropositionDerivation],
+    filter_assumption_conflicts: bool,
 ) -> Result<Vec<CertifiedConditionTransition>, ClickError> {
-    let assumptions = match prerequisite_policy {
-        StatementPrerequisitePolicy::Exact => Assumptions::new(),
-        StatementPrerequisitePolicy::Certified
-        | StatementPrerequisitePolicy::Contextual
-        | StatementPrerequisitePolicy::Planning => assumptions_from_propositions(pure_facts),
+    let mut transition_pure_facts = pure_facts.to_vec();
+    let planning_assumptions = assumptions_from_propositions(pure_facts);
+    let mut assumptions = match prerequisite_policy {
+        StatementPrerequisitePolicy::Exact
+        | StatementPrerequisitePolicy::Explicit
+        | StatementPrerequisitePolicy::Certified
+        | StatementPrerequisitePolicy::Contextual => assumptions_from_propositions(pure_facts),
+        StatementPrerequisitePolicy::Planning => {
+            assumptions_from_propositions(pure_facts).defer_non_exact_loadability_obligations()
+        }
     };
-    let evaluation =
-        prove_symbolic_c_condition_evaluation(state.clone(), condition.clone(), assumptions);
+    if matches!(prerequisite_policy, StatementPrerequisitePolicy::Certified) {
+        for derivation in certified_prerequisites {
+            if derivation_replays_with_materialized_context(derivation, pure_facts) {
+                assumptions = assumptions.assume_proposition(derivation.conclusion().clone());
+                if !transition_pure_facts.contains(derivation.conclusion()) {
+                    transition_pure_facts.push(derivation.conclusion().clone());
+                }
+            }
+        }
+    }
+    if matches!(prerequisite_policy, StatementPrerequisitePolicy::Exact) {
+        assumptions = assumptions.defer_non_exact_loadability_obligations();
+        assumptions = assumptions.defer_non_exact_condition_reasoning();
+    } else if matches!(prerequisite_policy, StatementPrerequisitePolicy::Certified) {
+        assumptions = assumptions.defer_non_exact_loadability_obligations();
+    } else if matches!(prerequisite_policy, StatementPrerequisitePolicy::Explicit) {
+        assumptions = assumptions.defer_non_exact_loadability_obligations();
+    }
+    let evaluation = prove_symbolic_c_condition_evaluation(
+        state.clone(),
+        condition.clone(),
+        assumptions.clone(),
+    );
     if let Some(limit) = evaluation.limit() {
         return Err(ClickError::new(format!(
             "{context_label} hit condition execution limit {limit:?}"
@@ -2633,21 +2881,68 @@ fn certified_condition_transitions(
         .paths()
         .iter()
         .filter(|path| {
-            matches!(
-                prerequisite_policy,
-                StatementPrerequisitePolicy::Planning
-            )
-                || !path.facts().iter().any(|path_fact| {
-                    pure_facts.iter().any(|available| {
-                        exact_facts_directly_conflict(available, path_fact.proposition())
-                    })
-                })
+            !path.facts().iter().any(|path_fact| {
+                pure_facts.iter().any(|available| {
+                    exact_facts_directly_conflict(available, path_fact.proposition())
+                }) || filter_assumption_conflicts
+                    && matches!(prerequisite_policy, StatementPrerequisitePolicy::Planning)
+                    && fact_conflicts_with_assumptions(
+                        path_fact.proposition(),
+                        &assumptions_from_propositions(pure_facts),
+                    )
+            })
         })
         .map(|path| {
-            let mut successor_facts = pure_facts.to_vec();
+            let mut successor_facts = transition_pure_facts.clone();
             successor_facts.extend(path.facts().iter().map(|fact| fact.proposition().clone()));
             let prerequisite_assumptions = assumptions_from_propositions(&successor_facts);
             let mut prerequisite_derivations = Vec::new();
+            let mut planning_exact_premises = Vec::new();
+            if matches!(prerequisite_policy, StatementPrerequisitePolicy::Planning) {
+                for path_fact in path.facts() {
+                    let proposition = path_fact.proposition();
+                    if exact_fact_is_available(proposition, pure_facts) {
+                        if !planning_exact_premises.contains(proposition) {
+                            planning_exact_premises.push(proposition.clone());
+                        }
+                        continue;
+                    }
+                    if matches!(normalize_proposition(proposition), SimpProposition::True) {
+                        continue;
+                    }
+                    if let Some(derivation) =
+                        minimal_proposition_derivation(proposition, pure_facts)
+                    {
+                        if !prerequisite_derivations
+                            .iter()
+                            .any(|existing: &PropositionDerivation| {
+                                existing.conclusion() == derivation.conclusion()
+                            })
+                        {
+                            prerequisite_derivations.push(derivation);
+                        }
+                        continue;
+                    }
+                    if planning_assumptions.proves(proposition) {
+                        let mut selected = pure_facts.to_vec();
+                        let mut index = 0;
+                        while index < selected.len() {
+                            let mut reduced = selected.clone();
+                            reduced.remove(index);
+                            if assumptions_from_propositions(&reduced).proves(proposition) {
+                                selected = reduced;
+                            } else {
+                                index += 1;
+                            }
+                        }
+                        for premise in selected {
+                            if !planning_exact_premises.contains(&premise) {
+                                planning_exact_premises.push(premise);
+                            }
+                        }
+                    }
+                }
+            }
             for obligation in path.obligations() {
                 let derivation = match prerequisite_policy {
                     StatementPrerequisitePolicy::Exact
@@ -2675,7 +2970,8 @@ fn certified_condition_transitions(
                             )));
                         }
                     }
-                    StatementPrerequisitePolicy::Contextual => {
+                    StatementPrerequisitePolicy::Explicit
+                    | StatementPrerequisitePolicy::Contextual => {
                         if prerequisite_assumptions.proves(obligation.proposition()) {
                             None
                         } else {
@@ -2722,6 +3018,7 @@ fn certified_condition_transitions(
                         .collect(),
                     theorem: path.theorem().clone(),
                     prerequisite_derivations,
+                    planning_exact_premises,
                 }),
                 Proposition::CConditionEvaluates {
                     outcome: CConditionOutcome::UndefinedBehavior(kind),
@@ -2751,28 +3048,44 @@ pub(super) fn certified_statement_transitions(
     execution_semantics: CExecutionSemantics,
     context_label: &str,
     next_opaque_call: &mut u64,
+    next_verification_variable: &mut u64,
     prerequisite_policy: StatementPrerequisitePolicy,
     fact_transport_policy: StatementFactTransportPolicy,
     certified_prerequisites: &[PropositionDerivation],
 ) -> Result<(Vec<CertifiedStatementTransition>, Option<CVerifiedLoopRule>), ClickError> {
+    let mut transition_pure_facts = pure_facts.to_vec();
     let mut assumptions = match prerequisite_policy {
-        StatementPrerequisitePolicy::Exact => Assumptions::new(),
-        StatementPrerequisitePolicy::Certified
+        StatementPrerequisitePolicy::Exact
+        | StatementPrerequisitePolicy::Explicit
+        | StatementPrerequisitePolicy::Certified
         | StatementPrerequisitePolicy::Contextual
         | StatementPrerequisitePolicy::Planning => assumptions_from_propositions(pure_facts),
     };
     if matches!(prerequisite_policy, StatementPrerequisitePolicy::Certified) {
-        let available = assumptions.clone();
         for derivation in certified_prerequisites {
-            if derivation.replay(&available) {
+            if derivation_replays_with_materialized_context(derivation, pure_facts) {
                 assumptions = assumptions.assume_proposition(derivation.conclusion().clone());
+                if !transition_pure_facts.contains(derivation.conclusion()) {
+                    transition_pure_facts.push(derivation.conclusion().clone());
+                }
             }
         }
-        assumptions = assumptions.defer_non_exact_obligations();
-    } else if matches!(prerequisite_policy, StatementPrerequisitePolicy::Planning) {
-        assumptions = assumptions.defer_non_exact_obligations();
     }
-    let mut budget = ExecutionBudget::default().with_next_opaque_call(*next_opaque_call);
+    if matches!(
+        prerequisite_policy,
+        StatementPrerequisitePolicy::Exact
+            | StatementPrerequisitePolicy::Explicit
+            | StatementPrerequisitePolicy::Certified
+    ) {
+        assumptions = assumptions.defer_non_exact_loadability_obligations();
+        assumptions = assumptions.prefer_symbolic_external_loads();
+    }
+    if matches!(prerequisite_policy, StatementPrerequisitePolicy::Exact) {
+        assumptions = assumptions.defer_non_exact_condition_reasoning();
+    }
+    let mut budget = ExecutionBudget::default()
+        .with_next_opaque_call(*next_opaque_call)
+        .with_next_verification_variable(*next_verification_variable);
     let (execution, loop_rule) =
         prove_symbolic_c_statement_verification_paths_with_environment_and_loop_rule_using_budget(
             state.clone(),
@@ -2783,10 +3096,11 @@ pub(super) fn certified_statement_transitions(
             &mut budget,
         );
     *next_opaque_call = budget.next_opaque_call();
+    *next_verification_variable = budget.next_verification_variable();
     certified_transitions_from_execution(
         execution,
         loop_rule,
-        pure_facts,
+        &transition_pure_facts,
         context_label,
         prerequisite_policy,
         fact_transport_policy,
@@ -2804,9 +3118,12 @@ fn certified_loop_exit_transitions_with_proven_phases(
     initialization_proven: bool,
     preservation_proven: bool,
     next_opaque_call: &mut u64,
+    next_verification_variable: &mut u64,
 ) -> Result<(Vec<CertifiedStatementTransition>, Option<CVerifiedLoopRule>), ClickError> {
     let assumptions = assumptions_from_propositions(pure_facts);
-    let mut budget = ExecutionBudget::default().with_next_opaque_call(*next_opaque_call);
+    let mut budget = ExecutionBudget::default()
+        .with_next_opaque_call(*next_opaque_call)
+        .with_next_verification_variable(*next_verification_variable);
     let (execution, loop_rule) = prove_symbolic_c_loop_exit_with_proven_phases_using_budget(
         state.clone(),
         statement.clone(),
@@ -2817,6 +3134,7 @@ fn certified_loop_exit_transitions_with_proven_phases(
         &mut budget,
     );
     *next_opaque_call = budget.next_opaque_call();
+    *next_verification_variable = budget.next_verification_variable();
     certified_transitions_from_execution(
         execution,
         loop_rule,
@@ -2853,38 +3171,6 @@ fn statement_contains_call_assign(statement: &CStatement) -> bool {
     }
 }
 
-fn statement_fact_collapses_to_snapshot_reflexivity(fact: &Proposition) -> bool {
-    let Proposition::ConditionIs(condition, true) = fact else {
-        return false;
-    };
-    let same_memory_load = |left: &Bitvector32Term, right: &Bitvector32Term| {
-        matches!(
-            (left, right),
-            (
-                Bitvector32Term::MemoryLoad(_, left_pointer),
-                Bitvector32Term::MemoryLoad(_, right_pointer),
-            ) if left_pointer == right_pointer
-        )
-    };
-    match condition {
-        ConditionTerm::Bitvector32Equal(left, right) => same_memory_load(left, right),
-        ConditionTerm::PointerOffsetEqual(left, right) => matches!(
-            (left.as_ref(), right.as_ref()),
-            (
-                PointerOffsetTerm::Int32Scaled {
-                    value: left,
-                    byte_width: left_width,
-                },
-                PointerOffsetTerm::Int32Scaled {
-                    value: right,
-                    byte_width: right_width,
-                },
-            ) if left_width == right_width && same_memory_load(left, right)
-        ),
-        _ => false,
-    }
-}
-
 fn certified_transitions_from_execution(
     execution: SymbolicCExecution,
     loop_rule: Option<CVerifiedLoopRule>,
@@ -2900,27 +3186,40 @@ fn certified_transitions_from_execution(
             "{context_label} hit execution limit {limit:?}"
         )));
     }
+    let has_failure_path = execution.paths().iter().any(|path| {
+        matches!(
+            implication_body(path.theorem().proposition()),
+            Proposition::CStatementExecutes {
+                outcome: CStatementOutcome::UndefinedBehavior(_)
+                    | CStatementOutcome::RuntimeError(_),
+                ..
+            }
+        )
+    });
     let transitions = execution
         .paths()
         .iter()
         .filter(|path| {
-            matches!(prerequisite_policy, StatementPrerequisitePolicy::Planning)
-                || !path.facts().iter().any(|path_fact| {
-                    pure_facts.iter().any(|available| {
-                        exact_facts_directly_conflict(available, path_fact.proposition())
-                    })
-                })
+            !path.facts().iter().any(|path_fact| {
+                pure_facts.iter().any(|available| {
+                    exact_facts_directly_conflict(available, path_fact.proposition())
+                }) || matches!(prerequisite_policy, StatementPrerequisitePolicy::Planning)
+                    && fact_conflicts_with_assumptions(
+                        path_fact.proposition(),
+                        &assumptions_from_propositions(pure_facts),
+                    )
+            })
         })
         .map(|path| {
             let mut successor_facts = pure_facts.to_vec();
-            let statement_facts = path
+            let mut statement_facts = path
                 .facts()
                 .iter()
                 .map(|fact| fact.proposition().clone())
                 .collect::<Vec<_>>();
-            let statement_fact_sources = statement_facts.clone();
+            let mut statement_fact_sources = statement_facts.clone();
             successor_facts.extend(statement_facts.iter().cloned());
-            let execution_facts = path.execution_facts();
+            let mut execution_facts = path.execution_facts();
             let mut transport_facts = successor_facts.clone();
             transport_facts.extend(
                 execution_facts
@@ -2929,11 +3228,91 @@ fn certified_transitions_from_execution(
             );
             let transport_assumptions = assumptions_from_propositions(&transport_facts);
             let prerequisite_assumptions = assumptions_from_propositions(&successor_facts);
+            let planning_assumptions = assumptions_from_propositions(pure_facts);
+            let planning_condition_assumptions =
+                assumptions_from_exact_conditions(pure_facts);
             let mut prerequisite_derivations = Vec::new();
+            if matches!(prerequisite_policy, StatementPrerequisitePolicy::Planning) {
+                let mut seen_prerequisites = BTreeSet::new();
+                let mut theorem_context = pure_facts.to_vec();
+                for premise in theorem_implication_premises(path.theorem()) {
+                    let already_certified = exact_fact_is_available(&premise, &theorem_context)
+                        || materialization_equivalent_available_fact(
+                            &premise,
+                            &theorem_context,
+                        )
+                        .is_some()
+                        || matches!(normalize_proposition(&premise), SimpProposition::True)
+                        || execution_facts
+                            .iter()
+                            .any(|fact| fact.is_certified() && fact.proposition() == &premise)
+                        || path
+                            .obligations()
+                            .iter()
+                            .any(|obligation| obligation.proposition() == &premise);
+                    if !already_certified {
+                        let derivation =
+                            minimal_proposition_derivation(&premise, &theorem_context);
+                        let Some(derivation) = derivation else {
+                            if has_failure_path {
+                                if !theorem_context.contains(&premise) {
+                                    theorem_context.push(premise);
+                                }
+                                continue;
+                            }
+                            return Err(ClickError::new(format!(
+                                "{context_label} used an assumption-derived theorem premise without a replayable derivation: {premise:?}"
+                            )));
+                        };
+                        if !prerequisite_derivations
+                            .iter()
+                            .any(|existing: &PropositionDerivation| {
+                                existing.conclusion() == derivation.conclusion()
+                            })
+                        {
+                            prerequisite_derivations.push(derivation);
+                        }
+                    }
+                    if !theorem_context.contains(&premise) {
+                        theorem_context.push(premise);
+                    }
+                }
+                for path_fact in path.facts().iter().chain(execution_facts.iter()) {
+                    if path_fact.is_certified()
+                        || !seen_prerequisites.insert(path_fact.proposition().clone())
+                    {
+                        continue;
+                    }
+                    let proposition = path_fact.proposition();
+                    if exact_fact_is_available(proposition, pure_facts)
+                        || matches!(normalize_proposition(proposition), SimpProposition::True)
+                    {
+                        continue;
+                    }
+                    if let Some(derivation) =
+                        minimal_proposition_derivation(proposition, pure_facts)
+                    {
+                        if !prerequisite_derivations
+                            .iter()
+                            .any(|existing: &PropositionDerivation| {
+                                existing.conclusion() == derivation.conclusion()
+                            })
+                        {
+                            prerequisite_derivations.push(derivation);
+                        }
+                    } else if planning_assumptions.proves(proposition) {
+                        return Err(ClickError::new(format!(
+                            "{context_label} used an assumption-derived execution fact without a replayable derivation: {proposition:?}"
+                        )));
+                    }
+                }
+            }
             for obligation in path.obligations() {
                 let proposition = obligation.proposition();
                 let derivation = match prerequisite_policy {
-                    StatementPrerequisitePolicy::Exact | StatementPrerequisitePolicy::Certified => {
+                    StatementPrerequisitePolicy::Exact
+                    | StatementPrerequisitePolicy::Explicit
+                    | StatementPrerequisitePolicy::Certified => {
                         if exact_fact_is_available(proposition, pure_facts)
                             || matches!(normalize_proposition(proposition), SimpProposition::True)
                             || matches!(prerequisite_policy, StatementPrerequisitePolicy::Certified)
@@ -2943,15 +3322,45 @@ fn certified_transitions_from_execution(
                                 })
                         {
                             None
-                        } else {
-                            let requirement = match prerequisite_policy {
-                                StatementPrerequisitePolicy::Exact => "exact prerequisite",
-                                StatementPrerequisitePolicy::Certified => "certified prerequisite",
-                                StatementPrerequisitePolicy::Contextual
-                                | StatementPrerequisitePolicy::Planning => unreachable!(),
+                        } else if matches!(
+                            prerequisite_policy,
+                            StatementPrerequisitePolicy::Explicit
+                        ) {
+                            // `step using` exposes a deliberately small premise
+                            // set. Permit one proof-producing atomic check over
+                            // exactly that set, after execution has deferred
+                            // every non-exact obligation. This keeps certificate
+                            // replay independent of the ambient proof context
+                            // without requiring callers to spell out internal
+                            // evaluator predicates such as no-overflow facts.
+                            let exact_assumptions = if matches!(
+                                proposition,
+                                Proposition::ConditionIs(_, _)
+                            ) {
+                                &planning_condition_assumptions
+                            } else {
+                                &planning_assumptions
                             };
+                            exact_assumptions
+                                .derive_atomic_proposition(proposition)
+                                .or_else(|| {
+                                    exact_assumptions
+                                        .derive_simp_atomic_proposition(proposition)
+                                })
+                                .ok_or_else(|| {
+                                    ClickError::new(format!(
+                                        "{context_label} is missing exact prerequisite{}: {:?}",
+                                        obligation
+                                            .context()
+                                            .map(|context| format!(" ({context})"))
+                                            .unwrap_or_default(),
+                                        proposition
+                                    ))
+                                })
+                                .map(Some)?
+                        } else {
                             return Err(ClickError::new(format!(
-                                "{context_label} is missing {requirement}{}: {:?}",
+                                "{context_label} is missing certified prerequisite{}: {:?}",
                                 obligation
                                     .context()
                                     .map(|context| format!(" ({context})"))
@@ -2974,26 +3383,55 @@ fn certified_transitions_from_execution(
                             )));
                         }
                     }
-                    StatementPrerequisitePolicy::Planning => Some(
-                        prerequisite_assumptions
-                            .derive_proposition(proposition)
-                            .ok_or_else(|| {
-                                ClickError::new(format!(
-                                    "{context_label} is missing prerequisite{}: {:?}",
-                                    obligation
-                                        .context()
-                                        .map(|context| format!(" ({context})"))
-                                        .unwrap_or_default(),
-                                    proposition
-                                ))
-                            })?,
-                    ),
+                    StatementPrerequisitePolicy::Planning => {
+                        if exact_fact_is_available(proposition, pure_facts) {
+                            None
+                        } else {
+                            Some(
+                                assumptions_from_propositions(
+                                    &successor_facts
+                                        .iter()
+                                        .filter(|fact| *fact != proposition)
+                                        .cloned()
+                                        .collect::<Vec<_>>(),
+                                )
+                                .derive_proposition(proposition)
+                                .ok_or_else(|| {
+                                    ClickError::new(format!(
+                                        "{context_label} is missing prerequisite{}: {:?}",
+                                        obligation
+                                            .context()
+                                            .map(|context| format!(" ({context})"))
+                                            .unwrap_or_default(),
+                                        proposition
+                                    ))
+                                })?,
+                            )
+                        }
+                    }
                 };
                 if let Some(derivation) = derivation {
                     prerequisite_derivations.push(derivation);
                 }
             }
-            let Proposition::CStatementExecutes { outcome, .. } =
+            if matches!(prerequisite_policy, StatementPrerequisitePolicy::Planning) {
+                let is_derived_prerequisite = |fact: &Proposition| {
+                    prerequisite_derivations
+                        .iter()
+                        .any(|derivation| derivation.conclusion() == fact)
+                        && !exact_fact_is_available(fact, pure_facts)
+                };
+                statement_facts.retain(|fact| !is_derived_prerequisite(fact));
+                statement_fact_sources.retain(|fact| !is_derived_prerequisite(fact));
+                successor_facts.retain(|fact| !is_derived_prerequisite(fact));
+                execution_facts
+                    .retain(|fact| !is_derived_prerequisite(fact.proposition()));
+            }
+            let Proposition::CStatementExecutes {
+                state: statement_pre_state,
+                outcome,
+                ..
+            } =
                 implication_body(path.theorem().proposition())
             else {
                 return Err(ClickError::new(format!(
@@ -3014,19 +3452,20 @@ fn certified_transitions_from_execution(
                 // part of the statement step. Surface transports remain
                 // responsible only for facts that predated the statement.
                 let mut transported_facts = Vec::new();
+                let mut certified_transport_sources = Vec::new();
                 if normalize_statement_facts_to_exit {
-                    for fact in statement_facts {
-                        if matches!(fact_transport_policy, StatementFactTransportPolicy::None)
-                            && statement_fact_collapses_to_snapshot_reflexivity(&fact)
+                    let mut normalization_sources = statement_facts;
+                    for execution_fact in &execution_facts {
+                        if execution_fact.is_certified()
+                            && !normalization_sources.contains(execution_fact.proposition())
                         {
-                            successor_facts.retain(|available| available != &fact);
-                            continue;
+                            normalization_sources.push(execution_fact.proposition().clone());
                         }
-                        let Some(theorem) = prove_c_condition_fact_transport(
-                            &fact,
-                            post_state.memory(),
-                            &transport_assumptions,
-                        ) else {
+                    }
+                    for fact in normalization_sources {
+                        let Some(theorem) =
+                            prove_c_fact_snapshot_transport(&fact, post_state.memory())
+                        else {
                             continue;
                         };
                         let Proposition::Implies(_, conclusion) = theorem.proposition() else {
@@ -3040,6 +3479,12 @@ fn certified_transitions_from_execution(
                         if !successor_facts.contains(target) {
                             successor_facts.push(target.clone());
                         }
+                        if execution_facts.iter().any(|execution_fact| {
+                            execution_fact.is_certified() && execution_fact.proposition() == &fact
+                        }) && !certified_transport_sources.contains(&fact)
+                        {
+                            certified_transport_sources.push(fact.clone());
+                        }
                         transported_facts.push(CertifiedFactTransport {
                             source: fact,
                             target: target.clone(),
@@ -3048,41 +3493,25 @@ fn certified_transitions_from_execution(
                         });
                     }
                 }
-                if normalize_statement_facts_to_exit
-                    && matches!(fact_transport_policy, StatementFactTransportPolicy::None)
-                {
-                    for fact in pure_facts {
-                        let Some(theorem) = prove_c_condition_fact_transport(
-                            fact,
-                            post_state.memory(),
-                            &transport_assumptions,
-                        ) else {
-                            continue;
-                        };
-                        let Proposition::Implies(_, conclusion) = theorem.proposition() else {
-                            unreachable!("condition transport must produce an implication")
-                        };
-                        transported_facts.push(CertifiedFactTransport {
-                            source: fact.clone(),
-                            target: conclusion.as_ref().clone(),
-                            theorem,
-                            statement_local: true,
-                        });
-                    }
-                }
+                let statement_memory_changed =
+                    statement_pre_state.memory() != post_state.memory();
 
                 if matches!(
                     fact_transport_policy,
                     StatementFactTransportPolicy::Automatic
-                ) {
+                ) && statement_memory_changed
+                {
                     let automatic_sources = if normalize_statement_facts_to_exit {
                         pure_facts.to_vec()
                     } else {
                         successor_facts.clone()
                     };
                     for fact in automatic_sources {
-                        let statement_local = normalize_statement_facts_to_exit
-                            || exact_fact_is_available(&fact, &statement_fact_sources);
+                        if c_condition_fact_memories(&fact).is_empty() {
+                            continue;
+                        }
+                        let statement_local =
+                            exact_fact_is_available(&fact, &statement_fact_sources);
                         let Some(theorem) = prove_c_condition_fact_transport(
                             &fact,
                             post_state.memory(),
@@ -3101,21 +3530,52 @@ fn certified_transitions_from_execution(
                         });
                     }
                 }
+                let mut transported_execution_facts = Vec::new();
                 for transport in &transported_facts {
                     successor_facts.retain(|fact| fact != &transport.source);
                     if !successor_facts.contains(&transport.target) {
                         successor_facts.push(transport.target.clone());
+                    }
+                    for fact in &mut execution_facts {
+                        if fact.proposition() == &transport.source {
+                            if fact.is_certified() {
+                                // Preserve the certified producer-side fact:
+                                // the execution theorem can name that exact
+                                // intermediate snapshot as a premise. The
+                                // transported copy is the fact exposed at the
+                                // source-statement exit.
+                                transported_execution_facts.push(
+                                    fact.clone().with_proposition(transport.target.clone()),
+                                );
+                            } else {
+                                *fact = fact
+                                    .clone()
+                                    .with_proposition(transport.target.clone());
+                            }
+                        }
+                    }
+                }
+                for fact in transported_execution_facts {
+                    if !execution_facts.contains(&fact) {
+                        execution_facts.push(fact);
+                    }
+                }
+                let mut path_facts = path
+                    .facts()
+                    .iter()
+                    .map(|fact| fact.proposition().clone())
+                    .filter(|fact| statement_fact_sources.contains(fact))
+                    .collect::<Vec<_>>();
+                for source in certified_transport_sources {
+                    if !path_facts.contains(&source) {
+                        path_facts.push(source);
                     }
                 }
                 return Ok(CertifiedStatementTransition {
                     theorem: path.theorem().clone(),
                     outcome: outcome.clone(),
                     execution_facts,
-                    path_facts: path
-                        .facts()
-                        .iter()
-                        .map(|fact| fact.proposition().clone())
-                        .collect(),
+                    path_facts,
                     obligations: path.obligations().to_vec(),
                     pure_facts: successor_facts,
                     prerequisite_derivations,
@@ -3130,6 +3590,7 @@ fn certified_transitions_from_execution(
                     .facts()
                     .iter()
                     .map(|fact| fact.proposition().clone())
+                    .filter(|fact| statement_fact_sources.contains(fact))
                     .collect(),
                 obligations: path.obligations().to_vec(),
                 pure_facts: successor_facts,
@@ -3264,6 +3725,7 @@ fn verify_execution_proofs_forward(
                         state: preservation.state().clone(),
                         pure_facts,
                         next_opaque_call: context.next_opaque_call,
+                        next_verification_variable: context.next_verification_variable,
                     });
                 }
             }
@@ -3345,11 +3807,13 @@ fn split_execution_proof_branch_contexts(
             "execution proof traversal",
             StatementPrerequisitePolicy::Contextual,
             &[],
+            true,
         )? {
             let next = ExecutionProofContext {
                 state: context.state.clone(),
                 pure_facts: transition.pure_facts,
                 next_opaque_call: context.next_opaque_call,
+                next_verification_variable: context.next_verification_variable,
             };
             if transition.is_true {
                 then_contexts.push(next);
@@ -3386,6 +3850,7 @@ fn advance_execution_proof_statement(
                 CExecutionSemantics::APPLY_CALL_RULES_AND_VERIFY_LOOPS,
                 &label,
                 &mut context.next_opaque_call,
+                &mut context.next_verification_variable,
                 StatementPrerequisitePolicy::Contextual,
                 StatementFactTransportPolicy::Automatic,
                 &[],
@@ -3399,13 +3864,33 @@ fn advance_execution_proof_statement(
                 initialization_proven,
                 preservation_proven,
                 &mut context.next_opaque_call,
+                &mut context.next_verification_variable,
             )?,
         };
         if matches!(statement, CStatement::While { .. }) {
             let loop_rule = loop_rule.ok_or_else(|| {
+                let unresolved = transitions
+                    .iter()
+                    .flat_map(|transition| transition.obligations.iter())
+                    .filter(|obligation| !obligation.is_assumable())
+                    .map(|obligation| {
+                        obligation
+                            .context()
+                            .unwrap_or("unlabeled verification condition")
+                            .to_string()
+                    })
+                    .collect::<Vec<_>>();
+                let mut unresolved = unresolved;
+                unresolved.sort();
+                unresolved.dedup();
                 ClickError::new(format!(
-                    "`{}` loop({region_index}) did not produce an obligation-free verified loop rule",
-                    environment.function_block.signature().name()
+                    "`{}` loop({region_index}) did not produce an obligation-free verified loop rule{}",
+                    environment.function_block.signature().name(),
+                    if unresolved.is_empty() {
+                        String::new()
+                    } else {
+                        format!("; unresolved verification conditions: {}", unresolved.join(", "))
+                    }
                 ))
             })?;
             verified_loop_rules.push(loop_rule);
@@ -3416,6 +3901,7 @@ fn advance_execution_proof_statement(
                     state,
                     pure_facts: transition.pure_facts,
                     next_opaque_call: context.next_opaque_call,
+                    next_verification_variable: context.next_verification_variable,
                 }),
                 CStatementOutcome::Return { .. } => {}
                 CStatementOutcome::UndefinedBehavior(kind) => {
@@ -3618,6 +4104,7 @@ fn apply_theorem_at_current_point(
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
     unfolded_predicates: &[String],
+    lowering_context: Option<&[Proposition]>,
 ) -> Result<Vec<Proposition>, ClickError> {
     let values = parameter_values(parameters, arguments).map_err(|error| {
         ClickError::new(format!(
@@ -3635,12 +4122,13 @@ fn apply_theorem_at_current_point(
         result: None,
         program_point_states,
     };
-    let available = apply_theorem_applications_to_available(
+    let available = apply_theorem_applications_to_available_with_lowering_context(
         theorem_environment,
         &[(tactic_index, application.clone())],
         claim_label,
         None,
         available,
+        lowering_context,
         &context,
         predicate_environment,
         click_function_environment,
@@ -3765,6 +4253,7 @@ fn plan_explicit_theorem_application(
             predicate_environment,
             click_function_environment,
             &replay.unfolded_predicates,
+            None,
         )
         .is_ok()
     };
@@ -3894,8 +4383,8 @@ fn checked_surface_fact_at_outcome(
         .keys()
         .cloned()
         .collect::<Vec<_>>();
-    for base in bases {
-        let Some(variants) = comparison_program_point_variants(&base, &points) else {
+    for base in &bases {
+        let Some(variants) = comparison_program_point_variants(base, &points) else {
             continue;
         };
         for candidate in variants {
@@ -3941,6 +4430,8 @@ fn apply_theorem_using_at_outcome(
     click_function_environment: &ClickFunctionEnvironment,
     unfolded_predicates: &[String],
 ) -> Result<Vec<Proposition>, ClickError> {
+    let mut lowering_available = available.clone();
+    append_resource_context_observable_facts(post_state.resources(), &mut lowering_available);
     let mut explicit_premises = Vec::new();
     for surface_premise in surface_premises {
         let premise = lower_outcome_proposition_with_program_points(
@@ -3949,7 +4440,7 @@ fn apply_theorem_using_at_outcome(
             pre_state,
             post_state,
             result,
-            &available,
+            &lowering_available,
             surface_premise,
             predicate_environment,
             click_function_environment,
@@ -3980,12 +4471,13 @@ fn apply_theorem_using_at_outcome(
         result: Some(result),
         program_point_states: &replay.program_point_states,
     };
-    let mut applied = apply_theorem_applications_to_available(
+    let mut applied = apply_theorem_applications_to_available_with_lowering_context(
         theorem_environment,
         &[(tactic_index, application.clone())],
         claim_label,
         Some(path_index),
         explicit_premises,
+        Some(&lowering_available),
         &application_context,
         predicate_environment,
         click_function_environment,
@@ -4137,6 +4629,9 @@ fn plan_explicit_fact_transport(
             });
         if selected_assumptions.derive_proposition(source).is_none() {
             return false;
+        }
+        if selected_assumptions.derive_proposition(target).is_some() {
+            return true;
         }
         let transport_assumptions = effect_facts
             .iter()
@@ -5393,29 +5888,35 @@ fn finish_ordered_proof_replay(
                         "execution proof failed for `{proof_label}` path {path_index}: proof-level `if` requires a return outcome"
                     )));
                 };
-                for (tactic_index, condition, value) in &replay.case_assumptions {
-                    let condition = lower_outcome_proposition_with_program_points(
-                        parsed_function.parameters(),
-                        arguments,
-                        pre_state,
-                        post_state,
-                        result,
-                        &path_requirements,
-                        condition,
-                        predicate_environment,
-                        click_function_environment,
-                        &replay.program_point_states,
-                    )
-                    .map_err(|message| {
-                        ClickError::new(format!(
-                            "`{proof_label}` path {path_index}, tactic {tactic_index}: could not lower `if` condition: {message}"
-                        ))
-                    })?;
-                    path_requirements.push(if *value {
-                        condition
+                for case in &replay.case_assumptions {
+                    let fact = if let Some(fact) = &case.fact {
+                        fact.clone()
                     } else {
-                        Proposition::Not(Box::new(condition))
-                    });
+                        let condition = lower_outcome_proposition_with_program_points(
+                            parsed_function.parameters(),
+                            arguments,
+                            pre_state,
+                            post_state,
+                            result,
+                            &path_requirements,
+                            &case.condition,
+                            predicate_environment,
+                            click_function_environment,
+                            &replay.program_point_states,
+                        )
+                        .map_err(|message| {
+                            ClickError::new(format!(
+                                "`{proof_label}` path {path_index}, tactic {}: could not lower `if` condition: {message}",
+                                case.tactic_index
+                            ))
+                        })?;
+                        if case.value {
+                            condition
+                        } else {
+                            Proposition::Not(Box::new(condition))
+                        }
+                    };
+                    path_requirements.push(fact);
                 }
             }
             let mut unfolded_predicates = replay.unfolded_predicates.clone();
@@ -5655,7 +6156,13 @@ fn finish_ordered_proof_replay(
                                 result,
                                 predicate_environment,
                                 click_function_environment,
-                            )?;
+                            )
+                            .map_err(|error| {
+                                ClickError::new(format!(
+                                    "`{proof_label}` path {path_index}, tactic {tactic_index}: `have` failed: {}",
+                                    error.message()
+                                ))
+                            })?;
                             let surface_have = ProofHave {
                                 proposition: have.proposition.clone(),
                                 proof: Proof::Script(vec![proof_tactic]),
@@ -6531,8 +7038,8 @@ fn checked_surface_comparison_fact_at_point(
         .keys()
         .cloned()
         .collect::<Vec<_>>();
-    for base in bases {
-        let Some(variants) = comparison_program_point_variants(&base, &points) else {
+    for base in &bases {
+        let Some(variants) = comparison_program_point_variants(base, &points) else {
             continue;
         };
         for candidate in variants {
@@ -6555,7 +7062,12 @@ fn checked_surface_comparison_fact_at_point(
         }
     }
     Err(ClickError::new(format!(
-        "comparison fact has no checked Click spelling at this proof point: {kernel:?}"
+        "comparison fact has no checked Click spelling at this proof point: {kernel:?}\n  candidate spellings: {}",
+        bases
+            .iter()
+            .map(describe_click_proposition)
+            .collect::<Vec<_>>()
+            .join(", ")
     )))
 }
 
@@ -7181,6 +7693,57 @@ fn lower_surface_candidate_at_point(
     .map_err(ClickError::new)
 }
 
+fn expression_reads_memory(expression: &CExpression) -> bool {
+    match expression {
+        CExpression::Load(_) | CExpression::TypedLoad { .. } | CExpression::Index(_, _) => true,
+        CExpression::Value(_) | CExpression::Variable(_) => false,
+        CExpression::AddressOf(inner)
+        | CExpression::Not(inner)
+        | CExpression::BitwiseNot(inner) => expression_reads_memory(inner),
+        CExpression::LessThan(left, right)
+        | CExpression::LessEqual(left, right)
+        | CExpression::GreaterThan(left, right)
+        | CExpression::GreaterEqual(left, right)
+        | CExpression::Equal(left, right)
+        | CExpression::NotEqual(left, right)
+        | CExpression::And(left, right)
+        | CExpression::Or(left, right)
+        | CExpression::Add(left, right)
+        | CExpression::Subtract(left, right)
+        | CExpression::Multiply(left, right)
+        | CExpression::Divide(left, right)
+        | CExpression::Remainder(left, right)
+        | CExpression::ShiftLeft(left, right)
+        | CExpression::ShiftRight(left, right)
+        | CExpression::BitwiseAnd(left, right)
+        | CExpression::BitwiseOr(left, right)
+        | CExpression::BitwiseXor(left, right) => {
+            expression_reads_memory(left) || expression_reads_memory(right)
+        }
+    }
+}
+
+fn statement_uses_ambient_memory_context(statement: &CStatement) -> bool {
+    match statement {
+        CStatement::Declare { .. } => false,
+        CStatement::Assign { expression, .. }
+        | CStatement::Assert {
+            condition: expression,
+            ..
+        }
+        | CStatement::Return(expression) => expression_reads_memory(expression),
+        CStatement::CallAssign { .. }
+        | CStatement::Store { .. }
+        | CStatement::TypedStore { .. }
+        | CStatement::If { .. }
+        | CStatement::While { .. } => true,
+        CStatement::Seq(first, second) => {
+            statement_uses_ambient_memory_context(first)
+                || statement_uses_ambient_memory_context(second)
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn record_surface_replay_tactic(
     replay: &mut TacticReplayState,
@@ -7192,65 +7755,30 @@ fn record_surface_replay_tactic(
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
     tactic: &ProofTactic,
+    statement_uses_memory_context: Option<bool>,
 ) {
     if replay.surface_replay.blocker.is_some() {
         return;
     }
-    let contextual_step = |replay: &TacticReplayState, needed: &[Proposition]| {
-        // A planned derivation can also mention facts produced internally by
-        // the statement itself (for example an opaque call result). Only facts
-        // already available at the statement entry belong in surface `using`
-        // premises; replay reconstructs the statement-local facts on its own.
-        let normalized_needed = needed
-            .iter()
-            .map(|fact| (fact, normalize_proposition(fact)))
-            .collect::<Vec<_>>();
-        let mut premises = Vec::new();
-        for (fact, normalized) in normalized_needed {
-            let candidates = available.iter().filter(|available| {
-                *available == fact
-                    || normalize_proposition(available) == normalized
-                    || assumptions_from_propositions(std::slice::from_ref(*available)).proves(fact)
-            });
-            if let Some(surface) = candidates
-                .filter_map(|available_fact| {
-                    checked_surface_fact_at_point(
-                        replay,
-                        available_fact,
-                        available,
-                        parameters,
-                        arguments,
-                        state,
-                        predicate_environment,
-                        click_function_environment,
-                    )
-                    .ok()
-                })
-                .next()
-                && !premises.contains(&surface)
-            {
-                premises.push(surface);
-            }
-        }
-        for fact in available {
-            if let Ok(surface) = checked_surface_fact_at_point(
-                replay,
-                fact,
-                available,
-                parameters,
-                arguments,
-                state,
-                predicate_environment,
-                click_function_environment,
-            ) && !premises.contains(&surface)
-            {
-                premises.push(surface);
-            }
-        }
-        Ok::<_, ClickError>(premises)
-    };
     match tactic {
         ProofTactic::CertifiedStatementReplay(evidence) => {
+            let statement_uses_memory_context =
+                match implication_body(evidence.transition.theorem.proposition()) {
+                    Proposition::CStatementExecutes { statement, .. } => {
+                        statement_uses_ambient_memory_context(statement)
+                    }
+                    _ => true,
+                };
+            let exact_premises = theorem_implication_premises(&evidence.transition.theorem)
+                .into_iter()
+                .filter(|premise| {
+                    !evidence
+                        .transition
+                        .execution_facts
+                        .iter()
+                        .any(|fact| fact.is_certified() && fact.proposition() == premise)
+                })
+                .collect();
             record_surface_replay_tactic(
                 replay,
                 state,
@@ -7260,23 +7788,111 @@ fn record_surface_replay_tactic(
                 arguments,
                 predicate_environment,
                 click_function_environment,
-                &ProofTactic::CertifiedStatementStep(
-                    evidence.transition.prerequisite_derivations.clone(),
-                ),
+                &ProofTactic::CertifiedStatementStep {
+                    prerequisite_derivations: evidence.transition.prerequisite_derivations.clone(),
+                    exact_premises,
+                },
+                Some(statement_uses_memory_context),
             );
         }
-        ProofTactic::CertifiedStatementStep(derivations) => {
+        ProofTactic::CertifiedLoopSummaryReplay(evidence) => {
+            let exact_premises = theorem_implication_premises(&evidence.transition.theorem)
+                .into_iter()
+                .filter(|premise| {
+                    !evidence
+                        .transition
+                        .execution_facts
+                        .iter()
+                        .any(|fact| fact.is_certified() && fact.proposition() == premise)
+                })
+                .collect();
+            record_surface_replay_tactic(
+                replay,
+                state,
+                available,
+                function_block,
+                parameters,
+                arguments,
+                predicate_environment,
+                click_function_environment,
+                &ProofTactic::CertifiedLoopSummaryStep {
+                    prerequisite_derivations: evidence.transition.prerequisite_derivations.clone(),
+                    exact_premises,
+                },
+                statement_uses_memory_context,
+            );
+        }
+        ProofTactic::CertifiedStatementStep {
+            prerequisite_derivations: derivations,
+            exact_premises,
+        } => {
             replay.surface_replay.last_step_entry = Some(ProgramPointRef {
                 region: CodeRegionRef::Statement(replay.frontier.next_statement_index),
                 kind: ProgramPointKind::Entry,
             });
-            let needed = derivations
-                .iter()
-                .flat_map(PropositionDerivation::context_premises)
-                .collect::<BTreeSet<_>>()
-                .into_iter()
-                .collect::<Vec<_>>();
-            match contextual_step(replay, &needed) {
+            let premises = Ok::<_, ClickError>({
+                let mut premises = Vec::new();
+                let derivation_context = derivations
+                    .iter()
+                    .flat_map(PropositionDerivation::context_premises)
+                    .collect::<BTreeSet<_>>();
+                // Preserve the facts selected by prerequisite derivations,
+                // plus exact condition facts that can affect arithmetic,
+                // access-range, or alias selection. Resource/loadability facts
+                // are projected deterministically from the current resource
+                // state after these explicit conditions are installed.
+                //
+                // Do not copy every implication premise from the execution
+                // theorem: it contains the transitive ambient context,
+                // including internal call identities and verifier variables.
+                // Ordinary replay below remains the authority on whether this
+                // explicit, source-expressible subset is sufficient.
+                let mut available_conjuncts = Vec::new();
+                for fact in available {
+                    atomic_conjuncts(fact, &mut available_conjuncts);
+                }
+                for fact in available_conjuncts {
+                    let selected_by_derivation = derivation_context.iter().any(|required| {
+                        (*required).eq(fact)
+                            || normalize_direct_atomic_memory_loads(required)
+                                == normalize_direct_atomic_memory_loads(fact)
+                    }) || exact_premises.iter().any(|required| {
+                        required == fact
+                            || normalize_direct_atomic_memory_loads(required)
+                                == normalize_direct_atomic_memory_loads(fact)
+                    });
+                    let structural_context = statement_uses_memory_context.unwrap_or(true)
+                        && matches!(
+                            fact,
+                            Proposition::ConditionIs(_, _)
+                                | Proposition::CMemoryLoadable { .. }
+                                | Proposition::CMemoryCanStore { .. }
+                                | Proposition::CMemoryDisjoint { .. }
+                                | Proposition::CResourceSeparate { .. }
+                                | Proposition::CResourceContains { .. }
+                        );
+                    if !selected_by_derivation && !structural_context {
+                        continue;
+                    }
+                    let Ok(surface) = checked_surface_comparison_fact_at_point(
+                        replay,
+                        fact,
+                        available,
+                        parameters,
+                        arguments,
+                        state,
+                        predicate_environment,
+                        click_function_environment,
+                    ) else {
+                        continue;
+                    };
+                    if !premises.contains(&surface) {
+                        premises.push(surface);
+                    }
+                }
+                premises
+            });
+            match premises {
                 Ok(premises) if premises.is_empty() => {
                     replay.surface_replay.push(ProofTactic::Step)
                 }
@@ -7287,7 +7903,10 @@ fn record_surface_replay_tactic(
                 )),
             }
         }
-        ProofTactic::CertifiedLoopSummaryStep(derivations) => {
+        ProofTactic::CertifiedLoopSummaryStep {
+            prerequisite_derivations: derivations,
+            exact_premises,
+        } => {
             let loop_index = replay
                 .source_layout
                 .statement(replay.frontier.next_statement_index)
@@ -7306,6 +7925,7 @@ fn record_surface_replay_tactic(
                 kind: ProgramPointKind::Entry,
             });
             let mut surface_available = available.to_vec();
+            let mut loop_summary_premises: Vec<(Proposition, ClickProposition)> = Vec::new();
             if let Some(loop_clause) = function_block
                 .structural_clauses()
                 .iter()
@@ -7428,6 +8048,12 @@ fn record_surface_replay_tactic(
                     {
                         continue;
                     }
+                    if !loop_summary_premises
+                        .iter()
+                        .any(|(kernel, _)| kernel == &fact)
+                    {
+                        loop_summary_premises.push((fact.clone(), have.proposition.clone()));
+                    }
                     if surface_available.contains(&fact) {
                         continue;
                     }
@@ -7486,6 +8112,12 @@ fn record_surface_replay_tactic(
                         Ok(planned) => planned,
                         Err(_) => continue,
                     };
+                    if !loop_summary_premises
+                        .iter()
+                        .any(|(kernel, _)| kernel == &fact)
+                    {
+                        loop_summary_premises.push((fact.clone(), have.proposition.clone()));
+                    }
                     if !surface_available.contains(&fact) {
                         if let Err(error) = replay
                             .surface_propositions
@@ -7537,28 +8169,45 @@ fn record_surface_replay_tactic(
                     Err(_) => {}
                 }
             }
-            let needed = derivations
+            let needed = exact_premises
                 .iter()
-                .flat_map(PropositionDerivation::context_premises)
+                .cloned()
+                .chain(
+                    loop_summary_premises
+                        .iter()
+                        .map(|(kernel, _)| kernel.clone()),
+                )
+                .chain(
+                    derivations
+                        .iter()
+                        .flat_map(PropositionDerivation::context_premises),
+                )
                 .collect::<BTreeSet<_>>()
                 .into_iter()
                 .collect::<Vec<_>>();
             let contextual_step = |replay: &TacticReplayState, needed: &[Proposition]| {
                 let normalized_needed = needed
                     .iter()
-                    .map(|fact| (fact, normalize_proposition(fact)))
+                    .map(|fact| {
+                        (
+                            fact,
+                            normalize_proposition(fact),
+                            normalize_direct_atomic_memory_loads(fact),
+                        )
+                    })
                     .collect::<Vec<_>>();
                 let mut premises = Vec::new();
-                for (fact, normalized) in normalized_needed {
+                for (fact, normalized, materialized) in normalized_needed {
                     let candidates = surface_available.iter().filter(|available| {
                         *available == fact
                             || normalize_proposition(available) == normalized
+                            || normalize_direct_atomic_memory_loads(available) == materialized
                             || assumptions_from_propositions(std::slice::from_ref(*available))
                                 .proves(fact)
                     });
                     if let Some(surface) = candidates
                         .filter_map(|available_fact| {
-                            checked_surface_fact_at_point(
+                            checked_surface_comparison_fact_at_point(
                                 replay,
                                 available_fact,
                                 &surface_available,
@@ -7576,24 +8225,17 @@ fn record_surface_replay_tactic(
                         premises.push(surface);
                     }
                 }
-                for fact in &surface_available {
-                    if let Ok(surface) = checked_surface_fact_at_point(
-                        replay,
-                        fact,
-                        &surface_available,
-                        parameters,
-                        arguments,
-                        state,
-                        predicate_environment,
-                        click_function_environment,
-                    ) && !premises.contains(&surface)
-                    {
-                        premises.push(surface);
-                    }
-                }
                 Ok::<_, ClickError>(premises)
             };
-            match contextual_step(replay, &needed) {
+            let premises = contextual_step(replay, &needed).map(|mut premises| {
+                for (_, surface) in &loop_summary_premises {
+                    if !premises.contains(surface) {
+                        premises.push(surface.clone());
+                    }
+                }
+                premises
+            });
+            match premises {
                 Ok(premises) if premises.is_empty() => {
                     replay
                         .surface_replay
@@ -7614,12 +8256,6 @@ fn record_surface_replay_tactic(
             }
         }
         ProofTactic::CertifiedFactTransport { source, target, .. } => {
-            // Materializing an unchanged symbolic load gives the kernel a new
-            // memory term, but it does not create a new surface proposition:
-            // evaluating the same Click expression at the new point reduces
-            // back to the original load. Keep that representational transport
-            // inside the statement certificate instead of printing a
-            // redundant (and potentially identical-looking) `transport`.
             if normalize_direct_atomic_memory_loads(source)
                 == normalize_direct_atomic_memory_loads(target)
             {
@@ -7641,19 +8277,26 @@ fn record_surface_replay_tactic(
                     .block("fact transport has no preceding statement-entry snapshot");
                 return;
             };
-            let base_surface = replay
-                .surface_propositions
-                .surface(source)
-                .or_else(|_| replay.surface_propositions.surface(target))
-                .ok()
-                .cloned()
-                .or_else(|| synthesize_surface_proposition(target, parameters, arguments, state));
-            let Some(base_surface) = base_surface else {
+            let mut base_surfaces = Vec::new();
+            for proposition in [source, target] {
+                if let Ok(surface) = replay.surface_propositions.surface(proposition)
+                    && !base_surfaces.contains(surface)
+                {
+                    base_surfaces.push(surface.clone());
+                }
+                if let Some(surface) =
+                    synthesize_surface_proposition(proposition, parameters, arguments, state)
+                    && !base_surfaces.contains(&surface)
+                {
+                    base_surfaces.push(surface);
+                }
+            }
+            if base_surfaces.is_empty() {
                 replay.surface_replay.block(format!(
                     "fact transport has no recorded or synthesized Click comparison spelling\n  source: {source:?}\n  target: {target:?}"
                 ));
                 return;
-            };
+            }
             let mut points = replay
                 .program_point_states
                 .keys()
@@ -7662,15 +8305,24 @@ fn record_surface_replay_tactic(
             if !points.contains(&step_entry) {
                 points.push(step_entry);
             }
-            let Some(candidates) = comparison_program_point_variants(&base_surface, &points) else {
-                replay
-                    .surface_replay
-                    .block("fact transport surface lowering currently supports comparisons only");
-                return;
-            };
+            let mut candidates = Vec::new();
+            for base_surface in base_surfaces {
+                let Some(variants) = comparison_program_point_variants(&base_surface, &points)
+                else {
+                    replay.surface_replay.block(
+                        "fact transport surface lowering currently supports comparisons only",
+                    );
+                    return;
+                };
+                for candidate in variants {
+                    if !candidates.contains(&candidate) {
+                        candidates.push(candidate);
+                    }
+                }
+            }
             let find_candidate = |expected: &Proposition| {
-                candidates.iter().find_map(|candidate| {
-                    let actual = lower_surface_candidate_at_point(
+                let lower = |candidate: &ClickProposition| {
+                    lower_surface_candidate_at_point(
                         replay,
                         candidate,
                         available,
@@ -7680,13 +8332,34 @@ fn record_surface_replay_tactic(
                         predicate_environment,
                         click_function_environment,
                     )
-                    .ok()?;
-                    (normalize_direct_atomic_memory_loads(&actual)
-                        == normalize_direct_atomic_memory_loads(expected))
-                    .then(|| candidate.clone())
-                })
+                    .ok()
+                };
+                candidates
+                    .iter()
+                    .find_map(|candidate| {
+                        let actual = lower(candidate)?;
+                        (normalize_direct_atomic_memory_loads(&actual)
+                            == normalize_direct_atomic_memory_loads(expected))
+                        .then(|| candidate.clone())
+                    })
+                    .or_else(|| {
+                        candidates.iter().find_map(|candidate| {
+                            let actual = lower(candidate)?;
+                            materialization_equivalent_available_fact(
+                                expected,
+                                std::slice::from_ref(&actual),
+                            )
+                            .is_some()
+                            .then(|| candidate.clone())
+                        })
+                    })
             };
             match (find_candidate(source), find_candidate(target)) {
+                (Some(surface_source), Some(surface_target))
+                    if surface_source == surface_target =>
+                {
+                    return;
+                }
                 (Some(surface_source), Some(surface_target)) => {
                     let transition_facts =
                         fact_transport_transition_facts(&replay.effect_facts, source);
@@ -7724,8 +8397,12 @@ fn record_surface_replay_tactic(
         }
         ProofTactic::FinishCertifiedFactTransports(_) => {}
         ProofTactic::CertifiedPathAssumption {
-            condition, value, ..
+            occurrence,
+            condition,
+            value,
+            ..
         } => replay.surface_replay.path_choices.push(SurfacePathChoice {
+            occurrence: *occurrence,
             condition: condition.clone(),
             value: *value,
             tactic_offset: replay.surface_replay.tactics.len(),
@@ -8053,6 +8730,7 @@ fn replay_linear_tactics(
                 predicate_environment,
                 click_function_environment,
                 tactic,
+                None,
             );
         }
         if let ProofTactic::Transport {
@@ -8415,6 +9093,13 @@ fn replay_linear_tactics(
                 replay
                     .surface_propositions
                     .record_lowering(surface_target, &target)?;
+                if selected_assumptions.derive_proposition(&target).is_some() {
+                    if !requirement_pure_facts.contains(&target) {
+                        requirement_pure_facts.push(target.clone());
+                        assumptions = assumptions.assume_proposition(target);
+                    }
+                    continue;
+                }
                 let transition_facts =
                     fact_transport_transition_facts(&replay.effect_facts, &source);
                 if surface_premises.is_none() {
@@ -8482,7 +9167,7 @@ fn replay_linear_tactics(
                 let (tactic_name, prerequisite_policy, loop_step_policy) = match tactic {
                     ProofTactic::StepUsing(_) => (
                         "step using",
-                        StatementPrerequisitePolicy::Contextual,
+                        StatementPrerequisitePolicy::Explicit,
                         LoopStepPolicy::EnterBody,
                     ),
                     ProofTactic::ApplyLoopSummaryUsing { region, .. } => {
@@ -8512,7 +9197,7 @@ fn replay_linear_tactics(
                         }
                         (
                             "apply_loop_summary using",
-                            StatementPrerequisitePolicy::Contextual,
+                            StatementPrerequisitePolicy::Explicit,
                             LoopStepPolicy::ApplyVerifiedRule,
                         )
                     }
@@ -8547,7 +9232,17 @@ fn replay_linear_tactics(
                                 error.message()
                             ))
                         })?;
-                    if !exact_fact_is_available(&premise, &all_pure_facts) {
+                    let premise_is_available =
+                        materialization_equivalent_available_fact(&premise, &all_pure_facts)
+                            .is_some()
+                            || assumptions_from_propositions(&all_pure_facts)
+                                .derive_atomic_proposition(&premise)
+                                .or_else(|| {
+                                    assumptions_from_propositions(&all_pure_facts)
+                                        .derive_simp_atomic_proposition(&premise)
+                                })
+                                .is_some();
+                    if !premise_is_available {
                         return Err(ClickError::new(format!(
                             "`{claim_label}` tactic {tactic_index}: `{tactic_name}` requires an exact premise: {}",
                             describe_missing_pure_fact(
@@ -8564,39 +9259,51 @@ fn replay_linear_tactics(
                         explicit_premises.push(premise);
                     }
                 }
-                for (_, condition, value) in &replay.case_assumptions {
-                    let proposition = lower_point_proposition(
-                        condition,
-                        &all_pure_facts,
-                        parsed_function.parameters(),
-                        arguments,
-                        &pre_state,
-                        &state,
-                        None,
-                        &replay.program_point_states,
-                        predicate_environment,
-                        click_function_environment,
-                    )
-                    .map_err(|message| {
-                        ClickError::new(format!(
-                            "`{claim_label}` tactic {tactic_index}: could not lower enclosing proof-branch condition: {message}"
-                        ))
-                    })?;
-                    let branch_fact = if *value {
-                        proposition
+                for case in &replay.case_assumptions {
+                    let branch_fact = if let Some(fact) = &case.fact {
+                        fact.clone()
                     } else {
-                        match proposition {
-                            Proposition::ConditionIs(condition, value) => {
-                                Proposition::ConditionIs(condition, !value)
+                        let proposition = lower_point_proposition(
+                            &case.condition,
+                            &all_pure_facts,
+                            parsed_function.parameters(),
+                            arguments,
+                            &pre_state,
+                            &state,
+                            None,
+                            &replay.program_point_states,
+                            predicate_environment,
+                            click_function_environment,
+                        )
+                        .map_err(|message| {
+                            ClickError::new(format!(
+                                "`{claim_label}` tactic {tactic_index}: could not lower enclosing proof-branch condition: {message}"
+                            ))
+                        })?;
+                        if case.value {
+                            proposition
+                        } else {
+                            match proposition {
+                                Proposition::ConditionIs(condition, value) => {
+                                    Proposition::ConditionIs(condition, !value)
+                                }
+                                Proposition::Not(body) => *body,
+                                proposition => Proposition::Not(Box::new(proposition)),
                             }
-                            Proposition::Not(body) => *body,
-                            proposition => Proposition::Not(Box::new(proposition)),
                         }
                     };
                     if exact_fact_is_available(&branch_fact, &all_pure_facts)
                         && !explicit_premises.contains(&branch_fact)
                     {
                         explicit_premises.push(branch_fact);
+                    }
+                }
+                for effect in &replay.effect_facts {
+                    if effect.is_certified()
+                        && exact_fact_is_available(effect.proposition(), &all_pure_facts)
+                        && !explicit_premises.contains(effect.proposition())
+                    {
+                        explicit_premises.push(effect.proposition().clone());
                     }
                 }
                 if matches!(tactic, ProofTactic::ApplyLoopSummaryUsing { .. })
@@ -8647,9 +9354,10 @@ fn replay_linear_tactics(
             }
             ProofTactic::Step
             | ProofTactic::ApplyLoopSummary(_)
-            | ProofTactic::CertifiedStatementStep(_)
-            | ProofTactic::CertifiedLoopSummaryStep(_)
-            | ProofTactic::CertifiedStatementReplay(_) => {
+            | ProofTactic::CertifiedStatementStep { .. }
+            | ProofTactic::CertifiedLoopSummaryStep { .. }
+            | ProofTactic::CertifiedStatementReplay(_)
+            | ProofTactic::CertifiedLoopSummaryReplay(_) => {
                 let (
                     prerequisite_policy,
                     certified_prerequisites,
@@ -8694,15 +9402,21 @@ fn replay_linear_tactics(
                             LoopStepPolicy::ApplyVerifiedRule,
                         )
                     }
-                    ProofTactic::CertifiedStatementStep(derivations) => (
+                    ProofTactic::CertifiedStatementStep {
+                        prerequisite_derivations,
+                        ..
+                    } => (
                         StatementPrerequisitePolicy::Certified,
-                        derivations.as_slice(),
+                        prerequisite_derivations.as_slice(),
                         None,
                         LoopStepPolicy::EnterBody,
                     ),
-                    ProofTactic::CertifiedLoopSummaryStep(derivations) => (
+                    ProofTactic::CertifiedLoopSummaryStep {
+                        prerequisite_derivations,
+                        ..
+                    } => (
                         StatementPrerequisitePolicy::Certified,
-                        derivations.as_slice(),
+                        prerequisite_derivations.as_slice(),
                         None,
                         LoopStepPolicy::ApplyVerifiedRule,
                     ),
@@ -8711,6 +9425,12 @@ fn replay_linear_tactics(
                         evidence.transition.prerequisite_derivations.as_slice(),
                         Some(evidence.as_ref()),
                         LoopStepPolicy::EnterBody,
+                    ),
+                    ProofTactic::CertifiedLoopSummaryReplay(evidence) => (
+                        StatementPrerequisitePolicy::Certified,
+                        evidence.transition.prerequisite_derivations.as_slice(),
+                        Some(evidence.as_ref()),
+                        LoopStepPolicy::ApplyVerifiedRule,
                     ),
                     _ => unreachable!(),
                 };
@@ -9457,6 +10177,7 @@ fn replay_linear_tactics(
                         predicate_environment,
                         click_function_environment,
                         &replay.unfolded_predicates,
+                        None,
                     )?;
                     assumptions = assumptions_from_propositions(&requirement_pure_facts);
                 }
@@ -9487,12 +10208,14 @@ fn replay_linear_tactics(
                     )));
                 }
                 let all_pure_facts = requirement_pure_facts.clone();
+                let mut lowering_facts = all_pure_facts.clone();
+                append_resource_context_observable_facts(state.resources(), &mut lowering_facts);
                 let pre_state = replay.execution_start_state(&state).clone();
                 let mut explicit_premises = Vec::new();
                 for surface_premise in premises {
                     let premise = lower_point_proposition(
                         surface_premise,
-                        &explicit_premises,
+                        &lowering_facts,
                         parsed_function.parameters(),
                         arguments,
                         &pre_state,
@@ -9538,6 +10261,7 @@ fn replay_linear_tactics(
                     predicate_environment,
                     click_function_environment,
                     &replay.unfolded_predicates,
+                    Some(&lowering_facts),
                 )?;
                 for fact in all_pure_facts {
                     if !applied.contains(&fact) {
@@ -9743,10 +10467,16 @@ fn replay_linear_tactics(
                 target,
                 theorem,
             } => {
-                if !exact_fact_is_available(source, &requirement_pure_facts) {
+                let Some(available_source) =
+                    materialization_equivalent_available_fact(source, &requirement_pure_facts)
+                else {
                     return Err(ClickError::new(format!(
                         "`{claim_label}` tactic {tactic_index}: certified fact transport is missing exact source {source:?}"
                     )));
+                };
+                if available_source != *source && !requirement_pure_facts.contains(source) {
+                    requirement_pure_facts.retain(|fact| fact != &available_source);
+                    requirement_pure_facts.push(source.clone());
                 }
                 let Proposition::Implies(theorem_source, theorem_target) = theorem.proposition()
                 else {
@@ -10272,10 +11002,12 @@ fn introduce_proof_case_assumption(
     claim_label: &str,
 ) -> Result<(), ClickError> {
     if context.replay.is_at_function_exit() {
-        context
-            .replay
-            .case_assumptions
-            .push((tactic_index, condition.clone(), value));
+        context.replay.case_assumptions.push(ReplayCaseAssumption {
+            tactic_index,
+            condition: condition.clone(),
+            value,
+            fact: None,
+        });
         return Ok(());
     }
     let proposition = lower_point_proposition(
@@ -10334,11 +11066,13 @@ fn introduce_proof_case_assumption(
         .replay
         .surface_propositions
         .record_lowering(&surface_fact, &kernel_fact)?;
-    context.pure_facts.push(kernel_fact);
-    context
-        .replay
-        .case_assumptions
-        .push((tactic_index, condition.clone(), value));
+    context.pure_facts.push(kernel_fact.clone());
+    context.replay.case_assumptions.push(ReplayCaseAssumption {
+        tactic_index,
+        condition: condition.clone(),
+        value,
+        fact: Some(kernel_fact),
+    });
     Ok(())
 }
 
@@ -10826,6 +11560,7 @@ fn execute_branch_step_from_execution_point(
             CExecutionSemantics::APPLY_VERIFIED_RULES,
             &transition_label,
             &mut replay.next_opaque_call,
+            &mut replay.next_verification_variable,
             prerequisite_policy,
             fact_transport_policy,
             certified_prerequisites,
@@ -10853,7 +11588,9 @@ fn execute_branch_step_from_execution_point(
         &transition_label,
         prerequisite_policy,
         certified_prerequisites,
+        true,
     )?;
+    let condition_was_proven = condition_transitions.len() == 1;
     if matches!(branch_step_policy, BranchStepPolicy::RequireProven)
         && condition_transitions.len() != 1
     {
@@ -10861,9 +11598,13 @@ fn execute_branch_step_from_execution_point(
             if take_then { "true" } else { "false" }
         });
         return Err(ClickError::new(format!(
-            "`{claim_label}` tactic {tactic_index}: `{tactic_name}` could not prove that the next C `if` condition `{}` is {expected}; got {} feasible condition paths\n{}",
+            "`{claim_label}` tactic {tactic_index}: `{tactic_name}` could not prove that the next C `if` condition `{}` is {expected}; got {} feasible condition paths\n  condition path facts: {:?}\n{}",
             describe_c_expression(&condition),
             condition_transitions.len(),
+            condition_transitions
+                .iter()
+                .map(|transition| &transition.path_facts)
+                .collect::<Vec<_>>(),
             describe_proof_context(
                 available_pure_facts,
                 &current_resources,
@@ -10903,11 +11644,15 @@ fn execute_branch_step_from_execution_point(
     }
 
     if matches!(branch_step_policy, BranchStepPolicy::Explore)
+        && !condition_was_proven
         && matches!(prerequisite_policy, StatementPrerequisitePolicy::Planning)
     {
+        let occurrence = replay.next_path_choice;
+        replay.next_path_choice += 1;
         replay
             .planned_tactics
             .push(ProofTactic::CertifiedPathAssumption {
+                occurrence,
                 condition: surface_c_condition(&condition),
                 value: condition_transition.is_true,
                 facts: condition_transition.path_facts.clone(),
@@ -10915,7 +11660,11 @@ fn execute_branch_step_from_execution_point(
             });
     }
     if matches!(prerequisite_policy, StatementPrerequisitePolicy::Planning) {
-        append_condition_transition_certificate(replay, &condition_transition);
+        append_condition_transition_certificate(
+            replay,
+            &condition_transition,
+            condition_was_proven || matches!(branch_step_policy, BranchStepPolicy::RequireProven),
+        );
     }
     *available_pure_facts = condition_transition.pure_facts;
     let selected_branch = if selected_then {
@@ -11010,6 +11759,7 @@ fn execute_concrete_loop_head_step(
             CExecutionSemantics::APPLY_VERIFIED_RULES,
             &transition_label,
             &mut replay.next_opaque_call,
+            &mut replay.next_verification_variable,
             prerequisite_policy,
             fact_transport_policy,
             certified_prerequisites,
@@ -11039,6 +11789,7 @@ fn execute_concrete_loop_head_step(
         &transition_label,
         prerequisite_policy,
         certified_prerequisites,
+        true,
     )?;
     if condition_transitions.len() != 1 {
         return Err(ClickError::new(format!(
@@ -11059,7 +11810,7 @@ fn execute_concrete_loop_head_step(
         .next()
         .expect("one condition transition was required");
     if matches!(prerequisite_policy, StatementPrerequisitePolicy::Planning) {
-        append_condition_transition_certificate(replay, &condition_transition);
+        append_condition_transition_certificate(replay, &condition_transition, true);
     }
     *available_pure_facts = condition_transition.pure_facts;
     replay.frontier.execution_start_state = Some(execution_start_state);
@@ -11265,19 +12016,22 @@ fn replay_certified_statement_transition(
     statement: &CStatement,
     available_pure_facts: &[Proposition],
     context_label: &str,
-) -> Result<Option<CertifiedStatementTransition>, ClickError> {
-    let assumptions = evidence
+) -> Result<CertifiedStatementTransition, ClickError> {
+    let mut replay_facts = available_pure_facts.to_vec();
+    for fact in evidence
         .transition
         .execution_facts
         .iter()
         .filter(|fact| fact.is_certified())
-        .fold(
-            assumptions_from_propositions(available_pure_facts),
-            |assumptions, fact| assumptions.assume_proposition(fact.proposition().clone()),
-        );
+    {
+        if !replay_facts.contains(fact.proposition()) {
+            replay_facts.push(fact.proposition().clone());
+        }
+    }
     let mut proposition = evidence.transition.theorem.proposition();
     while let Proposition::Implies(premise, body) = proposition {
         let certified = exact_fact_is_available(premise, available_pure_facts)
+            || materialization_equivalent_available_fact(premise, available_pure_facts).is_some()
             || matches!(normalize_proposition(premise), SimpProposition::True)
             || evidence
                 .transition
@@ -11289,10 +12043,13 @@ fn replay_certified_statement_transition(
                 .prerequisite_derivations
                 .iter()
                 .any(|derivation| {
-                    derivation.conclusion() == premise.as_ref() && derivation.replay(&assumptions)
+                    derivation.conclusion() == premise.as_ref()
+                        && derivation_replays_with_materialized_context(derivation, &replay_facts)
                 });
         if !certified {
-            return Ok(None);
+            return Err(ClickError::new(format!(
+                "{context_label} certificate is missing prerequisite {premise:?}"
+            )));
         }
         proposition = body;
     }
@@ -11363,7 +12120,7 @@ fn replay_certified_statement_transition(
         }
     }
     transition.fact_transports.clear();
-    Ok(Some(transition))
+    Ok(transition)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -11494,12 +12251,14 @@ fn execute_step_from_execution_point(
                 &transition_label,
             )
         })
-        .transpose()?
-        .flatten();
+        .transpose()?;
     let transitions = if let Some(transition) = direct_transition {
         replay.next_opaque_call = certified_replay
             .expect("a direct transition requires replay evidence")
             .next_opaque_call;
+        replay.next_verification_variable = certified_replay
+            .expect("a direct transition requires replay evidence")
+            .next_verification_variable;
         vec![transition]
     } else {
         certified_statement_transitions(
@@ -11510,6 +12269,7 @@ fn execute_step_from_execution_point(
             CExecutionSemantics::APPLY_VERIFIED_RULES,
             &transition_label,
             &mut replay.next_opaque_call,
+            &mut replay.next_verification_variable,
             prerequisite_policy,
             fact_transport_policy,
             certified_prerequisites,
@@ -11578,8 +12338,15 @@ fn execute_step_from_execution_point(
             )));
         }
         return Err(ClickError::new(format!(
-            "`{claim_label}` tactic {tactic_index}: `{tactic_name}` requires exactly one statement successor, got {}",
-            transitions.len()
+            "`{claim_label}` tactic {tactic_index}: `{tactic_name}` requires exactly one statement successor for {step_statement:?}, got {}\n{}",
+            transitions.len(),
+            describe_proof_context(
+                available_pure_facts,
+                &current_resources,
+                parameters,
+                arguments,
+                &[]
+            )
         )));
     }
     let transition = transitions

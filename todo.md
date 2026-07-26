@@ -112,6 +112,60 @@ profiler, and let it advance farther through that project.
 
 ### Sweep checkpoint: 2026-07-25
 
+#### Latest verified state
+
+This checkpoint supersedes the older frontier rankings below.
+
+The statement-certificate correctness bugs found by the latest profile are
+fixed:
+
+- Consecutive loops now materialize each invariant as an explicit induction
+  hypothesis at the fresh loop-top snapshot. A derivation from the previous
+  loop's entry facts is not reused across the new havoc boundary.
+- A certified call transition retains its producer-snapshot fact for the
+  execution theorem and adds a separately certified transported copy for the
+  statement exit. Transport no longer mutates away the theorem's premise.
+- Generated statement certificates flatten compound invariant facts into
+  their atomic conjuncts. This fixed the `vector_fill` expansion that omitted
+  `0 <= i` and consequently could not replay its resource-bound check.
+- Bare `step` remains exact and cannot silently discharge a contextual safety
+  prerequisite. `step using` has a separate explicit-premise policy: numeric
+  condition selection may use exactly its listed facts, while non-exact
+  loadability remains an explicit obligation. Certified and planning modes no
+  longer share one overloaded "defer everything" switch.
+
+The slow-simple paths are also fixed. Strict one-statement replay uses a
+conservative symbolic external load rather than running global alias
+normalization; smart planning and multi-statement execution retain the full
+normalization path. Exact increment certificates recognize any strict int32
+upper bound before invoking transported order reasoning. The bounded memory
+pruner also checks the memory-resolution relation before the general
+distinctness solver.
+
+A 15-second-per-project profile of the complete `examples` directory now
+reports **no completed SIMPLE tactic over 500 ms and no verification
+failures**. The completed smart frontiers are:
+
+- `owned-vector/vector.click:123:13`, about 5.3 seconds;
+- `owned-split-buffer/owned_split_buffer.click:188:5`, about 3.6 seconds;
+- `owned-string/owned_string.click:152:5`, about 3.4 seconds;
+- `owned-segmented-buffer/owned_segmented_buffer.click:79:5`, about 3.3
+  seconds.
+
+Later smart frontiers in input-cursor, segmented-buffer, split-buffer,
+owned-string, and owned-vector hit the project watchdog. Resume the
+one-frontier-at-a-time smart expansion sweep from those profiler locations;
+there is currently no reached slow-simple engine path to fix first.
+
+The library suite is green at 363 tests. The focused
+`bubble_sort3_two_pass_sorted` Markdown regression is green. The complete
+Markdown corpus is not currently green:
+`field_derived_precise_effect_after_metadata_write.md` fails while proving the
+second data-cell write after the neighboring length-field mutation. The same
+focused test fails in the clean `c72a231` worktree, so this was not introduced
+by the latest statement-speed changes, but it is a real remaining correctness
+bug and takes priority if the work returns to the Markdown corpus.
+
 #### Strict smart/surface boundary checkpoint
 
 The performance sweep is paused while the certificate boundary is made
@@ -193,26 +247,48 @@ when another project fails verification. It prints a `VERIFICATION FAILURES`
 section, continues through the corpus, and exits nonzero after printing the
 partial report.
 
-The subsequent ten-second-per-project profile has two known certificate
-failures, three bounded smart frontiers, and one completed slow simple step:
+The three correctness failures from the subsequent profile were fixed on
+2026-07-25:
 
-- `owned_segmented_buffer_pipeline` loses a loadability fact while lowering a
-  late post-execution `apply using` premise.
-- `owned_string_push` emits a statement certificate without the numeric fact
-  needed to rule out signed overflow.
-- The pre-existing `bubble_sort3_loop_permutation` Markdown regression lowers
-  a nested branch condition at `j + 1` without first proving that the fourth
-  element is loadable. The unchanged `c0790fa` checkpoint fails in the same
-  place; generated-certificate diagnostics now expose the attempted replay.
-- input-cursor, split-buffer, and owned-vector time out at smart tactics at
-  `input_cursor.click:199:5`, `owned_split_buffer.click:226:5`, and
-  `vector.click:206:13`.
-- `owned_segmented_buffer_get_first` has a 774 ms simple read step, above the
-  default 500 ms engine threshold.
+- Post-execution `apply using` now separates its lowering context from its
+  theorem-premise context. Ambient resource/loadability facts may be used to
+  interpret an explicitly named memory expression, but only the named facts
+  may discharge theorem premises. A focused post-execution regression covers
+  the `owned_segmented_buffer_pipeline` failure.
+- Planned statement certificates retain replayable derivations for numeric
+  safety facts. The generated surface `step using` names the original numeric
+  bound, while the derived no-overflow fact remains internal certificate
+  evidence and no longer leaks into the exported function requirements.
+- Branch and statement certificates preserve distinct occurrences and
+  verification-variable identities, replay condition facts modulo checked
+  materialization equivalence, and accept finite case proofs when later facts
+  narrow the covered range. `bubble_sort3_loop_permutation`,
+  `field_derived_precise_effect_after_metadata_write`, and
+  `later_loop_preserve` now pass as focused Markdown regressions.
 
-Fix the three certificate/branch-lowering failures before resuming performance
-expansion. Then reduce the 774 ms simple read before expanding the three smart
-frontiers.
+Certified statement evidence no longer falls back to rerunning symbolic
+execution when direct replay fails: a missing premise is an explicit
+certificate error. Opaque-call identities and internal verification-variable
+freshness also use separate cursors instead of sharing an arithmetic encoding.
+The unit suite is green at 358 tests.
+The full Markdown regression corpus is also green (67 seconds in the final
+debug-build run).
+
+The next correctness issue exposed by the profile is separate from those
+three: expansion of `owned_string_pop.contract` at
+`examples/owned-string/owned_string.click:266:5` emits a read step with five
+alias/loadability successors instead of one. `owned_string_push` itself gets
+past its former signed-overflow certificate failure before the project reaches
+this later function.
+
+Performance work is still blocked on slow simple replay. A bounded segmented
+buffer profile reports the read in
+`owned_segmented_buffer_get_first.contract` around 650 ms and spends tens of
+seconds in statement 3 of `owned_segmented_buffer_pipeline`; even a bounded
+two-minute expansion request for the later `apply` does not reach the selected
+tactic. The owned-string profile reports simple statement replay up to several
+seconds in `owned_string_set` and `owned_string_pop`. Fix these deterministic
+engine paths before resuming the smart-frontier sweep.
 
 Inline `have ... by { simp(); }` is now treated as a selectable smart unit
 rather than an opaque control container. `click-expand` lowers a successful

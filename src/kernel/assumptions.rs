@@ -76,18 +76,37 @@ impl Assumptions {
         Self::default()
     }
 
-    /// Keep contextual consequences as explicit proof obligations instead of
-    /// silently discharging them while symbolic execution is being planned.
+    /// Keep contextual loadability consequences as explicit proof obligations
+    /// instead of silently discharging them while symbolic execution is being
+    /// planned.
     ///
     /// Condition reasoning is unchanged: this flag only controls the
     /// obligation boundary used by the evaluator.
-    pub(crate) fn defer_non_exact_obligations(mut self) -> Self {
-        self.defer_non_exact_obligations = true;
+    pub(crate) fn defer_non_exact_loadability_obligations(mut self) -> Self {
+        self.defer_non_exact_loadability_obligations = true;
         self
     }
 
-    pub(super) fn should_defer_non_exact_obligations(&self) -> bool {
-        self.defer_non_exact_obligations
+    pub(super) fn should_defer_non_exact_loadability_obligations(&self) -> bool {
+        self.defer_non_exact_loadability_obligations
+    }
+
+    pub(crate) fn defer_non_exact_condition_reasoning(mut self) -> Self {
+        self.defer_non_exact_condition_reasoning = true;
+        self
+    }
+
+    pub(super) fn should_defer_non_exact_condition_reasoning(&self) -> bool {
+        self.defer_non_exact_condition_reasoning
+    }
+
+    pub(crate) fn prefer_symbolic_external_loads(mut self) -> Self {
+        self.prefer_symbolic_external_loads = true;
+        self
+    }
+
+    pub(super) fn should_prefer_symbolic_external_loads(&self) -> bool {
+        self.prefer_symbolic_external_loads
     }
 
     pub(super) fn proves_exact(&self, proposition: &Proposition) -> bool {
@@ -180,18 +199,22 @@ impl Assumptions {
                             .get(condition)
                             .copied()
                             .or_else(|| self.condition_facts.get(&simplified).copied())
-                            .or_else(|| self.decide_from_order_facts(&simplified))
-                            .or_else(|| self.decide_from_overflow_facts(&simplified)),
+                            .or_else(|| self.decide_from_overflow_facts(&simplified))
+                            .or_else(|| self.decide_from_order_facts(&simplified)),
                     };
                 }
 
                 self.condition_facts
                     .get(condition)
                     .copied()
-                    .or_else(|| self.decide_from_order_facts(condition))
                     .or_else(|| self.decide_from_overflow_facts(condition))
+                    .or_else(|| self.decide_from_order_facts(condition))
             }
         }
+    }
+
+    pub(super) fn decide_intrinsically(condition: &ConditionTerm) -> Option<bool> {
+        Self::new().decide(condition)
     }
 
     pub(super) fn has_condition_fact(&self, condition: ConditionTerm, value: bool) -> bool {
@@ -227,6 +250,66 @@ impl Assumptions {
                         left.as_ref().clone(),
                     ))
                     .copied(),
+                ConditionTerm::Bitvector32SignedLessThan(left, right) => self
+                    .condition_facts
+                    .get(&ConditionTerm::signed_greater_than(
+                        right.as_ref().clone(),
+                        left.as_ref().clone(),
+                    ))
+                    .copied()
+                    .or_else(|| {
+                        self.condition_facts
+                            .get(&ConditionTerm::signed_greater_equal(
+                                left.as_ref().clone(),
+                                right.as_ref().clone(),
+                            ))
+                            .map(|value| !value)
+                    }),
+                ConditionTerm::Bitvector32SignedLessEqual(left, right) => self
+                    .condition_facts
+                    .get(&ConditionTerm::signed_greater_equal(
+                        right.as_ref().clone(),
+                        left.as_ref().clone(),
+                    ))
+                    .copied()
+                    .or_else(|| {
+                        self.condition_facts
+                            .get(&ConditionTerm::signed_greater_than(
+                                left.as_ref().clone(),
+                                right.as_ref().clone(),
+                            ))
+                            .map(|value| !value)
+                    }),
+                ConditionTerm::Bitvector32SignedGreaterThan(left, right) => self
+                    .condition_facts
+                    .get(&ConditionTerm::signed_less_than(
+                        right.as_ref().clone(),
+                        left.as_ref().clone(),
+                    ))
+                    .copied()
+                    .or_else(|| {
+                        self.condition_facts
+                            .get(&ConditionTerm::signed_less_equal(
+                                left.as_ref().clone(),
+                                right.as_ref().clone(),
+                            ))
+                            .map(|value| !value)
+                    }),
+                ConditionTerm::Bitvector32SignedGreaterEqual(left, right) => self
+                    .condition_facts
+                    .get(&ConditionTerm::signed_less_equal(
+                        right.as_ref().clone(),
+                        left.as_ref().clone(),
+                    ))
+                    .copied()
+                    .or_else(|| {
+                        self.condition_facts
+                            .get(&ConditionTerm::signed_less_than(
+                                left.as_ref().clone(),
+                                right.as_ref().clone(),
+                            ))
+                            .map(|value| !value)
+                    }),
                 _ => None,
             })
     }
@@ -917,7 +1000,8 @@ impl Assumptions {
                 ) || self.has_condition_fact(
                     ConditionTerm::signed_less_equal(right.clone(), left.clone()),
                     true,
-                ) || self.order_facts_force_equal(&left, &right)
+                ) || self.has_order_path(&right, &left, true)
+                    || self.order_facts_force_equal(&left, &right)
                 {
                     Some(false)
                 } else {
@@ -1097,6 +1181,31 @@ impl Assumptions {
     ) -> bool {
         let order_facts = self.condition_order_facts();
         self.has_order_path_in_facts(left, right, require_strict, &order_facts)
+    }
+
+    fn has_exact_order_path(
+        &self,
+        left: &Bitvector32Term,
+        right: &Bitvector32Term,
+        require_strict: bool,
+    ) -> bool {
+        let order_facts = self.condition_order_facts();
+        let mut stack = vec![(left.clone(), false)];
+        let mut seen = BTreeSet::new();
+        while let Some((current, strict_so_far)) = stack.pop() {
+            if !seen.insert((current.clone(), strict_so_far)) {
+                continue;
+            }
+            if &current == right && (!require_strict || strict_so_far) {
+                return true;
+            }
+            for (edge_left, edge_right, edge_strict) in &order_facts {
+                if &current == edge_left {
+                    stack.push((edge_right.clone(), strict_so_far || *edge_strict));
+                }
+            }
+        }
+        false
     }
 
     pub(super) fn has_order_path_in_facts(
@@ -1322,7 +1431,7 @@ impl Assumptions {
             .iter()
             .any(|(fact, value)| match (fact, value) {
                 (ConditionTerm::Bitvector32SignedLessThan(fact_left, upper), true)
-                    if fact_left.as_ref() == left =>
+                    if self.bitvector_terms_equal_for_transport(fact_left, left) =>
                 {
                     self.decide(&ConditionTerm::signed_less_equal(
                         upper.as_ref().clone(),
@@ -1342,7 +1451,7 @@ impl Assumptions {
             .iter()
             .any(|(fact, value)| match (fact, value) {
                 (ConditionTerm::Bitvector32SignedLessEqual(fact_left, upper), true)
-                    if fact_left.as_ref() == left =>
+                    if self.bitvector_terms_equal_for_transport(fact_left, left) =>
                 {
                     self.decide(&ConditionTerm::signed_less_equal(
                         upper.as_ref().clone(),
@@ -1350,7 +1459,7 @@ impl Assumptions {
                     )) == Some(true)
                 }
                 (ConditionTerm::Bitvector32SignedGreaterEqual(upper, fact_left), true)
-                    if fact_left.as_ref() == left =>
+                    if self.bitvector_terms_equal_for_transport(fact_left, left) =>
                 {
                     self.decide(&ConditionTerm::signed_less_equal(
                         upper.as_ref().clone(),
@@ -1510,7 +1619,7 @@ impl Assumptions {
             .iter()
             .any(|(fact, value)| match (fact, value) {
                 (ConditionTerm::Bitvector32SignedGreaterEqual(fact_left, lower), true)
-                    if fact_left.as_ref() == left =>
+                    if self.bitvector_terms_equal_for_transport(fact_left, left) =>
                 {
                     self.decide(&ConditionTerm::signed_greater_than(
                         lower.as_ref().clone(),
@@ -1518,7 +1627,7 @@ impl Assumptions {
                     )) == Some(true)
                 }
                 (ConditionTerm::Bitvector32SignedLessEqual(lower, fact_left), true)
-                    if fact_left.as_ref() == left =>
+                    if self.bitvector_terms_equal_for_transport(fact_left, left) =>
                 {
                     self.decide(&ConditionTerm::signed_greater_than(
                         lower.as_ref().clone(),
@@ -1538,7 +1647,7 @@ impl Assumptions {
             .iter()
             .any(|(fact, value)| match (fact, value) {
                 (ConditionTerm::Bitvector32SignedGreaterEqual(fact_left, lower), true)
-                    if fact_left.as_ref() == left =>
+                    if self.bitvector_terms_equal_for_transport(fact_left, left) =>
                 {
                     self.decide(&ConditionTerm::signed_greater_equal(
                         lower.as_ref().clone(),
@@ -1546,7 +1655,7 @@ impl Assumptions {
                     )) == Some(true)
                 }
                 (ConditionTerm::Bitvector32SignedLessEqual(lower, fact_left), true)
-                    if fact_left.as_ref() == left =>
+                    if self.bitvector_terms_equal_for_transport(fact_left, left) =>
                 {
                     self.decide(&ConditionTerm::signed_greater_equal(
                         lower.as_ref().clone(),
@@ -1894,10 +2003,28 @@ impl Assumptions {
             {
                 let int_max = Bitvector32Term::Constant(i32::MAX as u32);
                 let left = left.as_ref().clone();
-                (self.has_condition_fact(
-                    ConditionTerm::signed_less_than(left.clone(), int_max.clone()),
-                    true,
-                ) || self.has_upper_bound_below(&left, &int_max))
+                // Any exact strict upper bound on an int32 proves that `left`
+                // is not INT_MAX. Check this common increment certificate
+                // syntactically before invoking transported order reasoning;
+                // the latter may compare large symbolic memory terms.
+                let has_strict_upper_bound =
+                    self.condition_facts.iter().any(|(condition, value)| {
+                        match (condition, value) {
+                            (ConditionTerm::Bitvector32SignedLessThan(fact_left, _), true) => {
+                                fact_left.as_ref() == &left
+                            }
+                            (ConditionTerm::Bitvector32SignedGreaterThan(_, fact_left), true) => {
+                                fact_left.as_ref() == &left
+                            }
+                            _ => false,
+                        }
+                    });
+                (has_strict_upper_bound
+                    || self.has_condition_fact(
+                        ConditionTerm::signed_less_than(left.clone(), int_max.clone()),
+                        true,
+                    )
+                    || self.has_upper_bound_below(&left, &int_max))
                 .then_some(false)
             }
             ConditionTerm::Bitvector32SignedMultiplyOverflows(left, right)
@@ -2744,6 +2871,10 @@ impl Assumptions {
                         && self.bitvector_terms_equal_for_transport(fact_right, target_left)
                     || fact_left == target_left
                         && self.bitvector_terms_equal_for_transport(fact_right, target_right)
+                    || self.bitvector_terms_equal_for_transport(fact_left, target_left)
+                        && self.bitvector_terms_equal_for_transport(fact_right, target_right)
+                    || self.bitvector_terms_equal_for_transport(fact_left, target_right)
+                        && self.bitvector_terms_equal_for_transport(fact_right, target_left)
             }
             (
                 ConditionTerm::PointerOffsetEqual(fact_left, fact_right),
@@ -3385,23 +3516,47 @@ impl Assumptions {
         left: &Pointer,
         right: &Pointer,
     ) -> bool {
-        self.prop_facts.iter().any(|proposition| {
-            let Proposition::CMemoryDisjoint {
+        self.prop_facts.iter().any(|proposition| match proposition {
+            Proposition::CMemoryDisjoint {
                 left_base,
                 left_start,
                 left_end,
                 right_base,
                 right_start,
                 right_end,
-            } = proposition
-            else {
-                return false;
-            };
-
-            self.pointer_in_range(left, left_base, left_start, left_end)
-                && self.pointer_in_range(right, right_base, right_start, right_end)
-                || self.pointer_in_range(right, left_base, left_start, left_end)
-                    && self.pointer_in_range(left, right_base, right_start, right_end)
+            } => {
+                self.pointer_in_range(left, left_base, left_start, left_end)
+                    && self.pointer_in_range(right, right_base, right_start, right_end)
+                    || self.pointer_in_range(right, left_base, left_start, left_end)
+                        && self.pointer_in_range(left, right_base, right_start, right_end)
+            }
+            Proposition::CResourceSeparate {
+                left: CResource::Memory(left_range),
+                right: CResource::Memory(right_range),
+            } => {
+                self.pointer_in_range(
+                    left,
+                    left_range.base(),
+                    left_range.start(),
+                    left_range.end(),
+                ) && self.pointer_in_range(
+                    right,
+                    right_range.base(),
+                    right_range.start(),
+                    right_range.end(),
+                ) || self.pointer_in_range(
+                    right,
+                    left_range.base(),
+                    left_range.start(),
+                    left_range.end(),
+                ) && self.pointer_in_range(
+                    left,
+                    right_range.base(),
+                    right_range.start(),
+                    right_range.end(),
+                )
+            }
+            _ => false,
         }) || self.proves_resource_separate(
             &CResource::Memory(CMemoryRange::new(
                 left.clone(),
@@ -3414,38 +3569,6 @@ impl Assumptions {
                 Bitvector32Term::Constant(1),
             )),
         )
-    }
-
-    pub(super) fn pointers_proven_disjoint_by_explicit_range_shallow(
-        &self,
-        left: &Pointer,
-        right: &Pointer,
-    ) -> bool {
-        self.prop_facts.iter().any(|proposition| match proposition {
-            Proposition::CMemoryDisjoint {
-                left_base,
-                left_start,
-                left_end,
-                right_base,
-                right_start,
-                right_end,
-            } => {
-                pointer_in_range_shallow(left, left_base, left_start, left_end)
-                    && pointer_in_range_shallow(right, right_base, right_start, right_end)
-                    || pointer_in_range_shallow(right, left_base, left_start, left_end)
-                        && pointer_in_range_shallow(left, right_base, right_start, right_end)
-            }
-            Proposition::CResourceSeparate {
-                left: CResource::Memory(left_range),
-                right: CResource::Memory(right_range),
-            } => {
-                pointer_in_memory_range_shallow(left, left_range)
-                    && pointer_in_memory_range_shallow(right, right_range)
-                    || pointer_in_memory_range_shallow(right, left_range)
-                        && pointer_in_memory_range_shallow(left, right_range)
-            }
-            _ => false,
-        })
     }
 
     pub(super) fn pointers_proven_disjoint_by_explicit_range_for_memory_resolution(
@@ -4249,7 +4372,7 @@ impl PropositionDerivation {
                 let Some(range) = available.finite_context_range(*variable) else {
                     return false;
                 };
-                if range.lower != *lower || range.upper != *upper {
+                if range.lower < *lower || range.upper > *upper {
                     return false;
                 }
                 let Ok(width) = usize::try_from(upper - lower + 1) else {
@@ -4475,14 +4598,28 @@ fn bitvector_index_in_range_shallow(
     ) {
         return start <= index && index < end;
     }
-    if assumptions.exact_condition_value(&ConditionTerm::signed_less_equal(
-        start.clone(),
-        index.clone(),
-    )) == Some(true)
-        && assumptions
-            .exact_condition_value(&ConditionTerm::signed_less_than(index.clone(), end.clone()))
-            == Some(true)
-    {
+    let lower_bound_is_exact = assumptions.exact_condition_value(
+        &ConditionTerm::signed_less_equal(start.clone(), index.clone()),
+    ) == Some(true)
+        || assumptions.has_exact_order_path(start, index, false)
+        || start == &Bitvector32Term::Constant(0)
+            && index.add_const_parts().is_some_and(|(base, increment)| {
+                (increment as i32) > 0
+                    && assumptions.has_exact_order_path(start, &base, false)
+                    && (assumptions.exact_condition_value(&ConditionTerm::signed_add_overflows(
+                        base.clone(),
+                        Bitvector32Term::Constant(increment),
+                    )) == Some(false)
+                        || assumptions.exact_condition_value(&ConditionTerm::signed_add_overflows(
+                            Bitvector32Term::Constant(increment),
+                            base,
+                        )) == Some(false))
+            });
+    let upper_bound_is_exact = assumptions
+        .exact_condition_value(&ConditionTerm::signed_less_than(index.clone(), end.clone()))
+        == Some(true)
+        || assumptions.has_exact_order_path(index, end, true);
+    if lower_bound_is_exact && upper_bound_is_exact {
         return true;
     }
 
@@ -4653,6 +4790,16 @@ impl ExecutionPureFact {
             public: true,
             certified: true,
         }
+    }
+
+    pub(super) fn into_certified(mut self) -> Self {
+        self.certified = true;
+        self
+    }
+
+    pub(crate) fn with_proposition(mut self, proposition: Proposition) -> Self {
+        self.proposition = proposition;
+        self
     }
 
     pub fn condition(condition: ConditionTerm, value: bool) -> Self {

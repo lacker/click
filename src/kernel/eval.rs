@@ -855,6 +855,21 @@ pub(super) fn evaluate_c_memory_load_paths(
         }];
     }
 
+    if has_external_read_resource && assumptions.should_prefer_symbolic_external_loads() {
+        let Some(value) = symbolic_load_value(memory, &pointer, value_type) else {
+            return vec![CExpressionPath {
+                outcome: CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+                facts,
+                obligations,
+            }];
+        };
+        return vec![CExpressionPath {
+            outcome: CExpressionOutcome::Value(value),
+            facts,
+            obligations,
+        }];
+    }
+
     let memory = memory.without_proven_distinct_cells(&pointer, assumptions);
 
     if let Some(value) = memory.known_value(&pointer) {

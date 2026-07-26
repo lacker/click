@@ -129,7 +129,19 @@ pub(super) fn execute_c_statement_verification_paths(
         else {
             return Ok(Vec::new());
         };
-        let paths = rule.paths.clone();
+        let paths = rule
+            .paths
+            .iter()
+            .cloned()
+            .map(|mut path| {
+                path.facts = path
+                    .facts
+                    .into_iter()
+                    .map(ExecutionPureFact::into_certified)
+                    .collect();
+                path
+            })
+            .collect::<Vec<_>>();
         budget.consume_paths(paths.len())?;
         return Ok(paths);
     }
@@ -1079,7 +1091,21 @@ pub(super) fn assume_invariant_checks(
                 ) else {
                     continue;
                 };
-                if add_path_fact(&mut facts, assumptions, path.proposition).is_some() {
+                // A loop invariant is an explicit induction hypothesis at the
+                // fresh loop-top snapshot. Even when the entry assumptions can
+                // derive it, retain the lowered proposition itself: the facts
+                // used for that derivation may belong to an earlier snapshot
+                // and are not a substitute for this loop's hypothesis after
+                // havoc.
+                if assumptions.proves(&path.proposition) {
+                    if !facts
+                        .iter()
+                        .any(|fact| fact.proposition() == &path.proposition)
+                    {
+                        facts.push(ExecutionPureFact::new(path.proposition));
+                    }
+                    next_contexts.push((facts, obligations));
+                } else if add_path_fact(&mut facts, assumptions, path.proposition).is_some() {
                     next_contexts.push((facts, obligations));
                 }
             }

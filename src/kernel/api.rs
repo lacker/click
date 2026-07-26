@@ -8,20 +8,22 @@ pub fn uint8(bits: impl Into<Bitvector32Term>) -> CValue {
     CValue::UInt8(bits.into())
 }
 
+pub(crate) fn canonical_c_memory_for_pointer_load(memory: &CMemory, pointer: &Pointer) -> CMemory {
+    canonical_memory_for_pointer_load(memory, pointer)
+}
+
 pub(crate) fn c_memory_load_is_unchanged(
     before: &CMemory,
     after: &CMemory,
     pointer: &Pointer,
     assumptions: &Assumptions,
 ) -> bool {
-    if memories_match_for_pointer_load(before, after, pointer)
-        || memories_match_for_pointer_load_under_assumptions(before, after, pointer, assumptions)
-    {
+    if memories_match_for_pointer_load(before, after, pointer) {
         return true;
     }
     // Predicate framing is deliberately bounded: use exact certified writes
     // and direct address cancellation, without invoking general alias search.
-    assumptions
+    if assumptions
         .prop_facts
         .iter()
         .any(|proposition| match proposition {
@@ -65,6 +67,10 @@ pub(crate) fn c_memory_load_is_unchanged(
             }
             _ => false,
         })
+    {
+        return true;
+    }
+    memories_match_for_pointer_load_under_assumptions(before, after, pointer, assumptions)
 }
 
 fn memory_materializes_atomic_load(
@@ -72,11 +78,12 @@ fn memory_materializes_atomic_load(
     symbolic: &CMemory,
     pointer: &Pointer,
 ) -> bool {
-    let expected =
-        Bitvector32Term::MemoryLoad(Box::new(symbolic.clone()), Box::new(pointer.clone()));
     matches!(
         materialized.known_value(pointer),
-        Some(CValue::Int32(value) | CValue::UInt8(value)) if value == expected
+        Some(CValue::Int32(Bitvector32Term::MemoryLoad(source, source_pointer))
+            | CValue::UInt8(Bitvector32Term::MemoryLoad(source, source_pointer)))
+            if source_pointer.as_ref() == pointer
+                && memories_match_for_pointer_load(&source, symbolic, pointer)
     )
 }
 
@@ -87,6 +94,127 @@ pub(crate) fn prove_c_condition_fact_transport(
     fact: &Proposition,
     after: &CMemory,
     assumptions: &Assumptions,
+) -> Option<Theorem> {
+    prove_c_condition_fact_transport_with_assumptions(fact, after, Some(assumptions))
+}
+
+/// Certifies normalization of a statement-produced fact across an internal
+/// snapshot change that is observationally irrelevant to every load embedded
+/// in the fact. Unlike ordinary frame transport, this uses no alias or effect
+/// reasoning: each changed load must be justified directly by the two memory
+/// snapshots.
+pub(crate) fn prove_c_fact_snapshot_transport(
+    fact: &Proposition,
+    after: &CMemory,
+) -> Option<Theorem> {
+    let transported = transport_snapshot_fact(fact, after)?;
+    if &transported == fact {
+        return None;
+    }
+    Some(Theorem::new(Proposition::Implies(
+        Box::new(fact.clone()),
+        Box::new(transported),
+    )))
+}
+
+fn transport_snapshot_fact(fact: &Proposition, after: &CMemory) -> Option<Proposition> {
+    Some(match fact {
+        Proposition::ConditionIs(condition, value) => Proposition::ConditionIs(
+            transport_framed_atomic_condition(condition, after, None)?,
+            *value,
+        ),
+        Proposition::CMemoryCanStore {
+            memory,
+            pointer,
+            byte_width,
+        } => Proposition::CMemoryCanStore {
+            memory: memory.clone(),
+            pointer: transport_snapshot_pointer(pointer, after)?,
+            byte_width: *byte_width,
+        },
+        Proposition::CMemoryLoadable {
+            memory,
+            base,
+            bytes,
+        } => Proposition::CMemoryLoadable {
+            memory: memory.clone(),
+            base: transport_snapshot_pointer(base, after)?,
+            bytes: transport_framed_atomic_bitvector(bytes, after, None)?,
+        },
+        Proposition::CMemoryDisjoint {
+            left_base,
+            left_start,
+            left_end,
+            right_base,
+            right_start,
+            right_end,
+        } => Proposition::CMemoryDisjoint {
+            left_base: transport_snapshot_pointer(left_base, after)?,
+            left_start: transport_framed_atomic_bitvector(left_start, after, None)?,
+            left_end: transport_framed_atomic_bitvector(left_end, after, None)?,
+            right_base: transport_snapshot_pointer(right_base, after)?,
+            right_start: transport_framed_atomic_bitvector(right_start, after, None)?,
+            right_end: transport_framed_atomic_bitvector(right_end, after, None)?,
+        },
+        Proposition::CResourceSeparate { left, right } => Proposition::CResourceSeparate {
+            left: transport_snapshot_resource(left, after)?,
+            right: transport_snapshot_resource(right, after)?,
+        },
+        Proposition::CResourceContains { parent, child } => Proposition::CResourceContains {
+            parent: transport_snapshot_resource(parent, after)?,
+            child: transport_snapshot_resource(child, after)?,
+        },
+        _ => return None,
+    })
+}
+
+fn transport_snapshot_resource(resource: &CResource, after: &CMemory) -> Option<CResource> {
+    Some(match resource {
+        CResource::Memory(range) => CResource::Memory(CMemoryRange {
+            base: transport_snapshot_pointer(&range.base, after)?,
+            start: transport_framed_atomic_bitvector(&range.start, after, None)?,
+            end: transport_framed_atomic_bitvector(&range.end, after, None)?,
+        }),
+        CResource::Composite { name, arguments } => CResource::Composite {
+            name: name.clone(),
+            arguments: arguments
+                .iter()
+                .map(|argument| transport_snapshot_value(argument, after))
+                .collect::<Option<Vec<_>>>()?,
+        },
+        CResource::Token { name, arguments } => CResource::Token {
+            name: name.clone(),
+            arguments: arguments
+                .iter()
+                .map(|argument| transport_snapshot_value(argument, after))
+                .collect::<Option<Vec<_>>>()?,
+        },
+    })
+}
+
+fn transport_snapshot_value(value: &CValue, after: &CMemory) -> Option<CValue> {
+    Some(match value {
+        CValue::Int32(value) => {
+            CValue::Int32(transport_framed_atomic_bitvector(value, after, None)?)
+        }
+        CValue::UInt8(value) => {
+            CValue::UInt8(transport_framed_atomic_bitvector(value, after, None)?)
+        }
+        CValue::Pointer(pointer) => CValue::Pointer(transport_snapshot_pointer(pointer, after)?),
+    })
+}
+
+fn transport_snapshot_pointer(pointer: &Pointer, after: &CMemory) -> Option<Pointer> {
+    Some(Pointer {
+        block: pointer.block.clone(),
+        offset: transport_framed_atomic_pointer_offset(&pointer.offset, after, None)?,
+    })
+}
+
+fn prove_c_condition_fact_transport_with_assumptions(
+    fact: &Proposition,
+    after: &CMemory,
+    assumptions: Option<&Assumptions>,
 ) -> Option<Theorem> {
     let Proposition::ConditionIs(condition, value) = fact else {
         return None;
@@ -199,7 +327,7 @@ fn collect_bitvector_memories(term: &Bitvector32Term, memories: &mut Vec<CMemory
 fn transport_framed_atomic_condition(
     condition: &ConditionTerm,
     after: &CMemory,
-    assumptions: &Assumptions,
+    assumptions: Option<&Assumptions>,
 ) -> Option<ConditionTerm> {
     let binary = |left: &Bitvector32Term, right: &Bitvector32Term| {
         Some((
@@ -246,7 +374,7 @@ fn transport_framed_atomic_condition(
 fn transport_framed_atomic_pointer_offset(
     offset: &PointerOffsetTerm,
     after: &CMemory,
-    assumptions: &Assumptions,
+    assumptions: Option<&Assumptions>,
 ) -> Option<PointerOffsetTerm> {
     Some(match offset {
         PointerOffsetTerm::Constant(_) | PointerOffsetTerm::Variable(_) => offset.clone(),
@@ -264,7 +392,7 @@ fn transport_framed_atomic_pointer_offset(
 fn transport_framed_atomic_bitvector(
     term: &Bitvector32Term,
     after: &CMemory,
-    assumptions: &Assumptions,
+    assumptions: Option<&Assumptions>,
 ) -> Option<Bitvector32Term> {
     Some(match term {
         Bitvector32Term::Constant(_) | Bitvector32Term::Variable(_) => term.clone(),
@@ -273,7 +401,10 @@ fn transport_framed_atomic_bitvector(
                 return None;
             }
             if memories_match_for_pointer_load(memory, after, pointer)
-                || c_memory_load_is_unchanged(memory, after, pointer, assumptions)
+                || memory_materializes_atomic_load(after, memory, pointer)
+                || assumptions.is_some_and(|assumptions| {
+                    c_memory_load_is_unchanged(memory, after, pointer, assumptions)
+                })
             {
                 Bitvector32Term::MemoryLoad(Box::new(after.clone()), pointer.clone())
             } else {
@@ -1477,8 +1608,8 @@ pub(crate) fn prove_symbolic_c_statement_verification_paths_with_environment_and
     execution_semantics: CExecutionSemantics,
     budget: &mut ExecutionBudget,
 ) -> (SymbolicCExecution, Option<CVerifiedLoopRule>) {
-    let mut variables = VerificationVariableGenerator::new(1_000_000);
-    let paths = match execute_c_statement_verification_paths(
+    let mut variables = VerificationVariableGenerator::new(budget.next_verification_variable);
+    let execution = execute_c_statement_verification_paths(
         &state,
         &statement,
         &assumptions,
@@ -1486,7 +1617,9 @@ pub(crate) fn prove_symbolic_c_statement_verification_paths_with_environment_and
         execution_semantics,
         budget,
         &mut variables,
-    ) {
+    );
+    budget.next_verification_variable = variables.next;
+    let paths = match execution {
         Ok(paths) => paths,
         Err(limit) => {
             return (
@@ -1547,8 +1680,8 @@ pub(crate) fn prove_symbolic_c_loop_exit_with_proven_phases_using_budget(
             None,
         );
     };
-    let mut variables = VerificationVariableGenerator::new(1_000_000);
-    let paths = match execute_c_while_exit_paths_with_proven_phases(
+    let mut variables = VerificationVariableGenerator::new(budget.next_verification_variable);
+    let execution = execute_c_while_exit_paths_with_proven_phases(
         &state,
         condition,
         invariant,
@@ -1562,7 +1695,9 @@ pub(crate) fn prove_symbolic_c_loop_exit_with_proven_phases_using_budget(
         preservation_proven,
         budget,
         &mut variables,
-    ) {
+    );
+    budget.next_verification_variable = variables.next;
+    let paths = match execution {
         Ok(paths) => paths,
         Err(limit) => {
             return (
@@ -1837,7 +1972,7 @@ pub fn prove_symbolic_c_function_verification_paths_with_environment_and_budget(
     execution_semantics: CExecutionSemantics,
     mut budget: ExecutionBudget,
 ) -> SymbolicCExecution {
-    let mut variables = VerificationVariableGenerator::new(1_000_000);
+    let mut variables = VerificationVariableGenerator::new(budget.next_verification_variable);
     let paths = match execute_c_function_verification_paths(
         &state,
         &function,

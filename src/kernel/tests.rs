@@ -52,6 +52,80 @@ fn assert_replayable_derivation(assumptions: &Assumptions, proposition: &Proposi
 }
 
 #[test]
+fn strict_reverse_order_derives_a_false_comparison() {
+    let left = Bitvector32Term::Variable(Variable(200));
+    let right = Bitvector32Term::Variable(Variable(201));
+    let reverse = Proposition::ConditionIs(
+        ConditionTerm::signed_less_than(right.clone(), left.clone()),
+        true,
+    );
+    let target = Proposition::ConditionIs(ConditionTerm::signed_less_than(left, right), false);
+    let assumptions = Assumptions::new().assume_proposition(reverse.clone());
+    let derivation = assumptions
+        .derive_proposition(&target)
+        .expect("a strict reverse order should prove the comparison false");
+    assert_eq!(derivation.context_premises(), vec![reverse]);
+    assert!(derivation.replay(&assumptions));
+    assert!(
+        assumptions
+            .clone()
+            .defer_non_exact_loadability_obligations()
+            .derive_proposition(&target)
+            .is_some(),
+        "proof construction remains available when symbolic execution defers search"
+    );
+}
+
+#[test]
+fn condition_fact_matching_ignores_unrelated_local_memory() {
+    let owner = Pointer {
+        block: "arg-memory".into(),
+        offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(100_000)), 4),
+    };
+    let owner_field = Pointer {
+        block: owner.block.clone(),
+        offset: PointerOffsetTerm::add(owner.offset.clone(), PointerOffsetTerm::Constant(4)),
+    };
+    let ignored_local = Pointer {
+        block: "local:ignored".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let empty_memory = CMemory::new();
+    let old_memory = empty_memory.clone().store(
+        owner.clone(),
+        int32(Bitvector32Term::MemoryLoad(
+            Box::new(empty_memory),
+            Box::new(owner),
+        )),
+    );
+    let before_local = CMemory::new()
+        .with_block("call-havoc:8000000", 0)
+        .with_block("local:ignored", 4);
+    let after_local = before_local
+        .clone()
+        .with_block("local:ignored", 4)
+        .store(ignored_local, int32(Bitvector32Term::Variable(Variable(1))));
+    let old_load = Bitvector32Term::MemoryLoad(Box::new(old_memory), Box::new(owner_field.clone()));
+    let fact = Proposition::ConditionIs(
+        ConditionTerm::equal(
+            Bitvector32Term::MemoryLoad(Box::new(before_local), Box::new(owner_field.clone())),
+            old_load.clone(),
+        ),
+        true,
+    );
+    let target = Proposition::ConditionIs(
+        ConditionTerm::equal(
+            Bitvector32Term::MemoryLoad(Box::new(after_local), Box::new(owner_field)),
+            old_load,
+        ),
+        true,
+    );
+    let assumptions = Assumptions::new().assume_proposition(fact);
+
+    assert_replayable_derivation(&assumptions, &target);
+}
+
+#[test]
 fn proposition_derivation_proves_implication_from_false_antecedent() {
     let condition = ConditionTerm::equal(
         Bitvector32Term::Variable(Variable(1)),
@@ -1368,7 +1442,7 @@ fn deferred_obligations_keep_contextual_memory_proofs_explicit() {
     );
 
     let mut deferred = Vec::new();
-    let deferred_assumptions = assumptions.defer_non_exact_obligations();
+    let deferred_assumptions = assumptions.defer_non_exact_loadability_obligations();
     assert!(add_proof_obligation(&mut deferred, &deferred_assumptions, element.clone()).is_some());
     assert_eq!(deferred.len(), 1);
     assert_eq!(deferred[0].proposition(), &element);
@@ -1452,6 +1526,42 @@ fn assumptions_split_small_finite_context_variable() {
 
     assert!(assumptions.proves(&proposition));
     assert_replayable_derivation(&assumptions, &proposition);
+}
+
+#[test]
+fn finite_context_derivation_replays_under_a_narrower_range() {
+    let j = Bitvector32Term::Variable(Variable(88));
+    let broad = Assumptions::new()
+        .assume_condition(
+            ConditionTerm::signed_greater_equal(j.clone(), Bitvector32Term::Constant(0)),
+            true,
+        )
+        .assume_condition(
+            ConditionTerm::signed_less_than(j.clone(), Bitvector32Term::Constant(2)),
+            true,
+        );
+    let proposition = Proposition::Or(
+        Box::new(Proposition::ConditionIs(
+            ConditionTerm::equal(j.clone(), Bitvector32Term::Constant(0)),
+            true,
+        )),
+        Box::new(Proposition::ConditionIs(
+            ConditionTerm::equal(j.clone(), Bitvector32Term::Constant(1)),
+            true,
+        )),
+    );
+    let derivation = broad
+        .derive_proposition(&proposition)
+        .expect("the broad two-value range should produce a finite proof");
+    let narrow = broad.assume_condition(
+        ConditionTerm::signed_less_than(j, Bitvector32Term::Constant(1)),
+        true,
+    );
+
+    assert!(
+        derivation.replay(&narrow),
+        "a proof covering a finite range remains valid when later facts narrow that range"
+    );
 }
 
 #[test]
@@ -3572,6 +3682,52 @@ fn atomic_condition_fact_transport_uses_certified_effect_summary() {
 }
 
 #[test]
+fn snapshot_transport_only_ignores_local_memory_differences() {
+    let external = Pointer {
+        block: "arg-memory".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let local = CMemory::local_pointer("result");
+    let before = CMemory::new()
+        .with_block("arg-memory", 4)
+        .with_block("local:result", 4)
+        .store(local.clone(), int32(0));
+    let after_local_store = before.clone().store(local, int32(1));
+    let fact = Proposition::ConditionIs(
+        ConditionTerm::equal(
+            Bitvector32Term::MemoryLoad(Box::new(before.clone()), Box::new(external.clone())),
+            Bitvector32Term::Constant(7),
+        ),
+        true,
+    );
+
+    let theorem = prove_c_fact_snapshot_transport(&fact, &after_local_store)
+        .expect("a local-only state change should normalize the external snapshot");
+    assert_eq!(
+        theorem.proposition(),
+        &Proposition::Implies(
+            Box::new(fact.clone()),
+            Box::new(Proposition::ConditionIs(
+                ConditionTerm::equal(
+                    Bitvector32Term::MemoryLoad(
+                        Box::new(after_local_store),
+                        Box::new(external.clone()),
+                    ),
+                    Bitvector32Term::Constant(7),
+                ),
+                true,
+            )),
+        )
+    );
+
+    let after_external_store = before.store(external, int32(9));
+    assert!(
+        prove_c_fact_snapshot_transport(&fact, &after_external_store).is_none(),
+        "snapshot normalization must not invoke framed-effect reasoning"
+    );
+}
+
+#[test]
 fn atomic_condition_fact_transport_ignores_distinct_materialized_cell() {
     let before = CMemory::new()
         .with_block("arg-memory", 8)
@@ -4270,6 +4426,66 @@ fn memory_resolution_alias_check_uses_explicit_separation() {
 }
 
 #[test]
+fn memory_resolution_alias_check_uses_exact_transitive_range_bounds() {
+    let owner = Pointer {
+        block: "arg-memory".into(),
+        offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(92)), 4),
+    };
+    let data = Pointer {
+        block: "arg-memory".into(),
+        offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(93)), 4),
+    };
+    let index = Bitvector32Term::Variable(Variable(94));
+    let length = Bitvector32Term::Variable(Variable(95));
+    let capacity = Bitvector32Term::Variable(Variable(96));
+    let assumptions = Assumptions::new()
+        .assume_proposition(Proposition::CResourceSeparate {
+            left: CResource::Memory(memory_range(owner.clone(), 0, 4)),
+            right: CResource::Memory(memory_range(data.clone(), 0, capacity.clone())),
+        })
+        .assume_condition(
+            ConditionTerm::signed_less_equal(Bitvector32Term::Constant(0), index.clone()),
+            true,
+        )
+        .assume_condition(
+            ConditionTerm::signed_less_than(index.clone(), length.clone()),
+            true,
+        )
+        .assume_condition(ConditionTerm::signed_less_than(length, capacity), true);
+
+    assert!(pointers_proven_distinct_for_memory_resolution(
+        &owner.offset_by_int32_elements(Bitvector32Term::Constant(1)),
+        &data.offset_by_int32_elements(index),
+        &assumptions,
+    ));
+
+    let incremented = Bitvector32Term::add(
+        Bitvector32Term::Variable(Variable(94)),
+        Bitvector32Term::Constant(1),
+    );
+    let incremented_assumptions = assumptions
+        .assume_condition(
+            ConditionTerm::signed_add_overflows(
+                Bitvector32Term::Variable(Variable(94)),
+                Bitvector32Term::Constant(1),
+            ),
+            false,
+        )
+        .assume_condition(
+            ConditionTerm::signed_less_than(
+                incremented.clone(),
+                Bitvector32Term::Variable(Variable(96)),
+            ),
+            true,
+        );
+    assert!(pointers_proven_distinct_for_memory_resolution(
+        &owner.offset_by_int32_elements(Bitvector32Term::Constant(1)),
+        &data.offset_by_int32_elements(incremented),
+        &incremented_assumptions,
+    ));
+}
+
+#[test]
 fn memory_resolution_alias_check_transports_unchanged_field_loads() {
     let owner = Pointer {
         block: "arg-memory".into(),
@@ -4307,6 +4523,68 @@ fn memory_resolution_alias_check_transports_unchanged_field_loads() {
     assert!(pointers_proven_equal_for_memory_resolution(
         &left,
         &right,
+        &assumptions,
+    ));
+}
+
+#[test]
+fn memory_resolution_separation_transports_unchanged_range_base_loads() {
+    let owner = Pointer {
+        block: "arg-memory".into(),
+        offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(93)), 4),
+    };
+    let len_cell = owner.clone();
+    let data_cell = owner.offset_by_int32_elements(Bitvector32Term::Constant(2));
+    let before = CMemory::new();
+    let after = before.clone().store(len_cell, int32(7));
+    let data_before =
+        Bitvector32Term::MemoryLoad(Box::new(before.clone()), Box::new(data_cell.clone()));
+    let data_after = Bitvector32Term::MemoryLoad(Box::new(after), Box::new(data_cell));
+    let index = Bitvector32Term::subtract(
+        Bitvector32Term::MemoryLoad(Box::new(before), Box::new(owner.clone())),
+        Bitvector32Term::Constant(1),
+    );
+    let data_base = Pointer {
+        block: "arg-memory".into(),
+        offset: PointerOffsetTerm::scale_int32(data_before, 4),
+    };
+    let indexed_data = Pointer {
+        block: "arg-memory".into(),
+        offset: PointerOffsetTerm::add(
+            PointerOffsetTerm::scale_int32(data_after.clone(), 4),
+            PointerOffsetTerm::scale_int32(index.clone(), 4),
+        ),
+    };
+    let assumptions = Assumptions::new()
+        .assume_proposition(Proposition::CResourceSeparate {
+            left: CResource::Memory(memory_range(owner.clone(), 0, 4)),
+            right: CResource::Memory(memory_range(data_base.clone(), 0, 10)),
+        })
+        .assume_condition(
+            ConditionTerm::signed_less_equal(Bitvector32Term::Constant(0), index.clone()),
+            true,
+        )
+        .assume_condition(
+            ConditionTerm::signed_less_than(index, Bitvector32Term::Constant(10)),
+            true,
+        );
+
+    assert!(pointers_proven_distinct_for_memory_resolution(
+        &owner,
+        &owner.offset_by_int32_elements(Bitvector32Term::Constant(2)),
+        &assumptions,
+    ));
+    assert!(pointers_proven_equal_for_memory_resolution(
+        &data_base,
+        &Pointer {
+            block: "arg-memory".into(),
+            offset: PointerOffsetTerm::scale_int32(data_after, 4),
+        },
+        &assumptions,
+    ));
+    assert!(pointers_proven_distinct_for_memory_resolution(
+        &owner.offset_by_int32_elements(Bitvector32Term::Constant(2)),
+        &indexed_data,
         &assumptions,
     ));
 }
@@ -4789,6 +5067,22 @@ fn symbolic_increment_uses_int_max_bound_to_rule_out_overflow() {
                 },
             }),
         )
+    );
+}
+
+#[test]
+fn symbolic_increment_uses_any_strict_upper_bound_to_rule_out_overflow() {
+    let x_bits = Bitvector32Term::Variable(Variable(651));
+    let upper_bits = Bitvector32Term::Variable(Variable(652));
+    let assumption = ConditionTerm::signed_less_than(x_bits.clone(), upper_bits);
+    let assumptions = Assumptions::new().assume_condition(assumption, true);
+
+    assert_eq!(
+        assumptions.decide(&ConditionTerm::signed_add_overflows(
+            x_bits,
+            Bitvector32Term::Constant(1),
+        )),
+        Some(false)
     );
 }
 

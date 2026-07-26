@@ -2238,43 +2238,121 @@ pub(super) fn rewrite_proposition_by_exact_equality(
 }
 
 pub(super) fn normalize_direct_atomic_memory_loads(proposition: &Proposition) -> Proposition {
-    let Proposition::ConditionIs(condition, value) = proposition else {
-        return proposition.clone();
+    let normalize_pointer = |pointer: &Pointer| Pointer {
+        block: pointer.block.clone(),
+        offset: normalize_direct_atomic_pointer_offset_loads(&pointer.offset),
     };
-    let binary = |left: &Bitvector32Term, right: &Bitvector32Term| {
-        (
-            normalize_direct_atomic_memory_load(left),
-            normalize_direct_atomic_memory_load(right),
-        )
+    match proposition {
+        Proposition::ConditionIs(condition, value) => {
+            let binary = |left: &Bitvector32Term, right: &Bitvector32Term| {
+                (
+                    normalize_direct_atomic_memory_load(left),
+                    normalize_direct_atomic_memory_load(right),
+                )
+            };
+            let condition = match condition {
+                ConditionTerm::Bitvector32SignedLessThan(left, right) => {
+                    let (left, right) = binary(left, right);
+                    ConditionTerm::Bitvector32SignedLessThan(Box::new(left), Box::new(right))
+                }
+                ConditionTerm::Bitvector32SignedLessEqual(left, right) => {
+                    let (left, right) = binary(left, right);
+                    ConditionTerm::Bitvector32SignedLessEqual(Box::new(left), Box::new(right))
+                }
+                ConditionTerm::Bitvector32SignedGreaterThan(left, right) => {
+                    let (left, right) = binary(left, right);
+                    ConditionTerm::Bitvector32SignedGreaterThan(Box::new(left), Box::new(right))
+                }
+                ConditionTerm::Bitvector32SignedGreaterEqual(left, right) => {
+                    let (left, right) = binary(left, right);
+                    ConditionTerm::Bitvector32SignedGreaterEqual(Box::new(left), Box::new(right))
+                }
+                ConditionTerm::Bitvector32Equal(left, right) => {
+                    let (left, right) = binary(left, right);
+                    ConditionTerm::Bitvector32Equal(Box::new(left), Box::new(right))
+                }
+                ConditionTerm::PointerOffsetEqual(left, right) => {
+                    ConditionTerm::PointerOffsetEqual(
+                        Box::new(normalize_direct_atomic_pointer_offset_loads(left)),
+                        Box::new(normalize_direct_atomic_pointer_offset_loads(right)),
+                    )
+                }
+                _ => return proposition.clone(),
+            };
+            Proposition::ConditionIs(condition, *value)
+        }
+        Proposition::CMemoryCanStore {
+            memory,
+            pointer,
+            byte_width,
+        } => Proposition::CMemoryCanStore {
+            memory: memory.clone(),
+            pointer: normalize_pointer(pointer),
+            byte_width: *byte_width,
+        },
+        Proposition::CMemoryLoadable {
+            memory,
+            base,
+            bytes,
+        } => Proposition::CMemoryLoadable {
+            memory: memory.clone(),
+            base: normalize_pointer(base),
+            bytes: normalize_direct_atomic_memory_load(bytes),
+        },
+        Proposition::CMemoryDisjoint {
+            left_base,
+            left_start,
+            left_end,
+            right_base,
+            right_start,
+            right_end,
+        } => Proposition::CMemoryDisjoint {
+            left_base: normalize_pointer(left_base),
+            left_start: normalize_direct_atomic_memory_load(left_start),
+            left_end: normalize_direct_atomic_memory_load(left_end),
+            right_base: normalize_pointer(right_base),
+            right_start: normalize_direct_atomic_memory_load(right_start),
+            right_end: normalize_direct_atomic_memory_load(right_end),
+        },
+        Proposition::CResourceSeparate { left, right } => Proposition::CResourceSeparate {
+            left: normalize_direct_atomic_resource_loads(left),
+            right: normalize_direct_atomic_resource_loads(right),
+        },
+        Proposition::CResourceContains { parent, child } => Proposition::CResourceContains {
+            parent: normalize_direct_atomic_resource_loads(parent),
+            child: normalize_direct_atomic_resource_loads(child),
+        },
+        _ => proposition.clone(),
+    }
+}
+
+fn normalize_direct_atomic_resource_loads(resource: &CResource) -> CResource {
+    let normalize_value = |value: &CValue| match value {
+        CValue::Int32(value) => CValue::Int32(normalize_direct_atomic_memory_load(value)),
+        CValue::UInt8(value) => CValue::UInt8(normalize_direct_atomic_memory_load(value)),
+        CValue::Pointer(pointer) => CValue::Pointer(Pointer {
+            block: pointer.block.clone(),
+            offset: normalize_direct_atomic_pointer_offset_loads(&pointer.offset),
+        }),
     };
-    let condition = match condition {
-        ConditionTerm::Bitvector32SignedLessThan(left, right) => {
-            let (left, right) = binary(left, right);
-            ConditionTerm::Bitvector32SignedLessThan(Box::new(left), Box::new(right))
-        }
-        ConditionTerm::Bitvector32SignedLessEqual(left, right) => {
-            let (left, right) = binary(left, right);
-            ConditionTerm::Bitvector32SignedLessEqual(Box::new(left), Box::new(right))
-        }
-        ConditionTerm::Bitvector32SignedGreaterThan(left, right) => {
-            let (left, right) = binary(left, right);
-            ConditionTerm::Bitvector32SignedGreaterThan(Box::new(left), Box::new(right))
-        }
-        ConditionTerm::Bitvector32SignedGreaterEqual(left, right) => {
-            let (left, right) = binary(left, right);
-            ConditionTerm::Bitvector32SignedGreaterEqual(Box::new(left), Box::new(right))
-        }
-        ConditionTerm::Bitvector32Equal(left, right) => {
-            let (left, right) = binary(left, right);
-            ConditionTerm::Bitvector32Equal(Box::new(left), Box::new(right))
-        }
-        ConditionTerm::PointerOffsetEqual(left, right) => ConditionTerm::PointerOffsetEqual(
-            Box::new(normalize_direct_atomic_pointer_offset_loads(left)),
-            Box::new(normalize_direct_atomic_pointer_offset_loads(right)),
-        ),
-        _ => return proposition.clone(),
-    };
-    Proposition::ConditionIs(condition, *value)
+    match resource {
+        CResource::Memory(range) => CResource::Memory(CMemoryRange::new(
+            Pointer {
+                block: range.base().block.clone(),
+                offset: normalize_direct_atomic_pointer_offset_loads(&range.base().offset),
+            },
+            normalize_direct_atomic_memory_load(range.start()),
+            normalize_direct_atomic_memory_load(range.end()),
+        )),
+        CResource::Composite { name, arguments } => CResource::Composite {
+            name: name.clone(),
+            arguments: arguments.iter().map(normalize_value).collect(),
+        },
+        CResource::Token { name, arguments } => CResource::Token {
+            name: name.clone(),
+            arguments: arguments.iter().map(normalize_value).collect(),
+        },
+    }
 }
 
 fn normalize_direct_atomic_pointer_offset_loads(term: &PointerOffsetTerm) -> PointerOffsetTerm {
@@ -2292,16 +2370,92 @@ fn normalize_direct_atomic_pointer_offset_loads(term: &PointerOffsetTerm) -> Poi
 }
 
 fn normalize_direct_atomic_memory_load(term: &Bitvector32Term) -> Bitvector32Term {
-    let Bitvector32Term::MemoryLoad(memory, pointer) = term else {
-        return term.clone();
+    let binary = |left: &Bitvector32Term, right: &Bitvector32Term| {
+        (
+            Box::new(normalize_direct_atomic_memory_load(left)),
+            Box::new(normalize_direct_atomic_memory_load(right)),
+        )
     };
-    match memory.load(pointer) {
-        CExpressionOutcome::Value(CValue::Int32(value) | CValue::UInt8(value))
-            if &value != term =>
-        {
-            value
+    match term {
+        Bitvector32Term::Constant(_) | Bitvector32Term::Variable(_) => term.clone(),
+        Bitvector32Term::Add(left, right) => {
+            let (left, right) = binary(left, right);
+            Bitvector32Term::Add(left, right)
         }
-        _ => term.clone(),
+        Bitvector32Term::Subtract(left, right) => {
+            let (left, right) = binary(left, right);
+            Bitvector32Term::Subtract(left, right)
+        }
+        Bitvector32Term::Multiply(left, right) => {
+            let (left, right) = binary(left, right);
+            Bitvector32Term::Multiply(left, right)
+        }
+        Bitvector32Term::Divide(left, right) => {
+            let (left, right) = binary(left, right);
+            Bitvector32Term::Divide(left, right)
+        }
+        Bitvector32Term::Remainder(left, right) => {
+            let (left, right) = binary(left, right);
+            Bitvector32Term::Remainder(left, right)
+        }
+        Bitvector32Term::ShiftLeft(left, right) => {
+            let (left, right) = binary(left, right);
+            Bitvector32Term::ShiftLeft(left, right)
+        }
+        Bitvector32Term::ArithmeticShiftRight(left, right) => {
+            let (left, right) = binary(left, right);
+            Bitvector32Term::ArithmeticShiftRight(left, right)
+        }
+        Bitvector32Term::BitwiseAnd(left, right) => {
+            let (left, right) = binary(left, right);
+            Bitvector32Term::BitwiseAnd(left, right)
+        }
+        Bitvector32Term::BitwiseOr(left, right) => {
+            let (left, right) = binary(left, right);
+            Bitvector32Term::BitwiseOr(left, right)
+        }
+        Bitvector32Term::BitwiseXor(left, right) => {
+            let (left, right) = binary(left, right);
+            Bitvector32Term::BitwiseXor(left, right)
+        }
+        Bitvector32Term::BitwiseNot(value) => {
+            Bitvector32Term::BitwiseNot(Box::new(normalize_direct_atomic_memory_load(value)))
+        }
+        Bitvector32Term::If {
+            condition,
+            then_term,
+            else_term,
+        } => Bitvector32Term::If {
+            condition: condition.clone(),
+            then_term: Box::new(normalize_direct_atomic_memory_load(then_term)),
+            else_term: Box::new(normalize_direct_atomic_memory_load(else_term)),
+        },
+        Bitvector32Term::RangeFold {
+            start,
+            end,
+            initial,
+            accumulator,
+            item,
+            body,
+        } => Bitvector32Term::RangeFold {
+            start: Box::new(normalize_direct_atomic_memory_load(start)),
+            end: Box::new(normalize_direct_atomic_memory_load(end)),
+            initial: Box::new(normalize_direct_atomic_memory_load(initial)),
+            accumulator: *accumulator,
+            item: *item,
+            body: Box::new(normalize_direct_atomic_memory_load(body)),
+        },
+        Bitvector32Term::MemoryLoad(memory, pointer) => match memory.load(pointer) {
+            CExpressionOutcome::Value(CValue::Int32(value) | CValue::UInt8(value))
+                if &value != term =>
+            {
+                normalize_direct_atomic_memory_load(&value)
+            }
+            _ => Bitvector32Term::MemoryLoad(
+                Box::new(canonical_c_memory_for_pointer_load(memory, pointer)),
+                pointer.clone(),
+            ),
+        },
     }
 }
 

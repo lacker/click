@@ -1,7 +1,8 @@
 use super::api::{int32, normalize_exact_memory_loads_in_pointer_offset, uint8};
 use super::reasoning::{
     bitvector_terms_proven_equal_for_memory_resolution, instantiate_range_fold_step,
-    int32_element_index_from_offset, pointers_proven_distinct, pointers_proven_equal,
+    int32_element_index_from_offset, pointers_proven_distinct,
+    pointers_proven_distinct_for_memory_resolution, pointers_proven_equal,
     pointers_proven_equal_for_memory_resolution, signed_bitvector_constant,
     signed_i64_bitvector_constant,
 };
@@ -566,6 +567,7 @@ pub struct ExecutionBudget {
     pub(super) loop_unrolls: usize,
     pub(super) paths: usize,
     pub(super) next_opaque_call: u64,
+    pub(super) next_verification_variable: u64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -940,7 +942,9 @@ pub(super) enum PropositionDerivationRule {
 pub struct Assumptions {
     pub(super) condition_facts: BTreeMap<ConditionTerm, bool>,
     pub(super) prop_facts: BTreeSet<Proposition>,
-    pub(super) defer_non_exact_obligations: bool,
+    pub(super) defer_non_exact_loadability_obligations: bool,
+    pub(super) defer_non_exact_condition_reasoning: bool,
+    pub(super) prefer_symbolic_external_loads: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -1675,6 +1679,7 @@ impl Pointer {
         }
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(super) fn has_symbolic_block(&self) -> bool {
         matches!(self.block, PointerBlock::Symbolic(_))
     }
@@ -2022,7 +2027,11 @@ impl CExecutionEnvironment {
         self.verified_loop_rules.iter().find(|rule| {
             rule.symbolic_entry_state == *state
                 && rule.loop_statement == *statement
-                && assumptions.includes(&rule.required_assumptions)
+                && rule
+                    .required_assumptions
+                    .pure_facts()
+                    .iter()
+                    .all(|required| assumptions.proves(required))
         })
     }
 }
@@ -2225,7 +2234,8 @@ impl CMemory {
     ) -> Self {
         let mut memory = self.clone();
         memory.cells.retain(|cell_pointer, _| {
-            !pointers_proven_distinct(cell_pointer, pointer, assumptions)
+            !pointers_proven_distinct_for_memory_resolution(cell_pointer, pointer, assumptions)
+                && !pointers_proven_distinct(cell_pointer, pointer, assumptions)
         });
         memory
     }
@@ -3317,6 +3327,7 @@ impl Default for ExecutionBudget {
             loop_unrolls: 256,
             paths: 10_000,
             next_opaque_call: 0,
+            next_verification_variable: 1_000_000,
         }
     }
 }
@@ -3358,6 +3369,18 @@ impl ExecutionBudget {
 
     pub(crate) fn next_opaque_call(&self) -> u64 {
         self.next_opaque_call
+    }
+
+    pub(crate) fn with_next_verification_variable(
+        mut self,
+        next_verification_variable: u64,
+    ) -> Self {
+        self.next_verification_variable = 1_000_000 + next_verification_variable;
+        self
+    }
+
+    pub(crate) fn next_verification_variable(&self) -> u64 {
+        self.next_verification_variable - 1_000_000
     }
 
     pub(super) fn consume_expression_step(&mut self) -> ExecutionResult<()> {

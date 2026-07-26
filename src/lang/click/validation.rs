@@ -268,6 +268,33 @@ fn expand_declared_resource_tactic(
     resource_definitions: &BTreeMap<String, DeclaredResourceInfo>,
 ) -> Result<ProofTactic, ClickError> {
     match tactic {
+        ProofTactic::StepUsing(premises) => Ok(ProofTactic::StepUsing(
+            premises
+                .into_iter()
+                .map(|premise| expand_declared_resource_proposition(premise, resource_definitions))
+                .collect::<Result<Vec<_>, _>>()?,
+        )),
+        ProofTactic::ApplyLoopSummaryUsing { region, premises } => {
+            Ok(ProofTactic::ApplyLoopSummaryUsing {
+                region,
+                premises: premises
+                    .into_iter()
+                    .map(|premise| {
+                        expand_declared_resource_proposition(premise, resource_definitions)
+                    })
+                    .collect::<Result<Vec<_>, _>>()?,
+            })
+        }
+        ProofTactic::ApplyTheoremUsing {
+            application,
+            premises,
+        } => Ok(ProofTactic::ApplyTheoremUsing {
+            application,
+            premises: premises
+                .into_iter()
+                .map(|premise| expand_declared_resource_proposition(premise, resource_definitions))
+                .collect::<Result<Vec<_>, _>>()?,
+        }),
         ProofTactic::UnfoldResource(resource) => Ok(ProofTactic::UnfoldResource(
             expand_declared_resource_clause(resource, resource_definitions)?,
         )),
@@ -303,11 +330,17 @@ fn expand_declared_resource_tactic(
                 .collect::<Result<Vec<_>, _>>()?,
         })),
         ProofTactic::Have(have) => Ok(ProofTactic::Have(ProofHave {
-            proposition: have.proposition,
+            proposition: expand_declared_resource_proposition(
+                have.proposition,
+                resource_definitions,
+            )?,
             proof: expand_declared_resource_proof(have.proof, resource_definitions)?,
         })),
         ProofTactic::If(proof_if) => Ok(ProofTactic::If(ProofIf {
-            condition: proof_if.condition,
+            condition: expand_declared_resource_proposition(
+                proof_if.condition,
+                resource_definitions,
+            )?,
             then_tactics: proof_if
                 .then_tactics
                 .into_iter()
@@ -325,7 +358,9 @@ fn expand_declared_resource_tactic(
                 .assertions
                 .into_iter()
                 .map(|assertion| match assertion {
-                    ProofAssertion::Fact(fact) => Ok(ProofAssertion::Fact(fact)),
+                    ProofAssertion::Fact(fact) => Ok(ProofAssertion::Fact(
+                        expand_declared_resource_proposition(fact, resource_definitions)?,
+                    )),
                     ProofAssertion::Resource(resource) => Ok(ProofAssertion::Resource(
                         expand_declared_resource_clause(resource, resource_definitions)?,
                     )),
@@ -2241,9 +2276,10 @@ fn validate_pure_theorem_tactics(
             | ProofTactic::StepUsing(_)
             | ProofTactic::ApplyLoopSummary(_)
             | ProofTactic::ApplyLoopSummaryUsing { .. }
-            | ProofTactic::CertifiedStatementStep(_)
-            | ProofTactic::CertifiedLoopSummaryStep(_)
+            | ProofTactic::CertifiedStatementStep { .. }
+            | ProofTactic::CertifiedLoopSummaryStep { .. }
             | ProofTactic::CertifiedStatementReplay(_)
+            | ProofTactic::CertifiedLoopSummaryReplay(_)
             | ProofTactic::CertifiedFactTransport { .. }
             | ProofTactic::FinishCertifiedFactTransports(_)
             | ProofTactic::CertifiedPathAssumption { .. }
@@ -2282,9 +2318,10 @@ pub(super) fn tactic_name(tactic: &ProofTactic) -> &'static str {
         ProofTactic::ApplyLoopSummary(_) | ProofTactic::ApplyLoopSummaryUsing { .. } => {
             "apply_loop_summary"
         }
-        ProofTactic::CertifiedStatementStep(_) => "certified_statement_step",
-        ProofTactic::CertifiedLoopSummaryStep(_) => "certified_loop_summary_step",
+        ProofTactic::CertifiedStatementStep { .. } => "certified_statement_step",
+        ProofTactic::CertifiedLoopSummaryStep { .. } => "certified_loop_summary_step",
         ProofTactic::CertifiedStatementReplay(_) => "certified_statement_step",
+        ProofTactic::CertifiedLoopSummaryReplay(_) => "certified_loop_summary_step",
         ProofTactic::ExecuteStep => "execute_step",
         ProofTactic::ExecuteThenStep => "execute_then_step",
         ProofTactic::ExecuteElseStep => "execute_else_step",
