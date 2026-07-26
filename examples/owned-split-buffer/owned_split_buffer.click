@@ -288,8 +288,14 @@ int32 owned_split_buffer_pipeline(
     }
     step using {
         fact load_int32(owner) < load_int32((owner + 1));
+        fact 2 <= length;
         fact loadable(owner[0..1]);
         fact loadable((owner + 1)[0..1]);
+        fact *(owner + 1) == length;
+        fact load_int32_pointer((owner + 2)) == data;
+        fact data[0] == left_value;
+        fact data[1] == right_value;
+        fact separate(memory(owner[0..4]), memory(data[0..length]));
     }
     have load_int32_pointer((owner + 2)) == data by {
         derive(load_int32_pointer((owner + 2)) == data) using {
@@ -299,7 +305,7 @@ int32 owned_split_buffer_pipeline(
         }
     }
     have data[0] == left_value by {
-        simp();
+        assumption();
     }
     have data[1] == right_value by {
         simp();
