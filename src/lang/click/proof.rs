@@ -3171,6 +3171,38 @@ fn statement_contains_call_assign(statement: &CStatement) -> bool {
     }
 }
 
+fn is_internal_snapshot_frame_witness(fact: &Proposition) -> bool {
+    let same_load_address = |left: &Bitvector32Term, right: &Bitvector32Term| {
+        matches!(
+            (left, right),
+            (
+                Bitvector32Term::MemoryLoad(_, left_pointer),
+                Bitvector32Term::MemoryLoad(_, right_pointer),
+            ) if left_pointer == right_pointer
+        )
+    };
+    let Proposition::ConditionIs(condition, true) = fact else {
+        return false;
+    };
+    match condition {
+        ConditionTerm::Bitvector32Equal(left, right) => same_load_address(left, right),
+        ConditionTerm::PointerOffsetEqual(left, right) => matches!(
+            (left.as_ref(), right.as_ref()),
+            (
+                PointerOffsetTerm::Int32Scaled {
+                    value: left,
+                    byte_width: left_width,
+                },
+                PointerOffsetTerm::Int32Scaled {
+                    value: right,
+                    byte_width: right_width,
+                },
+            ) if left_width == right_width && same_load_address(left, right)
+        ),
+        _ => false,
+    }
+}
+
 fn certified_transitions_from_execution(
     execution: SymbolicCExecution,
     loop_rule: Option<CVerifiedLoopRule>,
@@ -3454,9 +3486,26 @@ fn certified_transitions_from_execution(
                 let mut transported_facts = Vec::new();
                 let mut certified_transport_sources = Vec::new();
                 if normalize_statement_facts_to_exit {
-                    let mut normalization_sources = statement_facts;
+                    let omit_internal_frame_witnesses =
+                        matches!(prerequisite_policy, StatementPrerequisitePolicy::Explicit);
+                    let mut normalization_sources = statement_facts
+                        .into_iter()
+                        .filter(|fact| {
+                            !omit_internal_frame_witnesses
+                                || !is_internal_snapshot_frame_witness(fact)
+                        })
+                        .collect::<Vec<_>>();
                     for execution_fact in &execution_facts {
                         if execution_fact.is_certified()
+                            && (!omit_internal_frame_witnesses
+                                || !is_internal_snapshot_frame_witness(
+                                    execution_fact.proposition(),
+                                ))
+                            && materialization_equivalent_available_fact(
+                                execution_fact.proposition(),
+                                pure_facts,
+                            )
+                            .is_none()
                             && !normalization_sources.contains(execution_fact.proposition())
                         {
                             normalization_sources.push(execution_fact.proposition().clone());
