@@ -212,6 +212,9 @@ int32 input_cursor_shared_pipeline(
         fact separate(memory(left[0..4]), memory(data[0..length]));
         fact separate(memory(right[0..4]), memory(load_int32_pointer((left + 2))[0..load_int32((left + 1))]));
     }
+    transport(at(statement(4).entry, *left) < at(statement(4).entry, *(left + 1)), *left < *(left + 1)) using {
+        fact at(statement(4).entry, *left) < at(statement(4).entry, *(left + 1));
+    }
     have load_int32(right) < load_int32((right + 1)) by {
         calculate(load_int32(right) < load_int32((right + 1))) using {
             fact 1 <= length;
@@ -234,7 +237,65 @@ int32 input_cursor_shared_pipeline(
         simp();
     }
     apply(pointer_equality_transitive(right->data, left->data, data));
-    execute_step();
+    step using {
+        fact loadable(old(left[0..4]));
+        fact loadable(old(right[0..4]));
+        fact load_int32_pointer((right + 2)) == load_int32_pointer((left + 2));
+        fact load_int32_pointer((left + 2)) == data;
+        fact load_int32_pointer((right + 2)) == data;
+        fact 1 <= length;
+        fact separate(memory(right[0..4]), memory(left[0..4]));
+        fact separate(memory(left[0..4]), memory(data[0..length]));
+        fact ignored == *left;
+        fact *right == *left;
+        fact *(right + 1) == *(left + 1);
+        fact *left < *(left + 1);
+        fact *left == left_value;
+        fact *(left + 1) == length;
+        fact separate(memory(right[0..4]), memory(data[0..length]));
+        fact separate(memory(left[left_value..4]), memory(right[left_value..4]));
+        fact loadable(old(data[0..length]));
+        fact 0 <= length;
+        fact at(statement(4).entry, *left) == at(statement(4).entry, 0);
+        fact at(statement(4).entry, *(left + 1)) == at(statement(4).entry, length);
+        fact at(statement(4).entry, load_int32_pointer((left + 2))) == at(statement(4).entry, data);
+        fact at(statement(4).entry, *left) < at(statement(4).entry, *(left + 1));
+        fact load_int32(right) < load_int32((right + 1));
+        fact load_int32(right) == 0;
+    }
+    have *(left + 1) == *(left + 1) by {
+        normalize();
+    }
+    have load_int32_pointer((left + 2)) == load_int32_pointer((left + 2)) by {
+        normalize();
+    }
+    transport(at(statement(5).entry, load_int32_pointer((right + 2))) == at(statement(5).entry, load_int32_pointer((left + 2))), load_int32_pointer((right + 2)) == load_int32_pointer((left + 2))) using {
+        fact at(statement(5).entry, load_int32_pointer((right + 2))) == at(statement(5).entry, load_int32_pointer((left + 2)));
+    }
+    transport(at(statement(5).entry, load_int32_pointer((left + 2))) == data, load_int32_pointer((left + 2)) == data) using {
+        fact at(statement(5).entry, load_int32_pointer((left + 2))) == data;
+    }
+    transport(at(statement(5).entry, load_int32_pointer((right + 2))) == data, load_int32_pointer((right + 2)) == data) using {
+        fact at(statement(5).entry, load_int32_pointer((right + 2))) == data;
+    }
+    transport(at(statement(5).entry, *right) == at(statement(5).entry, *left), *right == at(statement(5).entry, *left)) using {
+        fact at(statement(5).entry, *right) == at(statement(5).entry, *left);
+    }
+    transport(at(statement(5).entry, *(right + 1)) == at(statement(5).entry, *(left + 1)), *(right + 1) == *(left + 1)) using {
+        fact at(statement(5).entry, *(right + 1)) == at(statement(5).entry, *(left + 1));
+    }
+    transport(at(statement(5).entry, *left) < at(statement(5).entry, *(left + 1)), at(statement(5).entry, *left) < *(left + 1)) using {
+        fact at(statement(5).entry, *left) < at(statement(5).entry, *(left + 1));
+    }
+    transport(at(statement(5).entry, *(left + 1)) == length, *(left + 1) == length) using {
+        fact at(statement(5).entry, *(left + 1)) == length;
+    }
+    transport(at(statement(5).entry, load_int32(right)) < at(statement(5).entry, load_int32((right + 1))), load_int32(right) < load_int32((right + 1))) using {
+        fact at(statement(5).entry, load_int32(right)) < at(statement(5).entry, load_int32((right + 1)));
+    }
+    transport(at(statement(5).entry, load_int32(right)) == 0, load_int32(right) == 0) using {
+        fact at(statement(5).entry, load_int32(right)) == 0;
+    }
     have at(statement(5).entry, left->pos) == 0 by {
         simp();
     }
