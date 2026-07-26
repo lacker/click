@@ -8145,7 +8145,10 @@ fn lower_outcome_simp_tactic(
         if check(&surface).is_ok_and(|lowered| {
             normalize_direct_atomic_memory_loads(&lowered)
                 == normalize_direct_atomic_memory_loads(fact)
-        }) {
+        }) && !premise_pairs
+            .iter()
+            .any(|(kernel, recorded_surface)| kernel == fact || recorded_surface == &surface)
+        {
             premise_pairs.push((fact.clone(), surface));
         }
     }
