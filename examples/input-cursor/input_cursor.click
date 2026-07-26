@@ -188,7 +188,11 @@ int32 input_cursor_shared_pipeline(
         }
     }
     have left->pos < left->len by {
-        simp();
+        derive(load_int32(left) < load_int32((left + 1))) using {
+            fact 1 <= length;
+            fact *(left + 1) == length;
+            fact *left == left_value;
+        }
     }
     have left->pos == 0 by {
         simp();
