@@ -8145,14 +8145,51 @@ fn lower_outcome_simp_tactic(
         if check(&surface).is_ok_and(|lowered| {
             normalize_direct_atomic_memory_loads(&lowered)
                 == normalize_direct_atomic_memory_loads(fact)
-        }) {
+        }) && !premise_pairs
+            .iter()
+            .any(|(kernel, recorded_surface)| kernel == fact || recorded_surface == &surface)
+        {
             premise_pairs.push((fact.clone(), surface));
         }
     }
-    let kernel_premises = premise_pairs
-        .iter()
-        .map(|(kernel, _)| kernel.clone())
-        .collect::<Vec<_>>();
+    let replay_kind = |pairs: &[(Proposition, ClickProposition)]| {
+        let kernel_premises = pairs
+            .iter()
+            .map(|(kernel, _)| kernel.clone())
+            .collect::<Vec<_>>();
+        let assumptions = assumptions_from_propositions(&kernel_premises);
+        if assumptions
+            .derive_atomic_proposition(goal)
+            .or_else(|| assumptions.derive_proposition(goal))
+            .is_some()
+        {
+            Some(false)
+        } else if assumptions
+            .derive_simp_atomic_proposition(goal)
+            .or_else(|| assumptions.derive_simp_proposition(goal))
+            .is_some()
+        {
+            Some(true)
+        } else {
+            None
+        }
+    };
+    if replay_kind(&premise_pairs).is_none() {
+        return Err(ClickError::new(format!(
+            "expressible path facts do not replay the postcondition derivation: {goal:?}"
+        )));
+    }
+    let mut index = 0;
+    while index < premise_pairs.len() {
+        let mut reduced = premise_pairs.clone();
+        reduced.remove(index);
+        if replay_kind(&reduced).is_some() {
+            premise_pairs = reduced;
+        } else {
+            index += 1;
+        }
+    }
+    let kind = replay_kind(&premise_pairs);
     let surface_premises = premise_pairs
         .into_iter()
         .map(|(_, surface)| surface)
@@ -8162,21 +8199,12 @@ fn lower_outcome_simp_tactic(
             "postcondition has no expressible premises for surface `simp` lowering: {goal:?}"
         )));
     }
-    let assumptions = assumptions_from_propositions(&kernel_premises);
-    if assumptions
-        .derive_atomic_proposition(goal)
-        .or_else(|| assumptions.derive_proposition(goal))
-        .is_some()
-    {
+    if kind == Some(false) {
         Ok(ProofTactic::Derive(ProofDerive {
             proposition: surface_goal.clone(),
             premises: surface_premises,
         }))
-    } else if assumptions
-        .derive_simp_atomic_proposition(goal)
-        .or_else(|| assumptions.derive_simp_proposition(goal))
-        .is_some()
-    {
+    } else if kind == Some(true) {
         Ok(ProofTactic::Calculate(ProofDerive {
             proposition: surface_goal.clone(),
             premises: surface_premises,
