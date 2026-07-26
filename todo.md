@@ -112,6 +112,38 @@ profiler, and let it advance farther through that project.
 
 ### Sweep checkpoint: 2026-07-25
 
+#### 2026-07-26 continuation
+
+The profiler now times deferred post-execution tactics where they actually run
+during claim finalization. Previously it timed only the near-zero-cost enqueue,
+which hid most of `owned-string`'s runtime and falsely reported a clean
+frontier. With correct attribution, the remaining default-threshold
+`owned-string` frontiers are:
+
+- final `simp` in `owned_string_pop`, about 12 seconds;
+- final smart `have` in `owned_string_pop`, about 5.7 seconds;
+- final smart `have` in `owned_string_set`, about 3.6 seconds;
+- final `simp` in `owned_string_pop_preserves_first`, about 2.8 seconds.
+
+Do not apply the current expansion of the 12-second grouped `simp`. It emits a
+kernel-valid `derive` as a top-level tactic, but `derive` is legal only inside a
+pure proof such as `have ... by { ... }`. Wrapping it in `have` is not by
+itself sufficient: the established fact and the ensure goal retain distinct
+snapshot identities, so a following surface `assumption` does not replay.
+Fix this post-execution claim-certificate boundary explicitly; do not equate
+the snapshots or add a fallback.
+
+Completed and committed during this continuation:
+
+- bounded direct indexed-range and loadability checks;
+- indexed fact transport in `owned-split-buffer`;
+- expansion of `simp` following a predicate `unfold`;
+- several verified `owned-string` statement expansions;
+- exact deduplication of repeated deferred-simp premises;
+- deferred-finalization timing attribution.
+
+The 1-second/project and 8-second-suite milestones are not yet reached.
+
 #### Latest verified state
 
 This checkpoint supersedes the older frontier rankings below.
