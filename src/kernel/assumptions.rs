@@ -4780,6 +4780,30 @@ fn exact_less_equal_for_memory_resolution(
     {
         return true;
     }
+    if assumptions
+        .condition_facts
+        .iter()
+        .any(|(condition, value)| {
+            if !*value {
+                return false;
+            }
+            let (fact_left, fact_right) = match condition {
+                ConditionTerm::Bitvector32SignedLessEqual(fact_left, fact_right)
+                | ConditionTerm::Bitvector32SignedLessThan(fact_left, fact_right) => {
+                    (fact_left.as_ref(), fact_right.as_ref())
+                }
+                _ => return false,
+            };
+            bitvector_terms_proven_equal_for_memory_resolution(fact_left, left, assumptions)
+                && bitvector_terms_proven_equal_for_memory_resolution(
+                    fact_right,
+                    right,
+                    assumptions,
+                )
+        })
+    {
+        return true;
+    }
     let Some(left_constant) = signed_bitvector_constant(left) else {
         return false;
     };

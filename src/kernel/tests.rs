@@ -3827,6 +3827,54 @@ fn constant_field_offset_is_disjoint_from_earlier_constant_range() {
 }
 
 #[test]
+fn bounded_separation_uses_order_fact_across_equivalent_snapshots() {
+    let owner = Pointer {
+        block: "arg-memory".into(),
+        offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(102)), 4),
+    };
+    let data = Pointer {
+        block: "arg-memory".into(),
+        offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(103)), 4),
+    };
+    let len_cell = owner.clone();
+    let cap_cell = owner.offset_by_int32_elements(Bitvector32Term::Constant(1));
+    let plain = CMemory::new();
+    let cached = CMemory::new().store(
+        Pointer {
+            block: "local:cache".into(),
+            offset: PointerOffsetTerm::Constant(0),
+        },
+        int32(0),
+    );
+    let query_len =
+        Bitvector32Term::MemoryLoad(Box::new(plain.clone()), Box::new(len_cell.clone()));
+    let query_cap = Bitvector32Term::MemoryLoad(Box::new(plain), Box::new(cap_cell.clone()));
+    let fact_len = Bitvector32Term::MemoryLoad(Box::new(cached.clone()), Box::new(len_cell));
+    let fact_cap = Bitvector32Term::MemoryLoad(Box::new(cached), Box::new(cap_cell));
+    let owner_range = CMemoryRange::new(
+        owner.clone(),
+        Bitvector32Term::Constant(0),
+        Bitvector32Term::Constant(4),
+    );
+    let owned_data_range = CMemoryRange::new(data.clone(), Bitvector32Term::Constant(0), query_cap);
+    let assumptions = Assumptions::new()
+        .assume_condition(ConditionTerm::signed_less_equal(fact_len, fact_cap), true)
+        .assume_proposition(Proposition::CResourceSeparate {
+            left: CResource::Memory(owner_range),
+            right: CResource::Memory(owned_data_range),
+        });
+
+    assert!(assumptions.ranges_proven_disjoint_from_pointer(
+        &[CMemoryRange::new(
+            data,
+            Bitvector32Term::Constant(0),
+            query_len,
+        )],
+        &owner.offset_by_int32_elements(Bitvector32Term::Constant(1)),
+    ));
+}
+
+#[test]
 fn covering_disjoint_fact_handles_shifted_mutable_range() {
     let n = Variable(83);
     let k = Variable(84);
