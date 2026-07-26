@@ -274,7 +274,10 @@ int32 owned_split_buffer_pipeline(
         assumption();
     }
     have data[1] == right_value by {
-        simp();
+        derive(data[1] == right_value) using {
+            fact at(statement(5).entry, *(load_int32_pointer((owner + 2)) + 1)) == at(statement(5).entry, right_value);
+            fact load_int32_pointer((owner + 2)) == data;
+        }
     }
     have owner->split < owner->len by {
         simp();
