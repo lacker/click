@@ -221,8 +221,11 @@ int32 input_cursor_shared_pipeline(
             fact *right == *left;
         }
     }
-    have right->pos == 0 by {
-        simp();
+    have load_int32(right) == 0 by {
+        derive(load_int32(right) == 0) using {
+            fact *left == left_value;
+            fact *right == *left;
+        }
     }
     have right->data == left->data by {
         simp();
