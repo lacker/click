@@ -2455,12 +2455,12 @@ pub(super) fn capture_c0_tactic_expansion(
     }
 }
 
-pub(super) fn active_c0_tactic_expansion_request() -> Option<(ProofSite, usize)> {
+pub(super) fn active_c0_tactic_expansion_request() -> Option<(ProofSite, Option<usize>)> {
     TACTIC_EXPANSION_PROBE.with(|probe| {
         probe
             .borrow()
             .as_ref()
-            .map(|probe| (probe.site.clone(), probe.source_index.unwrap_or(0)))
+            .map(|probe| (probe.site.clone(), probe.source_index))
     })
 }
 
@@ -2526,6 +2526,43 @@ fn finish_proof_site_expansion_capture(
     } else {
         Ok(())
     }
+}
+
+fn record_proof_site_tactic_expansion(
+    site: &ProofSite,
+    source_index: usize,
+    tactics: &[ProofTactic],
+) {
+    TACTIC_EXPANSION_PROBE.with(|probe| {
+        let mut slot = probe.borrow_mut();
+        let Some(probe) = slot.as_mut() else {
+            return;
+        };
+        if probe.site != *site || probe.source_index != Some(source_index) {
+            return;
+        }
+        probe.active = true;
+        match &mut probe.result {
+            None => probe.result = Some(Ok(tactics.to_vec())),
+            Some(Ok(existing)) if existing == tactics => {}
+            Some(Ok(_)) => {
+                probe.result = Some(Err(
+                    "selected tactic expands differently across proof obligations".to_string(),
+                ));
+            }
+            Some(Err(_)) => {}
+        }
+    });
+}
+
+fn selected_tactic_index_for_site(site: &ProofSite) -> Option<usize> {
+    TACTIC_EXPANSION_PROBE.with(|probe| {
+        probe
+            .borrow()
+            .as_ref()
+            .filter(|probe| probe.site == *site)
+            .and_then(|probe| probe.source_index)
+    })
 }
 
 fn proof_site_for_claims(
@@ -2596,6 +2633,16 @@ fn finish_tactic_expansion_capture(surface_replay: &SurfaceReplay) -> ClickError
 
 fn tactic_expansion_capture_is_active() -> bool {
     TACTIC_EXPANSION_PROBE.with(|probe| probe.borrow().as_ref().is_some_and(|probe| probe.active))
+}
+
+fn tactic_expansion_capture_matches(site: Option<&ProofSite>, source_index: usize) -> bool {
+    TACTIC_EXPANSION_PROBE.with(|probe| {
+        probe.borrow().as_ref().is_some_and(|probe| {
+            probe.active
+                && site == Some(&probe.site)
+                && probe.source_index == Some(source_index)
+        })
+    })
 }
 
 #[derive(Clone)]
@@ -4784,18 +4831,26 @@ fn verify_execution_proofs_forward(
                     &claim_label,
                     initialization_path_certificates,
                 )?;
-                finish_proof_site_expansion_capture(
-                    &ProofSite::LoopPhase {
-                        function_name: environment
-                            .function_block
-                            .signature()
-                            .name()
-                            .to_string(),
-                        loop_index,
-                        phase: "initialize",
-                    },
-                    &initialization_certificate,
-                )?;
+                let site = ProofSite::LoopPhase {
+                    function_name: environment
+                        .function_block
+                        .signature()
+                        .name()
+                        .to_string(),
+                    loop_index,
+                    phase: "initialize",
+                };
+                if let Some(source_index) = selected_tactic_index_for_site(&site)
+                    && let Some((_, Proof::Script(source_tactics))) = initialization_proof
+                    && matches!(source_tactics.get(source_index), Some(ProofTactic::Simp))
+                {
+                    record_proof_site_tactic_expansion(
+                        &site,
+                        source_index,
+                        initialization_certificate.tactics(),
+                    );
+                }
+                finish_proof_site_expansion_capture(&site, &initialization_certificate)?;
             }
             if !preservation_path_certificates.is_empty() {
                 let claim_label = format!(
@@ -4826,6 +4881,14 @@ fn verify_execution_proofs_forward(
                         .to_string(),
                     region: CodeRegion::Loop(loop_index),
                     item_index,
+                    kind: environment
+                        .function_block
+                        .structural_clauses()
+                        .iter()
+                        .find(|clause| clause.region() == &CodeRegion::Loop(loop_index))
+                        .and_then(|clause| clause.items().get(item_index))
+                        .map(StructuralItem::kind)
+                        .expect("effect certificate site should name a structural item"),
                 };
                 let certificate =
                     merge_path_aligned_certificates(&site.description(), paths)?;
@@ -4937,6 +5000,7 @@ fn split_execution_proof_branch_contexts(
 
 #[allow(clippy::too_many_arguments)]
 fn plan_point_pure_goal_certificate(
+    proof_site: &ProofSite,
     proposition: &ClickProposition,
     proof: &Proof,
     claim_label: &str,
@@ -5055,7 +5119,7 @@ fn plan_point_pure_goal_certificate(
             .surface_propositions
             .record_lowering(&unfolded_surface, &unfolded_fact)?;
     }
-    let proof = surface_simp_plan_proof(
+    let surface_proof = surface_simp_plan_proof(
         &mut surface_replay,
         state,
         available,
@@ -5067,7 +5131,7 @@ fn plan_point_pure_goal_certificate(
         &plan,
         &unfolded_predicates,
     )?;
-    let Proof::Script(tactics) = proof else {
+    let Proof::Script(tactics) = surface_proof else {
         return Err(ClickError::new(format!(
             "`{claim_label}` did not lower to an explicit proof script"
         )));
@@ -5077,6 +5141,27 @@ fn plan_point_pure_goal_certificate(
             "`{claim_label}` produced an invalid point-pure certificate: {error:?}"
         ))
     })?;
+    if matches!(proof_site, ProofSite::StructuralItem { .. })
+        && let Proof::Script(source_tactics) = proof
+    {
+        let source_index = TACTIC_EXPANSION_PROBE.with(|probe| {
+            probe
+                .borrow()
+                .as_ref()
+                .filter(|probe| probe.site == *proof_site)
+                .and_then(|probe| probe.source_index)
+        });
+        if let Some(source_index) = source_index
+            && matches!(source_tactics.get(source_index), Some(ProofTactic::Simp))
+            && source_index <= certificate.tactics().len()
+        {
+            record_proof_site_tactic_expansion(
+                proof_site,
+                source_index,
+                &certificate.tactics()[source_index..],
+            );
+        }
+    }
     Ok((fact, certificate))
 }
 
@@ -5125,15 +5210,22 @@ fn certify_structural_assertions(
             },
             context.state.clone(),
         );
-        for (assertion_index, (_, item)) in assertions.iter().enumerate() {
+        for (assertion_index, (item_index, item)) in assertions.iter().enumerate() {
             let proposition = item
                 .proposition()
                 .expect("assert structural item should contain a proposition");
             let claim_label = format!(
-                "{}.{region_label}.assert_{assertion_index}",
-                environment.function_block.signature().name()
+                "{}.{region_label}.assert_{}",
+                environment.function_block.signature().name(),
+                item_index
             );
             let (planned_fact, planned_certificate) = plan_point_pure_goal_certificate(
+                &ProofSite::StructuralItem {
+                    function_name: environment.function_block.signature().name().to_string(),
+                    region,
+                    item_index: *item_index,
+                    kind: item.kind(),
+                },
                 proposition,
                 item.proof(),
                 &claim_label,
@@ -5193,6 +5285,7 @@ fn certify_structural_assertions(
             function_name: environment.function_block.signature().name().to_string(),
             region,
             item_index: *item_index,
+            kind: StructuralItemKind::Assert,
         };
         let certificate =
             merge_path_aligned_certificates(&site.description(), certificates)?;
@@ -5341,6 +5434,15 @@ fn verify_loop_initialization_pure_proof(
                 let invariant_claim_label =
                     format!("{claim_label} (loop {loop_index} invariant {invariant_index} entry)");
                 let direct_plan = plan_point_pure_goal_certificate(
+                    &ProofSite::LoopPhase {
+                        function_name: environment
+                            .function_block
+                            .signature()
+                            .name()
+                            .to_string(),
+                        loop_index,
+                        phase: "initialize",
+                    },
                     proposition,
                     proof,
                     &invariant_claim_label,
@@ -5452,6 +5554,27 @@ fn verify_loop_initialization_pure_proof(
             let mut replay_available = context.pure_facts.clone();
             let invariant_start = certificate.tactics().len() - invariant_items.len();
             for (certificate_index, tactic) in certificate.tactics().iter().enumerate() {
+                if certificate_index < invariant_start
+                    && let ProofTactic::UnfoldPredicate(name) = tactic
+                {
+                    if environment.predicate_environment.get(name).is_none() {
+                        return Err(ClickError::new(format!(
+                            "`{claim_label}` certificate step {certificate_index} names unknown predicate `{name}`"
+                        )));
+                    }
+                    replay_available = unfold_available_predicate_facts(
+                        environment.predicate_environment,
+                        environment.click_function_environment,
+                        std::slice::from_ref(name),
+                        &replay_available,
+                    )
+                    .map_err(|message| {
+                        ClickError::new(format!(
+                            "`{claim_label}` certificate step {certificate_index}: {message}"
+                        ))
+                    })?;
+                    continue;
+                }
                 let ProofTactic::Have(have) = tactic else {
                     return Err(ClickError::new(format!(
                         "`{claim_label}` certificate step {certificate_index} is not a pure `have`"
@@ -5701,6 +5824,7 @@ fn verify_structural_effect_proof(
         function_name: environment.function_block.signature().name().to_string(),
         region: CodeRegion::Loop(loop_index),
         item_index,
+        kind: item.kind(),
     };
     let claim_label = site.description();
     let certificate = match item.proof() {
@@ -5911,8 +6035,15 @@ fn verify_one_loop_preservation_proof(
             }
             vec![ProofTactic::CloseInvariants]
         };
-        if context.replay.region_simp.is_some()
-            && tactic_expansion_capture_is_active()
+        if context
+            .replay
+            .region_simp
+            .is_some_and(|(_, source_index)| {
+                tactic_expansion_capture_matches(
+                    context.replay.proof_site.as_ref(),
+                    source_index,
+                )
+            })
         {
             let capture = SurfaceReplay {
                 tactics: closer_tactics.clone(),
@@ -6049,11 +6180,12 @@ fn verify_one_loop_preservation_proof(
     let effect_certificates = effect_items
         .iter()
         .zip(effect_certificate_paths)
-        .map(|((item_index, _), paths)| {
+        .map(|((item_index, item), paths)| {
             let site = ProofSite::StructuralItem {
                 function_name: environment.function_block.signature().name().to_string(),
                 region: CodeRegion::Loop(loop_index),
                 item_index: *item_index,
+                kind: item.kind(),
             };
             Ok((
                 *item_index,

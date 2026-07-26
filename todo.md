@@ -15,11 +15,11 @@ The intended invariant is:
 > tactics. Successful automation must produce a checked, replayable surface
 > certificate. There must not be a second class of internal-only simple tactics.
 
-This document covers the remaining work for that claim-source boundary. Pure
-theorem proofs, loop `initialize`/`preserve` proofs, and structural-item proofs
-also use the tactic language, but `CProofClaim` cannot select or rewrite them.
-They are a follow-up source-expansion boundary and must not be included in a
-claim that `click-expand` covers every proof-bearing construct in Click.
+The original claim-only selector has been replaced by one shared `ProofSite`
+identity. Pure theorem proofs, loop `initialize`/`preserve` proofs, structural
+assertions, and structural effects now retain and rewrite the same replayed
+`TacticCertificate` used for verification. Omitted loop phases use distinct
+coordinates on the `for loop(...)` header and are inserted canonically.
 
 The certificate foundation, printer, public API, and initial CLI already exist.
 
@@ -72,7 +72,7 @@ The following items remain before that statement is true globally:
   their lowering/checking as proof plumbing. Region `invariant` items do not
   own proofs; their initialization/preservation obligations remain tracked by
   the loop-phase items above.
-- [ ] **Structural effect items.** Make `immutable`, `mutable`, and step-effect
+- [x] **Structural effect items.** Make `immutable`, `mutable`, and step-effect
   `frame`/`auto` proofs produce explicit effect-obligation certificates.
   Back-edge effect validation should use the same explicit-obligation boundary
   as invariant preservation.
@@ -89,13 +89,13 @@ The following items remain before that statement is true globally:
 - [x] **Remove loop dummy-claim scaffolding.** Execute loop-region certificates
   against their real invariant/effect obligation bundle rather than a dummy
   `0 == 0` ensure followed by a separate semantic check.
-- [ ] **Source selection for every proof surface.** Extend the source selector
+- [x] **Source selection for every proof surface.** Extend the source selector
   beyond `CProofClaim` so theorem ensures, loop `initialize`/`preserve`, and
   structural-item proofs can be selected and rewritten. Profiler locations
   must never point at a tactic that `click-expand` cannot select.
-  The locator now recognizes all of these surfaces, and pure theorem source
-  rewriting is complete; loop and structural rewriting remain blocked until
-  those surfaces retain replayed certificates.
+  The locator and rewriter now share `ProofSite`; explicit and omitted loop
+  phases, structural assertions, and whole/step structural effects have
+  rewrite-and-reverify regressions.
 - [x] **Canonical omitted-proof rewriting.** Allow omitted/default proofs to be
   replaced by canonical `by { ... }` source; this is already a known bug for
   selectable ensures/effects and will also be required by the new proof

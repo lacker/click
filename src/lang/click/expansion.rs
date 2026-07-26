@@ -54,6 +54,9 @@ pub fn expand_c0_claim_source(
                 .is_some_and(|character| !character.is_whitespace());
             format!("{}{replacement}", if separator { " " } else { "" })
         }
+        ProofSourceEdit::OmittedLoopPhase { .. } => {
+            unreachable!("function claim edits are never loop phases")
+        }
     };
     let mut expanded =
         String::with_capacity(click_source.len() - (span.end - span.start) + replacement.len());
@@ -133,6 +136,10 @@ pub fn expand_c0_tactic_source_at(
                         .is_some_and(|character| !character.is_whitespace());
                     format!("{}{replacement}", if separator { " " } else { "" })
                 }
+                ProofSourceEdit::OmittedLoopPhase { phase, .. } => {
+                    let replacement = replacement.replace('\n', "\n    ");
+                    format!("    {phase} {replacement}\n")
+                }
             };
             (span, replacement)
         }
@@ -178,6 +185,9 @@ fn expand_pure_theorem_source(
                 .next_back()
                 .is_some_and(|character| !character.is_whitespace());
             format!("{}{replacement}", if separator { " " } else { "" })
+        }
+        ProofSourceEdit::OmittedLoopPhase { .. } => {
+            unreachable!("theorem ensure edits are never loop phases")
         }
     };
     let mut expanded =
@@ -439,6 +449,9 @@ fn find_claim_proof_span(
         ProofSourceEdit::DefaultTerminator { .. } => Err(ClickError::new(format!(
             "selected {claim:?} uses a default proof and has no explicit source tactic"
         ))),
+        ProofSourceEdit::OmittedLoopPhase { .. } => {
+            unreachable!("function claim edits are never loop phases")
+        }
     }
 }
 
@@ -446,19 +459,27 @@ fn find_claim_proof_span(
 enum ProofSourceEdit {
     Explicit(Range<usize>),
     DefaultTerminator { span: Range<usize>, selector: usize },
+    OmittedLoopPhase {
+        span: Range<usize>,
+        selector: usize,
+        phase: &'static str,
+    },
 }
 
 impl ProofSourceEdit {
     fn span(&self) -> &Range<usize> {
         match self {
-            Self::Explicit(span) | Self::DefaultTerminator { span, .. } => span,
+            Self::Explicit(span)
+            | Self::DefaultTerminator { span, .. }
+            | Self::OmittedLoopPhase { span, .. } => span,
         }
     }
 
     fn selector(&self) -> usize {
         match self {
             Self::Explicit(span) => span.start,
-            Self::DefaultTerminator { selector, .. } => *selector,
+            Self::DefaultTerminator { selector, .. }
+            | Self::OmittedLoopPhase { selector, .. } => *selector,
         }
     }
 }
@@ -538,6 +559,7 @@ pub(super) enum ProofSite {
         function_name: String,
         region: CodeRegion,
         item_index: usize,
+        kind: StructuralItemKind,
     },
 }
 
@@ -561,7 +583,21 @@ impl ProofSite {
                 function_name,
                 region,
                 item_index,
-            } => format!("function `{function_name}` {region:?} item {item_index}"),
+                kind,
+            } => {
+                let region = match region {
+                    CodeRegion::Function => "function".to_string(),
+                    CodeRegion::Loop(index) => format!("loop({index})"),
+                    CodeRegion::Statement(index) => format!("statement({index})"),
+                };
+                let kind = match kind {
+                    StructuralItemKind::Invariant => "invariant",
+                    StructuralItemKind::Assert => "assert",
+                    StructuralItemKind::Effect => "effect",
+                    StructuralItemKind::StepEffect => "step_effect",
+                };
+                format!("{function_name}.{region}.{kind}_{item_index}")
+            }
         }
     }
 }
@@ -615,19 +651,21 @@ fn locate_source_tactic(
                 ("initialize", clause.initialize_proof()),
                 ("preserve", clause.preserve_proof()),
             ] {
-                let Some(proof) = proof else {
-                    continue;
-                };
-                let (_, proof_span) =
+                let (selector, proof_span, insertion) =
                     find_loop_phase_proof_span(&tokens, &function, *loop_index, phase)?;
-                let proof_span = proof_span.ok_or_else(|| {
-                    ClickError::new(format!(
-                        "`{function_name}.loop({loop_index}).{phase}` has no source proof"
-                    ))
-                })?;
+                let default_proof = Proof::Default;
+                let proof = proof.unwrap_or(&default_proof);
+                let edit = proof_span.map_or_else(
+                    || ProofSourceEdit::OmittedLoopPhase {
+                        span: insertion..insertion,
+                        selector,
+                        phase,
+                    },
+                    ProofSourceEdit::Explicit,
+                );
                 if let Some(found) = locate_tactic_in_proof(
                     &tokens,
-                    &ProofSourceEdit::Explicit(proof_span),
+                    &edit,
                     proof,
                     wanted,
                     ProofSite::LoopPhase {
@@ -659,6 +697,7 @@ fn locate_source_tactic(
                         function_name: function_name.to_string(),
                         region: *clause.region(),
                         item_index,
+                        kind: item.kind(),
                     },
                 )? {
                     return Ok(found);
@@ -759,7 +798,8 @@ fn locate_tactic_in_proof(
                         edit: TacticSourceEdit::WholeProof(edit.clone()),
                     }))
             }
-            ProofSourceEdit::DefaultTerminator { .. } => {
+            ProofSourceEdit::DefaultTerminator { .. }
+            | ProofSourceEdit::OmittedLoopPhase { .. } => {
                 Ok((edit.selector() == wanted).then(|| LocatedSourceTactic {
                     site,
                     source_index: 0,
@@ -800,7 +840,8 @@ pub fn c0_tactic_source_position(
                 &tokens,
                 match &edit {
                     ProofSourceEdit::Explicit(span) => Some(span),
-                    ProofSourceEdit::DefaultTerminator { .. } => None,
+                    ProofSourceEdit::DefaultTerminator { .. }
+                    | ProofSourceEdit::OmittedLoopPhase { .. } => None,
                 },
                 Some(ensure.proof()),
                 edit.selector(),
@@ -843,7 +884,8 @@ pub fn c0_tactic_source_position(
                     &tokens,
                     match edit {
                         ProofSourceEdit::Explicit(span) => Some(span),
-                        ProofSourceEdit::DefaultTerminator { .. } => None,
+                        ProofSourceEdit::DefaultTerminator { .. }
+                        | ProofSourceEdit::OmittedLoopPhase { .. } => None,
                     },
                     Some(item.proof()),
                     edit.selector(),
@@ -869,7 +911,7 @@ pub fn c0_tactic_source_position(
                 } else {
                     clause.preserve_proof()
                 };
-                let (fallback, proof_span) =
+                let (fallback, proof_span, _) =
                     find_loop_phase_proof_span(&tokens, &function, loop_index, phase)?;
                 return proof_source_position(
                     click_source,
@@ -1027,7 +1069,7 @@ fn find_loop_phase_proof_span(
     function: &FunctionSource,
     wanted_loop: usize,
     phase: &str,
-) -> Result<(usize, Option<Range<usize>>), ClickError> {
+) -> Result<(usize, Option<Range<usize>>, usize), ClickError> {
     let mut depth = 0;
     let mut index = function.body_open + 1;
     while index < function.body_close {
@@ -1050,6 +1092,11 @@ fn find_loop_phase_proof_span(
                     && tokens.get(index + 4).map(|token| token.text.as_str()) == Some(")")
                     && tokens.get(open).map(|token| token.text.as_str()) == Some("{")
                 {
+                    let selector = if phase == "initialize" {
+                        tokens[index].span.start
+                    } else {
+                        tokens[index + 1].span.start
+                    };
                     let close = matching_delimiter(tokens, open, "{", "}")?;
                     let mut nested = 0;
                     for cursor in open + 1..close {
@@ -1064,14 +1111,19 @@ fn find_loop_phase_proof_span(
                                     )));
                                 }
                                 return Ok((
-                                    tokens[index].span.start,
+                                    selector,
                                     Some(proof_span(tokens, by)?),
+                                    tokens[close].span.start,
                                 ));
                             }
                             _ => {}
                         }
                     }
-                    return Ok((tokens[index].span.start, None));
+                    return Ok((
+                        selector,
+                        None,
+                        tokens[close].span.start,
+                    ));
                 }
             }
             _ => {}
@@ -1977,6 +2029,115 @@ int32 count(int32 n) {
             assert!(expanded.contains("frame();"));
             verify_c0_sources(&expanded, &[("count.c", c_source)])
                 .expect("expanded structural effect certificate should re-verify");
+        }
+
+        let omitted = r#"verifying "count.c";
+int32 count(int32 n) {
+    for loop(0) {
+        invariant n == n;
+        immutable;
+    }
+    ensures result == result;
+}
+"#;
+        let position = c0_tactic_source_position(
+            omitted,
+            &[("count.c", c_source)],
+            "count.loop(0).effect_1",
+            0,
+        )
+        .expect("omitted structural effect should have a source coordinate");
+        let expanded = expand_c0_tactic_source_at(
+            omitted,
+            &[("count.c", c_source)],
+            position.line,
+            position.column,
+        )
+        .expect("omitted structural effect should expand");
+        assert!(expanded.contains("immutable by {\n"));
+        verify_c0_sources(&expanded, &[("count.c", c_source)])
+            .expect("expanded omitted structural effect should re-verify");
+    }
+
+    #[test]
+    fn expands_smart_tactics_inside_loop_initialization_and_structural_assertions() {
+        let c_source =
+            "int32 count(int32 n) { while (n > 0) { n = n - 1; } return n; }";
+        let click_source = r#"verifying "count.c";
+int32 count(int32 n) {
+    for loop(0) {
+        invariant n == n;
+        invariant n == n;
+        assert n == n by {
+            simp();
+        }
+        initialize by {
+            simp();
+        }
+        preserve by auto;
+    }
+    ensures result == result;
+}
+"#;
+        for needle in ["assert n == n by {\n            simp", "initialize by {\n            simp"] {
+            let offset = click_source.find(needle).unwrap() + needle.rfind("simp").unwrap();
+            let position = position_at_offset(click_source, offset);
+            let expanded = expand_c0_tactic_source_at(
+                click_source,
+                &[("count.c", c_source)],
+                position.line,
+                position.column,
+            )
+            .expect("point-pure smart tactic should expand at its source location");
+            assert_eq!(expanded.matches("simp();").count(), 1);
+            verify_c0_sources(&expanded, &[("count.c", c_source)]).unwrap_or_else(|error| {
+                panic!(
+                    "expanded point-pure tactic should re-verify: {}\n{expanded}",
+                    error.message()
+                )
+            });
+        }
+    }
+
+    #[test]
+    fn expands_omitted_loop_phase_proofs_at_distinct_coordinates() {
+        let c_source =
+            "int32 count(int32 n) { while (n > 0) { n = n - 1; } return n; }";
+        let click_source = r#"verifying "count.c";
+int32 count(int32 n) {
+    for loop(0) {
+        invariant n == n;
+    }
+    ensures result == result;
+}
+"#;
+        let initialize = c0_tactic_source_position(
+            click_source,
+            &[("count.c", c_source)],
+            "count.loop(0).initialize",
+            0,
+        )
+        .expect("omitted initialization should have a selector coordinate");
+        let preserve = c0_tactic_source_position(
+            click_source,
+            &[("count.c", c_source)],
+            "count.loop(0).preserve",
+            0,
+        )
+        .expect("omitted preservation should have a selector coordinate");
+        assert_ne!(initialize, preserve);
+
+        for position in [initialize, preserve] {
+            let expanded = expand_c0_tactic_source_at(
+                click_source,
+                &[("count.c", c_source)],
+                position.line,
+                position.column,
+            )
+            .expect("omitted loop phase should expand to an inserted certificate");
+            assert!(expanded.contains(" by {\n"));
+            verify_c0_sources(&expanded, &[("count.c", c_source)])
+                .expect("inserted loop-phase certificate should re-verify");
         }
     }
 

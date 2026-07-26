@@ -2059,7 +2059,7 @@ pub fn verify_c0_sources(
 fn tactic_expansion_required_functions(
     file: &ClickFile,
     parsed_sources: &BTreeMap<String, (String, syntax::C0Function)>,
-    (site, tactic_index): (ProofSite, usize),
+    (site, tactic_index): (ProofSite, Option<usize>),
 ) -> Result<BTreeSet<String>, ClickError> {
     let ProofSite::FunctionClaim {
         function_name,
@@ -2072,6 +2072,11 @@ fn tactic_expansion_required_functions(
             .map(|function| function.signature().name().to_string())
             .collect());
     };
+    let tactic_index = tactic_index.ok_or_else(|| {
+        ClickError::new(format!(
+            "whole-proof capture is not supported for function claim {claim:?}"
+        ))
+    })?;
     let function_block = file
         .function_blocks()
         .iter()
@@ -2605,14 +2610,10 @@ fn validate_region_proof_clauses(
             } else if item.kind() == StructuralItemKind::Invariant {
                 debug_assert!(item.proof().is_auto_tactic());
             } else if !item.proof().is_auto_tactic()
-                && !matches!(
-                    item.proof(),
-                    Proof::Script(tactics)
-                        if TacticCertificate::from_proof_tactics(tactics).is_ok()
-                )
+                && !matches!(item.proof(), Proof::Script(_))
             {
                 return Err(ClickError::new(
-                    "`assert` structural clauses must use the default prover, `by auto;`, or a surface certificate",
+                    "`assert` structural clauses must use the default prover, `by auto;`, or a supported pure proof script",
                 ));
             }
             if item.kind() == StructuralItemKind::Assert
