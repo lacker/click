@@ -200,7 +200,27 @@ int32 owned_string_push(struct owned_string* owner, int32 value) {
     execute_step();
     execute_step();
     execute_step();
-    execute_step();
+    step using {
+        fact at(statement(0).entry, (load_int32(owner) + 1)) < at(statement(0).entry, load_int32((owner + 1)));
+        fact separate(memory(owner[0..1]), memory(owner[1..2]));
+        fact separate(memory(owner[0..1]), memory(owner[2..4]));
+        fact separate(memory(owner[0..1]), memory(load_int32_pointer((owner + 2))[0..load_int32((owner + 1))]));
+        fact separate(memory(owner[1..2]), memory(owner[2..4]));
+        fact separate(memory(owner[1..2]), memory(load_int32_pointer((owner + 2))[0..load_int32((owner + 1))]));
+        fact separate(memory(owner[2..4]), memory(load_int32_pointer((owner + 2))[0..load_int32((owner + 1))]));
+        fact contains(owned_string(owner), memory(owner[0..1]));
+        fact contains(owned_string(owner), memory(owner[1..2]));
+        fact contains(owned_string(owner), memory(owner[2..4]));
+        fact contains(owned_string(owner), memory(load_int32_pointer((owner + 2))[0..load_int32((owner + 1))]));
+        fact loadable(old(owner[0..1]));
+        fact loadable(old(owner[1..2]));
+        fact loadable(old(owner[2..4]));
+        fact loadable(old(load_int32_pointer((owner + 2))[0..load_int32((owner + 1))]));
+        fact at(statement(0).entry, 0) <= at(statement(0).entry, load_int32(owner));
+        fact at(statement(0).entry, load_int32(owner)) < at(statement(0).entry, load_int32((owner + 1)));
+        fact terminated_at(at(statement(0).entry, load_int32_pointer((owner + 2))), at(statement(0).entry, load_int32(owner)));
+        fact separate(memory(owner[0..4]), memory(load_int32_pointer((owner + 2))[0..load_int32((owner + 1))]));
+    }
     execute_step();
     execute_step();
     have terminated_at(owner->data, owner->len) by {
