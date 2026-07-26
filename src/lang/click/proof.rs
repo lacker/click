@@ -5468,28 +5468,53 @@ fn prove_pure_proposition_case_at_point(
                 let mut prepared_derivation_lowering_facts = None;
                 if let ProofTactic::Derive(derive) | ProofTactic::Calculate(derive) = tactic {
                     let mut lowering_facts = facts_for_direct_derivation_lowering(&available);
-                    for premise in &derive.premises {
-                        let lowered = lower_point_proposition_with_values(
-                            premise,
-                            &lowering_facts,
-                            values.clone(),
-                            &array_refs,
-                            pre_state,
-                            state,
-                            result,
-                            program_point_states,
-                            predicate_environment,
-                            click_function_environment,
-                        )
-                        .map_err(|message| {
-                            ClickError::new(format!(
+                    let mut unresolved = derive.premises.iter().collect::<Vec<_>>();
+                    while !unresolved.is_empty() {
+                        let mut next = Vec::new();
+                        let prior_fact_count = lowering_facts.len();
+                        for premise in unresolved {
+                            match lower_point_proposition_with_values(
+                                premise,
+                                &lowering_facts,
+                                values.clone(),
+                                &array_refs,
+                                pre_state,
+                                state,
+                                result,
+                                program_point_states,
+                                predicate_environment,
+                                click_function_environment,
+                            ) {
+                                Ok(lowered) => {
+                                    if !lowering_facts.contains(&lowered) {
+                                        lowering_facts.push(lowered);
+                                    }
+                                }
+                                Err(_) => next.push(premise),
+                            }
+                        }
+                        if lowering_facts.len() == prior_fact_count && !next.is_empty() {
+                            let premise = next[0];
+                            let message = lower_point_proposition_with_values(
+                                premise,
+                                &lowering_facts,
+                                values.clone(),
+                                &array_refs,
+                                pre_state,
+                                state,
+                                result,
+                                program_point_states,
+                                predicate_environment,
+                                click_function_environment,
+                            )
+                            .map(|_| unreachable!("stalled premise should still fail"))
+                            .unwrap_err();
+                            return Err(ClickError::new(format!(
                                 "`{claim_label}` {proof_name} proof {outer_tactic_index}: could not lower `{}` premise: {message}",
                                 tactic_name(tactic)
-                            ))
-                        })?;
-                        if !lowering_facts.contains(&lowered) {
-                            lowering_facts.push(lowered);
+                            )));
                         }
+                        unresolved = next;
                     }
                     prepared_derivation_lowering_facts = Some(lowering_facts);
                 }
@@ -9514,8 +9539,13 @@ fn replay_linear_tactics(
                 // below is still restricted to explicit premises plus
                 // certified frame context.
                 let lowering_facts = requirement_pure_facts.as_slice();
-                let direct_lowering_facts =
+                let mut direct_lowering_facts =
                     facts_for_direct_surface_lowering(&requirement_pure_facts);
+                for premise in &explicit_premises {
+                    if !direct_lowering_facts.contains(premise) {
+                        direct_lowering_facts.push(premise.clone());
+                    }
+                }
                 let source = if let Some(recorded) = replay
                     .surface_propositions
                     .available_kernel(surface_source, &requirement_pure_facts)
