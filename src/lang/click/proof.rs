@@ -7419,12 +7419,33 @@ fn synthesize_surface_pointer_offset(
                 value_type: CType::Int32Pointer,
             }))
         }
+        PointerOffsetTerm::Add(left, right) => {
+            let indexed_pointer = |base: &PointerOffsetTerm, byte_offset: &PointerOffsetTerm| {
+                let PointerOffsetTerm::Constant(byte_offset) = byte_offset else {
+                    return None;
+                };
+                if byte_offset % 4 != 0 {
+                    return None;
+                }
+                let ContractExpression::CFragment(base) =
+                    synthesize_surface_pointer_offset(base, parameters, arguments, state)?
+                else {
+                    return None;
+                };
+                Some(ContractExpression::CFragment(CExpression::Add(
+                    Box::new(base),
+                    Box::new(CExpression::Value(CValue::Int32(
+                        Bitvector32Term::Constant((byte_offset / 4) as u32),
+                    ))),
+                )))
+            };
+            indexed_pointer(left, right).or_else(|| indexed_pointer(right, left))
+        }
         PointerOffsetTerm::Int32Scaled { value, byte_width } if matches!(*byte_width, 1 | 4) => {
             synthesize_surface_bitvector(value, parameters, arguments, state)
         }
         PointerOffsetTerm::Constant(_)
         | PointerOffsetTerm::Variable(_)
-        | PointerOffsetTerm::Add(_, _)
         | PointerOffsetTerm::Int32Scaled { .. } => None,
     }
 }
@@ -7860,8 +7881,7 @@ fn lower_surface_candidate_at_point(
     let values = parameter_values(parameters, arguments)?;
     let array_refs = array_refs_for_parameters(parameters, &values, state.memory());
     let (mut values, array_refs) = contract_environment_at_state(&values, &array_refs, state);
-    let assumptions =
-        assumptions_from_propositions(available).allow_symbolic_contract_loads();
+    let assumptions = assumptions_from_propositions(available).allow_symbolic_contract_loads();
     let mut next_variable = 2_000_000;
     let mut active_functions = BTreeSet::new();
     lower_outcome_proposition_with_environment(

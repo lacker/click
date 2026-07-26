@@ -3712,6 +3712,71 @@ fn source_expander_preserves_pointer_spelling_inside_smart_have() {
 }
 
 #[test]
+fn source_expander_spells_an_indexed_load_through_a_pointer_field() {
+    let c_source = r#"
+            struct holder {
+                int32* data;
+            };
+
+            int32 holder_read(struct holder* owner, int32 data[], int32 value) {
+                return 0;
+            }
+        "#;
+    let click_source = r#"
+            verifying "holder.c";
+
+            predicate second_is(struct holder* owner, int32 value) {
+                (owner->data)[1] == value
+            }
+
+            int32 holder_read(
+                struct holder* owner,
+                int32 data[],
+                int32 value
+            ) {
+                requires owner->data == data;
+                requires second_is(owner, value);
+                views owner[0..2];
+                views data[1..2];
+                immutable;
+                ensures result == 0;
+            } by {
+                unfold(second_is);
+                have data[1] == value by {
+                    simp();
+                }
+                execute_rest();
+                frame();
+                simp();
+            }
+        "#;
+    let have_offset = click_source
+        .find("have data[1] == value")
+        .expect("proof should contain the selected indexed have");
+    let line = click_source[..have_offset]
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count()
+        + 1;
+    let column = have_offset
+        - click_source[..have_offset]
+            .rfind('\n')
+            .map(|offset| offset + 1)
+            .unwrap_or(0)
+        + 1;
+
+    let expanded =
+        expand_c0_tactic_source_at(click_source, &[("holder.c", c_source)], line, column)
+            .expect("the indexed pointer-field fact should have a surface spelling");
+    assert!(
+        expanded.contains("load_int32_pointer(owner)[1] == value"),
+        "{expanded}"
+    );
+    verify_c0_sources(&expanded, &[("holder.c", c_source)])
+        .expect("the indexed pointer-field expansion should replay");
+}
+
+#[test]
 fn smart_have_uses_transport_planned_at_the_mutation_boundary() {
     let c_source = r#"
             int32 set_second_return_first(int32 p[2]) {
