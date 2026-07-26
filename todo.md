@@ -54,7 +54,7 @@ invariant applies to every proof surface:
 
 The following items remain before that statement is true globally:
 
-- [ ] **Loop initialization.** Route explicit `initialize by auto`/`simp` and
+- [x] **Loop initialization.** Route explicit `initialize by auto`/`simp` and
   smart tactics inside initialization scripts through `TacticCertificate`.
   The certificate must prove every lowered invariant path and replay at the
   exact loop-entry snapshot.
@@ -111,6 +111,12 @@ The following items remain before that statement is true globally:
 
 Performance work remains subordinate to this invariant: a slow smart tactic
 may need a better planner, but it must not gain a non-certificate fast path.
+
+Loop initialization now builds one ordered certificate of invariant `have`
+proofs per incoming execution path, replays that certificate at the exact
+loop-entry snapshot, and accepts only the replayed facts. Certificates from
+different code paths are merged through their shared proof-condition tree;
+incompatible or missing branches are rejected rather than flattened.
 
 ## Current Implementation
 

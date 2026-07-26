@@ -971,6 +971,22 @@ pub fn c_loop_invariant_obligations_at_back_edge(
     .map_err(|error| format!("could not lower back-edge invariants: {error:?}"))
 }
 
+pub fn c_loop_invariant_obligations_at_entry(
+    state: &CState,
+    invariant_checks: &[CLoopInvariantCheck],
+    assumptions: &Assumptions,
+) -> Result<Vec<ProofObligation>, String> {
+    collect_invariant_check_obligations_without_search(
+        state,
+        state,
+        invariant_checks,
+        InvariantPhase::Entry,
+        assumptions,
+        &mut ExecutionBudget::default(),
+    )
+    .map_err(|error| format!("could not lower entry invariants: {error:?}"))
+}
+
 pub fn c_loop_effects_hold_at_back_edge(
     iteration_entry_state: &CState,
     state: &CState,

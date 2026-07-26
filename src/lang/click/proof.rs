@@ -777,6 +777,88 @@ mod certificate_tests {
         )
         .expect("failed replay must not mutate the shared proof inputs");
     }
+
+    #[test]
+    fn path_aligned_certificates_preserve_branch_structure() {
+        let condition = ClickProposition::Comparison {
+            left: ContractExpression::CFragment(CExpression::Variable("x".to_string())),
+            operator: ComparisonOperator::Equal,
+            right: ContractExpression::CFragment(CExpression::Value(int32(0))),
+        };
+        let assumption = TacticCertificate::from_proof_tactics(&[ProofTactic::Assumption])
+            .expect("assumption is a certificate");
+        let normalize = TacticCertificate::from_proof_tactics(&[ProofTactic::Normalize])
+            .expect("normalize is a certificate");
+
+        let merged = merge_path_aligned_certificates(
+            "branching",
+            vec![
+                PathCertificate {
+                    case_path: vec![ProofCaseChoice {
+                        condition: condition.clone(),
+                        value: true,
+                    }],
+                    certificate: assumption,
+                },
+                PathCertificate {
+                    case_path: vec![ProofCaseChoice {
+                        condition: condition.clone(),
+                        value: false,
+                    }],
+                    certificate: normalize,
+                },
+            ],
+        )
+        .expect("opposite path certificates should merge");
+
+        let [ProofTactic::If(proof_if)] = merged.tactics() else {
+            panic!("different path certificates should produce one proof branch");
+        };
+        assert_eq!(proof_if.condition, condition);
+        assert_eq!(proof_if.then_tactics, vec![ProofTactic::Assumption]);
+        assert_eq!(proof_if.else_tactics, vec![ProofTactic::Normalize]);
+    }
+
+    #[test]
+    fn path_aligned_certificates_reject_incompatible_frontiers() {
+        let condition = ClickProposition::Comparison {
+            left: ContractExpression::CFragment(CExpression::Variable("x".to_string())),
+            operator: ComparisonOperator::Equal,
+            right: ContractExpression::CFragment(CExpression::Value(int32(0))),
+        };
+        let other = ClickProposition::Comparison {
+            left: ContractExpression::CFragment(CExpression::Variable("y".to_string())),
+            operator: ComparisonOperator::Equal,
+            right: ContractExpression::CFragment(CExpression::Value(int32(0))),
+        };
+        let assumption = TacticCertificate::from_proof_tactics(&[ProofTactic::Assumption])
+            .expect("assumption is a certificate");
+        let normalize = TacticCertificate::from_proof_tactics(&[ProofTactic::Normalize])
+            .expect("normalize is a certificate");
+
+        let error = merge_path_aligned_certificates(
+            "branching",
+            vec![
+                PathCertificate {
+                    case_path: vec![ProofCaseChoice {
+                        condition,
+                        value: true,
+                    }],
+                    certificate: assumption,
+                },
+                PathCertificate {
+                    case_path: vec![ProofCaseChoice {
+                        condition: other,
+                        value: false,
+                    }],
+                    certificate: normalize,
+                },
+            ],
+        )
+        .expect_err("unrelated branch conditions must not be flattened together");
+
+        assert!(error.message().contains("incompatible next branch"));
+    }
 }
 
 struct ExpandedProofCase {
@@ -2799,6 +2881,7 @@ pub(super) fn verify_loop_execution_proofs(
         vec![ExecutionProofContext {
             state: entry_state,
             pure_facts: requirement_facts,
+            case_path: Vec::new(),
             next_opaque_call: 0,
             next_verification_variable: 0,
         }],
@@ -2837,8 +2920,112 @@ struct ExecutionProofEnvironment<'a> {
 struct ExecutionProofContext {
     state: CState,
     pure_facts: Vec<Proposition>,
+    case_path: Vec<ProofCaseChoice>,
     next_opaque_call: u64,
     next_verification_variable: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ProofCaseChoice {
+    condition: ClickProposition,
+    value: bool,
+}
+
+#[derive(Clone)]
+struct PathCertificate {
+    case_path: Vec<ProofCaseChoice>,
+    certificate: TacticCertificate,
+}
+
+fn merge_path_aligned_certificates(
+    claim_label: &str,
+    paths: Vec<PathCertificate>,
+) -> Result<TacticCertificate, ClickError> {
+    fn merge(
+        claim_label: &str,
+        mut paths: Vec<PathCertificate>,
+    ) -> Result<TacticCertificate, ClickError> {
+        let first = paths.first().ok_or_else(|| {
+            ClickError::new(format!(
+                "`{claim_label}` path-aligned certificate has no paths"
+            ))
+        })?;
+        if paths
+            .iter()
+            .all(|path| path.certificate == first.certificate)
+        {
+            return Ok(first.certificate.clone());
+        }
+        while paths.iter().all(|path| {
+            path.case_path.first() == paths.first().and_then(|first| first.case_path.first())
+        }) && paths
+            .first()
+            .is_some_and(|first| !first.case_path.is_empty())
+        {
+            for path in &mut paths {
+                path.case_path.remove(0);
+            }
+        }
+        if paths.iter().any(|path| path.case_path.is_empty()) {
+            return Err(ClickError::new(format!(
+                "`{claim_label}` path-aligned certificates disagree after one proof path has already joined"
+            )));
+        }
+        let condition = paths[0].case_path[0].condition.clone();
+        if paths
+            .iter()
+            .any(|path| path.case_path[0].condition != condition)
+        {
+            return Err(ClickError::new(format!(
+                "`{claim_label}` path-aligned certificates have incompatible next branch conditions"
+            )));
+        }
+        let mut then_paths = Vec::new();
+        let mut else_paths = Vec::new();
+        for mut path in paths {
+            let choice = path.case_path.remove(0);
+            if choice.value {
+                then_paths.push(path);
+            } else {
+                else_paths.push(path);
+            }
+        }
+        if then_paths.is_empty() || else_paths.is_empty() {
+            return Err(ClickError::new(format!(
+                "`{claim_label}` path-aligned certificate is missing one branch of `{}`",
+                describe_click_proposition(&condition)
+            )));
+        }
+        let then_certificate = merge(claim_label, then_paths)?;
+        let else_certificate = merge(claim_label, else_paths)?;
+        TacticCertificate::from_proof_tactics(&[ProofTactic::If(ProofIf {
+            condition,
+            then_tactics: then_certificate.tactics().to_vec(),
+            else_tactics: else_certificate.tactics().to_vec(),
+        })])
+        .map_err(|error| {
+            ClickError::new(format!(
+                "`{claim_label}` merged an invalid path-aligned certificate: {error:?}"
+            ))
+        })
+    }
+
+    let mut unique = Vec::<PathCertificate>::new();
+    for path in paths {
+        if let Some(existing) = unique
+            .iter()
+            .find(|existing| existing.case_path == path.case_path)
+        {
+            if existing.certificate != path.certificate {
+                return Err(ClickError::new(format!(
+                    "`{claim_label}` produced different certificates for the same proof path"
+                )));
+            }
+        } else {
+            unique.push(path);
+        }
+    }
+    merge(claim_label, unique)
 }
 
 #[derive(Clone)]
@@ -4349,20 +4536,30 @@ fn verify_execution_proofs_forward(
                 .iter()
                 .find(|clause| clause.region() == &CodeRegion::Loop(loop_index));
             let explicit_tactics = loop_clause.and_then(explicit_loop_preservation_tactics);
-            let explicit_initialization = loop_clause
-                .and_then(StructuralClause::initialize_proof)
-                .filter(|proof| !proof.is_auto_tactic());
+            let default_initialization = Proof::Default;
+            let initialization_proof = loop_clause.map(|clause| {
+                (
+                    clause,
+                    clause.initialize_proof().unwrap_or(&default_initialization),
+                )
+            });
             let mut iteration_contexts = Vec::new();
+            let mut initialization_path_certificates = Vec::new();
             for (path_index, context) in contexts.iter().enumerate() {
                 let assumptions = assumptions_from_propositions(&context.pure_facts);
-                if let (Some(clause), Some(proof)) = (loop_clause, explicit_initialization) {
-                    verify_loop_initialization_pure_proof(
+                if let Some((clause, proof)) = initialization_proof {
+                    let certificate = verify_loop_initialization_pure_proof(
                         loop_index,
                         proof,
                         clause,
                         context,
+                        invariant_checks,
                         environment,
                     )?;
+                    initialization_path_certificates.push(PathCertificate {
+                        case_path: context.case_path.clone(),
+                        certificate,
+                    });
                 } else {
                     c_loop_invariants_hold_at_entry(&context.state, invariant_checks, &assumptions)
                         .map_err(|message| {
@@ -4407,10 +4604,20 @@ fn verify_execution_proofs_forward(
                     iteration_contexts.push(ExecutionProofContext {
                         state: preservation.state().clone(),
                         pure_facts,
+                        case_path: context.case_path.clone(),
                         next_opaque_call: context.next_opaque_call,
                         next_verification_variable: context.next_verification_variable,
                     });
                 }
+            }
+            if initialization_proof.is_some() {
+                let _initialization_certificate = merge_path_aligned_certificates(
+                    &format!(
+                        "{}.loop({loop_index}).initialize",
+                        environment.function_block.signature().name()
+                    ),
+                    initialization_path_certificates,
+                )?;
             }
 
             if kernel_statement_contains_loop(body) {
@@ -4436,7 +4643,7 @@ fn verify_execution_proofs_forward(
                 } else {
                     LoopPreservationSource::Automatic
                 },
-                explicit_initialization.is_some(),
+                initialization_proof.is_some(),
             )
         }
         CStatement::Return(_) => Ok(Vec::new()),
@@ -4495,6 +4702,14 @@ fn split_execution_proof_branch_contexts(
             let next = ExecutionProofContext {
                 state: context.state.clone(),
                 pure_facts: transition.pure_facts,
+                case_path: {
+                    let mut case_path = context.case_path.clone();
+                    case_path.push(ProofCaseChoice {
+                        condition: surface_c_condition(condition),
+                        value: transition.is_true,
+                    });
+                    case_path
+                },
                 next_opaque_call: context.next_opaque_call,
                 next_verification_variable: context.next_verification_variable,
             };
@@ -4832,6 +5047,7 @@ fn advance_execution_proof_statement(
                 CStatementOutcome::Normal(state) => advanced.push(ExecutionProofContext {
                     state,
                     pure_facts: transition.pure_facts,
+                    case_path: context.case_path.clone(),
                     next_opaque_call: context.next_opaque_call,
                     next_verification_variable: context.next_verification_variable,
                 }),
@@ -4858,8 +5074,9 @@ fn verify_loop_initialization_pure_proof(
     proof: &Proof,
     clause: &StructuralClause,
     context: &ExecutionProofContext,
+    invariant_checks: &[CLoopInvariantCheck],
     environment: &ExecutionProofEnvironment<'_>,
-) -> Result<(), ClickError> {
+) -> Result<TacticCertificate, ClickError> {
     let claim_label = format!(
         "{}.loop({loop_index}).initialize",
         environment.function_block.signature().name()
@@ -4872,40 +5089,211 @@ fn verify_loop_initialization_pure_proof(
         },
         context.state.clone(),
     );
-    let mut available = context.pure_facts.clone();
-    for (invariant_index, item) in clause
+    let invariant_items = clause
         .items()
         .iter()
         .filter(|item| item.kind() == StructuralItemKind::Invariant)
-        .enumerate()
-    {
-        let proposition = item
-            .proposition()
-            .expect("invariant region proof item should contain a proposition");
-        let fact = prove_pure_proposition_at_point(
-            proposition,
-            proof,
-            "initialize",
-            environment.theorem_environment,
-            &claim_label,
-            invariant_index,
-            &available,
-            environment.parsed_function.parameters(),
-            environment.arguments,
-            environment.initial_state,
-            &context.state,
-            None,
-            &program_point_states,
-            environment.predicate_environment,
-            environment.click_function_environment,
-            environment.function_block.requires(),
-            None,
-        )?;
-        if !available.contains(&fact) {
-            available.push(fact);
+        .collect::<Vec<_>>();
+    let (certificate, available) = pure_goal_certificate_gateway(
+        &claim_label,
+        || {
+            let mut planning_available = context.pure_facts.clone();
+            let mut tactics = Vec::new();
+            let entry_obligations = c_loop_invariant_obligations_at_entry(
+                &context.state,
+                invariant_checks,
+                &assumptions_from_propositions(&planning_available),
+            )
+            .map_err(|message| ClickError::new(format!("`{claim_label}`: {message}")))?;
+            for (invariant_index, item) in invariant_items.iter().enumerate() {
+                let proposition = item
+                    .proposition()
+                    .expect("invariant region proof item should contain a proposition");
+                let invariant_claim_label =
+                    format!("{claim_label} (loop {loop_index} invariant {invariant_index} entry)");
+                let direct_plan = plan_point_pure_goal_certificate(
+                    proposition,
+                    proof,
+                    &invariant_claim_label,
+                    invariant_index,
+                    &planning_available,
+                    environment.parsed_function.parameters(),
+                    environment.arguments,
+                    environment.initial_state,
+                    &context.state,
+                    &program_point_states,
+                    environment.predicate_environment,
+                    environment.click_function_environment,
+                    environment.surface_propositions,
+                );
+                let (planned_fact, planned_certificate) = match direct_plan {
+                    Ok(planned) => planned,
+                    Err(direct_error) => {
+                        let expected_context =
+                            format!("loop {loop_index} invariant {invariant_index} entry");
+                        let obligation = entry_obligations
+                            .iter()
+                            .find(|obligation| obligation.context() == Some(&expected_context))
+                            .ok_or_else(|| direct_error.clone())?;
+                        let unfolded_predicates =
+                            smart_simp_unfold_prefix(proof).ok_or_else(|| direct_error.clone())?;
+                        let derivation = minimal_proposition_derivation(
+                            obligation.proposition(),
+                            &planning_available,
+                        )
+                        .ok_or_else(|| direct_error.clone())?;
+                        let replay = TacticReplayState {
+                            surface_propositions: environment.surface_propositions.clone(),
+                            program_point_states: program_point_states.clone(),
+                            unfolded_predicates: unfolded_predicates.clone(),
+                            ..TacticReplayState::default()
+                        };
+                        let mut premise_kernels = Vec::new();
+                        for kernel in derivation
+                            .context_premises()
+                            .into_iter()
+                            .chain(planning_available.iter().cloned())
+                        {
+                            let mut conjuncts = Vec::new();
+                            atomic_conjuncts(&kernel, &mut conjuncts);
+                            premise_kernels.extend(conjuncts.into_iter().cloned());
+                        }
+                        let premises = premise_kernels
+                            .into_iter()
+                            .filter_map(|kernel| {
+                                checked_surface_fact_at_point(
+                                    &replay,
+                                    &kernel,
+                                    &planning_available,
+                                    environment.parsed_function.parameters(),
+                                    environment.arguments,
+                                    &context.state,
+                                    environment.predicate_environment,
+                                    environment.click_function_environment,
+                                )
+                                .ok()
+                            })
+                            .fold(Vec::new(), |mut premises, premise| {
+                                if !premises.contains(&premise) {
+                                    premises.push(premise);
+                                }
+                                premises
+                            });
+                        let mut certificate_tactics = unfolded_predicates
+                            .into_iter()
+                            .map(ProofTactic::UnfoldPredicate)
+                            .collect::<Vec<_>>();
+                        certificate_tactics.push(ProofTactic::Derive(ProofDerive {
+                            proposition: proposition.clone(),
+                            premises,
+                        }));
+                        let certificate =
+                            TacticCertificate::from_proof_tactics(&certificate_tactics).map_err(
+                                |error| {
+                                    ClickError::new(format!(
+                                        "`{invariant_claim_label}` produced an invalid guarded invariant certificate: {error:?}"
+                                    ))
+                                },
+                            )?;
+                        (obligation.proposition().clone(), certificate)
+                    }
+                };
+                tactics.push(ProofTactic::Have(ProofHave {
+                    proposition: proposition.clone(),
+                    proof: Proof::Script(planned_certificate.tactics().to_vec()),
+                }));
+                if !planning_available.contains(&planned_fact) {
+                    planning_available.push(planned_fact);
+                }
+            }
+            TacticCertificate::from_proof_tactics(&tactics).map_err(|error| {
+                ClickError::new(format!(
+                    "`{claim_label}` produced an invalid initialization certificate: {error:?}"
+                ))
+            })
+        },
+        |certificate| {
+            if certificate.tactics().len() < invariant_items.len() {
+                return Err(ClickError::new(format!(
+                    "`{claim_label}` certificate has only {} steps for {} invariants",
+                    certificate.tactics().len(),
+                    invariant_items.len()
+                )));
+            }
+            let mut replay_available = context.pure_facts.clone();
+            let invariant_start = certificate.tactics().len() - invariant_items.len();
+            for (certificate_index, tactic) in certificate.tactics().iter().enumerate() {
+                let ProofTactic::Have(have) = tactic else {
+                    return Err(ClickError::new(format!(
+                        "`{claim_label}` certificate step {certificate_index} is not a pure `have`"
+                    )));
+                };
+                let invariant_index = certificate_index.checked_sub(invariant_start);
+                if let Some(invariant_index) = invariant_index {
+                    let proposition = invariant_items[invariant_index]
+                        .proposition()
+                        .expect("invariant region proof item should contain a proposition");
+                    if &have.proposition != proposition {
+                        return Err(ClickError::new(format!(
+                            "`{claim_label}` certificate step {certificate_index} changed invariant {invariant_index}"
+                        )));
+                    }
+                }
+                let step_claim_label = invariant_index
+                    .map(|invariant_index| {
+                        format!(
+                            "{claim_label} (loop {loop_index} invariant {invariant_index} entry)"
+                        )
+                    })
+                    .unwrap_or_else(|| format!("{claim_label} prerequisite {certificate_index}"));
+                let fact = prove_pure_proposition_at_point(
+                    &have.proposition,
+                    &have.proof,
+                    "initialize",
+                    environment.theorem_environment,
+                    &step_claim_label,
+                    certificate_index,
+                    &replay_available,
+                    environment.parsed_function.parameters(),
+                    environment.arguments,
+                    environment.initial_state,
+                    &context.state,
+                    None,
+                    &program_point_states,
+                    environment.predicate_environment,
+                    environment.click_function_environment,
+                    environment.function_block.requires(),
+                    None,
+                )?;
+                if !replay_available.contains(&fact) {
+                    replay_available.push(fact);
+                }
+            }
+            Ok(replay_available)
+        },
+    )?;
+    let assumptions = assumptions_from_propositions(&available);
+    let obligations =
+        c_loop_invariant_obligations_at_entry(&context.state, invariant_checks, &assumptions)
+            .map_err(|message| ClickError::new(format!("`{claim_label}`: {message}")))?;
+    for obligation in obligations {
+        if !available.contains(obligation.proposition())
+            && materialization_equivalent_available_fact(obligation.proposition(), &available)
+                .is_none()
+            && quantified_replay_equivalent_available_fact(obligation.proposition(), &available)
+                .is_none()
+        {
+            return Err(ClickError::new(format!(
+                "`{claim_label}` replayed certificate did not produce invariant obligation{}: {:?}",
+                obligation
+                    .context()
+                    .map(|context| format!(" ({context})"))
+                    .unwrap_or_default(),
+                obligation.proposition()
+            )));
         }
     }
-    Ok(())
+    Ok(certificate)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -6032,6 +6420,11 @@ fn plan_smart_have_at_current_point(
         return Ok((fact, plan));
     }
     if materialization_equivalent_available_fact(&goal, &available).is_some() {
+        let plan = ProofReplayPlan::from_planned_tactics(&[ProofTactic::Assumption])
+            .expect("assumption is a simple replay tactic");
+        return Ok((fact, plan));
+    }
+    if quantified_replay_equivalent_available_fact(&goal, &available).is_some() {
         let plan = ProofReplayPlan::from_planned_tactics(&[ProofTactic::Assumption])
             .expect("assumption is a simple replay tactic");
         return Ok((fact, plan));
