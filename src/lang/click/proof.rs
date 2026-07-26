@@ -1139,6 +1139,55 @@ fn prove_pure_theorem_tactics(
                     &unfolded_predicates,
                 )?;
             }
+            ProofTactic::ApplyTheoremUsing {
+                application,
+                premises,
+            } => {
+                let explicit_premises = premises
+                    .iter()
+                    .map(|premise| {
+                        lower_pure_theorem_proposition(
+                            claim_label,
+                            premise,
+                            &context.values,
+                            &context.array_refs,
+                            &context.memory,
+                            predicate_environment,
+                            click_function_environment,
+                        )
+                    })
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(|message| {
+                        ClickError::new(format!(
+                            "`{claim_label}` tactic {tactic_index}: could not lower `apply using` premise: {message}"
+                        ))
+                    })?;
+                for premise in &explicit_premises {
+                    if !exact_fact_is_available(premise, &available) {
+                        return Err(ClickError::new(format!(
+                            "`{claim_label}` tactic {tactic_index}: `apply using` requires an unavailable exact premise: {premise:?}"
+                        )));
+                    }
+                }
+                let mut applied = apply_theorem_applications_to_available_with_lowering_context(
+                    theorem_environment,
+                    &[(tactic_index, application.clone())],
+                    claim_label,
+                    None,
+                    explicit_premises,
+                    Some(&available),
+                    &application_context,
+                    predicate_environment,
+                    click_function_environment,
+                    &unfolded_predicates,
+                )?;
+                for fact in available {
+                    if !applied.contains(&fact) {
+                        applied.push(fact);
+                    }
+                }
+                available = applied;
+            }
             ProofTactic::ExactPropositionDerivation(derivation) => {
                 let assumptions = assumptions_from_propositions(&available);
                 if derivation.conclusion() != &goal || !derivation.replay(&assumptions) {
@@ -5499,6 +5548,66 @@ fn prove_pure_proposition_case_at_point(
                     &unfolded_predicates,
                 )?;
             }
+            ProofTactic::ApplyTheoremUsing {
+                application,
+                premises,
+            } => {
+                let explicit_premises = premises
+                    .iter()
+                    .map(|premise| {
+                        lower_point_proposition_with_values(
+                            premise,
+                            &available,
+                            values.clone(),
+                            &array_refs,
+                            pre_state,
+                            state,
+                            result,
+                            program_point_states,
+                            predicate_environment,
+                            click_function_environment,
+                        )
+                    })
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(|message| {
+                        ClickError::new(format!(
+                            "`{claim_label}` {proof_name} proof {outer_tactic_index}, tactic {inner_tactic_index}: could not lower `apply using` premise: {message}"
+                        ))
+                    })?;
+                for premise in &explicit_premises {
+                    if !exact_fact_is_available(premise, &available) {
+                        return Err(ClickError::new(format!(
+                            "`{claim_label}` {proof_name} proof {outer_tactic_index}, tactic {inner_tactic_index}: `apply using` requires an unavailable exact premise: {premise:?}"
+                        )));
+                    }
+                }
+                let application_context = TheoremApplicationContext {
+                    values: &values,
+                    array_refs: &array_refs,
+                    pre_state,
+                    post_state: state,
+                    result,
+                    program_point_states,
+                };
+                let mut applied = apply_theorem_applications_to_available_with_lowering_context(
+                    theorem_environment,
+                    &[(inner_tactic_index, application.clone())],
+                    claim_label,
+                    path_index,
+                    explicit_premises,
+                    Some(&available),
+                    &application_context,
+                    predicate_environment,
+                    click_function_environment,
+                    &unfolded_predicates,
+                )?;
+                for available_fact in available {
+                    if !applied.contains(&available_fact) {
+                        applied.push(available_fact);
+                    }
+                }
+                available = applied;
+            }
             ProofTactic::Have(inner_have) => {
                 let inner_fact = prove_have_at_point(
                     inner_have,
@@ -9201,7 +9310,10 @@ fn record_surface_replay_tactic(
         ProofTactic::Have(have) => {
             match TacticCertificate::from_proof_tactics(std::slice::from_ref(tactic)) {
                 Ok(_) => replay.surface_replay.push(tactic.clone()),
-                Err(_) if smart_simp_unfold_prefix(&have.proof).is_some() => {
+                Err(_)
+                    if smart_simp_unfold_prefix(&have.proof).is_some()
+                        || have_proof_contains_smart_apply(&have.proof) =>
+                {
                     // The successful smart proof is lowered after it has
                     // produced its checked kernel fact.
                 }
@@ -9320,6 +9432,74 @@ fn smart_simp_unfold_prefix(proof: &Proof) -> Option<Vec<String>> {
         .collect()
 }
 
+fn have_proof_contains_smart_apply(proof: &Proof) -> bool {
+    let Proof::Script(tactics) = proof else {
+        return false;
+    };
+    tactics
+        .iter()
+        .any(|tactic| matches!(tactic, ProofTactic::ApplyTheorem(_)))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn surface_simp_plan_proof(
+    replay: &mut TacticReplayState,
+    state: &CState,
+    available: &[Proposition],
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    surface_goal: &ClickProposition,
+    plan: &ProofReplayPlan,
+    unfolded_predicates: &[String],
+) -> Result<Proof, ClickError> {
+    let proof = match plan.tactics() {
+        [ProofTactic::Assumption] => Proof::Script(vec![ProofTactic::Assumption]),
+        [ProofTactic::Normalize] => Proof::Script(vec![ProofTactic::Normalize]),
+        [ProofTactic::ExactPropositionDerivation(derivation)] => {
+            let (_, proof) = lower_surface_atomic_derivation(
+                replay,
+                derivation,
+                unfolded_predicates.is_empty().then_some(surface_goal),
+                available,
+                parameters,
+                arguments,
+                state,
+                predicate_environment,
+                click_function_environment,
+            )
+            .map_err(|error| {
+                ClickError::new(format!(
+                    "could not lower the planned smart proof certificate: {}",
+                    error.message()
+                ))
+            })?;
+            proof
+        }
+        _ => {
+            return Err(ClickError::new(
+                "smart proof planned an unexpected simp certificate",
+            ));
+        }
+    };
+    if unfolded_predicates.is_empty() {
+        return Ok(proof);
+    }
+    let mut tactics = unfolded_predicates
+        .iter()
+        .cloned()
+        .map(ProofTactic::UnfoldPredicate)
+        .collect::<Vec<_>>();
+    let Proof::Script(suffix) = proof else {
+        return Err(ClickError::new(
+            "planned smart proof certificate was not a tactic script",
+        ));
+    };
+    tactics.extend(suffix);
+    Ok(Proof::Script(tactics))
+}
+
 #[allow(clippy::too_many_arguments)]
 fn surface_smart_have_certificate(
     replay: &mut TacticReplayState,
@@ -9333,53 +9513,18 @@ fn surface_smart_have_certificate(
     plan: &ProofReplayPlan,
     unfolded_predicates: &[String],
 ) -> Result<TacticCertificate, ClickError> {
-    let proof = match plan.tactics() {
-        [ProofTactic::Assumption] => Proof::Script(vec![ProofTactic::Assumption]),
-        [ProofTactic::Normalize] => Proof::Script(vec![ProofTactic::Normalize]),
-        [ProofTactic::ExactPropositionDerivation(derivation)] => {
-            let (_, proof) = lower_surface_atomic_derivation(
-                replay,
-                derivation,
-                unfolded_predicates
-                    .is_empty()
-                    .then_some(&have.proposition),
-                available,
-                parameters,
-                arguments,
-                state,
-                predicate_environment,
-                click_function_environment,
-            )
-            .map_err(|error| {
-                ClickError::new(format!(
-                    "could not lower the planned smart `have` certificate: {}",
-                    error.message()
-                ))
-            })?;
-            proof
-        }
-        _ => {
-            return Err(ClickError::new(
-                "smart `have` planned an unexpected simp certificate",
-            ));
-        }
-    };
-    let proof = if unfolded_predicates.is_empty() {
-        proof
-    } else {
-        let mut tactics = unfolded_predicates
-            .iter()
-            .cloned()
-            .map(ProofTactic::UnfoldPredicate)
-            .collect::<Vec<_>>();
-        let Proof::Script(suffix) = proof else {
-            return Err(ClickError::new(
-                "planned smart `have` certificate was not a tactic script",
-            ));
-        };
-        tactics.extend(suffix);
-        Proof::Script(tactics)
-    };
+    let proof = surface_simp_plan_proof(
+        replay,
+        state,
+        available,
+        parameters,
+        arguments,
+        predicate_environment,
+        click_function_environment,
+        &have.proposition,
+        plan,
+        unfolded_predicates,
+    )?;
     let tactic = ProofTactic::Have(ProofHave {
         proposition: have.proposition.clone(),
         proof,
@@ -9389,6 +9534,123 @@ fn surface_smart_have_certificate(
             "smart `have` produced an invalid certificate: {error:?}"
         ))
     })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn surface_smart_apply_have_certificate(
+    replay: &mut TacticReplayState,
+    state: &CState,
+    available: &[Proposition],
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    theorem_environment: &TheoremEnvironment,
+    claim_label: &str,
+    tactic_index: usize,
+    have: &ProofHave,
+    goal: &Proposition,
+) -> Result<Option<TacticCertificate>, ClickError> {
+    if !have_proof_contains_smart_apply(&have.proof) {
+        return Ok(None);
+    }
+    let Proof::Script(tactics) = &have.proof else {
+        unreachable!("smart apply is represented by a proof script")
+    };
+    let mut planning_replay = replay.clone();
+    let mut planning_available = available.to_vec();
+    let mut surface_tactics = Vec::with_capacity(tactics.len());
+    for tactic in tactics {
+        match tactic {
+            ProofTactic::UnfoldPredicate(name) => {
+                planning_available = unfold_available_predicate_facts(
+                    predicate_environment,
+                    click_function_environment,
+                    std::slice::from_ref(name),
+                    &planning_available,
+                )
+                .map_err(|message| {
+                    ClickError::new(format!(
+                        "`{claim_label}` tactic {tactic_index}: could not plan smart `apply` after `unfold`: {message}"
+                    ))
+                })?;
+                if !planning_replay.unfolded_predicates.contains(name) {
+                    planning_replay.unfolded_predicates.push(name.clone());
+                }
+                surface_tactics.push(tactic.clone());
+            }
+            ProofTactic::ApplyTheorem(application) => {
+                let premises = plan_explicit_theorem_application(
+                    theorem_environment,
+                    application,
+                    claim_label,
+                    tactic_index,
+                    &planning_available,
+                    parameters,
+                    arguments,
+                    &planning_replay,
+                    state,
+                    predicate_environment,
+                    click_function_environment,
+                )?;
+                planning_available = apply_theorem_at_current_point(
+                    theorem_environment,
+                    application,
+                    claim_label,
+                    tactic_index,
+                    planning_available,
+                    parameters,
+                    arguments,
+                    planning_replay.execution_start_state(state),
+                    state,
+                    &planning_replay.program_point_states,
+                    predicate_environment,
+                    click_function_environment,
+                    &planning_replay.unfolded_predicates,
+                    None,
+                )?;
+                surface_tactics.push(ProofTactic::ApplyTheoremUsing {
+                    application: application.clone(),
+                    premises,
+                });
+            }
+            ProofTactic::Simp => {
+                let assumptions = assumptions_from_propositions(&planning_available);
+                let plan = plan_simp_certificate(goal, &assumptions).ok_or_else(|| {
+                    ClickError::new(format!(
+                        "`{claim_label}` tactic {tactic_index}: could not plan the `simp` suffix after smart `apply`"
+                    ))
+                })?;
+                let Proof::Script(lowered) = surface_simp_plan_proof(
+                    &mut planning_replay,
+                    state,
+                    &planning_available,
+                    parameters,
+                    arguments,
+                    predicate_environment,
+                    click_function_environment,
+                    &have.proposition,
+                    &plan,
+                    &[],
+                )?
+                else {
+                    unreachable!("surface simp lowering always returns a script")
+                };
+                surface_tactics.extend(lowered);
+            }
+            _ => surface_tactics.push(tactic.clone()),
+        }
+    }
+    let tactic = ProofTactic::Have(ProofHave {
+        proposition: have.proposition.clone(),
+        proof: Proof::Script(surface_tactics),
+    });
+    let certificate = TacticCertificate::from_proof_tactics(&[tactic]).map_err(|error| {
+        ClickError::new(format!(
+            "`{claim_label}` tactic {tactic_index}: smart `apply` inside `have` produced an invalid certificate: {error:?}"
+        ))
+    })?;
+    Ok(Some(certificate))
 }
 
 fn tactic_is_deferred_post_execution(tactic: &ProofTactic) -> bool {
@@ -11238,8 +11500,8 @@ fn replay_linear_tactics(
                 replay
                     .surface_propositions
                     .record_lowering(&have.proposition, &fact)?;
-                if let Some((_, plan)) = &smart_plan {
-                    let certificate = surface_smart_have_certificate(
+                let surface_certificate = if let Some((_, plan)) = &smart_plan {
+                    Some(surface_smart_have_certificate(
                         &mut replay,
                         &state,
                         &have_facts,
@@ -11250,7 +11512,24 @@ fn replay_linear_tactics(
                         have,
                         plan,
                         smart_unfolds.as_deref().unwrap_or(&[]),
-                    )?;
+                    )?)
+                } else {
+                    surface_smart_apply_have_certificate(
+                        &mut replay,
+                        &state,
+                        &have_facts,
+                        parsed_function.parameters(),
+                        arguments,
+                        predicate_environment,
+                        click_function_environment,
+                        theorem_environment,
+                        claim_label,
+                        tactic_index,
+                        have,
+                        &fact,
+                    )?
+                };
+                if let Some(certificate) = surface_certificate {
                     verify_surface_certificate(
                         ProofReplayContext {
                             state: state.clone(),

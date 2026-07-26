@@ -3884,6 +3884,61 @@ fn source_expander_lowers_smart_simp_inside_have() {
 }
 
 #[test]
+fn source_expander_lowers_smart_apply_inside_have() {
+    let c_source = r#"
+            int32 identity(int32 x) {
+                return x;
+            }
+        "#;
+    let click_source = r#"
+            theorem int32_reflexive(value: int32) {
+                ensures value == value by {
+                    simp();
+                }
+            }
+
+            verifying "identity.c";
+
+            int32 identity(int32 x) {
+                ensures result == x;
+            } by {
+                have x == x by {
+                    apply(int32_reflexive(x));
+                }
+                execute_rest();
+                simp();
+            }
+        "#;
+    let have_offset = click_source
+        .find("have x == x")
+        .expect("proof should contain the selected have");
+    let line = click_source[..have_offset]
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count()
+        + 1;
+    let column = have_offset
+        - click_source[..have_offset]
+            .rfind('\n')
+            .map(|offset| offset + 1)
+            .unwrap_or(0)
+        + 1;
+
+    let expanded =
+        expand_c0_tactic_source_at(click_source, &[("identity.c", c_source)], line, column)
+            .expect("the selected smart apply inside have should expand");
+    let expanded_have = &expanded[expanded
+        .find("have x == x")
+        .expect("expanded proof should retain the selected have")
+        ..expanded
+            .find("execute_rest()")
+            .expect("expanded proof should retain its suffix")];
+    assert!(expanded_have.contains("apply(int32_reflexive(x)) using {"));
+    verify_c0_sources(&expanded, &[("identity.c", c_source)])
+        .expect("the expanded smart apply inside have should replay");
+}
+
+#[test]
 fn source_expander_lowers_smart_simp_after_unfold_inside_have() {
     let c_source = r#"
             int32 identity(int32 x) {
