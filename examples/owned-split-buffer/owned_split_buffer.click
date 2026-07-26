@@ -236,7 +236,10 @@ int32 owned_split_buffer_pipeline(
         simp();
     }
     have data[0] == left_value by {
-        simp();
+        derive(data[0] == left_value) using {
+            fact at(statement(4).entry, *load_int32_pointer((owner + 2))) == at(statement(4).entry, left_value);
+            fact load_int32_pointer((owner + 2)) == data;
+        }
     }
     have 1 < load_int32((owner + 1)) by {
         calculate(1 < *(owner + 1)) using {
