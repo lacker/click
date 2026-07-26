@@ -8710,7 +8710,7 @@ fn record_surface_replay_tactic(
                     if surface_available.contains(&fact) {
                         continue;
                     }
-                    record_surface_smart_have(
+                    match surface_smart_have_certificate(
                         replay,
                         state,
                         &surface_available,
@@ -8721,7 +8721,13 @@ fn record_surface_replay_tactic(
                         &have,
                         &plan,
                         &[],
-                    );
+                    ) {
+                        Ok(certificate) => replay
+                            .surface_replay
+                            .tactics
+                            .extend_from_slice(certificate.tactics()),
+                        Err(error) => replay.surface_replay.block(error.message()),
+                    }
                     surface_available.push(fact);
                 }
                 fn append_surface_conjuncts(
@@ -8784,7 +8790,7 @@ fn record_surface_replay_tactic(
                             ));
                             return;
                         }
-                        record_surface_smart_have(
+                        match surface_smart_have_certificate(
                             replay,
                             state,
                             &surface_available,
@@ -8795,7 +8801,13 @@ fn record_surface_replay_tactic(
                             &have,
                             &plan,
                             &[],
-                        );
+                        ) {
+                            Ok(certificate) => replay
+                                .surface_replay
+                                .tactics
+                                .extend_from_slice(certificate.tactics()),
+                            Err(error) => replay.surface_replay.block(error.message()),
+                        }
                         surface_available.push(fact);
                     }
                 }
@@ -9172,7 +9184,7 @@ fn smart_simp_unfold_prefix(proof: &Proof) -> Option<Vec<String>> {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn record_surface_smart_have(
+fn surface_smart_have_certificate(
     replay: &mut TacticReplayState,
     state: &CState,
     available: &[Proposition],
@@ -9181,17 +9193,14 @@ fn record_surface_smart_have(
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
     have: &ProofHave,
-    certificate: &ProofReplayPlan,
+    plan: &ProofReplayPlan,
     unfolded_predicates: &[String],
-) {
-    if replay.surface_replay.blocker.is_some() {
-        return;
-    }
-    let proof = match certificate.tactics() {
+) -> Result<TacticCertificate, ClickError> {
+    let proof = match plan.tactics() {
         [ProofTactic::Assumption] => Proof::Script(vec![ProofTactic::Assumption]),
         [ProofTactic::Normalize] => Proof::Script(vec![ProofTactic::Normalize]),
         [ProofTactic::ExactPropositionDerivation(derivation)] => {
-            match lower_surface_atomic_derivation(
+            let (_, proof) = lower_surface_atomic_derivation(
                 replay,
                 derivation,
                 unfolded_predicates
@@ -9203,22 +9212,19 @@ fn record_surface_smart_have(
                 state,
                 predicate_environment,
                 click_function_environment,
-            ) {
-                Ok((_, proof)) => proof,
-                Err(error) => {
-                    replay.surface_replay.block(format!(
-                        "could not lower the planned smart `have` certificate: {}",
-                        error.message()
-                    ));
-                    return;
-                }
-            }
+            )
+            .map_err(|error| {
+                ClickError::new(format!(
+                    "could not lower the planned smart `have` certificate: {}",
+                    error.message()
+                ))
+            })?;
+            proof
         }
         _ => {
-            replay
-                .surface_replay
-                .block("smart `have` planned an unexpected simp certificate");
-            return;
+            return Err(ClickError::new(
+                "smart `have` planned an unexpected simp certificate",
+            ));
         }
     };
     let proof = if unfolded_predicates.is_empty() {
@@ -9230,10 +9236,9 @@ fn record_surface_smart_have(
             .map(ProofTactic::UnfoldPredicate)
             .collect::<Vec<_>>();
         let Proof::Script(suffix) = proof else {
-            replay
-                .surface_replay
-                .block("planned smart `have` certificate was not a tactic script");
-            return;
+            return Err(ClickError::new(
+                "planned smart `have` certificate was not a tactic script",
+            ));
         };
         tactics.extend(suffix);
         Proof::Script(tactics)
@@ -9242,12 +9247,11 @@ fn record_surface_smart_have(
         proposition: have.proposition.clone(),
         proof,
     });
-    match TacticCertificate::from_proof_tactics(std::slice::from_ref(&tactic)) {
-        Ok(_) => replay.surface_replay.push(tactic),
-        Err(error) => replay.surface_replay.block(format!(
+    TacticCertificate::from_proof_tactics(&[tactic]).map_err(|error| {
+        ClickError::new(format!(
             "smart `have` produced an invalid certificate: {error:?}"
-        )),
-    }
+        ))
+    })
 }
 
 fn tactic_is_deferred_post_execution(tactic: &ProofTactic) -> bool {
@@ -11098,7 +11102,7 @@ fn replay_linear_tactics(
                     .surface_propositions
                     .record_lowering(&have.proposition, &fact)?;
                 if let Some((_, plan)) = &smart_plan {
-                    record_surface_smart_have(
+                    let certificate = surface_smart_have_certificate(
                         &mut replay,
                         &state,
                         &have_facts,
@@ -11109,7 +11113,40 @@ fn replay_linear_tactics(
                         have,
                         plan,
                         smart_unfolds.as_deref().unwrap_or(&[]),
-                    );
+                    )?;
+                    verify_surface_certificate(
+                        ProofReplayContext {
+                            state: state.clone(),
+                            pure_facts: requirement_pure_facts.clone(),
+                            replay: replay.clone(),
+                            branch_path: branch_path.clone(),
+                        },
+                        function_block,
+                        parsed_function,
+                        claims,
+                        claim_label,
+                        function_environment,
+                        predicate_environment,
+                        click_function_environment,
+                        resource_environment,
+                        theorem_environment,
+                        function,
+                        arguments,
+                        tactic_index,
+                        source_index,
+                        &certificate,
+                    )
+                    .map_err(|error| {
+                        ClickError::new(format!(
+                            "`{claim_label}` tactic {tactic_index}: smart `have` certificate failed replay:\n{}\n{}",
+                            format_tactic_certificate(&certificate),
+                            error.message()
+                        ))
+                    })?;
+                    replay
+                        .surface_replay
+                        .tactics
+                        .extend_from_slice(certificate.tactics());
                 }
                 if !requirement_pure_facts.contains(&fact) {
                     requirement_pure_facts.push(fact.clone());
