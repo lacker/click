@@ -4980,6 +4980,20 @@ fn plan_smart_have_at_current_point(
             .expect("an exact proposition derivation is a simple replay tactic");
         return Ok((fact, plan));
     }
+    let normalized_fact = normalize_direct_atomic_memory_loads(&fact);
+    if let Some(equivalent) = available
+        .iter()
+        .find(|available| normalize_direct_atomic_memory_loads(available) == normalized_fact)
+        && let Some(derivation) =
+            minimal_proposition_derivation(&fact, std::slice::from_ref(equivalent))
+    {
+        let plan =
+            ProofReplayPlan::from_planned_tactics(&[ProofTactic::ExactPropositionDerivation(
+                derivation,
+            )])
+            .expect("a directly normalized derivation is a simple replay tactic");
+        return Ok((fact, plan));
+    }
     if let Some(derivation) = bounded_condition_derivation(&fact, available) {
         let plan =
             ProofReplayPlan::from_planned_tactics(&[ProofTactic::ExactPropositionDerivation(
