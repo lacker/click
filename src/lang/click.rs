@@ -17,10 +17,10 @@ use crate::kernel::{
     ExecutionPureFact, Pointer, PointerOffsetTerm, ProofObligation, Proposition,
     PropositionDerivation, ResourceContext, ResourceContextValidityError, Sort, SpecExpression,
     SpecMemory, SpecPredicateArgument, SpecProposition, SpecResource, SymbolicCExecution, Term,
-    Theorem, Variable, abstract_c_state_for_join, c_condition_fact_memories,
-    c_expression_definedness_proposition, c_function, c_function_entry_state,
-    c_function_outcome_from_statement_outcome, c_function_specification, c_if, c_labeled_assert,
-    c_loop_effects_hold_at_back_edge, c_loop_invariants_hold_at_back_edge,
+    Theorem, Variable, abstract_c_state_for_join, c_condition_fact_has_memory,
+    c_condition_fact_memories, c_expression_definedness_proposition, c_function,
+    c_function_entry_state, c_function_outcome_from_statement_outcome, c_function_specification,
+    c_if, c_labeled_assert, c_loop_effects_hold_at_back_edge, c_loop_invariants_hold_at_back_edge,
     c_loop_invariants_hold_at_entry, c_loop_preservation_contexts,
     c_pointer_offsets_proven_equal_for_effect, c_pointer_value, c_resources_directly_match, c_seq,
     c_verified_function_contract_claim, c_verified_function_rule,
@@ -323,6 +323,7 @@ pub enum ClickProposition {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct SurfacePropositionMap {
     by_kernel: BTreeMap<Proposition, Vec<ClickProposition>>,
+    by_surface: Vec<(ClickProposition, Vec<Proposition>)>,
 }
 
 impl SurfacePropositionMap {
@@ -334,6 +335,23 @@ impl SurfacePropositionMap {
         let spellings = self.by_kernel.entry(kernel.clone()).or_default();
         if !spellings.contains(surface) {
             spellings.push(surface.clone());
+        }
+        let lowerings = if let Some((_, lowerings)) = self
+            .by_surface
+            .iter_mut()
+            .find(|(recorded, _)| recorded == surface)
+        {
+            lowerings
+        } else {
+            self.by_surface.push((surface.clone(), Vec::new()));
+            &mut self
+                .by_surface
+                .last_mut()
+                .expect("surface lowering was just inserted")
+                .1
+        };
+        if !lowerings.contains(kernel) {
+            lowerings.push(kernel.clone());
         }
         match (surface, kernel) {
             (ClickProposition::And(surface_left, surface_right), Proposition::And(left, right))
@@ -392,9 +410,12 @@ impl SurfacePropositionMap {
         surface: &ClickProposition,
         available: &[Proposition],
     ) -> Option<&Proposition> {
-        let mut matches = self.by_kernel.iter().filter_map(|(kernel, spellings)| {
-            (available.contains(kernel) && spellings.contains(surface)).then_some(kernel)
-        });
+        let mut matches = self
+            .by_surface
+            .iter()
+            .find_map(|(recorded, lowerings)| (recorded == surface).then_some(lowerings))?
+            .iter()
+            .filter(|kernel| available.contains(kernel));
         let kernel = matches.next()?;
         matches.next().is_none().then_some(kernel)
     }

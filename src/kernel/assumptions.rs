@@ -3435,26 +3435,24 @@ impl Assumptions {
             && byte_width == 4
             && let Some(index) = base.element_index_from_base(range_base)
             && let Some(element_count) = int32_element_count_from_bytes(range_bytes)
+            && let (Some(index), Some(element_count)) = (
+                signed_bitvector_constant(&index),
+                signed_bitvector_constant(&element_count),
+            )
         {
-            return self.decide(&ConditionTerm::signed_greater_equal(
-                index.clone(),
-                Bitvector32Term::Constant(0),
-            )) == Some(true)
-                && self.decide(&ConditionTerm::signed_less_than(index, element_count))
-                    == Some(true);
+            return 0 <= index && index < element_count;
         }
         let Some(byte_offset) = pointer_byte_offset_from_base(base, range_base) else {
             return false;
         };
-        let access_end = Bitvector32Term::add(byte_offset.clone(), bytes.clone());
-        self.decide(&ConditionTerm::signed_greater_equal(
-            byte_offset,
-            Bitvector32Term::Constant(0),
-        )) == Some(true)
-            && self.decide(&ConditionTerm::signed_less_equal(
-                access_end,
-                range_bytes.clone(),
-            )) == Some(true)
+        let (Some(byte_offset), Some(bytes), Some(range_bytes)) = (
+            signed_bitvector_constant(&byte_offset),
+            signed_bitvector_constant(bytes),
+            signed_bitvector_constant(range_bytes),
+        ) else {
+            return false;
+        };
+        0 <= byte_offset && byte_offset + bytes <= range_bytes
     }
 
     pub(super) fn proves_loadable_region_from_range(
@@ -3704,6 +3702,9 @@ impl Assumptions {
         if pointer.block != base.block {
             return None;
         }
+        if pointer.offset == base.offset {
+            return Some(Bitvector32Term::Constant(0));
+        }
         if self.decide(&ConditionTerm::pointer_offset_equal(
             pointer.offset.clone(),
             base.offset.clone(),
@@ -3713,35 +3714,39 @@ impl Assumptions {
         }
 
         if let PointerOffsetTerm::Add(left, right) = &pointer.offset {
-            if self.decide(&ConditionTerm::pointer_offset_equal(
-                left.as_ref().clone(),
-                base.offset.clone(),
-            )) == Some(true)
+            if left.as_ref() == &base.offset
+                || self.decide(&ConditionTerm::pointer_offset_equal(
+                    left.as_ref().clone(),
+                    base.offset.clone(),
+                )) == Some(true)
             {
                 return int32_element_index_from_offset(right);
             }
-            if self.decide(&ConditionTerm::pointer_offset_equal(
-                right.as_ref().clone(),
-                base.offset.clone(),
-            )) == Some(true)
+            if right.as_ref() == &base.offset
+                || self.decide(&ConditionTerm::pointer_offset_equal(
+                    right.as_ref().clone(),
+                    base.offset.clone(),
+                )) == Some(true)
             {
                 return int32_element_index_from_offset(left);
             }
         }
 
         if let PointerOffsetTerm::Add(left, right) = &base.offset {
-            if self.decide(&ConditionTerm::pointer_offset_equal(
-                pointer.offset.clone(),
-                left.as_ref().clone(),
-            )) == Some(true)
+            if &pointer.offset == left.as_ref()
+                || self.decide(&ConditionTerm::pointer_offset_equal(
+                    pointer.offset.clone(),
+                    left.as_ref().clone(),
+                )) == Some(true)
             {
                 return int32_element_index_from_offset(right)
                     .map(|index| Bitvector32Term::subtract(Bitvector32Term::Constant(0), index));
             }
-            if self.decide(&ConditionTerm::pointer_offset_equal(
-                pointer.offset.clone(),
-                right.as_ref().clone(),
-            )) == Some(true)
+            if &pointer.offset == right.as_ref()
+                || self.decide(&ConditionTerm::pointer_offset_equal(
+                    pointer.offset.clone(),
+                    right.as_ref().clone(),
+                )) == Some(true)
             {
                 return int32_element_index_from_offset(left)
                     .map(|index| Bitvector32Term::subtract(Bitvector32Term::Constant(0), index));
@@ -4182,6 +4187,16 @@ impl Assumptions {
             if pointer_in_memory_range_shallow(pointer, range) {
                 return false;
             }
+            let direct_index = self.direct_pointer_element_index_from_base(pointer, &range.base);
+            if let Some(index) = direct_index.as_ref()
+                && let (Some(index), Some(start), Some(end)) = (
+                    signed_bitvector_constant(index),
+                    signed_bitvector_constant(&range.start),
+                    signed_bitvector_constant(&range.end),
+                )
+            {
+                return index < start || end <= index;
+            }
             if self.prop_facts.iter().any(|proposition| match proposition {
                 Proposition::CMemoryDisjoint {
                     left_base,
@@ -4217,20 +4232,7 @@ impl Assumptions {
                 return true;
             }
 
-            let pointer_range = CMemoryRange::new(
-                pointer.clone(),
-                Bitvector32Term::Constant(0),
-                Bitvector32Term::Constant(1),
-            );
-            if self.memory_ranges_proven_disjoint_by_explicit_separation_for_memory_resolution(
-                range,
-                &pointer_range,
-            ) {
-                return true;
-            }
-
-            let Some(index) = self.direct_pointer_element_index_from_base(pointer, &range.base)
-            else {
+            let Some(index) = direct_index else {
                 return false;
             };
             self.decide(&ConditionTerm::signed_less_than(
@@ -4288,6 +4290,13 @@ impl Assumptions {
         let Some(index) = self.direct_pointer_element_index_from_base(pointer, &range.base) else {
             return false;
         };
+        if let (Some(index), Some(start), Some(end)) = (
+            signed_bitvector_constant(&index),
+            signed_bitvector_constant(&range.start),
+            signed_bitvector_constant(&range.end),
+        ) {
+            return start <= index && index < end;
+        }
         self.decide(&ConditionTerm::signed_less_equal(
             range.start.clone(),
             index.clone(),

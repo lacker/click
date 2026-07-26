@@ -2736,10 +2736,41 @@ fn directly_matching_separation_fact(
     })
 }
 
+fn directly_covering_loadability_fact(
+    required: &Proposition,
+    available: &[Proposition],
+) -> Option<Proposition> {
+    matches!(required, Proposition::CMemoryLoadable { .. }).then_some(())?;
+    available.iter().find_map(|fact| {
+        matches!(fact, Proposition::CMemoryLoadable { .. })
+            .then(|| {
+                assumptions_from_propositions(std::slice::from_ref(fact))
+                    .derive_atomic_proposition(required)
+                    .map(|_| fact.clone())
+            })
+            .flatten()
+    })
+}
+
+fn proposition_has_contextual_derivation_rules(proposition: &Proposition) -> bool {
+    !matches!(
+        proposition,
+        Proposition::CMemoryMutatesOnly { .. } | Proposition::CMemoryEffectSummary { .. }
+    )
+}
+
 fn minimal_proposition_derivation(
     proposition: &Proposition,
     available: &[Proposition],
 ) -> Option<PropositionDerivation> {
+    if !proposition_has_contextual_derivation_rules(proposition) {
+        return None;
+    }
+    if matches!(proposition, Proposition::ConditionIs(_, _))
+        && let Some(derivation) = bounded_condition_derivation(proposition, available)
+    {
+        return Some(derivation);
+    }
     let derive = |facts: &[Proposition]| {
         let assumptions = assumptions_from_propositions(facts);
         assumptions
@@ -2847,38 +2878,11 @@ fn fact_conflicts_with_assumptions(fact: &Proposition, assumptions: &Assumptions
                 || fact_conflicts_with_assumptions(right, assumptions)
         }
         Proposition::ConditionIs(condition, value) => {
-            let opposite = Proposition::ConditionIs(condition.clone(), !value);
-            assumptions.proves(&opposite)
-                || assumptions.derive_simp_proposition(&opposite).is_some()
+            assumptions.proves(&Proposition::ConditionIs(condition.clone(), !value))
         }
-        Proposition::Not(body) => {
-            assumptions.proves(body) || assumptions.derive_simp_proposition(body).is_some()
-        }
-        fact => {
-            let opposite = Proposition::Not(Box::new(fact.clone()));
-            assumptions.proves(&opposite)
-                || assumptions.derive_simp_proposition(&opposite).is_some()
-        }
+        Proposition::Not(body) => assumptions.proves(body),
+        fact => assumptions.proves(&Proposition::Not(Box::new(fact.clone()))),
     }
-}
-
-fn assumptions_from_exact_conditions(propositions: &[Proposition]) -> Assumptions {
-    fn collect(proposition: &Proposition, conditions: &mut Vec<Proposition>) {
-        match proposition {
-            Proposition::ConditionIs(_, _) => conditions.push(proposition.clone()),
-            Proposition::And(left, right) => {
-                collect(left, conditions);
-                collect(right, conditions);
-            }
-            _ => {}
-        }
-    }
-
-    let mut conditions = Vec::new();
-    for proposition in propositions {
-        collect(proposition, &mut conditions);
-    }
-    assumptions_from_propositions(&conditions)
 }
 
 fn assumptions_for_direct_fact_transport(propositions: &[Proposition]) -> Assumptions {
@@ -2900,6 +2904,25 @@ fn assumptions_for_direct_fact_transport(propositions: &[Proposition]) -> Assump
         collect(proposition, &mut facts);
     }
     assumptions_from_propositions(&facts)
+}
+
+fn facts_for_direct_surface_lowering(propositions: &[Proposition]) -> Vec<Proposition> {
+    propositions
+        .iter()
+        .filter(|proposition| {
+            matches!(
+                proposition,
+                Proposition::CMemoryLoadable { .. }
+                    | Proposition::CMemoryCanStore { .. }
+                    | Proposition::CMemoryDisjoint { .. }
+                    | Proposition::CResourceSeparate { .. }
+                    | Proposition::CResourceContains { .. }
+                    | Proposition::CMemoryMutatesOnly { .. }
+                    | Proposition::CMemoryEffectSummary { .. }
+            )
+        })
+        .cloned()
+        .collect()
 }
 
 #[derive(Clone, Copy)]
@@ -3314,11 +3337,7 @@ fn certified_transitions_from_execution(
             !path.facts().iter().any(|path_fact| {
                 pure_facts.iter().any(|available| {
                     exact_facts_directly_conflict(available, path_fact.proposition())
-                }) || matches!(prerequisite_policy, StatementPrerequisitePolicy::Planning)
-                    && fact_conflicts_with_assumptions(
-                        path_fact.proposition(),
-                        &assumptions_from_propositions(pure_facts),
-                    )
+                })
             })
         })
         .map(|path| {
@@ -3340,8 +3359,6 @@ fn certified_transitions_from_execution(
             let transport_assumptions = assumptions_for_direct_fact_transport(&transport_facts);
             let prerequisite_assumptions = assumptions_from_propositions(&successor_facts);
             let planning_assumptions = assumptions_from_propositions(pure_facts);
-            let planning_condition_assumptions =
-                assumptions_from_exact_conditions(pure_facts);
             let mut prerequisite_derivations = Vec::new();
             if matches!(prerequisite_policy, StatementPrerequisitePolicy::Planning) {
                 let mut seen_prerequisites = BTreeSet::new();
@@ -3411,7 +3428,9 @@ fn certified_transitions_from_execution(
                         {
                             prerequisite_derivations.push(derivation);
                         }
-                    } else if planning_assumptions.proves(proposition) {
+                    } else if proposition_has_contextual_derivation_rules(proposition)
+                        && planning_assumptions.proves(proposition)
+                    {
                         return Err(ClickError::new(format!(
                             "{context_label} used an assumption-derived execution fact without a replayable derivation: {proposition:?}"
                         )));
@@ -3431,6 +3450,7 @@ fn certified_transitions_from_execution(
                             )
                             .is_some()
                             || directly_matching_separation_fact(proposition, pure_facts).is_some()
+                            || directly_covering_loadability_fact(proposition, pure_facts).is_some()
                             || matches!(normalize_proposition(proposition), SimpProposition::True)
                             || matches!(prerequisite_policy, StatementPrerequisitePolicy::Certified)
                                 && certified_prerequisites.iter().any(|derivation| {
@@ -3454,24 +3474,9 @@ fn certified_transitions_from_execution(
                                 proposition,
                                 Proposition::ConditionIs(_, _)
                             ) {
-                                planning_condition_assumptions
-                                    .derive_atomic_proposition(proposition)
-                                    .or_else(|| {
-                                        planning_condition_assumptions
-                                            .derive_simp_atomic_proposition(proposition)
-                                    })
-                            } else if matches!(
-                                proposition,
-                                Proposition::CResourceSeparate { .. }
-                            ) {
-                                None
+                                bounded_condition_derivation(proposition, pure_facts)
                             } else {
-                                planning_assumptions
-                                    .derive_atomic_proposition(proposition)
-                                    .or_else(|| {
-                                        planning_assumptions
-                                            .derive_simp_atomic_proposition(proposition)
-                                    })
+                                None
                             };
                             exact_derivation.ok_or_else(|| {
                                     ClickError::new(format!(
@@ -3513,16 +3518,14 @@ fn certified_transitions_from_execution(
                         if exact_fact_is_available(proposition, pure_facts) {
                             None
                         } else {
+                            let derivation_facts = successor_facts
+                                .iter()
+                                .filter(|fact| *fact != proposition)
+                                .cloned()
+                                .collect::<Vec<_>>();
                             Some(
-                                assumptions_from_propositions(
-                                    &successor_facts
-                                        .iter()
-                                        .filter(|fact| *fact != proposition)
-                                        .cloned()
-                                        .collect::<Vec<_>>(),
-                                )
-                                .derive_proposition(proposition)
-                                .ok_or_else(|| {
+                                minimal_proposition_derivation(proposition, &derivation_facts)
+                                    .ok_or_else(|| {
                                     ClickError::new(format!(
                                         "{context_label} is missing prerequisite{}: {:?}",
                                         obligation
@@ -3650,7 +3653,7 @@ fn certified_transitions_from_execution(
                         successor_facts.clone()
                     };
                     for fact in automatic_sources {
-                        if c_condition_fact_memories(&fact).is_empty() {
+                        if !c_condition_fact_has_memory(&fact) {
                             continue;
                         }
                         let statement_local =
@@ -9377,23 +9380,30 @@ fn replay_linear_tactics(
                 let mut explicit_premises = Vec::new();
                 if let Some(surface_premises) = surface_premises {
                     for surface_premise in surface_premises {
-                        let premise = lower_point_proposition(
-                            surface_premise,
-                            &requirement_pure_facts,
-                            parsed_function.parameters(),
-                            arguments,
-                            &pre_state,
-                            &state,
-                            None,
-                            &replay.program_point_states,
-                            predicate_environment,
-                            click_function_environment,
-                        )
-                        .map_err(|message| {
-                            ClickError::new(format!(
-                                "`{claim_label}` tactic {tactic_index}: could not lower `transport using` premise: {message}"
-                            ))
-                        })?;
+                        let premise = if let Some(recorded) = replay
+                            .surface_propositions
+                            .available_kernel(surface_premise, &requirement_pure_facts)
+                        {
+                            recorded.clone()
+                        } else {
+                            lower_point_proposition(
+                                surface_premise,
+                                &requirement_pure_facts,
+                                parsed_function.parameters(),
+                                arguments,
+                                &pre_state,
+                                &state,
+                                None,
+                                &replay.program_point_states,
+                                predicate_environment,
+                                click_function_environment,
+                            )
+                            .map_err(|message| {
+                                ClickError::new(format!(
+                                    "`{claim_label}` tactic {tactic_index}: could not lower `transport using` premise: {message}"
+                                ))
+                            })?
+                        };
                         if !exact_fact_is_available(&premise, &requirement_pure_facts) {
                             return Err(ClickError::new(format!(
                                 "`{claim_label}` tactic {tactic_index}: `transport using` requires an exact premise: {}",
@@ -9417,23 +9427,32 @@ fn replay_linear_tactics(
                 // below is still restricted to explicit premises plus
                 // certified frame context.
                 let lowering_facts = requirement_pure_facts.as_slice();
-                let source = lower_point_proposition(
-                    surface_source,
-                    lowering_facts,
-                    parsed_function.parameters(),
-                    arguments,
-                    &pre_state,
-                    &state,
-                    None,
-                    &replay.program_point_states,
-                    predicate_environment,
-                    click_function_environment,
-                )
-                .map_err(|message| {
-                    ClickError::new(format!(
-                        "`{claim_label}` tactic {tactic_index}: could not lower `transport` source: {message}"
-                    ))
-                })?;
+                let direct_lowering_facts =
+                    facts_for_direct_surface_lowering(&requirement_pure_facts);
+                let source = if let Some(recorded) = replay
+                    .surface_propositions
+                    .available_kernel(surface_source, &requirement_pure_facts)
+                {
+                    recorded.clone()
+                } else {
+                    lower_point_proposition(
+                        surface_source,
+                        lowering_facts,
+                        parsed_function.parameters(),
+                        arguments,
+                        &pre_state,
+                        &state,
+                        None,
+                        &replay.program_point_states,
+                        predicate_environment,
+                        click_function_environment,
+                    )
+                    .map_err(|message| {
+                        ClickError::new(format!(
+                            "`{claim_label}` tactic {tactic_index}: could not lower `transport` source: {message}"
+                        ))
+                    })?
+                };
                 replay
                     .surface_propositions
                     .record_lowering(surface_source, &source)?;
@@ -9453,7 +9472,11 @@ fn replay_linear_tactics(
                 } else {
                     assumptions.clone()
                 };
-                if selected_assumptions.derive_proposition(&source).is_none() {
+                if !exact_fact_is_available(&source, &explicit_premises)
+                    && selected_assumptions
+                        .derive_atomic_proposition(&source)
+                        .is_none()
+                {
                     return Err(ClickError::new(format!(
                         "`{claim_label}` tactic {tactic_index}: `transport{}` requires a source derivable from its {}facts: {}",
                         if surface_premises.is_some() {
@@ -9478,7 +9501,7 @@ fn replay_linear_tactics(
                 }
                 let target = lower_point_proposition(
                     surface_target,
-                    lowering_facts,
+                    &direct_lowering_facts,
                     parsed_function.parameters(),
                     arguments,
                     &pre_state,
@@ -9496,7 +9519,10 @@ fn replay_linear_tactics(
                 replay
                     .surface_propositions
                     .record_lowering(surface_target, &target)?;
-                if selected_assumptions.derive_proposition(&target).is_some() {
+                if exact_fact_is_available(&target, &requirement_pure_facts)
+                    || materialization_equivalent_available_fact(&target, &requirement_pure_facts)
+                        .is_some()
+                {
                     if !requirement_pure_facts.contains(&target) {
                         requirement_pure_facts.push(target.clone());
                         assumptions = assumptions.assume_proposition(target);
@@ -9610,23 +9636,30 @@ fn replay_linear_tactics(
                 let pre_state = replay.execution_start_state(&state).clone();
                 let mut explicit_premises = Vec::new();
                 for surface_premise in premises {
-                    let premise = lower_point_proposition(
-                        surface_premise,
-                        &all_pure_facts,
-                        parsed_function.parameters(),
-                        arguments,
-                        &pre_state,
-                        &state,
-                        None,
-                        &replay.program_point_states,
-                        predicate_environment,
-                        click_function_environment,
-                    )
-                    .map_err(|message| {
-                        ClickError::new(format!(
-                            "`{claim_label}` tactic {tactic_index}: could not lower `{tactic_name}` premise: {message}"
-                        ))
-                    })?;
+                    let premise = if let Some(recorded) = replay
+                        .surface_propositions
+                        .available_kernel(surface_premise, &all_pure_facts)
+                    {
+                        recorded.clone()
+                    } else {
+                        lower_point_proposition(
+                            surface_premise,
+                            &all_pure_facts,
+                            parsed_function.parameters(),
+                            arguments,
+                            &pre_state,
+                            &state,
+                            None,
+                            &replay.program_point_states,
+                            predicate_environment,
+                            click_function_environment,
+                        )
+                        .map_err(|message| {
+                            ClickError::new(format!(
+                                "`{claim_label}` tactic {tactic_index}: could not lower `{tactic_name}` premise: {message}"
+                            ))
+                        })?
+                    };
                     replay
                         .surface_propositions
                         .record_lowering(surface_premise, &premise)

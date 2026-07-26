@@ -172,17 +172,22 @@ fn c_memory_load_is_directly_unchanged(
                 after: effect_after,
                 mutable_ranges,
             } => {
-                memories_directly_match_for_pointer_load(
+                let before_matches = memories_directly_match_for_pointer_load(
                     effect_before,
                     before,
                     pointer,
                     assumptions,
-                ) && memories_directly_match_for_pointer_load(
-                    effect_after,
-                    after,
-                    pointer,
-                    assumptions,
-                ) && assumptions.ranges_directly_disjoint_from_pointer(mutable_ranges, pointer)
+                );
+                let after_matches = before_matches
+                    && memories_directly_match_for_pointer_load(
+                        effect_after,
+                        after,
+                        pointer,
+                        assumptions,
+                    );
+                let disjoint = after_matches
+                    && assumptions.ranges_directly_disjoint_from_pointer(mutable_ranges, pointer);
+                before_matches && after_matches && disjoint
             }
             _ => false,
         })
@@ -209,9 +214,8 @@ fn memories_directly_match_for_pointer_load(
     {
         return false;
     }
-    left.differing_cell_pointers(right)
+    differing_cell_pointers_in_block(left, right, &pointer.block)
         .into_iter()
-        .filter(|cell| cell.block == pointer.block)
         .all(|cell| {
             cell.blocks_proven_distinct(pointer)
                 || pointer_byte_offset_from_base(&cell, pointer)
@@ -226,6 +230,20 @@ fn memories_directly_match_for_pointer_load(
                     pointer,
                 )
         })
+}
+
+fn differing_cell_pointers_in_block(
+    left: &CMemory,
+    right: &CMemory,
+    block: &PointerBlock,
+) -> BTreeSet<Pointer> {
+    left.cells
+        .keys()
+        .chain(right.cells.keys())
+        .filter(|pointer| &pointer.block == block)
+        .filter(|pointer| left.cells.get(*pointer) != right.cells.get(*pointer))
+        .cloned()
+        .collect()
 }
 
 fn memory_materializes_atomic_load(
@@ -287,6 +305,77 @@ pub(crate) fn c_condition_fact_memories(fact: &Proposition) -> Vec<CMemory> {
     let mut memories = Vec::new();
     collect_condition_memories(condition, &mut memories);
     memories
+}
+
+pub(crate) fn c_condition_fact_has_memory(fact: &Proposition) -> bool {
+    fn bitvector_has_memory(term: &Bitvector32Term) -> bool {
+        match term {
+            Bitvector32Term::MemoryLoad(_, _) => true,
+            Bitvector32Term::Add(left, right)
+            | Bitvector32Term::Subtract(left, right)
+            | Bitvector32Term::Multiply(left, right)
+            | Bitvector32Term::Divide(left, right)
+            | Bitvector32Term::Remainder(left, right)
+            | Bitvector32Term::ShiftLeft(left, right)
+            | Bitvector32Term::ArithmeticShiftRight(left, right)
+            | Bitvector32Term::BitwiseAnd(left, right)
+            | Bitvector32Term::BitwiseOr(left, right)
+            | Bitvector32Term::BitwiseXor(left, right) => {
+                bitvector_has_memory(left) || bitvector_has_memory(right)
+            }
+            Bitvector32Term::BitwiseNot(term) => bitvector_has_memory(term),
+            Bitvector32Term::If {
+                then_term,
+                else_term,
+                ..
+            } => bitvector_has_memory(then_term) || bitvector_has_memory(else_term),
+            Bitvector32Term::RangeFold {
+                start,
+                end,
+                initial,
+                body,
+                ..
+            } => {
+                bitvector_has_memory(start)
+                    || bitvector_has_memory(end)
+                    || bitvector_has_memory(initial)
+                    || bitvector_has_memory(body)
+            }
+            Bitvector32Term::Constant(_) | Bitvector32Term::Variable(_) => false,
+        }
+    }
+    fn offset_has_memory(offset: &PointerOffsetTerm) -> bool {
+        match offset {
+            PointerOffsetTerm::Add(left, right) => {
+                offset_has_memory(left) || offset_has_memory(right)
+            }
+            PointerOffsetTerm::Int32Scaled { value, .. } => bitvector_has_memory(value),
+            PointerOffsetTerm::Constant(_) | PointerOffsetTerm::Variable(_) => false,
+        }
+    }
+    let Proposition::ConditionIs(condition, _) = fact else {
+        return false;
+    };
+    match condition {
+        ConditionTerm::Bitvector32SignedLessThan(left, right)
+        | ConditionTerm::Bitvector32SignedLessEqual(left, right)
+        | ConditionTerm::Bitvector32SignedGreaterThan(left, right)
+        | ConditionTerm::Bitvector32SignedGreaterEqual(left, right)
+        | ConditionTerm::Bitvector32Equal(left, right)
+        | ConditionTerm::Bitvector32SignedAddOverflows(left, right)
+        | ConditionTerm::Bitvector32SignedSubtractOverflows(left, right)
+        | ConditionTerm::Bitvector32SignedMultiplyOverflows(left, right)
+        | ConditionTerm::Bitvector32SignedDivideOverflows(left, right)
+        | ConditionTerm::Bitvector32SignedShiftLeftOverflows(left, right) => {
+            bitvector_has_memory(left) || bitvector_has_memory(right)
+        }
+        ConditionTerm::PointerOffsetEqual(left, right) => {
+            offset_has_memory(left) || offset_has_memory(right)
+        }
+        ConditionTerm::Constant(_)
+        | ConditionTerm::Variable(_)
+        | ConditionTerm::PointerEqual(_, _) => false,
+    }
 }
 
 fn collect_condition_memories(condition: &ConditionTerm, memories: &mut Vec<CMemory>) {
