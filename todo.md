@@ -79,11 +79,13 @@ The following items remain before that statement is true globally:
 - [x] **Pure theorem smart proofs.** Make theorem-level default/`auto`, `simp`,
   and any smart tactics nested in theorem scripts return and replay
   `TacticCertificate`; remove the separate pure-theorem smart success path.
-- [ ] **Shared pure-goal gateway.** Consolidate
-  `prove_pure_theorem_*`, `prove_pure_proposition_at_point`, smart `have`, and
-  loop-phase pure proofs around one planner → certificate → ordinary replay
-  implementation. A proof surface must not choose whether certificates are
-  mandatory.
+- [x] **Shared pure-goal certificate gateway.** Pure theorems, smart `have`,
+  and structural proposition items now pass planner output through one
+  `TacticCertificate` validation → ordinary replay gateway.
+  `prove_pure_proposition_at_point` remains the ordinary point-proof replay
+  engine rather than an alternate smart-success API. Loop initialization must
+  still be adapted to this gateway at its exact entry snapshot, as tracked
+  separately above.
 - [ ] **Remove loop dummy-claim scaffolding.** Execute loop-region certificates
   against their real invariant/effect obligation bundle rather than a dummy
   `0 == 0` ensure followed by a separate semantic check.
@@ -91,6 +93,9 @@ The following items remain before that statement is true globally:
   beyond `CProofClaim` so theorem ensures, loop `initialize`/`preserve`, and
   structural-item proofs can be selected and rewritten. Profiler locations
   must never point at a tactic that `click-expand` cannot select.
+  The locator now recognizes all of these surfaces, and pure theorem source
+  rewriting is complete; loop and structural rewriting remain blocked until
+  those surfaces retain replayed certificates.
 - [x] **Canonical omitted-proof rewriting.** Allow omitted/default proofs to be
   replaced by canonical `by { ... }` source; this is already a known bug for
   selectable ensures/effects and will also be required by the new proof

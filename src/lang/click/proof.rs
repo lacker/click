@@ -459,24 +459,31 @@ fn verify_theorem_ensure(
         }
     };
 
-    let certificate = pure_theorem_surface_certificate(
-        theorem,
-        surface_goal,
+    let (certificate, ()) = pure_goal_certificate_gateway(
         claim_label,
-        context,
-        &goal,
-        source_tactics,
-        predicate_environment,
-    )?;
-    replay_pure_theorem_certificate(
-        claim_label,
-        &context.requires,
-        &goal,
-        predicate_environment,
-        click_function_environment,
-        theorem_environment,
-        context,
-        &certificate,
+        || {
+            pure_theorem_surface_certificate(
+                theorem,
+                surface_goal,
+                claim_label,
+                context,
+                &goal,
+                source_tactics,
+                predicate_environment,
+            )
+        },
+        |certificate| {
+            replay_pure_theorem_certificate(
+                claim_label,
+                &context.requires,
+                &goal,
+                predicate_environment,
+                click_function_environment,
+                theorem_environment,
+                context,
+                certificate,
+            )
+        },
     )?;
     Ok(VerifiedPureTheorem {
         theorem_definition: theorem.clone(),
@@ -487,6 +494,27 @@ fn verify_theorem_ensure(
         requires: context.requires.clone(),
         conclusion: goal,
     })
+}
+
+fn pure_goal_certificate_gateway<T>(
+    claim_label: &str,
+    planner: impl FnOnce() -> Result<TacticCertificate, ClickError>,
+    replay: impl FnOnce(&TacticCertificate) -> Result<T, ClickError>,
+) -> Result<(TacticCertificate, T), ClickError> {
+    let certificate = planner()?;
+    TacticCertificate::from_proof_tactics(certificate.tactics()).map_err(|error| {
+        ClickError::new(format!(
+            "pure goal `{claim_label}` planner returned a non-surface certificate: {error:?}"
+        ))
+    })?;
+    let replayed = replay(&certificate).map_err(|error| {
+        ClickError::new(format!(
+            "pure goal `{claim_label}` certificate failed ordinary replay:\n{}\n{}",
+            format_tactic_certificate(&certificate),
+            error.message()
+        ))
+    })?;
+    Ok((certificate, replayed))
 }
 
 fn pure_theorem_surface_certificate(
@@ -4481,6 +4509,151 @@ fn split_execution_proof_branch_contexts(
 }
 
 #[allow(clippy::too_many_arguments)]
+fn plan_point_pure_goal_certificate(
+    proposition: &ClickProposition,
+    proof: &Proof,
+    claim_label: &str,
+    proof_index: usize,
+    available: &[Proposition],
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    pre_state: &CState,
+    state: &CState,
+    program_point_states: &ProgramPointStates,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    surface_propositions: &SurfacePropositionMap,
+) -> Result<(Proposition, TacticCertificate), ClickError> {
+    if let Proof::Script(tactics) = proof
+        && let Ok(certificate) = TacticCertificate::from_proof_tactics(tactics)
+    {
+        let fact = lower_point_proposition(
+            proposition,
+            available,
+            parameters,
+            arguments,
+            pre_state,
+            state,
+            None,
+            program_point_states,
+            predicate_environment,
+            click_function_environment,
+        )
+        .map_err(|message| {
+            ClickError::new(format!(
+                "`{claim_label}` proof {proof_index}: could not lower pure goal: {message}"
+            ))
+        })?;
+        return Ok((fact, certificate));
+    }
+
+    let unfolded_predicates = smart_simp_unfold_prefix(proof).ok_or_else(|| {
+        ClickError::new(format!(
+            "`{claim_label}` proof {proof_index} contains a smart pure proof that has no certificate planner"
+        ))
+    })?;
+    let have = ProofHave {
+        proposition: proposition.clone(),
+        proof: proof.clone(),
+    };
+    let (fact, plan) = plan_smart_have_at_current_point(
+        &have,
+        claim_label,
+        proof_index,
+        available,
+        parameters,
+        arguments,
+        pre_state,
+        state,
+        program_point_states,
+        predicate_environment,
+        click_function_environment,
+        &unfolded_predicates,
+    )?;
+    let mut surface_replay = TacticReplayState {
+        surface_propositions: surface_propositions.clone(),
+        program_point_states: program_point_states.clone(),
+        ..TacticReplayState::default()
+    };
+    surface_replay
+        .surface_propositions
+        .record_lowering(proposition, &fact)?;
+    if !unfolded_predicates.is_empty() {
+        let assumptions = assumptions_from_propositions(available);
+        let recorded_unfoldings = available
+            .iter()
+            .filter_map(|kernel| {
+                let surface = surface_replay
+                    .surface_propositions
+                    .surface(kernel)
+                    .ok()?
+                    .clone();
+                let unfolded_surface = unfold_structural_invariant_proposition(
+                    predicate_environment,
+                    &surface,
+                    &unfolded_predicates,
+                )
+                .ok()?;
+                let unfolded_kernel = unfold_predicates_in_proposition(
+                    predicate_environment,
+                    click_function_environment,
+                    &unfolded_predicates,
+                    kernel,
+                    &assumptions,
+                )
+                .ok()?;
+                Some((unfolded_surface, unfolded_kernel))
+            })
+            .collect::<Vec<_>>();
+        for (surface, kernel) in recorded_unfoldings {
+            surface_replay
+                .surface_propositions
+                .record_lowering(&surface, &kernel)?;
+        }
+        let unfolded_surface = unfold_structural_invariant_proposition(
+            predicate_environment,
+            proposition,
+            &unfolded_predicates,
+        )
+        .map_err(|message| ClickError::new(format!("`{claim_label}`: {message}")))?;
+        let unfolded_fact = unfold_predicates_in_proposition(
+            predicate_environment,
+            click_function_environment,
+            &unfolded_predicates,
+            &fact,
+            &assumptions,
+        )
+        .map_err(|message| ClickError::new(format!("`{claim_label}`: {message}")))?;
+        surface_replay
+            .surface_propositions
+            .record_lowering(&unfolded_surface, &unfolded_fact)?;
+    }
+    let proof = surface_simp_plan_proof(
+        &mut surface_replay,
+        state,
+        available,
+        parameters,
+        arguments,
+        predicate_environment,
+        click_function_environment,
+        proposition,
+        &plan,
+        &unfolded_predicates,
+    )?;
+    let Proof::Script(tactics) = proof else {
+        return Err(ClickError::new(format!(
+            "`{claim_label}` did not lower to an explicit proof script"
+        )));
+    };
+    let certificate = TacticCertificate::from_proof_tactics(&tactics).map_err(|error| {
+        ClickError::new(format!(
+            "`{claim_label}` produced an invalid point-pure certificate: {error:?}"
+        ))
+    })?;
+    Ok((fact, certificate))
+}
+
+#[allow(clippy::too_many_arguments)]
 fn certify_structural_assertions(
     region: CodeRegion,
     mut contexts: Vec<ExecutionProofContext>,
@@ -4530,13 +4703,9 @@ fn certify_structural_assertions(
                 "{}.{region_label}.assert_{assertion_index}",
                 environment.function_block.signature().name()
             );
-            let have = ProofHave {
-                proposition: proposition.clone(),
-                proof: item.proof().clone(),
-            };
-            let unfolded_predicates = item.proof().unfold_tactic_names();
-            let (planned_fact, plan) = plan_smart_have_at_current_point(
-                &have,
+            let (planned_fact, planned_certificate) = plan_point_pure_goal_certificate(
+                proposition,
+                item.proof(),
                 &claim_label,
                 assertion_index,
                 &context.pure_facts,
@@ -4547,54 +4716,34 @@ fn certify_structural_assertions(
                 &program_point_states,
                 environment.predicate_environment,
                 environment.click_function_environment,
-                &unfolded_predicates,
+                environment.surface_propositions,
             )?;
-            let mut surface_replay = TacticReplayState {
-                surface_propositions: environment.surface_propositions.clone(),
-                program_point_states: program_point_states.clone(),
-                ..TacticReplayState::default()
-            };
-            let proof = surface_simp_plan_proof(
-                &mut surface_replay,
-                &context.state,
-                &context.pure_facts,
-                environment.parsed_function.parameters(),
-                environment.arguments,
-                environment.predicate_environment,
-                environment.click_function_environment,
-                proposition,
-                &plan,
-                &unfolded_predicates,
-            )?;
-            let Proof::Script(tactics) = &proof else {
-                return Err(ClickError::new(format!(
-                    "`{claim_label}` did not lower to an explicit proof script"
-                )));
-            };
-            let certificate = TacticCertificate::from_proof_tactics(tactics).map_err(|error| {
-                ClickError::new(format!(
-                    "`{claim_label}` produced an invalid structural proposition certificate: {error:?}"
-                ))
-            })?;
-            let replayed_fact = prove_pure_proposition_at_point(
-                proposition,
-                &Proof::Script(certificate.tactics().to_vec()),
-                "assert",
-                environment.theorem_environment,
+            let (certificate, replayed_fact) = pure_goal_certificate_gateway(
                 &claim_label,
-                assertion_index,
-                &context.pure_facts,
-                environment.parsed_function.parameters(),
-                environment.arguments,
-                environment.initial_state,
-                &context.state,
-                None,
-                &program_point_states,
-                environment.predicate_environment,
-                environment.click_function_environment,
-                environment.function_block.requires(),
-                None,
+                || Ok(planned_certificate),
+                |certificate| {
+                    prove_pure_proposition_at_point(
+                        proposition,
+                        &Proof::Script(certificate.tactics().to_vec()),
+                        "assert",
+                        environment.theorem_environment,
+                        &claim_label,
+                        assertion_index,
+                        &context.pure_facts,
+                        environment.parsed_function.parameters(),
+                        environment.arguments,
+                        environment.initial_state,
+                        &context.state,
+                        None,
+                        &program_point_states,
+                        environment.predicate_environment,
+                        environment.click_function_environment,
+                        environment.function_block.requires(),
+                        None,
+                    )
+                },
             )?;
+            debug_assert!(TacticCertificate::from_proof_tactics(certificate.tactics()).is_ok());
             if replayed_fact != planned_fact {
                 return Err(ClickError::new(format!(
                     "`{claim_label}` certificate replay changed the proved proposition"
@@ -12628,35 +12777,34 @@ fn replay_linear_tactics(
                     )?
                 };
                 if let Some(certificate) = surface_certificate {
-                    verify_surface_certificate(
-                        ProofReplayContext {
-                            state: state.clone(),
-                            pure_facts: requirement_pure_facts.clone(),
-                            replay: replay.clone(),
-                            branch_path: branch_path.clone(),
-                        },
-                        function_block,
-                        parsed_function,
-                        claims,
+                    let (_, _) = pure_goal_certificate_gateway(
                         claim_label,
-                        function_environment,
-                        predicate_environment,
-                        click_function_environment,
-                        resource_environment,
-                        theorem_environment,
-                        function,
-                        arguments,
-                        tactic_index,
-                        source_index,
-                        &certificate,
-                    )
-                    .map_err(|error| {
-                        ClickError::new(format!(
-                            "`{claim_label}` tactic {tactic_index}: smart `have` certificate failed replay:\n{}\n{}",
-                            format_tactic_certificate(&certificate),
-                            error.message()
-                        ))
-                    })?;
+                        || Ok(certificate.clone()),
+                        |certificate| {
+                            verify_surface_certificate(
+                                ProofReplayContext {
+                                    state: state.clone(),
+                                    pure_facts: requirement_pure_facts.clone(),
+                                    replay: replay.clone(),
+                                    branch_path: branch_path.clone(),
+                                },
+                                function_block,
+                                parsed_function,
+                                claims,
+                                claim_label,
+                                function_environment,
+                                predicate_environment,
+                                click_function_environment,
+                                resource_environment,
+                                theorem_environment,
+                                function,
+                                arguments,
+                                tactic_index,
+                                source_index,
+                                certificate,
+                            )
+                        },
+                    )?;
                     replay
                         .surface_replay
                         .tactics
