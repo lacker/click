@@ -212,8 +212,14 @@ int32 input_cursor_shared_pipeline(
         fact separate(memory(left[0..4]), memory(data[0..length]));
         fact separate(memory(right[0..4]), memory(load_int32_pointer((left + 2))[0..load_int32((left + 1))]));
     }
-    have right->pos < right->len by {
-        simp();
+    have load_int32(right) < load_int32((right + 1)) by {
+        calculate(load_int32(right) < load_int32((right + 1))) using {
+            fact 1 <= length;
+            fact *(left + 1) == length;
+            fact *(right + 1) == *(left + 1);
+            fact *left == left_value;
+            fact *right == *left;
+        }
     }
     have right->pos == 0 by {
         simp();
