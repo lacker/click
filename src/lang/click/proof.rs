@@ -9543,7 +9543,12 @@ fn replay_linear_tactics(
                     &[],
                     None,
                     prerequisite_policy,
-                    StatementFactTransportPolicy::None,
+                    // `using` deliberately selects the exact context that may
+                    // cross this statement boundary. Transport only those
+                    // listed facts through the certified statement effect;
+                    // ambient facts are restored below at their original
+                    // snapshots.
+                    StatementFactTransportPolicy::Automatic,
                     loop_step_policy,
                 )?;
                 for fact in all_pure_facts {

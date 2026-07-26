@@ -3773,6 +3773,69 @@ fn smart_have_uses_transport_planned_at_the_mutation_boundary() {
 }
 
 #[test]
+fn smart_have_uses_fact_selected_by_explicit_step_at_the_mutation_boundary() {
+    let c_source = r#"
+            int32 set_second_return_first(int32 p[2]) {
+                p[1] = 9;
+                return p[0];
+            }
+        "#;
+    let click_source = r#"
+            verifying "transport.c";
+
+            predicate first_is_seven(int32 p[]) {
+                p[0] == 7
+            }
+
+            int32 set_second_return_first(int32 p[2]) {
+                requires first_is_seven(p);
+                consumes p[0..2];
+                mutable p[1..2] by {
+                    unfold(first_is_seven);
+                    step using {
+                        fact p[0] == 7;
+                        fact loadable(p[0..2]);
+                    }
+                    have p[0] == 7 by {
+                        simp();
+                    }
+                    execute_step();
+                    frame();
+                }
+                produces p[0..2];
+            }
+        "#;
+    let have_offset = click_source
+        .find("have p[0] == 7")
+        .expect("proof should contain the selected have");
+    let line = click_source[..have_offset]
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count()
+        + 1;
+    let column = have_offset
+        - click_source[..have_offset]
+            .rfind('\n')
+            .map(|offset| offset + 1)
+            .unwrap_or(0)
+        + 1;
+
+    let expanded =
+        expand_c0_tactic_source_at(click_source, &[("transport.c", c_source)], line, column)
+            .expect("the fact selected by `step using` should reach the current snapshot");
+    let expanded_have = &expanded[expanded
+        .find("have p[0] == 7")
+        .expect("expanded proof should retain the selected have")
+        ..expanded
+            .find("execute_step();\n                    frame();")
+            .expect("expanded proof should retain its suffix")];
+    assert!(expanded_have.contains("assumption();"), "{expanded_have}");
+    assert!(!expanded_have.contains("simp();"), "{expanded_have}");
+    verify_c0_sources(&expanded, &[("transport.c", c_source)])
+        .expect("the explicit-step boundary transport should replay");
+}
+
+#[test]
 fn source_expander_recalls_a_fact_at_a_recorded_statement_entry() {
     let preserve_c_source = r#"
             int32 preserve(int32 p[1]) {
