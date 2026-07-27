@@ -84,17 +84,32 @@ pub(super) fn verification_target_at(
     line: usize,
     column: usize,
 ) -> Result<VerificationTarget, ClickError> {
-    let selected = locate_source_tactic(click_source, c_sources, line, column)?;
-    Ok(match selected.site {
-        ProofSite::TheoremEnsure { theorem_name, .. } => {
-            VerificationTarget::Theorem(theorem_name)
+    let wanted = offset_at_position(click_source, line, column)?;
+    let tokens = scan_source_tokens(click_source)?;
+    let file = parse_source_with_c_layouts(click_source, c_sources)?;
+    for theorem in file.theorem_definitions() {
+        let source = find_theorem(&tokens, theorem.name())?;
+        if tokens[source.body_open].span.start <= wanted
+            && wanted <= tokens[source.body_close].span.end
+        {
+            return Ok(VerificationTarget::Theorem(theorem.name().to_string()));
         }
-        ProofSite::FunctionClaim { function_name, .. }
-        | ProofSite::LoopPhase { function_name, .. }
-        | ProofSite::StructuralItem { function_name, .. } => {
-            VerificationTarget::Function(function_name)
+    }
+    for function in file.function_blocks() {
+        let function_name = function.signature().name();
+        let source = find_function(&tokens, function_name)?;
+        let in_body = tokens[source.body_open].span.start <= wanted
+            && wanted <= tokens[source.body_close].span.end;
+        let in_grouped_proof = function.grouped_proof().is_some()
+            && find_grouped_proof_span(&tokens, &source)?
+                .contains(&wanted);
+        if in_body || in_grouped_proof {
+            return Ok(VerificationTarget::Function(function_name.to_string()));
         }
-    })
+    }
+    Err(ClickError::new(format!(
+        "no theorem or C function proof contains source location {line}:{column}"
+    )))
 }
 
 /// Expands one tactic and returns the rewritten source.

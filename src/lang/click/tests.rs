@@ -7436,7 +7436,7 @@ int32 bad(int32 x) {
 }
 "#;
     let sources = [("good.c", good_c), ("bad.c", bad_c)];
-    let selected = click_source.find("execute_rest()").unwrap();
+    let selected = click_source.find("ensures result == x;").unwrap();
     let position = expansion::position_at_offset(click_source, selected);
 
     verify_c0_sources(click_source, &sources)
