@@ -191,12 +191,19 @@ Completed slow smart tactics:
 
 The focused 60-second owned-vector profile now reports:
 
-- one slow simple `apply_loop_summary` replay at
-  `examples/owned-vector/vector.click:134:5`, about 528 ms;
-- the 10.2-second `vector_get` smart `simp` at line 75;
-- a 5.9-second loop-preservation smart `simp` at line 125;
-- a 3.4-second `vector_fill` smart `execute_rest` at line 134;
+- no completed simple tactic over 500 ms;
+- a 10.6-second `vector_get` smart `simp` at line 75;
+- a 6.3-second loop-preservation smart `simp` at line 125;
+- a 2.9-second `vector_fill` smart `execute_rest` at line 134;
 - a timeout in the final `vector_fill` smart `simp` at line 136.
+
+The former 528 ms `apply_loop_summary` replay was a simple-tactic boundary
+violation: after applying the verified loop rule, replay re-lowered every
+invariant with the general point-proposition lowering machinery and silently
+ignored failures. `apply_loop_summary` now does only its certified transition;
+it does not eagerly manufacture proposition-map entries for possible future
+tactics. Later explicit tactics lower and check their own premises at their own
+program points. There is no search or ignored-error path.
 
 Owned-string still times out at
 `examples/owned-string/owned_string.click:485:5`, a final smart `simp` that
@@ -210,10 +217,10 @@ one-premise arithmetic certificate.
 
 Work one frontier at a time and commit each logical change independently.
 
-1. Fix the 528 ms owned-vector `apply_loop_summary` simple replay without
-   adding search or special-case fallbacks.
-2. Reprofile owned-vector. Expand one smart frontier only after no reached
-   simple tactic exceeds 500 ms.
+1. Expand one owned-vector smart frontier, starting at line 75, then reprofile
+   and stop to fix any correctness or slow-simple issue it exposes.
+2. Continue the same cycle for the smart frontiers at owned-vector lines 125,
+   134, and 136.
 3. Continue the same cycle for
    owned-string line 485, owned-string line 471, and input-cursor line 125.
 4. Build the global certificate audit before claiming expansion is complete.

@@ -12772,51 +12772,45 @@ fn replay_linear_tactics(
             ProofTactic::StepUsing(premises)
             | ProofTactic::ApplyLoopSummaryUsing { premises, .. } => {
                 let all_pure_facts = requirement_pure_facts.clone();
-                let all_pure_assumptions = assumptions_from_propositions(&all_pure_facts);
-                let (tactic_name, prerequisite_policy, loop_step_policy, applied_loop_index) =
-                    match tactic {
-                        ProofTactic::StepUsing(_) => (
-                            "step using",
-                            StatementPrerequisitePolicy::Explicit,
-                            LoopStepPolicy::EnterBody,
-                            None,
-                        ),
-                        ProofTactic::ApplyLoopSummaryUsing { region, .. } => {
-                            let CodeRegion::Loop(expected_loop) = resolve_code_region_ref(
-                                function_block,
-                                region,
-                                claim_label,
-                                tactic_index,
-                            )?
-                            else {
-                                return Err(ClickError::new(format!(
-                                    "`{claim_label}` tactic {tactic_index}: `apply_loop_summary` expects a loop region"
-                                )));
-                            };
-                            let current_loop = replay
-                                .source_layout
-                                .statement(replay.frontier.next_statement_index)
-                                .and_then(|region| match region.kind {
-                                    SourceStatementKind::Loop { loop_index } => Some(loop_index),
-                                    SourceStatementKind::Plain | SourceStatementKind::If { .. } => {
-                                        None
-                                    }
-                                });
-                            if current_loop != Some(expected_loop) {
-                                return Err(ClickError::new(format!(
-                                    "`{claim_label}` tactic {tactic_index}: `apply_loop_summary(loop({expected_loop}))` is not at that loop's entry; current statement is statement({})",
-                                    replay.frontier.next_statement_index
-                                )));
-                            }
-                            (
-                                "apply_loop_summary using",
-                                StatementPrerequisitePolicy::Explicit,
-                                LoopStepPolicy::ApplyVerifiedRule,
-                                Some(expected_loop),
-                            )
+                let (tactic_name, prerequisite_policy, loop_step_policy) = match tactic {
+                    ProofTactic::StepUsing(_) => (
+                        "step using",
+                        StatementPrerequisitePolicy::Explicit,
+                        LoopStepPolicy::EnterBody,
+                    ),
+                    ProofTactic::ApplyLoopSummaryUsing { region, .. } => {
+                        let CodeRegion::Loop(expected_loop) = resolve_code_region_ref(
+                            function_block,
+                            region,
+                            claim_label,
+                            tactic_index,
+                        )?
+                        else {
+                            return Err(ClickError::new(format!(
+                                "`{claim_label}` tactic {tactic_index}: `apply_loop_summary` expects a loop region"
+                            )));
+                        };
+                        let current_loop = replay
+                            .source_layout
+                            .statement(replay.frontier.next_statement_index)
+                            .and_then(|region| match region.kind {
+                                SourceStatementKind::Loop { loop_index } => Some(loop_index),
+                                SourceStatementKind::Plain | SourceStatementKind::If { .. } => None,
+                            });
+                        if current_loop != Some(expected_loop) {
+                            return Err(ClickError::new(format!(
+                                "`{claim_label}` tactic {tactic_index}: `apply_loop_summary(loop({expected_loop}))` is not at that loop's entry; current statement is statement({})",
+                                replay.frontier.next_statement_index
+                            )));
                         }
-                        _ => unreachable!(),
-                    };
+                        (
+                            "apply_loop_summary using",
+                            StatementPrerequisitePolicy::Explicit,
+                            LoopStepPolicy::ApplyVerifiedRule,
+                        )
+                    }
+                    _ => unreachable!(),
+                };
                 let pre_state = replay.execution_start_state(&state).clone();
                 let mut explicit_premises = Vec::new();
                 for surface_premise in premises {
@@ -12853,15 +12847,12 @@ fn replay_linear_tactics(
                                 error.message()
                             ))
                         })?;
-                    let premise_is_available =
-                        materialization_equivalent_available_fact(&premise, &all_pure_facts)
-                            .is_some()
-                            || all_pure_assumptions
-                                .derive_atomic_proposition(&premise)
-                                .or_else(|| {
-                                    all_pure_assumptions.derive_simp_atomic_proposition(&premise)
-                                })
-                                .is_some();
+                    let premise_is_available = exact_fact_is_available(&premise, &all_pure_facts)
+                        || materialization_equivalent_available_fact(
+                            &premise,
+                            &all_pure_facts,
+                        )
+                        .is_some();
                     if !premise_is_available {
                         return Err(ClickError::new(format!(
                             "`{claim_label}` tactic {tactic_index}: `{tactic_name}` requires an exact premise: {}",
@@ -12975,37 +12966,6 @@ fn replay_linear_tactics(
                     }
                 }
                 requirement_pure_facts = explicit_premises;
-                if let Some(loop_index) = applied_loop_index
-                    && let Some(loop_clause) = function_block
-                        .structural_clauses()
-                        .iter()
-                        .find(|clause| clause.region() == &CodeRegion::Loop(loop_index))
-                {
-                    for invariant in loop_clause
-                        .items()
-                        .iter()
-                        .filter(|item| item.kind() == StructuralItemKind::Invariant)
-                        .filter_map(StructuralItem::proposition)
-                    {
-                        let Ok(kernel) = lower_point_proposition(
-                            invariant,
-                            &requirement_pure_facts,
-                            parsed_function.parameters(),
-                            arguments,
-                            replay.execution_start_state(&state),
-                            &state,
-                            None,
-                            &replay.program_point_states,
-                            predicate_environment,
-                            click_function_environment,
-                        ) else {
-                            continue;
-                        };
-                        replay
-                            .surface_propositions
-                            .record_lowering(invariant, &kernel)?;
-                    }
-                }
                 assumptions = assumptions_from_propositions(&requirement_pure_facts);
             }
             ProofTactic::Step
