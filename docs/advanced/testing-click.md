@@ -117,7 +117,8 @@ then handles each unique `file:line:column` independently:
 2. require a changed, syntactically readable sidecar;
 3. copy the original project to a fresh temporary directory;
 4. install that one expanded sidecar; and
-5. fully verify the rewritten project in another bounded child process.
+5. fully verify that rewritten sidecar against the copied C sources in another
+   bounded child process.
 
 Discovery, expansion, and rewritten verification default to limits of five
 minutes, two minutes, and five minutes respectively. Override them with
@@ -127,8 +128,9 @@ diagnostic run; a release or certificate-boundary audit should omit it.
 
 Every timeout child is killed and reaped. Sites are tested against independent
 project copies, so an earlier rewrite cannot hide or cause a later failure.
+Sibling sidecars are not redundantly reverified after a one-sidecar rewrite.
 The command exits unsuccessfully if original verification, expansion, parsing,
-or rewritten verification fails.
+or rewritten-sidecar verification fails.
 
 ## Unit Tests
 

@@ -21,12 +21,13 @@ const USAGE: &str = "\
 usage: click-audit [OPTIONS] <example-project|examples-directory>
 
 The audit verifies each original project, inventories every smart tactic, then
-expands and fully verifies each site against a fresh temporary project copy.
+expands and fully verifies each rewritten sidecar against a fresh temporary
+project copy.
 
 defaults:
   --discovery-time-limit 5m   original verification and site inventory
   --expansion-time-limit 2m   one source expansion
-  --verification-time-limit 5m rewritten-project verification
+  --verification-time-limit 5m rewritten-sidecar verification
 
 options:
   --discovery-time-limit <DURATION>
@@ -101,7 +102,9 @@ fn run_internal_command(arguments: &[String]) -> Option<Result<(), String>> {
         [command, path] if command == "--internal-inventory" => {
             Some(verify_project(Path::new(path)))
         }
-        [command, path] if command == "--internal-verify" => Some(verify_project(Path::new(path))),
+        [command, path] if command == "--internal-verify-sidecar" => {
+            Some(verify_sidecar(Path::new(path)))
+        }
         [command, location] if command == "--internal-expand" => {
             Some(expand_location(location).map(|source| print!("{source}")))
         }
@@ -426,11 +429,17 @@ fn audit_site(
         .map_err(|error| format!("failed to write `{}`: {error}", rewritten_path.display()))?;
 
     let mut verification = Command::new(executable);
-    verification.arg("--internal-verify").arg(temporary.path());
+    verification
+        .arg("--internal-verify-sidecar")
+        .arg(&rewritten_path);
     let verification = require_success(
-        run_bounded(verification, verification_limit, "rewritten verification")?,
+        run_bounded(
+            verification,
+            verification_limit,
+            "rewritten-sidecar verification",
+        )?,
         verification_limit,
-        "rewritten verification",
+        "rewritten-sidecar verification",
     )?;
     Ok((expansion.elapsed, verification.elapsed))
 }
@@ -610,6 +619,24 @@ fn verify_project(project: &Path) -> Result<(), String> {
             )
         })?;
     }
+    Ok(())
+}
+
+fn verify_sidecar(click_path: &Path) -> Result<(), String> {
+    let project = click_path.parent().unwrap_or_else(|| Path::new("."));
+    let mut c_paths = files_with_extension(project, "c")?;
+    c_paths.sort();
+    let c_sources = read_named_sources(&c_paths)?;
+    let refs = source_refs(&c_sources);
+    let click_source = fs::read_to_string(click_path)
+        .map_err(|error| format!("failed to read `{}`: {error}", click_path.display()))?;
+    verify_c0_sources(&click_source, &refs).map_err(|error| {
+        format!(
+            "sidecar `{}` failed: {}",
+            click_path.display(),
+            error.message()
+        )
+    })?;
     Ok(())
 }
 
