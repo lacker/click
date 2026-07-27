@@ -1,5 +1,5 @@
 use super::prelude::*;
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 
 // Global equality resolution can re-enter itself through snapshot and alias
 // facts. Two levels retain the framed symbolic-load cases while making failed
@@ -34,6 +34,8 @@ impl Drop for MemoryLoadEqualityDepthGuard {
 thread_local! {
     static SIMP_REASONING_FUEL: Cell<Option<usize>> = const { Cell::new(None) };
     static SIMP_FACT_REASONING_DEPTH: Cell<usize> = const { Cell::new(0) };
+    static CONDITION_DECISIONS_IN_PROGRESS: RefCell<BTreeSet<ConditionTerm>> =
+        const { RefCell::new(BTreeSet::new()) };
 }
 
 const DEFAULT_SIMP_REASONING_FUEL: usize = 300;
@@ -90,6 +92,36 @@ impl SimpFactReasoningDepthGuard {
 impl Drop for SimpFactReasoningDepthGuard {
     fn drop(&mut self) {
         SIMP_FACT_REASONING_DEPTH.with(|depth| depth.set(depth.get() - 1));
+    }
+}
+
+struct ConditionDecisionGuard {
+    condition: ConditionTerm,
+}
+
+impl ConditionDecisionGuard {
+    // Order matching can compare memory loads, which can ask alias questions
+    // whose pointer arithmetic re-enters the original order query. Repeating
+    // an in-progress query cannot add evidence, so stop that branch
+    // conservatively instead of recursing through the Rust stack.
+    fn enter(condition: &ConditionTerm) -> Option<Self> {
+        CONDITION_DECISIONS_IN_PROGRESS.with(|in_progress| {
+            let mut in_progress = in_progress.borrow_mut();
+            if !in_progress.insert(condition.clone()) {
+                return None;
+            }
+            Some(Self {
+                condition: condition.clone(),
+            })
+        })
+    }
+}
+
+impl Drop for ConditionDecisionGuard {
+    fn drop(&mut self) {
+        CONDITION_DECISIONS_IN_PROGRESS.with(|in_progress| {
+            in_progress.borrow_mut().remove(&self.condition);
+        });
     }
 }
 
@@ -285,6 +317,7 @@ impl Assumptions {
         if !consume_simp_reasoning_fuel() {
             return None;
         }
+        let _decision_guard = ConditionDecisionGuard::enter(condition)?;
         self.decide_inner(condition)
     }
 

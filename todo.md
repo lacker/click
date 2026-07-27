@@ -1,6 +1,6 @@
 # `click-profile` / `click-expand` Handoff
 
-Last updated: 2026-07-26
+Last updated: 2026-07-27
 
 ## Goal
 
@@ -120,8 +120,10 @@ Notable strict boundaries include:
 
 Current focused validation:
 
-- 397 library tests pass;
+- 404 library tests pass;
 - 7 `click-profile` binary tests pass;
+- the `execute_rest` order/alias recursion regression passes in an isolated
+  mdtest process;
 - the owned-string example verifies normally;
 - a 10 ms diagnostic owned-string profile completes without source-mapping
   errors;
@@ -130,6 +132,13 @@ Current focused validation:
 
 There is no presently reproduced expansion or profiler-coordinate correctness
 failure.
+
+General condition solving now detects re-entry of the same condition query.
+Without that guard, order facts over memory-loaded indices could cycle through
+memory-load equality, pointer alias reasoning, and back into the original
+order query until Rust aborted with a stack overflow. Re-entry returns
+conservative "not decided"; it does not add a larger stack or hide the cycle
+behind a timeout.
 
 ## Remaining correctness work
 
@@ -203,6 +212,12 @@ Fresh verification gets through `vector_fill` and now reaches a later failure:
 the final smart `simp` in `vector_push_first` does not close
 `vector_push_first.ensures_3`. Treat that as the next owned-vector correctness
 frontier; it is not an expansion timeout.
+
+The full mdtest sweep also currently stops at the pre-existing expanded
+certificate in `bubble_pass3_max_suffix.md`: after unfolding
+`all_le_range`, its printed `derive(all_le_range(...))` target no longer
+matches the quantified current goal. The condition-cycle guard does not cause
+this failure; the same focused mdtest fails with the guard disabled.
 
 This sweep fixed two expander correctness bugs. Grouped expansion now preserves
 one closer per claim even when multiple claims end in structurally identical
