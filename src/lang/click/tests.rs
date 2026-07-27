@@ -7404,3 +7404,88 @@ fn expanded_read_step_keeps_named_range_separation_premises() {
     verify_c0_sources(&expanded, &[("owned_string_pop.c", c_source)])
         .expect("the expanded read certificate should verify as a complete proof");
 }
+
+#[test]
+fn location_verification_skips_unrelated_function_proofs() {
+    let good_c = r#"
+int32 good(int32 x) {
+    return x;
+}
+"#;
+    let bad_c = r#"
+int32 bad(int32 x) {
+    return x;
+}
+"#;
+    let click_source = r#"
+verifying "good.c";
+verifying "bad.c";
+
+int32 good(int32 x) {
+    ensures result == x;
+} by {
+    execute_rest();
+    simp();
+}
+
+int32 bad(int32 x) {
+    ensures result == x + 1;
+} by {
+    execute_rest();
+    simp();
+}
+"#;
+    let sources = [("good.c", good_c), ("bad.c", bad_c)];
+    let selected = click_source.find("execute_rest()").unwrap();
+    let position = expansion::position_at_offset(click_source, selected);
+
+    verify_c0_sources(click_source, &sources)
+        .expect_err("complete verification should reject the bad function");
+    let verified =
+        verify_c0_sources_at(click_source, &sources, position.line, position.column)
+            .expect("location verification should skip the unrelated bad proof");
+    assert!(verified
+        .iter()
+        .all(|theorem| theorem.function_block.signature().name() == "good"));
+}
+
+#[test]
+fn location_verification_checks_called_function_dependencies() {
+    let callee_c = r#"
+int32 callee(int32 x) {
+    return x;
+}
+"#;
+    let caller_c = r#"
+int32 caller(int32 x) {
+    int32 result;
+    result = callee(x);
+    return result;
+}
+"#;
+    let click_source = r#"
+verifying "callee.c";
+verifying "caller.c";
+
+int32 callee(int32 x) {
+    ensures result == x + 1;
+} by {
+    execute_rest();
+    simp();
+}
+
+int32 caller(int32 x) {
+    ensures result == x + 1;
+} by {
+    execute_rest();
+    simp();
+}
+"#;
+    let sources = [("callee.c", callee_c), ("caller.c", caller_c)];
+    let caller_proof = click_source.rfind("execute_rest()").unwrap();
+    let position = expansion::position_at_offset(click_source, caller_proof);
+
+    let error = verify_c0_sources_at(click_source, &sources, position.line, position.column)
+        .expect_err("targeted caller verification must check its callee dependency");
+    assert!(error.message().contains("callee"), "{}", error.message());
+}

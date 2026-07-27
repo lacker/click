@@ -72,6 +72,31 @@ pub struct SourcePosition {
     pub column: usize,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) enum VerificationTarget {
+    Function(String),
+    Theorem(String),
+}
+
+pub(super) fn verification_target_at(
+    click_source: &str,
+    c_sources: &[(&str, &str)],
+    line: usize,
+    column: usize,
+) -> Result<VerificationTarget, ClickError> {
+    let selected = locate_source_tactic(click_source, c_sources, line, column)?;
+    Ok(match selected.site {
+        ProofSite::TheoremEnsure { theorem_name, .. } => {
+            VerificationTarget::Theorem(theorem_name)
+        }
+        ProofSite::FunctionClaim { function_name, .. }
+        | ProofSite::LoopPhase { function_name, .. }
+        | ProofSite::StructuralItem { function_name, .. } => {
+            VerificationTarget::Function(function_name)
+        }
+    })
+}
+
 /// Expands one tactic and returns the rewritten source.
 ///
 /// Certificate capture verifies the selected proof prefix. The caller is
@@ -1282,7 +1307,7 @@ fn offset_at_position(source: &str, line: usize, column: usize) -> Result<usize,
     Ok(line_start + byte_in_line)
 }
 
-fn position_at_offset(source: &str, offset: usize) -> SourcePosition {
+pub(super) fn position_at_offset(source: &str, offset: usize) -> SourcePosition {
     let prefix = &source[..offset];
     let line = prefix.bytes().filter(|byte| *byte == b'\n').count() + 1;
     let line_start = prefix.rfind('\n').map_or(0, |newline| newline + 1);

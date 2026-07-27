@@ -45,7 +45,7 @@ mod printing;
 mod proof;
 mod validation;
 use checking::*;
-use expansion::ProofSite;
+use expansion::{ProofSite, VerificationTarget, verification_target_at};
 pub use expansion::{
     CProofClaim, SourcePosition, c0_tactic_source_position, expand_c0_claim_source,
     expand_c0_tactic_source_at, verifying_source_paths,
@@ -1849,13 +1849,48 @@ pub fn verify_c0_sources(
     click_source: &str,
     c_sources: &[(&str, &str)],
 ) -> Result<Vec<VerifiedCTheorem>, ClickError> {
+    verify_c0_sources_targeted(click_source, c_sources, None)
+}
+
+/// Parses and validates the complete sidecar, then verifies only the proof
+/// unit containing the one-based source location and the C functions it calls.
+pub fn verify_c0_sources_at(
+    click_source: &str,
+    c_sources: &[(&str, &str)],
+    line: usize,
+    column: usize,
+) -> Result<Vec<VerifiedCTheorem>, ClickError> {
+    let target = verification_target_at(click_source, c_sources, line, column)?;
+    verify_c0_sources_targeted(click_source, c_sources, Some(target))
+}
+
+fn verify_c0_sources_targeted(
+    click_source: &str,
+    c_sources: &[(&str, &str)],
+    verification_target: Option<VerificationTarget>,
+) -> Result<Vec<VerifiedCTheorem>, ClickError> {
     let c_sources: BTreeMap<&str, &str> = c_sources.iter().copied().collect();
     let struct_layouts = parse_c_struct_layouts(&c_sources)?;
     let file = parser::parse_with_struct_layouts(click_source, struct_layouts)?;
     let parsed_sources = parse_verified_sources(&file, &c_sources)?;
-    let tactic_expansion_functions = proof::active_c0_tactic_expansion_request()
+    let expansion_functions = proof::active_c0_tactic_expansion_request()
         .map(|request| tactic_expansion_required_functions(&file, &parsed_sources, request))
         .transpose()?;
+    let selected_functions = if expansion_functions.is_some() {
+        expansion_functions
+    } else {
+        match verification_target.as_ref() {
+            Some(VerificationTarget::Function(function_name)) => {
+                Some(verification_required_functions(
+                    &file,
+                    &parsed_sources,
+                    function_name,
+                )?)
+            }
+            Some(VerificationTarget::Theorem(_)) => Some(BTreeSet::new()),
+            None => None,
+        }
+    };
     let predicate_definitions = combined_predicate_definitions(&file)?;
     let click_function_definitions = combined_click_function_definitions(&file)?;
     let resource_definitions = combined_resource_definitions(&file)?;
@@ -1879,7 +1914,7 @@ pub fn verify_c0_sources(
     let mut verified = Vec::new();
 
     for function_block in file.function_blocks {
-        if tactic_expansion_functions
+        if selected_functions
             .as_ref()
             .is_some_and(|functions| !functions.contains(function_block.signature.name()))
         {
@@ -2141,6 +2176,35 @@ fn tactic_expansion_required_functions(
         if let Some((_, parsed)) = parsed_sources.get(&dependency) {
             pending.extend(c0_statement_calls(parsed.body()).into_iter().flatten());
         }
+    }
+    Ok(required)
+}
+
+fn verification_required_functions(
+    file: &ClickFile,
+    parsed_sources: &BTreeMap<String, (String, syntax::C0Function)>,
+    function_name: &str,
+) -> Result<BTreeSet<String>, ClickError> {
+    if !file
+        .function_blocks()
+        .iter()
+        .any(|function| function.signature().name() == function_name)
+    {
+        return Err(ClickError::new(format!(
+            "source location selected unknown function `{function_name}`"
+        )));
+    }
+    let mut required = BTreeSet::new();
+    let mut pending = vec![function_name.to_string()];
+    while let Some(name) = pending.pop() {
+        if !required.insert(name.clone()) {
+            continue;
+        }
+        let parsed = &parsed_sources
+            .get(&name)
+            .ok_or_else(|| ClickError::new(format!("no C source defines `{name}`")))?
+            .1;
+        pending.extend(c0_statement_calls(parsed.body()).into_iter().flatten());
     }
     Ok(required)
 }
