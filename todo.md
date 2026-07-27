@@ -224,14 +224,20 @@ again afterward.
 A 120-second owned-vector profile reaches `vector_pipeline`, so there is no
 remaining `vector_push_first` correctness failure. It reports:
 
-- a 674 ms simple `assumption` at
-  `examples/owned-vector/vector.click:290:5`;
 - a 22.1 second smart `execute_until` at
   `examples/owned-vector/vector.click:459:5`;
 - a 2.9 second smart `execute_step` at
   `examples/owned-vector/vector.click:387:5`;
 - a project timeout while the smart `execute_until` at
   `examples/owned-vector/vector.click:478:5` was active.
+
+The former 674 ms simple `assumption` at
+`examples/owned-vector/vector.click:290:5` is fixed. Post-execution
+`assumption` now resolves an unchanged ensure proposition through the checked
+surface-to-kernel mapping established by the preceding certified `have`,
+instead of re-lowering the quantified goal from the full ambient fact set. The
+same location is now below the profiler's 1 ms reporting threshold, and a
+fresh default-threshold profile reports no completed slow simple tactics.
 
 `bubble_pass3_max_suffix.md` now passes. Loop initialization plans against the
 authoritative lowered invariant goal when duplicate surface lowering is not
@@ -277,14 +283,12 @@ one-premise arithmetic certificate.
 
 Work one frontier at a time and commit each logical change independently.
 
-1. Fix the 674 ms simple `vector_fill.contract` assumption path before
-   expanding more owned-vector smart tactics.
-2. Then expand the known-working `vector_pipeline` line 459 and
+1. Expand the known-working `vector_pipeline` line 459 and
    `vector_push_first` line 387 certificates one at a time, reprofile, and
    inspect the line 478 frontier.
-3. Continue the same cycle for
+2. Continue the same cycle for
    owned-string line 485, owned-string line 471, and input-cursor line 125.
-4. Build the global certificate audit before claiming expansion is complete.
+3. Build the global certificate audit before claiming expansion is complete.
 
 Do not optimize by adding proposition-specific smart fast paths, broad ambient
 premises, generic transport fallbacks, or internal-only certificate tactics.

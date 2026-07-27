@@ -9125,23 +9125,31 @@ fn finish_ordered_proof_replay(
                             };
                             let goal = match &rewritten_claim_goals[claim_index] {
                                 Some(goal) => goal.clone(),
-                                None => lower_ensure_proposition_goal(
-                                    &path_requirements,
-                                    surface_goal,
-                                    parsed_function.parameters(),
-                                    arguments,
-                                    pre_state,
-                                    &outcome,
-                                    predicate_environment,
-                                    click_function_environment,
-                                    &replay.program_point_states,
-                                    &unfolded_predicates,
-                                )
-                                .map_err(|message| {
-                                    ClickError::new(format!(
-                                        "`{proof_label}` path {path_index}, tactic {tactic_index}: `assumption` could not lower goal: {message}"
-                                    ))
-                                })?,
+                                None => {
+                                    if let Some(recorded) = outcome_surface_propositions
+                                        .available_kernel(surface_goal, &path_requirements)
+                                    {
+                                        recorded.clone()
+                                    } else {
+                                        lower_ensure_proposition_goal(
+                                            &path_requirements,
+                                            surface_goal,
+                                            parsed_function.parameters(),
+                                            arguments,
+                                            pre_state,
+                                            &outcome,
+                                            predicate_environment,
+                                            click_function_environment,
+                                            &replay.program_point_states,
+                                            &unfolded_predicates,
+                                        )
+                                        .map_err(|message| {
+                                            ClickError::new(format!(
+                                                "`{proof_label}` path {path_index}, tactic {tactic_index}: `assumption` could not lower goal: {message}"
+                                            ))
+                                        })?
+                                    }
+                                }
                             };
                             if path_requirements.contains(&goal) {
                                 closed_claims[claim_index] = true;
