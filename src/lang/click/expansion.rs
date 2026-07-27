@@ -1008,11 +1008,10 @@ fn proof_source_position(
         })?;
         return Ok(position_at_offset(click_source, span.start));
     }
-    if source_index != 0 {
-        return Err(ClickError::new(format!(
-            "`{claim_label}` has no source tactic occurrence {source_index}"
-        )));
-    }
+    // Smart and omitted proofs have one source site even when verification
+    // lowers them to several internally indexed certificate tactics. Those
+    // generated indices are useful profiler diagnostics, but they all map
+    // back to the same selectable proof site.
     if let Some(proof_span) = proof_span {
         let by = tokens
             .iter()
@@ -1844,6 +1843,21 @@ int32 identity(int32 x) {
             .unwrap(),
             SourcePosition { line: 4, column: 6 }
         );
+        assert_eq!(
+            c0_tactic_source_position(
+                explicit,
+                &[("identity.c", c_source)],
+                "identity.contract",
+                2,
+            )
+            .unwrap(),
+            SourcePosition { line: 4, column: 6 }
+        );
+        let expanded = expand_c0_tactic_source_at(explicit, &[("identity.c", c_source)], 4, 6)
+            .expect("an internal smart-proof timing should select the whole source proof");
+        assert!(!expanded.contains("by auto"));
+        verify_c0_sources(&expanded, &[("identity.c", c_source)])
+            .expect("the expanded smart proof should verify");
 
         let implicit = r#"verifying "identity.c";
 int32 identity(int32 x) {
@@ -1856,6 +1870,16 @@ int32 identity(int32 x) {
                 &[("identity.c", c_source)],
                 "identity.ensures_0",
                 0,
+            )
+            .unwrap(),
+            SourcePosition { line: 3, column: 5 }
+        );
+        assert_eq!(
+            c0_tactic_source_position(
+                implicit,
+                &[("identity.c", c_source)],
+                "identity.ensures_0",
+                2,
             )
             .unwrap(),
             SourcePosition { line: 3, column: 5 }
