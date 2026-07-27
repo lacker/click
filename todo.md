@@ -183,19 +183,33 @@ completed simple tactic over 500 ms.
 Completed slow smart tactics:
 
 - `examples/owned-vector/vector.click:75:5`
-  (`vector_get.contract`, final `simp`): about 10.3 seconds;
+  (`vector_get.contract`, final `simp`): expanded and committed;
+- the former `vector_fill.loop(0).preserve` `simp`: expanded to
+  `close_invariants()` and committed;
+- the former `vector_fill.contract` `execute_rest`: expanded to explicit
+  statement and loop-summary certificates and committed;
 - `examples/owned-string/owned_string.click:471:5`
   (`owned_string_pop.contract`, smart `have`): about 5.6 seconds;
 - `examples/input-cursor/input_cursor.click:125:5`
   (`input_cursor_take.contract`, `simp`): about 3.8 seconds.
 
-The focused 60-second owned-vector profile now reports:
+The focused 30-second owned-vector profile now reports:
 
 - no completed simple tactic over 500 ms;
-- a 10.6-second `vector_get` smart `simp` at line 75;
-- a 6.3-second loop-preservation smart `simp` at line 125;
-- a 2.9-second `vector_fill` smart `execute_rest` at line 134;
-- a timeout in the final `vector_fill` smart `simp` at line 136.
+- no completed smart tactic over two seconds;
+- one active timeout in the final `vector_fill` smart `simp` at
+  `examples/owned-vector/vector.click:259:5`.
+
+The final `vector_fill` `simp` did not produce a certificate under either the
+standard 60-second expansion limit or a bounded 120-second probe. Leave that
+site unmodified until its smart proof search can be reduced or replaced by a
+certified plan.
+
+This sweep fixed two expander correctness bugs. Grouped expansion now preserves
+one closer per claim even when multiple claims end in structurally identical
+tactics. Source printing now recursively uses Click syntax inside quantified
+and range propositions, and premise-free certified derivations print as
+`normalize()` backed by context-free derivation replay.
 
 The former 528 ms `apply_loop_summary` replay was a simple-tactic boundary
 violation: after applying the verified loop rule, replay re-lowered every
@@ -217,13 +231,11 @@ one-premise arithmetic certificate.
 
 Work one frontier at a time and commit each logical change independently.
 
-1. Expand one owned-vector smart frontier, starting at line 75, then reprofile
-   and stop to fix any correctness or slow-simple issue it exposes.
-2. Continue the same cycle for the smart frontiers at owned-vector lines 125,
-   134, and 136.
-3. Continue the same cycle for
+1. Reduce the remaining final `vector_fill` smart `simp` at owned-vector line
+   259, then expand and reprofile it.
+2. Continue the same cycle for
    owned-string line 485, owned-string line 471, and input-cursor line 125.
-4. Build the global certificate audit before claiming expansion is complete.
+3. Build the global certificate audit before claiming expansion is complete.
 
 Do not optimize by adding proposition-specific smart fast paths, broad ambient
 premises, generic transport fallbacks, or internal-only certificate tactics.
