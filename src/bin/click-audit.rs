@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 
 use click::lang::click::{
     SourcePosition, c0_tactic_source_position, expand_c0_tactic_source_at, verify_c0_sources,
-    verifying_source_paths,
+    verify_c0_sources_at, verifying_source_paths,
 };
 
 const DEFAULT_DISCOVERY_LIMIT: Duration = Duration::from_secs(5 * 60);
@@ -102,9 +102,10 @@ fn run_internal_command(arguments: &[String]) -> Option<Result<(), String>> {
         [command, path] if command == "--internal-inventory" => {
             Some(verify_project(Path::new(path)))
         }
-        [command, path] if command == "--internal-verify-sidecar" => {
-            Some(verify_sidecar(Path::new(path)))
-        }
+        [command, path, line, column] if command == "--internal-verify-sidecar-at" => Some(
+            parse_position(line, column)
+                .and_then(|position| verify_sidecar_at(Path::new(path), position)),
+        ),
         [command, location] if command == "--internal-expand" => {
             Some(expand_location(location).map(|source| print!("{source}")))
         }
@@ -430,8 +431,10 @@ fn audit_site(
 
     let mut verification = Command::new(executable);
     verification
-        .arg("--internal-verify-sidecar")
-        .arg(&rewritten_path);
+        .arg("--internal-verify-sidecar-at")
+        .arg(&rewritten_path)
+        .arg(site.position.line.to_string())
+        .arg(site.position.column.to_string());
     let verification = require_success(
         run_bounded(
             verification,
@@ -622,7 +625,7 @@ fn verify_project(project: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn verify_sidecar(click_path: &Path) -> Result<(), String> {
+fn verify_sidecar_at(click_path: &Path, position: SourcePosition) -> Result<(), String> {
     let project = click_path.parent().unwrap_or_else(|| Path::new("."));
     let mut c_paths = files_with_extension(project, "c")?;
     c_paths.sort();
@@ -630,7 +633,7 @@ fn verify_sidecar(click_path: &Path) -> Result<(), String> {
     let refs = source_refs(&c_sources);
     let click_source = fs::read_to_string(click_path)
         .map_err(|error| format!("failed to read `{}`: {error}", click_path.display()))?;
-    verify_c0_sources(&click_source, &refs).map_err(|error| {
+    verify_c0_sources_at(&click_source, &refs, position.line, position.column).map_err(|error| {
         format!(
             "sidecar `{}` failed: {}",
             click_path.display(),
@@ -638,6 +641,19 @@ fn verify_sidecar(click_path: &Path) -> Result<(), String> {
         )
     })?;
     Ok(())
+}
+
+fn parse_position(line: &str, column: &str) -> Result<SourcePosition, String> {
+    let line = line
+        .parse::<usize>()
+        .map_err(|_| format!("invalid source line `{line}`"))?;
+    let column = column
+        .parse::<usize>()
+        .map_err(|_| format!("invalid source column `{column}`"))?;
+    if line == 0 || column == 0 {
+        return Err("source lines and columns are one-based".to_string());
+    }
+    Ok(SourcePosition { line, column })
 }
 
 fn find_projects(path: &Path) -> Result<Vec<PathBuf>, String> {

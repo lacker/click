@@ -71,6 +71,23 @@ Expansion does replay verification from the start of the sidecar through the
 selected proof site. A late selector can therefore take longer than the
 selected tactic itself.
 
+### Location-targeted verification
+
+Use:
+
+```sh
+cargo run --quiet --bin click-verify -- path/to/file.click:LINE:COLUMN
+```
+
+The verifier parses and validates the complete sidecar, resolves the location
+to its containing theorem or C function proof, and verifies only that semantic
+unit. C-function targets also verify their transitive C-call dependencies.
+Unrelated function proofs are not executed.
+
+`click-audit` uses this mode for rewritten sidecars. Original project discovery
+still performs one complete verification so the audit never treats an
+unverified baseline as authoritative.
+
 ### Profiling
 
 Use:
