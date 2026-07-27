@@ -1932,6 +1932,7 @@ pub fn verify_c0_sources(
                     &resource_environment,
                     &theorem_environment,
                     tactics,
+                    ProofTacticSource::SourceSyntax,
                 )?,
                 Proof::Default | Proof::Tactic(SmartTactic::Simp | SmartTactic::Frame) => {
                     return Err(ClickError::new(format!(
@@ -1998,6 +1999,7 @@ pub fn verify_c0_sources(
                         &resource_environment,
                         &theorem_environment,
                         tactics,
+                        ProofTacticSource::SourceSyntax,
                     )?,
                 };
                 function_verified.extend(theorems.iter().cloned());

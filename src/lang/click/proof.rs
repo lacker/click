@@ -702,6 +702,68 @@ fn prove_pure_theorem_script(
 mod certificate_tests {
     use super::*;
 
+    fn linear_tactic_coordinates(node: &InternalProofNode) -> Vec<(usize, usize)> {
+        match node {
+            InternalProofNode::Done => Vec::new(),
+            InternalProofNode::Linear {
+                tactics,
+                continuation,
+            } => {
+                let mut coordinates = tactics
+                    .iter()
+                    .map(|tactic| (tactic.index, tactic.source_index))
+                    .collect::<Vec<_>>();
+                coordinates.extend(linear_tactic_coordinates(continuation));
+                coordinates
+            }
+            InternalProofNode::If {
+                then_branch,
+                else_branch,
+                continuation,
+                ..
+            } => {
+                let mut coordinates = linear_tactic_coordinates(then_branch);
+                coordinates.extend(linear_tactic_coordinates(else_branch));
+                coordinates.extend(linear_tactic_coordinates(continuation));
+                coordinates
+            }
+            InternalProofNode::Advance {
+                body, continuation, ..
+            } => {
+                let mut coordinates = linear_tactic_coordinates(body);
+                coordinates.extend(linear_tactic_coordinates(continuation));
+                coordinates
+            }
+        }
+    }
+
+    #[test]
+    fn generated_certificate_steps_retain_one_owning_source_occurrence() {
+        let tactics = [ProofTactic::Step, ProofTactic::Assumption];
+        let source = build_internal_proof(&tactics, "source").expect("source proof should build");
+        let generated = build_generated_certificate_proof(&tactics, "generated", 7)
+            .expect("generated certificate should build");
+
+        assert_eq!(linear_tactic_coordinates(&source), vec![(0, 0), (1, 1)]);
+        assert_eq!(
+            linear_tactic_coordinates(&generated),
+            vec![(0, 7), (1, 7)]
+        );
+    }
+
+    #[test]
+    fn deferred_tactics_retain_their_owning_source_occurrence() {
+        let mut replay = TacticReplayState::default();
+        replay.defer_post_execution(9, 2, PostExecutionTactic::Simp);
+
+        let [deferred] = replay.post_execution_tactics.as_slice() else {
+            panic!("expected one deferred tactic");
+        };
+        assert_eq!(deferred.tactic_index, 9);
+        assert_eq!(deferred.source_index, 2);
+        assert!(matches!(deferred.tactic, PostExecutionTactic::Simp));
+    }
+
     #[test]
     fn timing_classifies_a_have_with_only_simple_tactics_as_simple() {
         let have = ProofTactic::Have(ProofHave {
@@ -1074,12 +1136,72 @@ enum InternalProofNode {
     },
 }
 
+#[derive(Clone, Copy)]
+pub(super) enum ProofTacticSource {
+    SourceSyntax,
+    GeneratedBy { source_index: usize },
+}
+
+fn build_internal_proof_with_source(
+    tactics: &[ProofTactic],
+    claim_label: &str,
+    source: ProofTacticSource,
+) -> Result<InternalProofNode, ClickError> {
+    match source {
+        ProofTacticSource::SourceSyntax => build_internal_proof(tactics, claim_label),
+        ProofTacticSource::GeneratedBy { source_index } => {
+            build_generated_certificate_proof(tactics, claim_label, source_index)
+        }
+    }
+}
+
 fn build_internal_proof(
     tactics: &[ProofTactic],
     claim_label: &str,
 ) -> Result<InternalProofNode, ClickError> {
     let mut next_join_id = 0;
     build_internal_proof_at(tactics, claim_label, &mut next_join_id, 0, 0)
+}
+
+fn build_generated_certificate_proof(
+    tactics: &[ProofTactic],
+    claim_label: &str,
+    owning_source_index: usize,
+) -> Result<InternalProofNode, ClickError> {
+    let mut proof = build_internal_proof(tactics, claim_label)?;
+    set_generated_proof_source_index(&mut proof, owning_source_index);
+    Ok(proof)
+}
+
+fn set_generated_proof_source_index(node: &mut InternalProofNode, owning_source_index: usize) {
+    match node {
+        InternalProofNode::Done => {}
+        InternalProofNode::Linear {
+            tactics,
+            continuation,
+        } => {
+            for tactic in tactics {
+                tactic.source_index = owning_source_index;
+            }
+            set_generated_proof_source_index(continuation, owning_source_index);
+        }
+        InternalProofNode::If {
+            then_branch,
+            else_branch,
+            continuation,
+            ..
+        } => {
+            set_generated_proof_source_index(then_branch, owning_source_index);
+            set_generated_proof_source_index(else_branch, owning_source_index);
+            set_generated_proof_source_index(continuation, owning_source_index);
+        }
+        InternalProofNode::Advance {
+            body, continuation, ..
+        } => {
+            set_generated_proof_source_index(body, owning_source_index);
+            set_generated_proof_source_index(continuation, owning_source_index);
+        }
+    }
 }
 
 fn build_internal_proof_at(
@@ -2135,6 +2257,7 @@ pub(super) fn prove_claim_by_auto(
             resource_environment,
             theorem_environment,
             &tactics,
+            ProofTacticSource::GeneratedBy { source_index: 0 },
         ) {
             Ok(mut theorems) => {
                 if let Err(error) = certify_auto_claim_result(
@@ -2177,6 +2300,7 @@ pub(super) fn prove_claim_by_auto(
             resource_environment,
             theorem_environment,
             &tactics,
+            ProofTacticSource::GeneratedBy { source_index: 0 },
         ) {
             Ok(theorems) => {
                 if let Err(error) = certify_auto_claim_result(
@@ -2242,6 +2366,7 @@ fn certify_auto_claim_result(
         resource_environment,
         theorem_environment,
         certificate.tactics(),
+        ProofTacticSource::GeneratedBy { source_index: 0 },
     )
     .map_err(|error| {
         ClickError::new(format!(
@@ -2291,6 +2416,7 @@ pub(super) fn prove_claim_by_frame(
         resource_environment,
         theorem_environment,
         &tactics,
+        ProofTacticSource::GeneratedBy { source_index: 0 },
     )?;
     for theorem in &mut theorems {
         theorem.proof_kind = ProofKind::Frame;
@@ -2334,6 +2460,7 @@ pub(super) fn prove_claim_by_simp(
         resource_environment,
         theorem_environment,
         &tactics,
+        ProofTacticSource::GeneratedBy { source_index: 0 },
     )?;
     for theorem in &mut theorems {
         theorem.proof_kind = ProofKind::Simp;
@@ -2350,7 +2477,7 @@ struct TacticReplayState {
     program_point_states: ProgramPointStates,
     frames: BTreeSet<Option<CodeRegionRef>>,
     unfolded_predicates: Vec<String>,
-    post_execution_tactics: Vec<(usize, PostExecutionTactic)>,
+    post_execution_tactics: Vec<DeferredPostExecutionTactic>,
     region_simp: Option<(usize, usize)>,
     region_invariants_closed: bool,
     case_assumptions: Vec<ReplayCaseAssumption>,
@@ -2826,6 +2953,29 @@ enum PostExecutionTactic {
     Frame,
     CertifiedFrame(Vec<Vec<PropositionDerivation>>),
     Simp,
+}
+
+#[derive(Clone)]
+struct DeferredPostExecutionTactic {
+    tactic_index: usize,
+    source_index: usize,
+    tactic: PostExecutionTactic,
+}
+
+impl TacticReplayState {
+    fn defer_post_execution(
+        &mut self,
+        tactic_index: usize,
+        source_index: usize,
+        tactic: PostExecutionTactic,
+    ) {
+        self.post_execution_tactics
+            .push(DeferredPostExecutionTactic {
+                tactic_index,
+                source_index,
+                tactic,
+            });
+    }
 }
 
 fn post_execution_tactic_timing(post_tactic: &PostExecutionTactic) -> (&'static str, &'static str) {
@@ -8020,13 +8170,14 @@ pub(super) fn prove_claim_by_tactics(
     resource_environment: &ResourceEnvironment,
     theorem_environment: &TheoremEnvironment,
     tactics: &[ProofTactic],
+    tactic_source: ProofTacticSource,
 ) -> Result<Vec<VerifiedCTheorem>, ClickError> {
     if tactics.is_empty() {
         return Err(ClickError::new(format!(
             "`{claim_label}` has an empty explicit proof script"
         )));
     }
-    let program = build_internal_proof(tactics, claim_label)?;
+    let program = build_internal_proof_with_source(tactics, claim_label, tactic_source)?;
     let (state, arguments, pure_facts, surface_propositions) = initial_claim_context(
         function_block,
         parsed_function,
@@ -8120,6 +8271,7 @@ pub(super) fn prove_claims_by_grouped_tactics(
     resource_environment: &ResourceEnvironment,
     theorem_environment: &TheoremEnvironment,
     tactics: &[ProofTactic],
+    tactic_source: ProofTacticSource,
 ) -> Result<Vec<VerifiedCTheorem>, ClickError> {
     let proof_label = format!("{}.contract", function_block.signature().name());
     if claims.is_empty() {
@@ -8132,7 +8284,7 @@ pub(super) fn prove_claims_by_grouped_tactics(
             "`{proof_label}` has an empty grouped explicit proof script"
         )));
     }
-    let program = build_internal_proof(tactics, &proof_label)?;
+    let program = build_internal_proof_with_source(tactics, &proof_label, tactic_source)?;
     let (state, arguments, pure_facts, surface_propositions) = initial_claim_context(
         function_block,
         parsed_function,
@@ -8256,6 +8408,7 @@ pub(super) fn prove_claims_by_grouped_auto(
         resource_environment,
         theorem_environment,
         &tactics,
+        ProofTacticSource::GeneratedBy { source_index: 0 },
     )?;
     let certificate = verified
         .first()
@@ -8284,6 +8437,7 @@ pub(super) fn prove_claims_by_grouped_auto(
         resource_environment,
         theorem_environment,
         certificate.tactics(),
+        ProofTacticSource::GeneratedBy { source_index: 0 },
     )
     .map_err(|error| {
         ClickError::new(format!(
@@ -8453,7 +8607,10 @@ fn finish_ordered_proof_replay(
             let mut rewritten_claim_goals: Vec<Option<Proposition>> = vec![None; claims.len()];
             let mut existence_tactics = Vec::new();
             let mut surface_certificate_facts = path_requirements.clone();
-            for (tactic_index, post_tactic) in &replay.post_execution_tactics {
+            for deferred in &replay.post_execution_tactics {
+                let tactic_index = &deferred.tactic_index;
+                let source_index = &deferred.source_index;
+                let post_tactic = &deferred.tactic;
                 let _timing = std::env::var_os("CLICK_TIMINGS").is_some().then(|| {
                     let (tactic_name, tactic_class) = post_execution_tactic_timing(post_tactic);
                     if std::env::var_os("CLICK_TIMING_STARTS").is_some() {
@@ -8464,13 +8621,13 @@ fn finish_ordered_proof_replay(
                             tactic_name,
                             tactic_class,
                             replay.frontier.next_statement_index,
-                            tactic_index
+                            source_index
                         );
                     }
                     TacticTiming {
                         claim_label: proof_label.clone(),
                         tactic_index: *tactic_index,
-                        source_index: *tactic_index,
+                        source_index: *source_index,
                         tactic_name: tactic_name.to_string(),
                         tactic_class,
                         statement_index: replay.frontier.next_statement_index,
@@ -13524,9 +13681,11 @@ fn replay_linear_tactics(
                         claim_label,
                         tactic_index,
                     )?;
-                    replay
-                        .post_execution_tactics
-                        .push((tactic_index, PostExecutionTactic::Frame));
+                    replay.defer_post_execution(
+                        tactic_index,
+                        source_index,
+                        PostExecutionTactic::Frame,
+                    );
                     replay.frames.insert(region_ref.clone());
                     continue;
                 }
@@ -13576,18 +13735,21 @@ fn replay_linear_tactics(
                             "`{claim_label}` tactic {tactic_index}: contextual function `frame()` should have been deferred earlier"
                         ))
                     })?;
-                    replay
-                        .post_execution_tactics
-                        .push((tactic_index, PostExecutionTactic::FrameRegion(region)));
+                    replay.defer_post_execution(
+                        tactic_index,
+                        source_index,
+                        PostExecutionTactic::FrameRegion(region),
+                    );
                 }
                 replay.frames.insert(region_ref.clone());
             }
             ProofTactic::CertifiedFrame(path_derivations) => {
                 require_function_exit(&replay, claim_label, tactic_index, "certified_frame")?;
-                replay.post_execution_tactics.push((
+                replay.defer_post_execution(
                     tactic_index,
+                    source_index,
                     PostExecutionTactic::CertifiedFrame(path_derivations.clone()),
-                ));
+                );
             }
             ProofTactic::UnfoldPredicate(name) => {
                 if predicate_environment.get(name).is_none() {
@@ -13596,10 +13758,11 @@ fn replay_linear_tactics(
                     )));
                 }
                 if replay.ordered_finalization && replay.is_at_function_exit() {
-                    replay.post_execution_tactics.push((
+                    replay.defer_post_execution(
                         tactic_index,
+                        source_index,
                         PostExecutionTactic::UnfoldPredicate(name.clone()),
-                    ));
+                    );
                     continue;
                 }
                 if !replay.unfolded_predicates.contains(name) {
@@ -13664,10 +13827,11 @@ fn replay_linear_tactics(
                 }
                 if replay.is_at_function_exit() {
                     if replay.ordered_finalization {
-                        replay.post_execution_tactics.push((
+                        replay.defer_post_execution(
                             tactic_index,
+                            source_index,
                             PostExecutionTactic::Apply(application.clone()),
-                        ));
+                        );
                     } else {
                         return Err(ClickError::new(format!(
                             "`{claim_label}` tactic {tactic_index}: post-execution `apply` is not available in this region proof"
@@ -13729,13 +13893,14 @@ fn replay_linear_tactics(
                 }
                 if replay.is_at_function_exit() {
                     if replay.ordered_finalization {
-                        replay.post_execution_tactics.push((
+                        replay.defer_post_execution(
                             tactic_index,
+                            source_index,
                             PostExecutionTactic::ApplyUsing {
                                 application: application.clone(),
                                 premises: premises.clone(),
                             },
-                        ));
+                        );
                         continue;
                     }
                     return Err(ClickError::new(format!(
@@ -13819,9 +13984,11 @@ fn replay_linear_tactics(
             ProofTactic::FoldResource(resource) => {
                 if replay.is_at_function_exit() {
                     if replay.ordered_finalization {
-                        replay
-                            .post_execution_tactics
-                            .push((tactic_index, PostExecutionTactic::Fold(resource.clone())));
+                        replay.defer_post_execution(
+                            tactic_index,
+                            source_index,
+                            PostExecutionTactic::Fold(resource.clone()),
+                        );
                     } else {
                         return Err(ClickError::new(format!(
                             "`{claim_label}` tactic {tactic_index}: post-execution `fold` is not available in this region proof"
@@ -13848,9 +14015,11 @@ fn replay_linear_tactics(
             ProofTactic::Have(have) => {
                 if replay.is_at_function_exit() {
                     if replay.ordered_finalization {
-                        replay
-                            .post_execution_tactics
-                            .push((tactic_index, PostExecutionTactic::Have(have.clone())));
+                        replay.defer_post_execution(
+                            tactic_index,
+                            source_index,
+                            PostExecutionTactic::Have(have.clone()),
+                        );
                     } else {
                         return Err(ClickError::new(format!(
                             "`{claim_label}` tactic {tactic_index}: post-execution `have` is not available in this region proof"
@@ -13992,9 +14161,11 @@ fn replay_linear_tactics(
                     let ProofTactic::Witness(witness) = tactic else {
                         unreachable!()
                     };
-                    replay
-                        .post_execution_tactics
-                        .push((tactic_index, PostExecutionTactic::Witness(witness.clone())));
+                    replay.defer_post_execution(
+                        tactic_index,
+                        source_index,
+                        PostExecutionTactic::Witness(witness.clone()),
+                    );
                     continue;
                 }
                 require_function_exit(&replay, claim_label, tactic_index, "witness")?;
@@ -14009,9 +14180,11 @@ fn replay_linear_tactics(
                     let ProofTactic::Choose(choice) = tactic else {
                         unreachable!()
                     };
-                    replay
-                        .post_execution_tactics
-                        .push((tactic_index, PostExecutionTactic::Choose(choice.clone())));
+                    replay.defer_post_execution(
+                        tactic_index,
+                        source_index,
+                        PostExecutionTactic::Choose(choice.clone()),
+                    );
                     continue;
                 }
                 require_function_exit(&replay, claim_label, tactic_index, "choose")?;
@@ -14029,9 +14202,7 @@ fn replay_linear_tactics(
                         }
                         _ => unreachable!(),
                     };
-                    replay
-                        .post_execution_tactics
-                        .push((tactic_index, post_tactic));
+                    replay.defer_post_execution(tactic_index, source_index, post_tactic);
                 }
             }
             ProofTactic::Intro
@@ -14116,9 +14287,11 @@ fn replay_linear_tactics(
                     replay.region_simp = Some((tactic_index, source_index));
                 }
                 if replay.ordered_finalization && replay.is_at_function_exit() {
-                    replay
-                        .post_execution_tactics
-                        .push((tactic_index, PostExecutionTactic::Simp));
+                    replay.defer_post_execution(
+                        tactic_index,
+                        source_index,
+                        PostExecutionTactic::Simp,
+                    );
                 }
             }
         }
@@ -14267,7 +14440,8 @@ fn verify_surface_certificate(
 ) -> Result<ProofReplayContext, ClickError> {
     let enclosing_branch_path = context.branch_path.clone();
     let enclosing_case_assumptions = context.replay.case_assumptions.clone();
-    let program = build_internal_proof(certificate.tactics(), claim_label)?;
+    let program =
+        build_generated_certificate_proof(certificate.tactics(), claim_label, source_index)?;
     let completed = SUPPRESS_TACTIC_EXPANSION_CAPTURE.with(|suppressed| {
         let previous = suppressed.replace(true);
         let result = execute_internal_proof(

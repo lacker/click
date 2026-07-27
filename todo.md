@@ -128,8 +128,8 @@ Current focused validation:
 - the default-threshold 15-second corpus profile reports no completed slow
   simple tactics and no verification failures.
 
-There is no presently reproduced expansion correctness failure. There is one
-current profiler-coordinate bug, described below.
+There is no presently reproduced expansion or profiler-coordinate correctness
+failure.
 
 ## Remaining correctness work
 
@@ -161,13 +161,6 @@ automation must have one gateway.
 
 ## Known tooling and performance warts
 
-- **Current profiler bug:** a 60-second owned-vector profile reaches a
-  generated step inside the explicit `vector_fill.contract` proof and reports
-  internal source occurrence 9, even though the source proof contains only
-  three tactics (`execute_rest`, `frame`, and `simp`). Source mapping then
-  aborts with `vector_fill.contract has no source tactic occurrence 9`.
-  Timing events need separate fields for the owning source occurrence and the
-  generated certificate-step index. Do not add another locator fallback.
 - The profiler suggests a fixed 60-second expansion watchdog. Prefix replay
   plus smart planning can exceed that even when expansion would eventually
   succeed.
@@ -196,14 +189,18 @@ Completed slow smart tactics:
 - `examples/input-cursor/input_cursor.click:125:5`
   (`input_cursor_take.contract`, `simp`): about 3.8 seconds.
 
-Timeouts and later failures:
+The focused 60-second owned-vector profile now reports:
 
-- `owned-string` times out at
-  `examples/owned-string/owned_string.click:485:5`, a final smart `simp` that
-  takes about 12 seconds in a focused 30-second profile;
-- a 15-second `owned-vector` profile times out after the completed 10.3-second
-  `vector_get` smart tactic without recording an active frontier; with a
-  60-second budget it instead exposes the explicit-proof coordinate bug above.
+- one slow simple `apply_loop_summary` replay at
+  `examples/owned-vector/vector.click:134:5`, about 528 ms;
+- the 10.2-second `vector_get` smart `simp` at line 75;
+- a 5.9-second loop-preservation smart `simp` at line 125;
+- a 3.4-second `vector_fill` smart `execute_rest` at line 134;
+- a timeout in the final `vector_fill` smart `simp` at line 136.
+
+Owned-string still times out at
+`examples/owned-string/owned_string.click:485:5`, a final smart `simp` that
+takes about 12 seconds in a focused 30-second profile.
 
 The motivating `owned_string_set` successor proof at line 183 is fixed:
 planning fell from 63.9 seconds to about 67 ms, and expansion emits a
@@ -213,18 +210,13 @@ one-premise arithmetic certificate.
 
 Work one frontier at a time and commit each logical change independently.
 
-1. Fix the owned-vector profiler-coordinate bug by separating the owning
-   source occurrence from generated certificate-step indices.
-2. Reprofile `owned-vector` with a larger bounded project budget.
-3. If a later active tactic appears, classify it:
-   - slow simple: fix deterministic replay;
-   - slow smart: expand it and reprofile;
-   - control: inspect its nested timings.
-4. If the project still times out without an active tactic, instrument the
-   untimed interval before doing performance work.
-5. Once owned-vector has an actionable frontier, continue the same cycle for
+1. Fix the 528 ms owned-vector `apply_loop_summary` simple replay without
+   adding search or special-case fallbacks.
+2. Reprofile owned-vector. Expand one smart frontier only after no reached
+   simple tactic exceeds 500 ms.
+3. Continue the same cycle for
    owned-string line 485, owned-string line 471, and input-cursor line 125.
-6. Build the global certificate audit before claiming expansion is complete.
+4. Build the global certificate audit before claiming expansion is complete.
 
 Do not optimize by adding proposition-specific smart fast paths, broad ambient
 premises, generic transport fallbacks, or internal-only certificate tactics.
