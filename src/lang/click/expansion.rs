@@ -458,7 +458,10 @@ fn find_claim_proof_span(
 #[derive(Clone, Debug)]
 enum ProofSourceEdit {
     Explicit(Range<usize>),
-    DefaultTerminator { span: Range<usize>, selector: usize },
+    DefaultTerminator {
+        span: Range<usize>,
+        selector: usize,
+    },
     OmittedLoopPhase {
         span: Range<usize>,
         selector: usize,
@@ -478,8 +481,9 @@ impl ProofSourceEdit {
     fn selector(&self) -> usize {
         match self {
             Self::Explicit(span) => span.start,
-            Self::DefaultTerminator { selector, .. }
-            | Self::OmittedLoopPhase { selector, .. } => *selector,
+            Self::DefaultTerminator { selector, .. } | Self::OmittedLoopPhase { selector, .. } => {
+                *selector
+            }
         }
     }
 }
@@ -1119,11 +1123,7 @@ fn find_loop_phase_proof_span(
                             _ => {}
                         }
                     }
-                    return Ok((
-                        selector,
-                        None,
-                        tokens[close].span.start,
-                    ));
+                    return Ok((selector, None, tokens[close].span.start));
                 }
             }
             _ => {}
@@ -1790,6 +1790,44 @@ int32 identity(int32 x) {
     }
 
     #[test]
+    fn grouped_simp_expansion_preserves_resource_scalar_and_quantified_transitions() {
+        let c_source = "int32 inspect(int32 p[1], int32 x) { return 0; }";
+        let click_source = r#"
+verifying "inspect.c";
+
+int32 inspect(int32 p[1], int32 x) {
+    requires forall (int32 k) {
+        0 <= k and k < 1 implies x == x
+    };
+    owns p[0..1];
+    immutable;
+    ensures result == 0;
+    ensures forall (int32 k) {
+        0 <= k and k < 1 implies x == x
+    };
+} by {
+    execute_rest();
+    frame();
+    simp();
+}
+"#;
+        let sources = [("inspect.c", c_source)];
+
+        let expanded = expand_top_level_tactic_for_test(
+            click_source,
+            &sources,
+            "inspect",
+            CProofClaim::Grouped,
+            2,
+        )
+        .expect("grouped simp should capture every newly closed claim");
+
+        assert!(!expanded.contains("simp();"), "{expanded}");
+        verify_c0_sources(&expanded, &sources)
+            .expect("the grouped transition certificate should re-verify");
+    }
+
+    #[test]
     fn expansion_preserves_unfolded_resource_and_predicate_fact_spellings() {
         let c_source = r#"
 struct box {
@@ -2049,8 +2087,7 @@ int32 count(int32 n) {
 
     #[test]
     fn expands_whole_and_step_structural_effect_certificates() {
-        let c_source =
-            "int32 count(int32 n) { while (n > 0) { n = n - 1; } return n; }";
+        let c_source = "int32 count(int32 n) { while (n > 0) { n = n - 1; } return n; }";
         let click_source = r#"verifying "count.c";
 int32 count(int32 n) {
     for loop(0) {
@@ -2114,8 +2151,7 @@ int32 count(int32 n) {
 
     #[test]
     fn expands_smart_tactics_inside_loop_initialization_and_structural_assertions() {
-        let c_source =
-            "int32 count(int32 n) { while (n > 0) { n = n - 1; } return n; }";
+        let c_source = "int32 count(int32 n) { while (n > 0) { n = n - 1; } return n; }";
         let click_source = r#"verifying "count.c";
 int32 count(int32 n) {
     for loop(0) {
@@ -2132,7 +2168,10 @@ int32 count(int32 n) {
     ensures result == result;
 }
 "#;
-        for needle in ["assert n == n by {\n            simp", "initialize by {\n            simp"] {
+        for needle in [
+            "assert n == n by {\n            simp",
+            "initialize by {\n            simp",
+        ] {
             let offset = click_source.find(needle).unwrap() + needle.rfind("simp").unwrap();
             let position = position_at_offset(click_source, offset);
             let expanded = expand_c0_tactic_source_at(
@@ -2154,8 +2193,7 @@ int32 count(int32 n) {
 
     #[test]
     fn expands_omitted_loop_phase_proofs_at_distinct_coordinates() {
-        let c_source =
-            "int32 count(int32 n) { while (n > 0) { n = n - 1; } return n; }";
+        let c_source = "int32 count(int32 n) { while (n > 0) { n = n - 1; } return n; }";
         let click_source = r#"verifying "count.c";
 int32 count(int32 n) {
     for loop(0) {
@@ -2242,9 +2280,8 @@ int32 identity(int32 x) {
     }
 }
 "#;
-        let expanded_once =
-            expand_pure_theorem_source(source, &[], "incremented_zero_is_one", 0)
-                .expect("smart theorem script should expand");
+        let expanded_once = expand_pure_theorem_source(source, &[], "incremented_zero_is_one", 0)
+            .expect("smart theorem script should expand");
         let expanded_twice =
             expand_pure_theorem_source(&expanded_once, &[], "incremented_zero_is_one", 0)
                 .expect("expanded theorem certificate should expand again");

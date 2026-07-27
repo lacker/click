@@ -45,11 +45,11 @@ mod printing;
 mod proof;
 mod validation;
 use checking::*;
+use expansion::ProofSite;
 pub use expansion::{
     CProofClaim, SourcePosition, c0_tactic_source_position, expand_c0_claim_source,
     expand_c0_tactic_source_at, verifying_source_paths,
 };
-use expansion::ProofSite;
 use lowering::*;
 use parser::ContractLetBinding;
 pub use printing::{format_proof_tactics, format_tactic_certificate};
@@ -365,7 +365,10 @@ impl SurfacePropositionMap {
                 self.record_lowering(surface_left, left)?;
                 self.record_lowering(surface_right, right)
             }
-            (ClickProposition::Not(_), Proposition::ConditionIs(_, false)) => Ok(()),
+            // Click comparison negation is lowered by flipping the comparison
+            // polarity, so either kernel boolean is possible (for example,
+            // `not (x != 0)` becomes equality with polarity `true`).
+            (ClickProposition::Not(_), Proposition::ConditionIs(_, _)) => Ok(()),
             (ClickProposition::Not(surface_body), Proposition::Not(body)) => {
                 self.record_lowering(surface_body, body)
             }
@@ -2611,9 +2614,7 @@ fn validate_region_proof_clauses(
                 }
             } else if item.kind() == StructuralItemKind::Invariant {
                 debug_assert!(item.proof().is_auto_tactic());
-            } else if !item.proof().is_auto_tactic()
-                && !matches!(item.proof(), Proof::Script(_))
-            {
+            } else if !item.proof().is_auto_tactic() && !matches!(item.proof(), Proof::Script(_)) {
                 return Err(ClickError::new(
                     "`assert` structural clauses must use the default prover, `by auto;`, or a supported pure proof script",
                 ));

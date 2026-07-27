@@ -193,17 +193,16 @@ Completed slow smart tactics:
 - `examples/input-cursor/input_cursor.click:125:5`
   (`input_cursor_take.contract`, `simp`): about 3.8 seconds.
 
-The focused 30-second owned-vector profile now reports:
+The final `vector_fill` smart `simp` has now been expanded. Grouped capture
+records each claim transition separately, loop-summary invariant outputs retain
+their exact source provenance, and pure certificate replay resolves listed
+premises through that certified mapping instead of re-lowering them against an
+ambient context.
 
-- no completed simple tactic over 500 ms;
-- no completed smart tactic over two seconds;
-- one active timeout in the final `vector_fill` smart `simp` at
-  `examples/owned-vector/vector.click:259:5`.
-
-The final `vector_fill` `simp` did not produce a certificate under either the
-standard 60-second expansion limit or a bounded 120-second probe. Leave that
-site unmodified until its smart proof search can be reduced or replaced by a
-certified plan.
+Fresh verification gets through `vector_fill` and now reaches a later failure:
+the final smart `simp` in `vector_push_first` does not close
+`vector_push_first.ensures_3`. Treat that as the next owned-vector correctness
+frontier; it is not an expansion timeout.
 
 This sweep fixed two expander correctness bugs. Grouped expansion now preserves
 one closer per claim even when multiple claims end in structurally identical
@@ -231,8 +230,8 @@ one-premise arithmetic certificate.
 
 Work one frontier at a time and commit each logical change independently.
 
-1. Reduce the remaining final `vector_fill` smart `simp` at owned-vector line
-   259, then expand and reprofile it.
+1. Diagnose the final `vector_push_first` smart `simp`, which is now the first
+   owned-vector verification failure.
 2. Continue the same cycle for
    owned-string line 485, owned-string line 471, and input-cursor line 125.
 3. Build the global certificate audit before claiming expansion is complete.
