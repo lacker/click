@@ -173,6 +173,14 @@ fn check_atomic_derivation_goal(
     Ok(())
 }
 
+fn normalizes_context_free(goal: &Proposition) -> bool {
+    matches!(normalize_proposition(goal), SimpProposition::True)
+        || Assumptions::new()
+            .derive_atomic_proposition(goal)
+            .or_else(|| Assumptions::new().derive_proposition(goal))
+            .is_some()
+}
+
 pub(super) fn verify_theorem_definitions(
     theorem_definitions: &[TheoremDefinition],
     predicate_environment: &PredicateEnvironment,
@@ -1596,7 +1604,7 @@ fn prove_pure_theorem_tactics(
                 closed = true;
             }
             ProofTactic::Normalize => {
-                if !matches!(normalize_proposition(&goal), SimpProposition::True) {
+                if !normalizes_context_free(&goal) {
                     return Err(ClickError::new(format!(
                         "`normalize` failed for `{claim_label}`: goal did not normalize to true: {goal:?}"
                     )));
@@ -7912,7 +7920,7 @@ fn prove_pure_proposition_case_at_point(
                         goal_closed = true;
                     }
                     ProofTactic::Normalize => {
-                        if !matches!(normalize_proposition(&unfolded_goal), SimpProposition::True) {
+                        if !normalizes_context_free(&unfolded_goal) {
                             return Err(ClickError::new(format!(
                                 "`{claim_label}` {proof_name} proof {outer_tactic_index}: `normalize` failed because the goal did not normalize to true: {unfolded_goal:?}"
                             )));

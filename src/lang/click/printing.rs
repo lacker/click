@@ -24,6 +24,50 @@ fn source_click_proposition(proposition: &ClickProposition) -> String {
                 format!("{} and {}", at_precedence(left, 3), at_precedence(right, 4)),
             ),
             ClickProposition::Not(body) => (4, format!("not {}", at_precedence(body, 4))),
+            ClickProposition::ForAll { c_type, name, body } => (
+                5,
+                format!(
+                    "forall ({} {name}) {{ {} }}",
+                    describe_c0_type(*c_type),
+                    at_precedence(body, 0)
+                ),
+            ),
+            ClickProposition::Exists { c_type, name, body } => (
+                5,
+                format!(
+                    "exists ({} {name}) {{ {} }}",
+                    describe_c0_type(*c_type),
+                    at_precedence(body, 0)
+                ),
+            ),
+            ClickProposition::RangeAll {
+                start,
+                end,
+                item,
+                body,
+            } => (
+                5,
+                format!(
+                    "({}..{}).all({item} => {})",
+                    describe_contract_expression(start),
+                    describe_contract_expression(end),
+                    at_precedence(body, 0)
+                ),
+            ),
+            ClickProposition::RangeAny {
+                start,
+                end,
+                item,
+                body,
+            } => (
+                5,
+                format!(
+                    "({}..{}).any({item} => {})",
+                    describe_contract_expression(start),
+                    describe_contract_expression(end),
+                    at_precedence(body, 0)
+                ),
+            ),
             proposition => (
                 5,
                 super::diagnostics::describe_click_proposition(proposition),
@@ -206,7 +250,13 @@ fn write_tactic(output: &mut String, tactic: &ProofTactic, indent: usize) {
             &prefix,
             &format!("contradiction({});", source_click_proposition(fact)),
         ),
+        ProofTactic::Derive(derive) if derive.premises.is_empty() => {
+            line(output, &prefix, "normalize();")
+        }
         ProofTactic::Derive(derive) => write_derivation(output, "derive", derive, indent),
+        ProofTactic::Calculate(derive) if derive.premises.is_empty() => {
+            line(output, &prefix, "normalize();")
+        }
         ProofTactic::Calculate(derive) => write_derivation(output, "calculate", derive, indent),
         ProofTactic::CloseInvariants => line(output, &prefix, "close_invariants();"),
         ProofTactic::Rewrite(equality) => line(

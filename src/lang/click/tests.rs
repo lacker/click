@@ -470,6 +470,54 @@ fn proof_source_printing_preserves_proposition_precedence() {
         source.contains("have (x == 0 or x == 1) and x < 2 by"),
         "{source}"
     );
+
+    let quantified = ClickProposition::ForAll {
+        c_type: C0Type::Int32,
+        name: "k".to_string(),
+        body: Box::new(ClickProposition::Implies(
+            Box::new(ClickProposition::And(
+                Box::new(comparison(ComparisonOperator::LessEqual, 0)),
+                Box::new(comparison(ComparisonOperator::LessThan, 2)),
+            )),
+            Box::new(comparison(ComparisonOperator::Equal, 1)),
+        )),
+    };
+    let source = super::printing::format_partial_tactic_sequence(&[ProofTactic::Have(ProofHave {
+        proposition: quantified,
+        proof: Proof::Script(vec![ProofTactic::Assumption]),
+    })]);
+
+    assert!(
+        source.contains("forall (int32 k) { x <= 0 and x < 2 implies x == 1 }"),
+        "{source}"
+    );
+    let proof_source = format!(
+        "int32 example(int32 x) {{ ensures result == x; }} by {{\n{source}\n}}"
+    );
+    parser::parse(&proof_source).expect("printed quantified proof source should parse");
+
+    let context_free =
+        super::printing::format_partial_tactic_sequence(&[ProofTactic::Derive(ProofDerive {
+            proposition: comparison(ComparisonOperator::Equal, 0),
+            premises: Vec::new(),
+        })]);
+    assert_eq!(context_free, "normalize();");
+}
+
+#[test]
+fn normalize_closes_context_free_quantified_contradictions() {
+    let source = r#"
+theorem impossible_interval() {
+    ensures forall (int32 k) {
+        0 <= k and k < 0 implies k == 7
+    } by {
+        normalize();
+    }
+}
+"#;
+
+    verify_c0_sources(source, &[])
+        .expect("normalize should replay a context-free quantified derivation");
 }
 
 #[test]
