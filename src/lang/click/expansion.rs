@@ -1828,6 +1828,46 @@ int32 inspect(int32 p[1], int32 x) {
     }
 
     #[test]
+    fn grouped_simp_expansion_uses_explicit_frame_consequences() {
+        let c_source = r#"
+int32 increment_and_return_old(int32 p[1]) {
+    int32 result;
+    result = p[0];
+    p[0] = 0;
+    return result;
+}
+"#;
+        let click_source = r#"
+verifying "increment.c";
+
+int32 increment_and_return_old(int32 p[1]) {
+    owns p[0..1];
+    mutable p[0..1];
+    ensures result == old(p[0]);
+    ensures p[0] == 0;
+} by {
+    execute_rest();
+    frame();
+    simp();
+}
+"#;
+        let sources = [("increment.c", c_source)];
+
+        let expanded = expand_top_level_tactic_for_test(
+            click_source,
+            &sources,
+            "increment_and_return_old",
+            CProofClaim::Grouped,
+            2,
+        )
+        .expect("grouped simp should capture frame-dependent claims");
+
+        assert!(!expanded.contains("simp();"), "{expanded}");
+        verify_c0_sources(&expanded, &sources)
+            .expect("the grouped frame transition certificate should re-verify");
+    }
+
+    #[test]
     fn expansion_preserves_unfolded_resource_and_predicate_fact_spellings() {
         let c_source = r#"
 struct box {
