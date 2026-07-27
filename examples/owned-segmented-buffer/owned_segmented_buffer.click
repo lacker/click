@@ -320,8 +320,7 @@ int32 owned_segmented_buffer_pipeline(
     }
     step using {
         fact 0 < owner->first_len;
-        fact loadable(owner[0..1]);
-        fact loadable((owner + 2)[0..2]);
+        fact loadable(owner[0..6]);
         fact owner->first_data == first_data;
         fact first_data[0] == first_value;
     }

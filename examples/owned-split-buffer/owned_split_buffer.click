@@ -295,8 +295,7 @@ int32 owned_split_buffer_pipeline(
     step using {
         fact load_int32(owner) < load_int32((owner + 1));
         fact 2 <= length;
-        fact loadable(owner[0..1]);
-        fact loadable((owner + 1)[0..1]);
+        fact loadable(owner[0..4]);
         fact *(owner + 1) == length;
         fact load_int32_pointer((owner + 2)) == data;
         fact data[0] == left_value;
@@ -347,9 +346,7 @@ int32 owned_split_buffer_pipeline(
     }
     step using {
         fact 1 < owner->split;
-        fact loadable(owner[0..1]);
-        fact loadable((owner + 1)[0..1]);
-        fact loadable((owner + 2)[0..2]);
+        fact loadable(owner[0..4]);
         fact owner->split == 2;
         fact owner->len == length;
         fact owner->data == data;
