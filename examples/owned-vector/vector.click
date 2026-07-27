@@ -138,7 +138,123 @@ int32 vector_fill(struct vector* owner, int32 value) {
         0 <= k and k < owner->len implies (owner->data)[k] == value
     };
 } by {
-    execute_rest();
+    step using {
+        fact separate(memory(owner[0..1]), memory(owner[1..2]));
+        fact separate(memory(owner[0..1]), memory(owner[2..4]));
+        fact separate(memory(owner[0..1]), memory(load_int32_pointer((owner + 2))[0..load_int32((owner + 1))]));
+        fact separate(memory(owner[1..2]), memory(owner[2..4]));
+        fact separate(memory(owner[1..2]), memory(load_int32_pointer((owner + 2))[0..load_int32((owner + 1))]));
+        fact separate(memory(owner[2..4]), memory(load_int32_pointer((owner + 2))[0..load_int32((owner + 1))]));
+        fact contains(nonempty_vector(owner), memory(owner[0..1]));
+        fact contains(nonempty_vector(owner), memory(owner[1..2]));
+        fact contains(nonempty_vector(owner), memory(owner[2..4]));
+        fact contains(nonempty_vector(owner), memory(load_int32_pointer((owner + 2))[0..load_int32((owner + 1))]));
+        fact loadable(owner[0..1]);
+        fact loadable(owner[1..2]);
+        fact loadable(owner[2..4]);
+        fact loadable(load_int32_pointer((owner + 2))[0..load_int32((owner + 1))]);
+        fact 1 <= load_int32(owner);
+        fact load_int32(owner) <= load_int32((owner + 1));
+        fact separate(memory(owner[0..4]), memory(load_int32_pointer((owner + 2))[0..load_int32((owner + 1))]));
+    }
+    step using {
+        fact separate(memory(owner[0..1]), memory(owner[1..2]));
+        fact separate(memory(owner[0..1]), memory(owner[2..4]));
+        fact separate(memory(owner[0..1]), memory(load_int32_pointer((owner + 2))[0..load_int32((owner + 1))]));
+        fact separate(memory(owner[1..2]), memory(owner[2..4]));
+        fact separate(memory(owner[1..2]), memory(load_int32_pointer((owner + 2))[0..load_int32((owner + 1))]));
+        fact separate(memory(owner[2..4]), memory(load_int32_pointer((owner + 2))[0..load_int32((owner + 1))]));
+        fact contains(nonempty_vector(owner), memory(owner[0..1]));
+        fact contains(nonempty_vector(owner), memory(owner[1..2]));
+        fact contains(nonempty_vector(owner), memory(owner[2..4]));
+        fact contains(nonempty_vector(owner), memory(load_int32_pointer((owner + 2))[0..load_int32((owner + 1))]));
+        fact loadable(old(owner[0..1]));
+        fact loadable(old(owner[1..2]));
+        fact loadable(old(owner[2..4]));
+        fact loadable(old(load_int32_pointer((owner + 2))[0..load_int32((owner + 1))]));
+        fact 1 <= load_int32(owner);
+        fact load_int32(owner) <= load_int32((owner + 1));
+        fact separate(memory(owner[0..4]), memory(load_int32_pointer((owner + 2))[0..load_int32((owner + 1))]));
+    }
+    have loadable(owner[0..1]) by {
+        derive(loadable(owner[0..1])) using {
+            fact loadable(old(owner[0..1]));
+        }
+    }
+    have loadable(owner[1..2]) by {
+        derive(loadable(owner[1..2])) using {
+            fact loadable(old(owner[1..2]));
+        }
+    }
+    have loadable(owner[2..4]) by {
+        derive(loadable(owner[2..4])) using {
+            fact loadable(old(owner[2..4]));
+        }
+    }
+    have loadable(load_int32_pointer((owner + 2))[0..load_int32((owner + 1))]) by {
+        derive(loadable(load_int32_pointer((owner + 2))[0..load_int32((owner + 1))])) using {
+            fact loadable(old(load_int32_pointer((owner + 2))[0..load_int32((owner + 1))]));
+        }
+    }
+    have i >= 0 by {
+        normalize();
+    }
+    have i <= load_int32(owner) by {
+        derive(i <= load_int32(owner)) using {
+            fact 1 <= load_int32(owner);
+        }
+    }
+    have forall (int32 k) { 0 <= k and k < i implies load_int32_pointer((owner + 2))[k] == value } by {
+        normalize();
+    }
+    apply_loop_summary(loop(0)) using {
+        fact separate(memory(owner[0..1]), memory(owner[1..2]));
+        fact 1 <= load_int32(owner);
+        fact load_int32(owner) <= load_int32((owner + 1));
+        fact loadable(old(owner[1..2]));
+        fact loadable(old(owner[2..4]));
+        fact loadable(old(owner[0..1]));
+        fact loadable(old(load_int32_pointer((owner + 2))[0..load_int32((owner + 1))]));
+        fact separate(memory(owner[0..1]), memory(owner[2..4]));
+        fact separate(memory(owner[0..1]), memory(load_int32_pointer((owner + 2))[0..load_int32((owner + 1))]));
+        fact separate(memory(owner[0..4]), memory(load_int32_pointer((owner + 2))[0..load_int32((owner + 1))]));
+        fact separate(memory(owner[1..2]), memory(owner[2..4]));
+        fact separate(memory(owner[1..2]), memory(load_int32_pointer((owner + 2))[0..load_int32((owner + 1))]));
+        fact separate(memory(owner[2..4]), memory(load_int32_pointer((owner + 2))[0..load_int32((owner + 1))]));
+        fact contains(nonempty_vector(owner), memory(owner[0..1]));
+        fact contains(nonempty_vector(owner), memory(owner[1..2]));
+        fact contains(nonempty_vector(owner), memory(owner[2..4]));
+        fact contains(nonempty_vector(owner), memory(load_int32_pointer((owner + 2))[0..load_int32((owner + 1))]));
+        fact loadable(owner[0..1]);
+        fact loadable(owner[1..2]);
+        fact loadable(owner[2..4]);
+        fact loadable(load_int32_pointer((owner + 2))[0..load_int32((owner + 1))]);
+        fact i >= 0;
+        fact i <= load_int32(owner);
+        fact forall (int32 k) { 0 <= k and k < i implies load_int32_pointer((owner + 2))[k] == value };
+    }
+    step using {
+        fact separate(memory(owner[0..1]), memory(owner[1..2]));
+        fact separate(memory(owner[0..1]), memory(owner[2..4]));
+        fact separate(memory(owner[0..1]), memory(load_int32_pointer((owner + 2))[0..load_int32((owner + 1))]));
+        fact separate(memory(owner[1..2]), memory(owner[2..4]));
+        fact separate(memory(owner[1..2]), memory(load_int32_pointer((owner + 2))[0..load_int32((owner + 1))]));
+        fact separate(memory(owner[2..4]), memory(load_int32_pointer((owner + 2))[0..load_int32((owner + 1))]));
+        fact contains(nonempty_vector(owner), memory(owner[0..1]));
+        fact contains(nonempty_vector(owner), memory(owner[1..2]));
+        fact contains(nonempty_vector(owner), memory(owner[2..4]));
+        fact contains(nonempty_vector(owner), memory(load_int32_pointer((owner + 2))[0..load_int32((owner + 1))]));
+        fact loadable(old(owner[0..1]));
+        fact loadable(old(owner[1..2]));
+        fact loadable(old(owner[2..4]));
+        fact loadable(old(load_int32_pointer((owner + 2))[0..load_int32((owner + 1))]));
+        fact 1 <= load_int32(owner);
+        fact load_int32(owner) <= load_int32((owner + 1));
+        fact separate(memory(owner[0..4]), memory(load_int32_pointer((owner + 2))[0..load_int32((owner + 1))]));
+        fact i >= 0;
+        fact at(statement(0).entry, i) <= at(statement(0).entry, *owner);
+        fact not i < *owner;
+    }
     frame();
     simp();
 }
