@@ -1760,6 +1760,36 @@ int32 caller() {
     }
 
     #[test]
+    fn grouped_simp_expansion_preserves_each_claim_closer() {
+        let c_source = "int32 identity(int32 x) { return x; }";
+        let click_source = r#"
+verifying "identity.c";
+
+int32 identity(int32 x) {
+    ensures result == x;
+    ensures result == old(x);
+} by {
+    execute_rest();
+    simp();
+}
+"#;
+        let sources = [("identity.c", c_source)];
+
+        let expanded = expand_top_level_tactic_for_test(
+            click_source,
+            &sources,
+            "identity",
+            CProofClaim::Grouped,
+            1,
+        )
+        .expect("grouped simp should expand");
+
+        assert_eq!(expanded.matches("assumption();").count(), 2);
+        verify_c0_sources(&expanded, &sources)
+            .expect("each grouped claim closer should survive expansion");
+    }
+
+    #[test]
     fn expansion_preserves_unfolded_resource_and_predicate_fact_spellings() {
         let c_source = r#"
 struct box {

@@ -3934,6 +3934,28 @@ fn facts_for_smart_have_lowering(propositions: &[Proposition]) -> Vec<Propositio
     facts
 }
 
+fn facts_for_simple_goal_lowering(propositions: &[Proposition]) -> Vec<Proposition> {
+    let mut facts = facts_for_smart_have_lowering(propositions);
+    for proposition in propositions {
+        if matches!(
+            proposition,
+            Proposition::ConditionIs(
+                ConditionTerm::Bitvector32SignedLessThan(_, _)
+                    | ConditionTerm::Bitvector32SignedLessEqual(_, _)
+                    | ConditionTerm::Bitvector32SignedGreaterThan(_, _)
+                    | ConditionTerm::Bitvector32SignedGreaterEqual(_, _)
+                    | ConditionTerm::PointerOffsetEqual(_, _),
+                _
+            )
+        )
+            && !facts.contains(proposition)
+        {
+            facts.push(proposition.clone());
+        }
+    }
+    facts
+}
+
 #[derive(Clone, Copy)]
 enum LoopPreservationSource {
     Automatic,
@@ -7761,6 +7783,11 @@ fn prove_pure_proposition_case_at_point(
             | ProofTactic::Calculate(_)
             | ProofTactic::Rewrite(_) => {
                 let mut prepared_derivation_lowering_facts = None;
+                let direct_goal_lowering_facts = matches!(
+                    tactic,
+                    ProofTactic::Assumption | ProofTactic::Normalize
+                )
+                .then(|| facts_for_simple_goal_lowering(&available));
                 if let ProofTactic::Derive(derive) | ProofTactic::Calculate(derive) = tactic {
                     let mut lowering_facts = facts_for_direct_derivation_lowering(&available);
                     let mut unresolved = derive.premises.iter().collect::<Vec<_>>();
@@ -7818,6 +7845,7 @@ fn prove_pure_proposition_case_at_point(
                         proposition,
                         prepared_derivation_lowering_facts
                             .as_deref()
+                            .or(direct_goal_lowering_facts.as_deref())
                             .unwrap_or(&available),
                         values.clone(),
                         &array_refs,
@@ -7858,8 +7886,11 @@ fn prove_pure_proposition_case_at_point(
                 match tactic {
                     ProofTactic::Assumption => {
                         if !available.contains(&unfolded_goal)
-                            && materialization_equivalent_available_fact(&unfolded_goal, &available)
-                                .is_none()
+                            && materialization_equivalent_available_fact(
+                                &unfolded_goal,
+                                &available,
+                            )
+                            .is_none()
                             && quantified_replay_equivalent_available_fact(
                                 &unfolded_goal,
                                 &available,
@@ -9433,14 +9464,8 @@ fn finish_ordered_proof_replay(
                                                         capture.tactic_index == *tactic_index
                                                     })
                                                 {
-                                                    for tactic in certificate.tactics() {
-                                                        if !path_deferred_capture_tactics
-                                                            .contains(tactic)
-                                                        {
-                                                            path_deferred_capture_tactics
-                                                                .push(tactic.clone());
-                                                        }
-                                                    }
+                                                    path_deferred_capture_tactics
+                                                        .extend_from_slice(certificate.tactics());
                                                 }
                                                 path_surface_closers[claim_index]
                                                     .extend_from_slice(certificate.tactics())
