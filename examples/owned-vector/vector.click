@@ -72,7 +72,14 @@ int32 vector_get(struct vector* owner, int32 index) {
 } by {
     execute_rest();
     frame();
-    simp();
+    have result == load_int32_pointer((owner + 2))[index] by {
+        normalize();
+    }
+    assumption();
+    have result == old(load_int32_pointer((owner + 2))[index]) by {
+        assumption();
+    }
+    assumption();
 }
 
 int32 vector_set(struct vector* owner, int32 index, int32 value) {
