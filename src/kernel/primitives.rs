@@ -1,7 +1,7 @@
 use super::api::{int32, normalize_exact_memory_loads_in_pointer_offset, uint8};
 use super::reasoning::{
-    bitvector_terms_proven_equal_for_memory_resolution, instantiate_range_fold_step,
-    int32_element_index_from_offset, pointers_proven_distinct,
+    bitvector_terms_proven_equal_for_memory_resolution, collect_or_cases,
+    instantiate_range_fold_step, int32_element_index_from_offset, pointers_proven_distinct,
     pointers_proven_distinct_for_memory_resolution, pointers_proven_equal,
     pointers_proven_equal_for_memory_resolution, signed_bitvector_constant,
     signed_i64_bitvector_constant,
@@ -930,6 +930,7 @@ pub(super) enum PropositionDerivationRule {
         variable: Variable,
         lower: i64,
         upper: i64,
+        premises: Assumptions,
         instances: Vec<PropositionDerivation>,
     },
     DisjunctionCases {
@@ -3297,6 +3298,18 @@ impl PropositionDerivation {
     }
 
     fn collect_context_premises(&self, premises: &mut BTreeSet<Proposition>) {
+        fn collect_local_assumptions(
+            proposition: &Proposition,
+            assumptions: &mut BTreeSet<Proposition>,
+        ) {
+            if let Proposition::And(left, right) = proposition {
+                collect_local_assumptions(left, assumptions);
+                collect_local_assumptions(right, assumptions);
+            } else {
+                assumptions.insert(proposition.clone());
+            }
+        }
+
         match &self.rule {
             PropositionDerivationRule::ContextFree => {}
             PropositionDerivationRule::ContextualAtomic {
@@ -3316,19 +3329,44 @@ impl PropositionDerivation {
             | PropositionDerivationRule::ForAllBody(proof) => {
                 proof.collect_context_premises(premises);
             }
-            PropositionDerivationRule::Implies { body, .. } => {
-                body.collect_context_premises(premises);
+            PropositionDerivationRule::Implies { antecedent, body } => {
+                let mut body_premises = BTreeSet::new();
+                body.collect_context_premises(&mut body_premises);
+                let mut local_assumptions = BTreeSet::new();
+                collect_local_assumptions(antecedent, &mut local_assumptions);
+                for local in local_assumptions {
+                    body_premises.remove(&local);
+                }
+                premises.extend(body_premises);
             }
-            PropositionDerivationRule::FiniteForAll { instances }
-            | PropositionDerivationRule::FiniteContextSplit { instances, .. } => {
+            PropositionDerivationRule::FiniteForAll { instances } => {
+                for instance in instances {
+                    instance.collect_context_premises(premises);
+                }
+            }
+            PropositionDerivationRule::FiniteContextSplit {
+                premises: range_premises,
+                instances,
+                ..
+            } => {
+                premises.extend(range_premises.pure_facts());
                 for instance in instances {
                     instance.collect_context_premises(premises);
                 }
             }
             PropositionDerivationRule::DisjunctionCases { disjunction, cases } => {
                 premises.insert(disjunction.clone());
-                for case in cases {
-                    case.collect_context_premises(premises);
+                let mut case_propositions = Vec::new();
+                collect_or_cases(disjunction, &mut case_propositions);
+                for (case, local) in cases.iter().zip(case_propositions) {
+                    let mut case_premises = BTreeSet::new();
+                    case.collect_context_premises(&mut case_premises);
+                    let mut local_assumptions = BTreeSet::new();
+                    collect_local_assumptions(&local, &mut local_assumptions);
+                    for local in local_assumptions {
+                        case_premises.remove(&local);
+                    }
+                    premises.extend(case_premises);
                 }
             }
         }

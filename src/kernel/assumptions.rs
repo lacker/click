@@ -3111,6 +3111,7 @@ impl Assumptions {
             variable,
             lower: range.lower,
             upper: range.upper,
+            premises: self.clone(),
             instances,
         })
     }
@@ -5199,9 +5200,13 @@ impl PropositionDerivation {
                 variable,
                 lower,
                 upper,
+                premises,
                 instances,
             } => {
-                let Some(range) = available.finite_context_range(*variable) else {
+                if !available.includes(premises) {
+                    return false;
+                }
+                let Some(range) = premises.finite_context_range(*variable) else {
                     return false;
                 };
                 if range.lower < *lower || range.upper > *upper {

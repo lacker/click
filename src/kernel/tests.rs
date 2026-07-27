@@ -1502,6 +1502,55 @@ fn proposition_derivation_replay_requires_its_context() {
 }
 
 #[test]
+fn implication_derivation_context_excludes_its_local_antecedent() {
+    let antecedent = Proposition::Predicate {
+        name: "local_hypothesis".to_string(),
+        arguments: Vec::new(),
+    };
+    let goal = Proposition::Implies(Box::new(antecedent.clone()), Box::new(antecedent));
+    let assumptions = Assumptions::new();
+    let derivation = assumptions
+        .derive_simp_proposition(&goal)
+        .expect("an implication may use its own antecedent");
+
+    assert!(derivation.replay(&assumptions));
+    assert!(
+        derivation.context_premises().is_empty(),
+        "binder-local assumptions are not ambient certificate premises"
+    );
+}
+
+#[test]
+fn finite_context_split_derivation_records_its_range_premises() {
+    let variable = Variable(87);
+    let value = Bitvector32Term::Variable(variable);
+    let lower = Proposition::ConditionIs(
+        ConditionTerm::signed_less_equal(Bitvector32Term::Constant(3), value.clone()),
+        true,
+    );
+    let upper = Proposition::ConditionIs(
+        ConditionTerm::signed_less_equal(value.clone(), Bitvector32Term::Constant(3)),
+        true,
+    );
+    let goal = Proposition::ConditionIs(
+        ConditionTerm::equal(value, Bitvector32Term::Constant(3)),
+        true,
+    );
+    let assumptions = Assumptions::new()
+        .assume_proposition(lower.clone())
+        .assume_proposition(upper.clone());
+    let derivation = assumptions
+        .derive_simp_proposition(&goal)
+        .expect("the singleton finite range should establish equality");
+
+    assert!(derivation.replay(&assumptions));
+    assert!(!derivation.replay(&Assumptions::new()));
+    let context = derivation.context_premises();
+    assert!(context.contains(&lower));
+    assert!(context.contains(&upper));
+}
+
+#[test]
 fn successor_order_derivation_needs_only_an_upper_bound() {
     let index = Bitvector32Term::Variable(Variable(88));
     let upper = Bitvector32Term::Variable(Variable(89));
@@ -1739,10 +1788,7 @@ fn symbolic_int32_range_directly_proves_constant_element_loadable() {
     let length = Bitvector32Term::Variable(Variable(89));
     let assumptions = Assumptions::new()
         .assume_condition(
-            ConditionTerm::signed_less_equal(
-                Bitvector32Term::Constant(2),
-                length.clone(),
-            ),
+            ConditionTerm::signed_less_equal(Bitvector32Term::Constant(2), length.clone()),
             true,
         )
         .assume_proposition(Proposition::CMemoryLoadable {
