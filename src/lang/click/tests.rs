@@ -7489,3 +7489,75 @@ int32 caller(int32 x) {
         .expect_err("targeted caller verification must check its callee dependency");
     assert!(error.message().contains("callee"), "{}", error.message());
 }
+
+#[test]
+fn verification_session_reuses_certified_dependencies_and_rechecks_target() {
+    let callee_c = r#"
+int32 callee(int32 x) {
+    return x;
+}
+"#;
+    let caller_c = r#"
+int32 caller(int32 x) {
+    int32 result;
+    result = callee(x);
+    return result;
+}
+"#;
+    let click_source = r#"
+verifying "callee.c";
+verifying "caller.c";
+
+int32 callee(int32 x) {
+    ensures result == x;
+} by {
+    execute_rest();
+    simp();
+}
+
+int32 caller(int32 x) {
+    ensures result == x;
+} by {
+    execute_rest();
+    simp();
+}
+"#;
+    let sources = [("callee.c", callee_c), ("caller.c", caller_c)];
+    let (session, _) =
+        C0VerificationSession::new(click_source, &sources).expect("baseline should verify");
+    let caller_simp = click_source.rfind("simp();").unwrap();
+    let position = expansion::position_at_offset(click_source, caller_simp);
+    let expanded = expand_c0_tactic_source_at(
+        click_source,
+        &sources,
+        position.line,
+        position.column,
+    )
+    .expect("caller simp should expand");
+
+    let verified = session
+        .verify_at(&expanded, position.line, position.column)
+        .expect("session should verify the rewritten caller");
+    assert!(verified
+        .iter()
+        .all(|theorem| theorem.function_block.signature().name() == "caller"));
+
+    let broken_target = expanded.replacen("assumption();", "left();", 1);
+    session
+        .verify_at(&broken_target, position.line, position.column)
+        .expect_err("the selected function must be rechecked");
+
+    let changed_dependency = expanded.replacen(
+        "int32 callee(int32 x) {\n    ensures result == x;",
+        "int32 callee(int32 x) {\n    ensures result == x + 1;",
+        1,
+    );
+    let error = session
+        .verify_at(&changed_dependency, position.line, position.column)
+        .expect_err("dependency source changes must invalidate the baseline session");
+    assert!(
+        error.message().contains("outside the selected proof unit"),
+        "{}",
+        error.message()
+    );
+}

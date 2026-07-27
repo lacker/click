@@ -2008,6 +2008,11 @@ impl CExecutionEnvironment {
         self
     }
 
+    pub fn without_verified_function_rule(mut self, name: &str) -> Self {
+        self.verified_function_rules.remove(name);
+        self
+    }
+
     pub(super) fn get_verified_function_rule(&self, name: &str) -> Option<&CVerifiedFunctionRule> {
         self.verified_function_rules.get(name)
     }

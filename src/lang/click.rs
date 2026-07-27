@@ -1401,6 +1401,14 @@ pub struct ClickError {
     message: String,
 }
 
+#[derive(Clone)]
+pub struct C0VerificationSession {
+    c_sources: Vec<(String, String)>,
+    baseline_click_source: String,
+    baseline_file: ClickFile,
+    verified_function_environment: CExecutionEnvironment,
+}
+
 impl ClickFile {
     pub fn verifying_sources(&self) -> &[String] {
         &self.verifying_sources
@@ -1845,11 +1853,132 @@ fn verify_click_theorems_with_c_sources(
     verify_click_file_theorems(&file)
 }
 
+fn parse_c0_click_file(
+    click_source: &str,
+    c_sources: &[(&str, &str)],
+) -> Result<ClickFile, ClickError> {
+    let sources = c_sources.iter().copied().collect::<BTreeMap<_, _>>();
+    let struct_layouts = parse_c_struct_layouts(&sources)?;
+    parser::parse_with_struct_layouts(click_source, struct_layouts)
+}
+
+fn proof_unit_erased_click_file(
+    mut file: ClickFile,
+    target: &VerificationTarget,
+) -> ClickFile {
+    if let VerificationTarget::Theorem(target_name) = target {
+        for theorem in &mut file.theorem_definitions {
+            if theorem.name == *target_name {
+                for ensure in &mut theorem.ensures {
+                    ensure.proof = Proof::Default;
+                }
+            }
+        }
+    }
+    let VerificationTarget::Function(target_name) = target else {
+        return file;
+    };
+    for function in &mut file.function_blocks {
+        if function.signature.name != *target_name {
+            continue;
+        }
+        if function.grouped_proof.is_some() {
+            function.grouped_proof = Some(Proof::Default);
+        }
+        for ensure in &mut function.ensures {
+            ensure.proof = Proof::Default;
+        }
+        for effect in &mut function.effects {
+            effect.proof = Proof::Default;
+        }
+        for clause in &mut function.structural_clauses {
+            if clause.initialize_proof.is_some() {
+                clause.initialize_proof = Some(Proof::Default);
+            }
+            if clause.preserve_proof.is_some() {
+                clause.preserve_proof = Some(Proof::Default);
+            }
+            for item in &mut clause.items {
+                item.proof = Proof::Default;
+            }
+        }
+    }
+    file
+}
+
 pub fn verify_c0_sources(
     click_source: &str,
     c_sources: &[(&str, &str)],
 ) -> Result<Vec<VerifiedCTheorem>, ClickError> {
     verify_c0_sources_targeted(click_source, c_sources, None)
+}
+
+impl C0VerificationSession {
+    pub fn new(
+        click_source: &str,
+        c_sources: &[(&str, &str)],
+    ) -> Result<(Self, Vec<VerifiedCTheorem>), ClickError> {
+        let (verified, verified_function_environment) =
+            verify_c0_sources_with_environment(click_source, c_sources, None, None)?;
+        let baseline_file = parse_c0_click_file(click_source, c_sources)?;
+        Ok((
+            Self {
+                c_sources: c_sources
+                    .iter()
+                    .map(|(name, source)| ((*name).to_string(), (*source).to_string()))
+                    .collect(),
+                baseline_click_source: click_source.to_string(),
+                baseline_file,
+                verified_function_environment,
+            },
+            verified,
+        ))
+    }
+
+    pub fn verify_at(
+        &self,
+        click_source: &str,
+        line: usize,
+        column: usize,
+    ) -> Result<Vec<VerifiedCTheorem>, ClickError> {
+        let c_sources = self
+            .c_sources
+            .iter()
+            .map(|(name, source)| (name.as_str(), source.as_str()))
+            .collect::<Vec<_>>();
+        let target = verification_target_at(click_source, &c_sources, line, column)?;
+        let baseline_target =
+            verification_target_at(&self.baseline_click_source, &c_sources, line, column)?;
+        if target != baseline_target {
+            return Err(ClickError::new(
+                "rewritten source location resolves to a different proof unit",
+            ));
+        }
+        let rewritten_file = parse_c0_click_file(click_source, &c_sources)?;
+        let baseline_interface =
+            proof_unit_erased_click_file(self.baseline_file.clone(), &target);
+        let rewritten_interface = proof_unit_erased_click_file(rewritten_file, &target);
+        if rewritten_interface != baseline_interface {
+            return Err(ClickError::new(
+                "rewritten sidecar changed source outside the selected proof unit",
+            ));
+        }
+        let initial_environment = match &target {
+            VerificationTarget::Function(function_name) => Some(
+                self.verified_function_environment
+                    .clone()
+                    .without_verified_function_rule(function_name),
+            ),
+            VerificationTarget::Theorem(_) => None,
+        };
+        verify_c0_sources_with_environment(
+            click_source,
+            &c_sources,
+            Some(target),
+            initial_environment,
+        )
+        .map(|(verified, _)| verified)
+    }
 }
 
 /// Parses and validates the complete sidecar, then verifies only the proof
@@ -1869,6 +1998,16 @@ fn verify_c0_sources_targeted(
     c_sources: &[(&str, &str)],
     verification_target: Option<VerificationTarget>,
 ) -> Result<Vec<VerifiedCTheorem>, ClickError> {
+    verify_c0_sources_with_environment(click_source, c_sources, verification_target, None)
+        .map(|(verified, _)| verified)
+}
+
+fn verify_c0_sources_with_environment(
+    click_source: &str,
+    c_sources: &[(&str, &str)],
+    verification_target: Option<VerificationTarget>,
+    initial_function_environment: Option<CExecutionEnvironment>,
+) -> Result<(Vec<VerifiedCTheorem>, CExecutionEnvironment), ClickError> {
     let c_sources: BTreeMap<&str, &str> = c_sources.iter().copied().collect();
     let struct_layouts = parse_c_struct_layouts(&c_sources)?;
     let file = parser::parse_with_struct_layouts(click_source, struct_layouts)?;
@@ -1881,11 +2020,15 @@ fn verify_c0_sources_targeted(
     } else {
         match verification_target.as_ref() {
             Some(VerificationTarget::Function(function_name)) => {
-                Some(verification_required_functions(
-                    &file,
-                    &parsed_sources,
-                    function_name,
-                )?)
+                if initial_function_environment.is_some() {
+                    Some(BTreeSet::from([function_name.clone()]))
+                } else {
+                    Some(verification_required_functions(
+                        &file,
+                        &parsed_sources,
+                        function_name,
+                    )?)
+                }
             }
             Some(VerificationTarget::Theorem(_)) => Some(BTreeSet::new()),
             None => None,
@@ -1898,13 +2041,15 @@ fn verify_c0_sources_targeted(
     let predicate_environment = PredicateEnvironment::new(&predicate_definitions);
     let click_function_environment = ClickFunctionEnvironment::new(&click_function_definitions);
     let resource_environment = ResourceEnvironment::new(&resource_definitions);
-    let mut function_environment = build_function_environment(
+    let built_function_environment = build_function_environment(
         &parsed_sources,
         file.function_blocks(),
         &predicate_environment,
         &click_function_environment,
         &resource_environment,
     )?;
+    let mut function_environment =
+        initial_function_environment.unwrap_or(built_function_environment);
     let _verified_theorems = verify_theorem_definitions(
         &theorem_definitions,
         &predicate_environment,
@@ -2111,7 +2256,7 @@ fn verify_c0_sources_targeted(
         }
     }
 
-    Ok(verified)
+    Ok((verified, function_environment))
 }
 
 fn tactic_expansion_required_functions(
