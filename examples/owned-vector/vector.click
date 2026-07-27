@@ -129,7 +129,7 @@ int32 vector_fill(struct vector* owner, int32 value) {
             have i < owner->cap by simp;
             execute_step();
             execute_step();
-            simp();
+            close_invariants();
         }
     }
 
