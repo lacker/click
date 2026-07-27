@@ -100,6 +100,36 @@ timing, set `CLICK_TIMINGS=1`; add `CLICK_TIMING_STARTS=1` when an externally
 interrupted run should identify its active statement. Raw tactic events include
 `class simple`, `class smart`, or `class control`.
 
+### Auditing smart-tactic expansion
+
+Use `click-audit` for a slow, exhaustive check of the source-expansion
+boundary:
+
+```sh
+cargo run --quiet --bin click-audit -- examples
+```
+
+For each example project, the audit first verifies the original source and
+uses the verifier's timing stream to inventory every smart source site. It
+then handles each unique `file:line:column` independently:
+
+1. run expansion in a bounded child process;
+2. require a changed, syntactically readable sidecar;
+3. copy the original project to a fresh temporary directory;
+4. install that one expanded sidecar; and
+5. fully verify the rewritten project in another bounded child process.
+
+Discovery, expansion, and rewritten verification default to limits of five
+minutes, two minutes, and five minutes respectively. Override them with
+`--discovery-time-limit`, `--expansion-time-limit`, and
+`--verification-time-limit`. Use `--max-sites` only for a deliberately partial
+diagnostic run; a release or certificate-boundary audit should omit it.
+
+Every timeout child is killed and reaped. Sites are tested against independent
+project copies, so an earlier rewrite cannot hide or cause a later failure.
+The command exits unsuccessfully if original verification, expansion, parsing,
+or rewritten verification fails.
+
 ## Unit Tests
 
 Rust unit tests are appropriate when the behavior is lower-level than a sidecar

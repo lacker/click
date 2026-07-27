@@ -1,4 +1,4 @@
-# `click-profile` / `click-expand` Handoff
+# `click-profile` / `click-expand` / `click-audit` Handoff
 
 Last updated: 2026-07-27
 
@@ -122,6 +122,7 @@ Current focused validation:
 
 - 407 library tests pass;
 - 7 `click-profile` binary tests pass;
+- 6 `click-audit` binary tests pass;
 - the `execute_rest` order/alias recursion regression passes in an isolated
   mdtest process;
 - the owned-string example verifies normally;
@@ -288,7 +289,15 @@ Work one frontier at a time and commit each logical change independently.
    inspect the line 478 frontier.
 2. Continue the same cycle for
    owned-string line 485, owned-string line 471, and input-cursor line 125.
-3. Build the global certificate audit before claiming expansion is complete.
+3. Run the full `click-audit` corpus audit and fix each concrete failure before
+   claiming expansion is complete. The audit command now inventories every
+   smart source site and independently expands and verifies it in bounded
+   child processes; the complete three-site `jsonc-refcount` audit passes.
+   Its next bounded trial found that `owned-segmented-buffer` currently fails
+   original verification before inventory:
+   `owned_segmented_buffer_pipeline.contract` tactic 22 is missing the exact
+   `loadable(owner[0..1])` premise required by `step using`. Diagnose that as
+   an example/verifier correctness issue before auditing its expansions.
 
 Do not optimize by adding proposition-specific smart fast paths, broad ambient
 premises, generic transport fallbacks, or internal-only certificate tactics.
