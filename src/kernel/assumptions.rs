@@ -1474,6 +1474,11 @@ impl Assumptions {
             {
                 Some(true)
             }
+            ConditionTerm::Bitvector32SignedLessThan(left, right)
+                if self.positive_offset_is_proven_above_for_simp(left, right) =>
+            {
+                Some(true)
+            }
             _ => {
                 if self.proves_condition_from_facts_for_simp(condition, true) {
                     return Some(true);
@@ -1751,6 +1756,39 @@ impl Assumptions {
             }
         }
         false
+    }
+
+    fn positive_offset_is_proven_above_for_simp(
+        &self,
+        base: &Bitvector32Term,
+        term: &Bitvector32Term,
+    ) -> bool {
+        let Some((term_base, addend)) = term.add_const_parts() else {
+            return false;
+        };
+        if &term_base != base || signed_u32_constant(addend).is_none_or(|value| value <= 0) {
+            return false;
+        }
+        // A strict upper bound by any int32 value proves that `base` is below
+        // INT_MAX. Therefore adding one cannot wrap. Keep this simp rule
+        // syntactic so certificate selection cannot recurse into memory or
+        // alias resolution.
+        addend == 1
+            && self.condition_facts.iter().any(|(condition, value)| {
+                matches!(
+                    (condition, value),
+                    (
+                        ConditionTerm::Bitvector32SignedLessThan(left, _),
+                        true
+                    ) if left.as_ref() == base
+                ) || matches!(
+                    (condition, value),
+                    (
+                        ConditionTerm::Bitvector32SignedGreaterThan(_, right),
+                        true
+                    ) if right.as_ref() == base
+                )
+            })
     }
 
     fn order_path_connection_for_simp(
@@ -2780,6 +2818,41 @@ impl Assumptions {
         proposition: &Proposition,
         for_simp: bool,
     ) -> Option<Assumptions> {
+        let condition_goal = match proposition {
+            Proposition::ConditionIs(_, _) => true,
+            Proposition::Not(body) => matches!(body.as_ref(), Proposition::ConditionIs(_, _)),
+            _ => false,
+        };
+        if condition_goal {
+            // Arithmetic and equality reasoning should emit the condition
+            // facts that actually establish the atomic result, rather than
+            // retaining unrelated memory and resource propositions from the
+            // ambient proof state. Start with the condition theory alone, then
+            // delete every premise whose absence preserves the derivation.
+            //
+            // This is cheap compared with minimizing the complete context:
+            // condition replay is bounded and structural, while proposition
+            // facts can re-enter quantified, memory, and alias reasoning.
+            let mut candidate = self.clone();
+            candidate.prop_facts.clear();
+            if candidate.proves_atomic_for_derivation(proposition, for_simp) {
+                let conditions = candidate
+                    .condition_facts
+                    .keys()
+                    .cloned()
+                    .collect::<Vec<_>>();
+                for condition in conditions {
+                    let Some(value) = candidate.condition_facts.remove(&condition) else {
+                        continue;
+                    };
+                    if !candidate.proves_atomic_for_derivation(proposition, for_simp) {
+                        candidate.condition_facts.insert(condition, value);
+                    }
+                }
+                return Some(candidate);
+            }
+        }
+
         let candidate_family = |fact: &Proposition| match proposition {
             Proposition::CMemoryLoadable { .. } | Proposition::CMemoryCanStore { .. } => {
                 matches!(fact, Proposition::CMemoryLoadable { .. })

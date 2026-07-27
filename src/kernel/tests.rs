@@ -1502,6 +1502,41 @@ fn proposition_derivation_replay_requires_its_context() {
 }
 
 #[test]
+fn successor_order_derivation_needs_only_an_upper_bound() {
+    let index = Bitvector32Term::Variable(Variable(88));
+    let upper = Bitvector32Term::Variable(Variable(89));
+    let upper_bound =
+        Proposition::ConditionIs(ConditionTerm::signed_less_than(index.clone(), upper), true);
+    let goal = Proposition::ConditionIs(
+        ConditionTerm::signed_less_than(
+            index.clone(),
+            Bitvector32Term::add(index.clone(), Bitvector32Term::Constant(1)),
+        ),
+        true,
+    );
+    let unrelated_order = Proposition::ConditionIs(
+        ConditionTerm::signed_greater_equal(
+            Bitvector32Term::Variable(Variable(90)),
+            Bitvector32Term::Constant(0),
+        ),
+        true,
+    );
+    let assumptions = Assumptions::new()
+        .assume_proposition(unrelated_order)
+        .assume_proposition(upper_bound.clone())
+        .assume_proposition(Proposition::Predicate {
+            name: "unrelated".to_string(),
+            arguments: Vec::new(),
+        });
+    let derivation = assumptions
+        .derive_simp_proposition(&goal)
+        .expect("an int32 value below another int32 value cannot overflow when incremented");
+
+    assert!(derivation.replay(&assumptions));
+    assert_eq!(derivation.context_premises(), vec![upper_bound]);
+}
+
+#[test]
 fn assumptions_split_small_finite_context_variable() {
     let j = Bitvector32Term::Variable(Variable(87));
     let assumptions = Assumptions::new()
