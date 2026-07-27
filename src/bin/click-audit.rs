@@ -1,28 +1,31 @@
 use std::collections::BTreeMap;
 use std::env;
 use std::fs;
-use std::io::{Read, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Command, ExitStatus, Stdio};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::process::{Child, ChildStdin, Command, ExitStatus, Stdio};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::thread;
 use std::time::{Duration, Instant};
 
+#[cfg(test)]
+use click::lang::click::verify_c0_sources;
 use click::lang::click::{
-    SourcePosition, c0_tactic_source_position, expand_c0_tactic_source_at, verify_c0_sources,
-    verify_c0_sources_at, verifying_source_paths,
+    C0VerificationSession, SourcePosition, c0_tactic_source_position, expand_c0_tactic_source_at,
+    verifying_source_paths,
 };
 
 const DEFAULT_DISCOVERY_LIMIT: Duration = Duration::from_secs(5 * 60);
 const DEFAULT_EXPANSION_LIMIT: Duration = Duration::from_secs(2 * 60);
 const DEFAULT_VERIFICATION_LIMIT: Duration = Duration::from_secs(5 * 60);
 const MAX_DIAGNOSTIC_CHARS: usize = 2_000;
+const SESSION_INITIALIZED_MARKER: &str = "click audit session: initialized";
 const USAGE: &str = "\
 usage: click-audit [OPTIONS] <example-project|examples-directory>
 
 The audit verifies each original project, inventories every smart tactic, then
-expands and fully verifies each rewritten sidecar against a fresh temporary
-project copy.
+retains that certified dependency environment while it expands and verifies
+each selected proof unit.
 
 defaults:
   --discovery-time-limit 5m   original verification and site inventory
@@ -85,6 +88,161 @@ enum BoundedOutput {
     },
 }
 
+struct AuditSessionWorker {
+    child: Child,
+    stdin: ChildStdin,
+    responses: Receiver<Result<(), String>>,
+    alive: bool,
+}
+
+impl AuditSessionWorker {
+    fn start(click_path: &Path, limit: Duration) -> Result<(Self, String), String> {
+        let executable =
+            env::current_exe().map_err(|error| format!("failed to locate click-audit: {error}"))?;
+        let mut child = Command::new(executable)
+            .arg("--internal-session-worker")
+            .arg(click_path)
+            .env("CLICK_TIMINGS", "1")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|error| format!("failed to start verification session: {error}"))?;
+        let stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| "failed to open verification-session input".to_string())?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| "failed to open verification-session output".to_string())?;
+        let stderr = child
+            .stderr
+            .take()
+            .ok_or_else(|| "failed to open verification-session diagnostics".to_string())?;
+        let (sender, responses) = mpsc::channel();
+        thread::spawn(move || {
+            let mut stdout = stdout;
+            loop {
+                match read_session_response(&mut stdout) {
+                    Ok(Some(response)) => {
+                        if sender.send(response).is_err() {
+                            break;
+                        }
+                    }
+                    Ok(None) => break,
+                    Err(error) => {
+                        let _ = sender.send(Err(error));
+                        break;
+                    }
+                }
+            }
+        });
+        let (diagnostic_sender, diagnostics) = mpsc::channel();
+        thread::spawn(move || {
+            let mut initialized = false;
+            for line in BufReader::new(stderr).lines() {
+                let Ok(line) = line else {
+                    break;
+                };
+                if !initialized {
+                    initialized = line == SESSION_INITIALIZED_MARKER;
+                    if diagnostic_sender.send(line).is_err() {
+                        break;
+                    }
+                }
+            }
+        });
+        let mut worker = Self {
+            child,
+            stdin,
+            responses,
+            alive: true,
+        };
+        let start = Instant::now();
+        worker.receive(limit, "verification-session initialization")?;
+        let mut initialization_diagnostics = Vec::new();
+        loop {
+            let remaining = limit.saturating_sub(start.elapsed());
+            if remaining.is_zero() {
+                worker.terminate();
+                return Err(format!(
+                    "verification-session inventory exceeded {}",
+                    format_duration(limit)
+                ));
+            }
+            match diagnostics.recv_timeout(remaining) {
+                Ok(line) if line == SESSION_INITIALIZED_MARKER => break,
+                Ok(line) => initialization_diagnostics.push(line),
+                Err(RecvTimeoutError::Timeout) => {
+                    worker.terminate();
+                    return Err(format!(
+                        "verification-session inventory exceeded {}",
+                        format_duration(limit)
+                    ));
+                }
+                Err(RecvTimeoutError::Disconnected) => {
+                    worker.terminate();
+                    return Err(
+                        "verification session omitted its initialization marker".to_string()
+                    );
+                }
+            }
+        }
+        Ok((worker, initialization_diagnostics.join("\n")))
+    }
+
+    fn verify(
+        &mut self,
+        click_source: &str,
+        position: SourcePosition,
+        limit: Duration,
+    ) -> Result<Duration, String> {
+        if !self.alive {
+            return Err("verification session is not running".to_string());
+        }
+        write_session_request(&mut self.stdin, click_source, position).map_err(|error| {
+            self.terminate();
+            format!("failed to send verification-session request: {error}")
+        })?;
+        let start = Instant::now();
+        self.receive(limit, "rewritten-sidecar verification")?;
+        Ok(start.elapsed())
+    }
+
+    fn receive(&mut self, limit: Duration, label: &str) -> Result<(), String> {
+        match self.responses.recv_timeout(limit) {
+            Ok(result) => result,
+            Err(RecvTimeoutError::Timeout) => {
+                self.terminate();
+                Err(format!("{label} exceeded {}", format_duration(limit)))
+            }
+            Err(RecvTimeoutError::Disconnected) => {
+                self.terminate();
+                Err(format!("{label} worker exited without a response"))
+            }
+        }
+    }
+
+    fn terminate(&mut self) {
+        if self.alive {
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+            self.alive = false;
+        }
+    }
+
+    fn is_alive(&self) -> bool {
+        self.alive
+    }
+}
+
+impl Drop for AuditSessionWorker {
+    fn drop(&mut self) {
+        self.terminate();
+    }
+}
+
 fn entry() -> Result<(), String> {
     let raw = env::args().skip(1).collect::<Vec<_>>();
     if let Some(result) = run_internal_command(&raw) {
@@ -99,13 +257,9 @@ fn entry() -> Result<(), String> {
 
 fn run_internal_command(arguments: &[String]) -> Option<Result<(), String>> {
     match arguments {
-        [command, path] if command == "--internal-inventory" => {
-            Some(verify_project(Path::new(path)))
+        [command, path] if command == "--internal-session-worker" => {
+            Some(run_session_worker(Path::new(path)))
         }
-        [command, path, line, column] if command == "--internal-verify-sidecar-at" => Some(
-            parse_position(line, column)
-                .and_then(|position| verify_sidecar_at(Path::new(path), position)),
-        ),
         [command, location] if command == "--internal-expand" => {
             Some(expand_location(location).map(|source| print!("{source}")))
         }
@@ -209,13 +363,40 @@ fn run_audit(arguments: Arguments) -> Result<(), String> {
         format_duration(arguments.expansion_limit),
         format_duration(arguments.verification_limit),
     );
-    for project in projects {
+    'projects: for project in projects {
         let project_name = project
             .file_name()
             .and_then(|name| name.to_str())
             .unwrap_or("example");
         println!("\nDISCOVER {project_name}");
-        let sites = match discover_sites(&project, arguments.discovery_limit) {
+        let mut workers = BTreeMap::<PathBuf, AuditSessionWorker>::new();
+        let mut click_paths = files_with_extension(&project, "click")?;
+        click_paths.sort();
+        let mut timing_output = String::new();
+        for click_path in click_paths {
+            let click_path = fs::canonicalize(&click_path).map_err(|error| {
+                format!("failed to resolve `{}`: {error}", click_path.display())
+            })?;
+            print!("  SESSION {} ... ", click_path.display());
+            std::io::stdout()
+                .flush()
+                .map_err(|error| format!("failed to flush audit progress: {error}"))?;
+            match AuditSessionWorker::start(&click_path, arguments.discovery_limit) {
+                Ok((worker, timings)) => {
+                    println!("ready");
+                    timing_output.push_str(&timings);
+                    timing_output.push('\n');
+                    workers.insert(click_path.clone(), worker);
+                }
+                Err(message) => {
+                    println!("FAIL");
+                    println!("      {}", message.replace('\n', "\n      "));
+                    project_failures += 1;
+                    continue 'projects;
+                }
+            }
+        }
+        let sites = match parse_smart_timing_sites(&timing_output).and_then(resolve_sites) {
             Ok(sites) => sites,
             Err(message) => {
                 println!("  FAIL {message}");
@@ -248,9 +429,28 @@ fn run_audit(arguments: Arguments) -> Result<(), String> {
             std::io::stdout()
                 .flush()
                 .map_err(|error| format!("failed to flush audit progress: {error}"))?;
+            let restart_worker = workers
+                .get(&site.click_path)
+                .is_none_or(|worker| !worker.is_alive());
+            if restart_worker {
+                match AuditSessionWorker::start(&site.click_path, arguments.discovery_limit) {
+                    Ok((worker, _)) => {
+                        workers.insert(site.click_path.clone(), worker);
+                    }
+                    Err(message) => {
+                        println!("FAIL");
+                        println!("      {}", message.replace('\n', "\n      "));
+                        site_failures += 1;
+                        continue;
+                    }
+                }
+            }
+            let worker = workers
+                .get_mut(&site.click_path)
+                .expect("audit session was initialized for every sidecar");
             match audit_site(
-                &project,
                 site,
+                worker,
                 arguments.expansion_limit,
                 arguments.verification_limit,
             ) {
@@ -289,20 +489,6 @@ fn run_audit(arguments: Arguments) -> Result<(), String> {
     } else {
         Err(format!("{failures} expansion audit check(s) failed"))
     }
-}
-
-fn discover_sites(project: &Path, limit: Duration) -> Result<Vec<AuditSite>, String> {
-    let executable =
-        env::current_exe().map_err(|error| format!("failed to locate click-audit: {error}"))?;
-    let mut command = Command::new(executable);
-    command
-        .arg("--internal-inventory")
-        .arg(project)
-        .env("CLICK_TIMINGS", "1");
-    let output = run_bounded(command, limit, "project discovery")?;
-    let completed = require_success(output, limit, "project discovery")?;
-    let timings = parse_smart_timing_sites(&String::from_utf8_lossy(&completed.stderr))?;
-    resolve_sites(timings)
 }
 
 fn parse_smart_timing_sites(output: &str) -> Result<Vec<TimingSite>, String> {
@@ -385,8 +571,8 @@ fn resolve_sites(timings: Vec<TimingSite>) -> Result<Vec<AuditSite>, String> {
 }
 
 fn audit_site(
-    project: &Path,
     site: &AuditSite,
+    worker: &mut AuditSessionWorker,
     expansion_limit: Duration,
     verification_limit: Duration,
 ) -> Result<(Duration, Duration), String> {
@@ -415,36 +601,8 @@ fn audit_site(
     verifying_source_paths(&expanded)
         .map_err(|error| format!("expanded sidecar did not parse: {}", error.message()))?;
 
-    let project = fs::canonicalize(project)
-        .map_err(|error| format!("failed to resolve `{}`: {error}", project.display()))?;
-    let relative_sidecar = site.click_path.strip_prefix(&project).map_err(|_| {
-        format!(
-            "timing sidecar `{}` is outside project `{}`",
-            site.click_path.display(),
-            project.display()
-        )
-    })?;
-    let temporary = TemporaryProject::copy_from(&project)?;
-    let rewritten_path = temporary.path().join(relative_sidecar);
-    fs::write(&rewritten_path, expanded)
-        .map_err(|error| format!("failed to write `{}`: {error}", rewritten_path.display()))?;
-
-    let mut verification = Command::new(executable);
-    verification
-        .arg("--internal-verify-sidecar-at")
-        .arg(&rewritten_path)
-        .arg(site.position.line.to_string())
-        .arg(site.position.column.to_string());
-    let verification = require_success(
-        run_bounded(
-            verification,
-            verification_limit,
-            "rewritten-sidecar verification",
-        )?,
-        verification_limit,
-        "rewritten-sidecar verification",
-    )?;
-    Ok((expansion.elapsed, verification.elapsed))
+    let verification_elapsed = worker.verify(&expanded, site.position, verification_limit)?;
+    Ok((expansion.elapsed, verification_elapsed))
 }
 
 fn expand_location(location: &str) -> Result<String, String> {
@@ -598,62 +756,173 @@ fn truncate_diagnostic(diagnostic: &str) -> String {
     )
 }
 
-fn verify_project(project: &Path) -> Result<(), String> {
-    let mut c_paths = files_with_extension(project, "c")?;
-    let mut click_paths = files_with_extension(project, "click")?;
-    c_paths.sort();
-    click_paths.sort();
-    if click_paths.is_empty() {
-        return Err(format!("`{}` has no Click sidecar", project.display()));
-    }
-    let c_sources = read_named_sources(&c_paths)?;
-    let refs = source_refs(&c_sources);
-    for click_path in click_paths {
-        let click_source = fs::read_to_string(&click_path)
-            .map_err(|error| format!("failed to read `{}`: {error}", click_path.display()))?;
-        if env::var_os("CLICK_TIMINGS").is_some() {
-            eprintln!("click timing: source {}", click_path.display());
-        }
-        verify_c0_sources(&click_source, &refs).map_err(|error| {
-            format!(
-                "sidecar `{}` failed: {}",
-                click_path.display(),
-                error.message()
-            )
-        })?;
-    }
-    Ok(())
-}
-
-fn verify_sidecar_at(click_path: &Path, position: SourcePosition) -> Result<(), String> {
-    let project = click_path.parent().unwrap_or_else(|| Path::new("."));
-    let mut c_paths = files_with_extension(project, "c")?;
-    c_paths.sort();
-    let c_sources = read_named_sources(&c_paths)?;
-    let refs = source_refs(&c_sources);
+fn run_session_worker(click_path: &Path) -> Result<(), String> {
     let click_source = fs::read_to_string(click_path)
         .map_err(|error| format!("failed to read `{}`: {error}", click_path.display()))?;
-    verify_c0_sources_at(&click_source, &refs, position.line, position.column).map_err(|error| {
-        format!(
-            "sidecar `{}` failed: {}",
-            click_path.display(),
-            error.message()
-        )
-    })?;
-    Ok(())
+    let c_sources = read_verifying_sources(click_path, &click_source)?;
+    let refs = source_refs(&c_sources);
+    eprintln!("click timing: source {}", click_path.display());
+    let session = match C0VerificationSession::new(&click_source, &refs) {
+        Ok((session, _)) => {
+            // SAFETY: this worker is deliberately single-threaded and has not
+            // spawned library threads. Timing is needed only for inventory.
+            unsafe {
+                env::remove_var("CLICK_TIMINGS");
+            }
+            eprintln!("{SESSION_INITIALIZED_MARKER}");
+            std::io::stderr()
+                .flush()
+                .map_err(|error| format!("failed to flush session inventory: {error}"))?;
+            write_session_response(&mut std::io::stdout(), Ok(()))?;
+            session
+        }
+        Err(error) => {
+            eprintln!("{SESSION_INITIALIZED_MARKER}");
+            std::io::stderr().flush().map_err(|flush_error| {
+                format!("failed to flush session inventory: {flush_error}")
+            })?;
+            write_session_response(&mut std::io::stdout(), Err(error.message().to_string()))?;
+            return Ok(());
+        }
+    };
+    let mut stdin = std::io::stdin();
+    loop {
+        let Some((rewritten, position)) = read_session_request(&mut stdin)? else {
+            return Ok(());
+        };
+        let result = session
+            .verify_at(&rewritten, position.line, position.column)
+            .map(|_| ())
+            .map_err(|error| error.message().to_string());
+        write_session_response(&mut std::io::stdout(), result)?;
+    }
 }
 
-fn parse_position(line: &str, column: &str) -> Result<SourcePosition, String> {
-    let line = line
-        .parse::<usize>()
-        .map_err(|_| format!("invalid source line `{line}`"))?;
-    let column = column
-        .parse::<usize>()
-        .map_err(|_| format!("invalid source column `{column}`"))?;
-    if line == 0 || column == 0 {
-        return Err("source lines and columns are one-based".to_string());
+fn read_verifying_sources(
+    click_path: &Path,
+    click_source: &str,
+) -> Result<Vec<(String, String)>, String> {
+    let parent = click_path.parent().unwrap_or_else(|| Path::new("."));
+    verifying_source_paths(click_source)
+        .map_err(|error| error.message().to_string())?
+        .into_iter()
+        .map(|name| {
+            let source = fs::read_to_string(parent.join(&name))
+                .map_err(|error| format!("failed to read `{name}`: {error}"))?;
+            Ok((name, source))
+        })
+        .collect()
+}
+
+fn write_session_request(
+    output: &mut impl Write,
+    click_source: &str,
+    position: SourcePosition,
+) -> std::io::Result<()> {
+    write_u64(output, click_source.len() as u64)?;
+    output.write_all(click_source.as_bytes())?;
+    write_u64(output, position.line as u64)?;
+    write_u64(output, position.column as u64)?;
+    output.flush()
+}
+
+fn read_session_request(input: &mut impl Read) -> Result<Option<(String, SourcePosition)>, String> {
+    let Some(length) = read_u64(input)? else {
+        return Ok(None);
+    };
+    let length = usize::try_from(length)
+        .map_err(|_| "verification-session request is too large".to_string())?;
+    if length > 64 * 1024 * 1024 {
+        return Err("verification-session request exceeds 64 MiB".to_string());
     }
-    Ok(SourcePosition { line, column })
+    let mut source = vec![0; length];
+    input
+        .read_exact(&mut source)
+        .map_err(|error| format!("failed to read verification-session source: {error}"))?;
+    let line = read_required_u64(input, "line")?;
+    let column = read_required_u64(input, "column")?;
+    let source = String::from_utf8(source)
+        .map_err(|error| format!("verification-session source was not UTF-8: {error}"))?;
+    let line =
+        usize::try_from(line).map_err(|_| "verification-session line is too large".to_string())?;
+    let column = usize::try_from(column)
+        .map_err(|_| "verification-session column is too large".to_string())?;
+    Ok(Some((source, SourcePosition { line, column })))
+}
+
+fn write_session_response(
+    output: &mut impl Write,
+    result: Result<(), String>,
+) -> Result<(), String> {
+    let (status, message) = match result {
+        Ok(()) => (0_u8, String::new()),
+        Err(message) => (1_u8, message),
+    };
+    output
+        .write_all(&[status])
+        .and_then(|_| write_u64(output, message.len() as u64))
+        .and_then(|_| output.write_all(message.as_bytes()))
+        .and_then(|_| output.flush())
+        .map_err(|error| format!("failed to write verification-session response: {error}"))
+}
+
+fn read_session_response(input: &mut impl Read) -> Result<Option<Result<(), String>>, String> {
+    let mut status = [0_u8; 1];
+    match input.read(&mut status) {
+        Ok(0) => return Ok(None),
+        Ok(1) => {}
+        Ok(_) => unreachable!("one-byte buffer cannot read more than one byte"),
+        Err(error) => {
+            return Err(format!(
+                "failed to read verification-session response: {error}"
+            ));
+        }
+    }
+    let length = read_required_u64(input, "response length")?;
+    let length = usize::try_from(length)
+        .map_err(|_| "verification-session response is too large".to_string())?;
+    let mut message = vec![0; length];
+    input
+        .read_exact(&mut message)
+        .map_err(|error| format!("failed to read verification-session diagnostic: {error}"))?;
+    let message = String::from_utf8(message)
+        .map_err(|error| format!("verification-session diagnostic was not UTF-8: {error}"))?;
+    match status[0] {
+        0 if message.is_empty() => Ok(Some(Ok(()))),
+        0 => Err("successful verification-session response contained a diagnostic".to_string()),
+        1 => Ok(Some(Err(message))),
+        other => Err(format!(
+            "unknown verification-session response status {other}"
+        )),
+    }
+}
+
+fn write_u64(output: &mut impl Write, value: u64) -> std::io::Result<()> {
+    output.write_all(&value.to_le_bytes())
+}
+
+fn read_u64(input: &mut impl Read) -> Result<Option<u64>, String> {
+    let mut bytes = [0_u8; 8];
+    let mut read = 0;
+    while read < bytes.len() {
+        match input.read(&mut bytes[read..]) {
+            Ok(0) if read == 0 => return Ok(None),
+            Ok(0) => {
+                return Err("verification-session frame ended mid-integer".to_string());
+            }
+            Ok(count) => read += count,
+            Err(error) => {
+                return Err(format!(
+                    "failed to read verification-session frame: {error}"
+                ));
+            }
+        }
+    }
+    Ok(Some(u64::from_le_bytes(bytes)))
+}
+
+fn read_required_u64(input: &mut impl Read, field: &str) -> Result<u64, String> {
+    read_u64(input)?.ok_or_else(|| format!("verification-session frame ended before its {field}"))
 }
 
 fn find_projects(path: &Path) -> Result<Vec<PathBuf>, String> {
@@ -761,61 +1030,6 @@ fn format_duration(duration: Duration) -> String {
     }
 }
 
-static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
-
-struct TemporaryProject {
-    path: PathBuf,
-}
-
-impl TemporaryProject {
-    fn copy_from(source: &Path) -> Result<Self, String> {
-        let sequence = TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-        let path = env::temp_dir().join(format!("click-audit-{}-{sequence}", std::process::id()));
-        fs::create_dir(&path)
-            .map_err(|error| format!("failed to create `{}`: {error}", path.display()))?;
-        if let Err(error) = copy_directory(source, &path) {
-            let _ = fs::remove_dir_all(&path);
-            return Err(error);
-        }
-        Ok(Self { path })
-    }
-
-    fn path(&self) -> &Path {
-        &self.path
-    }
-}
-
-impl Drop for TemporaryProject {
-    fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.path);
-    }
-}
-
-fn copy_directory(source: &Path, target: &Path) -> Result<(), String> {
-    for entry in fs::read_dir(source)
-        .map_err(|error| format!("failed to read `{}`: {error}", source.display()))?
-    {
-        let entry = entry.map_err(|error| format!("failed to read directory entry: {error}"))?;
-        let source_path = entry.path();
-        let target_path = target.join(entry.file_name());
-        if source_path.is_dir() {
-            fs::create_dir(&target_path).map_err(|error| {
-                format!("failed to create `{}`: {error}", target_path.display())
-            })?;
-            copy_directory(&source_path, &target_path)?;
-        } else {
-            fs::copy(&source_path, &target_path).map_err(|error| {
-                format!(
-                    "failed to copy `{}` to `{}`: {error}",
-                    source_path.display(),
-                    target_path.display()
-                )
-            })?;
-        }
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -859,24 +1073,31 @@ click timing: tactic f.contract 2 simp class smart statement 1 source 2 0.200000
     }
 
     #[test]
-    fn copies_temporary_projects_and_removes_them_on_drop() {
-        let root = env::temp_dir().join(format!(
-            "click-audit-copy-test-{}-{}",
-            std::process::id(),
-            TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed)
-        ));
-        fs::create_dir(&root).unwrap();
-        fs::write(root.join("example.click"), "source").unwrap();
-        let copied_path = {
-            let copied = TemporaryProject::copy_from(&root).unwrap();
-            assert_eq!(
-                fs::read_to_string(copied.path().join("example.click")).unwrap(),
-                "source"
-            );
-            copied.path().to_path_buf()
+    fn session_protocol_round_trips_requests_and_responses() {
+        let position = SourcePosition {
+            line: 12,
+            column: 34,
         };
-        assert!(!copied_path.exists());
-        fs::remove_dir_all(root).unwrap();
+        let mut request = Vec::new();
+        write_session_request(&mut request, "proof source λ", position).unwrap();
+        assert_eq!(
+            read_session_request(&mut request.as_slice()).unwrap(),
+            Some(("proof source λ".to_string(), position))
+        );
+
+        let mut success = Vec::new();
+        write_session_response(&mut success, Ok(())).unwrap();
+        assert_eq!(
+            read_session_response(&mut success.as_slice()).unwrap(),
+            Some(Ok(()))
+        );
+
+        let mut failure = Vec::new();
+        write_session_response(&mut failure, Err("bad certificate".to_string())).unwrap();
+        assert_eq!(
+            read_session_response(&mut failure.as_slice()).unwrap(),
+            Some(Err("bad certificate".to_string()))
+        );
     }
 
     #[test]

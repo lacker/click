@@ -110,15 +110,18 @@ cargo run --quiet --bin click-audit -- examples
 ```
 
 For each example project, the audit first verifies the original source and
-uses the verifier's timing stream to inventory every smart source site. It
-then handles each unique `file:line:column` independently:
+uses that same verification's timing stream to inventory every smart source
+site. The resulting certified function environment stays alive in a bounded
+worker process. The audit then handles each unique `file:line:column`
+independently:
 
 1. run expansion in a bounded child process;
 2. require a changed, syntactically readable sidecar;
-3. copy the original project to a fresh temporary directory;
-4. install that one expanded sidecar; and
-5. fully verify that rewritten sidecar against the copied C sources in another
-   bounded child process.
+3. require the rewritten AST to differ only in the selected theorem or
+   function proof;
+4. remove the selected function's rule from the certified baseline
+   environment; and
+5. reverify that proof unit while reusing its already-certified dependencies.
 
 Discovery, expansion, and rewritten verification default to limits of five
 minutes, two minutes, and five minutes respectively. Override them with
@@ -126,11 +129,12 @@ minutes, two minutes, and five minutes respectively. Override them with
 `--verification-time-limit`. Use `--max-sites` only for a deliberately partial
 diagnostic run; a release or certificate-boundary audit should omit it.
 
-Every timeout child is killed and reaped. Sites are tested against independent
-project copies, so an earlier rewrite cannot hide or cause a later failure.
-Sibling sidecars are not redundantly reverified after a one-sidecar rewrite.
-The command exits unsuccessfully if original verification, expansion, parsing,
-or rewritten-sidecar verification fails.
+Every timeout child or worker is killed and reaped. Every site starts from the
+unchanged baseline source, so an earlier rewrite cannot hide or cause a later
+failure. A timed-out worker is rebuilt from a fresh complete verification
+before the audit continues. The command exits unsuccessfully if original
+verification, expansion, parsing, source-isolation, or selected-proof
+verification fails.
 
 ## Unit Tests
 

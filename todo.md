@@ -81,12 +81,16 @@ cargo run --quiet --bin click-verify -- path/to/file.click:LINE:COLUMN
 
 The verifier parses and validates the complete sidecar, resolves the location
 to its containing theorem or C function proof, and verifies only that semantic
-unit. C-function targets also verify their transitive C-call dependencies.
-Unrelated function proofs are not executed.
+unit. Standalone `click-verify` also verifies the target's transitive C-call
+dependencies. Unrelated function proofs are not executed.
 
-`click-audit` uses this mode for rewritten sidecars. Original project discovery
-still performs one complete verification so the audit never treats an
-unverified baseline as authoritative.
+`click-audit` now creates a reusable verification session. Its single complete
+baseline verification both inventories smart sites and retains the certified
+function environment. For each rewrite the session checks that the AST changed
+only inside the selected proof unit, removes that target's own cached function
+rule, and reverifies the target against its retained certified dependencies.
+Expansion and session verification have separate watchdogs; a timed-out
+session is killed, reaped, and rebuilt from a complete baseline verification.
 
 ### Profiling
 
@@ -160,10 +164,11 @@ behind a timeout.
 
 ## Remaining correctness work
 
-### 1. Global certificate audit
+### 1. Complete the global certificate audit
 
-The main missing confidence mechanism is a generated audit over every
-proof-bearing source construct.
+`click-audit` is now the generated audit over proof-bearing source constructs.
+The remaining work is to run it across the full examples corpus and fix every
+concrete failure.
 
 For every syntactic smart-tactic occurrence, the audit should:
 
@@ -289,9 +294,12 @@ it does not eagerly manufacture proposition-map entries for possible future
 tactics. Later explicit tactics lower and check their own premises at their own
 program points. There is no search or ignored-error path.
 
-Owned-string still times out at
-`examples/owned-string/owned_string.click:485:5`, a final smart `simp` that
-takes about 12 seconds in a focused 30-second profile.
+The retained-session audit passes the first 47 of 67 owned-string smart sites.
+Most selected-proof checks take milliseconds to a few seconds. The two
+`owned_string_pipeline.contract` sites at lines 550 and 551 still take about
+75 seconds each even though certified dependencies are reused. This is genuine
+cost inside verification of the selected function, not project copying or
+transitive dependency re-verification.
 
 The motivating `owned_string_set` successor proof at line 183 is fixed:
 planning fell from 63.9 seconds to about 67 ms, and expansion emits a
@@ -308,8 +316,9 @@ Work one frontier at a time and commit each logical change independently.
    owned-string line 485, owned-string line 471, and input-cursor line 125.
 3. Run the full `click-audit` corpus audit and fix each concrete failure before
    claiming expansion is complete. The audit command now inventories every
-   smart source site and independently expands and verifies it in bounded
-   child processes; the complete three-site `jsonc-refcount` audit passes.
+   smart source site during one baseline verification and independently
+   expands and verifies it against a retained certified environment; the
+   complete three-site `jsonc-refcount` audit passes.
    Its next bounded trial found that `owned-segmented-buffer` currently fails
    original verification before inventory:
    `owned_segmented_buffer_pipeline.contract` tactic 22 is missing the exact
