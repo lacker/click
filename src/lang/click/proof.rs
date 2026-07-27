@@ -11953,10 +11953,16 @@ fn record_surface_replay_tactic(
                     if !selected_by_derivation && !structural_context {
                         continue;
                     }
+                    // A certified statement prerequisite may be represented by
+                    // a source fact whose lowering differs only by canonical
+                    // load materialization. Keep that checked equivalence here:
+                    // the generated `step using` certificate is subsequently
+                    // replayed by the ordinary executor, which remains the
+                    // authority on whether the selected premise is sufficient.
                     let Ok(surface) = checked_surface_comparison_fact_at_point(
                         replay,
                         fact,
-                        SurfaceFactMatch::CanonicalExact,
+                        SurfaceFactMatch::ReplayEquivalent,
                         available,
                         parameters,
                         arguments,
