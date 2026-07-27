@@ -1935,7 +1935,10 @@ fn instantiate_theorem_application(
         .map_err(|message| {
             theorem_application_error(claim_label, path_index, tactic_index, message)
         })?;
-        if !available.contains(&lowered)
+        lowered = normalize_direct_atomic_memory_loads(&lowered);
+        if !available
+            .iter()
+            .any(|fact| normalize_direct_atomic_memory_loads(fact) == lowered)
             && !matches!(normalize_proposition(&lowered), SimpProposition::True)
         {
             return Err(theorem_application_error(
@@ -1978,7 +1981,7 @@ fn instantiate_theorem_application(
                     ),
                 )
             })?;
-        conclusions.push(conclusion);
+        conclusions.push(normalize_direct_atomic_memory_loads(&conclusion));
     }
     Ok(conclusions)
 }
@@ -4912,15 +4915,12 @@ fn verify_execution_proofs_forward(
                 contexts,
                 environment,
             )?;
-            advance_execution_proof_statement(
-                statement,
-                contexts,
-                *next_loop_index,
-                environment,
-                verified_loop_rules,
-                LoopPreservationSource::Automatic,
-                false,
-            )
+            // The structural proof has certified the assertion and added its
+            // proposition to every path context. A C assertion has no state
+            // effect, so do not evaluate its expression again: doing so would
+            // require reopening resources that the proof was allowed to use
+            // through their certified pure facts.
+            Ok(contexts)
         }
         CStatement::While {
             condition,
@@ -5704,7 +5704,9 @@ fn advance_execution_proof_statement(
                 }
                 CStatementOutcome::RuntimeError(error) => {
                     return Err(ClickError::new(format!(
-                        "execution proof traversal produced runtime error: {error:?}"
+                        "execution proof traversal for {} statement({region_index}) produced runtime error: {error:?}\navailable resources: {:?}",
+                        environment.function_block.signature().name(),
+                        context.state.resources().facts()
                     )));
                 }
             }
@@ -6542,6 +6544,7 @@ fn lower_theorem_application_requirements(
                 &lowered,
                 &assumptions,
             )
+            .map(|lowered| normalize_direct_atomic_memory_loads(&lowered))
         })
         .collect()
 }
@@ -6608,6 +6611,7 @@ fn plan_explicit_theorem_application(
         let surface = checked_surface_comparison_fact_at_point(
             replay,
             &matched,
+            SurfaceFactMatch::CanonicalExact,
             available,
             parameters,
             arguments,
@@ -7094,6 +7098,7 @@ fn plan_explicit_fact_transport(
             let surface = checked_surface_comparison_fact_at_point(
                 replay,
                 kernel,
+                SurfaceFactMatch::ReplayEquivalent,
                 available,
                 parameters,
                 arguments,
@@ -7180,9 +7185,9 @@ fn plan_explicit_fact_transport(
         let unavailable = available
             .iter()
             .filter(|fact| !candidates.iter().any(|(candidate, _)| candidate == *fact))
-            .count();
+            .collect::<Vec<_>>();
         return Err(ClickError::new(format!(
-            "transport depends on an ambient fact with no checked Click spelling\n  selected surface premises: {}\n  unspellable ambient facts: {unavailable}",
+            "explicit surface premises do not replay the certified fact transport\n  source: {source:?}\n  target: {target:?}\n  selected surface premises: {}\n  unspellable ambient facts: {unavailable:#?}",
             selected.len(),
         )));
     }
@@ -9989,10 +9994,17 @@ fn checked_surface_fact_at_point(
     }
 }
 
+#[derive(Clone, Copy)]
+enum SurfaceFactMatch {
+    CanonicalExact,
+    ReplayEquivalent,
+}
+
 #[allow(clippy::too_many_arguments)]
 fn checked_surface_comparison_fact_at_point(
     replay: &TacticReplayState,
     kernel: &Proposition,
+    match_kind: SurfaceFactMatch,
     available: &[Proposition],
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
@@ -10001,6 +10013,10 @@ fn checked_surface_comparison_fact_at_point(
     click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<ClickProposition, ClickError> {
     let matches_kernel = |lowered: &Proposition| {
+        if matches!(match_kind, SurfaceFactMatch::CanonicalExact) {
+            return normalize_direct_atomic_memory_loads(lowered)
+                == normalize_direct_atomic_memory_loads(kernel);
+        }
         let lowered = normalize_direct_atomic_memory_loads(lowered);
         let kernel = normalize_direct_atomic_memory_loads(kernel);
         condition_polarity_equivalent(&lowered, &kernel)
@@ -10028,10 +10044,29 @@ fn checked_surface_comparison_fact_at_point(
             bases.push(surface.clone());
         }
     }
+    let kernel_memories = c_condition_fact_memories(kernel);
+    let matching_points = replay
+        .program_point_states
+        .iter()
+        .rev()
+        .filter(|(_, point_state)| {
+            kernel_memories
+                .iter()
+                .any(|memory| memory.has_same_snapshot_markers(point_state.memory()))
+        })
+        .collect::<Vec<_>>();
     if let Some(surface) = synthesize_surface_proposition(kernel, parameters, arguments, state)
         && !bases.contains(&surface)
     {
         bases.push(surface);
+    }
+    for (_, point_state) in &matching_points {
+        if let Some(surface) =
+            synthesize_surface_proposition(kernel, parameters, arguments, point_state)
+            && !bases.contains(&surface)
+        {
+            bases.push(surface);
+        }
     }
     for base in &bases {
         if let Ok(lowered) = lower_surface_candidate_at_point(
@@ -10054,17 +10089,6 @@ fn checked_surface_comparison_fact_at_point(
             return Ok(base.clone());
         }
     }
-    let kernel_memories = c_condition_fact_memories(kernel);
-    let matching_points = replay
-        .program_point_states
-        .iter()
-        .rev()
-        .filter(|(_, state)| {
-            kernel_memories
-                .iter()
-                .any(|memory| memory.has_same_snapshot_markers(state.memory()))
-        })
-        .collect::<Vec<_>>();
     for (point, _) in matching_points {
         for base in &bases {
             let ClickProposition::Comparison {
@@ -10552,6 +10576,7 @@ fn lower_surface_atomic_derivation(
         match checked_surface_comparison_fact_at_point(
             replay,
             &premise,
+            SurfaceFactMatch::ReplayEquivalent,
             available,
             parameters,
             arguments,
@@ -11577,6 +11602,7 @@ fn record_surface_replay_tactic(
                     let Ok(surface) = checked_surface_comparison_fact_at_point(
                         replay,
                         fact,
+                        SurfaceFactMatch::ReplayEquivalent,
                         available,
                         parameters,
                         arguments,
@@ -11941,6 +11967,7 @@ fn record_surface_replay_tactic(
                             checked_surface_comparison_fact_at_point(
                                 replay,
                                 available_fact,
+                                SurfaceFactMatch::ReplayEquivalent,
                                 &surface_available,
                                 parameters,
                                 arguments,
@@ -12068,7 +12095,46 @@ fn record_surface_replay_tactic(
                         .then(|| (candidate.clone(), actual))
                 })
             };
+            let selected_by_preceding_step = replay
+                .surface_replay
+                .tactics
+                .iter()
+                .rev()
+                .find_map(|tactic| match tactic {
+                    ProofTactic::StepUsing(premises)
+                    | ProofTactic::ApplyLoopSummaryUsing { premises, .. } => Some(Some(premises)),
+                    ProofTactic::Step | ProofTactic::ApplyLoopSummary(_) => Some(None),
+                    _ => None,
+                })
+                .flatten()
+                .is_some_and(|premises| {
+                    premises.iter().any(|premise| {
+                        replay
+                            .surface_propositions
+                            .surfaces(source)
+                            .any(|surface| surface == premise)
+                    })
+                });
             match (find_candidate(source), find_candidate(target)) {
+                (
+                    Some((_surface_source, _)),
+                    Some((surface_target, lowered_surface_target)),
+                ) if selected_by_preceding_step => {
+                    // `step using` replays with Selected fact transport, so a
+                    // listed statement-entry source is already carried by the
+                    // certified statement transition. Do not ask the
+                    // post-state context to independently reconstruct the
+                    // same frame proof.
+                    if let Err(error) = replay
+                        .surface_propositions
+                        .record_lowering(&surface_target, &lowered_surface_target)
+                    {
+                        replay.surface_replay.block(format!(
+                            "could not retain the certified fact transport target spelling: {}",
+                            error.message()
+                        ));
+                    }
+                }
                 (
                     Some((surface_source, _)),
                     Some((surface_target, lowered_surface_target)),

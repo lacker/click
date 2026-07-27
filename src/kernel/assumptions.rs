@@ -31,6 +31,22 @@ impl Drop for MemoryLoadEqualityDepthGuard {
     }
 }
 
+fn equality_graph_terms_match(left: &Bitvector32Term, right: &Bitvector32Term) -> bool {
+    if left == right {
+        return true;
+    }
+    let (
+        Bitvector32Term::MemoryLoad(left_memory, left_pointer),
+        Bitvector32Term::MemoryLoad(right_memory, right_pointer),
+    ) = (left, right)
+    else {
+        return false;
+    };
+    left_pointer == right_pointer
+        && canonical_memory_for_pointer_load(left_memory, left_pointer)
+            == canonical_memory_for_pointer_load(right_memory, right_pointer)
+}
+
 thread_local! {
     static SIMP_REASONING_FUEL: Cell<Option<usize>> = const { Cell::new(None) };
     static SIMP_FACT_REASONING_DEPTH: Cell<usize> = const { Cell::new(0) };
@@ -515,7 +531,7 @@ impl Assumptions {
             if !seen.insert(term.clone()) {
                 continue;
             }
-            if &term == right {
+            if equality_graph_terms_match(&term, right) {
                 return true;
             }
             for (condition, value) in &self.condition_facts {
@@ -537,10 +553,10 @@ impl Assumptions {
                     }
                     _ => continue,
                 };
-                if fact_left == term {
+                if equality_graph_terms_match(&fact_left, &term) {
                     stack.push(fact_right.clone());
                 }
-                if fact_right == term {
+                if equality_graph_terms_match(&fact_right, &term) {
                     stack.push(fact_left);
                 }
             }

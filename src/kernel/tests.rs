@@ -126,6 +126,44 @@ fn condition_fact_matching_ignores_unrelated_local_memory() {
 }
 
 #[test]
+fn equality_chains_across_observationally_equivalent_memory_loads() {
+    let owner = Pointer {
+        block: "arg-memory".into(),
+        offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(100_000)), 4),
+    };
+    let observed = CMemory::local_pointer("observed");
+    let before_materialized = CMemory::new()
+        .with_block("call-havoc:0", 0)
+        .with_block("call-havoc:1", 0)
+        .with_block(observed.block.clone(), 4)
+        .store(observed, int32(Bitvector32Term::Variable(Variable(10))));
+    let before_sparse = CMemory::new()
+        .with_block("call-havoc:0", 0)
+        .with_block("call-havoc:1", 0);
+    let after = before_sparse.clone().with_block("call-havoc:3", 0);
+    let before_materialized_load =
+        Bitvector32Term::MemoryLoad(Box::new(before_materialized), Box::new(owner.clone()));
+    let before_sparse_load =
+        Bitvector32Term::MemoryLoad(Box::new(before_sparse), Box::new(owner.clone()));
+    let after_load = Bitvector32Term::MemoryLoad(Box::new(after), Box::new(owner));
+    let assumptions = Assumptions::new()
+        .assume_condition(
+            ConditionTerm::equal(before_materialized_load, Bitvector32Term::Constant(1)),
+            true,
+        )
+        .assume_condition(
+            ConditionTerm::equal(after_load.clone(), before_sparse_load),
+            true,
+        );
+    let target = Proposition::ConditionIs(
+        ConditionTerm::equal(after_load, Bitvector32Term::Constant(1)),
+        true,
+    );
+
+    assert_replayable_derivation(&assumptions, &target);
+}
+
+#[test]
 fn proposition_derivation_proves_implication_from_false_antecedent() {
     let condition = ConditionTerm::equal(
         Bitvector32Term::Variable(Variable(1)),

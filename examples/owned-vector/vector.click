@@ -284,7 +284,7 @@ int32 vector_fill(struct vector* owner, int32 value) {
             fact contains(nonempty_vector(owner), memory(owner[1..2]));
             fact contains(nonempty_vector(owner), memory(owner[2..4]));
             fact contains(nonempty_vector(owner), memory(load_int32_pointer((owner + 2))[0..load_int32((owner + 1))]));
-            fact forall (int32 k) { 0 <= k and k < at(loop(0).exit, i) implies at(loop(0).exit, load_int32_pointer((owner + 2))[k]) == at(loop(0).exit, value) };
+            fact forall (int32 k) { at(loop(0).exit, 0) <= at(loop(0).exit, k) and at(loop(0).exit, k) < at(loop(0).exit, i) implies at(loop(0).exit, (owner->data)[k]) == at(loop(0).exit, value) };
         }
     }
     assumption();

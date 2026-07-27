@@ -120,7 +120,7 @@ Notable strict boundaries include:
 
 Current focused validation:
 
-- 406 library tests pass;
+- 407 library tests pass;
 - 7 `click-profile` binary tests pass;
 - the `execute_rest` order/alias recursion regression passes in an isolated
   mdtest process;
@@ -208,10 +208,30 @@ their exact source provenance, and pure certificate replay resolves listed
 premises through that certified mapping instead of re-lowering them against an
 ambient context.
 
-Fresh verification gets through `vector_fill` and now reaches a later failure:
-the final smart `simp` in `vector_push_first` does not close
-`vector_push_first.ensures_3`. Treat that as the next owned-vector correctness
-frontier; it is not an expansion timeout.
+`vector_push_first` now verifies, including its final `simp`, and its remaining
+slow `execute_step` at `examples/owned-vector/vector.click:387:5` expands
+successfully. The failure attributed to the final `simp` was stale: later
+certificate construction had exposed three representation bugs in the caller.
+Equality chains now compare pointer loads through their canonical observable
+memory, certified structural assertions are not re-executed after their proof
+has already established them, and theorem requirements canonicalize direct
+memory loads so unrelated local materialization is not part of a source-level
+value's identity. Historical comparison synthesis also uses every recorded
+state with the required memory snapshot, and a statement's selected certified
+fact transports are owned by that statement transition rather than replayed
+again afterward.
+
+A 120-second owned-vector profile reaches `vector_pipeline`, so there is no
+remaining `vector_push_first` correctness failure. It reports:
+
+- a 674 ms simple `assumption` at
+  `examples/owned-vector/vector.click:290:5`;
+- a 22.1 second smart `execute_until` at
+  `examples/owned-vector/vector.click:459:5`;
+- a 2.9 second smart `execute_step` at
+  `examples/owned-vector/vector.click:387:5`;
+- a project timeout while the smart `execute_until` at
+  `examples/owned-vector/vector.click:478:5` was active.
 
 `bubble_pass3_max_suffix.md` now passes. Loop initialization plans against the
 authoritative lowered invariant goal when duplicate surface lowering is not
@@ -257,11 +277,14 @@ one-premise arithmetic certificate.
 
 Work one frontier at a time and commit each logical change independently.
 
-1. Diagnose the final `vector_push_first` smart `simp`, which is now the first
-   owned-vector verification failure.
-2. Continue the same cycle for
+1. Fix the 674 ms simple `vector_fill.contract` assumption path before
+   expanding more owned-vector smart tactics.
+2. Then expand the known-working `vector_pipeline` line 459 and
+   `vector_push_first` line 387 certificates one at a time, reprofile, and
+   inspect the line 478 frontier.
+3. Continue the same cycle for
    owned-string line 485, owned-string line 471, and input-cursor line 125.
-3. Build the global certificate audit before claiming expansion is complete.
+4. Build the global certificate audit before claiming expansion is complete.
 
 Do not optimize by adding proposition-specific smart fast paths, broad ambient
 premises, generic transport fallbacks, or internal-only certificate tactics.
