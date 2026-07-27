@@ -1730,6 +1730,68 @@ fn finite_forall_order_fact_participates_in_transitive_order_path() {
 }
 
 #[test]
+fn conditional_forall_instantiates_at_same_named_variable_in_order_path() {
+    let k = Variable(188);
+    let k_bits = Bitvector32Term::Variable(k);
+    let j = Bitvector32Term::Variable(Variable(189));
+    let value_at_k = Bitvector32Term::MemoryLoad(
+        Box::new(CMemory::new()),
+        Box::new(Pointer {
+            block: "arg-memory".into(),
+            offset: PointerOffsetTerm::scale_int32(k_bits.clone(), 4),
+        }),
+    );
+    let pivot = Bitvector32Term::Variable(Variable(191));
+    let successor = Bitvector32Term::Variable(Variable(192));
+    let induction_hypothesis = Proposition::ForAll {
+        var: k,
+        sort: Sort::CInt32,
+        body: Box::new(Proposition::Implies(
+            Box::new(Proposition::ConditionIs(
+                ConditionTerm::signed_less_than(k_bits.clone(), j.clone()),
+                true,
+            )),
+            Box::new(Proposition::ConditionIs(
+                ConditionTerm::signed_less_equal(value_at_k.clone(), pivot.clone()),
+                true,
+            )),
+        )),
+    };
+    let assumptions = Assumptions::new()
+        .assume_proposition(induction_hypothesis)
+        .assume_condition(
+            ConditionTerm::signed_less_than(
+                k_bits.clone(),
+                Bitvector32Term::add(j.clone(), Bitvector32Term::Constant(1)),
+            ),
+            true,
+        )
+        .assume_condition(ConditionTerm::equal(k_bits, j.clone()), false)
+        .assume_condition(
+            ConditionTerm::signed_greater_equal(j.clone(), Bitvector32Term::Constant(0)),
+            true,
+        )
+        .assume_condition(
+            ConditionTerm::signed_less_than(j, Bitvector32Term::Constant(2)),
+            true,
+        )
+        .assume_condition(
+            ConditionTerm::signed_less_equal(pivot, successor.clone()),
+            true,
+        );
+    let goal = Proposition::ConditionIs(
+        ConditionTerm::signed_less_equal(value_at_k, successor),
+        true,
+    );
+
+    let derivation = assumptions
+        .derive_simp_proposition(&goal)
+        .expect("quantified order instance should produce a simplifier derivation");
+    assert_eq!(derivation.conclusion(), &goal);
+    assert!(derivation.replay(&assumptions));
+}
+
+#[test]
 fn assumptions_prove_by_bounded_disjunction_cases() {
     let x = Bitvector32Term::Variable(Variable(89));
     let x_is_zero = Proposition::ConditionIs(

@@ -24,9 +24,9 @@ use crate::kernel::{
     c_loop_invariant_obligations_at_entry, c_loop_invariants_hold_at_back_edge_using,
     c_loop_invariants_hold_at_entry, c_loop_preservation_contexts,
     c_pointer_offsets_proven_equal_for_effect, c_pointer_value, c_resources_directly_match, c_seq,
-    c_verified_function_contract_claim, c_verified_function_rule,
-    c_while_with_invariant_and_effect_checks, canonical_c_memory_for_pointer_load,
-    certify_c_function_execution_paths_from_outcomes, int32,
+    c_verified_function_contract_claim,
+    c_verified_function_rule, c_while_with_invariant_and_effect_checks,
+    canonical_c_memory_for_pointer_load, certify_c_function_execution_paths_from_outcomes, int32,
     prove_c_condition_fact_direct_transport, prove_c_condition_fact_transport,
     prove_c_function_satisfies_specification_from_symbolic_path,
     prove_symbolic_c_condition_evaluation,
@@ -407,6 +407,13 @@ impl SurfacePropositionMap {
             })
     }
 
+    pub fn surfaces(&self, kernel: &Proposition) -> impl Iterator<Item = &ClickProposition> {
+        self.by_kernel
+            .get(kernel)
+            .into_iter()
+            .flat_map(|spellings| spellings.iter())
+    }
+
     pub fn kernel_facts(&self) -> impl Iterator<Item = &Proposition> {
         self.by_kernel.keys()
     }
@@ -424,6 +431,16 @@ impl SurfacePropositionMap {
             .filter(|kernel| available.contains(kernel));
         let kernel = matches.next()?;
         matches.next().is_none().then_some(kernel)
+    }
+
+    pub fn unique_kernel(&self, surface: &ClickProposition) -> Option<&Proposition> {
+        let mut lowerings = self
+            .by_surface
+            .iter()
+            .find_map(|(recorded, lowerings)| (recorded == surface).then_some(lowerings))?
+            .iter();
+        let kernel = lowerings.next()?;
+        lowerings.next().is_none().then_some(kernel)
     }
 
     pub fn checked_surface<F>(

@@ -1765,7 +1765,11 @@ impl Assumptions {
         right: &Bitvector32Term,
         require_strict: bool,
     ) -> bool {
-        let order_facts = self.condition_order_facts();
+        let mut order_facts = self.condition_order_facts();
+        self.collect_quantified_order_facts_for_condition(
+            &ConditionTerm::signed_less_than(left.clone(), right.clone()),
+            &mut order_facts,
+        );
         let mut stack = vec![(left.clone(), false)];
         let mut seen = BTreeSet::new();
         while let Some((current, strict_so_far)) = stack.pop() {
@@ -3362,7 +3366,20 @@ impl Assumptions {
         };
         let mut order_facts = self.condition_order_facts();
         self.collect_derived_order_facts(&mut order_facts);
+        self.collect_quantified_order_facts_for_condition(condition, &mut order_facts);
         self.has_order_path_in_facts(&left, &right, strict, &order_facts)
+    }
+
+    fn collect_quantified_order_facts_for_condition(
+        &self,
+        condition: &ConditionTerm,
+        order_facts: &mut Vec<(Bitvector32Term, Bitvector32Term, bool)>,
+    ) {
+        for proposition in &self.prop_facts {
+            for instance in self.forall_instantiations_for_condition(proposition, condition) {
+                self.collect_derived_order_facts_from_proposition(&instance, order_facts);
+            }
+        }
     }
 
     pub(super) fn proposition_proves_condition(
@@ -3479,7 +3496,6 @@ impl Assumptions {
         collect_condition_bitvector_variables(condition, &mut variables);
         variables
             .into_iter()
-            .filter(|candidate| candidate != var)
             .map(|candidate| {
                 substitute_bitvector_variable_in_proposition(
                     body,

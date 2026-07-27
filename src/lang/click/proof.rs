@@ -122,7 +122,10 @@ fn check_atomic_derivation_goal(
     goal: &Proposition,
     available: &[Proposition],
 ) -> Result<(), String> {
-    if &target != goal {
+    let target_matches_goal = &target == goal
+        || quantified_replay_equivalent_available_fact(goal, std::slice::from_ref(&target))
+            .is_some();
+    if !target_matches_goal {
         return Err(format!(
             "`{}` target does not match the current goal\n  target: {target:?}\n  goal: {goal:?}",
             tactic_name(tactic)
@@ -5175,27 +5178,32 @@ fn plan_point_pure_goal_certificate(
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
     surface_propositions: &SurfacePropositionMap,
+    prelowered_goal: Option<&Proposition>,
 ) -> Result<(Proposition, TacticCertificate), ClickError> {
     if let Proof::Script(tactics) = proof
         && let Ok(certificate) = TacticCertificate::from_proof_tactics(tactics)
     {
-        let fact = lower_point_proposition(
-            proposition,
-            available,
-            parameters,
-            arguments,
-            pre_state,
-            state,
-            None,
-            program_point_states,
-            predicate_environment,
-            click_function_environment,
-        )
-        .map_err(|message| {
-            ClickError::new(format!(
-                "`{claim_label}` proof {proof_index}: could not lower pure goal: {message}"
-            ))
-        })?;
+        let fact = if let Some(prelowered_goal) = prelowered_goal {
+            prelowered_goal.clone()
+        } else {
+            lower_point_proposition(
+                proposition,
+                available,
+                parameters,
+                arguments,
+                pre_state,
+                state,
+                None,
+                program_point_states,
+                predicate_environment,
+                click_function_environment,
+            )
+            .map_err(|message| {
+                ClickError::new(format!(
+                    "`{claim_label}` proof {proof_index}: could not lower pure goal: {message}"
+                ))
+            })?
+        };
         return Ok((fact, certificate));
     }
 
@@ -5221,6 +5229,7 @@ fn plan_point_pure_goal_certificate(
         predicate_environment,
         click_function_environment,
         &unfolded_predicates,
+        prelowered_goal,
     )?;
     let mut surface_replay = TacticReplayState {
         surface_propositions: surface_propositions.clone(),
@@ -5400,6 +5409,7 @@ fn certify_structural_assertions(
                 environment.predicate_environment,
                 environment.click_function_environment,
                 environment.surface_propositions,
+                None,
             )?;
             let (certificate, replayed_fact) = pure_goal_certificate_gateway(
                 &claim_label,
@@ -5407,6 +5417,7 @@ fn certify_structural_assertions(
                 |certificate| {
                     prove_pure_proposition_at_point(
                         proposition,
+                        None,
                         &Proof::Script(certificate.tactics().to_vec()),
                         "assert",
                         environment.theorem_environment,
@@ -5577,23 +5588,41 @@ fn verify_loop_initialization_pure_proof(
         .iter()
         .filter(|item| item.kind() == StructuralItemKind::Invariant)
         .collect::<Vec<_>>();
+    let initialization_surface_propositions =
+        std::cell::RefCell::new(SurfacePropositionMap::default());
+    let entry_obligations = c_loop_invariant_obligations_at_entry(
+        &context.state,
+        invariant_checks,
+        &assumptions_from_propositions(&context.pure_facts),
+    )
+    .map_err(|message| ClickError::new(format!("`{claim_label}`: {message}")))?;
     let (certificate, available) = pure_goal_certificate_gateway(
         &claim_label,
         || {
             let mut planning_available = context.pure_facts.clone();
             let mut tactics = Vec::new();
-            let entry_obligations = c_loop_invariant_obligations_at_entry(
-                &context.state,
-                invariant_checks,
-                &assumptions_from_propositions(&planning_available),
-            )
-            .map_err(|message| ClickError::new(format!("`{claim_label}`: {message}")))?;
             for (invariant_index, item) in invariant_items.iter().enumerate() {
                 let proposition = item
                     .proposition()
                     .expect("invariant region proof item should contain a proposition");
                 let invariant_claim_label =
                     format!("{claim_label} (loop {loop_index} invariant {invariant_index} entry)");
+                let obligation_context =
+                    format!("loop {loop_index} invariant {invariant_index} entry");
+                let expected_goal = entry_obligations
+                    .iter()
+                    .find(|obligation| obligation.context() == Some(&obligation_context))
+                    .map(|obligation| obligation.proposition().clone());
+                let planning_assumptions = assumptions_from_propositions(&planning_available);
+                let expected_goal = expected_goal.map(|mut expected_goal| {
+                    while let Proposition::Implies(antecedent, body) = &expected_goal {
+                        if !planning_assumptions.proves(antecedent) {
+                            break;
+                        }
+                        expected_goal = body.as_ref().clone();
+                    }
+                    expected_goal
+                });
                 let direct_plan = plan_point_pure_goal_certificate(
                     &ProofSite::LoopPhase {
                         function_name: environment.function_block.signature().name().to_string(),
@@ -5613,79 +5642,12 @@ fn verify_loop_initialization_pure_proof(
                     environment.predicate_environment,
                     environment.click_function_environment,
                     environment.surface_propositions,
-                );
-                let (planned_fact, planned_certificate) = match direct_plan {
-                    Ok(planned) => planned,
-                    Err(direct_error) => {
-                        let expected_context =
-                            format!("loop {loop_index} invariant {invariant_index} entry");
-                        let obligation = entry_obligations
-                            .iter()
-                            .find(|obligation| obligation.context() == Some(&expected_context))
-                            .ok_or_else(|| direct_error.clone())?;
-                        let unfolded_predicates =
-                            smart_simp_unfold_prefix(proof).ok_or_else(|| direct_error.clone())?;
-                        let derivation = minimal_proposition_derivation(
-                            obligation.proposition(),
-                            &planning_available,
-                        )
-                        .ok_or_else(|| direct_error.clone())?;
-                        let replay = TacticReplayState {
-                            surface_propositions: environment.surface_propositions.clone(),
-                            program_point_states: program_point_states.clone(),
-                            unfolded_predicates: unfolded_predicates.clone(),
-                            ..TacticReplayState::default()
-                        };
-                        let mut premise_kernels = Vec::new();
-                        for kernel in derivation
-                            .context_premises()
-                            .into_iter()
-                            .chain(planning_available.iter().cloned())
-                        {
-                            let mut conjuncts = Vec::new();
-                            atomic_conjuncts(&kernel, &mut conjuncts);
-                            premise_kernels.extend(conjuncts.into_iter().cloned());
-                        }
-                        let premises = premise_kernels
-                            .into_iter()
-                            .filter_map(|kernel| {
-                                checked_surface_fact_at_point(
-                                    &replay,
-                                    &kernel,
-                                    &planning_available,
-                                    environment.parsed_function.parameters(),
-                                    environment.arguments,
-                                    &context.state,
-                                    environment.predicate_environment,
-                                    environment.click_function_environment,
-                                )
-                                .ok()
-                            })
-                            .fold(Vec::new(), |mut premises, premise| {
-                                if !premises.contains(&premise) {
-                                    premises.push(premise);
-                                }
-                                premises
-                            });
-                        let mut certificate_tactics = unfolded_predicates
-                            .into_iter()
-                            .map(ProofTactic::UnfoldPredicate)
-                            .collect::<Vec<_>>();
-                        certificate_tactics.push(ProofTactic::Derive(ProofDerive {
-                            proposition: proposition.clone(),
-                            premises,
-                        }));
-                        let certificate =
-                            TacticCertificate::from_proof_tactics(&certificate_tactics).map_err(
-                                |error| {
-                                    ClickError::new(format!(
-                                        "`{invariant_claim_label}` produced an invalid guarded invariant certificate: {error:?}"
-                                    ))
-                                },
-                            )?;
-                        (obligation.proposition().clone(), certificate)
-                    }
-                };
+                    expected_goal.as_ref(),
+                )?;
+                let (planned_fact, planned_certificate) = direct_plan;
+                initialization_surface_propositions
+                    .borrow_mut()
+                    .record_lowering(proposition, &planned_fact)?;
                 tactics.push(ProofTactic::Have(ProofHave {
                     proposition: proposition.clone(),
                     proof: Proof::Script(planned_certificate.tactics().to_vec()),
@@ -5755,8 +5717,10 @@ fn verify_loop_initialization_pure_proof(
                         )
                     })
                     .unwrap_or_else(|| format!("{claim_label} prerequisite {certificate_index}"));
+                let surface_propositions = initialization_surface_propositions.borrow();
                 let fact = prove_pure_proposition_at_point(
                     &have.proposition,
+                    surface_propositions.unique_kernel(&have.proposition),
                     &have.proof,
                     "initialize",
                     environment.theorem_environment,
@@ -5769,7 +5733,7 @@ fn verify_loop_initialization_pure_proof(
                     &context.state,
                     None,
                     &program_point_states,
-                    None,
+                    Some(&surface_propositions),
                     environment.predicate_environment,
                     environment.click_function_environment,
                     environment.function_block.requires(),
@@ -5783,26 +5747,8 @@ fn verify_loop_initialization_pure_proof(
         },
     )?;
     let assumptions = assumptions_from_propositions(&available);
-    let obligations =
-        c_loop_invariant_obligations_at_entry(&context.state, invariant_checks, &assumptions)
-            .map_err(|message| ClickError::new(format!("`{claim_label}`: {message}")))?;
-    for obligation in obligations {
-        if !available.contains(obligation.proposition())
-            && materialization_equivalent_available_fact(obligation.proposition(), &available)
-                .is_none()
-            && quantified_replay_equivalent_available_fact(obligation.proposition(), &available)
-                .is_none()
-        {
-            return Err(ClickError::new(format!(
-                "`{claim_label}` replayed certificate did not produce invariant obligation{}: {:?}",
-                obligation
-                    .context()
-                    .map(|context| format!(" ({context})"))
-                    .unwrap_or_default(),
-                obligation.proposition()
-            )));
-        }
-    }
+    c_loop_invariants_hold_at_entry(&context.state, invariant_checks, &assumptions)
+        .map_err(|message| ClickError::new(format!("`{claim_label}`: {message}")))?;
     Ok(certificate)
 }
 
@@ -7255,13 +7201,14 @@ fn plan_smart_have_at_current_point(
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
     unfolded_predicates: &[String],
+    prelowered_goal: Option<&Proposition>,
 ) -> Result<(Proposition, ProofReplayPlan), ClickError> {
     // Plan and replay this proof once. Surface expansion must lower this exact
     // plan; it must not search for a different proof if lowering is incomplete.
     // Snapshot transport belongs to the statement transition that changed the
     // memory and reaches a later `have` as an exact current-state assumption.
     let direct_lowering_facts = facts_for_smart_have_lowering(available);
-    let fact = lower_point_proposition(
+    let fact = match lower_point_proposition(
         &have.proposition,
         &direct_lowering_facts,
         parameters,
@@ -7272,12 +7219,15 @@ fn plan_smart_have_at_current_point(
         program_point_states,
         predicate_environment,
         click_function_environment,
-    )
-    .map_err(|message| {
-        ClickError::new(format!(
-            "`{claim_label}` have proof {outer_tactic_index}: could not lower pure goal: {message}"
-        ))
-    })?;
+    ) {
+        Ok(fact) => fact,
+        Err(_) if prelowered_goal.is_some() => prelowered_goal.expect("checked above").clone(),
+        Err(message) => {
+            return Err(ClickError::new(format!(
+                "`{claim_label}` have proof {outer_tactic_index}: could not lower pure goal: {message}"
+            )));
+        }
+    };
     let available = if unfolded_predicates.is_empty() {
         available.to_vec()
     } else {
@@ -7391,6 +7341,7 @@ fn prove_have_at_point(
 ) -> Result<Proposition, ClickError> {
     prove_pure_proposition_at_point(
         &have.proposition,
+        None,
         &have.proof,
         "have",
         theorem_environment,
@@ -7414,6 +7365,7 @@ fn prove_have_at_point(
 #[allow(clippy::too_many_arguments)]
 fn prove_pure_proposition_at_point(
     proposition: &ClickProposition,
+    prelowered_goal: Option<&Proposition>,
     proof: &Proof,
     proof_name: &str,
     theorem_environment: &TheoremEnvironment,
@@ -7461,6 +7413,7 @@ fn prove_pure_proposition_at_point(
     for proof_case in proof_cases {
         let fact = prove_pure_proposition_case_at_point(
             proposition,
+            prelowered_goal,
             &proof_case,
             tactic_simp,
             proof_name,
@@ -7499,6 +7452,7 @@ fn prove_pure_proposition_at_point(
 #[allow(clippy::too_many_arguments)]
 fn prove_pure_proposition_case_at_point(
     proposition: &ClickProposition,
+    prelowered_goal: Option<&Proposition>,
     proof_case: &ExpandedProofCase,
     tactic_simp: bool,
     proof_name: &str,
@@ -7698,23 +7652,27 @@ fn prove_pure_proposition_case_at_point(
             }
             ProofTactic::Witness(witness) => {
                 if goal.is_none() {
-                    let lowered = lower_point_proposition_with_values(
-                        proposition,
-                        &available,
-                        values.clone(),
-                        &array_refs,
-                        pre_state,
-                        state,
-                        result,
-                        program_point_states,
-                        predicate_environment,
-                        click_function_environment,
-                    )
-                    .map_err(|message| {
-                        ClickError::new(format!(
-                            "`{claim_label}` {proof_name} proof {outer_tactic_index}: could not lower pure goal: {message}"
-                        ))
-                    })?;
+                    let lowered = if let Some(prelowered_goal) = prelowered_goal {
+                        prelowered_goal.clone()
+                    } else {
+                        lower_point_proposition_with_values(
+                            proposition,
+                            &available,
+                            values.clone(),
+                            &array_refs,
+                            pre_state,
+                            state,
+                            result,
+                            program_point_states,
+                            predicate_environment,
+                            click_function_environment,
+                        )
+                        .map_err(|message| {
+                            ClickError::new(format!(
+                                "`{claim_label}` {proof_name} proof {outer_tactic_index}: could not lower pure goal: {message}"
+                            ))
+                        })?
+                    };
                     fact = Some(lowered.clone());
                     goal = Some(lowered);
                 }
@@ -7833,26 +7791,30 @@ fn prove_pure_proposition_case_at_point(
                     prepared_derivation_lowering_facts = Some(lowering_facts);
                 }
                 if goal.is_none() {
-                    let lowered = lower_point_proposition_with_values(
-                        proposition,
-                        prepared_derivation_lowering_facts
-                            .as_deref()
-                            .or(direct_goal_lowering_facts.as_deref())
-                            .unwrap_or(&available),
-                        values.clone(),
-                        &array_refs,
-                        pre_state,
-                        state,
-                        result,
-                        program_point_states,
-                        predicate_environment,
-                        click_function_environment,
-                    )
-                    .map_err(|message| {
-                        ClickError::new(format!(
-                            "`{claim_label}` {proof_name} proof {outer_tactic_index}: could not lower pure goal: {message}"
-                        ))
-                    })?;
+                    let lowered = if let Some(prelowered_goal) = prelowered_goal {
+                        prelowered_goal.clone()
+                    } else {
+                        lower_point_proposition_with_values(
+                            proposition,
+                            prepared_derivation_lowering_facts
+                                .as_deref()
+                                .or(direct_goal_lowering_facts.as_deref())
+                                .unwrap_or(&available),
+                            values.clone(),
+                            &array_refs,
+                            pre_state,
+                            state,
+                            result,
+                            program_point_states,
+                            predicate_environment,
+                            click_function_environment,
+                        )
+                        .map_err(|message| {
+                            ClickError::new(format!(
+                                "`{claim_label}` {proof_name} proof {outer_tactic_index}: could not lower pure goal: {message}"
+                            ))
+                        })?
+                    };
                     fact = Some(lowered.clone());
                     goal = Some(lowered);
                 }
@@ -7955,24 +7917,28 @@ fn prove_pure_proposition_case_at_point(
                         let derivation_lowering_facts = prepared_derivation_lowering_facts
                             .as_ref()
                             .expect("derive lowering facts should be prepared");
-                        let target = lower_point_proposition_with_values(
-                            &derive.proposition,
-                            &derivation_lowering_facts,
-                            values.clone(),
-                            &array_refs,
-                            pre_state,
-                            state,
-                            result,
-                            program_point_states,
-                            predicate_environment,
-                            click_function_environment,
-                        )
-                        .map_err(|message| {
-                            ClickError::new(format!(
-                                "`{claim_label}` {proof_name} proof {outer_tactic_index}: could not lower `{}` target: {message}",
-                                tactic_name(tactic)
-                            ))
-                        })?;
+                        let target = if derive.proposition == *proposition {
+                            unfolded_goal.clone()
+                        } else {
+                            lower_point_proposition_with_values(
+                                &derive.proposition,
+                                &derivation_lowering_facts,
+                                values.clone(),
+                                &array_refs,
+                                pre_state,
+                                state,
+                                result,
+                                program_point_states,
+                                predicate_environment,
+                                click_function_environment,
+                            )
+                            .map_err(|message| {
+                                ClickError::new(format!(
+                                    "`{claim_label}` {proof_name} proof {outer_tactic_index}: could not lower `{}` target: {message}",
+                                    tactic_name(tactic)
+                                ))
+                            })?
+                        };
                         let premises = derive
                             .premises
                             .iter()
@@ -8081,23 +8047,29 @@ fn prove_pure_proposition_case_at_point(
 
     let fact = match fact {
         Some(fact) => fact,
-        None => lower_point_proposition_with_values(
-            proposition,
-            &available,
-            values,
-            &array_refs,
-            pre_state,
-            state,
-            result,
-            program_point_states,
-            predicate_environment,
-            click_function_environment,
-        )
-        .map_err(|message| {
-            ClickError::new(format!(
-                "`{claim_label}` {proof_name} proof {outer_tactic_index}: could not lower pure goal: {message}"
-            ))
-        })?,
+        None => {
+            if let Some(prelowered_goal) = prelowered_goal {
+                prelowered_goal.clone()
+            } else {
+                lower_point_proposition_with_values(
+                    proposition,
+                    &available,
+                    values,
+                    &array_refs,
+                    pre_state,
+                    state,
+                    result,
+                    program_point_states,
+                    predicate_environment,
+                    click_function_environment,
+                )
+                .map_err(|message| {
+                    ClickError::new(format!(
+                        "`{claim_label}` {proof_name} proof {outer_tactic_index}: could not lower pure goal: {message}"
+                    ))
+                })?
+            }
+        }
     };
     if goal_closed {
         return Ok(fact);
@@ -11587,6 +11559,7 @@ fn record_surface_replay_tactic(
                         predicate_environment,
                         click_function_environment,
                         &[],
+                        None,
                     ) else {
                         continue;
                     };
@@ -11664,6 +11637,7 @@ fn record_surface_replay_tactic(
                         predicate_environment,
                         click_function_environment,
                         &[],
+                        None,
                     );
                     let (fact, plan) = match planned {
                         Ok(planned) => planned,
@@ -11820,21 +11794,6 @@ fn record_surface_replay_tactic(
             }
         }
         ProofTactic::CertifiedFactTransport { source, target, .. } => {
-            if normalize_direct_atomic_memory_loads(source)
-                == normalize_direct_atomic_memory_loads(target)
-            {
-                return;
-            }
-            let is_reflexive = |proposition: &Proposition| {
-                matches!(
-                    proposition,
-                    Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), true)
-                        if left == right
-                )
-            };
-            if is_reflexive(source) && is_reflexive(target) {
-                return;
-            }
             let Some(step_entry) = replay.surface_replay.last_step_entry.clone() else {
                 replay
                     .surface_replay
@@ -11843,16 +11802,27 @@ fn record_surface_replay_tactic(
             };
             let mut base_surfaces = Vec::new();
             for proposition in [source, target] {
-                if let Ok(surface) = replay.surface_propositions.surface(proposition)
-                    && !base_surfaces.contains(surface)
-                {
-                    base_surfaces.push(surface.clone());
+                for surface in replay.surface_propositions.surfaces(proposition) {
+                    if !base_surfaces.contains(surface) {
+                        base_surfaces.push(surface.clone());
+                    }
                 }
                 if let Some(surface) =
                     synthesize_surface_proposition(proposition, parameters, arguments, state)
                     && !base_surfaces.contains(&surface)
                 {
                     base_surfaces.push(surface);
+                }
+                let normalized = normalize_direct_atomic_memory_loads(proposition);
+                for recorded in replay.surface_propositions.kernel_facts() {
+                    if normalize_direct_atomic_memory_loads(recorded) != normalized {
+                        continue;
+                    }
+                    for surface in replay.surface_propositions.surfaces(recorded) {
+                        if !base_surfaces.contains(surface) {
+                            base_surfaces.push(surface.clone());
+                        }
+                    }
                 }
             }
             if base_surfaces.is_empty() {
@@ -11885,6 +11855,7 @@ fn record_surface_replay_tactic(
                 }
             }
             let find_candidate = |expected: &Proposition| {
+                let normalized_expected = normalize_direct_atomic_memory_loads(expected);
                 let lower = |candidate: &ClickProposition| {
                     lower_surface_candidate_at_point(
                         replay,
@@ -11900,22 +11871,38 @@ fn record_surface_replay_tactic(
                 };
                 candidates.iter().find_map(|candidate| {
                     let actual = lower(candidate)?;
-                    (&actual == expected).then(|| candidate.clone())
+                    (normalize_direct_atomic_memory_loads(&actual) == normalized_expected)
+                        .then(|| (candidate.clone(), actual))
                 })
             };
             match (find_candidate(source), find_candidate(target)) {
-                (Some(surface_source), Some(surface_target))
+                (
+                    Some((surface_source, _)),
+                    Some((surface_target, lowered_surface_target)),
+                )
                     if surface_source == surface_target =>
                 {
+                    if let Err(error) = replay
+                        .surface_propositions
+                        .record_lowering(&surface_target, &lowered_surface_target)
+                    {
+                        replay.surface_replay.block(format!(
+                            "could not retain the certified fact transport target spelling: {}",
+                            error.message()
+                        ));
+                    }
                     return;
                 }
-                (Some(surface_source), Some(surface_target)) => {
+                (
+                    Some((surface_source, lowered_surface_source)),
+                    Some((surface_target, lowered_surface_target)),
+                ) => {
                     let transition_facts =
-                        fact_transport_transition_facts(&replay.effect_facts, source);
+                        fact_transport_transition_facts(&replay.effect_facts, &lowered_surface_source);
                     match plan_explicit_fact_transport(
                         &surface_source,
-                        source,
-                        target,
+                        &lowered_surface_source,
+                        &lowered_surface_target,
                         available,
                         &transition_facts,
                         parameters,
@@ -11928,9 +11915,18 @@ fn record_surface_replay_tactic(
                         Ok(premises) => {
                             replay.surface_replay.push(ProofTactic::TransportUsing {
                                 source: surface_source,
-                                target: surface_target,
+                                target: surface_target.clone(),
                                 premises,
                             });
+                            if let Err(error) = replay
+                                .surface_propositions
+                                .record_lowering(&surface_target, &lowered_surface_target)
+                            {
+                                replay.surface_replay.block(format!(
+                                    "could not retain the certified fact transport target spelling: {}",
+                                    error.message()
+                                ));
+                            }
                         }
                         Err(error) => replay.surface_replay.block(format!(
                             "could not make fact transport premises explicit: {}",
@@ -11949,13 +11945,58 @@ fn record_surface_replay_tactic(
             occurrence,
             condition,
             value,
+            facts,
             ..
-        } => replay.surface_replay.path_choices.push(SurfacePathChoice {
-            occurrence: *occurrence,
-            condition: condition.clone(),
-            value: *value,
-            tactic_offset: replay.surface_replay.tactics.len(),
-        }),
+        } => {
+            let surface_fact = if *value {
+                condition.clone()
+            } else {
+                ClickProposition::Not(Box::new(condition.clone()))
+            };
+            let lowered = lower_surface_candidate_at_point(
+                replay,
+                &surface_fact,
+                available,
+                parameters,
+                arguments,
+                state,
+                predicate_environment,
+                click_function_environment,
+            );
+            match lowered {
+                Ok(kernel_fact) if facts.contains(&kernel_fact) => {
+                    if let Err(error) = replay
+                        .surface_propositions
+                        .record_lowering(&surface_fact, &kernel_fact)
+                    {
+                        replay.surface_replay.block(format!(
+                            "could not retain the certified path-condition spelling: {}",
+                            error.message()
+                        ));
+                        return;
+                    }
+                }
+                Ok(kernel_fact) => {
+                    replay.surface_replay.block(format!(
+                        "surface branch condition did not lower to a certified path fact\n  lowered: {kernel_fact:?}\n  certified facts: {facts:?}"
+                    ));
+                    return;
+                }
+                Err(error) => {
+                    replay.surface_replay.block(format!(
+                        "could not lower the certified path condition: {}",
+                        error.message()
+                    ));
+                    return;
+                }
+            }
+            replay.surface_replay.path_choices.push(SurfacePathChoice {
+                occurrence: *occurrence,
+                condition: condition.clone(),
+                value: *value,
+                tactic_offset: replay.surface_replay.tactics.len(),
+            });
+        }
         ProofTactic::CertifiedAlternatives(_) => {}
         ProofTactic::Have(have) => {
             match TacticCertificate::from_proof_tactics(std::slice::from_ref(tactic)) {
@@ -12104,6 +12145,20 @@ fn surface_simp_plan_proof(
     plan: &ProofReplayPlan,
     unfolded_predicates: &[String],
 ) -> Result<Proof, ClickError> {
+    let active_surface_goal = if unfolded_predicates.is_empty() {
+        surface_goal.clone()
+    } else {
+        unfold_structural_invariant_proposition(
+            predicate_environment,
+            surface_goal,
+            unfolded_predicates,
+        )
+        .map_err(|message| {
+            ClickError::new(format!(
+                "could not express the smart proof goal after predicate unfolding: {message}"
+            ))
+        })?
+    };
     let proof = match plan.tactics() {
         [ProofTactic::Assumption] => Proof::Script(vec![ProofTactic::Assumption]),
         [ProofTactic::Normalize] => Proof::Script(vec![ProofTactic::Normalize]),
@@ -12111,7 +12166,7 @@ fn surface_simp_plan_proof(
             let (_, proof) = lower_surface_atomic_derivation(
                 replay,
                 derivation,
-                unfolded_predicates.is_empty().then_some(surface_goal),
+                Some(&active_surface_goal),
                 available,
                 parameters,
                 arguments,
@@ -14180,6 +14235,7 @@ fn replay_linear_tactics(
                         predicate_environment,
                         click_function_environment,
                         unfolded_predicates,
+                        None,
                     )?;
                     Some((fact, plan))
                 } else {

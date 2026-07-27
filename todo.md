@@ -213,11 +213,18 @@ the final smart `simp` in `vector_push_first` does not close
 `vector_push_first.ensures_3`. Treat that as the next owned-vector correctness
 frontier; it is not an expansion timeout.
 
-The full mdtest sweep also currently stops at the pre-existing expanded
-certificate in `bubble_pass3_max_suffix.md`: after unfolding
-`all_le_range`, its printed `derive(all_le_range(...))` target no longer
-matches the quantified current goal. The condition-cycle guard does not cause
-this failure; the same focused mdtest fails with the guard disabled.
+`bubble_pass3_max_suffix.md` now passes. Loop initialization plans against the
+authoritative lowered invariant goal when duplicate surface lowering is not
+possible, branch-condition spellings survive certified fact transports, and
+conditional universal order facts can participate in a transitive proof even
+when the instantiated variable has the same internal id as the quantifier
+binder.
+
+The full mdtest sweep now advances to `bubble_sort3_two_pass_sorted.md`. Its
+final smart proof succeeds internally but surface lowering cannot yet replay
+the quantified atomic derivation from the selected explicit premises. Treat
+that as the next certificate-lowering frontier; it is separate from the fixed
+`bubble_pass3` loop certificate.
 
 This sweep fixed two expander correctness bugs. Grouped expansion now preserves
 one closer per claim even when multiple claims end in structurally identical
