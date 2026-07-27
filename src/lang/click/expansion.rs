@@ -32,17 +32,25 @@ pub fn expand_c0_claim_source(
     function_name: &str,
     claim: CProofClaim,
 ) -> Result<String, ClickError> {
-    let verified = verify_c0_sources(click_source, c_sources)?;
-    let theorem = select_expansion_theorem(&verified, function_name, claim)?;
-    let replacement = theorem.expanded_proof_source()?;
     let tokens = scan_source_tokens(click_source)?;
     let function = find_function(&tokens, function_name)?;
-    let grouped = theorem.function_block.grouped_proof().is_some();
+    let file = parse_source_with_c_layouts(click_source, c_sources)?;
+    let function_block = file
+        .function_blocks()
+        .iter()
+        .find(|function| function.signature().name() == function_name)
+        .ok_or_else(|| ClickError::new(format!("unknown function `{function_name}`")))?;
+    let grouped = function_block.grouped_proof().is_some();
     let edit = if grouped || claim == CProofClaim::Grouped {
         ProofSourceEdit::Explicit(find_grouped_proof_span(&tokens, &function)?)
     } else {
         find_claim_proof_edit(&tokens, &function, claim)?
     };
+    let target = position_at_offset(click_source, edit.selector());
+    let verified =
+        verify_c0_sources_at(click_source, c_sources, target.line, target.column)?;
+    let theorem = select_expansion_theorem(&verified, function_name, claim)?;
+    let replacement = theorem.expanded_proof_source()?;
     let span = edit.span();
     let replacement = indent_replacement(click_source, span.start, &replacement);
     let replacement = match edit {
@@ -2346,6 +2354,37 @@ int32 identity(int32 x) {
         .expect("default proof should expand from its clause coordinate");
         assert!(implicit_expanded.contains("ensures result == x by {"));
         verify_c0_sources(&implicit_expanded, &[("identity.c", c_source)]).unwrap();
+    }
+
+    #[test]
+    fn whole_function_proof_expansion_skips_unrelated_broken_proofs() {
+        let good_c = "int32 good(int32 x) { return x; }";
+        let bad_c = "int32 bad(int32 x) { return x; }";
+        let click_source = r#"verifying "good.c";
+verifying "bad.c";
+int32 good(int32 x) {
+    ensures result == x;
+}
+int32 bad(int32 x) {
+    ensures result == x + 1 by simp;
+}
+"#;
+        let sources = [("good.c", good_c), ("bad.c", bad_c)];
+        verify_c0_sources(click_source, &sources)
+            .expect_err("the unrelated bad proof should fail complete verification");
+        let selected = position_at_offset(click_source, click_source.find("ensures").unwrap());
+
+        let expanded = expand_c0_tactic_source_at(
+            click_source,
+            &sources,
+            selected.line,
+            selected.column,
+        )
+        .expect("whole-proof expansion should verify only the selected function");
+
+        assert!(expanded.contains("ensures result == x by {"));
+        verify_c0_sources_at(&expanded, &sources, selected.line, selected.column)
+            .expect("the expanded selected function should verify independently");
     }
 
     #[test]
