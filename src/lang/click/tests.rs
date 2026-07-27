@@ -1694,6 +1694,51 @@ fn execute_step_records_a_point_checked_surface_expansion() {
 }
 
 #[test]
+fn execute_rest_return_certificate_omits_unused_ambient_facts() {
+    let c_source = r#"
+            int32 return_x(int32 x) {
+                return x;
+            }
+        "#;
+    let click_source = r#"
+            verifying "return_x.c";
+
+            int32 return_x(int32 x) {
+                requires x < 100;
+                ensures result == x;
+            } by {
+                execute_rest();
+                simp();
+            }
+        "#;
+
+    let verified = verify_c0_sources(click_source, &[("return_x.c", c_source)])
+        .expect("the return proof should verify");
+    let expanded = verified[0]
+        .expanded_proof_tactics()
+        .expect("the return proof should have a surface expansion");
+    assert_eq!(expanded[0], ProofTactic::Step);
+    assert!(matches!(expanded[1], ProofTactic::Have(_)));
+    assert_eq!(expanded[2], ProofTactic::Assumption);
+
+    let execute_offset = click_source
+        .find("execute_rest()")
+        .expect("proof should contain execute_rest");
+    let position = expansion::position_at_offset(click_source, execute_offset);
+    let rewritten = expand_c0_tactic_source_at(
+        click_source,
+        &[("return_x.c", c_source)],
+        position.line,
+        position.column,
+    )
+    .expect("the return execution should expand");
+    assert!(rewritten.contains("    step();"), "{rewritten}");
+    assert!(!rewritten.contains("step using"), "{rewritten}");
+    verify_c0_sources(&rewritten, &[("return_x.c", c_source)])
+        .expect("the minimal return certificate should replay");
+}
+
+#[test]
 fn execute_step_omits_materialization_only_transport() {
     let c_source = r#"
             int32 set_second_return_first(int32 p[2]) {

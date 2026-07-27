@@ -1712,7 +1712,7 @@ int32 identity(int32 x) {
         .expect("the nested then tactic should expand");
 
         assert_eq!(expanded.matches("execute_rest();").count(), 1);
-        assert!(expanded.contains("    if x == x {\n        step using {"));
+        assert!(expanded.contains("    if x == x {\n        step();"));
         verify_c0_sources(&expanded, &[("identity.c", c_source)])
             .expect("the source with one nested expansion should re-verify");
     }

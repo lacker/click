@@ -295,11 +295,17 @@ tactics. Later explicit tactics lower and check their own premises at their own
 program points. There is no search or ignored-error path.
 
 The retained-session audit passes the first 47 of 67 owned-string smart sites.
-Most selected-proof checks take milliseconds to a few seconds. The two
-`owned_string_pipeline.contract` sites at lines 550 and 551 still take about
-75 seconds each even though certified dependencies are reused. This is genuine
-cost inside verification of the selected function, not project copying or
-transitive dependency re-verification.
+Most selected-proof checks take milliseconds to a few seconds. The former
+roughly 75-second `owned_string_pipeline.contract` checks at lines 550 and 551
+now take about 0.31 seconds. Their final `return observed` certificate had
+mistakenly copied every ambient implication premise from the monotone execution
+theorem into a generated `step using`, forcing the simple replay through a
+large irrelevant search. Returning a local or literal is total, reads and
+mutates no memory, and consumes no proposition assumptions, so its statement
+certificate is now premise-free while the certified transition preserves the
+unchanged facts. Arithmetic and memory-reading returns continue to retain their
+actual safety premises. Grouped outcome `simp` replay also reuses its already
+lowered kernel goal instead of lowering the same surface expression twice.
 
 The motivating `owned_string_set` successor proof at line 183 is fixed:
 planning fell from 63.9 seconds to about 67 ms, and expansion emits a

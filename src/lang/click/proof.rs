@@ -11330,8 +11330,15 @@ fn certify_outcome_simp_have(
             "`{claim_label}` path {path_index}, tactic {tactic_index}: smart `simp` produced an invalid certificate: {error:?}"
         ))
     })?;
-    let replayed_goal = prove_have_at_point(
-        &surface_have,
+    // `goal` was already lowered from `surface_goal` at this exact outcome.
+    // Replaying the generated certificate must check that kernel goal, rather
+    // than lower the same surface memory expression again through the full
+    // ambient assumptions solver.
+    let replayed_goal = prove_pure_proposition_at_point(
+        &surface_have.proposition,
+        Some(goal),
+        &surface_have.proof,
+        "have",
         theorem_environment,
         claim_label,
         tactic_index,
@@ -11800,23 +11807,36 @@ fn record_surface_replay_tactic(
     }
     match tactic {
         ProofTactic::CertifiedStatementReplay(evidence) => {
+            let statement = match implication_body(evidence.transition.theorem.proposition()) {
+                Proposition::CStatementExecutes { statement, .. } => Some(statement),
+                _ => None,
+            };
             let statement_uses_memory_context =
-                match implication_body(evidence.transition.theorem.proposition()) {
-                    Proposition::CStatementExecutes { statement, .. } => {
-                        statement_uses_ambient_memory_context(statement)
-                    }
-                    _ => true,
-                };
-            let exact_premises = theorem_implication_premises(&evidence.transition.theorem)
-                .into_iter()
-                .filter(|premise| {
-                    !evidence
-                        .transition
-                        .execution_facts
-                        .iter()
-                        .any(|fact| fact.is_certified() && fact.proposition() == premise)
-                })
-                .collect();
+                statement.is_none_or(statement_uses_ambient_memory_context);
+            // Execution theorems are monotone in their input assumptions, so
+            // their implication prefixes normally contain the complete
+            // ambient context. Evaluating a local or literal return value is
+            // total and does not read or mutate memory; it consumes none of
+            // those assumptions, and all existing facts remain valid.
+            let exact_premises = if matches!(
+                statement,
+                Some(CStatement::Return(
+                    CExpression::Value(_) | CExpression::Variable(_)
+                ))
+            ) {
+                Vec::new()
+            } else {
+                theorem_implication_premises(&evidence.transition.theorem)
+                    .into_iter()
+                    .filter(|premise| {
+                        !evidence
+                            .transition
+                            .execution_facts
+                            .iter()
+                            .any(|fact| fact.is_certified() && fact.proposition() == premise)
+                    })
+                    .collect()
+            };
             record_surface_replay_tactic(
                 replay,
                 state,
