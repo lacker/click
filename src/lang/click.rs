@@ -59,6 +59,7 @@ use validation::{
     combined_resource_definitions, combined_theorem_definitions,
     combined_theorem_definitions_with_stdlib_ensure_count, contains_at_expression,
     contains_old_expression, describe_c0_type, describe_resource_clause,
+    proposition_contains_at_expression,
 };
 
 const EXTERNAL_ARGUMENT_MEMORY_BLOCK: &str = "arg-memory";

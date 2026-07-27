@@ -1904,6 +1904,53 @@ fn assumptions_prove_forall_int32_array_range_body() {
 }
 
 #[test]
+fn loadability_transports_to_snapshot_with_symbolic_index_bounds() {
+    let index = Bitvector32Term::Variable(Variable(190));
+    let cursor = Bitvector32Term::Variable(Variable(191));
+    let range_memory = CMemory::new();
+    let snapshot_memory = CMemory::new().with_block("local:j", 4);
+    let base = Pointer {
+        block: "arg-memory".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let assumptions = Assumptions::new()
+        .assume_proposition(Proposition::CMemoryLoadable {
+            memory: range_memory,
+            base: base.clone(),
+            bytes: Bitvector32Term::Constant(12),
+        })
+        .assume_condition(
+            ConditionTerm::signed_greater_equal(index.clone(), Bitvector32Term::Constant(0)),
+            true,
+        )
+        .assume_condition(
+            ConditionTerm::signed_less_than(index.clone(), cursor.clone()),
+            true,
+        )
+        .assume_condition(
+            ConditionTerm::signed_less_equal(cursor.clone(), Bitvector32Term::Constant(2)),
+            true,
+        )
+        .assume_condition(
+            ConditionTerm::signed_less_than(cursor, Bitvector32Term::Constant(2)),
+            false,
+        );
+
+    assert_eq!(
+        assumptions.decide(&ConditionTerm::signed_less_than(
+            index.clone(),
+            Bitvector32Term::Constant(3),
+        )),
+        Some(true)
+    );
+    assert!(assumptions.proves(&Proposition::CMemoryLoadable {
+        memory: snapshot_memory,
+        base: base.offset_by_int32_elements(index),
+        bytes: Bitvector32Term::Constant(4),
+    }));
+}
+
+#[test]
 fn assumptions_prove_finite_forall_int32_by_instantiation() {
     let i = Variable(92);
     let j = Variable(93);

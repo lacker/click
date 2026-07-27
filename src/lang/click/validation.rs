@@ -3221,7 +3221,7 @@ fn resource_subject_contains_at_expression(resource: &ResourceSubject) -> bool {
     }
 }
 
-fn proposition_contains_at_expression(proposition: &ClickProposition) -> bool {
+pub(super) fn proposition_contains_at_expression(proposition: &ClickProposition) -> bool {
     match proposition {
         ClickProposition::Comparison { left, right, .. } => {
             contains_at_expression(left) || contains_at_expression(right)

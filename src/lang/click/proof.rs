@@ -3153,6 +3153,8 @@ pub(super) fn verify_loop_execution_proofs(
         vec![ExecutionProofContext {
             state: entry_state,
             pure_facts: requirement_facts,
+            surface_propositions: surface_propositions.clone(),
+            program_point_states: ProgramPointStates::new(),
             case_path: Vec::new(),
             next_opaque_call: 0,
             next_verification_variable: 0,
@@ -3192,6 +3194,8 @@ struct ExecutionProofEnvironment<'a> {
 struct ExecutionProofContext {
     state: CState,
     pure_facts: Vec<Proposition>,
+    surface_propositions: SurfacePropositionMap,
+    program_point_states: ProgramPointStates,
     case_path: Vec<ProofCaseChoice>,
     next_opaque_call: u64,
     next_verification_variable: u64,
@@ -3626,6 +3630,53 @@ fn quantified_replay_equivalent_available_fact(
             .is_some();
         (forward && reverse).then_some(fact)
     })
+}
+
+fn quantified_binder_equivalent(left: &Proposition, right: &Proposition) -> bool {
+    match (left, right) {
+        (
+            Proposition::ForAll {
+                var: left_var,
+                sort: left_sort,
+                body: left_body,
+            },
+            Proposition::ForAll {
+                var: right_var,
+                sort: right_sort,
+                body: right_body,
+            },
+        ) => {
+            left_sort == right_sort
+                && substitute_int32_variable_in_proposition(
+                    left_body,
+                    *left_var,
+                    Bitvector32Term::Variable(*right_var),
+                ) == **right_body
+        }
+        (
+            Proposition::Exists {
+                name: left_name,
+                var: left_var,
+                sort: left_sort,
+                body: left_body,
+            },
+            Proposition::Exists {
+                name: right_name,
+                var: right_var,
+                sort: right_sort,
+                body: right_body,
+            },
+        ) => {
+            left_name == right_name
+                && left_sort == right_sort
+                && substitute_int32_variable_in_proposition(
+                    left_body,
+                    *left_var,
+                    Bitvector32Term::Variable(*right_var),
+                ) == **right_body
+        }
+        _ => false,
+    }
 }
 
 fn atomic_conjuncts<'a>(proposition: &'a Proposition, output: &mut Vec<&'a Proposition>) {
@@ -4993,6 +5044,8 @@ fn verify_execution_proofs_forward(
                     iteration_contexts.push(ExecutionProofContext {
                         state: preservation.state().clone(),
                         pure_facts,
+                        surface_propositions: context.surface_propositions.clone(),
+                        program_point_states: context.program_point_states.clone(),
                         case_path: context.case_path.clone(),
                         next_opaque_call: context.next_opaque_call,
                         next_verification_variable: context.next_verification_variable,
@@ -5141,6 +5194,8 @@ fn split_execution_proof_branch_contexts(
             let next = ExecutionProofContext {
                 state: context.state.clone(),
                 pure_facts: transition.pure_facts,
+                surface_propositions: context.surface_propositions.clone(),
+                program_point_states: context.program_point_states.clone(),
                 case_path: {
                     let mut case_path = context.case_path.clone();
                     case_path.push(ProofCaseChoice {
@@ -5241,29 +5296,48 @@ fn plan_point_pure_goal_certificate(
         .record_lowering(proposition, &fact)?;
     if !unfolded_predicates.is_empty() {
         let assumptions = assumptions_from_propositions(available);
-        let recorded_unfoldings = available
-            .iter()
-            .filter_map(|kernel| {
-                let surface = surface_replay
+        let recorded_unfoldings = surface_replay
+            .surface_propositions
+            .kernel_facts()
+            .flat_map(|kernel| {
+                surface_replay
                     .surface_propositions
-                    .surface(kernel)
-                    .ok()?
-                    .clone();
-                let unfolded_surface = unfold_structural_invariant_proposition(
-                    predicate_environment,
-                    &surface,
-                    &unfolded_predicates,
-                )
-                .ok()?;
-                let unfolded_kernel = unfold_predicates_in_proposition(
-                    predicate_environment,
-                    click_function_environment,
-                    &unfolded_predicates,
-                    kernel,
-                    &assumptions,
-                )
-                .ok()?;
-                Some((unfolded_surface, unfolded_kernel))
+                    .surfaces(kernel)
+                    .filter_map(|surface| {
+                        let mut unfolded_surface = unfold_structural_invariant_proposition(
+                            predicate_environment,
+                            surface,
+                            &unfolded_predicates,
+                        )
+                        .ok()?;
+                        if unfolded_surface == *surface {
+                            return None;
+                        }
+                        if let Some(point) = predicate_call_source_site(surface) {
+                            unfolded_surface =
+                                surface_with_source_site(&unfolded_surface, &point).ok()?;
+                        }
+                        let unfolded_kernel = unfold_predicates_in_proposition(
+                            predicate_environment,
+                            click_function_environment,
+                            &unfolded_predicates,
+                            kernel,
+                            &assumptions,
+                        )
+                        .ok()?;
+                        let available_kernel = available
+                            .iter()
+                            .find(|available| {
+                                **available == unfolded_kernel
+                                    || quantified_binder_equivalent(
+                                        &normalize_direct_atomic_memory_loads(&unfolded_kernel),
+                                        &normalize_direct_atomic_memory_loads(available),
+                                    )
+                            })?
+                            .clone();
+                        Some((unfolded_surface, available_kernel))
+                    })
+                    .collect::<Vec<_>>()
             })
             .collect::<Vec<_>>();
         for (surface, kernel) in recorded_unfoldings {
@@ -5367,7 +5441,7 @@ fn certify_structural_assertions(
     };
     let mut site_certificates = vec![Vec::new(); assertions.len()];
     for context in &mut contexts {
-        let mut program_point_states = ProgramPointStates::new();
+        let mut program_point_states = context.program_point_states.clone();
         let point_region = match region {
             CodeRegion::Function => CodeRegionRef::Function,
             CodeRegion::Loop(index) => CodeRegionRef::Loop(index),
@@ -5408,7 +5482,7 @@ fn certify_structural_assertions(
                 &program_point_states,
                 environment.predicate_environment,
                 environment.click_function_environment,
-                environment.surface_propositions,
+                &context.surface_propositions,
                 None,
             )?;
             let (certificate, replayed_fact) = pure_goal_certificate_gateway(
@@ -5451,6 +5525,9 @@ fn certify_structural_assertions(
             if !context.pure_facts.contains(&replayed_fact) {
                 context.pure_facts.push(replayed_fact);
             }
+            context
+                .surface_propositions
+                .record_lowering(proposition, &planned_fact)?;
         }
     }
     for ((item_index, _), certificates) in assertions.iter().zip(site_certificates) {
@@ -5537,10 +5614,84 @@ fn advance_execution_proof_statement(
             verified_loop_rules.push(loop_rule);
         }
         for transition in transitions {
+            let mut surface_propositions = context.surface_propositions.clone();
+            let mut program_point_states = context.program_point_states.clone();
+            if matches!(statement, CStatement::While { .. }) {
+                let entry_point = ProgramPointRef {
+                    region: CodeRegionRef::Loop(region_index),
+                    kind: ProgramPointKind::Entry,
+                };
+                program_point_states.insert(entry_point, context.state.clone());
+                if let CStatementOutcome::Normal(exit_state) = &transition.outcome {
+                    let exit_point = ProgramPointRef {
+                        region: CodeRegionRef::Loop(region_index),
+                        kind: ProgramPointKind::Exit,
+                    };
+                    program_point_states.insert(exit_point.clone(), exit_state.clone());
+                    if let Some(loop_clause) = environment
+                        .function_block
+                        .structural_clauses()
+                        .iter()
+                        .find(|clause| clause.region() == &CodeRegion::Loop(region_index))
+                    {
+                        let mut invariant_targets = transition.pure_facts.iter().filter(|fact| {
+                            !context.pure_facts.contains(fact)
+                                && !matches!(
+                                    fact,
+                                    Proposition::CMemoryEffectSummary { .. }
+                                        | Proposition::CMemoryMutatesOnly { .. }
+                                )
+                        });
+                        for surface in loop_clause
+                            .items()
+                            .iter()
+                            .filter(|item| item.kind() == StructuralItemKind::Invariant)
+                            .filter_map(StructuralItem::proposition)
+                        {
+                            let target = invariant_targets.next().ok_or_else(|| {
+                                ClickError::new(format!(
+                                    "execution proof traversal loop({region_index}) omitted an exported fact for an invariant"
+                                ))
+                            })?;
+                            let exit_surface = surface_with_source_site(surface, &exit_point)?;
+                            surface_propositions.record_lowering(&exit_surface, target)?;
+                        }
+                    }
+                    if let CStatement::While { condition, .. } = statement {
+                        let exit_condition =
+                            ClickProposition::Not(Box::new(surface_c_condition(condition)));
+                        let lowered_exit_condition = lower_point_proposition(
+                            &exit_condition,
+                            &transition.pure_facts,
+                            environment.parsed_function.parameters(),
+                            environment.arguments,
+                            environment.initial_state,
+                            exit_state,
+                            None,
+                            &program_point_states,
+                            environment.predicate_environment,
+                            environment.click_function_environment,
+                        )
+                        .map_err(|message| {
+                            ClickError::new(format!(
+                                "could not lower loop({region_index}) exit condition provenance: {message}"
+                            ))
+                        })?;
+                        if transition.pure_facts.contains(&lowered_exit_condition) {
+                            let exit_surface =
+                                surface_with_source_site(&exit_condition, &exit_point)?;
+                            surface_propositions
+                                .record_lowering(&exit_surface, &lowered_exit_condition)?;
+                        }
+                    }
+                }
+            }
             match transition.outcome {
                 CStatementOutcome::Normal(state) => advanced.push(ExecutionProofContext {
                     state,
                     pure_facts: transition.pure_facts,
+                    surface_propositions,
+                    program_point_states,
                     case_path: context.case_path.clone(),
                     next_opaque_call: context.next_opaque_call,
                     next_verification_variable: context.next_verification_variable,
@@ -5575,7 +5726,7 @@ fn verify_loop_initialization_pure_proof(
         "{}.loop({loop_index}).initialize",
         environment.function_block.signature().name()
     );
-    let mut program_point_states = ProgramPointStates::new();
+    let mut program_point_states = context.program_point_states.clone();
     program_point_states.insert(
         ProgramPointRef {
             region: CodeRegionRef::Loop(loop_index),
@@ -5589,7 +5740,7 @@ fn verify_loop_initialization_pure_proof(
         .filter(|item| item.kind() == StructuralItemKind::Invariant)
         .collect::<Vec<_>>();
     let initialization_surface_propositions =
-        std::cell::RefCell::new(SurfacePropositionMap::default());
+        std::cell::RefCell::new(context.surface_propositions.clone());
     let entry_obligations = c_loop_invariant_obligations_at_entry(
         &context.state,
         invariant_checks,
@@ -5641,7 +5792,7 @@ fn verify_loop_initialization_pure_proof(
                     &program_point_states,
                     environment.predicate_environment,
                     environment.click_function_environment,
-                    environment.surface_propositions,
+                    &context.surface_propositions,
                     expected_goal.as_ref(),
                 )?;
                 let (planned_fact, planned_certificate) = direct_plan;
@@ -9849,6 +10000,15 @@ fn checked_surface_comparison_fact_at_point(
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<ClickProposition, ClickError> {
+    let matches_kernel = |lowered: &Proposition| {
+        let lowered = normalize_direct_atomic_memory_loads(lowered);
+        let kernel = normalize_direct_atomic_memory_loads(kernel);
+        condition_polarity_equivalent(&lowered, &kernel)
+            || lowered == kernel
+            || materialization_equivalent_available_fact(&kernel, std::slice::from_ref(&lowered))
+                .is_some()
+            || quantified_binder_equivalent(&lowered, &kernel)
+    };
     if let Ok(surface) = checked_surface_fact_at_point(
         replay,
         kernel,
@@ -9863,15 +10023,36 @@ fn checked_surface_comparison_fact_at_point(
     }
 
     let mut bases = Vec::new();
-    if let Ok(surface) = replay.surface_propositions.surface(kernel)
-        && !bases.contains(surface)
-    {
-        bases.push(surface.clone());
+    for surface in replay.surface_propositions.surfaces(kernel) {
+        if !bases.contains(surface) {
+            bases.push(surface.clone());
+        }
     }
     if let Some(surface) = synthesize_surface_proposition(kernel, parameters, arguments, state)
         && !bases.contains(&surface)
     {
         bases.push(surface);
+    }
+    for base in &bases {
+        if let Ok(lowered) = lower_surface_candidate_at_point(
+            replay,
+            base,
+            available,
+            parameters,
+            arguments,
+            state,
+            predicate_environment,
+            click_function_environment,
+        ) && (matches_kernel(&lowered)
+            || proposition_contains_at_expression(base)
+                && quantified_replay_equivalent_available_fact(
+                    kernel,
+                    std::slice::from_ref(&lowered),
+                )
+                .is_some())
+        {
+            return Ok(base.clone());
+        }
     }
     let kernel_memories = c_condition_fact_memories(kernel);
     let matching_points = replay
@@ -9926,10 +10107,7 @@ fn checked_surface_comparison_fact_at_point(
                     predicate_environment,
                     click_function_environment,
                 );
-                if lowered.is_ok_and(|lowered| {
-                    normalize_direct_atomic_memory_loads(&lowered)
-                        == normalize_direct_atomic_memory_loads(kernel)
-                }) {
+                if lowered.is_ok_and(|lowered| matches_kernel(&lowered)) {
                     return Ok(candidate);
                 }
             }
@@ -9955,10 +10133,8 @@ fn checked_surface_comparison_fact_at_point(
                 predicate_environment,
                 click_function_environment,
             )
-            .is_ok_and(|lowered| {
-                normalize_direct_atomic_memory_loads(&lowered)
-                    == normalize_direct_atomic_memory_loads(kernel)
-            }) {
+            .is_ok_and(|lowered| matches_kernel(&lowered))
+            {
                 return Ok(candidate);
             }
         }
@@ -10370,24 +10546,23 @@ fn lower_surface_atomic_derivation(
             click_function_environment,
         )?,
     };
-    let mut premise_pairs = derivation
-        .context_premises()
-        .into_iter()
-        .filter_map(|premise| {
-            checked_surface_comparison_fact_at_point(
-                replay,
-                &premise,
-                available,
-                parameters,
-                arguments,
-                state,
-                predicate_environment,
-                click_function_environment,
-            )
-            .ok()
-            .map(|surface| (premise, surface))
-        })
-        .collect::<Vec<_>>();
+    let mut premise_pairs = Vec::new();
+    let mut unexpressed_premises = Vec::new();
+    for premise in derivation.context_premises() {
+        match checked_surface_comparison_fact_at_point(
+            replay,
+            &premise,
+            available,
+            parameters,
+            arguments,
+            state,
+            predicate_environment,
+            click_function_environment,
+        ) {
+            Ok(surface) => premise_pairs.push((premise, surface)),
+            Err(error) => unexpressed_premises.push((premise, error)),
+        }
+    }
     let replay_kind = |pairs: &[(Proposition, ClickProposition)]| {
         let kernel_premises = pairs
             .iter()
@@ -10416,8 +10591,13 @@ fn lower_surface_atomic_derivation(
     ) && replay_kind(&premise_pairs).is_none()
     {
         return Err(ClickError::new(format!(
-            "surface premises do not replay the atomic derivation of {:?}",
+            "surface premises do not replay the atomic derivation of {:?}\nunexpressed derivation premises:\n{}",
             derivation.conclusion(),
+            unexpressed_premises
+                .iter()
+                .map(|(premise, error)| format!("  {premise:?}: {}", error.message()))
+                .collect::<Vec<_>>()
+                .join("\n"),
         )));
     }
     let mut index = 0;
@@ -11468,38 +11648,51 @@ fn record_surface_replay_tactic(
                     let assumptions = assumptions_from_propositions(&surface_available);
                     let surface_unfoldings = surface_available
                         .iter()
-                        .filter_map(|kernel| {
+                        .flat_map(|kernel| {
                             let Proposition::Predicate {
                                 name: kernel_name, ..
                             } = kernel
                             else {
-                                return None;
+                                return Vec::new();
                             };
                             if kernel_name != &name {
-                                return None;
+                                return Vec::new();
                             }
-                            let ClickProposition::PredicateCall {
-                                name: surface_name,
-                                arguments: surface_arguments,
-                            } = replay.surface_propositions.surface(kernel).ok()?
-                            else {
-                                return None;
-                            };
-                            let definition = predicate_environment.get(surface_name)?;
-                            let surface = instantiate_click_predicate_definition(
-                                definition,
-                                surface_arguments,
-                            )
-                            .ok()?;
-                            let unfolded = unfold_predicates_in_proposition(
+                            let Some(unfolded) = unfold_predicates_in_proposition(
                                 predicate_environment,
                                 click_function_environment,
                                 std::slice::from_ref(&name),
                                 kernel,
                                 &assumptions,
                             )
-                            .ok()?;
-                            Some((surface, unfolded))
+                            .ok() else {
+                                return Vec::new();
+                            };
+                            replay
+                                .surface_propositions
+                                .surfaces(kernel)
+                                .filter_map(|surface| {
+                                    let ClickProposition::PredicateCall {
+                                        name: surface_name,
+                                        arguments: surface_arguments,
+                                    } = surface
+                                    else {
+                                        return None;
+                                    };
+                                    let source_point = predicate_call_source_site(surface);
+                                    let definition = predicate_environment.get(surface_name)?;
+                                    let mut surface = instantiate_click_predicate_definition(
+                                        definition,
+                                        surface_arguments,
+                                    )
+                                    .ok()?;
+                                    if let Some(point) = source_point {
+                                        surface =
+                                            surface_with_source_site(&surface, &point).ok()?;
+                                    }
+                                    Some((surface, unfolded.clone()))
+                                })
+                                .collect::<Vec<_>>()
                         })
                         .collect::<Vec<_>>();
                     match unfold_available_predicate_facts(
@@ -13060,8 +13253,7 @@ fn replay_linear_tactics(
                         region: CodeRegionRef::Statement(replay.frontier.next_statement_index),
                         kind: ProgramPointKind::Entry,
                     };
-                    let source_surface =
-                        surface_with_local_source_site(surface_premise, &state, &entry_point)?;
+                    let source_surface = surface_with_source_site(surface_premise, &entry_point)?;
                     replay
                         .surface_propositions
                         .record_lowering(&source_surface, &premise)
@@ -16201,26 +16393,12 @@ fn replay_certified_statement_transition(
     Ok(transition)
 }
 
-fn surface_with_local_source_site(
+fn surface_with_source_site(
     surface: &ClickProposition,
-    state: &CState,
     point: &ProgramPointRef,
 ) -> Result<ClickProposition, ClickError> {
-    let local_names = state
-        .locals()
-        .object_values()
-        .map(|(name, _)| name.to_string())
-        .chain(
-            state
-                .locals()
-                .array_object_values()
-                .map(|(name, _, _)| name.to_string()),
-        )
-        .collect::<BTreeSet<_>>();
     let expression_at_source = |expression: &ContractExpression| {
-        if matches!(expression, ContractExpression::Old(_))
-            || contract_expression_referenced_names(expression).is_disjoint(&local_names)
-        {
+        if matches!(expression, ContractExpression::Old(_)) {
             expression.clone()
         } else {
             ContractExpression::At {
@@ -16308,6 +16486,22 @@ fn surface_with_local_source_site(
         }
     }
     Ok(annotate(surface, &expression_at_source))
+}
+
+fn predicate_call_source_site(surface: &ClickProposition) -> Option<ProgramPointRef> {
+    let ClickProposition::PredicateCall { arguments, .. } = surface else {
+        return None;
+    };
+    arguments.iter().find_map(|argument| {
+        let ContractExpression::At {
+            selector: VisitSelector::ProgramPoint(point),
+            ..
+        } = argument
+        else {
+            return None;
+        };
+        Some(point.clone())
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -16585,8 +16779,7 @@ fn execute_step_from_execution_point(
                 region: CodeRegionRef::Loop(loop_index),
                 kind: ProgramPointKind::Exit,
             };
-            let exit_surface =
-                surface_with_local_source_site(surface, &current_state, &exit_point)?;
+            let exit_surface = surface_with_source_site(surface, &exit_point)?;
             replay
                 .surface_propositions
                 .record_lowering(&exit_surface, target)?;

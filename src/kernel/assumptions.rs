@@ -1364,7 +1364,12 @@ impl Assumptions {
             if !seen.insert((current.clone(), strict_so_far)) {
                 continue;
             }
-            if &current == right && (!require_strict || strict_so_far) {
+            let constant_connection = signed_bitvector_constant(&current)
+                .zip(signed_bitvector_constant(right))
+                .and_then(|(current, right)| (current <= right).then_some(current < right));
+            if (&current == right || constant_connection.is_some())
+                && (!require_strict || strict_so_far || constant_connection == Some(true))
+            {
                 return true;
             }
             for (edge_left, edge_right, edge_strict) in &order_facts {
@@ -1397,8 +1402,12 @@ impl Assumptions {
             if !seen.insert((current.clone(), strict_so_far)) {
                 continue;
             }
-            if self.bitvector_terms_equal_for_transport(&current, right)
-                && (!require_strict || strict_so_far)
+            let constant_connection = signed_bitvector_constant(&current)
+                .zip(signed_bitvector_constant(right))
+                .and_then(|(current, right)| (current <= right).then_some(current < right));
+            if (self.bitvector_terms_equal_for_transport(&current, right)
+                || constant_connection.is_some())
+                && (!require_strict || strict_so_far || constant_connection == Some(true))
             {
                 return true;
             }

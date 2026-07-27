@@ -120,7 +120,7 @@ Notable strict boundaries include:
 
 Current focused validation:
 
-- 404 library tests pass;
+- 406 library tests pass;
 - 7 `click-profile` binary tests pass;
 - the `execute_rest` order/alias recursion regression passes in an isolated
   mdtest process;
@@ -220,11 +220,16 @@ conditional universal order facts can participate in a transitive proof even
 when the instantiated variable has the same internal id as the quantifier
 binder.
 
-The full mdtest sweep now advances to `bubble_sort3_two_pass_sorted.md`. Its
-final smart proof succeeds internally but surface lowering cannot yet replay
-the quantified atomic derivation from the selected explicit premises. Treat
-that as the next certificate-lowering frontier; it is separate from the fixed
-`bubble_pass3` loop certificate.
+`bubble_sort3_two_pass_sorted.md` now passes. Forward execution-proof traversal
+retains the exact surface spellings and program-point snapshots exported by
+loops, predicate unfolding preserves the source-site scope of historical
+array reads, and quantified replay handles alpha-renamed binders without
+ambient search. The kernel order graph can also finish a symbolic bound chain
+through an intrinsic signed-constant comparison, which certifies the snapshot
+loadability used by this example.
+
+The focused bubble-sort regressions pass; a full mdtest sweep has not yet been
+rerun, so the next corpus frontier is not currently known.
 
 This sweep fixed two expander correctness bugs. Grouped expansion now preserves
 one closer per claim even when multiple claims end in structurally identical
