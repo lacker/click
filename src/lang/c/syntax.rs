@@ -1238,6 +1238,29 @@ impl Parser {
     }
 
     fn parse_unary(&mut self) -> Result<C0Expression, C0SyntaxError> {
+        if self.peek() == Some(&Token::Minus) {
+            self.position += 1;
+            if let Some(Token::Number(number)) = self.peek().cloned() {
+                self.position += 1;
+                let magnitude = number.parse::<u64>().map_err(|_| {
+                    C0SyntaxError::new(format!(
+                        "negative int32 literal `-{number}` is out of range"
+                    ))
+                })?;
+                if magnitude > (i32::MAX as u64) + 1 {
+                    return Err(C0SyntaxError::new(format!(
+                        "negative int32 literal `-{number}` is out of range"
+                    )));
+                }
+                let value = (-(magnitude as i64) as i32) as u32;
+                return Ok(C0Expression::Int32Literal(value));
+            }
+            return Ok(C0Expression::Subtract(
+                Box::new(C0Expression::Int32Literal(0)),
+                Box::new(self.parse_unary()?),
+            ));
+        }
+
         if self.peek() == Some(&Token::Star) {
             self.position += 1;
             return Ok(C0Expression::Load(Box::new(self.parse_unary()?)));

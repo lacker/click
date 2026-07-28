@@ -204,6 +204,91 @@ fn kernel_skip_preserves_state_without_facts_or_obligations() {
 }
 
 #[test]
+fn c0_syntax_parses_negative_literals_and_unary_minus() {
+    let literal = syntax::parse_function(
+        r#"
+        int32 negative_one() {
+            return -1;
+        }
+        "#,
+    )
+    .expect("negative literals should parse");
+    assert!(matches!(
+        literal.body(),
+        syntax::C0Statement::Return(syntax::C0Expression::Int32Literal(value))
+            if *value == (-1i32) as u32
+    ));
+
+    let minimum = syntax::parse_function(
+        r#"
+        int32 minimum() {
+            return -2147483648;
+        }
+        "#,
+    )
+    .expect("the minimum int32 literal should parse");
+    assert!(matches!(
+        minimum.body(),
+        syntax::C0Statement::Return(syntax::C0Expression::Int32Literal(0x8000_0000))
+    ));
+
+    let negation = syntax::parse_function(
+        r#"
+        int32 negate(int32 value) {
+            return -value;
+        }
+        "#,
+    )
+    .expect("general unary minus should parse");
+    assert!(matches!(
+        negation.body(),
+        syntax::C0Statement::Return(syntax::C0Expression::Subtract(left, right))
+            if matches!(
+                left.as_ref(),
+                syntax::C0Expression::Int32Literal(0)
+            ) && matches!(
+                right.as_ref(),
+                syntax::C0Expression::Variable(name) if name == "value"
+            )
+    ));
+}
+
+#[test]
+fn c0_unary_minus_preserves_signed_overflow_semantics() {
+    let function = syntax::parse_function(
+        r#"
+        int32 negate(int32 value) {
+            return -value;
+        }
+        "#,
+    )
+    .expect("unary minus function should parse");
+    let state = crate::kernel::CState::new().with_local(
+        "value",
+        crate::kernel::int32(crate::kernel::Bitvector32Term::Constant(0x8000_0000)),
+    );
+    let theorem = crate::kernel::prove_symbolic_c_execution(
+        state.clone(),
+        function.body_kernel_statement(),
+        crate::kernel::Assumptions::new(),
+    )
+    .expect("concrete signed overflow should have an execution theorem");
+    let mut proposition = theorem.proposition();
+    while let crate::kernel::Proposition::Implies(_, body) = proposition {
+        proposition = body;
+    }
+    assert!(matches!(
+        proposition,
+        crate::kernel::Proposition::CStatementExecutes {
+            outcome: crate::kernel::CStatementOutcome::UndefinedBehavior(
+                crate::kernel::CUndefinedBehavior::SignedOverflow
+            ),
+            ..
+        }
+    ));
+}
+
+#[test]
 fn c0_syntax_targets_kernel_max_body() {
     let function = syntax::parse_function(
         r#"
