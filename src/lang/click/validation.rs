@@ -1192,6 +1192,20 @@ fn collect_resource_fact_scalar_assumptions_from_proposition(
             }
             Ok(())
         }
+        ClickProposition::At { proposition, .. } => {
+            collect_resource_fact_scalar_assumptions_from_proposition(
+                proposition,
+                predicate_definitions,
+                values,
+                array_refs,
+                memory,
+                predicate_environment,
+                click_function_environment,
+                visited_predicates,
+                assumptions,
+                resource_name,
+            )
+        }
         ClickProposition::Separate { .. } | ClickProposition::Contains { .. } => Ok(()),
         ClickProposition::And(left, right) => {
             collect_resource_fact_scalar_assumptions_from_proposition(
@@ -1353,6 +1367,15 @@ fn collect_resource_fact_reads_from_proposition(
                 resource_name,
             )
         }
+        ClickProposition::At { proposition, .. } => collect_resource_fact_reads_from_proposition(
+            proposition,
+            predicate_definitions,
+            click_function_definitions,
+            visited_predicates,
+            visited_functions,
+            reads,
+            resource_name,
+        ),
         ClickProposition::And(left, right)
         | ClickProposition::Or(left, right)
         | ClickProposition::Implies(left, right) => {
@@ -2171,6 +2194,9 @@ fn validate_proposition_expression_types(
             validate_proposition_expression_types(right, variables, click_functions, context)
         }
         ClickProposition::Not(body)
+        | ClickProposition::At {
+            proposition: body, ..
+        }
         | ClickProposition::ForAll { body, .. }
         | ClickProposition::Exists { body, .. } => {
             validate_proposition_expression_types(body, variables, click_functions, context)
@@ -2837,6 +2863,9 @@ fn validate_predicate_calls_in_proposition(
             validate_predicate_calls_in_proposition(right, predicates, click_functions, context)
         }
         ClickProposition::Not(body)
+        | ClickProposition::At {
+            proposition: body, ..
+        }
         | ClickProposition::ForAll { body, .. }
         | ClickProposition::Exists { body, .. } => {
             validate_predicate_calls_in_proposition(body, predicates, click_functions, context)
@@ -3035,6 +3064,9 @@ fn validate_if_condition_proposition(
             validate_if_condition_proposition(right, click_functions, context)
         }
         ClickProposition::Not(body)
+        | ClickProposition::At {
+            proposition: body, ..
+        }
         | ClickProposition::ForAll { body, .. }
         | ClickProposition::Exists { body, .. } => {
             validate_if_condition_proposition(body, click_functions, context)
@@ -3134,6 +3166,9 @@ fn proposition_contains_old_expression(proposition: &ClickProposition) -> bool {
         }
         ClickProposition::Loadable { segment } => contract_segment_contains_old_expression(segment),
         ClickProposition::Defined { expression } => contains_old_expression(expression),
+        ClickProposition::At { proposition, .. } => {
+            proposition_contains_old_expression(proposition)
+        }
         ClickProposition::And(left, right)
         | ClickProposition::Or(left, right)
         | ClickProposition::Implies(left, right) => {
@@ -3236,6 +3271,7 @@ pub(super) fn proposition_contains_at_expression(proposition: &ClickProposition)
         }
         ClickProposition::Loadable { segment } => contract_segment_contains_at_expression(segment),
         ClickProposition::Defined { expression } => contains_at_expression(expression),
+        ClickProposition::At { .. } => true,
         ClickProposition::And(left, right)
         | ClickProposition::Or(left, right)
         | ClickProposition::Implies(left, right) => {
@@ -3363,6 +3399,9 @@ fn collect_click_function_calls_in_proposition(
         }
         ClickProposition::Defined { expression } => {
             collect_click_function_calls(expression, calls);
+        }
+        ClickProposition::At { proposition, .. } => {
+            collect_click_function_calls_in_proposition(proposition, calls);
         }
         ClickProposition::And(left, right)
         | ClickProposition::Or(left, right)

@@ -3743,6 +3743,43 @@ fn smart_apply_preserves_statement_snapshots_in_explicit_premises() {
 }
 
 #[test]
+fn statement_snapshots_support_complete_loadability_propositions() {
+    let c_source = r#"
+            int32 store_second_return_first(int32 p[2]) {
+                p[1] = 9;
+                return p[0];
+            }
+        "#;
+    let click_source = r#"
+            verifying "snapshot_loadable.c";
+
+            int32 store_second_return_first(int32 p[2]) {
+                consumes p[0..2];
+                mutable p[1..2];
+                produces p[0..2];
+                ensures result == p[0];
+            } by {
+                execute_step();
+                have at(statement(0).entry, loadable(p[0..2])) by {
+                    assumption();
+                }
+                transport(
+                    at(statement(0).entry, loadable(p[0..2])),
+                    loadable(p[0..2])
+                ) using {
+                    fact at(statement(0).entry, loadable(p[0..2]));
+                }
+                execute_rest();
+                frame();
+                simp();
+            }
+        "#;
+
+    verify_c0_sources(click_source, &[("snapshot_loadable.c", c_source)])
+        .expect("a complete loadability proposition should lower and transport from a snapshot");
+}
+
+#[test]
 fn smart_apply_uses_ambient_loadability_only_for_argument_lowering() {
     let c_source = r#"
             struct pointer_pair {

@@ -7150,17 +7150,9 @@ fn plan_explicit_fact_transport(
             .iter()
             .fold(selected_assumptions, |assumptions, fact| {
                 assumptions.assume_proposition(fact.proposition().clone())
-            });
-        let Some(theorem) =
-            prove_c_condition_fact_transport(source, state.memory(), &transport_assumptions)
-        else {
-            return false;
-        };
-        let Proposition::Implies(_, conclusion) = theorem.proposition() else {
-            unreachable!("condition transport must produce an implication")
-        };
-        normalize_direct_atomic_memory_loads(conclusion)
-            == normalize_direct_atomic_memory_loads(target)
+            })
+            .assume_proposition(source.clone());
+        certified_fact_transport_reaches(source, target, state.memory(), &transport_assumptions)
     };
 
     if !replays(&selected) {
@@ -7207,6 +7199,24 @@ fn plan_explicit_fact_transport(
         }
     }
     Ok(selected.into_iter().map(|(_, surface)| surface).collect())
+}
+
+fn certified_fact_transport_reaches(
+    source: &Proposition,
+    target: &Proposition,
+    after: &CMemory,
+    assumptions: &Assumptions,
+) -> bool {
+    if matches!(target, Proposition::CMemoryLoadable { .. }) {
+        return assumptions.derive_atomic_proposition(target).is_some();
+    }
+    let Some(theorem) = prove_c_condition_fact_transport(source, after, assumptions) else {
+        return false;
+    };
+    let Proposition::Implies(_, conclusion) = theorem.proposition() else {
+        unreachable!("condition transport must produce an implication")
+    };
+    normalize_direct_atomic_memory_loads(conclusion) == normalize_direct_atomic_memory_loads(target)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -11543,78 +11553,100 @@ fn certify_outcome_simp_have(
             continue;
         }
 
-        let Proposition::CMemoryLoadable {
-            base: target_base,
-            bytes: target_bytes,
-            ..
-        } = &obligation
-        else {
+        let Proposition::CMemoryLoadable { .. } = &obligation else {
             unreachable!("surface lowering obligations are loadability propositions")
         };
-        let source_memories = certified_available
-            .iter()
-            .filter_map(|candidate| match candidate {
-                Proposition::CMemoryLoadable { memory, .. } => Some(memory.clone()),
-                _ => None,
-            })
-            .fold(Vec::new(), |mut memories, memory| {
-                if !memories.contains(&memory) {
-                    memories.push(memory);
-                }
-                memories
-            });
-        let transported = source_memories.iter().find_map(|source_memory| {
-            let source = Proposition::CMemoryLoadable {
-                memory: source_memory.clone(),
-                base: target_base.clone(),
-                bytes: target_bytes.clone(),
-            };
-            let source_context = certified_available
-                .iter()
-                .filter(|fact| {
-                    matches!(fact, Proposition::ConditionIs(_, _))
-                        || matches!(fact, Proposition::CMemoryLoadable { memory, .. }
-                            if memory.has_same_snapshot_markers(source_memory))
-                })
+        let source_selectors = std::iter::once(VisitSelector::ProgramPoint(ProgramPointRef {
+            region: CodeRegionRef::Function,
+            kind: ProgramPointKind::Entry,
+        }))
+        .chain(
+            replay
+                .program_point_states
+                .keys()
+                .rev()
                 .cloned()
-                .collect::<Vec<_>>();
-            let derivation = assumptions_from_propositions(&source_context)
-                .derive_atomic_proposition(&source)?;
-            let transition_facts = fact_transport_transition_facts(&replay.effect_facts, &source);
-            let transport_assumptions = transition_facts.iter().fold(
-                assumptions_from_propositions(&certified_available),
-                |assumptions, fact| assumptions.assume_proposition(fact.proposition().clone()),
-            );
-            let theorem = prove_c_condition_fact_transport(
-                &source,
-                post_state.memory(),
-                &transport_assumptions,
-            )?;
-            let Proposition::Implies(_, conclusion) = theorem.proposition() else {
-                return None;
-            };
-            (normalize_direct_atomic_memory_loads(conclusion)
-                == normalize_direct_atomic_memory_loads(&obligation))
-            .then(|| (source, derivation, transition_facts))
-        });
-        let Some((source, source_derivation, transition_facts)) = transported else {
+                .map(VisitSelector::ProgramPoint),
+        );
+        let source_candidates = source_selectors
+            .filter_map(|selector| {
+                let surface = ClickProposition::At {
+                    selector,
+                    proposition: Box::new(surface_obligation.clone()),
+                };
+                let source = lower_outcome_proposition_with_program_points(
+                    parameters,
+                    arguments,
+                    pre_state,
+                    post_state,
+                    result,
+                    &certified_available,
+                    &surface,
+                    predicate_environment,
+                    click_function_environment,
+                    &replay.program_point_states,
+                )
+                .ok()?;
+                matches!(source, Proposition::CMemoryLoadable { .. }).then_some((source, surface))
+            })
+            .fold(Vec::new(), |mut candidates, candidate| {
+                if !candidates.iter().any(|(source, _)| source == &candidate.0) {
+                    candidates.push(candidate);
+                }
+                candidates
+            });
+        let source_candidate_count = source_candidates.len();
+        let mut derivable_source_count = 0;
+        let mut transportable_source_count = 0;
+        let transported = source_candidates
+            .into_iter()
+            .find_map(|(source, surface_source)| {
+                let Proposition::CMemoryLoadable {
+                    memory: source_memory,
+                    ..
+                } = &source
+                else {
+                    unreachable!("loadability source candidates are loadability propositions")
+                };
+                let source_context = certified_available
+                    .iter()
+                    .filter(|fact| {
+                        matches!(fact, Proposition::ConditionIs(_, _))
+                            || matches!(fact, Proposition::CMemoryLoadable { memory, .. }
+                            if memory.has_same_snapshot_markers(source_memory))
+                    })
+                    .cloned()
+                    .collect::<Vec<_>>();
+                let derivation = assumptions_from_propositions(&source_context)
+                    .derive_atomic_proposition(&source)?;
+                derivable_source_count += 1;
+                let transition_facts =
+                    fact_transport_transition_facts(&replay.effect_facts, &source);
+                let transport_assumptions = transition_facts
+                    .iter()
+                    .fold(
+                        assumptions_from_propositions(&certified_available),
+                        |assumptions, fact| {
+                            assumptions.assume_proposition(fact.proposition().clone())
+                        },
+                    )
+                    .assume_proposition(source.clone());
+                let reaches = certified_fact_transport_reaches(
+                    &source,
+                    &obligation,
+                    post_state.memory(),
+                    &transport_assumptions,
+                );
+                transportable_source_count += usize::from(reaches);
+                reaches.then(|| (source, surface_source, derivation, transition_facts))
+            });
+        let Some((source, surface_source, source_derivation, transition_facts)) = transported
+        else {
             return Err(ClickError::new(format!(
-                "`{claim_label}` path {path_index}, tactic {tactic_index}: loadability obligation has neither a direct proof nor a certified transport\n  obligation: {obligation:?}"
+                "`{claim_label}` path {path_index}, tactic {tactic_index}: loadability obligation has neither a direct proof nor a certified transport\n  surface obligation: {}\n  source candidates: {source_candidate_count}, derivable: {derivable_source_count}, transportable: {transportable_source_count}\n  obligation: {obligation:?}",
+                describe_click_proposition(&surface_obligation),
             )));
         };
-        let surface_source = checked_surface_fact_at_outcome(
-            replay,
-            &source,
-            SurfaceFactMatch::CanonicalExact,
-            &certified_available,
-            parameters,
-            arguments,
-            pre_state,
-            post_state,
-            result,
-            predicate_environment,
-            click_function_environment,
-        )?;
         if !exact_fact_is_available(&source, &certified_available) {
             let (_, source_proof) = lower_surface_atomic_derivation(
                 replay,
@@ -11673,26 +11705,17 @@ fn certify_outcome_simp_have(
             .iter()
             .fold(transport_assumptions, |assumptions, fact| {
                 assumptions.assume_proposition(fact.proposition().clone())
-            });
-        let theorem = prove_c_condition_fact_transport(
+            })
+            .assume_proposition(source.clone());
+        if !certified_fact_transport_reaches(
             &source,
+            &obligation,
             post_state.memory(),
             &transport_assumptions,
-        )
-        .ok_or_else(|| {
-            ClickError::new(format!(
+        ) {
+            return Err(ClickError::new(format!(
                 "`{claim_label}` path {path_index}, tactic {tactic_index}: explicit loadability source does not replay its certified transport"
-            ))
-        })?;
-        let Proposition::Implies(_, conclusion) = theorem.proposition() else {
-            unreachable!("condition transport must produce an implication")
-        };
-        if normalize_direct_atomic_memory_loads(conclusion)
-            != normalize_direct_atomic_memory_loads(&obligation)
-        {
-            return Err(ClickError::new(
-                "explicit loadability transport produced a different target",
-            ));
+            )));
         }
         surface_tactics.push(ProofTactic::TransportUsing {
             source: surface_source.clone(),
@@ -13977,27 +14000,18 @@ fn replay_linear_tactics(
                     .iter()
                     .fold(selected_assumptions, |assumptions, fact| {
                         assumptions.assume_proposition(fact.proposition().clone())
-                    });
-                let theorem = prove_c_condition_fact_transport(
+                    })
+                    .assume_proposition(source.clone());
+                if !certified_fact_transport_reaches(
                     &source,
+                    &target,
                     state.memory(),
                     &transport_assumptions,
-                )
-                .ok_or_else(|| {
-                    ClickError::new(format!(
-                        "`{claim_label}` tactic {tactic_index}: no certified frame transport applies to the exact source fact\n  source: {source:?}\n  current memory: {:?}\n  effect facts: {:?}",
-                        state.memory(), replay.effect_facts
-                    ))
-                })?;
-                let Proposition::Implies(_, conclusion) = theorem.proposition() else {
-                    unreachable!("condition transport must produce an implication")
-                };
-                let transported = normalize_direct_atomic_memory_loads(conclusion);
-                let requested = normalize_direct_atomic_memory_loads(&target);
-                if transported != requested {
+                ) {
                     return Err(ClickError::new(format!(
-                        "`{claim_label}` tactic {tactic_index}: transported fact does not equal the requested target\n  transported: {:?}\n  requested: {:?}",
-                        transported, requested
+                        "`{claim_label}` tactic {tactic_index}: no certified frame transport applies to the exact source fact\n  source: {source:?}\n  current memory: {:?}\n  effect facts: {:?}",
+                        state.memory(),
+                        replay.effect_facts
                     )));
                 }
                 if !requirement_pure_facts.contains(&target) {
@@ -17231,6 +17245,17 @@ fn surface_with_source_site(
     surface: &ClickProposition,
     point: &ProgramPointRef,
 ) -> Result<ClickProposition, ClickError> {
+    if matches!(
+        surface,
+        ClickProposition::Loadable { .. }
+            | ClickProposition::Separate { .. }
+            | ClickProposition::Contains { .. }
+    ) {
+        return Ok(ClickProposition::At {
+            selector: VisitSelector::ProgramPoint(point.clone()),
+            proposition: Box::new(surface.clone()),
+        });
+    }
     let expression_at_source = |expression: &ContractExpression| {
         if matches!(expression, ContractExpression::Old(_)) {
             expression.clone()
@@ -17261,6 +17286,7 @@ fn surface_with_source_site(
             ClickProposition::Defined { expression } => ClickProposition::Defined {
                 expression: expression_at_source(expression),
             },
+            ClickProposition::At { .. } => proposition.clone(),
             ClickProposition::And(left, right) => ClickProposition::And(
                 Box::new(annotate(left, expression_at_source)),
                 Box::new(annotate(right, expression_at_source)),

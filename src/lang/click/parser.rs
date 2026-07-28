@@ -1397,6 +1397,24 @@ impl Parser {
             self.position = start;
         }
 
+        if self.peek_ident() == Some("at") && self.peek_next() == Some(&Token::LParen) {
+            let start = self.position;
+            self.position += 2;
+            let proposition_at_point = self.parse_visit_selector().and_then(|selector| {
+                self.expect(Token::Comma)?;
+                let proposition = self.parse_proposition()?;
+                self.expect(Token::RParen)?;
+                Ok(ClickProposition::At {
+                    selector,
+                    proposition: Box::new(proposition),
+                })
+            });
+            if proposition_at_point.is_ok() {
+                return proposition_at_point;
+            }
+            self.position = start;
+        }
+
         if self.peek_ident() == Some("separate") && self.peek_next() == Some(&Token::LParen) {
             let (left, right) = self.parse_resource_subject_pair("separate")?;
             return Ok(ClickProposition::Separate { left, right });

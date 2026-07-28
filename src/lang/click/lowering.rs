@@ -203,6 +203,7 @@ fn proposition_supported_in_opaque_contract(proposition: &ClickProposition) -> b
         | ClickProposition::Contains { .. }
         | ClickProposition::Loadable { .. }
         | ClickProposition::Defined { .. } => true,
+        ClickProposition::At { .. } => false,
         ClickProposition::And(left, right)
         | ClickProposition::Or(left, right)
         | ClickProposition::Implies(left, right) => {
@@ -468,6 +469,9 @@ impl AnnotationLowerer<'_> {
             ClickProposition::Defined { expression } => Ok(SpecProposition::Defined(
                 self.lower_contract_expression_to_spec(expression, environment)?,
             )),
+            ClickProposition::At { .. } => {
+                Err("`at(...)` propositions are proof-script snapshots".to_string())
+            }
             ClickProposition::And(left, right) => Ok(SpecProposition::And(
                 Box::new(self.click_proposition_to_spec_proposition(left, environment)?),
                 Box::new(self.click_proposition_to_spec_proposition(right, environment)?),
@@ -1544,6 +1548,18 @@ pub(super) fn unfold_click_predicates_in_proposition_with_active(
         ClickProposition::Defined { expression } => Ok(ClickProposition::Defined {
             expression: expression.clone(),
         }),
+        ClickProposition::At {
+            selector,
+            proposition,
+        } => Ok(ClickProposition::At {
+            selector: selector.clone(),
+            proposition: Box::new(unfold_click_predicates_in_proposition_with_active(
+                predicate_environment,
+                unfolded_predicates,
+                proposition,
+                active,
+            )?),
+        }),
         ClickProposition::And(left, right) => Ok(ClickProposition::And(
             Box::new(unfold_click_predicates_in_proposition_with_active(
                 predicate_environment,
@@ -1704,6 +1720,13 @@ pub(super) fn substitute_click_proposition(
         }),
         ClickProposition::Defined { expression } => Ok(ClickProposition::Defined {
             expression: substitute_contract_expression(expression, substitutions)?,
+        }),
+        ClickProposition::At {
+            selector,
+            proposition,
+        } => Ok(ClickProposition::At {
+            selector: selector.clone(),
+            proposition: Box::new(substitute_click_proposition(proposition, substitutions)?),
         }),
         ClickProposition::And(left, right) => Ok(ClickProposition::And(
             Box::new(substitute_click_proposition(left, substitutions)?),
@@ -2150,6 +2173,16 @@ pub(super) fn apply_contract_let_expressions_to_proposition(
         ClickProposition::Defined { expression } => Ok(ClickProposition::Defined {
             expression: apply_contract_lets_to_expression(expression, bindings)?,
         }),
+        ClickProposition::At {
+            selector,
+            proposition,
+        } => Ok(ClickProposition::At {
+            selector,
+            proposition: Box::new(apply_contract_let_expressions_to_proposition(
+                *proposition,
+                bindings,
+            )?),
+        }),
         ClickProposition::And(left, right) => Ok(ClickProposition::And(
             Box::new(apply_contract_let_expressions_to_proposition(
                 *left, bindings,
@@ -2417,6 +2450,9 @@ pub(super) fn collect_click_proposition_referenced_names(
         }
         ClickProposition::Defined { expression } => {
             collect_contract_expression_referenced_names(expression, names);
+        }
+        ClickProposition::At { proposition, .. } => {
+            collect_click_proposition_referenced_names(proposition, names);
         }
         ClickProposition::And(left, right)
         | ClickProposition::Or(left, right)
@@ -2909,6 +2945,7 @@ pub(super) fn click_proposition_to_c_expression(
         | ClickProposition::Contains { .. }
         | ClickProposition::Loadable { .. }
         | ClickProposition::Defined { .. }
+        | ClickProposition::At { .. }
         | ClickProposition::PredicateCall { .. } => None,
     }
 }
@@ -4201,6 +4238,9 @@ impl KernelPropositionLowerer {
                     ))
                 })
             }
+            ClickProposition::At { .. } => Err(ClickError::new(
+                "`at(...)` propositions are not available in function requirements",
+            )),
             ClickProposition::And(left, right) => Ok(Proposition::And(
                 Box::new(self.lower_requirement_proposition(left)?),
                 Box::new(self.lower_requirement_proposition(right)?),

@@ -93,8 +93,9 @@ Common tactics include:
 - `normalize();`: close the current pure goal by context-free normalization.
 - `rewrite(equality);`: perform one explicit equality substitution in the
   current pure goal.
-- `transport(source, target);`: apply one explicit frame-transport theorem
-  between memory snapshots.
+- `transport(source, target);`: transport an exact fact between memory
+  snapshots using certified execution effects. This covers framed conditions
+  and structural memory facts such as `loadable(...)`.
 - `frame();`: check a certified write summary against an effect claim using
   exact available range bounds. `by frame` is the smart contextual form.
 
@@ -106,8 +107,10 @@ The end of the `by { ... }` block checks the claim.
 
 For proofs that refer to a region more than once, attach a stable label with a
 structural clause such as `for statement(4) as update { ... }`, then write
-`execute_until(update)` and `at(update.entry, expression)`. Numeric statement
-IDs are global source-preorder IDs and remain useful for declaring the label.
+`execute_until(update)` and `at(update.entry, expression)`. In a proposition
+position, the same selector can snapshot a complete claim:
+`at(update.entry, loadable(p[0..n]))`. Numeric statement IDs are global
+source-preorder IDs and remain useful for declaring the label.
 
 Existential proofs also use:
 

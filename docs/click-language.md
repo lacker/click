@@ -166,7 +166,9 @@ For straight-line execution, `step()` is the simple form: it accepts only exact
 or context-free execution prerequisites and does not automatically transport
 facts between memory snapshots. `execute_step()` is the smart automated
 convenience form. An explicit `transport(source, target)` applies
-one certified frame-transport rule between two stated atomic facts.
+the certified transport rule for the stated atomic fact family. Conditions use
+the frame rule; structural facts such as `loadable(...)` are re-derived from
+the exact source plus certified execution effects.
 
 When one transition needs contextual pure facts, list them explicitly:
 
@@ -219,7 +221,8 @@ annotations, and `at(statement(N).entry|exit, ...)` snapshots.
 A structural clause may give a statement or loop a stable name with
 `for statement(N) as label` or `for loop(N) as label`. Prefer that label in
 proof scripts: `execute_until(label)`, `advance(label.exit)`, and
-`at(label.entry, expression)` all resolve to the same code region.
+`at(label.entry, expression_or_proposition)` all resolve to the same code
+region.
 
 `apply(...)` instantiates a verified theorem, requires each proposition
 `requires` clause as an exact current pure fact or a context-free tautology,
@@ -465,16 +468,23 @@ See [click-core.md](click-core.md).
 ## `at(...)`
 
 `at(selector, expression)` evaluates a contract expression at a selected visit
-to a program point. The initial supported selectors are deliberately narrow:
+to a program point. In a proposition position, `at(selector, proposition)`
+evaluates the complete proposition at that visit:
 
 ```click
 at(function.entry, x)
 at(loop_label.entry, x)
 at(statement(0).entry, x)
 at(statement(0).exit, x)
+at(statement(0).entry, p[0] == 7)
+at(statement(0).entry, loadable(p[0..n]))
 ```
 
-`at(function.entry, expression)` is equivalent to `old(expression)`.
+`at(function.entry, expression)` is equivalent to `old(expression)`. The
+proposition form snapshots every state-relative part of the proposition
+together. This matters for propositions such as `loadable(...)`: both the
+address expression and the memory in which it is loadable come from the
+selected state.
 
 The selected snapshot is a complete recorded C state, not only a memory
 snapshot. Inside `at(...)`, reassigned parameters and declared scalar, pointer,
@@ -488,9 +498,9 @@ preservation checks. Inside an explicit `preserve` proof, the same spelling is
 scoped to the fresh arbitrary loop-head visit whose body iteration is being
 proved.
 
-`at(statement(N).entry, expression)` and
-`at(statement(N).exit, expression)` are currently supported in explicit
-proof-script claims after deterministic execution records that statement point.
+The expression and proposition forms of `at(statement(N).entry, ...)` and
+`at(statement(N).exit, ...)` are currently supported in explicit proof-script
+claims after deterministic execution records that statement point.
 `execute_step()`, `execute_until(...)`, and `execute_rest()` all record every
 deterministic statement boundary they cross. Executing an annotated loop uses
 its verified abstract rule and records both `at(loop_label.entry, expression)`

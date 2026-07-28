@@ -1062,6 +1062,9 @@ pub(super) fn lower_predicate_body_proposition_with_environment(
                 format!("`defined(...)` elaboration hit execution limit {limit:?}")
             })
         }
+        ClickProposition::At { .. } => {
+            Err("`at(...)` is not available in predicate definitions".to_string())
+        }
         ClickProposition::And(left, right) => Ok(Proposition::And(
             Box::new(lower_predicate_body_proposition_with_environment(
                 values,
@@ -4194,6 +4197,29 @@ pub(super) fn lower_outcome_proposition_with_environment(
             c_expression_definedness_proposition(&state, &expression).map_err(|limit| {
                 format!("`defined(...)` elaboration hit execution limit {limit:?}")
             })
+        }
+        ClickProposition::At {
+            selector,
+            proposition,
+        } => {
+            let snapshot_state =
+                concrete_program_point_state(selector, pre_state, program_point_states)?;
+            let (mut snapshot_values, snapshot_array_refs) =
+                contract_environment_at_state(values, array_refs, snapshot_state);
+            lower_outcome_proposition_with_environment(
+                &mut snapshot_values,
+                &snapshot_array_refs,
+                pre_state,
+                snapshot_state,
+                None,
+                assumptions,
+                proposition,
+                next_variable,
+                predicate_environment,
+                click_function_environment,
+                program_point_states,
+                active_functions,
+            )
         }
         ClickProposition::And(left, right) => Ok(Proposition::And(
             Box::new(lower_outcome_proposition_with_environment(

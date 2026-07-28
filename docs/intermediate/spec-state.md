@@ -48,7 +48,8 @@ Click already has a few spec-only mechanisms:
 - `old(...)` lets specs refer to function-entry state.
 - `at(statement(N).entry, ...)` and `at(statement(N).exit, ...)` can name
   complete statement-state snapshots recorded by deterministic proof
-  execution, including memory and C local values.
+  execution, including memory and C local values. Their second argument may be
+  an expression or a complete proposition such as `loadable(p[0..n])`.
 - labels give names to requirements and guarantees.
 - predicates package abstract facts.
 - `let ... where` introduces immutable witnesses in proposition clauses.

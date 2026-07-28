@@ -178,8 +178,9 @@ Current tactics:
 - `rewrite(equality);`: rewrite a pure goal once using an exact available int32
   equality whose left side is a variable.
 - `transport(source, target);`: require an exact source fact and apply one
-  certified atomic frame-transport rule to establish the stated target fact at
-  the current statement frontier.
+  certified atomic transport rule to establish the stated target fact at the
+  current statement frontier. Conditions use framing; structural memory facts
+  such as `loadable(...)` use the certified execution effects.
 - `simp();`: request smart contextual simplification when the proof block is
   checked.
 
@@ -393,6 +394,8 @@ at(function.entry, x)
 at(loop_name.entry, x)
 at(statement(0).entry, x)
 at(statement(0).exit, x)
+at(statement(0).entry, p[0] == 7)
+at(statement(0).entry, loadable(p[0..n]))
 ```
 
 The initial `loop_name.entry` support is available in invariants on that loop
@@ -402,11 +405,14 @@ Statement entry and exit snapshots are currently recorded by deterministic
 proof execution. `execute_step()`, `execute_until(...)`, and `execute_rest()`
 record each deterministic boundary they cross. An `at(...)` expression reads
 memory, reassigned parameters, and declared scalar, pointer, or array locals
-from the selected state. Branch entries can have a unique snapshot. An explicit
-loop `preserve` proof binds `at(loop_name.entry, ...)` to its fresh arbitrary
-iteration state. Executing a verified loop records its unique abstract exit as
-`at(loop_name.exit, ...)`. Historical iteration visits still require a future
-selection model.
+from the selected state. `at(selector, proposition)` instead snapshots the
+complete proposition; use this form for state-relative facts such as
+`loadable(...)`, where snapshotting only the segment expression would leave the
+memory component at the current state. Branch entries can have a unique
+snapshot. An explicit loop `preserve` proof binds
+`at(loop_name.entry, ...)` to its fresh arbitrary iteration state. Executing a
+verified loop records its unique abstract exit as `at(loop_name.exit, ...)`.
+Historical iteration visits still require a future selection model.
 
 `assert` is a one-shot spec check at the selected statement code region. It
 currently accepts the executable proposition fragment over current-state C

@@ -289,6 +289,10 @@ pub enum ClickProposition {
     Defined {
         expression: ContractExpression,
     },
+    At {
+        selector: VisitSelector,
+        proposition: Box<ClickProposition>,
+    },
     And(Box<ClickProposition>, Box<ClickProposition>),
     Or(Box<ClickProposition>, Box<ClickProposition>),
     Not(Box<ClickProposition>),

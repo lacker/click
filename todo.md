@@ -38,6 +38,12 @@ The certificate boundary currently covers:
 - whole-loop and step structural effects;
 - statement execution, loop summaries, framing, and fact transport.
 
+Historical pure facts use one source form for both expressions and complete
+propositions. `at(point, expression)` snapshots a value;
+`at(point, proposition)` snapshots every state-relative component of an atomic
+or compound claim, including the memory and range expressions in
+`loadable(...)`.
+
 `ProofSite` is the shared identity used by verification, profiling, selection,
 and rewriting. It covers function claims, theorem claims, loop phases, and
 structural items.
@@ -141,7 +147,7 @@ Notable strict boundaries include:
 
 Current focused validation:
 
-- 407 library tests pass;
+- 415 library tests pass;
 - 7 `click-profile` binary tests pass;
 - 6 `click-audit` binary tests pass;
 - the `execute_rest` order/alias recursion regression passes in an isolated
@@ -154,6 +160,15 @@ Current focused validation:
 
 There is no presently reproduced expansion or profiler-coordinate correctness
 failure.
+
+The grouped loadability boundary now lowers the complete source proposition at
+an exact `function.entry` or recorded program point. It no longer constructs a
+candidate by replacing only the memory term of a current proposition. Explicit
+loadability transport re-derives its target from the exact source plus
+certified execution effects; condition transport continues to use the
+condition frame theorem. Symbolic subranges also use the direct element rule:
+`split <= index < len` selects cell `index` from `[split..len]` without
+byte-scaled search.
 
 General condition solving now detects re-entry of the same condition query.
 Without that guard, order facts over memory-loaded indices could cycle through
@@ -329,6 +344,14 @@ A fresh two-minute profile reports no slow simple tactics, a 5.78-second smart
 `simp` at line 398, a 2.08-second smart `execute_step` at line 387, a
 7.91-second smart `execute_until` at line 459, and a timeout while line 478's
 smart `execute_until` is active.
+
+The line 398 `vector_push_first` grouped `simp` now expands successfully with a
+180-second watchdog (about 51 seconds in the focused release run). Its
+certificate names the historical loadability source with
+`at(function.entry, loadable(...))` and transports that exact proposition into
+the current memory. A focused `owned-vector` baseline verification still
+exceeds five minutes, so the retained-session audit remains performance
+blocked rather than correctness blocked.
 
 The motivating `owned_string_set` successor proof at line 183 is fixed:
 planning fell from 63.9 seconds to about 67 ms, and expansion emits a

@@ -32,7 +32,7 @@ tactics run.
 | `derive(P) using { fact Q; ... }` | Check one atomic consequence `P` using exactly the listed premises and the ordinary kernel theory rules. |
 | `calculate(P) using { fact Q; ... }` | Check one atomic consequence using the simplifier's deterministic equality and arithmetic theory rules. |
 | `rewrite(equality)` | Rewrite the current pure goal once using an exact available equality. |
-| `transport(source, target)` | Apply one certified frame-transport rule from an exact source fact to the explicitly stated target fact. |
+| `transport(source, target)` | Transport an exact atomic source to the explicitly stated target using its certified fact-family rule and execution effects. |
 | `apply(theorem(args))` | Instantiate one theorem, require each premise exactly or by context-free normalization, and add its conclusions. |
 | `unfold(predicate)` | Unfold one explicitly named predicate in matching facts and goals. |
 | `unfold(resource)` | Replace one owned composite resource element with one body layer. |
@@ -122,10 +122,10 @@ complete expanded sidecar to standard output. Nested branch and `advance`
 tactics use the same location scheme. Source files from `verifying`
 declarations are resolved relative to the sidecar.
 One-step execution uses only the context premises named by its recorded
-proposition derivations. Atomic comparison transport is emitted as an explicit
-`transport` whose source is named at the preceding statement-entry snapshot;
-both source and target are re-lowered against the certified transport before
-the trace accepts them.
+proposition derivations. Atomic comparison and structural-memory transport are
+emitted as explicit `transport` steps whose sources name the relevant
+historical snapshot; both source and target are re-lowered against the
+certified transport before the trace accepts them.
 
 Kernel propositions are not printed by guessing source text. Expansion builds
 a checked map from each `ClickProposition` fact or goal to its exact lowered
@@ -225,9 +225,10 @@ transition. Their proof behavior differs:
   the loop body.
 - Its `using { fact P; ... }` form makes contextual premises explicit in the
   same way as `step using`.
-- `transport(source, target)` explicitly moves one atomic condition fact to the
-  current snapshot when a certified effect fact proves that its referenced
-  memory was framed.
+- `transport(source, target)` explicitly moves one atomic fact to the current
+  snapshot. Conditions require certified framing of referenced memory;
+  structural facts such as `loadable(...)` are re-derived from the source and
+  certified effect facts.
 - `execute_step()` is smart automation. It invokes contextual
   prerequisite reasoning and attempts bounded automatic transport for eligible
   atomic facts. At an `if`, it uses the same contextual reasoning to select a

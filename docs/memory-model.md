@@ -63,6 +63,21 @@ expects a proposition, for example in a composite resource `fact`. `loadable`
 does not grant read or write authority; it only supplies the pure fact needed
 to justify loads from that range when the index bounds are known.
 
+In an explicit proof, use proposition-level `at(...)` to refer to loadability
+at a recorded program point:
+
+```click
+have at(statement(0).entry, loadable(p[0..n])) by {
+    assumption();
+}
+```
+
+This snapshots the whole loadability proposition. In particular, its pointer,
+range bounds, and memory state are all interpreted at `statement(0).entry`.
+Writing `loadable(at(statement(0).entry, p)[0..n])` is not equivalent: that
+would snapshot the pointer expression but still ask whether it is loadable in
+the current memory.
+
 ## Old Memory
 
 `old(expression)` evaluates in the function-entry state:
