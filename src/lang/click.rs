@@ -2313,9 +2313,20 @@ fn tactic_expansion_required_functions(
     let statement_calls = c0_statement_calls(parsed_function.body());
     let touched_end = proof_statement_prefix_end(tactics, tactic_index, statement_calls.len());
     let mut required = BTreeSet::from([function_name]);
+    let structural_traversal = function_block.structural_clauses().iter().any(|clause| {
+        matches!(clause.region(), CodeRegion::Loop(_))
+            || clause
+                .items()
+                .iter()
+                .any(|item| item.kind() == StructuralItemKind::Assert)
+    });
     let mut pending = statement_calls
         .iter()
-        .take(touched_end)
+        .take(if structural_traversal {
+            statement_calls.len()
+        } else {
+            touched_end
+        })
         .flatten()
         .cloned()
         .collect::<Vec<_>>();
