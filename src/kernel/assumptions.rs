@@ -5924,6 +5924,48 @@ impl SymbolicCExecutionPath {
     }
 }
 
+impl CFunctionExecutionCandidates {
+    pub fn state(&self) -> &CState {
+        &self.state
+    }
+
+    pub fn function(&self) -> &CFunction {
+        &self.function
+    }
+
+    pub fn arguments(&self) -> &[CExpression] {
+        &self.arguments
+    }
+
+    pub fn paths(&self) -> &[CFunctionExecutionCandidate] {
+        &self.paths
+    }
+}
+
+impl CFunctionExecutionCandidate {
+    pub fn outcome(&self) -> &CFunctionOutcome {
+        &self.outcome
+    }
+
+    pub fn facts(&self) -> &[ExecutionPureFact] {
+        &self.facts
+    }
+
+    pub fn execution_facts(&self) -> Vec<ExecutionPureFact> {
+        let mut facts = self.facts.clone();
+        for fact in &self.effect_facts {
+            if !facts.contains(fact) {
+                facts.push(fact.clone());
+            }
+        }
+        facts
+    }
+
+    pub fn obligations(&self) -> &[ProofObligation] {
+        &self.obligations
+    }
+}
+
 impl SymbolicCConditionEvaluation {
     pub fn paths(&self) -> &[SymbolicCConditionEvaluationPath] {
         &self.paths

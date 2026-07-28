@@ -5989,33 +5989,19 @@ fn missing_memory_load_is_native_undefined_behavior() {
 
 #[test]
 fn function_execution_theorem_retains_non_assumable_verification_conditions() {
-    let function = c_function(
-        CType::Int32,
-        "requires_checked_path",
-        Vec::new(),
-        c_return(c_int32_literal(0)),
-    );
-    let verification_condition =
-        Proposition::ConditionIs(ConditionTerm::Constant(false), true);
-    let execution = certify_c_function_execution_paths_from_outcomes(
-        CState::new(),
-        function,
-        Vec::new(),
-        Assumptions::new(),
-        vec![(
-            CFunctionOutcome::Return {
-                value: int32(0),
-                state: CState::new(),
-            },
-            Vec::new(),
-            vec![ProofObligation::verification_condition(
-                verification_condition.clone(),
-            )],
+    let verification_condition = Proposition::ConditionIs(ConditionTerm::Constant(false), true);
+    let conclusion = Proposition::ConditionIs(ConditionTerm::Constant(true), true);
+    let theorem = Theorem::new(wrap_proof_facts(
+        conclusion,
+        &Assumptions::new(),
+        &[],
+        &[ProofObligation::verification_condition(
+            verification_condition.clone(),
         )],
-    );
+    ));
 
     assert!(matches!(
-        execution.paths()[0].theorem().proposition(),
+        theorem.proposition(),
         Proposition::Implies(condition, _)
             if condition.as_ref() == &verification_condition
     ));

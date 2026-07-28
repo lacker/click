@@ -2210,44 +2210,36 @@ pub fn prove_symbolic_c_function_verification_paths_with_environment_and_budget(
     SymbolicCExecution { paths, limit: None }
 }
 
-pub fn certify_c_function_execution_paths_from_outcomes(
+pub fn c_function_execution_candidates_from_outcomes(
     state: CState,
     function: CFunction,
     arguments: Vec<CExpression>,
-    assumptions: Assumptions,
     paths: Vec<(
         CFunctionOutcome,
         Vec<ExecutionPureFact>,
         Vec<ProofObligation>,
     )>,
-) -> SymbolicCExecution {
+) -> CFunctionExecutionCandidates {
     let paths = paths
         .into_iter()
         .map(|(outcome, facts, obligations)| {
             let effect_facts = memory_effect_execution_facts(&facts);
             let facts = public_execution_pure_facts(&facts);
-            let proposition = Proposition::CFunctionExecutes {
-                state: state.clone(),
-                function: function.clone(),
-                arguments: arguments.clone(),
+            CFunctionExecutionCandidate {
                 outcome,
-            };
-            let theorem = Theorem::new(wrap_proof_facts(
-                proposition,
-                &assumptions,
-                &facts,
-                &obligations,
-            ));
-            SymbolicCExecutionPath {
                 facts,
                 effect_facts,
                 obligations,
-                theorem,
             }
         })
         .collect();
 
-    SymbolicCExecution { paths, limit: None }
+    CFunctionExecutionCandidates {
+        state,
+        function,
+        arguments,
+        paths,
+    }
 }
 
 pub fn prove_c_function_satisfies_specification_from_symbolic_path(
@@ -2287,9 +2279,12 @@ pub fn prove_c_function_satisfies_specification_from_symbolic_path(
         |body, requirement| Proposition::Implies(Box::new(requirement), Box::new(body)),
     );
     Some(Theorem::new(
-        premises.into_iter().rev().fold(proposition, |body, premise| {
-            Proposition::Implies(Box::new(premise), Box::new(body))
-        }),
+        premises
+            .into_iter()
+            .rev()
+            .fold(proposition, |body, premise| {
+                Proposition::Implies(Box::new(premise), Box::new(body))
+            }),
     ))
 }
 

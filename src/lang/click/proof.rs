@@ -2520,6 +2520,7 @@ struct TacticReplayState {
     next_opaque_call: u64,
     next_verification_variable: u64,
     next_path_choice: usize,
+    execution_start_facts: Vec<Proposition>,
     planned_tactics: Vec<ProofTactic>,
     surface_propositions: SurfacePropositionMap,
     surface_replay: SurfaceReplay,
@@ -3075,7 +3076,7 @@ enum ProofExecutionPoint {
         remaining: CStatement,
     },
     FunctionExit {
-        execution: crate::kernel::SymbolicCExecution,
+        execution: CFunctionExecutionCandidates,
     },
 }
 
@@ -3099,7 +3100,7 @@ impl TacticReplayState {
         matches!(self.frontier.point, ProofExecutionPoint::FunctionEntry)
     }
 
-    fn execution(&self) -> Option<&crate::kernel::SymbolicCExecution> {
+    fn execution(&self) -> Option<&CFunctionExecutionCandidates> {
         match &self.frontier.point {
             ProofExecutionPoint::FunctionEntry | ProofExecutionPoint::StatementEntry { .. } => None,
             ProofExecutionPoint::FunctionExit { execution, .. } => Some(execution),
@@ -8706,6 +8707,7 @@ pub(super) fn prove_claim_by_tactics(
         proof_site: proof_site_for_claims(function_block, &proof_claims, false),
         source_layout: SourceExecutionLayout::new(parsed_function.body()),
         ordered_finalization: true,
+        execution_start_facts: pure_facts.clone(),
         surface_propositions,
         ..TacticReplayState::default()
     };
@@ -8753,6 +8755,7 @@ pub(super) fn prove_claim_by_tactics(
             click_function_environment,
             resource_environment,
             theorem_environment,
+            function_environment,
             &function,
             &arguments,
             tactics,
@@ -8813,6 +8816,7 @@ pub(super) fn prove_claims_by_grouped_tactics(
         source_layout: SourceExecutionLayout::new(parsed_function.body()),
         ordered_finalization: true,
         grouped_contract: true,
+        execution_start_facts: pure_facts.clone(),
         surface_propositions,
         ..TacticReplayState::default()
     };
@@ -8860,6 +8864,7 @@ pub(super) fn prove_claims_by_grouped_tactics(
             click_function_environment,
             resource_environment,
             theorem_environment,
+            function_environment,
             &function,
             &arguments,
             tactics,
@@ -8976,6 +8981,7 @@ fn finish_ordered_proof_replay(
     click_function_environment: &ClickFunctionEnvironment,
     resource_environment: &ResourceEnvironment,
     theorem_environment: &TheoremEnvironment,
+    function_environment: &CExecutionEnvironment,
     function: &CFunction,
     arguments: &[CExpression],
     certificate_tactics: &[ProofTactic],
@@ -8997,17 +9003,55 @@ fn finish_ordered_proof_replay(
                 "`{proof_label}` execution proof must reach function exit with `execute_step()`, `execute_rest()`, or `bounded_execute()`"
             ))
         })?;
-        if let Some(limit) = execution.limit() {
-            return Err(ClickError::new(format!(
-                "execution proof hit execution limit {limit:?} for `{proof_label}`"
-            )));
-        }
         if execution.paths().is_empty() {
             return Err(ClickError::new(format!(
                 "execution proof could not prove any complete execution path for `{proof_label}`"
             )));
         }
         let pre_state = replay.execution_start_state(&state);
+        let certified_execution = prove_symbolic_c_function_verification_paths_with_environment(
+            pre_state.clone(),
+            function.clone(),
+            arguments.to_vec(),
+            assumptions_from_propositions(&replay.execution_start_facts),
+            function_environment.clone(),
+            CExecutionSemantics::APPLY_VERIFIED_RULES,
+        );
+        if let Some(limit) = certified_execution.limit() {
+            return Err(ClickError::new(format!(
+                "kernel certification hit execution limit {limit:?} for `{proof_label}`"
+            )));
+        }
+        let certified_outcomes = certified_execution
+            .paths()
+            .iter()
+            .map(|path| match implication_body(path.theorem().proposition()) {
+                Proposition::CFunctionExecutes {
+                    state,
+                    function: proved_function,
+                    arguments: proved_arguments,
+                    outcome,
+                } if state == pre_state
+                    && proved_function == function
+                    && proved_arguments == arguments =>
+                {
+                    Ok(outcome.clone())
+                }
+                proposition => Err(ClickError::new(format!(
+                    "kernel certification for `{proof_label}` produced an inexact theorem body {proposition:?}"
+                ))),
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let replay_outcomes = execution
+            .paths()
+            .iter()
+            .map(|path| path.outcome().clone())
+            .collect::<Vec<_>>();
+        if replay_outcomes != certified_outcomes {
+            return Err(ClickError::new(format!(
+                "execution replay for `{proof_label}` does not preserve the kernel-certified path frontier"
+            )));
+        }
         let mut verified = Vec::new();
         let mut surface_closers_by_claim = vec![Vec::new(); claims.len()];
         let mut surface_closer_blockers = vec![None; claims.len()];
@@ -9016,6 +9060,7 @@ fn finish_ordered_proof_replay(
         let mut deferred_capture_tactics_by_path = Vec::with_capacity(execution.paths().len());
 
         for (path_index, path) in execution.paths().iter().enumerate() {
+            let certified_path = &certified_execution.paths()[path_index];
             let mut path_surface_closers = vec![Vec::new(); claims.len()];
             let mut path_grouped_surface_closers = Vec::new();
             let mut path_surface_post_tactics = Vec::new();
@@ -9033,14 +9078,7 @@ fn finish_ordered_proof_replay(
                     )
                 )));
             }
-            let mut outcome = match implication_body(path.theorem().proposition()) {
-                Proposition::CFunctionExecutes { outcome, .. } => outcome.clone(),
-                proposition => {
-                    return Err(ClickError::new(format!(
-                        "execution proof failed for `{proof_label}` path {path_index}: unexpected theorem body {proposition:?}"
-                    )));
-                }
-            };
+            let mut outcome = path.outcome().clone();
             let mut path_requirements = pure_facts.clone();
             path_requirements.extend(path.facts().iter().map(|fact| fact.proposition().clone()));
 
@@ -10326,7 +10364,7 @@ fn finish_ordered_proof_replay(
             let theorem = prove_c_function_satisfies_specification_from_symbolic_path(
                 function.clone(),
                 specification.clone(),
-                path,
+                certified_path,
             )
             .ok_or_else(|| {
                 ClickError::new(format!(
@@ -15220,13 +15258,6 @@ fn replay_linear_tactics(
                             "`{claim_label}` tactic {tactic_index}: `frame` cannot plan from an execution path with unresolved obligations"
                         )));
                     }
-                    let Proposition::CFunctionExecutes { outcome, .. } =
-                        implication_body(path.theorem().proposition())
-                    else {
-                        return Err(ClickError::new(format!(
-                            "`{claim_label}` tactic {tactic_index}: `frame` saw an unexpected execution theorem"
-                        )));
-                    };
                     let mut path_facts = requirement_pure_facts.clone();
                     path_facts.extend(path.facts().iter().map(|fact| fact.proposition().clone()));
                     path_derivations.push(plan_effect_clause_derivations(
@@ -15238,7 +15269,7 @@ fn replay_linear_tactics(
                         parsed_function.parameters(),
                         arguments,
                         pre_state,
-                        outcome,
+                        path.outcome(),
                     )?);
                 }
                 let certificate =
@@ -16195,13 +16226,6 @@ fn merge_surface_certificate_contexts(
             .execution()
             .expect("every completed surface branch is at function exit");
         for path in execution.paths() {
-            let Proposition::CFunctionExecutes { outcome, .. } =
-                implication_body(path.theorem().proposition())
-            else {
-                return Err(ClickError::new(format!(
-                    "`{claim_label}` tactic {tactic_index}: surface certificate replay saw an unexpected completed theorem"
-                )));
-            };
             let mut facts = path.execution_facts();
             for fact in &context.pure_facts {
                 let fact = ExecutionPureFact::new(fact.clone());
@@ -16213,20 +16237,19 @@ fn merge_surface_certificate_contexts(
             if !paths
                 .iter()
                 .any(|(existing_outcome, existing_facts, existing_obligations)| {
-                    existing_outcome == outcome
+                    existing_outcome == path.outcome()
                         && existing_facts == &facts
                         && existing_obligations == &obligations
                 })
             {
-                paths.push((outcome.clone(), facts, obligations));
+                paths.push((path.outcome().clone(), facts, obligations));
             }
         }
     }
-    let execution = certify_c_function_execution_paths_from_outcomes(
+    let execution = c_function_execution_candidates_from_outcomes(
         execution_start_state.clone(),
         function.clone(),
         arguments.to_vec(),
-        Assumptions::new(),
         paths,
     );
     let mut merged = completed.remove(0);
@@ -17814,7 +17837,7 @@ fn execute_step_from_execution_point(
     function: &CFunction,
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
-    assumptions: &Assumptions,
+    _assumptions: &Assumptions,
     function_environment: &CExecutionEnvironment,
     claim_label: &str,
     tactic_index: usize,
@@ -18176,11 +18199,10 @@ fn execute_step_from_execution_point(
             );
             let mut completed_execution_facts = execution_pure_facts;
             append_execution_effect_facts(&mut completed_execution_facts, &replay.effect_facts);
-            let completed = certify_c_function_execution_paths_from_outcomes(
+            let completed = c_function_execution_candidates_from_outcomes(
                 execution_start_state.clone(),
                 function.clone(),
                 arguments.to_vec(),
-                assumptions.clone(),
                 vec![(outcome, completed_execution_facts, obligations)],
             );
             let replay_state = execution_start_state.clone();
@@ -18491,13 +18513,6 @@ fn merge_bounded_execution_frontiers(
             .execution()
             .expect("completed bounded frontier should have an execution");
         for path in execution.paths() {
-            let Proposition::CFunctionExecutes { outcome, .. } =
-                implication_body(path.theorem().proposition())
-            else {
-                return Err(ClickError::new(format!(
-                    "`{claim_label}` tactic {tactic_index}: `bounded_execute` saw an unexpected completed theorem"
-                )));
-            };
             let mut facts = path.execution_facts();
             for fact in &frontier.pure_facts {
                 let fact = ExecutionPureFact::new(fact.clone());
@@ -18505,14 +18520,13 @@ fn merge_bounded_execution_frontiers(
                     facts.push(fact);
                 }
             }
-            paths.push((outcome.clone(), facts, path.obligations().to_vec()));
+            paths.push((path.outcome().clone(), facts, path.obligations().to_vec()));
         }
     }
-    let execution = certify_c_function_execution_paths_from_outcomes(
+    let execution = c_function_execution_candidates_from_outcomes(
         execution_start_state.clone(),
         function.clone(),
         arguments.to_vec(),
-        Assumptions::new(),
         paths,
     );
 
@@ -18765,7 +18779,7 @@ fn set_replay_execution(
     tactic_index: usize,
     tactic_name: &str,
     execution_start_state: CState,
-    execution: crate::kernel::SymbolicCExecution,
+    execution: CFunctionExecutionCandidates,
 ) -> Result<(), ClickError> {
     if replay.is_at_function_exit() {
         return Err(ClickError::new(format!(
@@ -20342,7 +20356,7 @@ fn validate_frame_code_region(
 }
 
 fn validate_function_frame_tactic(
-    execution: &crate::kernel::SymbolicCExecution,
+    execution: &CFunctionExecutionCandidates,
     claim: &FunctionClaimRef<'_>,
     claim_label: &str,
     tactic_index: usize,
@@ -20351,11 +20365,6 @@ fn validate_function_frame_tactic(
     state: &CState,
     requirement_pure_facts: &[Proposition],
 ) -> Result<(), ClickError> {
-    if let Some(limit) = execution.limit() {
-        return Err(ClickError::new(format!(
-            "`{claim_label}` tactic {tactic_index}: `frame()` hit execution limit {limit:?}"
-        )));
-    }
     if execution.paths().is_empty() {
         return Err(ClickError::new(format!(
             "`{claim_label}` tactic {tactic_index}: `frame()` had no complete execution path"
@@ -20376,15 +20385,6 @@ fn validate_function_frame_tactic(
                 )
             )));
         }
-        let outcome = match implication_body(path.theorem().proposition()) {
-            Proposition::CFunctionExecutes { outcome, .. } => outcome.clone(),
-            proposition => {
-                return Err(ClickError::new(format!(
-                    "`{claim_label}` tactic {tactic_index}: `frame()` saw unexpected theorem body {proposition:?}\n  execution pure facts: {}",
-                    describe_execution_pure_facts(path.facts())
-                )));
-            }
-        };
         let mut path_requirements = requirement_pure_facts.to_vec();
         path_requirements.extend(path.facts().iter().map(|fact| fact.proposition().clone()));
         check_effect_claim_exact(
@@ -20396,7 +20396,7 @@ fn validate_function_frame_tactic(
             parameters,
             arguments,
             state,
-            &outcome,
+            path.outcome(),
         )?;
     }
 

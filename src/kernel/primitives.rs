@@ -977,6 +977,27 @@ pub struct SymbolicCExecutionPath {
     pub(super) theorem: Theorem,
 }
 
+/// An untrusted collection of replayed function outcomes.
+///
+/// Candidates deliberately carry no [`Theorem`]. They become useful as proof
+/// evidence only after a checked kernel execution independently reproduces the
+/// same complete path frontier.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CFunctionExecutionCandidates {
+    pub(super) state: CState,
+    pub(super) function: CFunction,
+    pub(super) arguments: Vec<CExpression>,
+    pub(super) paths: Vec<CFunctionExecutionCandidate>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CFunctionExecutionCandidate {
+    pub(super) outcome: CFunctionOutcome,
+    pub(super) facts: Vec<ExecutionPureFact>,
+    pub(super) effect_facts: Vec<ExecutionPureFact>,
+    pub(super) obligations: Vec<ProofObligation>,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SymbolicCConditionEvaluation {
     pub(super) paths: Vec<SymbolicCConditionEvaluationPath>,
