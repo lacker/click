@@ -8668,7 +8668,6 @@ fn finish_ordered_proof_replay(
         let mut surface_closer_blockers = vec![None; claims.len()];
         let mut surface_grouped_closers_by_path =
             Vec::with_capacity(execution.paths().len());
-        let mut surface_grouped_closer_blocker = None;
         let mut surface_post_tactics_by_path = Vec::with_capacity(execution.paths().len());
         let mut deferred_capture_tactics_by_path = Vec::with_capacity(execution.paths().len());
 
@@ -9728,10 +9727,58 @@ fn finish_ordered_proof_replay(
                                 }
                                 Err(error) => {
                                     closer_errors[claim_index] = Some(error.message().to_string());
+                                    // The grouped certificate is the
+                                    // proof-producing authority for proposition
+                                    // claims. The ambient `simp` check above is
+                                    // only a fast path and can miss a valid
+                                    // source-site derivation, so retain the
+                                    // lowered goal for exact certificate
+                                    // construction below.
+                                    if replay.grouped_contract
+                                        && existence_tactics.is_empty()
+                                        && rewritten_claim_goals[claim_index].is_none()
+                                        && let Ensure::Proposition(surface_goal) =
+                                            ensure_clause.ensure()
+                                        && let CFunctionOutcome::Return { .. } = &outcome
+                                        && let Ok(goal) = lower_ensure_proposition_goal(
+                                            &path_requirements,
+                                            surface_goal,
+                                            parsed_function.parameters(),
+                                            arguments,
+                                            pre_state,
+                                            &outcome,
+                                            predicate_environment,
+                                            click_function_environment,
+                                            &replay.program_point_states,
+                                            &unfolded_predicates,
+                                        )
+                                        && !grouped_transition_goals
+                                            .iter()
+                                            .any(|candidate| {
+                                                candidate.claim_index == claim_index
+                                            })
+                                    {
+                                        grouped_transition_goals.push(GroupedOutcomeSimpGoal {
+                                            claim_index,
+                                            claim_label,
+                                            surface_goal: surface_goal.clone(),
+                                            goal,
+                                        });
+                                    }
                                 }
                             }
                         }
                         if replay.grouped_contract {
+                            // A grouped smart `simp` succeeds on proposition
+                            // claims exactly when its generated certificate
+                            // proves them. Mark every candidate transition
+                            // here, then require successful construction and
+                            // replay below; failure is a proof failure, not
+                            // merely an expansion blocker.
+                            for goal in &grouped_transition_goals {
+                                closed_claims[goal.claim_index] = true;
+                                closer_errors[goal.claim_index] = None;
+                            }
                             let newly_closed_claim_count = claims_before_simp
                                 .iter()
                                 .zip(&closed_claims)
@@ -9780,8 +9827,7 @@ fn finish_ordered_proof_replay(
                                     }
                                 }
                                 Err(error) => {
-                                    surface_grouped_closer_blocker
-                                        .get_or_insert_with(|| error.message().to_string());
+                                    return Err(error);
                                 }
                             }
                         } else if capturing_this_tactic {
@@ -9931,10 +9977,7 @@ fn finish_ordered_proof_replay(
             {
                 expanded.block(message);
             }
-            if let Some(blocker) = surface_grouped_closer_blocker
-                .as_ref()
-                .or_else(|| surface_closer_blockers.iter().flatten().next())
-            {
+            if let Some(blocker) = surface_closer_blockers.iter().flatten().next() {
                 expanded.block(format!("could not lower post-execution `simp`: {blocker}"));
             } else if surface_grouped_closers_by_path
                 .iter()

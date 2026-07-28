@@ -294,8 +294,8 @@ it does not eagerly manufacture proposition-map entries for possible future
 tactics. Later explicit tactics lower and check their own premises at their own
 program points. There is no search or ignored-error path.
 
-The retained-session audit passes the first 47 of 67 owned-string smart sites.
-Most selected-proof checks take milliseconds to a few seconds. The former
+The retained-session audit passes all 67 owned-string smart sites. Most
+selected-proof checks take milliseconds to a few seconds. The former
 roughly 75-second `owned_string_pipeline.contract` checks at lines 550 and 551
 now take about 0.31 seconds. Their final `return observed` certificate had
 mistakenly copied every ambient implication premise from the monotone execution
@@ -306,6 +306,25 @@ certificate is now premise-free while the certified transition preserves the
 unchanged facts. Arithmetic and memory-reading returns continue to retain their
 actual safety premises. Grouped outcome `simp` replay also reuses its already
 lowered kernel goal instead of lowering the same surface expression twice.
+
+The audit also passes all 37 owned-segmented-buffer sites, all 33
+owned-split-buffer sites, and all 29 input-cursor sites. The previously
+documented segmented-buffer baseline failure was stale.
+
+Owned-vector exposed a grouped-`simp` boundary bug. Its ambient precheck could
+reject a postcondition that the generated source-site certificate proved,
+leaving `vector_push_first.ensures_3` unproved. Grouped proposition transitions
+are now accepted exactly when their generated certificate successfully
+replays; a certificate failure is a proof failure rather than a non-fatal
+expansion blocker. `vector_push_first` verifies in about 6.4 seconds and all
+413 library tests pass.
+
+The complete owned-vector audit is currently blocked by baseline performance,
+not a known correctness failure: session initialization exceeds five minutes.
+A two-minute profile reports the 1.35-second simple `frame` at line 397, the
+2.86-second smart `simp` at line 398, the 4.62-second smart `execute_until` at
+line 459, and a timeout while line 478's smart `execute_until` is active. Fix
+the simple `frame` path before expanding the smart frontiers.
 
 The motivating `owned_string_set` successor proof at line 183 is fixed:
 planning fell from 63.9 seconds to about 67 ms, and expansion emits a
@@ -324,12 +343,10 @@ Work one frontier at a time and commit each logical change independently.
    claiming expansion is complete. The audit command now inventories every
    smart source site during one baseline verification and independently
    expands and verifies it against a retained certified environment; the
-   complete three-site `jsonc-refcount` audit passes.
-   Its next bounded trial found that `owned-segmented-buffer` currently fails
-   original verification before inventory:
-   `owned_segmented_buffer_pipeline.contract` tactic 22 is missing the exact
-   `loadable(owner[0..1])` premise required by `step using`. Diagnose that as
-   an example/verifier correctness issue before auditing its expansions.
+   complete three-site `jsonc-refcount` audit passes. Owned-string,
+   owned-segmented-buffer, owned-split-buffer, and input-cursor are also fully
+   green. Owned-vector is the next frontier, after its baseline performance
+   issue is reduced enough for the retained audit session to initialize.
 
 Do not optimize by adding proposition-specific smart fast paths, broad ambient
 premises, generic transport fallbacks, or internal-only certificate tactics.

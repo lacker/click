@@ -1000,8 +1000,9 @@ fn grouped_function_proof_checks_every_claim() {
         error.message()
     );
     assert!(
-        error.message().contains("last closing attempt:")
-            && error.message().contains("missing pure fact:"),
+        error
+            .message()
+            .contains("grouped `simp` could not certify its complete claim transition"),
         "unexpected error: {}",
         error.message()
     );

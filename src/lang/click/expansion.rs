@@ -1804,7 +1804,12 @@ int32 caller() {
 
         let error = verify_c0_sources(&expanded, &sources)
             .expect_err("the separate verification step should reject the invalid sidecar");
-        assert!(error.message().contains("left `zero.ensures_0` unproved"));
+        assert!(error.message().contains("zero.ensures_0"));
+        assert!(
+            error
+                .message()
+                .contains("grouped `simp` could not certify its complete claim transition")
+        );
     }
 
     #[test]
