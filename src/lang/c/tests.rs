@@ -50,6 +50,30 @@ fn c0_array_parameter_syntax_lowers_to_pointer_parameter() {
 }
 
 #[test]
+fn c0_syntax_ignores_line_and_block_comments() {
+    let function = syntax::parse_function(
+        r#"
+        /* the imported source may retain its documentation */
+        int32 identity(int32 value) {
+            // comments do not become syntax
+            return /* including inline comments */ value;
+        }
+        "#,
+    )
+    .expect("ordinary C comments should parse");
+
+    assert_eq!(function.name(), "identity");
+}
+
+#[test]
+fn c0_syntax_reports_unterminated_block_comments() {
+    let error = syntax::parse_function("/* never closed")
+        .expect_err("an unterminated block comment should be rejected");
+
+    assert_eq!(error.message(), "unterminated block comment");
+}
+
+#[test]
 fn c0_syntax_targets_kernel_max_body() {
     let function = syntax::parse_function(
         r#"

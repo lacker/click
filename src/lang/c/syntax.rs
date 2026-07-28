@@ -1419,6 +1419,28 @@ fn tokenize(source: &str) -> Result<Vec<Token>, C0SyntaxError> {
             continue;
         }
 
+        if ch == '/' && chars.get(index + 1) == Some(&'/') {
+            index += 2;
+            while index < chars.len() && chars[index] != '\n' {
+                index += 1;
+            }
+            continue;
+        }
+
+        if ch == '/' && chars.get(index + 1) == Some(&'*') {
+            index += 2;
+            while index + 1 < chars.len()
+                && !(chars[index] == '*' && chars[index + 1] == '/')
+            {
+                index += 1;
+            }
+            if index + 1 == chars.len() {
+                return Err(C0SyntaxError::new("unterminated block comment"));
+            }
+            index += 2;
+            continue;
+        }
+
         if is_ident_start(ch) {
             let start = index;
             index += 1;
