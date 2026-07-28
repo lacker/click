@@ -529,7 +529,16 @@ int32 vector_pipeline(
     have (owner->data)[0] == replacement by {
         simp();
     }
-    execute_until(statement(7));
+    have 0 < owner->len by {
+        derive(0 < owner->len) using {
+            fact owner->len == 1;
+        }
+    }
+    step using {
+        fact 0 < load_int32(owner);
+        fact load_int32(owner) == 1;
+    }
+    execute_step();
     have observed == at(statement(6).entry, (owner->data)[0]) by {
         simp();
     }
