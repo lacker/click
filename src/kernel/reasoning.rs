@@ -3618,7 +3618,6 @@ pub(super) fn wrap_proof_facts(
 ) -> Proposition {
     let proposition = obligations
         .iter()
-        .filter(|obligation| obligation.is_assumable())
         .rev()
         .fold(proposition, |body, obligation| {
             Proposition::Implies(Box::new(obligation.proposition().clone()), Box::new(body))
@@ -3659,7 +3658,6 @@ pub(super) fn wrap_path_context(
 ) -> Proposition {
     let proposition = obligations
         .iter()
-        .filter(|obligation| obligation.is_assumable())
         .rev()
         .fold(proposition, |body, obligation| {
             Proposition::Implies(Box::new(obligation.proposition().clone()), Box::new(body))
