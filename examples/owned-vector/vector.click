@@ -480,7 +480,37 @@ int32 vector_pipeline(
     have 0 < owner->len by {
         simp();
     }
-    execute_until(read_replacement);
+    step using {
+        fact at(statement(4).entry, 1) <= at(statement(4).entry, capacity);
+        fact at(statement(2).entry, loadable(old(owner[0..4])));
+        fact at(statement(2).entry, loadable(old(data[0..capacity])));
+        fact at(statement(2).entry, separate(memory(owner[ignored..4]), memory(data[ignored..capacity])));
+        fact at(statement(3).entry, observed) == at(statement(3).entry, ignored);
+        fact at(statement(3).entry, load_int32(owner)) == at(statement(3).entry, 0);
+        fact at(statement(4).entry, observed) == at(statement(4).entry, 1);
+        fact at(statement(3).entry, load_int32_pointer((owner + 2))) == at(statement(3).entry, data);
+        fact at(statement(3).entry, load_int32((owner + 1))) == at(statement(3).entry, capacity);
+        fact *owner == ignored;
+        fact *(owner + 1) == capacity;
+        fact load_int32_pointer((owner + 2)) == data;
+        fact observed == *load_int32_pointer((owner + 2));
+        fact load_int32(owner) == 1;
+        fact *load_int32_pointer((owner + 2)) == first;
+        fact 0 < load_int32(owner);
+        fact at(statement(4).entry, load_int32(owner)) == at(statement(4).entry, 1);
+        fact at(statement(4).entry, *load_int32_pointer((owner + 2))) == at(statement(4).entry, first);
+        fact at(statement(4).entry, *(owner + 1)) == at(statement(4).entry, capacity);
+        fact at(statement(4).entry, 0) < at(statement(4).entry, load_int32(owner));
+    }
+    have *owner == *owner by {
+        normalize();
+    }
+    have *(owner + 1) == *(owner + 1) by {
+        normalize();
+    }
+    have load_int32_pointer((owner + 2)) == load_int32_pointer((owner + 2)) by {
+        normalize();
+    }
     have at(statement(5).entry, owner->len) == 1 by {
         assumption();
     }
