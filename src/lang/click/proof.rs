@@ -8666,8 +8666,7 @@ fn finish_ordered_proof_replay(
         let mut verified = Vec::new();
         let mut surface_closers_by_claim = vec![Vec::new(); claims.len()];
         let mut surface_closer_blockers = vec![None; claims.len()];
-        let mut surface_grouped_closers_by_path =
-            Vec::with_capacity(execution.paths().len());
+        let mut surface_grouped_closers_by_path = Vec::with_capacity(execution.paths().len());
         let mut surface_post_tactics_by_path = Vec::with_capacity(execution.paths().len());
         let mut deferred_capture_tactics_by_path = Vec::with_capacity(execution.paths().len());
 
@@ -9681,8 +9680,7 @@ fn finish_ordered_proof_replay(
                                                 {
                                                     surface_certificate_facts.push(goal);
                                                 }
-                                                if capturing_this_tactic
-                                                    && !replay.grouped_contract
+                                                if capturing_this_tactic && !replay.grouped_contract
                                                 {
                                                     captured_transitions[claim_index] =
                                                         Some(certificate.clone());
@@ -9733,9 +9731,7 @@ fn finish_ordered_proof_replay(
                                         )
                                         && !grouped_transition_goals
                                             .iter()
-                                            .any(|candidate| {
-                                                candidate.claim_index == claim_index
-                                            })
+                                            .any(|candidate| candidate.claim_index == claim_index)
                                     {
                                         grouped_transition_goals.push(GroupedOutcomeSimpGoal {
                                             claim_index,
@@ -9961,11 +9957,10 @@ fn finish_ordered_proof_replay(
             } else if surface_grouped_closers_by_path
                 .iter()
                 .any(|tactics| !tactics.is_empty())
-                    && let Err(message) =
-                        append_surface_tactics_by_leaf(
-                            &mut expanded.tactics,
-                            &surface_grouped_closers_by_path,
-                        )
+                && let Err(message) = append_surface_tactics_by_leaf(
+                    &mut expanded.tactics,
+                    &surface_grouped_closers_by_path,
+                )
             {
                 expanded.block(message);
             }
@@ -10907,14 +10902,36 @@ fn lower_outcome_simp_tactic(
                 )
                 .ok()
                 .filter(|surface| {
-                    check(surface).is_ok_and(|lowered| {
-                        condition_polarity_equivalent(&lowered, fact)
-                    })
+                    check(surface)
+                        .is_ok_and(|lowered| condition_polarity_equivalent(&lowered, fact))
                 })
                 .map(|surface| (fact.clone(), surface))
             })
     };
-    if let Some(plan) = plan_simp_certificate(goal, &assumptions_from_propositions(available))
+    let expressible_available = atomic_available
+        .iter()
+        .filter(|fact| {
+            checked_surface_fact_at_outcome(
+                replay,
+                fact,
+                SurfaceFactMatch::CanonicalExact,
+                available,
+                parameters,
+                arguments,
+                pre_state,
+                post_state,
+                result,
+                predicate_environment,
+                click_function_environment,
+            )
+            .is_ok_and(|surface| {
+                check(&surface).is_ok_and(|lowered| condition_polarity_equivalent(&lowered, fact))
+            })
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    if let Some(plan) =
+        plan_simp_certificate(goal, &assumptions_from_propositions(&expressible_available))
         && let [ProofTactic::ExactPropositionDerivation(derivation)] = plan.tactics()
     {
         let context = derivation
@@ -11101,8 +11118,7 @@ fn lower_outcome_simp_tactic(
         result,
         predicate_environment,
         click_function_environment,
-    ) && check(&surface)
-        .is_ok_and(|lowered| condition_polarity_equivalent(&lowered, fact))
+    ) && check(&surface).is_ok_and(|lowered| condition_polarity_equivalent(&lowered, fact))
     {
         let assumptions = assumptions_from_propositions(std::slice::from_ref(fact));
         if assumptions
@@ -11143,11 +11159,10 @@ fn lower_outcome_simp_tactic(
         ) else {
             continue;
         };
-        if check(&surface)
-            .is_ok_and(|lowered| condition_polarity_equivalent(&lowered, fact))
+        if check(&surface).is_ok_and(|lowered| condition_polarity_equivalent(&lowered, fact))
             && !premise_pairs
-            .iter()
-            .any(|(kernel, recorded_surface)| kernel == fact || recorded_surface == &surface)
+                .iter()
+                .any(|(kernel, recorded_surface)| kernel == fact || recorded_surface == &surface)
         {
             premise_pairs.push((fact.clone(), surface));
         }
@@ -11201,9 +11216,9 @@ fn lower_outcome_simp_tactic(
         .or_else(|| exact_assumptions.derive_proposition(goal))
         .is_some()
         && assumptions
-        .derive_atomic_proposition(&normalized_goal)
-        .or_else(|| assumptions.derive_proposition(&normalized_goal))
-        .is_some()
+            .derive_atomic_proposition(&normalized_goal)
+            .or_else(|| assumptions.derive_proposition(&normalized_goal))
+            .is_some()
     {
         Ok(ProofTactic::Derive(ProofDerive {
             proposition: surface_goal.clone(),
@@ -11214,9 +11229,9 @@ fn lower_outcome_simp_tactic(
         .or_else(|| exact_assumptions.derive_simp_proposition(goal))
         .is_some()
         && assumptions
-        .derive_simp_atomic_proposition(&normalized_goal)
-        .or_else(|| assumptions.derive_simp_proposition(&normalized_goal))
-        .is_some()
+            .derive_simp_atomic_proposition(&normalized_goal)
+            .or_else(|| assumptions.derive_simp_proposition(&normalized_goal))
+            .is_some()
     {
         Ok(ProofTactic::Calculate(ProofDerive {
             proposition: surface_goal.clone(),
@@ -11327,12 +11342,371 @@ fn certify_outcome_simp_have(
     claim_label: &str,
     tactic_index: usize,
     path_index: usize,
-) -> Result<ProofTactic, ClickError> {
-    let proof = lower_outcome_simp_proof(
+) -> Result<Vec<ProofTactic>, ClickError> {
+    let initial_proof = lower_outcome_simp_proof(
         replay,
         surface_goal,
         goal,
         available,
+        parameters,
+        arguments,
+        pre_state,
+        post_state,
+        result,
+        predicate_environment,
+        click_function_environment,
+    )?;
+    let mut goal_lowering_facts = available.to_vec();
+    if let Proof::Script(tactics) = &initial_proof
+        && let Some(ProofTactic::Derive(derive) | ProofTactic::Calculate(derive)) = tactics.first()
+    {
+        goal_lowering_facts = facts_for_direct_derivation_lowering(available);
+        for premise in &derive.premises {
+            let lowered = replay
+                .surface_propositions
+                .available_kernel(premise, available)
+                .cloned()
+                .map(Ok)
+                .unwrap_or_else(|| {
+                    lower_outcome_proposition_with_program_points(
+                        parameters,
+                        arguments,
+                        pre_state,
+                        post_state,
+                        result,
+                        available,
+                        premise,
+                        predicate_environment,
+                        click_function_environment,
+                        &replay.program_point_states,
+                    )
+                })
+                .map_err(|error| {
+                    ClickError::new(format!(
+                        "`{claim_label}` path {path_index}, tactic {tactic_index}: smart `simp` could not lower a generated explicit premise while certifying its goal context: {error}"
+                    ))
+                })?;
+            if !goal_lowering_facts.contains(&lowered) {
+                goal_lowering_facts.push(lowered);
+            }
+        }
+    }
+    let lowered = lower_outcome_proposition_with_obligations(
+        parameters,
+        arguments,
+        pre_state,
+        post_state,
+        Some(result),
+        &goal_lowering_facts,
+        surface_goal,
+        predicate_environment,
+        click_function_environment,
+        &replay.program_point_states,
+    )
+    .map_err(|error| {
+        ClickError::new(format!(
+            "`{claim_label}` path {path_index}, tactic {tactic_index}: smart `simp` could not structurally lower its surface goal: {error}"
+        ))
+    })?;
+    if normalize_direct_atomic_memory_loads(&lowered.proposition)
+        != normalize_direct_atomic_memory_loads(goal)
+    {
+        return Err(ClickError::new(format!(
+            "`{claim_label}` path {path_index}, tactic {tactic_index}: smart `simp` surface goal lowered to a different kernel proposition"
+        )));
+    }
+
+    let mut certified_available = available.to_vec();
+    let mut surface_tactics = Vec::new();
+    for obligation in lowered.loadability_obligations {
+        let SurfaceLoadabilityObligation {
+            proposition: obligation,
+            segment,
+        } = obligation;
+        if exact_fact_is_available(&obligation, &certified_available) {
+            continue;
+        }
+        let recorded_segment = segment.clone();
+        let check_surface = |surface: &ClickProposition| {
+            lower_outcome_proposition_with_program_points(
+                parameters,
+                arguments,
+                pre_state,
+                post_state,
+                result,
+                &certified_available,
+                surface,
+                predicate_environment,
+                click_function_environment,
+                &replay.program_point_states,
+            )
+            .is_ok_and(|lowered| lowered == obligation)
+        };
+        let mut surface_obligation = segment.map(|segment| ClickProposition::Loadable { segment });
+        if surface_obligation
+            .as_ref()
+            .is_some_and(|surface| !check_surface(surface))
+            && let Some(ClickProposition::Loadable { segment }) = &surface_obligation
+        {
+            let mut old_segment = segment.clone();
+            old_segment.state = ContractSegmentState::Old;
+            let old = ClickProposition::Loadable {
+                segment: old_segment,
+            };
+            surface_obligation = check_surface(&old).then_some(old);
+        }
+        let surface_obligation = match surface_obligation.filter(|surface| check_surface(surface)) {
+            Some(surface) => surface,
+            None => checked_surface_fact_at_outcome(
+                replay,
+                &obligation,
+                SurfaceFactMatch::CanonicalExact,
+                &certified_available,
+                parameters,
+                arguments,
+                pre_state,
+                post_state,
+                result,
+                predicate_environment,
+                click_function_environment,
+            )
+            .map_err(|error| {
+                ClickError::new(format!(
+                    "`{claim_label}` path {path_index}, tactic {tactic_index}: smart `simp` loadability obligation has no exact surface spelling: {}\n  recorded segment: {recorded_segment:?}\n  obligation: {obligation:?}",
+                    error.message(),
+                ))
+            })?,
+        };
+        let obligation_memory = match &obligation {
+            Proposition::CMemoryLoadable { memory, .. } => memory,
+            _ => unreachable!("surface lowering obligations are loadability propositions"),
+        };
+        let has_current_loadability_context = certified_available.iter().any(|fact| {
+            matches!(fact, Proposition::CMemoryLoadable { memory, .. }
+                if memory.has_same_snapshot_markers(obligation_memory))
+        });
+        let direct = has_current_loadability_context
+            .then(|| {
+                lower_outcome_simp_proof(
+                    replay,
+                    &surface_obligation,
+                    &obligation,
+                    &certified_available,
+                    parameters,
+                    arguments,
+                    pre_state,
+                    post_state,
+                    result,
+                    predicate_environment,
+                    click_function_environment,
+                )
+            })
+            .transpose()
+            .and_then(|proof| {
+                proof.ok_or_else(|| {
+                    ClickError::new("loadability obligation requires memory transport")
+                })
+            })
+            .and_then(|proof| {
+                let surface_have = ProofHave {
+                    proposition: surface_obligation.clone(),
+                    proof,
+                };
+                let replayed = prove_have_at_point(
+                    &surface_have,
+                    theorem_environment,
+                    claim_label,
+                    tactic_index,
+                    &certified_available,
+                    parameters,
+                    arguments,
+                    pre_state,
+                    post_state,
+                    Some(result),
+                    &replay.program_point_states,
+                    Some(&replay.surface_propositions),
+                    predicate_environment,
+                    click_function_environment,
+                    function_requires,
+                    Some(path_index),
+                )?;
+                if replayed != obligation {
+                    return Err(ClickError::new(
+                        "loadability certificate replayed a different proposition",
+                    ));
+                }
+                Ok(surface_have)
+            });
+        if let Ok(surface_have) = direct {
+            certified_available.push(obligation);
+            surface_tactics.push(ProofTactic::Have(surface_have));
+            continue;
+        }
+
+        let Proposition::CMemoryLoadable {
+            base: target_base,
+            bytes: target_bytes,
+            ..
+        } = &obligation
+        else {
+            unreachable!("surface lowering obligations are loadability propositions")
+        };
+        let source_memories = certified_available
+            .iter()
+            .filter_map(|candidate| match candidate {
+                Proposition::CMemoryLoadable { memory, .. } => Some(memory.clone()),
+                _ => None,
+            })
+            .fold(Vec::new(), |mut memories, memory| {
+                if !memories.contains(&memory) {
+                    memories.push(memory);
+                }
+                memories
+            });
+        let transported = source_memories.iter().find_map(|source_memory| {
+            let source = Proposition::CMemoryLoadable {
+                memory: source_memory.clone(),
+                base: target_base.clone(),
+                bytes: target_bytes.clone(),
+            };
+            let source_context = certified_available
+                .iter()
+                .filter(|fact| {
+                    matches!(fact, Proposition::ConditionIs(_, _))
+                        || matches!(fact, Proposition::CMemoryLoadable { memory, .. }
+                            if memory.has_same_snapshot_markers(source_memory))
+                })
+                .cloned()
+                .collect::<Vec<_>>();
+            let derivation = assumptions_from_propositions(&source_context)
+                .derive_atomic_proposition(&source)?;
+            let transition_facts = fact_transport_transition_facts(&replay.effect_facts, &source);
+            let transport_assumptions = transition_facts.iter().fold(
+                assumptions_from_propositions(&certified_available),
+                |assumptions, fact| assumptions.assume_proposition(fact.proposition().clone()),
+            );
+            let theorem = prove_c_condition_fact_transport(
+                &source,
+                post_state.memory(),
+                &transport_assumptions,
+            )?;
+            let Proposition::Implies(_, conclusion) = theorem.proposition() else {
+                return None;
+            };
+            (normalize_direct_atomic_memory_loads(conclusion)
+                == normalize_direct_atomic_memory_loads(&obligation))
+            .then(|| (source, derivation, transition_facts))
+        });
+        let Some((source, source_derivation, transition_facts)) = transported else {
+            return Err(ClickError::new(format!(
+                "`{claim_label}` path {path_index}, tactic {tactic_index}: loadability obligation has neither a direct proof nor a certified transport\n  obligation: {obligation:?}"
+            )));
+        };
+        let surface_source = checked_surface_fact_at_outcome(
+            replay,
+            &source,
+            SurfaceFactMatch::CanonicalExact,
+            &certified_available,
+            parameters,
+            arguments,
+            pre_state,
+            post_state,
+            result,
+            predicate_environment,
+            click_function_environment,
+        )?;
+        if !exact_fact_is_available(&source, &certified_available) {
+            let (_, source_proof) = lower_surface_atomic_derivation(
+                replay,
+                &source_derivation,
+                Some(&surface_source),
+                &certified_available,
+                parameters,
+                arguments,
+                post_state,
+                predicate_environment,
+                click_function_environment,
+            )?;
+            let source_have = ProofHave {
+                proposition: surface_source.clone(),
+                proof: source_proof,
+            };
+            let replayed = prove_have_at_point(
+                &source_have,
+                theorem_environment,
+                claim_label,
+                tactic_index,
+                &certified_available,
+                parameters,
+                arguments,
+                pre_state,
+                post_state,
+                Some(result),
+                &replay.program_point_states,
+                Some(&replay.surface_propositions),
+                predicate_environment,
+                click_function_environment,
+                function_requires,
+                Some(path_index),
+            )?;
+            if replayed != source {
+                return Err(ClickError::new(
+                    "loadability transport source replayed a different proposition",
+                ));
+            }
+            certified_available.push(source.clone());
+            surface_tactics.push(ProofTactic::Have(source_have));
+        }
+        let explicit_assumptions = assumptions_from_propositions(std::slice::from_ref(&source));
+        let resource_facts = post_state
+            .resources()
+            .observable_facts_assuming_valid(&explicit_assumptions);
+        let transport_assumptions = certified_available
+            .iter()
+            .filter(|fact| is_implicit_fact_transport_context(fact))
+            .cloned()
+            .chain(resource_facts)
+            .fold(explicit_assumptions, |assumptions, fact| {
+                assumptions.assume_proposition(fact)
+            });
+        let transport_assumptions = transition_facts
+            .iter()
+            .fold(transport_assumptions, |assumptions, fact| {
+                assumptions.assume_proposition(fact.proposition().clone())
+            });
+        let theorem = prove_c_condition_fact_transport(
+            &source,
+            post_state.memory(),
+            &transport_assumptions,
+        )
+        .ok_or_else(|| {
+            ClickError::new(format!(
+                "`{claim_label}` path {path_index}, tactic {tactic_index}: explicit loadability source does not replay its certified transport"
+            ))
+        })?;
+        let Proposition::Implies(_, conclusion) = theorem.proposition() else {
+            unreachable!("condition transport must produce an implication")
+        };
+        if normalize_direct_atomic_memory_loads(conclusion)
+            != normalize_direct_atomic_memory_loads(&obligation)
+        {
+            return Err(ClickError::new(
+                "explicit loadability transport produced a different target",
+            ));
+        }
+        surface_tactics.push(ProofTactic::TransportUsing {
+            source: surface_source.clone(),
+            target: surface_obligation,
+            premises: vec![surface_source],
+        });
+        certified_available.push(obligation);
+    }
+
+    let proof = lower_outcome_simp_proof(
+        replay,
+        surface_goal,
+        goal,
+        &certified_available,
         parameters,
         arguments,
         pre_state,
@@ -11352,19 +11726,12 @@ fn certify_outcome_simp_have(
             "`{claim_label}` path {path_index}, tactic {tactic_index}: smart `simp` produced an invalid certificate: {error:?}"
         ))
     })?;
-    // `goal` was already lowered from `surface_goal` at this exact outcome.
-    // Replaying the generated certificate must check that kernel goal, rather
-    // than lower the same surface memory expression again through the full
-    // ambient assumptions solver.
-    let replayed_goal = prove_pure_proposition_at_point(
-        &surface_have.proposition,
-        Some(goal),
-        &surface_have.proof,
-        "have",
+    let replayed_goal = prove_have_at_point(
+        &surface_have,
         theorem_environment,
         claim_label,
         tactic_index,
-        available,
+        &certified_available,
         parameters,
         arguments,
         pre_state,
@@ -11389,7 +11756,8 @@ fn certify_outcome_simp_have(
             "`{claim_label}` path {path_index}, tactic {tactic_index}: smart `simp` certificate replayed a different goal"
         )));
     }
-    Ok(surface_tactic)
+    surface_tactics.push(surface_tactic);
+    Ok(surface_tactics)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -11411,7 +11779,7 @@ fn certify_outcome_simp(
     tactic_index: usize,
     path_index: usize,
 ) -> Result<TacticCertificate, ClickError> {
-    let surface_have = certify_outcome_simp_have(
+    let mut surface_tactics = certify_outcome_simp_have(
         replay,
         surface_goal,
         goal,
@@ -11429,14 +11797,12 @@ fn certify_outcome_simp(
         tactic_index,
         path_index,
     )?;
-    let certificate =
-        TacticCertificate::from_proof_tactics(&[surface_have, ProofTactic::Assumption]).map_err(
-            |error| {
-                ClickError::new(format!(
-                    "`{claim_label}` path {path_index}, tactic {tactic_index}: smart `simp` produced an invalid certificate: {error:?}"
-                ))
-            },
-        )?;
+    surface_tactics.push(ProofTactic::Assumption);
+    let certificate = TacticCertificate::from_proof_tactics(&surface_tactics).map_err(|error| {
+        ClickError::new(format!(
+            "`{claim_label}` path {path_index}, tactic {tactic_index}: smart `simp` produced an invalid certificate: {error:?}"
+        ))
+    })?;
     Ok(certificate)
 }
 
@@ -11494,12 +11860,12 @@ fn certify_grouped_outcome_simp_transition(
                 tactic_index,
                 path_index,
             ) {
-                Ok(surface_have) => {
+                Ok(surface_haves) => {
                     replay
                         .surface_propositions
                         .record_lowering(&goal.surface_goal, &goal.goal)?;
                     available.push(goal.goal);
-                    tactics.push(surface_have);
+                    tactics.extend(surface_haves);
                     made_progress = true;
                 }
                 Err(error) => {
@@ -13410,9 +13776,9 @@ fn replay_linear_tactics(
                 target: surface_target,
                 ..
             } => {
-                if replay.is_at_function_entry() || replay.is_at_function_exit() {
+                if replay.is_at_function_entry() {
                     return Err(ClickError::new(format!(
-                        "`{claim_label}` tactic {tactic_index}: `transport` requires a current statement frontier after at least one execution step"
+                        "`{claim_label}` tactic {tactic_index}: `transport` requires at least one completed execution step"
                     )));
                 }
                 let pre_state = replay.execution_start_state(&state).clone();

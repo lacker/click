@@ -1869,6 +1869,8 @@ pub(super) fn evaluate_predicate_contract_expression(
             evaluate_postcondition_bitwise_not(value)
         }
         ContractExpression::Index(base, index) => {
+            let surface_base = contract_expression_to_c_fragment(base);
+            let surface_index = contract_expression_to_c_fragment(index);
             if contains_old_expression(base) {
                 return Err("`old(...)` is not available in predicate definitions".to_string());
             }
@@ -1907,12 +1909,23 @@ pub(super) fn evaluate_predicate_contract_expression(
             let element_type = array_ref.element_type;
             let pointer =
                 offset_pointer_by_elements(array_ref.pointer, index, element_type.byte_width());
-            evaluate_contract_memory_load_from_memory(
+            let value = evaluate_contract_memory_load_from_memory(
                 &array_ref.memory,
-                pointer,
+                pointer.clone(),
                 element_type,
                 assumptions,
-            )
+            )?;
+            if let (Some(base), Some(index)) = (surface_base, surface_index) {
+                record_surface_loadability_segment(
+                    &array_ref.memory,
+                    &pointer,
+                    element_type,
+                    CExpression::Add(Box::new(base), Box::new(index)),
+                    CExpression::Value(int32(0)),
+                    CExpression::Value(int32(1)),
+                );
+            }
+            Ok(value)
         }
         ContractExpression::If {
             condition,
@@ -3899,6 +3912,145 @@ pub(super) fn lower_outcome_proposition_with_program_points(
     )
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct LoweredOutcomeProposition {
+    pub(super) proposition: Proposition,
+    pub(super) loadability_obligations: Vec<SurfaceLoadabilityObligation>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct SurfaceLoadabilityObligation {
+    pub(super) proposition: Proposition,
+    pub(super) segment: Option<ContractSegment>,
+}
+
+thread_local! {
+    static SURFACE_LOADABILITY_OBLIGATIONS:
+        std::cell::RefCell<Option<Vec<SurfaceLoadabilityObligation>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+struct SurfaceLoadabilityObligationGuard;
+
+impl SurfaceLoadabilityObligationGuard {
+    fn enter() -> Result<Self, String> {
+        SURFACE_LOADABILITY_OBLIGATIONS.with(|obligations| {
+            let mut obligations = obligations.borrow_mut();
+            if obligations.is_some() {
+                return Err("nested surface loadability certification".to_string());
+            }
+            *obligations = Some(Vec::new());
+            Ok(Self)
+        })
+    }
+
+    fn finish(self) -> Vec<SurfaceLoadabilityObligation> {
+        let obligations = SURFACE_LOADABILITY_OBLIGATIONS
+            .with(|obligations| obligations.borrow_mut().take().unwrap_or_default());
+        std::mem::forget(self);
+        obligations
+    }
+}
+
+impl Drop for SurfaceLoadabilityObligationGuard {
+    fn drop(&mut self) {
+        SURFACE_LOADABILITY_OBLIGATIONS.with(|obligations| {
+            obligations.borrow_mut().take();
+        });
+    }
+}
+
+fn record_surface_loadability_obligation(proposition: &Proposition) {
+    SURFACE_LOADABILITY_OBLIGATIONS.with(|obligations| {
+        let mut obligations = obligations.borrow_mut();
+        let Some(obligations) = obligations.as_mut() else {
+            return;
+        };
+        if !obligations
+            .iter()
+            .any(|obligation| obligation.proposition == *proposition)
+        {
+            obligations.push(SurfaceLoadabilityObligation {
+                proposition: proposition.clone(),
+                segment: None,
+            });
+        }
+    });
+}
+
+fn record_surface_loadability_segment(
+    memory: &CMemory,
+    pointer: &Pointer,
+    value_type: CType,
+    base: CExpression,
+    start: CExpression,
+    end: CExpression,
+) {
+    let proposition = Proposition::CMemoryLoadable {
+        memory: memory.clone(),
+        base: pointer.clone(),
+        bytes: Bitvector32Term::Constant(value_type.byte_width()),
+    };
+    SURFACE_LOADABILITY_OBLIGATIONS.with(|obligations| {
+        let mut obligations = obligations.borrow_mut();
+        let Some(obligations) = obligations.as_mut() else {
+            return;
+        };
+        let Some(obligation) = obligations
+            .iter_mut()
+            .find(|obligation| obligation.proposition == proposition)
+        else {
+            return;
+        };
+        obligation.segment = Some(ContractSegment {
+            state: ContractSegmentState::Current,
+            base,
+            start,
+            end,
+        });
+    });
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn lower_outcome_proposition_with_obligations(
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    pre_state: &CState,
+    post_state: &CState,
+    result: Option<&CValue>,
+    available_pure_facts: &[Proposition],
+    proposition: &ClickProposition,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    program_point_states: &ProgramPointStates,
+) -> Result<LoweredOutcomeProposition, String> {
+    let mut values = parameter_values(parameters, arguments).map_err(|error| error.message)?;
+    let array_refs = array_refs_for_parameters(parameters, &values, post_state.memory());
+    let assumptions =
+        assumptions_from_propositions(available_pure_facts).allow_symbolic_contract_loads();
+    let mut next_variable = 2_000_000;
+    let mut active_functions = BTreeSet::new();
+    let guard = SurfaceLoadabilityObligationGuard::enter()?;
+    let proposition = lower_outcome_proposition_with_environment(
+        &mut values,
+        &array_refs,
+        pre_state,
+        post_state,
+        result,
+        &assumptions,
+        proposition,
+        &mut next_variable,
+        predicate_environment,
+        click_function_environment,
+        program_point_states,
+        &mut active_functions,
+    )?;
+    Ok(LoweredOutcomeProposition {
+        proposition,
+        loadability_obligations: guard.finish(),
+    })
+}
+
 pub(super) fn lower_outcome_proposition_with_environment(
     values: &mut BTreeMap<String, CValue>,
     array_refs: &ClickArrayRefs,
@@ -4995,6 +5147,8 @@ pub(super) fn evaluate_contract_expression_with_environment(
             evaluate_postcondition_bitwise_not(value)
         }
         ContractExpression::Index(base, index) => {
+            let surface_base = contract_expression_to_c_fragment(base);
+            let surface_index = contract_expression_to_c_fragment(index);
             let array_ref = evaluate_contract_array_ref_with_environment(
                 parameter_values,
                 array_refs,
@@ -5029,12 +5183,23 @@ pub(super) fn evaluate_contract_expression_with_environment(
             let element_type = array_ref.element_type;
             let pointer =
                 offset_pointer_by_elements(array_ref.pointer, index, element_type.byte_width());
-            evaluate_contract_memory_load_from_memory(
+            let value = evaluate_contract_memory_load_from_memory(
                 &array_ref.memory,
-                pointer,
+                pointer.clone(),
                 element_type,
                 assumptions,
-            )
+            )?;
+            if let (Some(base), Some(index)) = (surface_base, surface_index) {
+                record_surface_loadability_segment(
+                    &array_ref.memory,
+                    &pointer,
+                    element_type,
+                    CExpression::Add(Box::new(base), Box::new(index)),
+                    CExpression::Value(int32(0)),
+                    CExpression::Value(int32(1)),
+                );
+            }
+            Ok(value)
         }
         ContractExpression::If {
             condition,
@@ -6055,6 +6220,7 @@ pub(super) fn evaluate_c_contract_expression(
             evaluate_postcondition_bitwise_not(value)
         }
         CExpression::Load(pointer) => {
+            let surface_pointer = pointer.as_ref().clone();
             let pointer = evaluate_c_contract_expression(
                 parameter_values,
                 state,
@@ -6065,12 +6231,23 @@ pub(super) fn evaluate_c_contract_expression(
             let CValue::Pointer(pointer) = pointer else {
                 return Err("field load base is not a pointer".to_string());
             };
-            evaluate_contract_memory_load(state, pointer, CType::Int32, assumptions)
+            let value =
+                evaluate_contract_memory_load(state, pointer.clone(), CType::Int32, assumptions)?;
+            record_surface_loadability_segment(
+                state.memory(),
+                &pointer,
+                CType::Int32,
+                surface_pointer,
+                CExpression::Value(int32(0)),
+                CExpression::Value(int32(1)),
+            );
+            Ok(value)
         }
         CExpression::TypedLoad {
             pointer,
             value_type,
         } => {
+            let surface_pointer = pointer.as_ref().clone();
             let pointer = evaluate_c_contract_expression(
                 parameter_values,
                 state,
@@ -6081,9 +6258,23 @@ pub(super) fn evaluate_c_contract_expression(
             let CValue::Pointer(pointer) = pointer else {
                 return Err("field load base is not a pointer".to_string());
             };
-            evaluate_contract_memory_load(state, pointer, *value_type, assumptions)
+            let value =
+                evaluate_contract_memory_load(state, pointer.clone(), *value_type, assumptions)?;
+            if value_type.byte_width() == 4 {
+                record_surface_loadability_segment(
+                    state.memory(),
+                    &pointer,
+                    *value_type,
+                    surface_pointer,
+                    CExpression::Value(int32(0)),
+                    CExpression::Value(int32(1)),
+                );
+            }
+            Ok(value)
         }
         CExpression::Index(base, index) => {
+            let surface_base = base.as_ref().clone();
+            let surface_index = index.as_ref().clone();
             let base =
                 evaluate_c_contract_expression(parameter_values, state, result, assumptions, base)?;
             let index = evaluate_c_contract_expression(
@@ -6094,7 +6285,17 @@ pub(super) fn evaluate_c_contract_expression(
                 index,
             )?;
             let pointer = evaluate_postcondition_pointer_add(base, index)?;
-            evaluate_contract_memory_load(state, pointer, CType::Int32, assumptions)
+            let value =
+                evaluate_contract_memory_load(state, pointer.clone(), CType::Int32, assumptions)?;
+            record_surface_loadability_segment(
+                state.memory(),
+                &pointer,
+                CType::Int32,
+                CExpression::Add(Box::new(surface_base), Box::new(surface_index)),
+                CExpression::Value(int32(0)),
+                CExpression::Value(int32(1)),
+            );
+            Ok(value)
         }
         _ => Err(format!(
             "unsupported postcondition expression `{expression:?}`"
@@ -6117,7 +6318,19 @@ pub(super) fn evaluate_contract_memory_load_from_memory(
     value_type: CType,
     assumptions: &Assumptions,
 ) -> Result<CValue, String> {
-    match memory.load(&pointer) {
+    let required = Proposition::CMemoryLoadable {
+        memory: memory.clone(),
+        base: pointer.clone(),
+        bytes: Bitvector32Term::Constant(value_type.byte_width()),
+    };
+    let outcome = memory.load(&pointer);
+    if assumptions.should_allow_symbolic_contract_loads()
+        && matches!(outcome, crate::kernel::CExpressionOutcome::Value(_))
+        && !assumptions.proves(&required)
+    {
+        record_surface_loadability_obligation(&required);
+    }
+    match outcome {
         crate::kernel::CExpressionOutcome::Value(value)
             if c_value_matches_kernel_type(&value, value_type) =>
         {
@@ -6132,17 +6345,17 @@ pub(super) fn evaluate_contract_memory_load_from_memory(
             "load from {pointer:?} produced {value:?}, not {value_type:?}"
         )),
         outcome => {
-            let required = Proposition::CMemoryLoadable {
-                memory: memory.clone(),
-                base: pointer.clone(),
-                bytes: Bitvector32Term::Constant(value_type.byte_width()),
-            };
-            if assumptions.should_allow_symbolic_contract_loads()
-                || value_type == CType::Int32
-                    && assumptions
-                        .pure_facts()
-                        .iter()
-                        .any(|fact| proposition_certifies_contract_load(fact, memory, &pointer))
+            if assumptions.should_allow_symbolic_contract_loads() {
+                if !assumptions.proves(&required) {
+                    record_surface_loadability_obligation(&required);
+                }
+                return symbolic_contract_memory_load(memory, pointer, value_type);
+            }
+            if value_type == CType::Int32
+                && assumptions
+                    .pure_facts()
+                    .iter()
+                    .any(|fact| proposition_certifies_contract_load(fact, memory, &pointer))
             {
                 return symbolic_contract_memory_load(memory, pointer, value_type);
             }
