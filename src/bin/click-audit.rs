@@ -1241,6 +1241,48 @@ int32 example() {
     }
 
     #[test]
+    fn inventory_does_not_advertise_loop_invariants_as_proof_sites() {
+        let c_source = r#"
+int32 count_to_one() {
+    int32 i;
+    i = 0;
+    while (i < 1) {
+        i = i + 1;
+    }
+    return i;
+}
+"#;
+        let click_source = r#"
+verifying "loop.c";
+
+int32 count_to_one() {
+    for loop(0) {
+        invariant i >= 0 and i <= 1;
+        initialize by simp;
+        preserve by simp;
+    }
+    ensures result == 1;
+} by auto;
+"#;
+        let sources = [("loop.c", c_source)];
+        let inventory = c0_smart_tactic_source_sites(click_source, &sources).unwrap();
+
+        assert!(
+            inventory
+                .iter()
+                .all(|site| !site.claim_label.contains(".invariant_")),
+            "{inventory:?}"
+        );
+        assert!(inventory.iter().any(|site| {
+            site.claim_label == "count_to_one.loop(0).initialize"
+                && site.tactic_name == "simp"
+        }));
+        assert!(inventory.iter().any(|site| {
+            site.claim_label == "count_to_one.loop(0).preserve" && site.tactic_name == "simp"
+        }));
+    }
+
+    #[test]
     fn truncates_large_child_diagnostics_at_character_boundaries() {
         let diagnostic = "λ".repeat(MAX_DIAGNOSTIC_CHARS + 2);
         let truncated = truncate_diagnostic(&diagnostic);

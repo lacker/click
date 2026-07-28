@@ -131,8 +131,13 @@ pub fn c0_smart_tactic_source_sites(
                 );
             }
             for (item_index, item) in clause.items().iter().enumerate() {
+                // Invariants have no independent source proof: their obligations
+                // are certified by the loop's initialize and preserve proofs.
+                if item.kind() == StructuralItemKind::Invariant {
+                    continue;
+                }
                 let kind = match item.kind() {
-                    StructuralItemKind::Invariant => "invariant",
+                    StructuralItemKind::Invariant => unreachable!(),
                     StructuralItemKind::Assert => "assert",
                     StructuralItemKind::Effect => "effect",
                     StructuralItemKind::StepEffect => "step_effect",
