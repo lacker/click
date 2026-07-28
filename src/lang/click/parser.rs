@@ -2236,6 +2236,9 @@ impl Parser {
         let Some(struct_name) = self.current_struct_params.get(base_name) else {
             return Ok(None);
         };
+        if !self.struct_layouts.contains_key(struct_name) {
+            return Ok(None);
+        }
         self.resolve_struct_field_metadata(struct_name, field_name)
             .map(Some)
     }
@@ -2416,7 +2419,9 @@ impl Parser {
                             self.error("field access is only supported on current C fragments")
                         );
                     };
-                    if let Some(base_struct_name) = &struct_name {
+                    if let Some(base_struct_name) = &struct_name
+                        && self.struct_layouts.contains_key(base_struct_name)
+                    {
                         let field =
                             self.resolve_struct_field_metadata(base_struct_name, &field_name)?;
                         let pointer = self.offset_field_pointer(base, field.offset_bytes);
