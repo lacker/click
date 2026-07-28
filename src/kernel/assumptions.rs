@@ -338,15 +338,17 @@ impl Assumptions {
         facts
     }
 
-    fn has_free_bitvector_variable(&self, variable: Variable) -> bool {
-        self.condition_facts.keys().any(|condition| {
+    fn without_free_bitvector_variable(&self, variable: Variable) -> Self {
+        let mut assumptions = self.clone();
+        assumptions.condition_facts.retain(|condition, _| {
             let mut variables = BTreeSet::new();
             collect_condition_bitvector_variables(condition, &mut variables);
-            variables.contains(&variable)
-        }) || self
+            !variables.contains(&variable)
+        });
+        assumptions
             .prop_facts
-            .iter()
-            .any(|proposition| proposition_has_free_bitvector_variable(proposition, variable))
+            .retain(|proposition| !proposition_has_free_bitvector_variable(proposition, variable));
+        assumptions
     }
 
     pub(super) fn includes(&self, required: &Self) -> bool {
@@ -2818,7 +2820,7 @@ impl Assumptions {
                 ..
             } => {
                 self.proves_finite_forall(proposition)
-                    || (!self.has_free_bitvector_variable(*var) && self.proves(body))
+                    || self.without_free_bitvector_variable(*var).proves(body)
             }
             Proposition::CMemoryLoadable {
                 memory,
@@ -3062,9 +3064,9 @@ impl Assumptions {
                     })
             }
             Proposition::ForAll { var, body, .. } => {
-                let body_derivation = (!self.has_free_bitvector_variable(*var))
-                    .then(|| self.derive_proposition_using(body, for_simp))
-                    .flatten()
+                let body_derivation = self
+                    .without_free_bitvector_variable(*var)
+                    .derive_proposition_using(body, for_simp)
                     .map(|proof| PropositionDerivationRule::ForAllBody(Box::new(proof)));
                 body_derivation.or_else(|| self.derive_finite_forall(proposition, for_simp))
             }
@@ -5329,9 +5331,8 @@ impl PropositionDerivation {
                 let Proposition::ForAll { var, body, .. } = &self.conclusion else {
                     return false;
                 };
-                !available.has_free_bitvector_variable(*var)
-                    && proof.conclusion == **body
-                    && proof.replay(available)
+                proof.conclusion == **body
+                    && proof.replay(&available.without_free_bitvector_variable(*var))
             }
             PropositionDerivationRule::FiniteForAll { instances } => {
                 let expected = available.finite_forall_instantiations(&self.conclusion);

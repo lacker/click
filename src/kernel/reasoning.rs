@@ -2109,6 +2109,41 @@ pub(super) fn collect_c_function_specification_bitvector_variables(
     collect_c_function_outcome_bitvector_variables(specification.outcome(), variables);
 }
 
+pub(super) fn collect_assumption_variables(
+    assumptions: &Assumptions,
+    variables: &mut BTreeSet<Variable>,
+) {
+    for proposition in assumptions.pure_facts() {
+        collect_proposition_bitvector_variables(&proposition, variables);
+    }
+}
+
+pub(super) fn collect_execution_environment_variables(
+    environment: &CExecutionEnvironment,
+    variables: &mut BTreeSet<Variable>,
+) {
+    for function in environment.functions.values() {
+        collect_c_function_bitvector_variables(function, variables);
+    }
+    for rule in environment.verified_function_rules.values() {
+        collect_c_function_bitvector_variables(&rule.function, variables);
+    }
+    for rule in &environment.verified_loop_rules {
+        collect_c_state_bitvector_variables(&rule.symbolic_entry_state, variables);
+        collect_c_statement_bitvector_variables(&rule.loop_statement, variables);
+        collect_assumption_variables(&rule.required_assumptions, variables);
+        for path in &rule.paths {
+            collect_c_statement_outcome_bitvector_variables(&path.outcome, variables);
+            for fact in &path.facts {
+                collect_proposition_bitvector_variables(fact.proposition(), variables);
+            }
+            for obligation in &path.obligations {
+                collect_proposition_bitvector_variables(obligation.proposition(), variables);
+            }
+        }
+    }
+}
+
 pub(super) fn collect_c_memory_range_bitvector_variables(
     range: &CMemoryRange,
     variables: &mut BTreeSet<Variable>,
@@ -2160,8 +2195,8 @@ pub(super) fn collect_condition_bitvector_variables(
             collect_pointer_offset_bitvector_variables(right, variables);
         }
         ConditionTerm::PointerEqual(left, right) => {
-            collect_pointer_offset_bitvector_variables(&left.offset, variables);
-            collect_pointer_offset_bitvector_variables(&right.offset, variables);
+            collect_pointer_bitvector_variables(left, variables);
+            collect_pointer_bitvector_variables(right, variables);
         }
     }
 }
@@ -2242,6 +2277,9 @@ pub(super) fn collect_pointer_bitvector_variables(
     pointer: &Pointer,
     variables: &mut BTreeSet<Variable>,
 ) {
+    if let PointerBlock::Symbolic(variable) = pointer.block {
+        variables.insert(variable);
+    }
     collect_pointer_offset_bitvector_variables(&pointer.offset, variables);
 }
 
@@ -2249,6 +2287,11 @@ pub(super) fn collect_memory_bitvector_variables(
     memory: &CMemory,
     variables: &mut BTreeSet<Variable>,
 ) {
+    for block in memory.blocks.keys() {
+        if let PointerBlock::Symbolic(variable) = block {
+            variables.insert(*variable);
+        }
+    }
     for (pointer, value) in &memory.cells {
         collect_pointer_bitvector_variables(pointer, variables);
         collect_c_value_bitvector_variables(value, variables);

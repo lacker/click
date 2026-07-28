@@ -858,10 +858,23 @@ pub fn c_loop_preservation_contexts(
     effect_checks: &[CLoopEffectCheck],
     body: &CStatement,
     assumptions: &Assumptions,
-    variable_start: u64,
 ) -> Result<Vec<CLoopPreservationContext>, String> {
     let mut budget = ExecutionBudget::default();
-    let mut variables = VerificationVariableGenerator::new(variable_start);
+    let mut existing_variables = BTreeSet::new();
+    collect_c_state_bitvector_variables(loop_entry_state, &mut existing_variables);
+    collect_c_expression_bitvector_variables(condition, &mut existing_variables);
+    for check in invariant_checks {
+        collect_spec_proposition_bitvector_variables(check.proposition(), &mut existing_variables);
+    }
+    for check in effect_checks {
+        collect_loop_effect_bitvector_variables(check.effect(), &mut existing_variables);
+    }
+    collect_c_statement_bitvector_variables(body, &mut existing_variables);
+    collect_assumption_variables(assumptions, &mut existing_variables);
+    let mut variables = VerificationVariableGenerator::fresh_for(
+        budget.next_verification_variable,
+        existing_variables,
+    );
     let (top_state, whole_loop_effect_summaries) = prepare_loop_top_state(
         loop_entry_state,
         effect_checks,
@@ -1074,9 +1087,13 @@ pub fn c_loop_invariants_hold_at_entry(
 pub fn abstract_c_state_for_join(
     state: &CState,
     stable_entry_locals: &BTreeMap<String, CValue>,
-    variable_start: u64,
 ) -> Result<CState, String> {
-    let mut variables = VerificationVariableGenerator::new(variable_start);
+    let mut existing_variables = BTreeSet::new();
+    collect_c_state_bitvector_variables(state, &mut existing_variables);
+    for value in stable_entry_locals.values() {
+        collect_c_value_bitvector_variables(value, &mut existing_variables);
+    }
+    let mut variables = VerificationVariableGenerator::fresh_for(1_000_000, existing_variables);
     let mut abstract_state = state.clone();
     let mut abstract_objects = Vec::new();
     let mut preserved_blocks = BTreeSet::new();
@@ -1791,6 +1808,21 @@ pub fn prove_symbolic_c_statement_verification_paths_with_environment_and_loop_r
     )
 }
 
+fn statement_verification_variables(
+    lower_bound: u64,
+    state: &CState,
+    statement: &CStatement,
+    assumptions: &Assumptions,
+    environment: &CExecutionEnvironment,
+) -> VerificationVariableGenerator {
+    let mut existing = BTreeSet::new();
+    collect_c_state_bitvector_variables(state, &mut existing);
+    collect_c_statement_bitvector_variables(statement, &mut existing);
+    collect_assumption_variables(assumptions, &mut existing);
+    collect_execution_environment_variables(environment, &mut existing);
+    VerificationVariableGenerator::fresh_for(lower_bound, existing)
+}
+
 pub(crate) fn prove_symbolic_c_statement_verification_paths_with_environment_and_loop_rule_using_budget(
     state: CState,
     statement: CStatement,
@@ -1799,7 +1831,13 @@ pub(crate) fn prove_symbolic_c_statement_verification_paths_with_environment_and
     execution_semantics: CExecutionSemantics,
     budget: &mut ExecutionBudget,
 ) -> (SymbolicCExecution, Option<CVerifiedLoopRule>) {
-    let mut variables = VerificationVariableGenerator::new(budget.next_verification_variable);
+    let mut variables = statement_verification_variables(
+        budget.next_verification_variable,
+        &state,
+        &statement,
+        &assumptions,
+        &environment,
+    );
     let execution = execute_c_statement_verification_paths(
         &state,
         &statement,
@@ -1871,7 +1909,13 @@ pub(crate) fn prove_symbolic_c_loop_exit_with_proven_phases_using_budget(
             None,
         );
     };
-    let mut variables = VerificationVariableGenerator::new(budget.next_verification_variable);
+    let mut variables = statement_verification_variables(
+        budget.next_verification_variable,
+        &state,
+        &statement,
+        &assumptions,
+        &environment,
+    );
     let execution = execute_c_while_exit_paths_with_proven_phases(
         &state,
         condition,
@@ -2410,7 +2454,16 @@ fn prove_symbolic_c_function_verification_paths_with_environment_and_budget_mode
     mut budget: ExecutionBudget,
     prepare_contract_resources: bool,
 ) -> SymbolicCExecution {
-    let mut variables = VerificationVariableGenerator::new(budget.next_verification_variable);
+    let mut existing = BTreeSet::new();
+    collect_c_state_bitvector_variables(&state, &mut existing);
+    collect_c_function_bitvector_variables(&function, &mut existing);
+    for argument in &arguments {
+        collect_c_expression_bitvector_variables(argument, &mut existing);
+    }
+    collect_assumption_variables(&assumptions, &mut existing);
+    collect_execution_environment_variables(&environment, &mut existing);
+    let mut variables =
+        VerificationVariableGenerator::fresh_for(budget.next_verification_variable, existing);
     let paths = match execute_c_function_verification_paths(
         &state,
         &function,

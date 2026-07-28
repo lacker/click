@@ -1104,17 +1104,30 @@ pub(super) struct CArgumentsPath {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct VerificationVariableGenerator {
     pub(super) next: u64,
+    reserved: BTreeSet<Variable>,
 }
 
 impl VerificationVariableGenerator {
-    pub(super) fn new(start: u64) -> Self {
-        Self { next: start }
+    pub(super) fn fresh_for(lower_bound: u64, existing: BTreeSet<Variable>) -> Self {
+        Self {
+            next: lower_bound,
+            reserved: existing,
+        }
     }
 
     pub(super) fn next(&mut self) -> Variable {
-        let variable = Variable(self.next);
-        self.next += 1;
-        variable
+        let start = self.next;
+        loop {
+            let variable = Variable(self.next);
+            self.next = self.next.wrapping_add(1);
+            if self.reserved.insert(variable) {
+                return variable;
+            }
+            assert!(
+                self.next != start,
+                "all symbolic variable identifiers are already reserved"
+            );
+        }
     }
 }
 
@@ -3634,12 +3647,6 @@ impl ExecutionBudget {
 
     pub(super) fn consume_function_call(&mut self) -> ExecutionResult<()> {
         consume_budget(&mut self.function_calls, ExecutionLimit::FunctionCalls)
-    }
-
-    pub(super) fn allocate_opaque_call(&mut self) -> u64 {
-        let call = self.next_opaque_call;
-        self.next_opaque_call += 1;
-        call
     }
 
     pub(super) fn consume_loop_unroll(&mut self) -> ExecutionResult<()> {

@@ -1156,7 +1156,7 @@ enum InternalProofNode {
     },
     Advance {
         index: usize,
-        join_id: usize,
+        _join_id: usize,
         target: ProgramPointRef,
         assertions: Vec<ProofAssertion>,
         body: Box<InternalProofNode>,
@@ -1298,7 +1298,7 @@ fn build_internal_proof_at(
             *next_join_id += 1;
             InternalProofNode::Advance {
                 index,
-                join_id,
+                _join_id: join_id,
                 target: advance.target.clone(),
                 assertions: advance.assertions.clone(),
                 body: Box::new(build_internal_proof_at(
@@ -4993,7 +4993,7 @@ fn verify_execution_proofs_forward(
             let mut initialization_path_certificates = Vec::new();
             let mut preservation_path_certificates = Vec::new();
             let mut effect_path_certificates = BTreeMap::<usize, Vec<PathCertificate>>::new();
-            for (path_index, context) in contexts.iter().enumerate() {
+            for context in &contexts {
                 let assumptions = assumptions_from_propositions(&context.pure_facts);
                 if let Some((clause, proof)) = initialization_proof {
                     let certificate = verify_loop_initialization_pure_proof(
@@ -5024,7 +5024,6 @@ fn verify_execution_proofs_forward(
                     effect_checks,
                     body,
                     &assumptions,
-                    11_000_000_000 + loop_index as u64 * 1_000_000 + path_index as u64 * 10_000,
                 )
                 .map_err(|message| {
                     ClickError::new(format!(
@@ -16552,7 +16551,7 @@ fn execute_internal_proof(
         }
         InternalProofNode::Advance {
             index,
-            join_id,
+            _join_id: _,
             target,
             assertions,
             body,
@@ -16582,7 +16581,6 @@ fn execute_internal_proof(
             let mut joined_context: Option<ProofReplayContext> = None;
             for mut branch_context in body_contexts {
                 let result = apply_advance_interface(
-                    *join_id,
                     target,
                     assertions,
                     *index,
@@ -16736,7 +16734,6 @@ fn add_proof_branch_path(mut error: ClickError, branch_path: &[String]) -> Click
 }
 
 fn apply_advance_interface(
-    join_id: usize,
     target: &ProgramPointRef,
     assertions: &[ProofAssertion],
     tactic_index: usize,
@@ -16885,16 +16882,8 @@ fn apply_advance_interface(
         }
     }
     let entry_state = replay.execution_start_state(state).clone();
-    let variable_start = (join_id as u64)
-        .checked_mul(1_000_000)
-        .and_then(|offset| 10_000_000_000u64.checked_add(offset))
-        .ok_or_else(|| {
-            ClickError::new(format!(
-                "`{claim_label}` tactic {tactic_index}: too many nested `advance` joins"
-            ))
-        })?;
     let mut abstract_state =
-        abstract_c_state_for_join(state, stable_join_locals, variable_start).map_err(|message| {
+        abstract_c_state_for_join(state, stable_join_locals).map_err(|message| {
             ClickError::new(format!(
                 "`{claim_label}` tactic {tactic_index}: could not abstract `advance` target state: {message}"
             ))

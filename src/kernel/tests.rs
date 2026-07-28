@@ -226,10 +226,8 @@ fn join_state_forgets_changed_scalars_and_memory() {
         );
     let stable = BTreeMap::from([("x".to_string(), stable_x.clone())]);
 
-    let abstract_zero =
-        abstract_c_state_for_join(&state_zero, &stable, 10_000).expect("join abstraction");
-    let abstract_one =
-        abstract_c_state_for_join(&state_one, &stable, 10_000).expect("join abstraction");
+    let abstract_zero = abstract_c_state_for_join(&state_zero, &stable).expect("join abstraction");
+    let abstract_one = abstract_c_state_for_join(&state_one, &stable).expect("join abstraction");
 
     assert_eq!(abstract_zero, abstract_one);
     assert_eq!(abstract_zero.locals().get("x"), Some(&stable_x));
@@ -250,13 +248,11 @@ fn join_state_abstracts_changed_pointer_locals() {
     let abstract_left = abstract_c_state_for_join(
         &CState::new().with_local("selected", CValue::Pointer(left)),
         &BTreeMap::new(),
-        20_000,
     )
     .expect("pointer join abstraction");
     let abstract_right = abstract_c_state_for_join(
         &CState::new().with_local("selected", CValue::Pointer(right)),
         &BTreeMap::new(),
-        20_000,
     )
     .expect("pointer join abstraction");
 
@@ -265,6 +261,21 @@ fn join_state_abstracts_changed_pointer_locals() {
         panic!("selected should remain a pointer local");
     };
     assert!(selected.has_symbolic_block());
+}
+
+#[test]
+fn join_state_fresh_variables_do_not_collide_with_symbolic_pointer_blocks() {
+    let state = CState::new().with_local(
+        "selected",
+        CValue::Pointer(Pointer::symbolic(Variable(1_000_000))),
+    );
+    let abstract_state =
+        abstract_c_state_for_join(&state, &BTreeMap::new()).expect("pointer join abstraction");
+    let Some(CValue::Pointer(selected)) = abstract_state.locals().get("selected") else {
+        panic!("selected should remain a pointer local");
+    };
+
+    assert_eq!(selected.block, PointerBlock::Symbolic(Variable(1_000_001)));
 }
 
 #[test]
@@ -1607,7 +1618,7 @@ fn forall_introduction_rejects_a_variable_free_in_ambient_assumptions() {
 }
 
 #[test]
-fn forall_derivation_replay_enforces_the_eigenvariable_condition() {
+fn forall_derivation_replay_shadows_ambient_uses_of_the_binder_id() {
     let variable = Variable(187);
     let value = Bitvector32Term::Variable(variable);
     let goal = forall_int32(
@@ -1623,7 +1634,7 @@ fn forall_derivation_replay_enforces_the_eigenvariable_condition() {
     });
 
     assert!(derivation.replay(&Assumptions::new()));
-    assert!(!derivation.replay(&contaminated));
+    assert!(derivation.replay(&contaminated));
 }
 
 #[test]
@@ -5484,7 +5495,7 @@ fn assumptions_resolve_materialized_symbolic_memory_load_aliases() {
 }
 
 #[test]
-fn assumptions_prove_wrapped_materialized_load_branch_obligation() {
+fn assumptions_reject_forall_based_on_a_shadowed_materialized_load_index() {
     let k = Variable(76);
     let k_bits = Bitvector32Term::Variable(k);
     let base_memory = CMemory::new().with_block("dst", 12).with_block("src", 12);
@@ -5573,11 +5584,11 @@ fn assumptions_prove_wrapped_materialized_load_branch_obligation() {
         )),
     );
 
-    assert!(Assumptions::new().proves(&proposition));
+    assert!(!Assumptions::new().proves(&proposition));
 }
 
 #[test]
-fn assumptions_prove_copied_prefix_new_cell_obligation() {
+fn assumptions_reject_forall_based_on_a_shadowed_prefix_index() {
     let i = Variable(82);
     let k = Variable(83);
     let i_bits = Bitvector32Term::Variable(i);
@@ -5668,7 +5679,7 @@ fn assumptions_prove_copied_prefix_new_cell_obligation() {
         )),
     );
 
-    assert!(Assumptions::new().proves(&proposition));
+    assert!(!Assumptions::new().proves(&proposition));
 }
 
 #[test]
@@ -6207,17 +6218,17 @@ fn verified_immutable_calls_allocate_distinct_results() {
         proposition = body;
     }
     let Proposition::CStatementExecutes {
-        outcome: CStatementOutcome::Return { value, .. },
+        outcome: CStatementOutcome::Return { value, state },
         ..
     } = proposition
     else {
         panic!("calls should return normally")
     };
 
-    assert_eq!(
-        value,
-        &CValue::Int32(Bitvector32Term::Variable(Variable(8_100_001)))
-    );
+    let first = state.locals().get("first").expect("first result");
+    let second = state.locals().get("second").expect("second result");
+    assert_ne!(first, second);
+    assert_eq!(value, second);
 }
 
 #[test]

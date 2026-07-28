@@ -347,7 +347,20 @@ fn execute_verified_function_rule(
 ) -> ExecutionResult<Vec<CFunctionPath>> {
     let function = &rule.function;
     budget.consume_function_call()?;
-    let call = budget.allocate_opaque_call();
+    let mut existing_variables = BTreeSet::new();
+    collect_c_state_bitvector_variables(caller_state, &mut existing_variables);
+    collect_c_function_bitvector_variables(function, &mut existing_variables);
+    for argument in arguments {
+        collect_c_expression_bitvector_variables(argument, &mut existing_variables);
+    }
+    collect_assumption_variables(assumptions, &mut existing_variables);
+    let mut variables = VerificationVariableGenerator::fresh_for(
+        budget.next_verification_variable,
+        existing_variables,
+    );
+    let memory_identity = variables.next();
+    let result_identity = variables.next();
+    budget.next_verification_variable = variables.next;
     let mut paths = Vec::new();
     for arguments_path in evaluate_c_arguments_paths(caller_state, arguments, assumptions, budget)?
     {
@@ -474,7 +487,7 @@ fn execute_verified_function_rule(
             entry_state.memory.clone()
         } else {
             entry_state.memory.clone().with_call_memory_havoc(
-                Variable(8_000_000 + call),
+                memory_identity,
                 &mutable_ranges,
                 &effective_assumptions,
             )
@@ -488,7 +501,7 @@ fn execute_verified_function_rule(
                 },
             ));
         }
-        let result = symbolic_call_result(function.return_type(), Variable(8_100_000 + call));
+        let result = symbolic_call_result(function.return_type(), result_identity);
         let mut post_state = entry_state.clone().with_memory(memory);
         post_state
             .locals
