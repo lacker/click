@@ -6337,6 +6337,82 @@ fn verified_immutable_calls_allocate_distinct_results() {
 }
 
 #[test]
+fn separate_statement_verification_calls_preserve_fresh_identity_progress() {
+    let helper = c_function(
+        CType::Int32,
+        "opaque_identity",
+        vec![c_parameter("x", CType::Int32)],
+        c_return(c_variable("x")),
+    )
+    .with_contract(
+        Vec::new(),
+        vec![SpecProposition::Comparison {
+            left: SpecExpression::CExpression(c_variable("result")),
+            operator: CComparisonOperator::Equal,
+            right: SpecExpression::CExpression(c_variable("x")),
+        }],
+        Vec::new(),
+        vec![CFunctionContractClaim::ensure_proposition(0, 0)],
+        true,
+    );
+    let environment = CExecutionEnvironment::new()
+        .with_function(helper.clone())
+        .with_verified_function_rule(CVerifiedFunctionRule { function: helper });
+    let mut budget = ExecutionBudget::default();
+
+    let (first_execution, _) =
+        prove_symbolic_c_statement_verification_paths_with_environment_and_loop_rule_using_budget(
+            CState::new(),
+            c_call_assign("first", "opaque_identity", vec![c_int32_literal(5)]),
+            Assumptions::new(),
+            environment.clone(),
+            CExecutionSemantics::APPLY_VERIFIED_RULES,
+            &mut budget,
+        );
+    let first_next = budget.next_verification_variable();
+    let first_path = first_execution.paths().first().expect("first call path");
+    let mut first_proposition = first_path.theorem().proposition();
+    while let Proposition::Implies(_, body) = first_proposition {
+        first_proposition = body;
+    }
+    let Proposition::CStatementExecutes {
+        outcome: CStatementOutcome::Normal(first_state),
+        ..
+    } = first_proposition
+    else {
+        panic!("first call should return normally")
+    };
+    let first_value = first_state.locals().get("first").expect("first result");
+
+    let (second_execution, _) =
+        prove_symbolic_c_statement_verification_paths_with_environment_and_loop_rule_using_budget(
+            first_state.clone(),
+            c_call_assign("second", "opaque_identity", vec![c_int32_literal(7)]),
+            Assumptions::new(),
+            environment,
+            CExecutionSemantics::APPLY_VERIFIED_RULES,
+            &mut budget,
+        );
+    let second_path = second_execution.paths().first().expect("second call path");
+    let mut second_proposition = second_path.theorem().proposition();
+    while let Proposition::Implies(_, body) = second_proposition {
+        second_proposition = body;
+    }
+    let Proposition::CStatementExecutes {
+        outcome: CStatementOutcome::Normal(second_state),
+        ..
+    } = second_proposition
+    else {
+        panic!("second call should return normally")
+    };
+    let second_value = second_state.locals().get("second").expect("second result");
+
+    assert!(first_next > 0);
+    assert!(budget.next_verification_variable() > first_next);
+    assert_ne!(first_value, second_value);
+}
+
+#[test]
 fn verified_function_rule_requires_every_contract_claim_certificate() {
     let function = c_function(
         CType::Int32,

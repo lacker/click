@@ -258,14 +258,25 @@ pub(super) fn execute_c_statement_verification_paths(
                 variables,
             )?
         }
-        _ => execute_c_statement_paths(
-            state,
-            statement,
-            assumptions,
-            environment,
-            execution_semantics,
-            budget,
-        )?,
+        _ => {
+            // Loop verification and verified-call execution share one symbolic
+            // identity stream. The loop paths allocate through `variables`,
+            // while ordinary statement execution allocates opaque-call
+            // identities through `budget`; synchronize both sides before and
+            // after crossing that boundary so neither can reuse an identity.
+            budget.next_verification_variable =
+                budget.next_verification_variable.max(variables.next);
+            let paths = execute_c_statement_paths(
+                state,
+                statement,
+                assumptions,
+                environment,
+                execution_semantics,
+                budget,
+            );
+            variables.next = variables.next.max(budget.next_verification_variable);
+            paths?
+        }
     };
     budget.consume_paths(paths.len())?;
     Ok(paths)

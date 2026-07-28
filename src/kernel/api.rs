@@ -1858,7 +1858,7 @@ pub(crate) fn prove_symbolic_c_statement_verification_paths_with_environment_and
         budget,
         &mut variables,
     );
-    budget.next_verification_variable = variables.next;
+    budget.next_verification_variable = budget.next_verification_variable.max(variables.next);
     let paths = match execution {
         Ok(paths) => paths,
         Err(limit) => {
@@ -1942,7 +1942,7 @@ pub(crate) fn prove_symbolic_c_loop_exit_with_proven_phases_using_budget(
         budget,
         &mut variables,
     );
-    budget.next_verification_variable = variables.next;
+    budget.next_verification_variable = budget.next_verification_variable.max(variables.next);
     let paths = match execution {
         Ok(paths) => paths,
         Err(limit) => {
