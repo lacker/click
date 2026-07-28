@@ -182,7 +182,15 @@ int32 owned_string_set(
     execute_step();
     have index < index + 1 by { simp(); }
     frame();
-    simp();
+    have result == value by {
+        normalize();
+    }
+    have load_int32_pointer((owner + 2))[index] == value by {
+        normalize();
+    }
+    assumption();
+    assumption();
+    assumption();
 }
 
 int32 owned_string_push(struct owned_string* owner, int32 value) {
@@ -482,7 +490,49 @@ int32 owned_string_pop(struct owned_string* owner) {
     }
     fold(owned_string(owner));
     frame();
-    simp();
+    have loadable(old((load_int32_pointer((owner + 2)) + (load_int32(owner) - 1))[0..1])) by {
+        calculate(loadable(old((load_int32_pointer((owner + 2)) + (load_int32(owner) - 1))[0..1]))) using {
+            fact at(statement(6).exit, index) < old(*owner);
+            fact old(*owner) < *(owner + 1);
+            fact 0 <= at(statement(6).exit, index);
+            fact 0 <= old(*owner);
+            fact 1 <= old(*owner);
+            fact terminated_at(at(statement(0).entry, load_int32_pointer((owner + 2))), at(statement(0).entry, load_int32(owner)));
+            fact at(statement(6).entry, loadable(old(load_int32_pointer((owner + 2))[0..load_int32((owner + 1))])));
+            fact at(statement(6).entry, separate(memory(owner[0..1]), memory(owner[1..2])));
+            fact at(statement(6).entry, separate(memory(owner[0..1]), memory(owner[2..4])));
+            fact at(statement(6).entry, separate(memory(owner[0..1]), memory(load_int32_pointer((owner + 2))[0..load_int32((owner + 1))])));
+            fact at(statement(6).entry, separate(memory(owner[0..4]), memory(load_int32_pointer((owner + 2))[0..load_int32((owner + 1))])));
+            fact at(statement(6).entry, separate(memory(owner[1..2]), memory(owner[2..4])));
+            fact at(statement(6).entry, separate(memory(owner[1..2]), memory(load_int32_pointer((owner + 2))[0..load_int32((owner + 1))])));
+            fact at(statement(6).entry, separate(memory(owner[2..4]), memory(load_int32_pointer((owner + 2))[0..load_int32((owner + 1))])));
+            fact at(statement(6).entry, contains(owned_string(owner), memory(owner[0..1])));
+            fact at(statement(6).entry, contains(owned_string(owner), memory(owner[1..2])));
+            fact at(statement(6).entry, contains(owned_string(owner), memory(owner[2..4])));
+            fact at(statement(6).entry, contains(owned_string(owner), memory(load_int32_pointer((owner + 2))[0..load_int32((owner + 1))])));
+        }
+    }
+    have result == old(load_int32_pointer((owner + 2))[(load_int32(owner) - 1)]) by {
+        normalize();
+    }
+    have load_int32(owner) == (old(load_int32(owner)) - 1) by {
+        normalize();
+    }
+    have load_int32((owner + 1)) == old(load_int32((owner + 1))) by {
+        normalize();
+    }
+    have load_int32_pointer((owner + 2)) == old(load_int32_pointer((owner + 2))) by {
+        normalize();
+    }
+    have load_int32_pointer((owner + 2))[load_int32(owner)] == 0 by {
+        normalize();
+    }
+    assumption();
+    assumption();
+    assumption();
+    assumption();
+    assumption();
+    assumption();
 }
 
 int32 owned_string_pop_preserves_first(struct owned_string* owner) {
