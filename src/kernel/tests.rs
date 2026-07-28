@@ -6057,9 +6057,7 @@ fn verified_function_rule_applies_contract_without_executing_body() {
             right: SpecExpression::CExpression(c_variable("x")),
         }],
         Vec::new(),
-        vec![CFunctionContractClaim::new(
-            CFunctionContractClaimKey::Ensure(0),
-        )],
+        vec![CFunctionContractClaim::ensure_proposition(0, 0)],
         true,
     );
     let environment = CExecutionEnvironment::new()
@@ -6149,9 +6147,7 @@ fn verified_immutable_calls_allocate_distinct_results() {
             right: SpecExpression::CExpression(c_variable("x")),
         }],
         Vec::new(),
-        vec![CFunctionContractClaim::new(
-            CFunctionContractClaimKey::Ensure(0),
-        )],
+        vec![CFunctionContractClaim::ensure_proposition(0, 0)],
         true,
     );
     let environment = CExecutionEnvironment::new()
@@ -6200,29 +6196,34 @@ fn verified_function_rule_requires_every_contract_claim_certificate() {
     )
     .with_contract(
         Vec::new(),
-        Vec::new(),
+        vec![
+            SpecProposition::Comparison {
+                left: SpecExpression::Value(int32(0)),
+                operator: CComparisonOperator::Equal,
+                right: SpecExpression::Value(int32(0)),
+            },
+            SpecProposition::Comparison {
+                left: SpecExpression::Value(int32(0)),
+                operator: CComparisonOperator::Equal,
+                right: SpecExpression::Value(int32(0)),
+            },
+        ],
         Vec::new(),
         vec![
-            CFunctionContractClaim::new(CFunctionContractClaimKey::Ensure(0)),
-            CFunctionContractClaim::new(CFunctionContractClaimKey::Ensure(1)),
+            CFunctionContractClaim::ensure_proposition(0, 0),
+            CFunctionContractClaim::ensure_proposition(1, 1),
         ],
         true,
     );
-    let specification = c_function_specification(
+    let execution = prove_c_function_contract_execution_paths_with_environment(
         CState::new(),
-        Vec::new(),
-        Vec::new(),
-        CFunctionOutcome::Return {
-            value: int32(0),
-            state: CState::new(),
-        },
-    );
-    let theorem = prove_c_function_satisfies_specification(
         function.clone(),
-        specification,
-        Assumptions::new(),
-    )
-    .expect("function should satisfy its concrete specification");
+        Vec::new(),
+        Vec::new(),
+        CExecutionEnvironment::new(),
+        CExecutionSemantics::EXECUTE_BODIES,
+        CFunctionContractExecutionMode::VerifyLoops,
+    );
 
     let impostor = c_function(
         CType::Int32,
@@ -6230,26 +6231,20 @@ fn verified_function_rule_requires_every_contract_claim_certificate() {
         Vec::new(),
         c_return(c_int32_literal(1)),
     );
-    let impostor_specification = c_function_specification(
+    let impostor_execution = prove_c_function_contract_execution_paths_with_environment(
         CState::new(),
-        Vec::new(),
-        Vec::new(),
-        CFunctionOutcome::Return {
-            value: int32(1),
-            state: CState::new(),
-        },
-    );
-    let impostor_theorem = prove_c_function_satisfies_specification(
         impostor,
-        impostor_specification,
-        Assumptions::new(),
-    )
-    .expect("impostor should satisfy its own specification");
+        Vec::new(),
+        Vec::new(),
+        CExecutionEnvironment::new(),
+        CExecutionSemantics::EXECUTE_BODIES,
+        CFunctionContractExecutionMode::VerifyLoops,
+    );
     assert!(
         c_verified_function_contract_claim(
             &function,
             CFunctionContractClaimKey::Ensure(0),
-            &impostor_theorem,
+            &impostor_execution,
         )
         .is_none()
     );
@@ -6257,7 +6252,7 @@ fn verified_function_rule_requires_every_contract_claim_certificate() {
     let first = c_verified_function_contract_claim(
         &function,
         CFunctionContractClaimKey::Ensure(0),
-        &theorem,
+        &execution,
     )
     .expect("first claim should certify");
 
@@ -6266,8 +6261,143 @@ fn verified_function_rule_requires_every_contract_claim_certificate() {
     let second = c_verified_function_contract_claim(
         &function,
         CFunctionContractClaimKey::Ensure(1),
-        &theorem,
+        &execution,
     )
     .expect("second claim should certify");
     assert!(c_verified_function_rule(function, &[first, second]).is_some());
+}
+
+#[test]
+fn contract_claim_rejects_same_source_function_with_a_different_contract() {
+    let body = c_return(c_int32_literal(0));
+    let uncontracted = c_function(CType::Int32, "contract_identity", Vec::new(), body.clone());
+    let execution = prove_c_function_contract_execution_paths_with_environment(
+        CState::new(),
+        uncontracted,
+        Vec::new(),
+        Vec::new(),
+        CExecutionEnvironment::new(),
+        CExecutionSemantics::EXECUTE_BODIES,
+        CFunctionContractExecutionMode::VerifyLoops,
+    );
+    let stronger = c_function(CType::Int32, "contract_identity", Vec::new(), body).with_contract(
+        Vec::new(),
+        vec![SpecProposition::Comparison {
+            left: SpecExpression::CExpression(c_variable("result")),
+            operator: CComparisonOperator::Equal,
+            right: SpecExpression::Value(int32(1)),
+        }],
+        Vec::new(),
+        vec![CFunctionContractClaim::ensure_proposition(0, 0)],
+        true,
+    );
+
+    assert!(
+        c_verified_function_contract_claim(
+            &stronger,
+            CFunctionContractClaimKey::Ensure(0),
+            &execution,
+        )
+        .is_none()
+    );
+}
+
+#[test]
+fn body_safety_claim_rejects_an_unproved_execution_condition() {
+    let function = c_function(
+        CType::Int32,
+        "unsafe_body",
+        Vec::new(),
+        c_return(c_int32_literal(0)),
+    )
+    .with_contract(
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        vec![CFunctionContractClaim::body_safety()],
+        true,
+    );
+    let state = CState::new();
+    let obligation = ProofObligation::verification_condition(Proposition::ConditionIs(
+        ConditionTerm::Constant(false),
+        true,
+    ));
+    let proposition = Proposition::CFunctionExecutes {
+        state: state.clone(),
+        function: function.clone(),
+        arguments: Vec::new(),
+        outcome: CFunctionOutcome::Return {
+            value: int32(0),
+            state,
+        },
+    };
+    let path = SymbolicCExecutionPath {
+        assumptions: Assumptions::new(),
+        facts: Vec::new(),
+        effect_facts: Vec::new(),
+        obligations: vec![obligation.clone()],
+        theorem: Theorem::new(wrap_proof_facts(
+            proposition,
+            &Assumptions::new(),
+            &[],
+            &[obligation],
+        )),
+    };
+    let execution = CFunctionContractExecution {
+        execution: SymbolicCExecution {
+            paths: vec![path],
+            limit: None,
+        },
+    };
+
+    assert!(
+        c_verified_function_contract_claim(
+            &function,
+            CFunctionContractClaimKey::BodySafety,
+            &execution,
+        )
+        .is_none()
+    );
+}
+
+#[test]
+fn contract_claim_rejects_caller_supplied_false_entry_fact() {
+    let function = c_function(
+        CType::Int32,
+        "false_postcondition",
+        Vec::new(),
+        c_return(c_int32_literal(0)),
+    )
+    .with_contract(
+        Vec::new(),
+        vec![SpecProposition::Comparison {
+            left: SpecExpression::CExpression(c_variable("result")),
+            operator: CComparisonOperator::Equal,
+            right: SpecExpression::Value(int32(1)),
+        }],
+        Vec::new(),
+        vec![CFunctionContractClaim::ensure_proposition(0, 0)],
+        true,
+    );
+    let execution = prove_c_function_contract_execution_paths_with_environment(
+        CState::new(),
+        function.clone(),
+        Vec::new(),
+        vec![Proposition::ConditionIs(
+            ConditionTerm::Constant(false),
+            true,
+        )],
+        CExecutionEnvironment::new(),
+        CExecutionSemantics::EXECUTE_BODIES,
+        CFunctionContractExecutionMode::VerifyLoops,
+    );
+
+    assert!(
+        c_verified_function_contract_claim(
+            &function,
+            CFunctionContractClaimKey::Ensure(0),
+            &execution,
+        )
+        .is_none()
+    );
 }

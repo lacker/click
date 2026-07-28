@@ -1744,6 +1744,7 @@ pub fn prove_symbolic_c_execution_paths_with_environment_and_budget(
                 &path.obligations,
             ));
             SymbolicCExecutionPath {
+                assumptions: assumptions.clone(),
                 facts,
                 effect_facts,
                 obligations: path.obligations,
@@ -1935,6 +1936,7 @@ fn symbolic_c_statement_execution_with_loop_rule(
                 &path.obligations,
             ));
             SymbolicCExecutionPath {
+                assumptions: assumptions.clone(),
                 facts,
                 effect_facts,
                 obligations: path.obligations,
@@ -2123,6 +2125,7 @@ pub fn prove_symbolic_c_function_execution_paths_with_environment_and_budget(
                 &path.obligations,
             ));
             SymbolicCExecutionPath {
+                assumptions: assumptions.clone(),
                 facts,
                 effect_facts,
                 obligations: path.obligations,
@@ -2160,7 +2163,252 @@ pub fn prove_symbolic_c_function_verification_paths_with_environment_and_budget(
     assumptions: Assumptions,
     environment: CExecutionEnvironment,
     execution_semantics: CExecutionSemantics,
+    budget: ExecutionBudget,
+) -> SymbolicCExecution {
+    prove_symbolic_c_function_verification_paths_with_environment_and_budget_mode(
+        state,
+        function,
+        arguments,
+        assumptions,
+        environment,
+        execution_semantics,
+        budget,
+        false,
+    )
+}
+
+/// Verifies an exact function body from its declared contract-entry resources.
+///
+/// Unlike ordinary proof replay, this canonicalizes composite requirements
+/// before body execution. It is the independent execution used to certify
+/// opaque contract claims.
+pub fn prove_symbolic_c_function_contract_verification_paths_with_environment(
+    state: CState,
+    function: CFunction,
+    arguments: Vec<CExpression>,
+    assumptions: Assumptions,
+    environment: CExecutionEnvironment,
+    execution_semantics: CExecutionSemantics,
+) -> SymbolicCExecution {
+    prove_symbolic_c_function_verification_paths_with_environment_and_budget_mode(
+        state,
+        function,
+        arguments,
+        assumptions,
+        environment,
+        execution_semantics,
+        ExecutionBudget::default(),
+        true,
+    )
+}
+
+/// Produces the only execution frontier accepted for opaque contract
+/// certification.
+///
+/// The initial assumptions are derived inside the kernel solely from the
+/// function's exact contract and resource entry state. Callers cannot inject
+/// additional hypotheses.
+pub fn prove_c_function_contract_execution_paths_with_environment(
+    state: CState,
+    function: CFunction,
+    arguments: Vec<CExpression>,
+    derived_entry_facts: Vec<Proposition>,
+    environment: CExecutionEnvironment,
+    execution_semantics: CExecutionSemantics,
+    mode: CFunctionContractExecutionMode,
+) -> CFunctionContractExecution {
+    let selection_assumptions =
+        assumptions_with_propositions(&Assumptions::new(), &derived_entry_facts);
+    let execution = match c_function_contract_certification_assumptions(
+        &state,
+        &function,
+        &arguments,
+        Assumptions::new(),
+        &selection_assumptions,
+    ) {
+        Some(mut assumptions) => {
+            let Some(mut entry_state) = c_function_entry_state(&state, &function, &arguments)
+            else {
+                return CFunctionContractExecution {
+                    execution: SymbolicCExecution {
+                        paths: Vec::new(),
+                        limit: None,
+                    },
+                };
+            };
+            let Some(entry_resources) = expand_all_composite_resource_facts(
+                entry_state.resources(),
+                function.composite_resource_definitions(),
+                entry_state.memory(),
+                &assumptions,
+            ) else {
+                return CFunctionContractExecution {
+                    execution: SymbolicCExecution {
+                        paths: Vec::new(),
+                        limit: None,
+                    },
+                };
+            };
+            entry_state.resources = entry_resources.clone();
+            for fact in derived_entry_facts {
+                if certification_proves_proposition(&assumptions, &fact)
+                    || resources_certify_loadability(
+                        &entry_state,
+                        &entry_resources,
+                        &fact,
+                        &assumptions,
+                    )
+                {
+                    assumptions = assumptions.assume_proposition(fact);
+                }
+            }
+            match mode {
+                CFunctionContractExecutionMode::VerifyLoops => {
+                    prove_symbolic_c_function_verification_paths_with_environment_and_budget_mode(
+                        state,
+                        function,
+                        arguments,
+                        assumptions,
+                        environment,
+                        execution_semantics,
+                        ExecutionBudget::default(),
+                        true,
+                    )
+                }
+                CFunctionContractExecutionMode::ExecuteLoops => {
+                    prove_symbolic_c_function_execution_paths_with_environment_and_budget(
+                        state,
+                        function,
+                        arguments,
+                        assumptions,
+                        environment,
+                        execution_semantics,
+                        ExecutionBudget::default(),
+                    )
+                }
+            }
+        }
+        None => SymbolicCExecution {
+            paths: Vec::new(),
+            limit: None,
+        },
+    };
+    CFunctionContractExecution { execution }
+}
+
+fn c_function_contract_certification_assumptions(
+    caller_state: &CState,
+    function: &CFunction,
+    arguments: &[CExpression],
+    mut assumptions: Assumptions,
+    selection_assumptions: &Assumptions,
+) -> Option<Assumptions> {
+    let mut entry_state = c_function_entry_state(caller_state, function, arguments)?;
+    let mut budget = ExecutionBudget::default();
+    for requirement in function.contract_requires() {
+        let paths = lower_spec_proposition_at_state_with_loop_entry(
+            &entry_state,
+            requirement,
+            None,
+            &assumptions,
+            &mut budget,
+        )
+        .ok()?;
+        let path = if let [path] = paths.as_slice() {
+            path
+        } else {
+            let selection_context =
+                assumptions_with_propositions(&assumptions, &selection_assumptions.pure_facts());
+            let proposition_matches = paths
+                .iter()
+                .filter(|path| {
+                    certification_proves_proposition(&selection_context, &path.proposition)
+                })
+                .collect::<Vec<_>>();
+            if let [path] = proposition_matches.as_slice() {
+                *path
+            } else {
+                let consistent = paths
+                    .iter()
+                    .filter(|path| {
+                        !assumptions_with_propositions(
+                            &selection_context,
+                            &path
+                                .facts
+                                .iter()
+                                .map(|fact| fact.proposition().clone())
+                                .collect::<Vec<_>>(),
+                        )
+                        .is_inconsistent()
+                    })
+                    .collect::<Vec<_>>();
+                let [path] = consistent.as_slice() else {
+                    return None;
+                };
+                *path
+            }
+        };
+        for obligation in &path.obligations {
+            assumptions = assumptions.assume_proposition(obligation.proposition().clone());
+        }
+        for fact in &path.facts {
+            assumptions = assumptions.assume_proposition(fact.proposition().clone());
+        }
+        assumptions = assumptions.assume_proposition(path.proposition.clone());
+    }
+    let required_resources = evaluate_function_resource_context(
+        &entry_state,
+        function.resource_requires(),
+        &assumptions,
+        &mut budget,
+    )
+    .ok()?
+    .ok()?;
+    let (_, resource_definition_facts) = expand_all_composite_resource_facts_and_propositions(
+        &required_resources,
+        function.composite_resource_definitions(),
+        entry_state.memory(),
+        &assumptions,
+    )?;
+    for proposition in resource_definition_facts {
+        assumptions = assumptions.assume_proposition(proposition);
+    }
+    let expanded_required_resources = expand_all_composite_resource_facts(
+        &required_resources,
+        function.composite_resource_definitions(),
+        entry_state.memory(),
+        &assumptions,
+    )?;
+    let entry_resources = expand_all_composite_resource_facts(
+        entry_state.resources(),
+        function.composite_resource_definitions(),
+        entry_state.memory(),
+        &assumptions,
+    )?;
+    if !expanded_required_resources
+        .facts()
+        .iter()
+        .all(|required| entry_resources.satisfies_fact(required, &assumptions))
+    {
+        return None;
+    }
+    for proposition in entry_resources.observable_facts(&assumptions).ok()? {
+        assumptions = assumptions.assume_proposition(proposition);
+    }
+    entry_state.resources = entry_resources.clone();
+    Some(assumptions)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn prove_symbolic_c_function_verification_paths_with_environment_and_budget_mode(
+    state: CState,
+    function: CFunction,
+    arguments: Vec<CExpression>,
+    assumptions: Assumptions,
+    environment: CExecutionEnvironment,
+    execution_semantics: CExecutionSemantics,
     mut budget: ExecutionBudget,
+    prepare_contract_resources: bool,
 ) -> SymbolicCExecution {
     let mut variables = VerificationVariableGenerator::new(budget.next_verification_variable);
     let paths = match execute_c_function_verification_paths(
@@ -2172,6 +2420,7 @@ pub fn prove_symbolic_c_function_verification_paths_with_environment_and_budget(
         execution_semantics,
         &mut budget,
         &mut variables,
+        prepare_contract_resources,
     ) {
         Ok(paths) => paths,
         Err(limit) => {
@@ -2199,6 +2448,7 @@ pub fn prove_symbolic_c_function_verification_paths_with_environment_and_budget(
                 &path.obligations,
             ));
             SymbolicCExecutionPath {
+                assumptions: assumptions.clone(),
                 facts,
                 effect_facts,
                 obligations: path.obligations,
@@ -2288,35 +2538,686 @@ pub fn prove_c_function_satisfies_specification_from_symbolic_path(
     ))
 }
 
-/// Certifies one checked contract claim against its exact target function.
-pub fn c_verified_function_contract_claim(
+fn certified_function_path_parts<'a>(
     function: &CFunction,
-    key: CFunctionContractClaimKey,
-    proof: &Theorem,
-) -> Option<CVerifiedFunctionContractClaim> {
-    let mut proposition = proof.proposition();
+    path: &'a SymbolicCExecutionPath,
+) -> Option<(
+    &'a CState,
+    &'a [CExpression],
+    &'a CFunctionOutcome,
+    Assumptions,
+)> {
+    let mut proposition = path.theorem().proposition();
     while let Proposition::Implies(_, body) = proposition {
         proposition = body;
     }
-    let proved_function = match proposition {
-        Proposition::CFunctionSatisfiesSpecification { function, .. } => function,
-        _ => return None,
+    let Proposition::CFunctionExecutes {
+        state,
+        function: proved_function,
+        arguments,
+        outcome,
+    } = proposition
+    else {
+        return None;
     };
-    if proved_function.name() != function.name()
-        || proved_function.parameters() != function.parameters()
-        || proved_function.return_type() != function.return_type()
-        || proved_function.source_body() != function.source_body()
-        || !function
-            .contract_claims()
+    if proved_function != function {
+        return None;
+    }
+    let mut assumptions = path.assumptions.clone();
+    assumptions = assumptions_with_propositions(
+        &assumptions,
+        &path
+            .execution_facts()
             .iter()
-            .any(|claim| claim.key() == &key)
+            .map(|fact| fact.proposition().clone())
+            .collect::<Vec<_>>(),
+    );
+    Some((state, arguments, outcome, assumptions))
+}
+
+fn resource_contexts_definitionally_equal(
+    function: &CFunction,
+    memory: &CMemory,
+    left: &ResourceContext,
+    right: &ResourceContext,
+    assumptions: &Assumptions,
+) -> bool {
+    let directly_equal = |left: &ResourceContext, right: &ResourceContext| {
+        left.facts()
+            .iter()
+            .all(|fact| right.satisfies_fact(fact, assumptions))
+            && right
+                .facts()
+                .iter()
+                .all(|fact| left.satisfies_fact(fact, assumptions))
+    };
+    if left == right {
+        return true;
+    }
+    let Some(left) = expand_all_composite_resource_facts(
+        left,
+        function.composite_resource_definitions(),
+        memory,
+        assumptions,
+    ) else {
+        return false;
+    };
+    let Some(right) = expand_all_composite_resource_facts(
+        right,
+        function.composite_resource_definitions(),
+        memory,
+        assumptions,
+    ) else {
+        return false;
+    };
+    directly_equal(&left, &right)
+}
+
+fn certification_proves_proposition(assumptions: &Assumptions, proposition: &Proposition) -> bool {
+    if assumptions.proves(proposition) {
+        return true;
+    }
+    match proposition {
+        Proposition::ConditionIs(condition, value)
+            if assumptions.decide_condition_for_simp(condition) == Some(*value) =>
+        {
+            true
+        }
+        Proposition::ConditionIs(condition, value)
+            if assumptions.has_matching_condition_fact_for_memory_resolution(condition, *value) =>
+        {
+            true
+        }
+        Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), true) => {
+            bitvector_terms_proven_equal_for_memory_resolution(left, right, assumptions)
+        }
+        Proposition::ConditionIs(ConditionTerm::PointerEqual(left, right), true) => {
+            pointers_proven_equal_for_memory_resolution(left, right, assumptions)
+        }
+        Proposition::ConditionIs(ConditionTerm::PointerOffsetEqual(left, right), true) => {
+            pointer_offsets_proven_equal_for_memory_resolution(left, right, assumptions)
+        }
+        Proposition::Equal(Term::CValue(left), Term::CValue(right)) => {
+            c_values_proven_equal_for_memory_resolution(left, right, assumptions)
+        }
+        _ => false,
+    }
+}
+
+fn certification_proves_post_proposition(
+    assumptions: &Assumptions,
+    proposition: &Proposition,
+    post_memory: &CMemory,
+) -> bool {
+    if certification_proves_proposition(assumptions, proposition) {
+        return true;
+    }
+    assumptions
+        .prop_facts
+        .iter()
+        .filter(|fact| {
+            matches!(
+                (fact, proposition),
+                (
+                    Proposition::ConditionIs(_, _),
+                    Proposition::ConditionIs(_, _)
+                ) | (Proposition::Equal(_, _), Proposition::Equal(_, _))
+            )
+        })
+        .any(|fact| {
+            let Some(theorem) = prove_c_condition_fact_transport(fact, post_memory, assumptions)
+            else {
+                return false;
+            };
+            let Proposition::Implies(source, target) = theorem.proposition() else {
+                return false;
+            };
+            if source.as_ref() != fact {
+                return false;
+            }
+            let transported_assumptions =
+                assumptions_with_propositions(assumptions, &[target.as_ref().clone()]);
+            certification_proves_proposition(&transported_assumptions, proposition)
+        })
+}
+
+fn resources_certify_loadability(
+    state: &CState,
+    resources: &ResourceContext,
+    proposition: &Proposition,
+    assumptions: &Assumptions,
+) -> bool {
+    match proposition {
+        Proposition::ForAll { body, .. } => {
+            return resources_certify_loadability(state, resources, body, assumptions);
+        }
+        Proposition::Implies(premise, conclusion) => {
+            let assumptions = assumptions
+                .clone()
+                .assume_proposition(premise.as_ref().clone());
+            return resources_certify_loadability(state, resources, conclusion, &assumptions);
+        }
+        Proposition::And(left, right) => {
+            return resources_certify_loadability(state, resources, left, assumptions)
+                && resources_certify_loadability(state, resources, right, assumptions);
+        }
+        _ => {}
+    }
+    let Proposition::CMemoryLoadable {
+        memory,
+        base,
+        bytes,
+    } = proposition
+    else {
+        return false;
+    };
+    memory_snapshots_proven_equal_at_pointer(memory, state.memory(), base, assumptions)
+        && bytes
+            .as_const()
+            .and_then(|bytes| u32::try_from(bytes).ok())
+            .is_some_and(|bytes| resource_context_has_read(resources, base, bytes, assumptions))
+}
+
+fn contract_endpoints_certify_loadability(
+    entry_state: &CState,
+    entry_resources: &ResourceContext,
+    post_state: &CState,
+    post_resources: &ResourceContext,
+    proposition: &Proposition,
+    assumptions: &Assumptions,
+) -> bool {
+    resources_certify_loadability(entry_state, entry_resources, proposition, assumptions)
+        || resources_certify_loadability(post_state, post_resources, proposition, assumptions)
+}
+
+pub fn c_function_outcomes_definitionally_equal(
+    function: &CFunction,
+    left: &CFunctionOutcome,
+    right: &CFunctionOutcome,
+    assumptions: &Assumptions,
+) -> bool {
+    match (left, right) {
+        (
+            CFunctionOutcome::Return {
+                value: left_value,
+                state: left_state,
+            },
+            CFunctionOutcome::Return {
+                value: right_value,
+                state: right_state,
+            },
+        ) => {
+            let values =
+                c_values_proven_equal_for_memory_resolution(left_value, right_value, assumptions);
+            let memories = c_memories_definitionally_equal(
+                left_state.memory(),
+                right_state.memory(),
+                assumptions,
+            );
+            let resources = resource_contexts_definitionally_equal(
+                function,
+                left_state.memory(),
+                left_state.resources(),
+                right_state.resources(),
+                assumptions,
+            );
+            values && memories && resources
+        }
+        _ => left == right,
+    }
+}
+
+fn c_memories_definitionally_equal(
+    left: &CMemory,
+    right: &CMemory,
+    assumptions: &Assumptions,
+) -> bool {
+    if memories_proven_equal_for_memory_resolution(left, right, assumptions) {
+        return true;
+    }
+    if !left
+        .blocks
+        .iter()
+        .filter(|(block, _)| !block.starts_with("local:"))
+        .eq(right
+            .blocks
+            .iter()
+            .filter(|(block, _)| !block.starts_with("local:")))
+    {
+        return false;
+    }
+    memory_cells_definitionally_contained(left, right, assumptions)
+        && memory_cells_definitionally_contained(right, left, assumptions)
+}
+
+fn memory_cells_definitionally_contained(
+    source: &CMemory,
+    target: &CMemory,
+    assumptions: &Assumptions,
+) -> bool {
+    for (source_pointer, source_value) in source
+        .cells
+        .iter()
+        .filter(|(pointer, _)| !pointer.block.starts_with("local:"))
+    {
+        let matching = target.cells.iter().find(|(target_pointer, _)| {
+            pointers_proven_equal_for_memory_resolution(source_pointer, target_pointer, assumptions)
+        });
+        let equal = if let Some((_, target_value)) = matching {
+            c_values_proven_equal_for_memory_resolution(source_value, target_value, assumptions)
+        } else {
+            materialized_load_is_unchanged(source_value, target, source_pointer, assumptions)
+        };
+        if !equal {
+            return false;
+        }
+    }
+    true
+}
+
+fn materialized_load_is_unchanged(
+    value: &CValue,
+    symbolic_memory: &CMemory,
+    pointer: &Pointer,
+    assumptions: &Assumptions,
+) -> bool {
+    let load = match value {
+        CValue::Int32(Bitvector32Term::MemoryLoad(memory, load_pointer))
+        | CValue::UInt8(Bitvector32Term::MemoryLoad(memory, load_pointer)) => {
+            (memory.as_ref(), load_pointer.as_ref())
+        }
+        _ => return false,
+    };
+    pointers_proven_equal_for_memory_resolution(load.1, pointer, assumptions)
+        && c_memory_load_is_unchanged(load.0, symbolic_memory, pointer, assumptions)
+}
+
+/// Changes only the bounded symbolic representation of a certified return path.
+///
+/// Program values and memory must be definitionally equal using the path's
+/// certified pure, memory-effect, and resource-separation facts. The old and
+/// new resource contexts must mutually satisfy every fact under those same
+/// assumptions.
+pub fn certify_c_function_execution_path_resource_representation(
+    path: &SymbolicCExecutionPath,
+    desired_outcome: CFunctionOutcome,
+) -> Option<SymbolicCExecutionPath> {
+    let mut proposition = path.theorem().proposition();
+    let mut premises = Vec::new();
+    while let Proposition::Implies(premise, body) = proposition {
+        premises.push(premise.as_ref().clone());
+        proposition = body;
+    }
+    let Proposition::CFunctionExecutes {
+        state,
+        function,
+        arguments,
+        outcome,
+    } = proposition
+    else {
+        return None;
+    };
+    let (
+        CFunctionOutcome::Return {
+            value,
+            state: return_state,
+        },
+        CFunctionOutcome::Return {
+            value: desired_value,
+            state: desired_state,
+        },
+    ) = (outcome, &desired_outcome)
+    else {
+        return (outcome == &desired_outcome).then(|| path.clone());
+    };
+    premises.extend(
+        path.execution_facts()
+            .iter()
+            .map(|fact| fact.proposition().clone()),
+    );
+    let preliminary_assumptions = assumptions_with_propositions(&path.assumptions, &premises);
+    let observable_resource_facts = return_state
+        .resources()
+        .observable_facts(&preliminary_assumptions)
+        .ok()?;
+    premises.extend(observable_resource_facts);
+    let assumptions = assumptions_with_propositions(&path.assumptions, &premises);
+    if !c_values_proven_equal_for_memory_resolution(value, desired_value, &assumptions)
+        || !c_memories_definitionally_equal(
+            return_state.memory(),
+            desired_state.memory(),
+            &assumptions,
+        )
     {
         return None;
     }
-    Some(CVerifiedFunctionContractClaim {
+    if !resource_contexts_definitionally_equal(
+        function,
+        return_state.memory(),
+        return_state.resources(),
+        desired_state.resources(),
+        &assumptions,
+    ) {
+        return None;
+    }
+
+    let conclusion = Proposition::CFunctionExecutes {
+        state: state.clone(),
         function: function.clone(),
-        key,
+        arguments: arguments.clone(),
+        outcome: desired_outcome,
+    };
+    let theorem = Theorem::new(
+        premises
+            .into_iter()
+            .rev()
+            .fold(conclusion, |body, premise| {
+                Proposition::Implies(Box::new(premise), Box::new(body))
+            }),
+    );
+    Some(SymbolicCExecutionPath {
+        assumptions: path.assumptions.clone(),
+        facts: path.facts.clone(),
+        effect_facts: path.effect_facts.clone(),
+        obligations: path.obligations.clone(),
+        theorem,
     })
+}
+
+struct CertifiedFunctionClaimPath {
+    caller_state: CState,
+    return_state: CState,
+    entry_state: CState,
+    entry_resources: ResourceContext,
+    post_state: CState,
+    post_resources: ResourceContext,
+    assumptions: Assumptions,
+    execution_facts: Vec<ExecutionPureFact>,
+}
+
+fn prepare_function_claim_path(
+    function: &CFunction,
+    path: &SymbolicCExecutionPath,
+) -> Option<CertifiedFunctionClaimPath> {
+    let Some((caller_state, arguments, outcome, assumptions)) =
+        certified_function_path_parts(function, path)
+    else {
+        return None;
+    };
+    let CFunctionOutcome::Return {
+        value,
+        state: return_state,
+    } = outcome
+    else {
+        return None;
+    };
+    let Some(mut entry_state) = c_function_entry_state(caller_state, function, arguments) else {
+        return None;
+    };
+    let mut budget = ExecutionBudget::default();
+    let Ok(Ok(required_resources)) = evaluate_function_resource_context(
+        &entry_state,
+        function.resource_requires(),
+        &assumptions,
+        &mut budget,
+    ) else {
+        return None;
+    };
+    let Some((_, definition_facts)) = expand_all_composite_resource_facts_and_propositions(
+        &required_resources,
+        function.composite_resource_definitions(),
+        entry_state.memory(),
+        &assumptions,
+    ) else {
+        return None;
+    };
+    let assumptions = assumptions_with_propositions(&assumptions, &definition_facts);
+    let Some(entry_resources) = expand_all_composite_resource_facts(
+        entry_state.resources(),
+        function.composite_resource_definitions(),
+        entry_state.memory(),
+        &assumptions,
+    ) else {
+        return None;
+    };
+    let Ok(resource_facts) = entry_resources.observable_facts(&assumptions) else {
+        return None;
+    };
+    entry_state.resources = entry_resources.clone();
+    let assumptions = assumptions_with_propositions(&assumptions, &resource_facts);
+    let Some(post_resources) = expand_all_composite_resource_facts(
+        return_state.resources(),
+        function.composite_resource_definitions(),
+        return_state.memory(),
+        &assumptions,
+    ) else {
+        return None;
+    };
+    let Ok(post_resource_facts) = post_resources.observable_facts(&assumptions) else {
+        return None;
+    };
+    let assumptions = assumptions_with_propositions(&assumptions, &post_resource_facts);
+    let mut post_state = entry_state
+        .clone()
+        .with_memory(return_state.memory().clone());
+    post_state.resources = post_resources.clone();
+    post_state
+        .locals
+        .set_typed("result".to_string(), value.clone(), function.return_type());
+    if !path.obligations().iter().all(|obligation| {
+        let proved = certification_proves_proposition(&assumptions, obligation.proposition())
+            || contract_endpoints_certify_loadability(
+                &entry_state,
+                &entry_resources,
+                &post_state,
+                &post_resources,
+                obligation.proposition(),
+                &assumptions,
+            );
+        proved
+    }) {
+        return None;
+    }
+
+    Some(CertifiedFunctionClaimPath {
+        caller_state: caller_state.clone(),
+        return_state: return_state.clone(),
+        entry_state,
+        entry_resources,
+        post_state,
+        post_resources,
+        assumptions,
+        execution_facts: path.execution_facts().to_vec(),
+    })
+}
+
+fn function_claim_holds_on_prepared_path(
+    function: &CFunction,
+    claim: &CFunctionContractClaim,
+    path: &CertifiedFunctionClaimPath,
+) -> bool {
+    let CertifiedFunctionClaimPath {
+        caller_state,
+        return_state,
+        entry_state,
+        entry_resources,
+        post_state,
+        post_resources,
+        assumptions,
+        execution_facts,
+    } = path;
+    let mut budget = ExecutionBudget::default();
+    match claim.target() {
+        CFunctionContractClaimTarget::BodySafety => true,
+        CFunctionContractClaimTarget::EnsureProposition(index) => {
+            let Some(ensure) = function.contract_ensures().get(*index) else {
+                return false;
+            };
+            let Ok(paths) = lower_spec_proposition_at_state_with_loop_entry(
+                &post_state,
+                ensure,
+                Some(&entry_state),
+                &assumptions,
+                &mut budget,
+            ) else {
+                return false;
+            };
+            paths.into_iter().any(|path| {
+                let obligations_hold = path.obligations.iter().all(|obligation| {
+                    certification_proves_proposition(&assumptions, obligation.proposition())
+                        || contract_endpoints_certify_loadability(
+                            &entry_state,
+                            &entry_resources,
+                            &post_state,
+                            &post_resources,
+                            obligation.proposition(),
+                            &assumptions,
+                        )
+                });
+                let path_assumptions = assumptions_with_propositions(
+                    &assumptions,
+                    &path
+                        .facts
+                        .iter()
+                        .map(|fact| fact.proposition().clone())
+                        .collect::<Vec<_>>(),
+                );
+                let proposition_holds = certification_proves_post_proposition(
+                    &path_assumptions,
+                    &path.proposition,
+                    return_state.memory(),
+                );
+                obligations_hold && proposition_holds
+            })
+        }
+        CFunctionContractClaimTarget::EnsureResource(index) => {
+            let Some(resource) = function.resource_ensures().get(*index) else {
+                return false;
+            };
+            let Ok(Ok(expected)) = evaluate_function_resource_context(
+                &post_state,
+                std::slice::from_ref(resource),
+                &assumptions,
+                &mut budget,
+            ) else {
+                return false;
+            };
+            expected.facts().iter().all(|fact| {
+                resource_context_satisfies_definitional_fact(
+                    return_state.resources(),
+                    fact,
+                    function.composite_resource_definitions(),
+                    return_state.memory(),
+                    &assumptions,
+                )
+            })
+        }
+        CFunctionContractClaimTarget::Effect => {
+            let mut mutable_ranges = Vec::new();
+            for segment in function.contract_mutable() {
+                let Ok(Ok(segment)) =
+                    evaluate_loop_effect_segment(&entry_state, segment, &assumptions, &mut budget)
+                else {
+                    return false;
+                };
+                mutable_ranges.push(CMemoryRange::new(segment.base, segment.start, segment.end));
+            }
+            let mut effect_memory = caller_state.memory().clone();
+            let effects_are_bounded = execution_facts.iter().all(|fact| match fact.proposition() {
+                Proposition::CMemoryMutatesOnly {
+                    before,
+                    after,
+                    pointers,
+                } => {
+                    if !c_memories_definitionally_equal(&effect_memory, before, &assumptions) {
+                        return false;
+                    }
+                    effect_memory = after.clone();
+                    pointers
+                        .iter()
+                        .filter(|pointer| !pointer.block.starts_with("local:"))
+                        .all(|pointer| {
+                            mutable_ranges.iter().any(|range| {
+                                assumptions.pointer_access_in_range(
+                                    pointer,
+                                    4,
+                                    range.base(),
+                                    range.start(),
+                                    range.end(),
+                                )
+                            })
+                        })
+                }
+                Proposition::CMemoryEffectSummary {
+                    before,
+                    after,
+                    mutable_ranges: nested_ranges,
+                } => {
+                    if !c_memories_definitionally_equal(&effect_memory, before, &assumptions) {
+                        return false;
+                    }
+                    effect_memory = after.clone();
+                    nested_ranges.iter().all(|nested| {
+                        mutable_ranges
+                            .iter()
+                            .any(|allowed| memory_range_covers(allowed, nested, &assumptions))
+                    })
+                }
+                _ => true,
+            });
+            let endpoint_matches = c_memories_definitionally_equal(
+                &effect_memory,
+                return_state.memory(),
+                &assumptions,
+            );
+            effects_are_bounded && endpoint_matches
+        }
+    }
+}
+
+/// Certifies every exact contract claim in one pass over a kernel-produced,
+/// complete execution frontier.
+///
+/// Path validity, resource expansion, and verification conditions are checked
+/// once per path and then shared by the individual claim checks.
+pub fn c_verified_function_contract_claims(
+    function: &CFunction,
+    contract_execution: &CFunctionContractExecution,
+) -> Option<Vec<CVerifiedFunctionContractClaim>> {
+    let execution = &contract_execution.execution;
+    if execution.limit().is_some() || execution.paths().is_empty() {
+        return None;
+    }
+    let paths = execution
+        .paths()
+        .iter()
+        .map(|path| prepare_function_claim_path(function, path))
+        .collect::<Option<Vec<_>>>()?;
+    function
+        .contract_claims()
+        .iter()
+        .map(|claim| {
+            paths
+                .iter()
+                .all(|path| function_claim_holds_on_prepared_path(function, claim, path))
+                .then(|| CVerifiedFunctionContractClaim {
+                    function: function.clone(),
+                    key: claim.key().clone(),
+                })
+        })
+        .collect()
+}
+
+/// Certifies one contract claim only after a kernel-produced complete
+/// execution frontier establishes that exact claim for the exact function.
+pub fn c_verified_function_contract_claim(
+    function: &CFunction,
+    key: CFunctionContractClaimKey,
+    execution: &CFunctionContractExecution,
+) -> Option<CVerifiedFunctionContractClaim> {
+    c_verified_function_contract_claims(function, execution)?
+        .into_iter()
+        .find(|proof| proof.key == key)
 }
 
 /// Packages an opaque rule only after every recorded contract claim has a

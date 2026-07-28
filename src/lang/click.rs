@@ -8,28 +8,33 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use crate::kernel::{
-    Assumptions, Bitvector32Term, CComparisonOperator, CConditionOutcome, CExecutionEnvironment,
-    CExecutionSemantics, CExpression, CExpressionOutcome, CFunction, CFunctionContractClaim,
-    CFunctionContractClaimKey, CFunctionExecutionCandidates, CFunctionOutcome,
-    CFunctionSpecification, CLoopEffect, CLoopEffectCheck, CLoopEffectSpan, CLoopInvariantCheck,
-    CMemory, CMemoryRange, CMemorySegment, CResource, CResourceAccessMode, CResourceFact,
-    CResourceSpec, CState, CStatement, CStatementOutcome, CType, CValue, CVerifiedLoopRule,
-    ConditionTerm, ExecutionBudget, ExecutionPureFact, Pointer, PointerOffsetTerm, ProofObligation,
-    Proposition, PropositionDerivation, ResourceContext, ResourceContextValidityError, Sort,
-    SpecExpression, SpecMemory, SpecPredicateArgument, SpecProposition, SpecResource,
-    SymbolicCExecution, Term, Theorem, Variable, abstract_c_state_for_join,
-    c_condition_fact_has_memory, c_condition_fact_memories, c_expression_definedness_proposition,
-    c_function, c_function_entry_state, c_function_execution_candidates_from_outcomes,
-    c_function_outcome_from_statement_outcome, c_function_specification, c_if, c_labeled_assert,
-    c_loop_effects_hold_at_back_edge, c_loop_invariant_obligations_at_entry,
-    c_loop_invariants_hold_at_back_edge_using, c_loop_invariants_hold_at_entry,
-    c_loop_preservation_contexts, c_pointer_offsets_proven_equal_for_effect, c_pointer_value,
-    c_resources_directly_match, c_seq, c_verified_function_contract_claim,
-    c_verified_function_rule, c_while_with_invariant_and_effect_checks,
-    canonical_c_memory_for_pointer_load, int32, prove_c_condition_fact_direct_transport,
-    prove_c_condition_fact_transport, prove_c_function_satisfies_specification_from_symbolic_path,
+    Assumptions, Bitvector32Term, CComparisonOperator, CCompositeResourceDefinition,
+    CConditionOutcome, CExecutionEnvironment, CExecutionSemantics, CExpression, CExpressionOutcome,
+    CFunction, CFunctionContractClaim, CFunctionContractClaimKey, CFunctionContractExecutionMode,
+    CFunctionExecutionCandidates, CFunctionOutcome, CFunctionSpecification, CLoopEffect,
+    CLoopEffectCheck, CLoopEffectSpan, CLoopInvariantCheck, CMemory, CMemoryRange, CMemorySegment,
+    CResource, CResourceAccessMode, CResourceFact, CResourceSpec, CState, CStatement,
+    CStatementOutcome, CType, CValue, CVerifiedLoopRule, ConditionTerm, ExecutionBudget,
+    ExecutionPureFact, Pointer, PointerOffsetTerm, ProofObligation, Proposition,
+    PropositionDerivation, ResourceContext, ResourceContextValidityError, Sort, SpecExpression,
+    SpecMemory, SpecPredicateArgument, SpecProposition, SpecResource, SymbolicCExecution, Term,
+    Theorem, Variable, abstract_c_state_for_join, c_condition_fact_has_memory,
+    c_condition_fact_memories, c_expression_definedness_proposition, c_function,
+    c_function_entry_state, c_function_execution_candidates_from_outcomes,
+    c_function_outcome_from_statement_outcome, c_function_outcomes_definitionally_equal,
+    c_function_specification, c_if, c_labeled_assert, c_loop_effects_hold_at_back_edge,
+    c_loop_invariant_obligations_at_entry, c_loop_invariants_hold_at_back_edge_using,
+    c_loop_invariants_hold_at_entry, c_loop_preservation_contexts,
+    c_pointer_offsets_proven_equal_for_effect, c_pointer_value, c_resources_directly_match, c_seq,
+    c_verified_function_contract_claims, c_verified_function_rule,
+    c_while_with_invariant_and_effect_checks, canonical_c_memory_for_pointer_load,
+    certify_c_function_execution_path_resource_representation, int32,
+    prove_c_condition_fact_direct_transport, prove_c_condition_fact_transport,
+    prove_c_function_contract_execution_paths_with_environment,
+    prove_c_function_satisfies_specification_from_symbolic_path,
     prove_symbolic_c_condition_evaluation,
-    prove_symbolic_c_function_verification_paths_with_environment,
+    prove_symbolic_c_function_contract_verification_paths_with_environment,
+    prove_symbolic_c_function_execution_paths_with_environment,
     prove_symbolic_c_loop_exit_with_proven_phases_using_budget,
     prove_symbolic_c_statement_verification_paths_with_environment_and_loop_rule_using_budget,
     substitute_int32_variable_in_proposition,
@@ -1323,7 +1328,7 @@ impl ClickFunctionEnvironment {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct ResourceEnvironment {
+pub(super) struct ResourceEnvironment {
     definitions: BTreeMap<String, ResourceDefinition>,
 }
 
@@ -1378,6 +1383,7 @@ pub struct VerifiedCTheorem {
     pub expansion_blocker: Option<String>,
     pub specification: CFunctionSpecification,
     pub theorem: Theorem,
+    pub concrete_loop_execution: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -2215,35 +2221,84 @@ fn verify_c0_sources_with_environment(
                 }
             }
         }
-        let contract_function = function_environment
-            .get_function(function_block.signature.name())
-            .cloned()
-            .expect("verified source should be present in the function environment");
-        let proof_objects = function_verified
-            .iter()
-            .map(|verified| {
-                let key = if has_explicit_claims {
-                    match &verified.claim {
-                        VerifiedClaim::Ensure { index, .. } => {
-                            CFunctionContractClaimKey::Ensure(*index)
-                        }
-                        VerifiedClaim::Effect { index, .. } => {
-                            CFunctionContractClaimKey::Effect(*index)
-                        }
-                    }
-                } else {
-                    CFunctionContractClaimKey::BodySafety
-                };
-                c_verified_function_contract_claim(&contract_function, key, &verified.theorem)
-                    .ok_or_else(|| {
-                        ClickError::new(format!(
-                            "could not certify a contract claim for `{}`",
-                            function_block.signature.name()
-                        ))
-                    })
-            })
-            .collect::<Result<Vec<_>, _>>()?;
+        let (certification_state, certification_arguments, certification_facts, _) =
+            initial_claim_context(
+                &function_block,
+                parsed_function,
+                &resource_environment,
+                &predicate_environment,
+                &click_function_environment,
+                &format!("{}.contract certification", function_block.signature.name()),
+            )?;
+        let contract_function = annotated_function(
+            &function_block,
+            parsed_function,
+            &certification_state,
+            &certification_arguments,
+            &predicate_environment,
+            &click_function_environment,
+            &resource_environment,
+        )?;
         if contract_function.opaque_contract_supported() {
+            let contract_execution_mode = if function_verified
+                .iter()
+                .any(|verified| verified.concrete_loop_execution)
+            {
+                CFunctionContractExecutionMode::ExecuteLoops
+            } else {
+                CFunctionContractExecutionMode::VerifyLoops
+            };
+            let contract_execution = prove_c_function_contract_execution_paths_with_environment(
+                certification_state,
+                contract_function.clone(),
+                certification_arguments,
+                certification_facts,
+                verification_function_environment.clone(),
+                match contract_execution_mode {
+                    CFunctionContractExecutionMode::VerifyLoops => {
+                        CExecutionSemantics::APPLY_CALL_RULES_AND_VERIFY_LOOPS
+                    }
+                    CFunctionContractExecutionMode::ExecuteLoops => {
+                        CExecutionSemantics::APPLY_VERIFIED_RULES
+                    }
+                },
+                contract_execution_mode,
+            );
+            if contract_execution.path_count() == 0 && contract_execution.limit().is_none() {
+                continue;
+            }
+            let Some(certified_claims) =
+                c_verified_function_contract_claims(&contract_function, &contract_execution)
+            else {
+                continue;
+            };
+            let proof_objects = function_verified
+                .iter()
+                .map(|verified| {
+                    let key = if has_explicit_claims {
+                        match &verified.claim {
+                            VerifiedClaim::Ensure { index, .. } => {
+                                CFunctionContractClaimKey::Ensure(*index)
+                            }
+                            VerifiedClaim::Effect { index, .. } => {
+                                CFunctionContractClaimKey::Effect(*index)
+                            }
+                        }
+                    } else {
+                        CFunctionContractClaimKey::BodySafety
+                    };
+                    certified_claims
+                        .iter()
+                        .find(|proof| proof.key() == &key)
+                        .cloned()
+                        .ok_or_else(|| {
+                            ClickError::new(format!(
+                                "could not certify contract claim {key:?} for `{}`",
+                                function_block.signature.name(),
+                            ))
+                        })
+                })
+                .collect::<Result<Vec<_>, _>>()?;
             let rule =
                 c_verified_function_rule(contract_function, &proof_objects).ok_or_else(|| {
                     ClickError::new(format!(
@@ -2532,6 +2587,11 @@ fn build_function_environment(
                 function
                     .to_kernel_function()
                     .with_resource_summary(resource_requires, resource_ensures)
+                    .with_composite_resource_definitions(composite_resource_definitions(
+                        resource_environment,
+                        predicate_environment,
+                        click_function_environment,
+                    )?)
                     .with_contract(
                         contract_requires,
                         contract_ensures,
@@ -2567,6 +2627,44 @@ fn function_resource_summary(
         })
         .collect::<Result<Vec<_>, _>>()?;
     Ok((requires, ensures))
+}
+
+fn composite_resource_definitions(
+    resource_environment: &ResourceEnvironment,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+) -> Result<Vec<CCompositeResourceDefinition>, ClickError> {
+    let mut definitions = Vec::new();
+    for definition in resource_environment.definitions.values() {
+        let Some(body) = definition.composite_body() else {
+            continue;
+        };
+        let contains = body
+            .contains()
+            .iter()
+            .map(resource_clause_to_resource_spec)
+            .collect::<Result<Vec<_>, _>>()?;
+        definitions.push(CCompositeResourceDefinition::new(
+            definition.name(),
+            definition
+                .parameters()
+                .iter()
+                .map(|parameter| {
+                    crate::kernel::CParameter::new(
+                        parameter.name(),
+                        parameter.c_type().to_kernel_type(),
+                    )
+                })
+                .collect(),
+            contains,
+            lower_composite_resource_facts(
+                definition,
+                predicate_environment,
+                click_function_environment,
+            )?,
+        ));
+    }
+    Ok(definitions)
 }
 
 fn append_entry_resource_specs(

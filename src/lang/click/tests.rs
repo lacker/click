@@ -7286,7 +7286,13 @@ fn verifies_fill3_c0_source_with_sidecar_specification() {
                     Vec::new(),
                 )
                 .with_contract(
-                    Vec::new(),
+                    vec![SpecProposition::MemoryLoadable {
+                        memory: SpecMemory::Current,
+                        base: SpecExpression::CExpression(CExpression::Variable("p".to_string(),)),
+                        start: SpecExpression::Value(int32(0)),
+                        end: SpecExpression::Value(int32(3)),
+                        element_width: 4,
+                    }],
                     vec![SpecProposition::Comparison {
                         left: SpecExpression::CExpression(CExpression::Variable(
                             "result".to_string(),
@@ -7299,9 +7305,7 @@ fn verifies_fill3_c0_source_with_sidecar_specification() {
                         CExpression::Value(int32(0)),
                         CExpression::Value(int32(3)),
                     )],
-                    vec![CFunctionContractClaim::new(
-                        CFunctionContractClaimKey::Ensure(0),
-                    )],
+                    vec![CFunctionContractClaim::ensure_proposition(0, 0)],
                     true,
                 ),
             specification: verified.specification.clone(),

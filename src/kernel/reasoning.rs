@@ -337,6 +337,64 @@ pub(super) fn bitvector_terms_proven_equal_for_memory_resolution(
     bitvector_terms_equal_for_memory_resolution(left, right, assumptions, 0)
 }
 
+pub(super) fn c_values_proven_equal_for_memory_resolution(
+    left: &CValue,
+    right: &CValue,
+    assumptions: &Assumptions,
+) -> bool {
+    match (left, right) {
+        (CValue::Int32(left), CValue::Int32(right))
+        | (CValue::UInt8(left), CValue::UInt8(right)) => {
+            bitvector_terms_proven_equal_for_memory_resolution(left, right, assumptions)
+        }
+        (CValue::Pointer(left), CValue::Pointer(right)) => {
+            pointers_proven_equal_for_memory_resolution(left, right, assumptions)
+        }
+        _ => false,
+    }
+}
+
+pub(super) fn memories_proven_equal_for_memory_resolution(
+    left: &CMemory,
+    right: &CMemory,
+    assumptions: &Assumptions,
+) -> bool {
+    if left == right {
+        return true;
+    }
+    if !left
+        .blocks
+        .iter()
+        .filter(|(block, _)| !block.starts_with("local:"))
+        .eq(right
+            .blocks
+            .iter()
+            .filter(|(block, _)| !block.starts_with("local:")))
+    {
+        return false;
+    }
+    left.cells
+        .keys()
+        .chain(right.cells.keys())
+        .filter(|pointer| !pointer.block.starts_with("local:"))
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .all(|pointer| {
+            let left_value = left.known_value(pointer);
+            let right_value = right.known_value(pointer);
+            match (&left_value, &right_value) {
+                (Some(left), Some(right)) => {
+                    c_values_proven_equal_for_memory_resolution(left, right, assumptions)
+                }
+                (None, None) => true,
+                _ => {
+                    memory_has_materialized_load_from(left, right, pointer, assumptions, 0)
+                        || memory_has_materialized_load_from(right, left, pointer, assumptions, 0)
+                }
+            }
+        })
+}
+
 pub(super) fn memory_load_terms_equal_for_fact_transport(
     left: &Bitvector32Term,
     right: &Bitvector32Term,
@@ -413,6 +471,15 @@ fn memory_snapshots_match_for_resolution(
                 depth + 1,
             )
         })
+}
+
+pub(super) fn memory_snapshots_proven_equal_at_pointer(
+    left: &CMemory,
+    right: &CMemory,
+    pointer: &Pointer,
+    assumptions: &Assumptions,
+) -> bool {
+    memory_snapshots_match_for_resolution(left, right, pointer, assumptions, 0)
 }
 
 fn memory_has_materialized_load_from(
@@ -3276,6 +3343,26 @@ pub(super) fn substitute_bitvector_variable_in_c_function(
             .collect(),
         contract_claims: function.contract_claims.clone(),
         opaque_contract_supported: function.opaque_contract_supported,
+        composite_resource_definitions: function
+            .composite_resource_definitions
+            .iter()
+            .map(|definition| CCompositeResourceDefinition {
+                name: definition.name.clone(),
+                parameters: definition.parameters.clone(),
+                contains: definition
+                    .contains
+                    .iter()
+                    .map(|resource| {
+                        substitute_bitvector_variable_in_resource_spec(resource, from, to)
+                    })
+                    .collect(),
+                facts: definition
+                    .facts
+                    .iter()
+                    .map(|fact| substitute_bitvector_variable_in_spec_proposition(fact, from, to))
+                    .collect(),
+            })
+            .collect(),
     }
 }
 

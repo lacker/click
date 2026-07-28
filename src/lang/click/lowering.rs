@@ -8,6 +8,58 @@ type FunctionContractSummary = (
     bool,
 );
 
+pub(super) fn lower_composite_resource_facts(
+    definition: &ResourceDefinition,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+) -> Result<Vec<SpecProposition>, ClickError> {
+    let body = definition
+        .composite_body()
+        .expect("only composite definitions have logical facts");
+    let entry_state = CState::new();
+    let mut lowerer = AnnotationLowerer {
+        structural_clauses: &[],
+        predicate_environment,
+        click_function_environment,
+        entry_state: &entry_state,
+        entry_values: BTreeMap::new(),
+        parameter_array_element_types: definition
+            .parameters()
+            .iter()
+            .filter_map(|parameter| {
+                Some((
+                    parameter.name().to_string(),
+                    click_array_element_type(parameter.c_type())?,
+                ))
+            })
+            .collect(),
+        quantified_values: BTreeMap::new(),
+        loop_index: 0,
+        statement_index: 0,
+        next_quantifier_variable: 3_200_000,
+    };
+    let all_predicates = predicate_environment
+        .definitions
+        .keys()
+        .cloned()
+        .collect::<Vec<_>>();
+    body.facts()
+        .iter()
+        .map(|fact| {
+            let fact = unfold_click_predicates_in_proposition_with_active(
+                predicate_environment,
+                &all_predicates,
+                fact,
+                &mut BTreeSet::new(),
+            )
+            .map_err(ClickError::new)?;
+            lowerer
+                .click_proposition_to_spec_proposition(&fact, &SpecElaborationContext::default())
+                .map_err(ClickError::new)
+        })
+        .collect()
+}
+
 pub(super) fn annotated_function(
     function_block: &FunctionBlock,
     parsed_function: &syntax::C0Function,
@@ -67,6 +119,11 @@ pub(super) fn annotated_function(
     )
     .with_source_body(source_body)
     .with_resource_summary(resource_requires, resource_ensures)
+    .with_composite_resource_definitions(composite_resource_definitions(
+        resource_environment,
+        predicate_environment,
+        click_function_environment,
+    )?)
     .with_contract(
         contract_requires,
         contract_ensures,
@@ -106,18 +163,69 @@ pub(super) fn function_contract_summary(
         next_quantifier_variable: 3_100_000,
     };
     let context = SpecElaborationContext::for_function_contract();
+    let all_predicates = predicate_environment
+        .definitions
+        .keys()
+        .cloned()
+        .collect::<Vec<_>>();
+    let unfold_contract_predicates = |proposition: &ClickProposition| {
+        unfold_click_predicates_in_proposition_with_active(
+            predicate_environment,
+            &all_predicates,
+            proposition,
+            &mut BTreeSet::new(),
+        )
+    };
     let mut opaque_contract_supported = true;
     let mut requires = Vec::new();
-    for proposition in function_block
-        .requires()
-        .iter()
-        .filter_map(Requirement::proposition)
-    {
-        if !proposition_supported_in_opaque_contract(proposition) {
+    for requirement in function_block.requires() {
+        let proposition = match requirement.inner() {
+            Requirement::Proposition(proposition) => proposition.clone(),
+            Requirement::LoadableSegment { segment } => ClickProposition::Loadable {
+                segment: segment.clone(),
+            },
+            Requirement::LoadableBytes {
+                name,
+                bytes: RangeBytes::Constant(bytes),
+            } => {
+                let element_width = parsed_function
+                    .parameters()
+                    .iter()
+                    .find(|parameter| parameter.name() == name)
+                    .and_then(|parameter| click_array_element_type(parameter.c_type()))
+                    .map(CType::byte_width);
+                let Some(element_width) = element_width else {
+                    opaque_contract_supported = false;
+                    continue;
+                };
+                if bytes % element_width != 0 {
+                    opaque_contract_supported = false;
+                    continue;
+                }
+                requires.push(SpecProposition::MemoryLoadable {
+                    memory: SpecMemory::Current,
+                    base: SpecExpression::CExpression(CExpression::Variable(name.clone())),
+                    start: SpecExpression::Value(int32(0)),
+                    end: SpecExpression::Value(int32(bytes / element_width)),
+                    element_width,
+                });
+                continue;
+            }
+            Requirement::LoadableBytes { .. } => {
+                opaque_contract_supported = false;
+                continue;
+            }
+            Requirement::Resource(_) | Requirement::Labeled { .. } => continue,
+        };
+        let Ok(proposition) = unfold_contract_predicates(&proposition) else {
+            opaque_contract_supported = false;
+            continue;
+        };
+        if !proposition_supported_in_opaque_contract(&proposition) {
             opaque_contract_supported = false;
             continue;
         }
-        match lowerer.click_proposition_to_spec_proposition(proposition, &context) {
+        match lowerer.click_proposition_to_spec_proposition(&proposition, &context) {
             Ok(proposition) => requires.push(proposition),
             Err(_) => opaque_contract_supported = false,
         }
@@ -131,11 +239,15 @@ pub(super) fn function_contract_summary(
             Ensure::Resource(_) => None,
         })
     {
-        if !proposition_supported_in_opaque_contract(proposition) {
+        let Ok(proposition) = unfold_contract_predicates(proposition) else {
+            opaque_contract_supported = false;
+            continue;
+        };
+        if !proposition_supported_in_opaque_contract(&proposition) {
             opaque_contract_supported = false;
             continue;
         }
-        match lowerer.click_proposition_to_spec_proposition(proposition, &context) {
+        match lowerer.click_proposition_to_spec_proposition(&proposition, &context) {
             Ok(proposition) => ensures.push(proposition),
             Err(_) => opaque_contract_supported = false,
         }
@@ -168,25 +280,33 @@ pub(super) fn function_contract_summary(
         }
     }
     let claims = if function_block.effects().is_empty() && function_block.ensures().is_empty() {
-        vec![CFunctionContractClaim::new(
-            CFunctionContractClaimKey::BodySafety,
-        )]
+        vec![CFunctionContractClaim::body_safety()]
     } else {
-        function_block
+        let mut proposition_index = 0;
+        let mut resource_index = 0;
+        let mut claims = function_block
             .effects()
             .iter()
             .enumerate()
-            .map(|(index, _)| CFunctionContractClaim::new(CFunctionContractClaimKey::Effect(index)))
-            .chain(
-                function_block
-                    .ensures()
-                    .iter()
-                    .enumerate()
-                    .map(|(index, _)| {
-                        CFunctionContractClaim::new(CFunctionContractClaimKey::Ensure(index))
-                    }),
-            )
-            .collect()
+            .map(|(index, _)| CFunctionContractClaim::effect(index))
+            .collect::<Vec<_>>();
+        for (source_index, ensure) in function_block.ensures().iter().enumerate() {
+            claims.push(match ensure.ensure() {
+                Ensure::Proposition(_) => {
+                    let claim =
+                        CFunctionContractClaim::ensure_proposition(source_index, proposition_index);
+                    proposition_index += 1;
+                    claim
+                }
+                Ensure::Resource(_) => {
+                    let claim =
+                        CFunctionContractClaim::ensure_resource(source_index, resource_index);
+                    resource_index += 1;
+                    claim
+                }
+            });
+        }
+        claims
     };
     Ok((
         requires,

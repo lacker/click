@@ -2140,7 +2140,7 @@ pub(super) fn function_claims(function_block: &FunctionBlock) -> Vec<FunctionCla
         .collect()
 }
 
-fn initial_claim_context(
+pub(super) fn initial_claim_context(
     function_block: &FunctionBlock,
     parsed_function: &syntax::C0Function,
     resource_environment: &ResourceEnvironment,
@@ -2521,6 +2521,7 @@ struct TacticReplayState {
     next_verification_variable: u64,
     next_path_choice: usize,
     execution_start_facts: Vec<Proposition>,
+    concrete_loop_execution: bool,
     planned_tactics: Vec<ProofTactic>,
     surface_propositions: SurfacePropositionMap,
     surface_replay: SurfaceReplay,
@@ -9009,14 +9010,33 @@ fn finish_ordered_proof_replay(
             )));
         }
         let pre_state = replay.execution_start_state(&state);
-        let certified_execution = prove_symbolic_c_function_verification_paths_with_environment(
-            pre_state.clone(),
-            function.clone(),
-            arguments.to_vec(),
-            assumptions_from_propositions(&replay.execution_start_facts),
-            function_environment.clone(),
-            CExecutionSemantics::APPLY_VERIFIED_RULES,
+        let mut certification_facts = replay.execution_start_facts.clone();
+        certification_facts.extend(
+            replay
+                .case_assumptions
+                .iter()
+                .filter_map(|case| case.fact.clone()),
         );
+        let execution_start_assumptions = assumptions_from_propositions(&certification_facts);
+        let certified_execution = if replay.concrete_loop_execution {
+            prove_symbolic_c_function_execution_paths_with_environment(
+                pre_state.clone(),
+                function.clone(),
+                arguments.to_vec(),
+                execution_start_assumptions,
+                function_environment.clone(),
+                CExecutionSemantics::APPLY_VERIFIED_RULES,
+            )
+        } else {
+            prove_symbolic_c_function_contract_verification_paths_with_environment(
+                pre_state.clone(),
+                function.clone(),
+                arguments.to_vec(),
+                execution_start_assumptions,
+                function_environment.clone(),
+                CExecutionSemantics::APPLY_VERIFIED_RULES,
+            )
+        };
         if let Some(limit) = certified_execution.limit() {
             return Err(ClickError::new(format!(
                 "kernel certification hit execution limit {limit:?} for `{proof_label}`"
@@ -9047,11 +9067,44 @@ fn finish_ordered_proof_replay(
             .iter()
             .map(|path| path.outcome().clone())
             .collect::<Vec<_>>();
-        if replay_outcomes != certified_outcomes {
+        let outcomes_match = |replayed: &CFunctionOutcome, certified_index: usize| {
+            let certified = &certified_outcomes[certified_index];
+            let certified_path = &certified_execution.paths()[certified_index];
+            let certified_facts = certified_path
+                .execution_facts()
+                .into_iter()
+                .map(|fact| fact.proposition().clone())
+                .collect::<Vec<_>>();
+            let mut path_assumptions = certified_path.assumptions().clone();
+            for fact in certification_facts.iter().chain(&certified_facts) {
+                path_assumptions = path_assumptions.assume_proposition(fact.clone());
+            }
+            if let CFunctionOutcome::Return { state, .. } = certified
+                && let Ok(resource_facts) = state.resources().observable_facts(&path_assumptions)
+            {
+                for fact in resource_facts {
+                    path_assumptions = path_assumptions.assume_proposition(fact);
+                }
+            }
+            c_function_outcomes_definitionally_equal(
+                function,
+                replayed,
+                certified,
+                &path_assumptions,
+            )
+        };
+        let certified_path_for_replay = replay_outcomes
+            .iter()
+            .map(|replayed| {
+                (0..certified_outcomes.len())
+                    .find(|certified_index| outcomes_match(replayed, *certified_index))
+            })
+            .collect::<Option<Vec<_>>>();
+        let Some(certified_path_for_replay) = certified_path_for_replay else {
             return Err(ClickError::new(format!(
-                "execution replay for `{proof_label}` does not preserve the kernel-certified path frontier"
+                "execution replay for `{proof_label}` contains a path not reproduced by kernel certification\n  replay: {replay_outcomes:?}\n  certified: {certified_outcomes:?}"
             )));
-        }
+        };
         let mut verified = Vec::new();
         let mut surface_closers_by_claim = vec![Vec::new(); claims.len()];
         let mut surface_closer_blockers = vec![None; claims.len()];
@@ -9060,7 +9113,8 @@ fn finish_ordered_proof_replay(
         let mut deferred_capture_tactics_by_path = Vec::with_capacity(execution.paths().len());
 
         for (path_index, path) in execution.paths().iter().enumerate() {
-            let certified_path = &certified_execution.paths()[path_index];
+            let certified_path =
+                &certified_execution.paths()[certified_path_for_replay[path_index]];
             let mut path_surface_closers = vec![Vec::new(); claims.len()];
             let mut path_grouped_surface_closers = Vec::new();
             let mut path_surface_post_tactics = Vec::new();
@@ -10355,6 +10409,16 @@ fn finish_ordered_proof_replay(
                 )));
             }
 
+            let certified_path = certify_c_function_execution_path_resource_representation(
+                certified_path,
+                outcome.clone(),
+            )
+            .ok_or_else(|| {
+                ClickError::new(format!(
+                    "execution proof for `{proof_label}` path {path_index} changed more than the certified ghost resource representation\n  desired outcome: {outcome:?}\n  certified path: {:?}",
+                    certified_path.theorem().proposition()
+                ))
+            })?;
             let specification = c_function_specification(
                 pre_state.clone(),
                 arguments.to_vec(),
@@ -10364,11 +10428,12 @@ fn finish_ordered_proof_replay(
             let theorem = prove_c_function_satisfies_specification_from_symbolic_path(
                 function.clone(),
                 specification.clone(),
-                certified_path,
+                &certified_path,
             )
             .ok_or_else(|| {
                 ClickError::new(format!(
-                    "execution proof for `{proof_label}` path {path_index} does not certify its exact function specification"
+                    "execution proof for `{proof_label}` path {path_index} does not certify its exact function specification\n  specification: {specification:?}\n  certified path: {:?}",
+                    certified_path.theorem().proposition()
                 ))
             })?;
             for claim in claims {
@@ -10386,6 +10451,7 @@ fn finish_ordered_proof_replay(
                     expansion_blocker: replay.surface_replay.blocker.clone(),
                     specification: specification.clone(),
                     theorem: theorem.clone(),
+                    concrete_loop_execution: replay.concrete_loop_execution,
                 });
             }
             for (claim_index, closers) in path_surface_closers.into_iter().enumerate() {
@@ -17309,6 +17375,7 @@ fn execute_concrete_loop_head_step(
     loop_statement: CStatement,
     remaining: Option<CStatement>,
 ) -> Result<(), ClickError> {
+    replay.concrete_loop_execution = true;
     let CStatement::While {
         condition, body, ..
     } = loop_statement.clone()

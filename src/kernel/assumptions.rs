@@ -1636,6 +1636,16 @@ impl Assumptions {
         })
     }
 
+    pub(super) fn has_matching_condition_fact_for_memory_resolution(
+        &self,
+        condition: &ConditionTerm,
+        value: bool,
+    ) -> bool {
+        self.condition_facts.iter().any(|(fact, fact_value)| {
+            *fact_value == value && self.condition_matches_for_simp(fact, condition)
+        })
+    }
+
     fn proposition_proves_condition_for_simp(
         &self,
         proposition: &Proposition,
@@ -2471,10 +2481,14 @@ impl Assumptions {
                 after,
                 mutable_ranges,
             } => {
-                let matches = memory_matches_effect_summary_endpoint(before, left, pointer)
-                    && memory_matches_effect_summary_endpoint(after, right, pointer)
-                    || memory_matches_effect_summary_endpoint(before, right, pointer)
-                        && memory_matches_effect_summary_endpoint(after, left, pointer);
+                let endpoint_matches = |expected: &CMemory, actual: &CMemory| {
+                    memory_matches_effect_summary_endpoint(expected, actual, pointer)
+                        || memories_match_for_pointer_load_under_assumptions(
+                            expected, actual, pointer, self,
+                        )
+                };
+                let matches = endpoint_matches(before, left) && endpoint_matches(after, right)
+                    || endpoint_matches(before, right) && endpoint_matches(after, left);
                 matches && self.ranges_proven_disjoint_from_pointer(mutable_ranges, pointer)
             }
             _ => false,
@@ -2507,10 +2521,14 @@ impl Assumptions {
                 after,
                 mutable_ranges,
             } => {
-                let matches = memory_matches_effect_summary_endpoint(before, left, pointer)
-                    && memory_matches_effect_summary_endpoint(after, right, pointer)
-                    || memory_matches_effect_summary_endpoint(before, right, pointer)
-                        && memory_matches_effect_summary_endpoint(after, left, pointer);
+                let endpoint_matches = |expected: &CMemory, actual: &CMemory| {
+                    memory_matches_effect_summary_endpoint(expected, actual, pointer)
+                        || memories_match_for_pointer_load_under_assumptions(
+                            expected, actual, pointer, self,
+                        )
+                };
+                let matches = endpoint_matches(before, left) && endpoint_matches(after, right)
+                    || endpoint_matches(before, right) && endpoint_matches(after, left);
                 matches && self.ranges_directly_disjoint_from_pointer(mutable_ranges, pointer)
             }
             _ => false,
@@ -5901,6 +5919,10 @@ impl SymbolicCExecution {
 }
 
 impl SymbolicCExecutionPath {
+    pub(crate) fn assumptions(&self) -> &Assumptions {
+        &self.assumptions
+    }
+
     pub fn facts(&self) -> &[ExecutionPureFact] {
         &self.facts
     }

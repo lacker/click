@@ -1,10 +1,11 @@
 use super::api::{int32, normalize_exact_memory_loads_in_pointer_offset, uint8};
 use super::reasoning::{
     bitvector_terms_proven_equal_for_memory_resolution, collect_or_cases,
-    instantiate_range_fold_step, int32_element_index_from_offset, pointers_proven_distinct,
+    instantiate_range_fold_step, int32_element_index_from_offset,
+    memory_snapshots_proven_equal_at_pointer, pointers_proven_distinct,
     pointers_proven_distinct_for_memory_resolution, pointers_proven_equal,
-    pointers_proven_equal_for_memory_resolution, signed_bitvector_constant,
-    signed_i64_bitvector_constant,
+    pointers_proven_equal_for_memory_resolution, resource_context_has_read,
+    signed_bitvector_constant, signed_i64_bitvector_constant,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -434,6 +435,15 @@ pub struct CFunction {
     pub(super) contract_mutable: Vec<CMemorySegment>,
     pub(super) contract_claims: Vec<CFunctionContractClaim>,
     pub(super) opaque_contract_supported: bool,
+    pub(super) composite_resource_definitions: Vec<CCompositeResourceDefinition>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct CCompositeResourceDefinition {
+    pub(super) name: String,
+    pub(super) parameters: Vec<CParameter>,
+    pub(super) contains: Vec<CResourceSpec>,
+    pub(super) facts: Vec<SpecProposition>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -446,6 +456,15 @@ pub enum CFunctionContractClaimKey {
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct CFunctionContractClaim {
     pub(super) key: CFunctionContractClaimKey,
+    pub(super) target: CFunctionContractClaimTarget,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub enum CFunctionContractClaimTarget {
+    BodySafety,
+    Effect,
+    EnsureProposition(usize),
+    EnsureResource(usize),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -507,6 +526,12 @@ pub struct CVerifiedFunctionRule {
 pub struct CVerifiedFunctionContractClaim {
     pub(super) function: CFunction,
     pub(super) key: CFunctionContractClaimKey,
+}
+
+impl CVerifiedFunctionContractClaim {
+    pub fn key(&self) -> &CFunctionContractClaimKey {
+        &self.key
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -969,8 +994,37 @@ pub struct SymbolicCExecution {
     pub(super) limit: Option<ExecutionLimit>,
 }
 
+/// A complete function frontier produced from only the exact function's
+/// contract entry state and requirements.
+///
+/// Unlike [`SymbolicCExecution`], this type is accepted as evidence when
+/// certifying an opaque function rule. Its fields are kernel-private so callers
+/// cannot turn an execution performed under arbitrary assumptions into
+/// contract evidence.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CFunctionContractExecution {
+    pub(super) execution: SymbolicCExecution,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CFunctionContractExecutionMode {
+    VerifyLoops,
+    ExecuteLoops,
+}
+
+impl CFunctionContractExecution {
+    pub fn path_count(&self) -> usize {
+        self.execution.paths.len()
+    }
+
+    pub fn limit(&self) -> Option<&ExecutionLimit> {
+        self.execution.limit.as_ref()
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SymbolicCExecutionPath {
+    pub(super) assumptions: Assumptions,
     pub(super) facts: Vec<ExecutionPureFact>,
     pub(super) effect_facts: Vec<ExecutionPureFact>,
     pub(super) obligations: Vec<ProofObligation>,
@@ -1800,6 +1854,7 @@ impl CFunction {
             contract_mutable: Vec::new(),
             contract_claims: Vec::new(),
             opaque_contract_supported: true,
+            composite_resource_definitions: Vec::new(),
         }
     }
 
@@ -1831,6 +1886,14 @@ impl CFunction {
         self.contract_mutable = mutable;
         self.contract_claims = claims;
         self.opaque_contract_supported = opaque_supported;
+        self
+    }
+
+    pub fn with_composite_resource_definitions(
+        mut self,
+        definitions: Vec<CCompositeResourceDefinition>,
+    ) -> Self {
+        self.composite_resource_definitions = definitions;
         self
     }
 
@@ -1881,15 +1944,79 @@ impl CFunction {
     pub fn opaque_contract_supported(&self) -> bool {
         self.opaque_contract_supported
     }
+
+    pub fn composite_resource_definitions(&self) -> &[CCompositeResourceDefinition] {
+        &self.composite_resource_definitions
+    }
+}
+
+impl CCompositeResourceDefinition {
+    pub fn new(
+        name: impl Into<String>,
+        parameters: Vec<CParameter>,
+        contains: Vec<CResourceSpec>,
+        facts: Vec<SpecProposition>,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            parameters,
+            contains,
+            facts,
+        }
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn parameters(&self) -> &[CParameter] {
+        &self.parameters
+    }
+
+    pub fn contains(&self) -> &[CResourceSpec] {
+        &self.contains
+    }
+
+    pub fn facts(&self) -> &[SpecProposition] {
+        &self.facts
+    }
 }
 
 impl CFunctionContractClaim {
-    pub fn new(key: CFunctionContractClaimKey) -> Self {
-        Self { key }
+    pub fn body_safety() -> Self {
+        Self {
+            key: CFunctionContractClaimKey::BodySafety,
+            target: CFunctionContractClaimTarget::BodySafety,
+        }
+    }
+
+    pub fn effect(index: usize) -> Self {
+        Self {
+            key: CFunctionContractClaimKey::Effect(index),
+            target: CFunctionContractClaimTarget::Effect,
+        }
+    }
+
+    pub fn ensure_proposition(source_index: usize, contract_index: usize) -> Self {
+        Self {
+            key: CFunctionContractClaimKey::Ensure(source_index),
+            target: CFunctionContractClaimTarget::EnsureProposition(contract_index),
+        }
+    }
+
+    pub fn ensure_resource(source_index: usize, resource_index: usize) -> Self {
+        Self {
+            key: CFunctionContractClaimKey::Ensure(source_index),
+            target: CFunctionContractClaimTarget::EnsureResource(resource_index),
+        }
     }
 
     pub fn key(&self) -> &CFunctionContractClaimKey {
         &self.key
+    }
+
+    pub fn target(&self) -> &CFunctionContractClaimTarget {
+        &self.target
     }
 }
 
@@ -2059,7 +2186,34 @@ impl CExecutionEnvironment {
                     .required_assumptions
                     .pure_facts()
                     .iter()
-                    .all(|required| assumptions.proves(required))
+                    .all(|required| {
+                        assumptions.proves(required)
+                            || match required {
+                                Proposition::CMemoryLoadable {
+                                    memory,
+                                    base,
+                                    bytes,
+                                } => {
+                                    memory_snapshots_proven_equal_at_pointer(
+                                        memory,
+                                        state.memory(),
+                                        base,
+                                        assumptions,
+                                    ) && bytes
+                                        .as_const()
+                                        .and_then(|bytes| u32::try_from(bytes).ok())
+                                        .is_some_and(|bytes| {
+                                            resource_context_has_read(
+                                                state.resources(),
+                                                base,
+                                                bytes,
+                                                assumptions,
+                                            )
+                                        })
+                                }
+                                _ => false,
+                            }
+                    })
         })
     }
 }
@@ -2601,6 +2755,12 @@ impl ResourceContext {
         Some(context.normalized(assumptions))
     }
 
+    pub(super) fn without_exact_representation(mut self, fact: &CResourceFact) -> Option<Self> {
+        let index = self.facts.iter().position(|available| available == fact)?;
+        self.facts.remove(index);
+        Some(self)
+    }
+
     /// Consumes several facts while postponing whole-context normalization
     /// until the end. If a required fact is only available after adjacent
     /// resources are merged, normalize once at that point and retry it.
@@ -3007,7 +3167,7 @@ fn pointer_has_structural_range_base(pointer: &Pointer, base: &Pointer) -> bool 
     )
 }
 
-fn memory_range_covers(
+pub(super) fn memory_range_covers(
     available: &CMemoryRange,
     required: &CMemoryRange,
     assumptions: &Assumptions,
