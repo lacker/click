@@ -249,15 +249,21 @@ int32 owned_segmented_buffer_pipeline(
     have owner->second_data == second_data by {
         simp();
     }
-    have first_data[0] == first_value by {
-        derive(first_data[0] == first_value) using {
+    have at(statement(4).entry, first_data[0]) == at(statement(4).entry, first_value) by {
+        derive(at(statement(4).entry, first_data[0]) == at(statement(4).entry, first_value)) using {
             fact at(statement(4).entry, *load_int32_pointer((owner + 2))) == at(statement(4).entry, first_value);
-            fact load_int32_pointer((owner + 2)) == first_data;
+            fact at(statement(4).entry, load_int32_pointer((owner + 2))) == at(statement(4).entry, first_data);
         }
+    }
+    transport(
+        at(statement(4).entry, first_data[0]) == at(statement(4).entry, first_value),
+        first_data[0] == first_value
+    ) using {
+        fact at(statement(4).entry, first_data[0]) == at(statement(4).entry, first_value);
     }
     step using {
         fact loadable(old(owner[0..6]));
-        fact 0 < load_int32((owner + 1));
+        fact at(statement(4).entry, 0) < at(statement(4).entry, load_int32((owner + 1)));
         fact read_value < *owner;
         fact 1 <= first_len;
         fact 1 <= second_len;
@@ -312,11 +318,17 @@ int32 owned_segmented_buffer_pipeline(
     have owner->second_data == second_data by {
         simp();
     }
-    have second_data[0] == second_value by {
-        derive(second_data[0] == second_value) using {
+    have at(statement(5).entry, second_data[0]) == at(statement(5).entry, second_value) by {
+        derive(at(statement(5).entry, second_data[0]) == at(statement(5).entry, second_value)) using {
             fact at(statement(5).entry, *load_int32_pointer((owner + 4))) == at(statement(5).entry, second_value);
-            fact load_int32_pointer((owner + 4)) == second_data;
+            fact at(statement(5).entry, load_int32_pointer((owner + 4))) == at(statement(5).entry, second_data);
         }
+    }
+    transport(
+        at(statement(5).entry, second_data[0]) == at(statement(5).entry, second_value),
+        second_data[0] == second_value
+    ) using {
+        fact at(statement(5).entry, second_data[0]) == at(statement(5).entry, second_value);
     }
     step using {
         fact 0 < owner->first_len;
