@@ -151,9 +151,9 @@ Notable strict boundaries include:
 
 Current focused validation:
 
-- 415 library tests pass;
+- 423 library tests pass;
 - 7 `click-profile` binary tests pass;
-- 8 `click-audit` binary tests pass;
+- 9 `click-audit` binary tests pass;
 - the `execute_rest` order/alias recursion regression passes in an isolated
   mdtest process;
 - the owned-string example verifies normally;
@@ -333,12 +333,10 @@ sites, and all three jsonc-refcount sites. The previously documented
 segmented-buffer baseline failure was stale.
 
 The parser-driven inventory added by `click-audit --start-at` is deliberately
-stronger than that timing inventory: it finds 32 input-cursor sites, 38
-owned-segmented-buffer sites, 35 owned-split-buffer sites, 72 owned-string
-sites, three jsonc-refcount sites, and 76 owned-vector sites. Thus the corpus
-contains 256 syntactic smart sites. The earlier audits established 169 of
-those; 11 newly exposed sites in the formerly green projects and all 76
-owned-vector sites remain to be checked by the new audit.
+stronger than the old timing inventory. Loop invariants are not independent
+proof sites: their obligations belong to the loop initialization and
+preservation proofs, and the audit no longer advertises their parser-internal
+`auto` marker as expandable.
 
 Owned-vector exposed a grouped-`simp` boundary bug. Its ambient precheck could
 reject a postcondition that the generated source-site certificate proved,
@@ -367,7 +365,24 @@ their original snapshots and are restored after the selected transition.
 
 A fresh release profile verifies all of owned-vector in about 15 seconds and
 reports no smart tactic over 2 seconds, no simple tactic over 500 ms, and no
-slow control container. All 419 library tests pass.
+slow control container. All 423 library tests pass.
+
+The retained-session owned-vector audit is green across all 71 real smart
+source sites. Each selected occurrence expanded and its rewritten proof unit
+reverified. The audit exposed and fixed five independent correctness issues:
+
+- declared resource argument types are now filled recursively inside
+  `at(point, proposition)`, so historical `contains(...)` facts lower exactly
+  like current ones;
+- loop invariants are excluded from the smart-site inventory because their
+  proofs are the loop initialize/preserve phases;
+- loop initialization certificates close quantified goals under binder
+  renaming and observationally equivalent materialized memory snapshots, using
+  the same replay-equivalence rule as explicit `assumption()`;
+- tactic source lookup now visits structural items in `statement(...)` blocks,
+  not only `loop(...)` blocks;
+- expansion dependency pruning includes the complete call graph used by the
+  verifier's whole-function structural traversal.
 
 The motivating `owned_string_set` successor proof at line 183 is fixed:
 planning fell from 63.9 seconds to about 67 ms, and expansion emits a
@@ -377,12 +392,9 @@ one-premise arithmetic certificate.
 
 Work one frontier at a time and commit each logical change independently.
 
-1. Run the retained-session `click-audit` on owned-vector now that its baseline
-   initializes regularly; fix each correctness failure before continuing past
-   it.
-2. Continue the profiling/expansion cycle for
+1. Continue the profiling/expansion cycle for
    owned-string line 485, owned-string line 471, and input-cursor line 125.
-3. Run the full `click-audit` corpus audit and fix each concrete failure before
+2. Run the full `click-audit` corpus audit and fix each concrete failure before
    claiming expansion is complete. The audit command now inventories every
    smart source site syntactically, then independently expands and verifies it
    against a retained certified environment; `--start-at` resumes inclusively
@@ -390,8 +402,7 @@ Work one frontier at a time and commit each logical change independently.
    `jsonc-refcount` audit passes. The new syntactic inventory exposed 11
    previously unvisited sites across owned-string, owned-segmented-buffer,
    owned-split-buffer, and input-cursor; audit those before calling the
-   projects fully green. Owned-vector has 76 sites and remains the final
-   project frontier, but its retained audit session can now initialize.
+   projects fully green. Owned-vector's complete 71-site audit now passes.
 
 Do not optimize by adding proposition-specific smart fast paths, broad ambient
 premises, generic transport fallbacks, or internal-only certificate tactics.
