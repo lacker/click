@@ -3866,6 +3866,42 @@ fn statement_snapshots_support_complete_loadability_propositions() {
 }
 
 #[test]
+fn statement_snapshots_preserve_declared_resource_argument_types() {
+    let c_source = r#"
+            int32 preserve_owner(int32* owner) {
+                return owner[0];
+            }
+        "#;
+    let click_source = r#"
+            resource owner_cell(owner: int32*) {
+                owns owner[0..1];
+            }
+
+            verifying "snapshot_resource.c";
+
+            int32 preserve_owner(int32* owner) {
+                consumes owner_cell(owner);
+                produces owner_cell(owner);
+                ensures result == owner[0];
+            } by {
+                unfold(owner_cell(owner));
+                execute_rest();
+                have at(
+                    statement(0).entry,
+                    contains(owner_cell(owner), memory(owner[0..1]))
+                ) by {
+                    assumption();
+                }
+                fold(owner_cell(owner));
+                simp();
+            }
+        "#;
+
+    verify_c0_sources(click_source, &[("snapshot_resource.c", c_source)])
+        .expect("a historical resource proposition should retain declared argument types");
+}
+
+#[test]
 fn smart_apply_uses_ambient_loadability_only_for_argument_lowering() {
     let c_source = r#"
             struct pointer_pair {

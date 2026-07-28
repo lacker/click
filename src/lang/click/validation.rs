@@ -470,6 +470,16 @@ fn expand_declared_resource_proposition(
         ClickProposition::Not(body) => Ok(ClickProposition::Not(Box::new(
             expand_declared_resource_proposition(*body, resource_definitions)?,
         ))),
+        ClickProposition::At {
+            selector,
+            proposition,
+        } => Ok(ClickProposition::At {
+            selector,
+            proposition: Box::new(expand_declared_resource_proposition(
+                *proposition,
+                resource_definitions,
+            )?),
+        }),
         ClickProposition::ForAll { c_type, name, body } => Ok(ClickProposition::ForAll {
             c_type,
             name,
