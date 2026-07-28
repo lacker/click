@@ -788,6 +788,25 @@ mod certificate_tests {
     }
 
     #[test]
+    fn pure_fact_replay_availability_ignores_quantifier_binder_ids() {
+        let quantified_equality = |variable| Proposition::ForAll {
+            var: variable,
+            sort: Sort::CInt32,
+            body: Box::new(Proposition::ConditionIs(
+                ConditionTerm::Bitvector32Equal(
+                    Box::new(Bitvector32Term::Variable(variable)),
+                    Box::new(Bitvector32Term::Variable(variable)),
+                ),
+                true,
+            )),
+        };
+        let available = quantified_equality(Variable(2_000_000));
+        let replayed = quantified_equality(Variable(3_000_000));
+
+        assert!(pure_fact_is_replay_available(&replayed, &[available]));
+    }
+
+    #[test]
     fn pure_certificate_replay_is_transactional() {
         let file = parse(
             r#"
@@ -3693,6 +3712,14 @@ fn quantified_binder_equivalent(left: &Proposition, right: &Proposition) -> bool
         }
         _ => false,
     }
+}
+
+fn pure_fact_is_replay_available(required: &Proposition, available: &[Proposition]) -> bool {
+    available.contains(required)
+        || available
+            .iter()
+            .any(|fact| quantified_binder_equivalent(required, fact))
+        || quantified_replay_equivalent_available_fact(required, available).is_some()
 }
 
 fn atomic_conjuncts<'a>(proposition: &'a Proposition, output: &mut Vec<&'a Proposition>) {
@@ -8565,7 +8592,7 @@ fn prove_pure_proposition_case_at_point(
             "`{claim_label}` {proof_name} proof {outer_tactic_index}: could not unfold pure goal: {message}"
         ))
     })?;
-    if available.contains(&goal)
+    if pure_fact_is_replay_available(&goal, &available)
         || (use_simp && matches!(simp_proposition(&goal, &assumptions), SimpProposition::True))
     {
         return Ok(fact);
