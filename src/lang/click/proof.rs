@@ -2954,6 +2954,11 @@ enum PostExecutionTactic {
         premises: Vec<ClickProposition>,
     },
     Have(ProofHave),
+    Transport {
+        source: ClickProposition,
+        target: ClickProposition,
+        premises: Option<Vec<ClickProposition>>,
+    },
     Choose(ProofChoice),
     Witness(ProofWitness),
     Assumption,
@@ -2997,6 +3002,14 @@ fn post_execution_tactic_timing(post_tactic: &PostExecutionTactic) -> (&'static 
                 "smart"
             } else {
                 "simple"
+            },
+        ),
+        PostExecutionTactic::Transport { premises, .. } => (
+            "transport",
+            if premises.is_some() {
+                "simple"
+            } else {
+                "smart"
             },
         ),
         PostExecutionTactic::Simp => ("simp", "smart"),
@@ -7201,6 +7214,300 @@ fn plan_explicit_fact_transport(
     Ok(selected.into_iter().map(|(_, surface)| surface).collect())
 }
 
+#[allow(clippy::too_many_arguments)]
+fn replay_fact_transport_at_outcome(
+    surface_source: &ClickProposition,
+    surface_target: &ClickProposition,
+    surface_premises: Option<&[ClickProposition]>,
+    claim_label: &str,
+    path_index: usize,
+    tactic_index: usize,
+    available: &mut Vec<Proposition>,
+    surface_propositions: &mut SurfacePropositionMap,
+    transition_facts: &[ExecutionPureFact],
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    pre_state: &CState,
+    post_state: &CState,
+    result: &CValue,
+    replay: &TacticReplayState,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+) -> Result<ProofTactic, ClickError> {
+    let lower = |surface: &ClickProposition, facts: &[Proposition]| {
+        lower_outcome_proposition_with_program_points(
+            parameters,
+            arguments,
+            pre_state,
+            post_state,
+            result,
+            facts,
+            surface,
+            predicate_environment,
+            click_function_environment,
+            &replay.program_point_states,
+        )
+    };
+    let recorded_or_lowered = |surface: &ClickProposition,
+                               facts: &[Proposition],
+                               recorded_surfaces: &SurfacePropositionMap|
+     -> Result<Proposition, ClickError> {
+        if let Some(recorded) = recorded_surfaces.available_kernel(surface, facts) {
+            Ok(recorded.clone())
+        } else {
+            lower(surface, facts).map_err(ClickError::new)
+        }
+    };
+
+    let mut explicit_premises = Vec::new();
+    if let Some(surface_premises) = surface_premises {
+        for surface_premise in surface_premises {
+            let premise =
+                recorded_or_lowered(surface_premise, available, surface_propositions).map_err(
+                    |error| {
+                        ClickError::new(format!(
+                            "`{claim_label}` path {path_index}, tactic {tactic_index}: could not lower `transport using` premise: {}",
+                            error.message()
+                        ))
+                    },
+                )?;
+            if !exact_fact_is_available(&premise, available) {
+                return Err(ClickError::new(format!(
+                    "`{claim_label}` path {path_index}, tactic {tactic_index}: `transport using` requires an exact premise: {premise:?}"
+                )));
+            }
+            surface_propositions.record_lowering(surface_premise, &premise)?;
+            if !explicit_premises.contains(&premise) {
+                explicit_premises.push(premise);
+            }
+        }
+    }
+
+    let source = recorded_or_lowered(surface_source, available, surface_propositions).map_err(
+        |error| {
+            ClickError::new(format!(
+                "`{claim_label}` path {path_index}, tactic {tactic_index}: could not lower `transport` source: {}",
+                error.message()
+            ))
+        },
+    )?;
+    surface_propositions.record_lowering(surface_source, &source)?;
+    let explicit_assumptions = assumptions_from_propositions(&explicit_premises);
+    let selected_assumptions = if surface_premises.is_some() {
+        let resource_facts = post_state
+            .resources()
+            .observable_facts_assuming_valid(&explicit_assumptions);
+        available
+            .iter()
+            .filter(|fact| is_implicit_fact_transport_context(fact))
+            .cloned()
+            .chain(resource_facts)
+            .fold(explicit_assumptions, |assumptions, fact| {
+                assumptions.assume_proposition(fact)
+            })
+    } else {
+        assumptions_from_propositions(available)
+    };
+    if !exact_fact_is_available(&source, &explicit_premises)
+        && selected_assumptions
+            .derive_atomic_proposition(&source)
+            .is_none()
+    {
+        return Err(ClickError::new(format!(
+            "`{claim_label}` path {path_index}, tactic {tactic_index}: `transport{}` requires a source derivable from its {}facts: {source:?}",
+            if surface_premises.is_some() {
+                " using"
+            } else {
+                ""
+            },
+            if surface_premises.is_some() {
+                "explicit "
+            } else {
+                "ambient "
+            },
+        )));
+    }
+
+    let mut direct_lowering_facts = facts_for_direct_surface_lowering(available);
+    for premise in &explicit_premises {
+        if !direct_lowering_facts.contains(premise) {
+            direct_lowering_facts.push(premise.clone());
+        }
+    }
+    let target = lower(surface_target, &direct_lowering_facts).map_err(|message| {
+        ClickError::new(format!(
+            "`{claim_label}` path {path_index}, tactic {tactic_index}: could not lower `transport` target: {message}"
+        ))
+    })?;
+    surface_propositions.record_lowering(surface_target, &target)?;
+
+    let emitted_premises = if surface_premises.is_some() {
+        None
+    } else {
+        Some(plan_explicit_fact_transport_at_outcome(
+            surface_source,
+            &source,
+            &target,
+            available,
+            transition_facts,
+            parameters,
+            arguments,
+            pre_state,
+            post_state,
+            result,
+            replay,
+            predicate_environment,
+            click_function_environment,
+        )?)
+    };
+    if exact_fact_is_available(&target, available)
+        || materialization_equivalent_available_fact(&target, available).is_some()
+    {
+        if !available.contains(&target) {
+            available.push(target.clone());
+        }
+    } else {
+        let transport_assumptions = transition_facts
+            .iter()
+            .fold(selected_assumptions, |assumptions, fact| {
+                assumptions.assume_proposition(fact.proposition().clone())
+            })
+            .assume_proposition(source.clone());
+        if !certified_fact_transport_reaches(
+            &source,
+            &target,
+            post_state.memory(),
+            &transport_assumptions,
+        ) {
+            return Err(ClickError::new(format!(
+                "`{claim_label}` path {path_index}, tactic {tactic_index}: no certified frame transport applies to the exact source fact"
+            )));
+        }
+        available.push(target.clone());
+    }
+
+    Ok(match emitted_premises {
+        Some(premises) => ProofTactic::TransportUsing {
+            source: surface_source.clone(),
+            target: surface_target.clone(),
+            premises,
+        },
+        None => ProofTactic::TransportUsing {
+            source: surface_source.clone(),
+            target: surface_target.clone(),
+            premises: surface_premises.unwrap_or_default().to_vec(),
+        },
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn plan_explicit_fact_transport_at_outcome(
+    surface_source: &ClickProposition,
+    source: &Proposition,
+    target: &Proposition,
+    available: &[Proposition],
+    transition_facts: &[ExecutionPureFact],
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    pre_state: &CState,
+    post_state: &CState,
+    result: &CValue,
+    replay: &TacticReplayState,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+) -> Result<Vec<ClickProposition>, ClickError> {
+    let mut candidates = available
+        .iter()
+        .filter_map(|kernel| {
+            checked_surface_fact_at_outcome(
+                replay,
+                kernel,
+                SurfaceFactMatch::ReplayEquivalent,
+                available,
+                parameters,
+                arguments,
+                pre_state,
+                post_state,
+                result,
+                predicate_environment,
+                click_function_environment,
+            )
+            .ok()
+            .map(|surface| (kernel.clone(), surface))
+        })
+        .collect::<Vec<_>>();
+    let mut selected = Vec::new();
+    if exact_fact_is_available(source, available) {
+        let source_pair = (source.clone(), surface_source.clone());
+        if !candidates.contains(&source_pair) {
+            candidates.push(source_pair.clone());
+        }
+        selected.push(source_pair);
+    }
+    let replays = |selected: &[(Proposition, ClickProposition)]| {
+        let explicit = selected
+            .iter()
+            .map(|(kernel, _)| kernel.clone())
+            .collect::<Vec<_>>();
+        let explicit_assumptions = assumptions_from_propositions(&explicit);
+        let resource_facts = post_state
+            .resources()
+            .observable_facts_assuming_valid(&explicit_assumptions);
+        let selected_assumptions = available
+            .iter()
+            .filter(|fact| is_implicit_fact_transport_context(fact))
+            .cloned()
+            .chain(resource_facts)
+            .fold(explicit_assumptions, |assumptions, fact| {
+                assumptions.assume_proposition(fact)
+            });
+        if selected_assumptions.derive_proposition(source).is_none() {
+            return false;
+        }
+        if selected_assumptions.derive_proposition(target).is_some() {
+            return true;
+        }
+        let transport_assumptions = transition_facts
+            .iter()
+            .fold(selected_assumptions, |assumptions, fact| {
+                assumptions.assume_proposition(fact.proposition().clone())
+            })
+            .assume_proposition(source.clone());
+        certified_fact_transport_reaches(
+            source,
+            target,
+            post_state.memory(),
+            &transport_assumptions,
+        )
+    };
+    if !replays(&selected) {
+        for pair in candidates {
+            if !selected.contains(&pair) {
+                selected.push(pair);
+                if replays(&selected) {
+                    break;
+                }
+            }
+        }
+    }
+    if !replays(&selected) {
+        return Err(ClickError::new(
+            "post-execution fact transport has no explicit surface-premise certificate",
+        ));
+    }
+    let mut index = 0;
+    while index < selected.len() {
+        let mut reduced = selected.clone();
+        reduced.remove(index);
+        if replays(&reduced) {
+            selected = reduced;
+        } else {
+            index += 1;
+        }
+    }
+    Ok(selected.into_iter().map(|(_, surface)| surface).collect())
+}
+
 fn certified_fact_transport_reaches(
     source: &Proposition,
     target: &Proposition,
@@ -9132,6 +9439,96 @@ fn finish_ordered_proof_replay(
                             replay.deferred_tactic_capture.as_ref(),
                             *tactic_index,
                             surface_have,
+                        );
+                    }
+                    PostExecutionTactic::Transport {
+                        source,
+                        target,
+                        premises,
+                    } => {
+                        let CFunctionOutcome::Return {
+                            value: result,
+                            state: post_state,
+                        } = &outcome
+                        else {
+                            return Err(ClickError::new(format!(
+                                "`{proof_label}` path {path_index}, tactic {tactic_index}: `transport` requires a return outcome"
+                            )));
+                        };
+                        let certificate_context = premises.is_none().then(|| {
+                            (
+                                path_requirements.clone(),
+                                outcome_surface_propositions.clone(),
+                            )
+                        });
+                        let surface_tactic = replay_fact_transport_at_outcome(
+                            source,
+                            target,
+                            premises.as_deref(),
+                            &proof_label,
+                            path_index,
+                            *tactic_index,
+                            &mut path_requirements,
+                            &mut outcome_surface_propositions,
+                            &path.execution_facts(),
+                            parsed_function.parameters(),
+                            arguments,
+                            pre_state,
+                            post_state,
+                            result,
+                            &replay,
+                            predicate_environment,
+                            click_function_environment,
+                        )?;
+                        if let Some((mut certificate_facts, mut certificate_surfaces)) =
+                            certificate_context
+                        {
+                            let ProofTactic::TransportUsing {
+                                source,
+                                target,
+                                premises,
+                            } = &surface_tactic
+                            else {
+                                unreachable!(
+                                    "smart post-execution transport must emit explicit premises"
+                                )
+                            };
+                            TacticCertificate::from_proof_tactics(std::slice::from_ref(
+                                &surface_tactic,
+                            ))
+                            .expect("explicit fact transport must be a simple certificate");
+                            replay_fact_transport_at_outcome(
+                                source,
+                                target,
+                                Some(premises),
+                                &proof_label,
+                                path_index,
+                                *tactic_index,
+                                &mut certificate_facts,
+                                &mut certificate_surfaces,
+                                &path.execution_facts(),
+                                parsed_function.parameters(),
+                                arguments,
+                                pre_state,
+                                post_state,
+                                result,
+                                &replay,
+                                predicate_environment,
+                                click_function_environment,
+                            )
+                            .map_err(|error| {
+                                ClickError::new(format!(
+                                    "`{proof_label}` path {path_index}, tactic {tactic_index}: post-execution `transport` certificate failed replay: {}",
+                                    error.message()
+                                ))
+                            })?;
+                        }
+                        record_post_execution_surface_tactic(
+                            &mut path_surface_post_tactics,
+                            &mut path_deferred_capture_tactics,
+                            replay.deferred_tactic_capture.as_ref(),
+                            *tactic_index,
+                            surface_tactic,
                         );
                     }
                     PostExecutionTactic::Choose(choice) => {
@@ -13416,6 +13813,8 @@ fn tactic_is_deferred_post_execution(tactic: &ProofTactic) -> bool {
             | ProofTactic::ApplyTheorem(_)
             | ProofTactic::ApplyTheoremUsing { .. }
             | ProofTactic::Have(_)
+            | ProofTactic::Transport { .. }
+            | ProofTactic::TransportUsing { .. }
             | ProofTactic::Witness(_)
             | ProofTactic::Choose(_)
             | ProofTactic::Assumption
@@ -13593,6 +13992,7 @@ fn replay_linear_tactics(
             source: surface_source,
             target: surface_target,
         } = tactic
+            && !replay.is_at_function_exit()
         {
             if replay.is_at_function_entry() || replay.is_at_function_exit() {
                 return Err(ClickError::new(format!(
@@ -13816,6 +14216,23 @@ fn replay_linear_tactics(
                 target: surface_target,
                 ..
             } => {
+                if replay.is_at_function_exit() {
+                    let premises = match tactic {
+                        ProofTactic::TransportUsing { premises, .. } => Some(premises.clone()),
+                        ProofTactic::Transport { .. } => None,
+                        _ => unreachable!(),
+                    };
+                    replay.defer_post_execution(
+                        tactic_index,
+                        source_index,
+                        PostExecutionTactic::Transport {
+                            source: surface_source.clone(),
+                            target: surface_target.clone(),
+                            premises,
+                        },
+                    );
+                    continue;
+                }
                 if replay.is_at_function_entry() {
                     return Err(ClickError::new(format!(
                         "`{claim_label}` tactic {tactic_index}: `transport` requires at least one completed execution step"

@@ -2133,6 +2133,13 @@ impl Parser {
             contract_expression_as_c_fragment(&expression).ok_or_else(|| {
                 self.error("memory segment base must be a current C pointer expression")
             })?
+        } else if self.peek() == Some(&Token::LParen) {
+            self.position += 1;
+            let expression = self.parse_contract_expression()?;
+            self.expect(Token::RParen)?;
+            contract_expression_as_c_fragment(&expression).ok_or_else(|| {
+                self.error("memory segment base must be a current C pointer expression")
+            })?
         } else {
             self.parse_ensure_primary()?.to_kernel_expression()
         };

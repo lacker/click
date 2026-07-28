@@ -660,6 +660,20 @@ fn parses_loadable_pointer_base_segment() {
 }
 
 #[test]
+fn parses_parenthesized_loaded_pointer_segment_base() {
+    let source = r#"
+            verifying "read.c";
+
+            int32 read(int32* owner) {
+                requires at(function.entry, loadable((load_int32_pointer((owner + 2)) + 0)[0..1]));
+                ensures result == 0 by auto;
+            }
+        "#;
+
+    parse(source).expect("a parenthesized loaded-pointer segment base should parse");
+}
+
+#[test]
 fn parses_loadable_segment_proposition() {
     let source = r#"
             verifying "read.c";
@@ -3557,6 +3571,78 @@ fn selected_post_execution_smart_have_uses_its_path_certificate() {
     assert!(expanded.contains("have result == x by {"), "{expanded}");
     verify_c0_sources(&expanded, &[("identity.c", c_source)])
         .expect("selected post-execution have certificate should replay");
+}
+
+#[test]
+fn post_execution_transport_observes_a_preceding_have() {
+    let c_source = r#"
+            int32 identity(int32 x) {
+                return x;
+            }
+        "#;
+    let click_source = r#"
+            verifying "identity.c";
+
+            int32 identity(int32 x) {
+                ensures result == x;
+            } by {
+                execute_rest();
+                have result == x by {
+                    normalize();
+                }
+                transport(result == x, result == x) using {
+                    fact result == x;
+                }
+                assumption();
+            }
+        "#;
+
+    verify_c0_sources(click_source, &[("identity.c", c_source)])
+        .expect("post-execution tactics should replay in source order");
+}
+
+#[test]
+fn selected_post_execution_transport_emits_an_explicit_certificate() {
+    let c_source = r#"
+            int32 identity(int32 x) {
+                return x;
+            }
+        "#;
+    let click_source = r#"
+            verifying "identity.c";
+
+            int32 identity(int32 x) {
+                ensures result == x;
+            } by {
+                execute_rest();
+                have result == x by {
+                    normalize();
+                }
+                transport(result == x, result == x);
+                assumption();
+            }
+        "#;
+    let transport_offset = click_source
+        .find("transport(")
+        .expect("proof should contain the selected transport");
+    let line = click_source[..transport_offset]
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count()
+        + 1;
+    let column = transport_offset
+        - click_source[..transport_offset]
+            .rfind('\n')
+            .map(|offset| offset + 1)
+            .unwrap_or(0)
+        + 1;
+
+    let expanded =
+        expand_c0_tactic_source_at(click_source, &[("identity.c", c_source)], line, column)
+            .expect("selected post-execution transport should expand after finalization");
+    assert!(expanded.contains("transport(result == x, result == x) using {"));
+    verify_c0_sources(&expanded, &[("identity.c", c_source)])
+        .expect("post-execution transport certificate should replay");
 }
 
 #[test]
