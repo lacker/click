@@ -90,13 +90,17 @@ to its containing theorem or C function proof, and verifies only that semantic
 unit. Standalone `click-verify` also verifies the target's transitive C-call
 dependencies. Unrelated function proofs are not executed.
 
-`click-audit` now creates a reusable verification session. Its single complete
-baseline verification both inventories smart sites and retains the certified
-function environment. For each rewrite the session checks that the AST changed
-only inside the selected proof unit, removes that target's own cached function
-rule, and reverifies the target against its retained certified dependencies.
-Expansion and session verification have separate watchdogs; a timed-out
-session is killed, reaped, and rebuilt from a complete baseline verification.
+`click-audit` now inventories smart sites syntactically before running any
+proof, orders them deterministically by file and source position, and creates a
+reusable verification session lazily for each file reached by the audit cursor.
+`--start-at PATH:LINE:COLUMN` inclusively resumes at a failed site without
+initializing earlier files. Failures and bounded `--max-sites` runs print the
+exact continuation command; the default sweep stops at the first failure, while
+`--keep-going` requests failure collection. For each rewrite the session checks
+that the AST changed only inside the selected proof unit, removes that target's
+own cached function rule, and reverifies the target against its retained
+certified dependencies. Expansion and session verification have separate
+watchdogs; every timed-out child is killed and reaped.
 
 ### Profiling
 
@@ -149,7 +153,7 @@ Current focused validation:
 
 - 415 library tests pass;
 - 7 `click-profile` binary tests pass;
-- 6 `click-audit` binary tests pass;
+- 8 `click-audit` binary tests pass;
 - the `execute_rest` order/alias recursion regression passes in an isolated
   mdtest process;
 - the owned-string example verifies normally;
@@ -368,9 +372,10 @@ Work one frontier at a time and commit each logical change independently.
    owned-string line 485, owned-string line 471, and input-cursor line 125.
 3. Run the full `click-audit` corpus audit and fix each concrete failure before
    claiming expansion is complete. The audit command now inventories every
-   smart source site during one baseline verification and independently
-   expands and verifies it against a retained certified environment; the
-   complete three-site `jsonc-refcount` audit passes. Owned-string,
+   smart source site syntactically, then independently expands and verifies it
+   against a retained certified environment; `--start-at` resumes inclusively
+   without initializing earlier files. The complete three-site
+   `jsonc-refcount` audit passes. Owned-string,
    owned-segmented-buffer, owned-split-buffer, and input-cursor are also fully
    green. Owned-vector is the next frontier, after its baseline performance
    issue is reduced enough for the retained audit session to initialize.

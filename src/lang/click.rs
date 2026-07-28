@@ -47,8 +47,9 @@ mod validation;
 use checking::*;
 use expansion::{ProofSite, VerificationTarget, verification_target_at};
 pub use expansion::{
-    CProofClaim, SourcePosition, c0_tactic_source_position, expand_c0_claim_source,
-    expand_c0_tactic_source_at, verifying_source_paths,
+    CProofClaim, SmartTacticSourceSite, SourcePosition, c0_smart_tactic_source_sites,
+    c0_tactic_source_position, expand_c0_claim_source, expand_c0_tactic_source_at,
+    verifying_source_paths,
 };
 use lowering::*;
 use parser::ContractLetBinding;

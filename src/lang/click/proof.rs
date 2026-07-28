@@ -784,7 +784,7 @@ mod certificate_tests {
             proof: Proof::Script(vec![ProofTactic::Assumption]),
         });
 
-        assert_eq!(timing_tactic_class(&have), "simple");
+        assert_eq!(source_tactic_class(&have), SourceTacticClass::Simple);
     }
 
     #[test]
@@ -13436,10 +13436,27 @@ struct TacticTiming {
     start: std::time::Instant,
 }
 
-fn timing_tactic_class(tactic: &ProofTactic) -> &'static str {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum SourceTacticClass {
+    Simple,
+    Smart,
+    Control,
+}
+
+impl SourceTacticClass {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Simple => "simple",
+            Self::Smart => "smart",
+            Self::Control => "control",
+        }
+    }
+}
+
+pub(super) fn source_tactic_class(tactic: &ProofTactic) -> SourceTacticClass {
     if let ProofTactic::Have(have) = tactic {
         if smart_simp_unfold_prefix(&have.proof).is_some() {
-            return "smart";
+            return SourceTacticClass::Smart;
         }
         if let Proof::Script(tactics) = &have.proof
             && !tactics.is_empty()
@@ -13447,13 +13464,13 @@ fn timing_tactic_class(tactic: &ProofTactic) -> &'static str {
                 .iter()
                 .all(|tactic| matches!(tactic.class(), TacticClass::Simple(_)))
         {
-            return "simple";
+            return SourceTacticClass::Simple;
         }
     }
     match tactic.class() {
-        TacticClass::Simple(_) => "simple",
-        TacticClass::Smart(_) => "smart",
-        TacticClass::ControlFlow(_) => "control",
+        TacticClass::Simple(_) => SourceTacticClass::Simple,
+        TacticClass::Smart(_) => SourceTacticClass::Smart,
+        TacticClass::ControlFlow(_) => SourceTacticClass::Control,
     }
 }
 
@@ -13466,7 +13483,7 @@ impl TacticTiming {
         statement_index: usize,
     ) -> Option<Self> {
         std::env::var_os("CLICK_TIMINGS").is_some().then(|| {
-            let tactic_class = timing_tactic_class(tactic);
+            let tactic_class = source_tactic_class(tactic).label();
             if std::env::var_os("CLICK_TIMING_STARTS").is_some() {
                 eprintln!(
                     "click timing: started tactic {} {} {} class {} statement {} source {}",

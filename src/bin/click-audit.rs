@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::env;
 use std::fs;
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, ExitStatus, Stdio};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
@@ -11,32 +11,35 @@ use std::time::{Duration, Instant};
 #[cfg(test)]
 use click::lang::click::verify_c0_sources;
 use click::lang::click::{
-    C0VerificationSession, SourcePosition, c0_tactic_source_position, expand_c0_tactic_source_at,
-    verifying_source_paths,
+    C0VerificationSession, SourcePosition, c0_smart_tactic_source_sites, c0_tactic_source_position,
+    expand_c0_tactic_source_at, verifying_source_paths,
 };
 
-const DEFAULT_DISCOVERY_LIMIT: Duration = Duration::from_secs(5 * 60);
+const DEFAULT_SESSION_LIMIT: Duration = Duration::from_secs(5 * 60);
 const DEFAULT_EXPANSION_LIMIT: Duration = Duration::from_secs(2 * 60);
 const DEFAULT_VERIFICATION_LIMIT: Duration = Duration::from_secs(5 * 60);
 const MAX_DIAGNOSTIC_CHARS: usize = 2_000;
-const SESSION_INITIALIZED_MARKER: &str = "click audit session: initialized";
 const USAGE: &str = "\
 usage: click-audit [OPTIONS] <example-project|examples-directory>
 
-The audit verifies each original project, inventories every smart tactic, then
-retains that certified dependency environment while it expands and verifies
-each selected proof unit.
+The audit inventories smart tactics without executing proofs, then verifies,
+expands, and reverifies each selected proof unit in source order. By default it
+stops at the first failure and prints an inclusive --start-at resume command.
 
 defaults:
-  --discovery-time-limit 5m   original verification and site inventory
+  --session-time-limit 5m     original-sidecar session initialization
   --expansion-time-limit 2m   one source expansion
   --verification-time-limit 5m rewritten-sidecar verification
 
 options:
-  --discovery-time-limit <DURATION>
+  --session-time-limit <DURATION>
+                              (`--discovery-time-limit` is a compatibility alias)
   --expansion-time-limit <DURATION>
   --verification-time-limit <DURATION>
-  --max-sites <COUNT>         bounded diagnostic run; omitted for a full audit";
+  --start-at <PATH:LINE:COLUMN>
+                              inclusively resume at this source location
+  --keep-going                continue after failures instead of stopping
+  --max-sites <COUNT>         bounded diagnostic run; prints the next cursor";
 
 fn main() {
     if let Err(message) = entry() {
@@ -48,10 +51,19 @@ fn main() {
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct Arguments {
     path: PathBuf,
-    discovery_limit: Duration,
+    session_limit: Duration,
     expansion_limit: Duration,
     verification_limit: Duration,
+    start_at: Option<SourceLocation>,
+    keep_going: bool,
     max_sites: Option<usize>,
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct SourceLocation {
+    path: PathBuf,
+    line: usize,
+    column: usize,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -59,14 +71,6 @@ struct AuditSite {
     click_path: PathBuf,
     position: SourcePosition,
     claim: String,
-    tactic_name: String,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct TimingSite {
-    click_path: PathBuf,
-    claim: String,
-    source_index: usize,
     tactic_name: String,
 }
 
@@ -96,16 +100,15 @@ struct AuditSessionWorker {
 }
 
 impl AuditSessionWorker {
-    fn start(click_path: &Path, limit: Duration) -> Result<(Self, String), String> {
+    fn start(click_path: &Path, limit: Duration) -> Result<Self, String> {
         let executable =
             env::current_exe().map_err(|error| format!("failed to locate click-audit: {error}"))?;
         let mut child = Command::new(executable)
             .arg("--internal-session-worker")
             .arg(click_path)
-            .env("CLICK_TIMINGS", "1")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
+            .stderr(Stdio::inherit())
             .spawn()
             .map_err(|error| format!("failed to start verification session: {error}"))?;
         let stdin = child
@@ -116,10 +119,6 @@ impl AuditSessionWorker {
             .stdout
             .take()
             .ok_or_else(|| "failed to open verification-session output".to_string())?;
-        let stderr = child
-            .stderr
-            .take()
-            .ok_or_else(|| "failed to open verification-session diagnostics".to_string())?;
         let (sender, responses) = mpsc::channel();
         thread::spawn(move || {
             let mut stdout = stdout;
@@ -138,58 +137,14 @@ impl AuditSessionWorker {
                 }
             }
         });
-        let (diagnostic_sender, diagnostics) = mpsc::channel();
-        thread::spawn(move || {
-            let mut initialized = false;
-            for line in BufReader::new(stderr).lines() {
-                let Ok(line) = line else {
-                    break;
-                };
-                if !initialized {
-                    initialized = line == SESSION_INITIALIZED_MARKER;
-                    if diagnostic_sender.send(line).is_err() {
-                        break;
-                    }
-                }
-            }
-        });
         let mut worker = Self {
             child,
             stdin,
             responses,
             alive: true,
         };
-        let start = Instant::now();
         worker.receive(limit, "verification-session initialization")?;
-        let mut initialization_diagnostics = Vec::new();
-        loop {
-            let remaining = limit.saturating_sub(start.elapsed());
-            if remaining.is_zero() {
-                worker.terminate();
-                return Err(format!(
-                    "verification-session inventory exceeded {}",
-                    format_duration(limit)
-                ));
-            }
-            match diagnostics.recv_timeout(remaining) {
-                Ok(line) if line == SESSION_INITIALIZED_MARKER => break,
-                Ok(line) => initialization_diagnostics.push(line),
-                Err(RecvTimeoutError::Timeout) => {
-                    worker.terminate();
-                    return Err(format!(
-                        "verification-session inventory exceeded {}",
-                        format_duration(limit)
-                    ));
-                }
-                Err(RecvTimeoutError::Disconnected) => {
-                    worker.terminate();
-                    return Err(
-                        "verification session omitted its initialization marker".to_string()
-                    );
-                }
-            }
-        }
-        Ok((worker, initialization_diagnostics.join("\n")))
+        Ok(worker)
     }
 
     fn verify(
@@ -269,15 +224,17 @@ fn run_internal_command(arguments: &[String]) -> Option<Result<(), String>> {
 
 fn parse_arguments(arguments: impl IntoIterator<Item = String>) -> Result<Arguments, String> {
     let mut path = None;
-    let mut discovery_limit = DEFAULT_DISCOVERY_LIMIT;
+    let mut session_limit = DEFAULT_SESSION_LIMIT;
     let mut expansion_limit = DEFAULT_EXPANSION_LIMIT;
     let mut verification_limit = DEFAULT_VERIFICATION_LIMIT;
+    let mut start_at = None;
+    let mut keep_going = false;
     let mut max_sites = None;
     let mut arguments = arguments.into_iter();
     while let Some(argument) = arguments.next() {
         match argument.as_str() {
-            "--discovery-time-limit" => {
-                discovery_limit = parse_next_duration(&mut arguments, &argument)?;
+            "--session-time-limit" | "--discovery-time-limit" => {
+                session_limit = parse_next_duration(&mut arguments, &argument)?;
             }
             "--expansion-time-limit" => {
                 expansion_limit = parse_next_duration(&mut arguments, &argument)?;
@@ -285,6 +242,16 @@ fn parse_arguments(arguments: impl IntoIterator<Item = String>) -> Result<Argume
             "--verification-time-limit" => {
                 verification_limit = parse_next_duration(&mut arguments, &argument)?;
             }
+            "--start-at" => {
+                if start_at.is_some() {
+                    return Err("`--start-at` may only be supplied once".to_string());
+                }
+                let source = arguments
+                    .next()
+                    .ok_or_else(|| format!("missing location after `{argument}`\n{USAGE}"))?;
+                start_at = Some(parse_source_location(&source)?);
+            }
+            "--keep-going" => keep_going = true,
             "--max-sites" => {
                 let source = arguments
                     .next()
@@ -306,10 +273,38 @@ fn parse_arguments(arguments: impl IntoIterator<Item = String>) -> Result<Argume
     }
     Ok(Arguments {
         path: path.ok_or_else(|| USAGE.to_string())?,
-        discovery_limit,
+        session_limit,
         expansion_limit,
         verification_limit,
+        start_at,
+        keep_going,
         max_sites,
+    })
+}
+
+fn parse_source_location(source: &str) -> Result<SourceLocation, String> {
+    let (path_and_line, column) = source
+        .rsplit_once(':')
+        .ok_or_else(|| format!("invalid source location `{source}`; expected PATH:LINE:COLUMN"))?;
+    let (path, line) = path_and_line
+        .rsplit_once(':')
+        .ok_or_else(|| format!("invalid source location `{source}`; expected PATH:LINE:COLUMN"))?;
+    if path.is_empty() {
+        return Err(format!("invalid source location `{source}`: path is empty"));
+    }
+    let line = line
+        .parse::<usize>()
+        .map_err(|_| format!("invalid source line `{line}`"))?;
+    let column = column
+        .parse::<usize>()
+        .map_err(|_| format!("invalid source column `{column}`"))?;
+    if line == 0 || column == 0 {
+        return Err("source lines and columns are one-based".to_string());
+    }
+    Ok(SourceLocation {
+        path: PathBuf::from(path),
+        line,
+        column,
     })
 }
 
@@ -351,223 +346,276 @@ fn parse_duration(source: &str) -> Result<Duration, String> {
 
 fn run_audit(arguments: Arguments) -> Result<(), String> {
     let projects = find_projects(&arguments.path)?;
+    println!("INVENTORY");
+    let sites = inventory_sites(&projects)?;
+    println!("  {} unique smart source sites", sites.len());
+
+    let start_at = arguments
+        .start_at
+        .as_ref()
+        .map(canonicalize_location)
+        .transpose()?;
+    if let Some(start_at) = &start_at
+        && !sites.iter().any(|site| site.click_path == start_at.path)
+    {
+        return Err(format!(
+            "`--start-at` path `{}` has no smart tactic sites in `{}`",
+            start_at.path.display(),
+            arguments.path.display()
+        ));
+    }
+    let first = first_site_at_or_after(&sites, start_at.as_ref());
+    if start_at.is_some() && first == sites.len() {
+        return Err("`--start-at` is after the final smart tactic site".to_string());
+    }
+
+    let selected = &sites[first..];
     let mut audited_sites = 0;
-    let mut discovered_sites = 0;
     let mut site_failures = 0;
-    let mut project_failures = 0;
-    let mut limit_remaining = arguments.max_sites;
+    let mut session_failures = 0;
+    let mut attempted_sites = 0;
+    let mut worker: Option<(PathBuf, AuditSessionWorker)> = None;
+    let mut cursor = 0;
 
     println!(
-        "Click expansion audit (discovery {}, expansion {}, verification {})",
-        format_duration(arguments.discovery_limit),
+        "\nClick expansion audit (session {}, expansion {}, verification {})",
+        format_duration(arguments.session_limit),
         format_duration(arguments.expansion_limit),
         format_duration(arguments.verification_limit),
     );
-    'projects: for project in projects {
-        let project_name = project
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or("example");
-        println!("\nDISCOVER {project_name}");
-        let mut workers = BTreeMap::<PathBuf, AuditSessionWorker>::new();
-        let mut click_paths = files_with_extension(&project, "click")?;
-        click_paths.sort();
-        let mut timing_output = String::new();
-        for click_path in click_paths {
-            let click_path = fs::canonicalize(&click_path).map_err(|error| {
-                format!("failed to resolve `{}`: {error}", click_path.display())
-            })?;
-            print!("  SESSION {} ... ", click_path.display());
-            std::io::stdout()
-                .flush()
-                .map_err(|error| format!("failed to flush audit progress: {error}"))?;
-            match AuditSessionWorker::start(&click_path, arguments.discovery_limit) {
-                Ok((worker, timings)) => {
-                    println!("ready");
-                    timing_output.push_str(&timings);
-                    timing_output.push('\n');
-                    workers.insert(click_path.clone(), worker);
-                }
-                Err(message) => {
-                    println!("FAIL");
-                    println!("      {}", message.replace('\n', "\n      "));
-                    project_failures += 1;
-                    continue 'projects;
-                }
-            }
-        }
-        let sites = match parse_smart_timing_sites(&timing_output).and_then(resolve_sites) {
-            Ok(sites) => sites,
-            Err(message) => {
-                println!("  FAIL {message}");
-                project_failures += 1;
-                continue;
-            }
-        };
-        discovered_sites += sites.len();
-        println!("  {} unique smart source sites", sites.len());
-        for (index, site) in sites.iter().enumerate() {
-            if limit_remaining == Some(0) {
-                break;
-            }
-            if let Some(remaining) = &mut limit_remaining {
-                *remaining -= 1;
-            }
-            let label = format!(
-                "{}:{}:{}",
-                site.click_path.display(),
-                site.position.line,
-                site.position.column
-            );
-            print!(
-                "  [{}/{}] {label}  {} ({}) ... ",
-                index + 1,
-                sites.len(),
-                site.claim,
-                site.tactic_name,
-            );
-            std::io::stdout()
-                .flush()
-                .map_err(|error| format!("failed to flush audit progress: {error}"))?;
-            let restart_worker = workers
-                .get(&site.click_path)
-                .is_none_or(|worker| !worker.is_alive());
-            if restart_worker {
-                match AuditSessionWorker::start(&site.click_path, arguments.discovery_limit) {
-                    Ok((worker, _)) => {
-                        workers.insert(site.click_path.clone(), worker);
-                    }
-                    Err(message) => {
-                        println!("FAIL");
-                        println!("      {}", message.replace('\n', "\n      "));
-                        site_failures += 1;
-                        continue;
-                    }
-                }
-            }
-            let worker = workers
-                .get_mut(&site.click_path)
-                .expect("audit session was initialized for every sidecar");
-            match audit_site(
-                site,
-                worker,
-                arguments.expansion_limit,
-                arguments.verification_limit,
-            ) {
-                Ok((expansion_elapsed, verification_elapsed)) => {
-                    audited_sites += 1;
-                    println!(
-                        "ok (expand {}, verify {})",
-                        format_duration(expansion_elapsed),
-                        format_duration(verification_elapsed)
-                    );
-                }
-                Err(message) => {
-                    println!("FAIL");
-                    println!("      {}", message.replace('\n', "\n      "));
-                    site_failures += 1;
-                }
-            }
-        }
-        if limit_remaining == Some(0) {
+
+    while cursor < selected.len() {
+        if arguments
+            .max_sites
+            .is_some_and(|limit| attempted_sites == limit)
+        {
             break;
+        }
+        let site = &selected[cursor];
+        let needs_session = worker
+            .as_ref()
+            .is_none_or(|(path, current)| path != &site.click_path || !current.is_alive());
+        if needs_session {
+            worker = None;
+            print!("SESSION {} ... ", site.click_path.display());
+            std::io::stdout()
+                .flush()
+                .map_err(|error| format!("failed to flush audit progress: {error}"))?;
+            match AuditSessionWorker::start(&site.click_path, arguments.session_limit) {
+                Ok(new_worker) => {
+                    println!("ready");
+                    worker = Some((site.click_path.clone(), new_worker));
+                }
+                Err(message) => {
+                    println!("FAIL");
+                    println!("    {}", message.replace('\n', "\n    "));
+                    print_resume(&arguments, site);
+                    session_failures += 1;
+                    if !arguments.keep_going {
+                        break;
+                    }
+                    let failed_path = site.click_path.clone();
+                    while cursor < selected.len() && selected[cursor].click_path == failed_path {
+                        cursor += 1;
+                    }
+                    continue;
+                }
+            }
+        }
+
+        attempted_sites += 1;
+        let label = format_location(&site_location(site));
+        print!(
+            "[{}/{}] {label}  {} ({}) ... ",
+            first + cursor + 1,
+            sites.len(),
+            site.claim,
+            site.tactic_name,
+        );
+        std::io::stdout()
+            .flush()
+            .map_err(|error| format!("failed to flush audit progress: {error}"))?;
+        let current = &mut worker
+            .as_mut()
+            .expect("the selected sidecar session was initialized")
+            .1;
+        match audit_site(
+            site,
+            current,
+            arguments.expansion_limit,
+            arguments.verification_limit,
+        ) {
+            Ok((expansion_elapsed, verification_elapsed)) => {
+                audited_sites += 1;
+                println!(
+                    "ok (expand {}, verify {})",
+                    format_duration(expansion_elapsed),
+                    format_duration(verification_elapsed)
+                );
+                cursor += 1;
+            }
+            Err(message) => {
+                println!("FAIL");
+                println!("    {}", message.replace('\n', "\n    "));
+                print_resume(&arguments, site);
+                site_failures += 1;
+                if !arguments.keep_going {
+                    break;
+                }
+                cursor += 1;
+            }
         }
     }
 
     println!(
         "\nSUMMARY: {audited_sites} sites passed; {site_failures} site failures; \
-         {project_failures} project failures; {discovered_sites} sites discovered{}",
+         {session_failures} session failures; {} sites discovered{}",
+        sites.len(),
         if arguments.max_sites.is_some() {
             " (bounded run)"
         } else {
             ""
         }
     );
-    let failures = site_failures + project_failures;
+    let failures = site_failures + session_failures;
     if failures == 0 {
+        if cursor < selected.len() {
+            println!();
+            print_resume(&arguments, &selected[cursor]);
+        }
         Ok(())
     } else {
         Err(format!("{failures} expansion audit check(s) failed"))
     }
 }
 
-fn parse_smart_timing_sites(output: &str) -> Result<Vec<TimingSite>, String> {
-    let mut click_path = PathBuf::new();
-    let mut sites = Vec::new();
-    for line in output.lines() {
-        if let Some(path) = line.strip_prefix("click timing: source ") {
-            click_path = PathBuf::from(path);
-            continue;
-        }
-        let fields = line.split_whitespace().collect::<Vec<_>>();
-        if fields.len() != 13
-            || fields[..3] != ["click", "timing:", "tactic"]
-            || fields[6..8] != ["class", "smart"]
-            || fields[10] != "source"
-        {
-            continue;
-        }
-        if click_path.as_os_str().is_empty() {
-            return Err("smart timing event had no Click source path".to_string());
-        }
-        sites.push(TimingSite {
-            click_path: click_path.clone(),
-            claim: fields[3].to_string(),
-            tactic_name: fields[5].to_string(),
-            source_index: fields[11]
-                .parse()
-                .map_err(|_| format!("invalid timing source index `{}`", fields[11]))?,
-        });
-    }
-    Ok(sites)
-}
-
-fn resolve_sites(timings: Vec<TimingSite>) -> Result<Vec<AuditSite>, String> {
-    let mut source_cache = BTreeMap::<PathBuf, (String, Vec<(String, String)>)>::new();
+fn inventory_sites(projects: &[PathBuf]) -> Result<Vec<AuditSite>, String> {
     let mut sites = BTreeMap::new();
-    for timing in timings {
-        let canonical_path = fs::canonicalize(&timing.click_path).map_err(|error| {
-            format!(
-                "failed to resolve `{}` from timing output: {error}",
-                timing.click_path.display()
-            )
-        })?;
-        let (click_source, c_sources) = match source_cache.get(&canonical_path) {
-            Some(cached) => cached,
-            None => {
-                let click_source = fs::read_to_string(&canonical_path).map_err(|error| {
-                    format!("failed to read `{}`: {error}", canonical_path.display())
-                })?;
-                let parent = canonical_path.parent().unwrap_or_else(|| Path::new("."));
-                let mut c_paths = files_with_extension(parent, "c")?;
-                c_paths.sort();
-                let c_sources = read_named_sources(&c_paths)?;
-                source_cache
-                    .entry(canonical_path.clone())
-                    .or_insert((click_source, c_sources))
-            }
-        };
-        let refs = source_refs(c_sources);
-        let position =
-            c0_tactic_source_position(click_source, &refs, &timing.claim, timing.source_index)
-                .map_err(|error| {
+    for project in projects {
+        let mut click_paths = files_with_extension(project, "click")?;
+        click_paths.sort();
+        for click_path in click_paths {
+            let canonical_path = fs::canonicalize(&click_path).map_err(|error| {
+                format!("failed to resolve `{}`: {error}", click_path.display())
+            })?;
+            let click_source = fs::read_to_string(&canonical_path).map_err(|error| {
+                format!("failed to read `{}`: {error}", canonical_path.display())
+            })?;
+            let c_sources = read_verifying_sources(&canonical_path, &click_source)?;
+            let refs = source_refs(&c_sources);
+            let syntactic_sites =
+                c0_smart_tactic_source_sites(&click_source, &refs).map_err(|error| {
                     format!(
-                        "could not resolve {} source {} in `{}`: {}",
-                        timing.claim,
-                        timing.source_index,
+                        "could not inventory smart tactics in `{}`: {}",
                         canonical_path.display(),
                         error.message()
                     )
                 })?;
-        let key = (canonical_path.clone(), position.line, position.column);
-        sites.entry(key).or_insert(AuditSite {
-            click_path: canonical_path,
-            position,
-            claim: timing.claim,
-            tactic_name: timing.tactic_name,
-        });
+            for syntactic in syntactic_sites {
+                let position = c0_tactic_source_position(
+                    &click_source,
+                    &refs,
+                    &syntactic.claim_label,
+                    syntactic.source_index,
+                )
+                .map_err(|error| {
+                    format!(
+                        "could not resolve {} source {} in `{}`: {}",
+                        syntactic.claim_label,
+                        syntactic.source_index,
+                        canonical_path.display(),
+                        error.message()
+                    )
+                })?;
+                let key = (canonical_path.clone(), position.line, position.column);
+                sites.entry(key).or_insert(AuditSite {
+                    click_path: canonical_path.clone(),
+                    position,
+                    claim: syntactic.claim_label,
+                    tactic_name: syntactic.tactic_name,
+                });
+            }
+        }
     }
     Ok(sites.into_values().collect())
+}
+
+fn canonicalize_location(location: &SourceLocation) -> Result<SourceLocation, String> {
+    let path = fs::canonicalize(&location.path)
+        .map_err(|error| format!("failed to resolve `{}`: {error}", location.path.display()))?;
+    Ok(SourceLocation {
+        path,
+        line: location.line,
+        column: location.column,
+    })
+}
+
+fn first_site_at_or_after(sites: &[AuditSite], start: Option<&SourceLocation>) -> usize {
+    start.map_or(0, |start| {
+        sites.partition_point(|site| site_location(site) < *start)
+    })
+}
+
+fn site_location(site: &AuditSite) -> SourceLocation {
+    SourceLocation {
+        path: site.click_path.clone(),
+        line: site.position.line,
+        column: site.position.column,
+    }
+}
+
+fn format_location(location: &SourceLocation) -> String {
+    format!(
+        "{}:{}:{}",
+        location.path.display(),
+        location.line,
+        location.column
+    )
+}
+
+fn print_resume(arguments: &Arguments, site: &AuditSite) {
+    println!("RESUME:");
+    println!("  {}", resume_command(arguments, &site_location(site)));
+    let _ = std::io::stdout().flush();
+}
+
+fn resume_command(arguments: &Arguments, location: &SourceLocation) -> String {
+    let mut words = vec![
+        "click-audit".to_string(),
+        "--session-time-limit".to_string(),
+        format_duration(arguments.session_limit),
+        "--expansion-time-limit".to_string(),
+        format_duration(arguments.expansion_limit),
+        "--verification-time-limit".to_string(),
+        format_duration(arguments.verification_limit),
+    ];
+    if arguments.keep_going {
+        words.push("--keep-going".to_string());
+    }
+    if let Some(max_sites) = arguments.max_sites {
+        words.push("--max-sites".to_string());
+        words.push(max_sites.to_string());
+    }
+    words.push("--start-at".to_string());
+    words.push(format_location(location));
+    words.push(arguments.path.display().to_string());
+    words
+        .into_iter()
+        .map(|word| shell_quote(&word))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn shell_quote(word: &str) -> String {
+    if !word.is_empty()
+        && word
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"/._:-".contains(&byte))
+    {
+        word.to_string()
+    } else {
+        format!("'{}'", word.replace('\'', "'\\''"))
+    }
 }
 
 fn audit_site(
@@ -761,26 +809,12 @@ fn run_session_worker(click_path: &Path) -> Result<(), String> {
         .map_err(|error| format!("failed to read `{}`: {error}", click_path.display()))?;
     let c_sources = read_verifying_sources(click_path, &click_source)?;
     let refs = source_refs(&c_sources);
-    eprintln!("click timing: source {}", click_path.display());
     let session = match C0VerificationSession::new(&click_source, &refs) {
         Ok((session, _)) => {
-            // SAFETY: this worker is deliberately single-threaded and has not
-            // spawned library threads. Timing is needed only for inventory.
-            unsafe {
-                env::remove_var("CLICK_TIMINGS");
-            }
-            eprintln!("{SESSION_INITIALIZED_MARKER}");
-            std::io::stderr()
-                .flush()
-                .map_err(|error| format!("failed to flush session inventory: {error}"))?;
             write_session_response(&mut std::io::stdout(), Ok(()))?;
             session
         }
         Err(error) => {
-            eprintln!("{SESSION_INITIALIZED_MARKER}");
-            std::io::stderr().flush().map_err(|flush_error| {
-                format!("failed to flush session inventory: {flush_error}")
-            })?;
             write_session_response(&mut std::io::stdout(), Err(error.message().to_string()))?;
             return Ok(());
         }
@@ -979,22 +1013,6 @@ fn files_with_extension(directory: &Path, extension: &str) -> Result<Vec<PathBuf
         .collect())
 }
 
-fn read_named_sources(paths: &[PathBuf]) -> Result<Vec<(String, String)>, String> {
-    paths
-        .iter()
-        .map(|path| {
-            let name = path
-                .file_name()
-                .and_then(|name| name.to_str())
-                .ok_or_else(|| format!("invalid UTF-8 path `{}`", path.display()))?
-                .to_string();
-            let source = fs::read_to_string(path)
-                .map_err(|error| format!("failed to read `{}`: {error}", path.display()))?;
-            Ok((name, source))
-        })
-        .collect()
-}
-
 fn source_refs(sources: &[(String, String)]) -> Vec<(&str, &str)> {
     sources
         .iter()
@@ -1038,12 +1056,15 @@ mod tests {
     fn parses_arguments_and_duration_units() {
         let arguments = parse_arguments(
             [
-                "--discovery-time-limit",
+                "--session-time-limit",
                 "30s",
                 "--expansion-time-limit",
                 "250ms",
                 "--verification-time-limit",
                 "2m",
+                "--start-at",
+                "examples/example.click:12:3",
+                "--keep-going",
                 "--max-sites",
                 "3",
                 "examples",
@@ -1051,25 +1072,95 @@ mod tests {
             .map(str::to_string),
         )
         .unwrap();
-        assert_eq!(arguments.discovery_limit, Duration::from_secs(30));
+        assert_eq!(arguments.session_limit, Duration::from_secs(30));
         assert_eq!(arguments.expansion_limit, Duration::from_millis(250));
         assert_eq!(arguments.verification_limit, Duration::from_secs(120));
+        assert_eq!(
+            arguments.start_at,
+            Some(SourceLocation {
+                path: PathBuf::from("examples/example.click"),
+                line: 12,
+                column: 3,
+            })
+        );
+        assert!(arguments.keep_going);
         assert_eq!(arguments.max_sites, Some(3));
         assert_eq!(arguments.path, PathBuf::from("examples"));
     }
 
     #[test]
-    fn parses_and_deduplicates_completed_smart_timing_sites() {
-        let output = "\
-click timing: source example.click
-click timing: tactic f.contract 2 simp class smart statement 1 source 2 0.100000s
-click timing: tactic f.contract 2 assumption class simple statement 1 source 2 0.001000s
-click timing: tactic f.contract 2 simp class smart statement 1 source 2 0.200000s
-";
-        let sites = parse_smart_timing_sites(output).unwrap();
-        assert_eq!(sites.len(), 2);
-        assert!(sites.iter().all(|site| site.claim == "f.contract"));
-        assert!(sites.iter().all(|site| site.source_index == 2));
+    fn source_locations_parse_from_the_right_and_are_one_based() {
+        assert_eq!(
+            parse_source_location("some:directory/example.click:12:34").unwrap(),
+            SourceLocation {
+                path: PathBuf::from("some:directory/example.click"),
+                line: 12,
+                column: 34,
+            }
+        );
+        assert!(parse_source_location("example.click:0:1").is_err());
+        assert!(parse_source_location("example.click:1").is_err());
+    }
+
+    #[test]
+    fn resume_command_retries_the_cursor_inclusively() {
+        let arguments = Arguments {
+            path: PathBuf::from("examples with spaces"),
+            session_limit: Duration::from_secs(30),
+            expansion_limit: Duration::from_secs(2),
+            verification_limit: Duration::from_secs(3),
+            start_at: None,
+            keep_going: false,
+            max_sites: Some(1),
+        };
+        let location = SourceLocation {
+            path: PathBuf::from("/tmp/example.click"),
+            line: 12,
+            column: 34,
+        };
+        assert_eq!(
+            resume_command(&arguments, &location),
+            "click-audit --session-time-limit 30s --expansion-time-limit 2s \
+             --verification-time-limit 3s --max-sites 1 --start-at \
+             /tmp/example.click:12:34 'examples with spaces'"
+        );
+    }
+
+    #[test]
+    fn start_cursor_is_an_inclusive_global_lower_bound() {
+        let site = |path: &str, line| AuditSite {
+            click_path: PathBuf::from(path),
+            position: SourcePosition { line, column: 3 },
+            claim: "claim".to_string(),
+            tactic_name: "simp".to_string(),
+        };
+        let sites = vec![
+            site("/tmp/a.click", 10),
+            site("/tmp/a.click", 20),
+            site("/tmp/b.click", 5),
+        ];
+        assert_eq!(
+            first_site_at_or_after(
+                &sites,
+                Some(&SourceLocation {
+                    path: PathBuf::from("/tmp/a.click"),
+                    line: 20,
+                    column: 3,
+                })
+            ),
+            1
+        );
+        assert_eq!(
+            first_site_at_or_after(
+                &sites,
+                Some(&SourceLocation {
+                    path: PathBuf::from("/tmp/a.click"),
+                    line: 15,
+                    column: 1,
+                })
+            ),
+            1
+        );
     }
 
     #[test]
@@ -1122,6 +1213,21 @@ int32 example() {
 }
 "#;
         let sources = [("example.c", c_source)];
+        let inventory = c0_smart_tactic_source_sites(click_source, &sources).unwrap();
+        assert_eq!(
+            inventory
+                .iter()
+                .map(|site| (
+                    site.claim_label.as_str(),
+                    site.source_index,
+                    site.tactic_name.as_str()
+                ))
+                .collect::<Vec<_>>(),
+            vec![
+                ("example.contract", 0, "execute_rest"),
+                ("example.contract", 1, "simp"),
+            ]
+        );
         verify_c0_sources(click_source, &sources).unwrap();
         let position =
             c0_tactic_source_position(click_source, &sources, "example.contract", 0).unwrap();

@@ -109,11 +109,12 @@ boundary:
 cargo run --quiet --bin click-audit -- examples
 ```
 
-For each example project, the audit first verifies the original source and
-uses that same verification's timing stream to inventory every smart source
-site. The resulting certified function environment stays alive in a bounded
-worker process. The audit then handles each unique `file:line:column`
-independently:
+The audit first parses every sidecar and builds a deterministic inventory of
+smart source sites without executing any proof. It then walks those unique
+`file:line:column` locations in path and source order. A bounded verifier
+worker is started lazily when the cursor reaches a sidecar, so resuming in a
+later file does not initialize earlier files. The resulting certified function
+environment stays alive while the audit handles that file:
 
 1. run expansion in a bounded child process;
 2. require a changed, syntactically readable sidecar;
@@ -123,18 +124,32 @@ independently:
    environment; and
 5. reverify that proof unit while reusing its already-certified dependencies.
 
-Discovery, expansion, and rewritten verification default to limits of five
-minutes, two minutes, and five minutes respectively. Override them with
-`--discovery-time-limit`, `--expansion-time-limit`, and
-`--verification-time-limit`. Use `--max-sites` only for a deliberately partial
-diagnostic run; a release or certificate-boundary audit should omit it.
+Session initialization, expansion, and rewritten verification default to
+limits of five minutes, two minutes, and five minutes respectively. Override
+them with `--session-time-limit`, `--expansion-time-limit`, and
+`--verification-time-limit`. The former `--discovery-time-limit` spelling
+remains as a compatibility alias for `--session-time-limit`.
+
+By default the audit stops at the first session, expansion, or verification
+failure and prints a copy-pasteable continuation command:
+
+```sh
+click-audit --start-at path/to/file.click:LINE:COLUMN examples
+```
+
+`--start-at` is inclusive, so fixing a failure and running the suggested
+command retests that same site before continuing. The cursor also skips
+session initialization for preceding files. `--keep-going` requests the older
+failure-collecting behavior. Use `--max-sites` only for a deliberately partial
+diagnostic run; it prints the next cursor when the bound is reached. A release
+or certificate-boundary audit should omit it and finish one complete pass.
 
 Every timeout child or worker is killed and reaped. Every site starts from the
 unchanged baseline source, so an earlier rewrite cannot hide or cause a later
-failure. A timed-out worker is rebuilt from a fresh complete verification
-before the audit continues. The command exits unsuccessfully if original
-verification, expansion, parsing, source-isolation, or selected-proof
-verification fails.
+failure. With `--keep-going`, a timed-out worker is rebuilt from a fresh
+complete verification before the audit continues. The command exits
+unsuccessfully if original verification, expansion, parsing, source-isolation,
+or selected-proof verification fails.
 
 ## Unit Tests
 

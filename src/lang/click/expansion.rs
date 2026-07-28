@@ -1,5 +1,6 @@
 use std::ops::Range;
 
+use super::validation::tactic_name;
 use super::*;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -78,6 +79,161 @@ pub fn expand_c0_claim_source(
 pub struct SourcePosition {
     pub line: usize,
     pub column: usize,
+}
+
+/// One source-selectable smart tactic in a parsed `.click` sidecar.
+///
+/// This inventory is purely syntactic: producing it does not execute or verify
+/// any proof. `source_index` uses the same pre-order indexing as tactic timing
+/// and individual source expansion.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SmartTacticSourceSite {
+    pub claim_label: String,
+    pub source_index: usize,
+    pub tactic_name: String,
+}
+
+/// Inventories every source-selectable smart tactic without running proofs.
+pub fn c0_smart_tactic_source_sites(
+    click_source: &str,
+    c_sources: &[(&str, &str)],
+) -> Result<Vec<SmartTacticSourceSite>, ClickError> {
+    let file = parse_source_with_c_layouts(click_source, c_sources)?;
+    let mut sites = Vec::new();
+    for theorem in file.theorem_definitions() {
+        for (ensure_index, ensure) in theorem.ensures().iter().enumerate() {
+            let label = ensure.name().map_or_else(
+                || format!("{}.ensures_{ensure_index}", theorem.name()),
+                |name| format!("{}.{name}", theorem.name()),
+            );
+            collect_smart_proof_sites(&label, ensure.proof(), &mut sites);
+        }
+    }
+    for function in file.function_blocks() {
+        let function_name = function.signature().name();
+        for clause in function.structural_clauses() {
+            let region_label = match clause.region() {
+                CodeRegion::Function => format!("{function_name}.function"),
+                CodeRegion::Loop(index) => format!("{function_name}.loop({index})"),
+                CodeRegion::Statement(index) => format!("{function_name}.statement({index})"),
+            };
+            if let CodeRegion::Loop(loop_index) = clause.region() {
+                let default = Proof::Default;
+                collect_smart_proof_sites(
+                    &format!("{function_name}.loop({loop_index}).initialize"),
+                    clause.initialize_proof().unwrap_or(&default),
+                    &mut sites,
+                );
+                collect_smart_proof_sites(
+                    &format!("{function_name}.loop({loop_index}).preserve"),
+                    clause.preserve_proof().unwrap_or(&default),
+                    &mut sites,
+                );
+            }
+            for (item_index, item) in clause.items().iter().enumerate() {
+                let kind = match item.kind() {
+                    StructuralItemKind::Invariant => "invariant",
+                    StructuralItemKind::Assert => "assert",
+                    StructuralItemKind::Effect => "effect",
+                    StructuralItemKind::StepEffect => "step_effect",
+                };
+                collect_smart_proof_sites(
+                    &format!("{region_label}.{kind}_{item_index}"),
+                    item.proof(),
+                    &mut sites,
+                );
+            }
+        }
+        if let Some(proof) = function.grouped_proof() {
+            collect_smart_proof_sites(&format!("{function_name}.contract"), proof, &mut sites);
+            continue;
+        }
+        for (index, ensure) in function.ensures().iter().enumerate() {
+            let label = ensure.name().map_or_else(
+                || format!("{function_name}.ensures_{index}"),
+                |name| format!("{function_name}.{name}"),
+            );
+            collect_smart_proof_sites(&label, ensure.proof(), &mut sites);
+        }
+        for (index, effect) in function.effects().iter().enumerate() {
+            let kind = match effect.effect() {
+                Effect::Immutable => "immutable",
+                Effect::Mutable(_) => "mutable",
+            };
+            collect_smart_proof_sites(
+                &format!("{function_name}.{kind}_{index}"),
+                effect.proof(),
+                &mut sites,
+            );
+        }
+    }
+    Ok(sites)
+}
+
+fn collect_smart_proof_sites(
+    claim_label: &str,
+    proof: &Proof,
+    sites: &mut Vec<SmartTacticSourceSite>,
+) {
+    match proof {
+        Proof::Default => sites.push(SmartTacticSourceSite {
+            claim_label: claim_label.to_string(),
+            source_index: 0,
+            tactic_name: "auto".to_string(),
+        }),
+        Proof::Tactic(tactic) => sites.push(SmartTacticSourceSite {
+            claim_label: claim_label.to_string(),
+            source_index: 0,
+            tactic_name: match tactic {
+                SmartTactic::Auto => "auto",
+                SmartTactic::Frame => "frame",
+                SmartTactic::Simp => "simp",
+            }
+            .to_string(),
+        }),
+        Proof::Script(tactics) => {
+            collect_smart_script_sites(claim_label, tactics, 0, sites);
+        }
+    }
+}
+
+fn collect_smart_script_sites(
+    claim_label: &str,
+    tactics: &[ProofTactic],
+    source_index_offset: usize,
+    sites: &mut Vec<SmartTacticSourceSite>,
+) {
+    let mut source_index = source_index_offset;
+    for tactic in tactics {
+        if source_tactic_class(tactic) == SourceTacticClass::Smart {
+            sites.push(SmartTacticSourceSite {
+                claim_label: claim_label.to_string(),
+                source_index,
+                tactic_name: tactic_name(tactic).to_string(),
+            });
+        }
+        match tactic {
+            ProofTactic::If(proof_if) => {
+                collect_smart_script_sites(
+                    claim_label,
+                    &proof_if.then_tactics,
+                    source_index + 1,
+                    sites,
+                );
+                collect_smart_script_sites(
+                    claim_label,
+                    &proof_if.else_tactics,
+                    source_index + 1 + source_tactic_count(&proof_if.then_tactics),
+                    sites,
+                );
+            }
+            ProofTactic::Advance(advance) => {
+                collect_smart_script_sites(claim_label, &advance.tactics, source_index + 1, sites)
+            }
+            _ => {}
+        }
+        source_index += source_tactic_count(std::slice::from_ref(tactic));
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
