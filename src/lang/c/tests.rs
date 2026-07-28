@@ -289,6 +289,170 @@ fn c0_unary_minus_preserves_signed_overflow_semantics() {
 }
 
 #[test]
+fn c0_syntax_retains_struct_pointee_types_across_chained_fields() {
+    let function = syntax::parse_function(
+        r#"
+        struct leaf {
+            int32 value;
+        };
+        struct node {
+            struct leaf* child;
+        };
+
+        int32 read_nested(struct node* root) {
+            return root->child->value;
+        }
+        "#,
+    )
+    .expect("chained struct-pointer fields should parse");
+
+    let child = function
+        .structs()
+        .get("node")
+        .and_then(|layout| layout.field("child"))
+        .expect("node child field");
+    assert_eq!(child.struct_name(), Some("leaf"));
+
+    let syntax::C0Statement::Return(syntax::C0Expression::Field {
+        pointer,
+        field_type: syntax::C0Type::Int32,
+        field_struct_name: None,
+    }) = function.body()
+    else {
+        panic!("the terminal scalar field should retain its resolved type")
+    };
+    assert!(matches!(
+        pointer.as_ref(),
+        syntax::C0Expression::Field {
+            field_type: syntax::C0Type::Int32Pointer,
+            field_struct_name: Some(name),
+            ..
+        } if name == "leaf"
+    ));
+}
+
+#[test]
+fn c0_chained_field_load_executes_through_typed_pointer_memory() {
+    let function = syntax::parse_function(
+        r#"
+        struct leaf {
+            int32 value;
+        };
+        struct node {
+            struct leaf* child;
+        };
+
+        int32 read_nested(struct node* root) {
+            return root->child->value;
+        }
+        "#,
+    )
+    .expect("chained struct-pointer fields should parse");
+    let root = crate::kernel::Pointer {
+        block: "root".into(),
+        offset: crate::kernel::PointerOffsetTerm::Constant(0),
+    };
+    let leaf = crate::kernel::Pointer {
+        block: "leaf".into(),
+        offset: crate::kernel::PointerOffsetTerm::Constant(0),
+    };
+    let memory = crate::kernel::CMemory::new()
+        .store(root.clone(), crate::kernel::CValue::Pointer(leaf.clone()))
+        .store(leaf.clone(), crate::kernel::int32(9));
+    let resources = crate::kernel::ResourceContext::new()
+        .unchecked_with_fact(crate::kernel::CResourceFact::view_memory(memory_range(
+            root.clone(),
+            0,
+            2,
+        )))
+        .unchecked_with_fact(crate::kernel::CResourceFact::view_memory(memory_range(
+            leaf, 0, 1,
+        )));
+    let state = crate::kernel::CState::new()
+        .with_local("root", crate::kernel::CValue::Pointer(root))
+        .with_memory(memory)
+        .with_resource_context(resources);
+    let theorem = crate::kernel::prove_symbolic_c_execution(
+        state,
+        function.body_kernel_statement(),
+        crate::kernel::Assumptions::new(),
+    )
+    .expect("the nested typed loads should execute");
+    let mut proposition = theorem.proposition();
+    while let crate::kernel::Proposition::Implies(_, body) = proposition {
+        proposition = body;
+    }
+    assert!(matches!(
+        proposition,
+        crate::kernel::Proposition::CStatementExecutes {
+            outcome: crate::kernel::CStatementOutcome::Return {
+                value: crate::kernel::CValue::Int32(crate::kernel::Bitvector32Term::Constant(9)),
+                ..
+            },
+            ..
+        }
+    ));
+}
+
+#[test]
+fn c0_syntax_parses_chained_field_store_targets() {
+    let function = syntax::parse_function(
+        r#"
+        struct leaf {
+            int32 value;
+        };
+        struct node {
+            struct leaf* child;
+        };
+
+        int32 write_nested(struct node* root, int32 value) {
+            root->child->value = value;
+            return value;
+        }
+        "#,
+    )
+    .expect("a chained field should remain a typed assignment target");
+
+    assert!(matches!(
+        function.body(),
+        syntax::C0Statement::Seq(first, _)
+            if matches!(
+                first.as_ref(),
+                syntax::C0Statement::Store {
+                    pointer: syntax::C0Expression::Field {
+                        field_type: syntax::C0Type::Int32Pointer,
+                        field_struct_name: Some(name),
+                        ..
+                    },
+                    value_type: Some(syntax::C0Type::Int32),
+                    ..
+                } if name == "leaf"
+            )
+    ));
+}
+
+#[test]
+fn c0_syntax_names_invalid_field_chains() {
+    let error = syntax::parse_function(
+        r#"
+        struct leaf {
+            int32 value;
+        };
+
+        int32 invalid(struct leaf* root) {
+            return root->value->missing;
+        }
+        "#,
+    )
+    .expect_err("a scalar field cannot be dereferenced as a struct pointer");
+
+    assert_eq!(
+        error.message(),
+        "cannot access field `missing` through a non-struct-pointer expression"
+    );
+}
+
+#[test]
 fn c0_syntax_targets_kernel_max_body() {
     let function = syntax::parse_function(
         r#"

@@ -34,6 +34,7 @@ pub struct C0StructLayout {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct C0StructField {
     c_type: C0Type,
+    struct_name: Option<String>,
     offset_bytes: u32,
 }
 
@@ -134,6 +135,7 @@ pub enum C0Expression {
     Field {
         pointer: Box<C0Expression>,
         field_type: C0Type,
+        field_struct_name: Option<String>,
     },
     Index(Box<C0Expression>, Box<C0Expression>),
 }
@@ -206,6 +208,10 @@ impl C0StructField {
 
     pub fn offset_bytes(&self) -> u32 {
         self.offset_bytes
+    }
+
+    pub fn struct_name(&self) -> Option<&str> {
+        self.struct_name.as_deref()
     }
 
     pub fn byte_width(&self) -> u32 {
@@ -396,6 +402,7 @@ impl C0Expression {
             Self::Field {
                 pointer,
                 field_type,
+                field_struct_name: _,
             } => crate::kernel::c_typed_load(
                 pointer.to_kernel_expression(),
                 field_type.to_kernel_type(),
@@ -576,6 +583,7 @@ impl Parser {
                         field_name.clone(),
                         C0StructField {
                             c_type: field_type.c_type,
+                            struct_name: field_type.struct_name,
                             offset_bytes,
                         },
                     )
@@ -1297,11 +1305,12 @@ impl Parser {
                 Some(Token::Arrow) => {
                     self.position += 1;
                     let field_name = self.expect_ident("field name")?;
-                    let (pointer, field_type) =
+                    let (pointer, field_type, field_struct_name) =
                         self.resolve_field_access(&expression, &field_name)?;
                     expression = C0Expression::Field {
                         pointer: Box::new(pointer),
                         field_type,
+                        field_struct_name,
                     };
                 }
                 _ => return Ok(expression),
@@ -1329,6 +1338,7 @@ impl Parser {
             C0Expression::Field {
                 pointer,
                 field_type,
+                ..
             } => Ok((*pointer, Some(field_type))),
             C0Expression::Index(base, index) => Ok((C0Expression::Add(base, index), None)),
             expression => Err(C0SyntaxError::new(format!(
@@ -1341,14 +1351,18 @@ impl Parser {
         &self,
         base: &C0Expression,
         field_name: &str,
-    ) -> Result<(C0Expression, C0Type), C0SyntaxError> {
-        let C0Expression::Variable(base_name) = base else {
-            return Err(C0SyntaxError::new(
-                "field access currently supports struct pointer variables only",
-            ));
+    ) -> Result<(C0Expression, C0Type, Option<String>), C0SyntaxError> {
+        let struct_name = match base {
+            C0Expression::Variable(base_name) => self.variable_structs.get(base_name),
+            C0Expression::Field {
+                field_struct_name, ..
+            } => field_struct_name.as_ref(),
+            _ => None,
         };
-        let struct_name = self.variable_structs.get(base_name).ok_or_else(|| {
-            C0SyntaxError::new(format!("`{base_name}` is not a known struct pointer"))
+        let struct_name = struct_name.ok_or_else(|| {
+            C0SyntaxError::new(format!(
+                "cannot access field `{field_name}` through a non-struct-pointer expression"
+            ))
         })?;
         let layout = self.structs.get(struct_name).ok_or_else(|| {
             C0SyntaxError::new(format!("unknown struct declaration `{struct_name}`"))
@@ -1361,6 +1375,7 @@ impl Parser {
         Ok((
             offset_field_pointer(base.clone(), field.offset_bytes),
             field.c_type,
+            field.struct_name.clone(),
         ))
     }
 

@@ -891,6 +891,66 @@ fn parses_pilot_struct_pointer_signature_and_field_load() {
 }
 
 #[test]
+fn parses_chained_struct_fields_with_imported_pointee_types() {
+    let c_source = r#"
+        struct leaf {
+            int32 padding;
+            int32 value;
+        };
+        struct node {
+            int32 tag;
+            struct leaf* child;
+        };
+
+        int32 read_nested(struct node* root) {
+            return root->child->value;
+        }
+    "#;
+    let click_source = r#"
+        verifying "read_nested.c";
+
+        int32 read_nested(struct node* root) {
+            ensures result == root->child->value;
+        } by {
+            assumption();
+        }
+    "#;
+    let file = parse_c0_click_file(click_source, &[("read_nested.c", c_source)])
+        .expect("contract field chains should use imported struct pointee types");
+    let Ensure::Proposition(ClickProposition::Comparison { right, .. }) =
+        file.function_blocks()[0].ensures()[0].ensure()
+    else {
+        panic!("expected comparison ensure")
+    };
+
+    assert!(matches!(
+        right,
+        ContractExpression::CFragment(CExpression::TypedLoad {
+            pointer,
+            value_type: CType::Int32,
+        }) if matches!(
+            pointer.as_ref(),
+            CExpression::PointerOffsetBytes {
+                pointer: child,
+                bytes: 4,
+            } if matches!(
+                child.as_ref(),
+                CExpression::TypedLoad {
+                    pointer,
+                    value_type: CType::Int32Pointer,
+                } if matches!(
+                    pointer.as_ref(),
+                    CExpression::PointerOffsetBytes {
+                        bytes: 8,
+                        ..
+                    }
+                )
+            )
+        )
+    ));
+}
+
+#[test]
 fn parses_pilot_struct_field_mutable_effect() {
     let source = r#"
             verifying "json_object_set_ref_count.c";

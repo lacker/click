@@ -83,9 +83,10 @@ struct ParsedParameters {
     struct_params: BTreeMap<String, String>,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 struct ResolvedField {
     c_type: C0Type,
+    struct_name: Option<String>,
     offset_bytes: u32,
     byte_width: u32,
 }
@@ -2206,13 +2207,21 @@ impl Parser {
         base: C0Expression,
         field_name: &str,
     ) -> Result<Option<C0Expression>, ClickError> {
-        let Some(field) = self.resolve_field_metadata(&base.to_kernel_expression(), field_name)?
-        else {
+        let struct_name = match &base {
+            C0Expression::Variable(base_name) => self.current_struct_params.get(base_name),
+            C0Expression::Field {
+                field_struct_name, ..
+            } => field_struct_name.as_ref(),
+            _ => None,
+        };
+        let Some(struct_name) = struct_name else {
             return Ok(None);
         };
+        let field = self.resolve_struct_field_metadata(struct_name, field_name)?;
         Ok(Some(C0Expression::Field {
             pointer: Box::new(self.offset_c0_field_pointer(base, field.offset_bytes)),
             field_type: field.c_type,
+            field_struct_name: field.struct_name,
         }))
     }
 
@@ -2227,8 +2236,17 @@ impl Parser {
         let Some(struct_name) = self.current_struct_params.get(base_name) else {
             return Ok(None);
         };
+        self.resolve_struct_field_metadata(struct_name, field_name)
+            .map(Some)
+    }
+
+    fn resolve_struct_field_metadata(
+        &self,
+        struct_name: &str,
+        field_name: &str,
+    ) -> Result<ResolvedField, ClickError> {
         let Some(layout) = self.struct_layouts.get(struct_name) else {
-            return Ok(None);
+            return Err(self.error(format!("unknown struct declaration `{struct_name}`")));
         };
         let Some(field) = layout.field(field_name) else {
             return Err(self.error(format!(
@@ -2240,11 +2258,12 @@ impl Parser {
                 self.error("field places currently require int32-aligned offsets and widths")
             );
         }
-        Ok(Some(ResolvedField {
+        Ok(ResolvedField {
             c_type: field.c_type(),
+            struct_name: field.struct_name().map(str::to_string),
             offset_bytes: field.offset_bytes(),
             byte_width: field.byte_width(),
-        }))
+        })
     }
 
     fn offset_field_pointer(&self, base: CExpression, offset_bytes: u32) -> CExpression {
@@ -2374,6 +2393,12 @@ impl Parser {
 
     fn parse_contract_postfix(&mut self) -> Result<ContractExpression, ClickError> {
         let mut expression = self.parse_contract_primary()?;
+        let mut struct_name = match &expression {
+            ContractExpression::CFragment(CExpression::Variable(name)) => {
+                self.current_struct_params.get(name).cloned()
+            }
+            _ => None,
+        };
         loop {
             match self.peek() {
                 Some(Token::LBracket) => {
@@ -2381,6 +2406,7 @@ impl Parser {
                     let index = self.parse_contract_expression()?;
                     self.expect(Token::RBracket)?;
                     expression = ContractExpression::Index(Box::new(expression), Box::new(index));
+                    struct_name = None;
                 }
                 Some(Token::Arrow) => {
                     self.position += 1;
@@ -2390,8 +2416,20 @@ impl Parser {
                             self.error("field access is only supported on current C fragments")
                         );
                     };
-                    expression =
-                        ContractExpression::CFragment(self.resolve_field_load(base, &field_name)?);
+                    if let Some(base_struct_name) = &struct_name {
+                        let field =
+                            self.resolve_struct_field_metadata(base_struct_name, &field_name)?;
+                        let pointer = self.offset_field_pointer(base, field.offset_bytes);
+                        struct_name = field.struct_name;
+                        expression = ContractExpression::CFragment(CExpression::TypedLoad {
+                            pointer: Box::new(pointer),
+                            value_type: field.c_type.to_kernel_type(),
+                        });
+                    } else {
+                        expression = ContractExpression::CFragment(
+                            self.resolve_field_load(base, &field_name)?,
+                        );
+                    }
                 }
                 _ => return Ok(expression),
             }
