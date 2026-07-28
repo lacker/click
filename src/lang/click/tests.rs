@@ -3902,6 +3902,51 @@ fn statement_snapshots_preserve_declared_resource_argument_types() {
 }
 
 #[test]
+fn source_expander_locates_statement_assertion_proofs() {
+    let c_source = r#"
+            int32 preserve_value(int32 x) {
+                x = x;
+                return x;
+            }
+        "#;
+    let click_source = r#"
+            verifying "statement_assert.c";
+
+            int32 preserve_value(int32 x) {
+                for statement(0) {
+                    assert x == x by auto;
+                }
+                ensures result == x;
+            } by {
+                execute_rest();
+                simp();
+            }
+        "#;
+    let auto_offset = click_source
+        .find("assert x == x by auto")
+        .expect("assertion proof should exist")
+        + "assert x == x by ".len();
+    let line = click_source[..auto_offset]
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count()
+        + 1;
+    let column = auto_offset
+        - click_source[..auto_offset]
+            .rfind('\n')
+            .map(|offset| offset + 1)
+            .unwrap_or(0)
+        + 1;
+
+    let expanded =
+        expand_c0_tactic_source_at(click_source, &[("statement_assert.c", c_source)], line, column)
+            .expect("the statement assertion proof should expand");
+    assert_ne!(expanded, click_source);
+    verify_c0_sources(&expanded, &[("statement_assert.c", c_source)])
+        .expect("the expanded statement assertion should replay");
+}
+
+#[test]
 fn smart_apply_uses_ambient_loadability_only_for_argument_lowering() {
     let c_source = r#"
             struct pointer_pair {

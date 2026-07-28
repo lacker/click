@@ -857,37 +857,36 @@ fn locate_source_tactic(
         let function_name = function_block.signature().name();
         let function = find_function(&tokens, function_name)?;
         for clause in function_block.structural_clauses() {
-            let CodeRegion::Loop(loop_index) = clause.region() else {
-                continue;
-            };
-            for (phase, proof) in [
-                ("initialize", clause.initialize_proof()),
-                ("preserve", clause.preserve_proof()),
-            ] {
-                let (selector, proof_span, insertion) =
-                    find_loop_phase_proof_span(&tokens, &function, *loop_index, phase)?;
-                let default_proof = Proof::Default;
-                let proof = proof.unwrap_or(&default_proof);
-                let edit = proof_span.map_or_else(
-                    || ProofSourceEdit::OmittedLoopPhase {
-                        span: insertion..insertion,
-                        selector,
-                        phase,
-                    },
-                    ProofSourceEdit::Explicit,
-                );
-                if let Some(found) = locate_tactic_in_proof(
-                    &tokens,
-                    &edit,
-                    proof,
-                    wanted,
-                    ProofSite::LoopPhase {
-                        function_name: function_name.to_string(),
-                        loop_index: *loop_index,
-                        phase,
-                    },
-                )? {
-                    return Ok(found);
+            if let CodeRegion::Loop(loop_index) = clause.region() {
+                for (phase, proof) in [
+                    ("initialize", clause.initialize_proof()),
+                    ("preserve", clause.preserve_proof()),
+                ] {
+                    let (selector, proof_span, insertion) =
+                        find_loop_phase_proof_span(&tokens, &function, *loop_index, phase)?;
+                    let default_proof = Proof::Default;
+                    let proof = proof.unwrap_or(&default_proof);
+                    let edit = proof_span.map_or_else(
+                        || ProofSourceEdit::OmittedLoopPhase {
+                            span: insertion..insertion,
+                            selector,
+                            phase,
+                        },
+                        ProofSourceEdit::Explicit,
+                    );
+                    if let Some(found) = locate_tactic_in_proof(
+                        &tokens,
+                        &edit,
+                        proof,
+                        wanted,
+                        ProofSite::LoopPhase {
+                            function_name: function_name.to_string(),
+                            loop_index: *loop_index,
+                            phase,
+                        },
+                    )? {
+                        return Ok(found);
+                    }
                 }
             }
             let block = find_structural_clause_block(&tokens, &function, *clause.region())?;
