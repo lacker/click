@@ -1692,6 +1692,9 @@ pub(super) fn collect_c_expression_bitvector_variables(
         CExpression::AddressOf(body) | CExpression::Not(body) | CExpression::Load(body) => {
             collect_c_expression_bitvector_variables(body, variables);
         }
+        CExpression::PointerOffsetBytes { pointer, .. } => {
+            collect_c_expression_bitvector_variables(pointer, variables);
+        }
         CExpression::TypedLoad { pointer, .. } => {
             collect_c_expression_bitvector_variables(pointer, variables);
         }
@@ -2563,6 +2566,12 @@ pub(super) fn substitute_bitvector_variable_in_c_expression(
         CExpression::AddressOf(body) => CExpression::AddressOf(Box::new(
             substitute_bitvector_variable_in_c_expression(body, from, to),
         )),
+        CExpression::PointerOffsetBytes { pointer, bytes } => CExpression::PointerOffsetBytes {
+            pointer: Box::new(substitute_bitvector_variable_in_c_expression(
+                pointer, from, to,
+            )),
+            bytes: *bytes,
+        },
         CExpression::Not(body) => CExpression::Not(Box::new(
             substitute_bitvector_variable_in_c_expression(body, from, to),
         )),

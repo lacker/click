@@ -103,6 +103,10 @@ pub enum C0Statement {
 pub enum C0Expression {
     Variable(String),
     AddressOf(Box<C0Expression>),
+    PointerOffsetBytes {
+        pointer: Box<C0Expression>,
+        bytes: u32,
+    },
     Int32Literal(u32),
     UInt8Literal(u8),
     LessThan(Box<C0Expression>, Box<C0Expression>),
@@ -312,6 +316,9 @@ impl C0Expression {
             Self::AddressOf(target) => {
                 crate::kernel::CExpression::AddressOf(Box::new(target.to_kernel_expression()))
             }
+            Self::PointerOffsetBytes { pointer, bytes } => {
+                crate::kernel::c_pointer_offset_bytes(pointer.to_kernel_expression(), *bytes)
+            }
             Self::Int32Literal(value) => crate::kernel::c_int32_literal(*value),
             Self::UInt8Literal(value) => crate::kernel::c_uint8_literal(*value),
             Self::LessThan(left, right) => crate::kernel::c_less_than(
@@ -429,10 +436,10 @@ fn offset_field_pointer(base: C0Expression, offset_bytes: u32) -> C0Expression {
     if offset_bytes == 0 {
         return base;
     }
-    C0Expression::Add(
-        Box::new(base),
-        Box::new(C0Expression::Int32Literal(offset_bytes / 4)),
-    )
+    C0Expression::PointerOffsetBytes {
+        pointer: Box::new(base),
+        bytes: offset_bytes,
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

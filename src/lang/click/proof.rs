@@ -12669,6 +12669,7 @@ fn expression_reads_memory(expression: &CExpression) -> bool {
         CExpression::Load(_) | CExpression::TypedLoad { .. } | CExpression::Index(_, _) => true,
         CExpression::Value(_) | CExpression::Variable(_) => false,
         CExpression::AddressOf(inner)
+        | CExpression::PointerOffsetBytes { pointer: inner, .. }
         | CExpression::Not(inner)
         | CExpression::BitwiseNot(inner) => expression_reads_memory(inner),
         CExpression::LessThan(left, right)

@@ -1206,6 +1206,42 @@ fn c0_lp64_layout_matches_the_host_c_abi() {
 }
 
 #[test]
+fn c0_struct_field_lowering_uses_explicit_byte_offsets() {
+    let function = syntax::parse_function(
+        r#"
+        struct mixed {
+            int32 tag;
+            int32* data;
+        };
+
+        int32* get_data(struct mixed* value) {
+            return value->data;
+        }
+        "#,
+    )
+    .expect("mixed struct getter should parse");
+    let syntax::C0Statement::Return(syntax::C0Expression::Field { pointer, .. }) = function.body()
+    else {
+        panic!("getter should return a field load")
+    };
+    assert!(matches!(
+        pointer.as_ref(),
+        syntax::C0Expression::PointerOffsetBytes { bytes: 8, .. }
+    ));
+    let crate::kernel::CStatement::Return(crate::kernel::CExpression::TypedLoad {
+        pointer,
+        value_type: crate::kernel::CType::Int32Pointer,
+    }) = function.body_kernel_statement()
+    else {
+        panic!("field load should retain its value type")
+    };
+    assert!(matches!(
+        pointer.as_ref(),
+        crate::kernel::CExpression::PointerOffsetBytes { bytes: 8, .. }
+    ));
+}
+
+#[test]
 fn c0_syntax_rejects_assignment_to_local_array_object() {
     let function = syntax::parse_function(
         r#"

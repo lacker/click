@@ -1493,6 +1493,9 @@ pub(super) fn collect_address_taken_in_expression(
         // escape, so conservatively record every variable it mentions.
         CExpression::AddressOf(target) => collect_variable_names(target, names),
         CExpression::Value(_) | CExpression::Variable(_) => {}
+        CExpression::PointerOffsetBytes { pointer, .. } => {
+            collect_address_taken_in_expression(pointer, names)
+        }
         CExpression::Not(inner) | CExpression::Load(inner) => {
             collect_address_taken_in_expression(inner, names)
         }
@@ -1533,6 +1536,7 @@ pub(super) fn collect_variable_names(expression: &CExpression, names: &mut BTree
             names.insert(name.clone());
         }
         CExpression::Value(_) => {}
+        CExpression::PointerOffsetBytes { pointer, .. } => collect_variable_names(pointer, names),
         CExpression::AddressOf(inner) | CExpression::Not(inner) | CExpression::Load(inner) => {
             collect_variable_names(inner, names)
         }

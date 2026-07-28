@@ -138,6 +138,31 @@ pub(super) fn evaluate_c_expression_paths(
         CExpression::AddressOf(target) => {
             address_of_lvalue_paths(state, target, assumptions, budget)?
         }
+        CExpression::PointerOffsetBytes { pointer, bytes } => {
+            evaluate_c_expression_paths(state, pointer, assumptions, budget)?
+                .into_iter()
+                .map(|path| CExpressionPath {
+                    outcome: match path.outcome {
+                        CExpressionOutcome::Value(CValue::Pointer(pointer)) => {
+                            CExpressionOutcome::Value(CValue::Pointer(
+                                pointer.offset_by_bytes(*bytes),
+                            ))
+                        }
+                        CExpressionOutcome::Value(_) => {
+                            CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch)
+                        }
+                        CExpressionOutcome::UndefinedBehavior(error) => {
+                            CExpressionOutcome::UndefinedBehavior(error)
+                        }
+                        CExpressionOutcome::RuntimeError(error) => {
+                            CExpressionOutcome::RuntimeError(error)
+                        }
+                    },
+                    facts: path.facts,
+                    obligations: path.obligations,
+                })
+                .collect()
+        }
         CExpression::LessThan(left, right) => evaluate_c_int32_binary_paths(
             state,
             left,
@@ -600,6 +625,9 @@ pub(super) fn c_expression_pointee_type(state: &CState, expression: &CExpression
             None => None,
         },
         CExpression::AddressOf(target) => c_expression_lvalue_type(state, target),
+        CExpression::PointerOffsetBytes { pointer, .. } => {
+            c_expression_pointee_type(state, pointer)
+        }
         CExpression::TypedLoad { value_type, .. } => value_type.pointee_type(),
         CExpression::Add(left, right) => c_expression_pointee_type(state, left)
             .or_else(|| c_expression_pointee_type(state, right)),

@@ -2841,6 +2841,10 @@ pub(super) fn substitute_c_fragment(
         CExpression::AddressOf(body) => Ok(CExpression::AddressOf(Box::new(
             substitute_c_fragment(body, substitutions)?,
         ))),
+        CExpression::PointerOffsetBytes { pointer, bytes } => Ok(CExpression::PointerOffsetBytes {
+            pointer: Box::new(substitute_c_fragment(pointer, substitutions)?),
+            bytes: *bytes,
+        }),
         CExpression::LessThan(left, right) => Ok(CExpression::LessThan(
             Box::new(substitute_c_fragment(left, substitutions)?),
             Box::new(substitute_c_fragment(right, substitutions)?),
@@ -3366,6 +3370,9 @@ pub(super) fn collect_c_expression_referenced_names(
         | CExpression::Not(expression)
         | CExpression::Load(expression) => {
             collect_c_expression_referenced_names(expression, names);
+        }
+        CExpression::PointerOffsetBytes { pointer, .. } => {
+            collect_c_expression_referenced_names(pointer, names);
         }
         CExpression::TypedLoad { pointer, .. } => {
             collect_c_expression_referenced_names(pointer, names);

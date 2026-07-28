@@ -2248,24 +2248,17 @@ impl Parser {
     }
 
     fn offset_field_pointer(&self, base: CExpression, offset_bytes: u32) -> CExpression {
-        if offset_bytes == 0 {
-            base
-        } else {
-            CExpression::Add(
-                Box::new(base),
-                Box::new(CExpression::Value(int32(offset_bytes / 4))),
-            )
-        }
+        crate::kernel::c_pointer_offset_bytes(base, offset_bytes)
     }
 
     fn offset_c0_field_pointer(&self, base: C0Expression, offset_bytes: u32) -> C0Expression {
         if offset_bytes == 0 {
             base
         } else {
-            C0Expression::Add(
-                Box::new(base),
-                Box::new(C0Expression::Int32Literal(offset_bytes / 4)),
-            )
+            C0Expression::PointerOffsetBytes {
+                pointer: Box::new(base),
+                bytes: offset_bytes,
+            }
         }
     }
 

@@ -170,6 +170,10 @@ pub enum CExpression {
     Value(CValue),
     Variable(String),
     AddressOf(Box<CExpression>),
+    PointerOffsetBytes {
+        pointer: Box<CExpression>,
+        bytes: u32,
+    },
     LessThan(Box<CExpression>, Box<CExpression>),
     LessEqual(Box<CExpression>, Box<CExpression>),
     GreaterThan(Box<CExpression>, Box<CExpression>),
@@ -1784,6 +1788,16 @@ impl Pointer {
     #[cfg_attr(not(test), allow(dead_code))]
     pub(super) fn offset_by_int32_elements(&self, elements: Bitvector32Term) -> Self {
         self.offset_by_elements(elements, 4)
+    }
+
+    pub(super) fn offset_by_bytes(&self, bytes: u32) -> Self {
+        Self {
+            block: self.block.clone(),
+            offset: PointerOffsetTerm::add(
+                self.offset.clone(),
+                PointerOffsetTerm::Constant(i64::from(bytes)),
+            ),
+        }
     }
 
     pub(super) fn offset_by_elements(&self, elements: Bitvector32Term, byte_width: u32) -> Self {

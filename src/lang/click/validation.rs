@@ -1807,6 +1807,9 @@ fn collect_resource_fact_reads_from_c_expression(
     match expression {
         CExpression::Value(_) | CExpression::Variable(_) => {}
         CExpression::AddressOf(_) => {}
+        CExpression::PointerOffsetBytes { pointer, .. } => {
+            collect_resource_fact_reads_from_c_expression(pointer, reads);
+        }
         CExpression::Load(pointer) => {
             collect_resource_fact_reads_from_c_expression(pointer, reads);
             reads.push(ResourceFactRead {
@@ -2632,6 +2635,9 @@ fn infer_c_expression_type(
         CExpression::Value(CValue::Pointer(_)) => None,
         CExpression::Variable(name) => variables.get(name).copied(),
         CExpression::AddressOf(_) => None,
+        CExpression::PointerOffsetBytes { pointer, .. } => {
+            infer_c_expression_type(pointer, variables)
+        }
         CExpression::LessThan(_, _)
         | CExpression::LessEqual(_, _)
         | CExpression::GreaterThan(_, _)

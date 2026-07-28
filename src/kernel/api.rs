@@ -1139,6 +1139,17 @@ pub fn c_addr_of(name: impl Into<String>) -> CExpression {
     CExpression::AddressOf(Box::new(c_variable(name)))
 }
 
+pub fn c_pointer_offset_bytes(pointer: CExpression, bytes: u32) -> CExpression {
+    if bytes == 0 {
+        pointer
+    } else {
+        CExpression::PointerOffsetBytes {
+            pointer: Box::new(pointer),
+            bytes,
+        }
+    }
+}
+
 pub fn c_int32_literal(value: u32) -> CExpression {
     CExpression::Value(int32(Bitvector32Term::Constant(value)))
 }

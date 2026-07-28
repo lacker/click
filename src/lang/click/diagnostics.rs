@@ -590,6 +590,9 @@ pub(super) fn describe_c_expression(expression: &CExpression) -> String {
         CExpression::Value(value) => describe_c_value(value, &[], &[]),
         CExpression::Variable(name) => name.clone(),
         CExpression::AddressOf(target) => format!("&{}", describe_c_expression(target)),
+        CExpression::PointerOffsetBytes { pointer, bytes } => {
+            format!("byte_offset({}, {bytes})", describe_c_expression(pointer))
+        }
         CExpression::LessThan(left, right) => describe_binary_c_expression(left, "<", right),
         CExpression::LessEqual(left, right) => describe_binary_c_expression(left, "<=", right),
         CExpression::GreaterThan(left, right) => describe_binary_c_expression(left, ">", right),
