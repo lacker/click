@@ -321,10 +321,14 @@ expansion blocker. `vector_push_first` verifies in about 6.4 seconds and all
 
 The complete owned-vector audit is currently blocked by baseline performance,
 not a known correctness failure: session initialization exceeds five minutes.
-A two-minute profile reports the 1.35-second simple `frame` at line 397, the
-2.86-second smart `simp` at line 398, the 4.62-second smart `execute_until` at
-line 459, and a timeout while line 478's smart `execute_until` is active. Fix
-the simple `frame` path before expanding the smart frontiers.
+The former 1.35-second simple `frame` at line 397 was running a general `simp`
+planner over every proposition postcondition after checking structural
+effects. `frame` now certifies only structural effects and takes about 3.8 ms;
+the following certificate-producing smart `simp` owns proposition closure.
+A fresh two-minute profile reports no slow simple tactics, a 5.78-second smart
+`simp` at line 398, a 2.08-second smart `execute_step` at line 387, a
+7.91-second smart `execute_until` at line 459, and a timeout while line 478's
+smart `execute_until` is active.
 
 The motivating `owned_string_set` successor proof at line 183 is fixed:
 planning fell from 63.9 seconds to about 67 ms, and expansion emits a

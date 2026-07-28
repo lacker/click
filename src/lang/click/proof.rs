@@ -9406,27 +9406,6 @@ fn finish_ordered_proof_replay(
                             )?;
                             closed_claims[claim_index] = true;
                         }
-                        for (claim_index, goal) in frame_certified_ensure_goals(
-                            claims,
-                            &path.execution_facts(),
-                            &path_requirements,
-                            parsed_function.parameters(),
-                            arguments,
-                            pre_state,
-                            &outcome,
-                            predicate_environment,
-                            click_function_environment,
-                            &replay.program_point_states,
-                            &unfolded_predicates,
-                        ) {
-                            frame_certified_claim_goals[claim_index] = Some(goal.clone());
-                            if !path_requirements.contains(&goal) {
-                                path_requirements.push(goal.clone());
-                            }
-                            if !surface_certificate_facts.contains(&goal) {
-                                surface_certificate_facts.push(goal);
-                            }
-                        }
                         record_post_execution_surface_tactic(
                             &mut path_surface_post_tactics,
                             &mut path_deferred_capture_tactics,
