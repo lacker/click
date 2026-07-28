@@ -1,6 +1,6 @@
 # `click-profile` / `click-expand` / `click-audit` Handoff
 
-Last updated: 2026-07-27
+Last updated: 2026-07-28
 
 ## Goal
 
@@ -156,14 +156,20 @@ Current focused validation:
 - 9 `click-audit` binary tests pass;
 - the `execute_rest` order/alias recursion regression passes in an isolated
   mdtest process;
-- the owned-string example verifies normally;
+- the owned-string proof units changed by the current audit verify through
+  location-targeted verification;
 - a 10 ms diagnostic owned-string profile completes without source-mapping
   errors;
 - the default-threshold 15-second corpus profile reports no completed slow
   simple tactics and no verification failures.
 
-There is no presently reproduced expansion or profiler-coordinate correctness
-failure.
+The corpus audit currently reproduces one expansion correctness failure in
+`owned_string_pop_preserves_first.contract`: the final grouped `simp` verifies,
+but its certificate planner cannot express the post-call result transition.
+The recorded surface context contains `result == *(owner + 1)` where the
+callee contract should transport the old last data element. The wrapper also
+has a C local named `result`, so call-result, local-result, and contract-result
+identity must be inspected before changing certificate search.
 
 The grouped loadability boundary now lowers the complete source proposition at
 an exact `function.entry` or recorded program point. It no longer constructs a
@@ -188,6 +194,17 @@ behind a timeout.
 `click-audit` is now the generated audit over proof-bearing source constructs.
 The remaining work is to run it across the full examples corpus and fix every
 concrete failure.
+
+Current sweep status:
+
+- `input-cursor`: 32/32 sites green;
+- `json-refcount`: 3/3 sites green;
+- `owned-segmented-buffer`: 38/38 sites green;
+- `owned-split-buffer`: 35/35 sites green;
+- `owned-vector`: 71/71 sites green;
+- `owned-string`: two slow grouped `simp` sites were expanded and independently
+  reverified; the sweep is blocked at
+  `owned_string_pop_preserves_first.contract` as described above.
 
 For every syntactic smart-tactic occurrence, the audit should:
 
@@ -223,6 +240,10 @@ automation must have one gateway.
   expands the whole implicit proof.
 - Expansion replays the sidecar prefix for every request. There is no
   certificate cache or persistent verification session.
+- `click-audit --start-at` cannot advance past a grouped-certificate failure
+  that occurs while initializing the file's reusable verification session.
+  The owned-string failure therefore masks later sites even when the resume
+  coordinate is after it.
 - `click-expand` prints the whole sidecar rather than a patch. This is
   deliberate until the certificate audit is complete.
 
