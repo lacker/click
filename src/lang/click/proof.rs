@@ -14604,14 +14604,6 @@ fn replay_linear_tactics(
                         explicit_premises.push(branch_fact);
                     }
                 }
-                for effect in &replay.effect_facts {
-                    if effect.is_certified()
-                        && exact_fact_is_available(effect.proposition(), &all_pure_facts)
-                        && !explicit_premises.contains(effect.proposition())
-                    {
-                        explicit_premises.push(effect.proposition().clone());
-                    }
-                }
                 if matches!(tactic, ProofTactic::ApplyLoopSummaryUsing { .. })
                     && !replay.unfolded_predicates.is_empty()
                 {
