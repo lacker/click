@@ -448,6 +448,26 @@ fn records_checked_surface_spellings_for_lowered_propositions() {
 }
 
 #[test]
+fn surface_synthesis_qualifies_a_c_local_named_result() {
+    let local = Bitvector32Term::Variable(Variable(42));
+    let proposition = Proposition::ConditionIs(
+        ConditionTerm::Bitvector32Equal(
+            Box::new(local.clone()),
+            Box::new(Bitvector32Term::Constant(0)),
+        ),
+        true,
+    );
+    let state = CState::new().with_local("result", CValue::Int32(local));
+
+    let surface = synthesize_surface_proposition(&proposition, &[], &[], &state)
+        .expect("the local comparison should have a surface spelling");
+    let ClickProposition::Comparison { left, .. } = surface else {
+        panic!("expected a comparison spelling");
+    };
+    assert_eq!(left, ContractExpression::CBinding("result".to_string()));
+}
+
+#[test]
 fn proof_source_printing_preserves_proposition_precedence() {
     let comparison = |operator, value| ClickProposition::Comparison {
         left: current_var("x"),

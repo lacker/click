@@ -163,13 +163,21 @@ Current focused validation:
 - the default-threshold 15-second corpus profile reports no completed slow
   simple tactics and no verification failures.
 
-The corpus audit currently reproduces one expansion correctness failure in
-`owned_string_pop_preserves_first.contract`: the final grouped `simp` verifies,
-but its certificate planner cannot express the post-call result transition.
-The recorded surface context contains `result == *(owner + 1)` where the
-callee contract should transport the old last data element. The wrapper also
-has a C local named `result`, so call-result, local-result, and contract-result
-identity must be inspected before changing certificate search.
+The C/contract name-identity issue found by the corpus audit is fixed.
+`c(name)` now denotes the C lexical binding explicitly, while an unqualified
+name continues to use the contract namespace. In particular, `result` is the
+contract result and `c(result)` is a C local or parameter named `result`.
+Generated surface certificates preserve this distinction, including beneath
+`at(...)`, and a focused grouped-`simp` regression expands and reverifies the
+collision.
+
+The audit remains blocked at the final grouped `simp` in
+`owned_string_pop_preserves_first.contract` for a separate performance reason.
+Its certificate planner eagerly re-lowers the available surface context while
+looking for expressible premises and does not finish within the two-minute
+expansion budget. Fix this without changing proof selection semantics; an
+earlier attempt to make the planner opportunistically lazy changed the selected
+proof and broke ordinary owned-string verification.
 
 The grouped loadability boundary now lowers the complete source proposition at
 an exact `function.entry` or recorded program point. It no longer constructs a
@@ -203,7 +211,7 @@ Current sweep status:
 - `owned-split-buffer`: 35/35 sites green;
 - `owned-vector`: 71/71 sites green;
 - `owned-string`: two slow grouped `simp` sites were expanded and independently
-  reverified; the sweep is blocked at
+  reverified; the sweep is blocked by eager certificate-premise lowering in
   `owned_string_pop_preserves_first.contract` as described above.
 
 For every syntactic smart-tactic occurrence, the audit should:

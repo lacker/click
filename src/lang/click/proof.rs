@@ -11000,12 +11000,18 @@ fn synthesize_surface_bitvector(
     if let Some((name, _)) = state.locals().object_values().find(
         |(_, value)| matches!(value, CValue::Int32(local) | CValue::UInt8(local) if local == term),
     ) {
-        return Some(ContractExpression::CFragment(CExpression::Variable(
-            name.to_string(),
-        )));
+        return Some(if name == "result" {
+            ContractExpression::CBinding(name.to_string())
+        } else {
+            ContractExpression::CFragment(CExpression::Variable(name.to_string()))
+        });
     }
     if let Some(name) = describe_parameter_bitvector(term, parameters, arguments) {
-        return Some(ContractExpression::CFragment(CExpression::Variable(name)));
+        return Some(if name == "result" {
+            ContractExpression::CBinding(name)
+        } else {
+            ContractExpression::CFragment(CExpression::Variable(name))
+        });
     }
     let binary = |left: &Bitvector32Term, right: &Bitvector32Term| {
         Some((

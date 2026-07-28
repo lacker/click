@@ -1601,6 +1601,9 @@ pub(super) fn evaluate_predicate_contract_expression(
         ContractExpression::CFragment(expression) => {
             evaluate_c_contract_expression(values, &state, None, assumptions, expression)
         }
+        ContractExpression::CBinding(name) => Err(format!(
+            "`c({name})` is not available in predicate definitions"
+        )),
         ContractExpression::Old(_) => {
             Err("`old(...)` is not available in predicate definitions".to_string())
         }
@@ -4831,6 +4834,12 @@ pub(super) fn evaluate_contract_expression_with_environment(
             assumptions,
             expression,
         ),
+        ContractExpression::CBinding(name) => post_state
+            .locals()
+            .object_values()
+            .find_map(|(local_name, value)| (local_name == name).then(|| value.clone()))
+            .or_else(|| parameter_values.get(name).cloned())
+            .ok_or_else(|| format!("C binding `{name}` is not in scope")),
         ContractExpression::Old(expression) => evaluate_contract_expression_with_environment(
             parameter_values,
             &array_refs_with_memory(array_refs, pre_state.memory()),
@@ -5735,7 +5744,8 @@ pub(super) fn evaluate_contract_array_ref_with_environment(
                 element_type,
             })
         }
-        ContractExpression::CFragment(CExpression::Variable(name)) => {
+        ContractExpression::CFragment(CExpression::Variable(name))
+        | ContractExpression::CBinding(name) => {
             if let Some(array_ref) = array_refs.get(name) {
                 return Ok(array_ref.clone());
             }
@@ -5940,7 +5950,8 @@ pub(super) fn contract_array_ref_element_type(
     expression: &ContractExpression,
 ) -> Option<CType> {
     match expression {
-        ContractExpression::CFragment(CExpression::Variable(name)) => {
+        ContractExpression::CFragment(CExpression::Variable(name))
+        | ContractExpression::CBinding(name) => {
             array_refs.get(name).map(|array_ref| array_ref.element_type)
         }
         ContractExpression::Old(expression) => {

@@ -483,6 +483,11 @@ impl SurfacePropositionMap {
 pub enum ContractExpression {
     /// A C0 expression fragment appearing inside Surface Click.
     CFragment(CExpression),
+    /// A binding from the verified C function's lexical environment.
+    ///
+    /// This is distinct from contract built-ins such as bare `result`, even
+    /// when the C binding has the same source name.
+    CBinding(String),
     Old(Box<ContractExpression>),
     At {
         selector: VisitSelector,

@@ -672,6 +672,9 @@ impl AnnotationLowerer<'_> {
             ContractExpression::CFragment(expression) => {
                 self.lower_c_fragment_to_spec(expression, environment)
             }
+            ContractExpression::CBinding(name) => {
+                self.lower_c_fragment_to_spec(&CExpression::Variable(name.clone()), environment)
+            }
             ContractExpression::Old(expression) => {
                 let old_environment =
                     environment.old_state(&self.entry_values, self.entry_state.memory())?;
@@ -2365,6 +2368,9 @@ pub(super) fn collect_contract_expression_referenced_names(
         ContractExpression::CFragment(expression) => {
             collect_c_expression_referenced_names(expression, names);
         }
+        ContractExpression::CBinding(name) => {
+            names.insert(name.clone());
+        }
         ContractExpression::Old(expression) | ContractExpression::BitwiseNot(expression) => {
             collect_contract_expression_referenced_names(expression, names);
         }
@@ -2513,6 +2519,7 @@ pub(super) fn substitute_contract_expression(
     substitutions: &BTreeMap<String, ContractExpression>,
 ) -> Result<ContractExpression, String> {
     match expression {
+        ContractExpression::CBinding(_) => Ok(expression.clone()),
         ContractExpression::CFragment(CExpression::Variable(name)) => Ok(substitutions
             .get(name)
             .cloned()
@@ -2816,6 +2823,7 @@ pub(super) fn contract_expression_as_c_fragment(
 ) -> Option<CExpression> {
     match expression {
         ContractExpression::CFragment(expression) => Some(expression.clone()),
+        ContractExpression::CBinding(name) => Some(CExpression::Variable(name.clone())),
         ContractExpression::Old(_) => None,
         ContractExpression::At { .. } => None,
         ContractExpression::Add(left, right) => Some(CExpression::Add(
@@ -2966,6 +2974,7 @@ pub(super) fn contract_expression_to_c_fragment(
 ) -> Option<CExpression> {
     match expression {
         ContractExpression::CFragment(expression) => Some(expression.clone()),
+        ContractExpression::CBinding(name) => Some(CExpression::Variable(name.clone())),
         ContractExpression::Old(_) => None,
         ContractExpression::At { .. } => None,
         ContractExpression::Add(left, right) => Some(CExpression::Add(
@@ -3618,6 +3627,7 @@ pub(super) fn resource_argument_to_c_expression(
 ) -> Result<CExpression, ClickError> {
     match argument {
         ContractExpression::CFragment(expression) => Ok(expression.clone()),
+        ContractExpression::CBinding(name) => Ok(CExpression::Variable(name.clone())),
         ContractExpression::Add(left, right) => Ok(CExpression::Add(
             Box::new(resource_argument_to_c_expression(left)?),
             Box::new(resource_argument_to_c_expression(right)?),
@@ -4525,6 +4535,9 @@ impl KernelPropositionLowerer {
         match expression {
             ContractExpression::CFragment(expression) => {
                 self.lower_requirement_c_expression(expression)
+            }
+            ContractExpression::CBinding(name) => {
+                self.lower_requirement_c_expression(&CExpression::Variable(name.clone()))
             }
             ContractExpression::Old(_) => Err(ClickError::new(
                 "`old(...)` is not available in `requires` clauses",

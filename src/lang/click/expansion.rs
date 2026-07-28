@@ -1927,6 +1927,69 @@ int32 caller() {
     }
 
     #[test]
+    fn grouped_simp_distinguishes_c_local_result_from_contract_result() {
+        let zero_c = "int32 zero() { return 0; }";
+        let caller_c = "int32 caller() { int32 result; result = zero(); return result; }";
+        let click_source = r#"
+verifying "zero.c";
+verifying "caller.c";
+
+int32 zero() {
+    ensures result == 0;
+} by {
+    execute_rest();
+    simp();
+}
+
+int32 caller() {
+    ensures result == 0;
+} by {
+    execute_rest();
+    simp();
+}
+"#;
+        let sources = [("zero.c", zero_c), ("caller.c", caller_c)];
+        let final_simp = click_source
+            .rfind("simp();")
+            .expect("caller final simp should exist");
+        let position = position_at_offset(click_source, final_simp);
+
+        let expanded =
+            expand_c0_tactic_source_at(click_source, &sources, position.line, position.column)
+                .expect("the grouped simp should expand across the local result assignment");
+
+        verify_c0_sources(&expanded, &sources)
+            .expect("the explicit C result binding should replay without aliasing contract result");
+
+        let explicit_source = r#"
+verifying "zero.c";
+verifying "caller.c";
+
+int32 zero() {
+    ensures result == 0;
+} by {
+    execute_rest();
+    simp();
+}
+
+int32 caller() {
+    ensures result == 0;
+} by {
+    execute_rest();
+    have at(statement(1).entry, c(result)) == 0 by {
+        normalize();
+    }
+    have result == at(statement(1).entry, c(result)) by {
+        assumption();
+    }
+    assumption();
+}
+"#;
+        verify_c0_sources(explicit_source, &sources)
+            .expect("`c(result)` should denote the C local rather than contract result");
+    }
+
+    #[test]
     fn selected_tactic_emits_before_the_normal_verifier_checks_the_suffix() {
         let zero_c = "int32 zero() { return 1; }";
         let caller_c = "int32 caller() { int32 value; value = zero(); return value; }";

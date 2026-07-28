@@ -651,6 +651,7 @@ pub(super) fn describe_binary_c_expression(
 pub(super) fn describe_contract_expression(expression: &ContractExpression) -> String {
     match expression {
         ContractExpression::CFragment(expression) => describe_c_expression(expression),
+        ContractExpression::CBinding(name) => format!("c({name})"),
         ContractExpression::Old(expression) => {
             format!("old({})", describe_contract_expression(expression))
         }

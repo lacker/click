@@ -1441,6 +1441,7 @@ impl Parser {
         if matches!(self.peek(), Some(Token::Ident(_)))
             && self.peek_ident() != Some("old")
             && self.peek_ident() != Some("at")
+            && self.peek_ident() != Some("c")
             && !matches!(
                 self.peek_ident(),
                 Some("load_int32" | "load_uint8" | "load_int32_pointer" | "load_uint8_pointer")
@@ -2458,6 +2459,13 @@ impl Parser {
                 selector,
                 expression: Box::new(expression),
             });
+        }
+
+        if self.peek_ident() == Some("c") && self.peek_next() == Some(&Token::LParen) {
+            self.position += 2;
+            let name = self.expect_ident("C binding name")?;
+            self.expect(Token::RParen)?;
+            return Ok(ContractExpression::CBinding(name));
         }
 
         let typed_load = match self.peek_ident() {

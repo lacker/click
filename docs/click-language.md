@@ -465,6 +465,25 @@ predicate, it becomes an entry-state Click array ref. For example,
 `permutation(p, old(p), 0, 2)` compares post-state `p` to entry-state `p`.
 See [click-core.md](click-core.md).
 
+## `c(...)`
+
+`c(name)` explicitly refers to the binding named `name` in the verified C
+program. It is distinct from Click built-ins and contract bindings with the
+same spelling. In particular, bare `result` is the function's contract result,
+while `c(result)` is a C parameter or local named `result`.
+
+C locals exist only while they are in scope. After function exit, refer to a
+local through a recorded program point:
+
+```click
+result == at(statement(1).entry, c(result))
+```
+
+The AST retains this distinction; `c(result)` is not converted to an ordinary
+string variable and cannot be reinterpreted as contract `result`. Expansion
+uses this spelling when a generated certificate must name an overlapping C
+binding.
+
 ## `at(...)`
 
 `at(selector, expression)` evaluates a contract expression at a selected visit
