@@ -313,8 +313,9 @@ it does not eagerly manufacture proposition-map entries for possible future
 tactics. Later explicit tactics lower and check their own premises at their own
 program points. There is no search or ignored-error path.
 
-The retained-session audit passes all 67 owned-string smart sites. Most
-selected-proof checks take milliseconds to a few seconds. The former
+The former timing-driven retained-session audit passed all 67 smart sites that
+it observed in owned-string. Most selected-proof checks take milliseconds to a
+few seconds. The former
 roughly 75-second `owned_string_pipeline.contract` checks at lines 550 and 551
 now take about 0.31 seconds. Their final `return observed` certificate had
 mistakenly copied every ambient implication premise from the monotone execution
@@ -326,9 +327,18 @@ unchanged facts. Arithmetic and memory-reading returns continue to retain their
 actual safety premises. Grouped outcome `simp` replay also reuses its already
 lowered kernel goal instead of lowering the same surface expression twice.
 
-The audit also passes all 37 owned-segmented-buffer sites, all 33
-owned-split-buffer sites, and all 29 input-cursor sites. The previously
-documented segmented-buffer baseline failure was stale.
+That timing-driven audit also passed all 37 observed owned-segmented-buffer
+sites, all 33 observed owned-split-buffer sites, all 29 observed input-cursor
+sites, and all three jsonc-refcount sites. The previously documented
+segmented-buffer baseline failure was stale.
+
+The parser-driven inventory added by `click-audit --start-at` is deliberately
+stronger than that timing inventory: it finds 32 input-cursor sites, 38
+owned-segmented-buffer sites, 35 owned-split-buffer sites, 72 owned-string
+sites, three jsonc-refcount sites, and 76 owned-vector sites. Thus the corpus
+contains 256 syntactic smart sites. The earlier audits established 169 of
+those; 11 newly exposed sites in the formerly green projects and all 76
+owned-vector sites remain to be checked by the new audit.
 
 Owned-vector exposed a grouped-`simp` boundary bug. Its ambient precheck could
 reject a postcondition that the generated source-site certificate proved,
@@ -375,10 +385,12 @@ Work one frontier at a time and commit each logical change independently.
    smart source site syntactically, then independently expands and verifies it
    against a retained certified environment; `--start-at` resumes inclusively
    without initializing earlier files. The complete three-site
-   `jsonc-refcount` audit passes. Owned-string,
-   owned-segmented-buffer, owned-split-buffer, and input-cursor are also fully
-   green. Owned-vector is the next frontier, after its baseline performance
-   issue is reduced enough for the retained audit session to initialize.
+   `jsonc-refcount` audit passes. The new syntactic inventory exposed 11
+   previously unvisited sites across owned-string, owned-segmented-buffer,
+   owned-split-buffer, and input-cursor; audit those before calling the
+   projects fully green. Owned-vector has 76 sites and remains the final
+   project frontier, after its baseline performance issue is reduced enough
+   for the retained audit session to initialize.
 
 Do not optimize by adding proposition-specific smart fast paths, broad ambient
 premises, generic transport fallbacks, or internal-only certificate tactics.
