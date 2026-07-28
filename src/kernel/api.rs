@@ -1301,6 +1301,10 @@ pub fn c_seq(first: CStatement, second: CStatement) -> CStatement {
     CStatement::Seq(Box::new(first), Box::new(second))
 }
 
+pub fn c_skip() -> CStatement {
+    CStatement::Skip
+}
+
 pub fn c_return(expression: CExpression) -> CStatement {
     CStatement::Return(expression)
 }

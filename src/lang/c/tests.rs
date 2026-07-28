@@ -144,6 +144,66 @@ fn c0_syntax_names_unsupported_local_array_initializers() {
 }
 
 #[test]
+fn c0_syntax_models_missing_else_and_empty_statements_as_skip() {
+    let function = syntax::parse_function(
+        r#"
+        int32 nonnegative(int32 value) {
+            ;
+            if (value < 0) {
+                return 0;
+            }
+            if (value == 0) {
+            }
+            return value;
+        }
+        "#,
+    )
+    .expect("if statements should not require artificial else branches");
+
+    fn contains_skip(statement: &syntax::C0Statement) -> bool {
+        match statement {
+            syntax::C0Statement::Skip => true,
+            syntax::C0Statement::Seq(first, second) => {
+                contains_skip(first) || contains_skip(second)
+            }
+            syntax::C0Statement::If {
+                then_branch,
+                else_branch,
+                ..
+            } => contains_skip(then_branch) || contains_skip(else_branch),
+            syntax::C0Statement::While { body, .. } => contains_skip(body),
+            syntax::C0Statement::Declare { .. }
+            | syntax::C0Statement::Assign { .. }
+            | syntax::C0Statement::CallAssign { .. }
+            | syntax::C0Statement::Return(_)
+            | syntax::C0Statement::Store { .. } => false,
+        }
+    }
+
+    assert!(contains_skip(function.body()));
+}
+
+#[test]
+fn kernel_skip_preserves_state_without_facts_or_obligations() {
+    let state = crate::kernel::CState::new();
+    let theorem = crate::kernel::prove_symbolic_c_execution(
+        state.clone(),
+        crate::kernel::c_skip(),
+        crate::kernel::Assumptions::new(),
+    )
+    .expect("skip should execute");
+
+    assert_eq!(
+        theorem.proposition(),
+        &crate::kernel::Proposition::CStatementExecutes {
+            state: state.clone(),
+            statement: crate::kernel::c_skip(),
+            outcome: crate::kernel::CStatementOutcome::Normal(state),
+        }
+    );
+}
+
+#[test]
 fn c0_syntax_targets_kernel_max_body() {
     let function = syntax::parse_function(
         r#"

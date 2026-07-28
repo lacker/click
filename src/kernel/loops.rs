@@ -1373,7 +1373,8 @@ pub(super) fn havoc_loop_modified_locals(
 
 pub(super) fn statement_may_write_memory(statement: &CStatement) -> bool {
     match statement {
-        CStatement::Declare { .. }
+        CStatement::Skip
+        | CStatement::Declare { .. }
         | CStatement::Assign { .. }
         | CStatement::Assert { .. }
         | CStatement::Return(_) => false,
@@ -1394,7 +1395,8 @@ pub(super) fn statement_may_write_memory(statement: &CStatement) -> bool {
 
 pub(super) fn collect_loop_modified_locals(statement: &CStatement, names: &mut BTreeSet<String>) {
     match statement {
-        CStatement::Declare { .. }
+        CStatement::Skip
+        | CStatement::Declare { .. }
         | CStatement::Assert { .. }
         | CStatement::Return(_)
         | CStatement::Store { .. }
@@ -1452,7 +1454,7 @@ pub(super) fn address_escaped_scalar_locals(state: &CState, body: &CStatement) -
 
 pub(super) fn collect_address_taken_locals(statement: &CStatement, names: &mut BTreeSet<String>) {
     match statement {
-        CStatement::Declare { .. } => {}
+        CStatement::Skip | CStatement::Declare { .. } => {}
         CStatement::Assign { expression, .. } => {
             collect_address_taken_in_expression(expression, names)
         }

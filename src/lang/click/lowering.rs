@@ -3313,7 +3313,8 @@ pub(super) fn collect_c0_loop_modified_locals(
     names: &mut BTreeSet<String>,
 ) {
     match statement {
-        syntax::C0Statement::Declare { .. }
+        syntax::C0Statement::Skip
+        | syntax::C0Statement::Declare { .. }
         | syntax::C0Statement::Return(_)
         | syntax::C0Statement::Store { .. } => {}
         syntax::C0Statement::Assign { name, .. } => {

@@ -68,6 +68,7 @@ impl CAbi {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum C0Statement {
+    Skip,
     Declare {
         c_type: C0Type,
         name: String,
@@ -254,6 +255,7 @@ impl C0Type {
 impl C0Statement {
     pub fn to_kernel_statement(&self) -> crate::kernel::CStatement {
         match self {
+            Self::Skip => crate::kernel::c_skip(),
             Self::Declare { c_type, name } => {
                 crate::kernel::c_declare(name.clone(), c_type.to_kernel_type())
             }
@@ -789,9 +791,7 @@ impl Parser {
 
         let mut statements = statements.into_iter();
         let Some(mut statement) = statements.next() else {
-            return Err(C0SyntaxError::new(
-                "expected at least one statement in block",
-            ));
+            return Ok(C0Statement::Skip);
         };
         for next in statements {
             statement = C0Statement::Seq(Box::new(statement), Box::new(next));
@@ -802,6 +802,10 @@ impl Parser {
 
     fn parse_statement(&mut self) -> Result<C0Statement, C0SyntaxError> {
         match self.peek() {
+            Some(Token::Semicolon) => {
+                self.position += 1;
+                Ok(C0Statement::Skip)
+            }
             Some(Token::Star) => {
                 self.position += 1;
                 let pointer = self.parse_unary()?;
@@ -890,8 +894,12 @@ impl Parser {
                     let condition = self.parse_expression()?;
                     self.expect(Token::RParen)?;
                     let then_branch = Box::new(self.parse_block_statement()?);
-                    self.expect_ident_spelling("else")?;
-                    let else_branch = Box::new(self.parse_block_statement()?);
+                    let else_branch = if self.peek_ident() == Some("else") {
+                        self.position += 1;
+                        Box::new(self.parse_block_statement()?)
+                    } else {
+                        Box::new(C0Statement::Skip)
+                    };
                     Ok(C0Statement::If {
                         condition,
                         then_branch,

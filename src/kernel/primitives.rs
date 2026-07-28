@@ -337,6 +337,7 @@ pub enum SpecResource {
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum CStatement {
+    Skip,
     Declare {
         name: String,
         c_type: CType,

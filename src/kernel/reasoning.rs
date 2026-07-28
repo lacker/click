@@ -1731,7 +1731,7 @@ pub(super) fn collect_c_statement_bitvector_variables(
     variables: &mut BTreeSet<Variable>,
 ) {
     match statement {
-        CStatement::Declare { .. } => {}
+        CStatement::Skip | CStatement::Declare { .. } => {}
         CStatement::Assign { expression, .. }
         | CStatement::Return(expression)
         | CStatement::Assert {
@@ -2751,6 +2751,7 @@ pub(super) fn substitute_bitvector_variable_in_c_statement(
     to: &Bitvector32Term,
 ) -> CStatement {
     match statement {
+        CStatement::Skip => CStatement::Skip,
         CStatement::Declare { name, c_type } => CStatement::Declare {
             name: name.clone(),
             c_type: *c_type,

@@ -4398,7 +4398,8 @@ fn statement_contains_call_assign(statement: &CStatement) -> bool {
                 || statement_contains_call_assign(else_branch)
         }
         CStatement::While { body, .. } => statement_contains_call_assign(body),
-        CStatement::Declare { .. }
+        CStatement::Skip
+        | CStatement::Declare { .. }
         | CStatement::Assign { .. }
         | CStatement::Assert { .. }
         | CStatement::Return(_)
@@ -5207,7 +5208,8 @@ fn kernel_statement_contains_loop(statement: &CStatement) -> bool {
             kernel_statement_contains_loop(then_branch)
                 || kernel_statement_contains_loop(else_branch)
         }
-        CStatement::Declare { .. }
+        CStatement::Skip
+        | CStatement::Declare { .. }
         | CStatement::Assign { .. }
         | CStatement::CallAssign { .. }
         | CStatement::Return(_)
@@ -12697,7 +12699,7 @@ fn expression_reads_memory(expression: &CExpression) -> bool {
 
 fn statement_uses_ambient_memory_context(statement: &CStatement) -> bool {
     match statement {
-        CStatement::Declare { .. } => false,
+        CStatement::Skip | CStatement::Declare { .. } => false,
         CStatement::Assign { expression, .. }
         | CStatement::Assert {
             condition: expression,

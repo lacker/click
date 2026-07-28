@@ -2461,6 +2461,7 @@ fn proof_statement_prefix_end(
 fn c0_statement_calls(statement: &syntax::C0Statement) -> Vec<BTreeSet<String>> {
     fn visit(statement: &syntax::C0Statement, calls: &mut Vec<BTreeSet<String>>) {
         match statement {
+            syntax::C0Statement::Skip => {}
             syntax::C0Statement::Seq(first, second) => {
                 visit(first, calls);
                 visit(second, calls);

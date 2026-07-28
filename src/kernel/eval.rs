@@ -2638,6 +2638,11 @@ pub(super) fn execute_c_statement_paths(
 ) -> ExecutionResult<Vec<CStatementExecutionPath>> {
     budget.consume_statement_step()?;
     let paths = match statement {
+        CStatement::Skip => vec![CStatementExecutionPath {
+            outcome: CStatementOutcome::Normal(state.clone()),
+            facts: Vec::new(),
+            obligations: Vec::new(),
+        }],
         CStatement::Declare { name, c_type } => vec![CStatementExecutionPath {
             outcome: CStatementOutcome::Normal(declare_local(state, name, *c_type)),
             facts: Vec::new(),
