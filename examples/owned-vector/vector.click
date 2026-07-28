@@ -539,8 +539,11 @@ int32 vector_pipeline(
         fact load_int32(owner) == 1;
     }
     execute_step();
-    have observed == at(statement(6).entry, (owner->data)[0]) by {
-        simp();
+    have observed == at(statement(6).entry, load_int32_pointer((owner + 2))[0]) by {
+        derive(observed == at(statement(6).entry, load_int32_pointer((owner + 2))[0])) using {
+            fact observed == *(owner + 1);
+            fact load_int32_pointer((owner + 2)) == (owner + 1);
+        }
     }
     have at(statement(6).entry, (owner->data)[0]) == replacement by {
         simp();
