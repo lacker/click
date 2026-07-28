@@ -4129,12 +4129,23 @@ impl Assumptions {
             && byte_width == 4
             && let Some(index) = base.element_index_from_base(range_base)
             && let Some(element_count) = int32_element_count_from_bytes(range_bytes)
-            && let Some(index_constant) = signed_bitvector_constant(&index)
         {
-            if let Some(element_count) = signed_bitvector_constant(&element_count) {
-                return 0 <= index_constant && index_constant < element_count;
+            if let Some(index_constant) = signed_bitvector_constant(&index) {
+                if let Some(element_count) = signed_bitvector_constant(&element_count) {
+                    return 0 <= index_constant && index_constant < element_count;
+                }
+                if 0 <= index_constant && self.has_exact_order_path(&index, &element_count, true) {
+                    return true;
+                }
             }
-            if 0 <= index_constant && self.has_exact_order_path(&index, &element_count, true) {
+            if let (
+                Bitvector32Term::Subtract(target_index, range_start),
+                Bitvector32Term::Subtract(range_end, count_start),
+            ) = (&index, &element_count)
+                && range_start == count_start
+                && self.has_exact_order_path(range_start, target_index, false)
+                && self.has_exact_order_path(target_index, range_end, true)
+            {
                 return true;
             }
         }

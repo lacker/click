@@ -1523,6 +1523,40 @@ fn memory_derivation_records_the_selected_range_candidate() {
 }
 
 #[test]
+fn loadable_symbolic_subrange_proves_an_indexed_cell() {
+    let memory = CMemory::new();
+    let data = Pointer {
+        block: "data".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let split = Bitvector32Term::Variable(Variable(87));
+    let index = Bitvector32Term::Variable(Variable(88));
+    let len = Bitvector32Term::Variable(Variable(89));
+    let range = Proposition::CMemoryLoadable {
+        memory: memory.clone(),
+        base: data.offset_by_int32_elements(split.clone()),
+        bytes: Bitvector32Term::multiply(
+            Bitvector32Term::subtract(len.clone(), split.clone()),
+            Bitvector32Term::Constant(4),
+        ),
+    };
+    let target = Proposition::CMemoryLoadable {
+        memory,
+        base: data.offset_by_int32_elements(index.clone()),
+        bytes: Bitvector32Term::Constant(4),
+    };
+    let assumptions = Assumptions::new()
+        .assume_proposition(range)
+        .assume_condition(ConditionTerm::signed_less_equal(split, index.clone()), true)
+        .assume_condition(ConditionTerm::signed_less_than(index, len), true);
+
+    assert!(
+        assumptions.derive_atomic_proposition(&target).is_some(),
+        "split <= index < len should select a cell from [split..len]"
+    );
+}
+
+#[test]
 fn proposition_derivation_replay_requires_its_context() {
     let x = Bitvector32Term::Variable(Variable(86));
     let proposition = Proposition::ConditionIs(
