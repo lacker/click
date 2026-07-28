@@ -3716,6 +3716,7 @@ fn quantified_binder_equivalent(left: &Proposition, right: &Proposition) -> bool
 
 fn pure_fact_is_replay_available(required: &Proposition, available: &[Proposition]) -> bool {
     available.contains(required)
+        || materialization_equivalent_available_fact(required, available).is_some()
         || available
             .iter()
             .any(|fact| quantified_binder_equivalent(required, fact))
@@ -10093,27 +10094,6 @@ fn finish_ordered_proof_replay(
                                         };
                                         match surface_tactic {
                                             Ok(certificate) => {
-                                                if replay.grouped_contract
-                                                    && let (
-                                                        Ensure::Proposition(surface_goal),
-                                                        CFunctionOutcome::Return { .. },
-                                                    ) = (ensure_clause.ensure(), &outcome)
-                                                    && let Ok(goal) = lower_ensure_proposition_goal(
-                                                        &path_requirements,
-                                                        surface_goal,
-                                                        parsed_function.parameters(),
-                                                        arguments,
-                                                        pre_state,
-                                                        &outcome,
-                                                        predicate_environment,
-                                                        click_function_environment,
-                                                        &replay.program_point_states,
-                                                        &unfolded_predicates,
-                                                    )
-                                                    && !surface_certificate_facts.contains(&goal)
-                                                {
-                                                    surface_certificate_facts.push(goal);
-                                                }
                                                 if capturing_this_tactic && !replay.grouped_contract
                                                 {
                                                     captured_transitions[claim_index] =
@@ -11274,12 +11254,6 @@ fn lower_outcome_simp_tactic(
     if matches!(normalize_proposition(goal), SimpProposition::True) {
         return Ok(ProofTactic::Normalize);
     }
-    if available.iter().any(|fact| fact == goal)
-        || materialization_equivalent_available_fact(goal, available).is_some()
-        || quantified_replay_equivalent_available_fact(goal, available).is_some()
-    {
-        return Ok(ProofTactic::Assumption);
-    }
 
     let check = |surface: &ClickProposition| {
         lower_outcome_proposition_with_program_points(
@@ -11295,6 +11269,11 @@ fn lower_outcome_simp_tactic(
             &replay.program_point_states,
         )
     };
+    if check(surface_goal)
+        .is_ok_and(|surface_goal| pure_fact_is_replay_available(&surface_goal, available))
+    {
+        return Ok(ProofTactic::Assumption);
+    }
     let normalized_goal = normalize_direct_atomic_memory_loads(goal);
     let mut atomic_available = Vec::new();
     for fact in available {

@@ -7460,14 +7460,19 @@ fn observed_cursor_facts_produce_replayable_surface_certificates() {
 
     "#;
 
-    verify_c0_sources(
-        click_source,
-        &[
-            ("input_cursor_peek.c", c_source),
-            ("input_cursor_take.c", take_c_source),
-        ],
-    )
-    .expect("the smart step's exact surface premises should select one read transition");
+    let sources = [
+        ("input_cursor_peek.c", c_source),
+        ("input_cursor_take.c", take_c_source),
+    ];
+    let final_simp = click_source
+        .rfind("simp();")
+        .expect("final simp should exist");
+    let position = expansion::position_at_offset(click_source, final_simp);
+    let expanded =
+        expand_c0_tactic_source_at(click_source, &sources, position.line, position.column)
+            .expect("the grouped simp should emit a non-circular surface certificate");
+    verify_c0_sources(&expanded, &sources)
+        .expect("the grouped simp surface certificate should replay from fresh source");
 }
 
 #[test]
