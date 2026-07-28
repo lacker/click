@@ -348,24 +348,26 @@ replays; a certificate failure is a proof failure rather than a non-fatal
 expansion blocker. `vector_push_first` verifies in about 6.4 seconds and all
 413 library tests pass.
 
-The complete owned-vector audit is currently blocked by baseline performance,
-not a known correctness failure: session initialization exceeds five minutes.
-The former 1.35-second simple `frame` at line 397 was running a general `simp`
-planner over every proposition postcondition after checking structural
-effects. `frame` now certifies only structural effects and takes about 3.8 ms;
-the following certificate-producing smart `simp` owns proposition closure.
-A fresh two-minute profile reports no slow simple tactics, a 5.78-second smart
-`simp` at line 398, a 2.08-second smart `execute_step` at line 387, a
-7.91-second smart `execute_until` at line 459, and a timeout while line 478's
-smart `execute_until` is active.
+Owned-vector baseline performance is no longer blocking the audit. The
+line-398 `vector_push_first` grouped `simp` is replaced by its explicit
+historical-loadability transport certificate. `vector_pipeline`'s setup
+`execute_until` is expanded into a checked `step using`, and its formerly
+unbounded final transition is split at statement 6. That call now replays from
+the exact current length facts, followed by the fast remaining step. The
+29.8-second result-snapshot `have` is replaced by a two-premise `derive`.
 
-The line 398 `vector_push_first` grouped `simp` now expands successfully with a
-180-second watchdog (about 51 seconds in the focused release run). Its
-certificate names the historical loadability source with
-`at(function.entry, loadable(...))` and transports that exact proposition into
-the current memory. A focused `owned-vector` baseline verification still
-exceeds five minutes, so the retained-session audit remains performance
-blocked rather than correctness blocked.
+This sweep also fixed three tool/engine bugs exposed by those certificates.
+Post-execution `have` and `transport` now replay in source order per outcome,
+and smart transport independently replays its emitted `TacticCertificate`.
+Expansion dependency discovery includes the endpoint statement executed by
+`execute_until`, so an endpoint call cannot lose its verified callee rule.
+Finally, `step using` no longer injects every historical certified effect into
+its explicit context before resource normalization; those facts remain at
+their original snapshots and are restored after the selected transition.
+
+A fresh release profile verifies all of owned-vector in about 15 seconds and
+reports no smart tactic over 2 seconds, no simple tactic over 500 ms, and no
+slow control container. All 419 library tests pass.
 
 The motivating `owned_string_set` successor proof at line 183 is fixed:
 planning fell from 63.9 seconds to about 67 ms, and expansion emits a
@@ -375,10 +377,10 @@ one-premise arithmetic certificate.
 
 Work one frontier at a time and commit each logical change independently.
 
-1. Expand the known-working `vector_pipeline` line 459 and
-   `vector_push_first` line 387 certificates one at a time, reprofile, and
-   inspect the line 478 frontier.
-2. Continue the same cycle for
+1. Run the retained-session `click-audit` on owned-vector now that its baseline
+   initializes regularly; fix each correctness failure before continuing past
+   it.
+2. Continue the profiling/expansion cycle for
    owned-string line 485, owned-string line 471, and input-cursor line 125.
 3. Run the full `click-audit` corpus audit and fix each concrete failure before
    claiming expansion is complete. The audit command now inventories every
@@ -389,8 +391,7 @@ Work one frontier at a time and commit each logical change independently.
    previously unvisited sites across owned-string, owned-segmented-buffer,
    owned-split-buffer, and input-cursor; audit those before calling the
    projects fully green. Owned-vector has 76 sites and remains the final
-   project frontier, after its baseline performance issue is reduced enough
-   for the retained audit session to initialize.
+   project frontier, but its retained audit session can now initialize.
 
 Do not optimize by adding proposition-specific smart fast paths, broad ambient
 premises, generic transport fallbacks, or internal-only certificate tactics.
