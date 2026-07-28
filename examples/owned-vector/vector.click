@@ -395,7 +395,31 @@ int32 vector_push_first(struct vector* owner, int32 value) {
     fold(nonempty_vector(owner));
     execute_step();
     frame();
-    simp();
+    have result == 1 by {
+        assumption();
+    }
+    have load_int32(owner) == 1 by {
+        assumption();
+    }
+    have at(function.entry, loadable((load_int32_pointer((owner + 2)) + 0)[0..1])) by {
+        derive(at(function.entry, loadable((load_int32_pointer((owner + 2)) + 0)[0..1]))) using {
+            fact load_int32(owner) <= load_int32((owner + 1));
+            fact load_int32(owner) == 1;
+            fact at(statement(0).entry, loadable(load_int32_pointer((owner + 2))[0..load_int32((owner + 1))]));
+        }
+    }
+    transport(at(function.entry, loadable((load_int32_pointer((owner + 2)) + 0)[0..1])), loadable((load_int32_pointer((owner + 2)) + 0)[0..1])) using {
+        fact at(function.entry, loadable((load_int32_pointer((owner + 2)) + 0)[0..1]));
+    }
+    have load_int32_pointer((owner + 2))[0] == value by {
+        derive(load_int32_pointer((owner + 2))[0] == value) using {
+            fact at(statement(8).exit, index) == 0;
+        }
+    }
+    assumption();
+    assumption();
+    assumption();
+    assumption();
 }
 
 int32 vector_clear(struct vector* owner) {
