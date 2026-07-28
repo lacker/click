@@ -2373,7 +2373,9 @@ fn proof_statement_prefix_end(
             ProofTactic::Step | ProofTactic::StepUsing(_) | ProofTactic::ExecuteStep => {
                 cursor = cursor.saturating_add(1)
             }
-            ProofTactic::ExecuteUntil(CodeRegionRef::Statement(target)) => cursor = *target,
+            ProofTactic::ExecuteUntil(CodeRegionRef::Statement(target)) => {
+                cursor = target.saturating_add(1)
+            }
             ProofTactic::ExecuteRest | ProofTactic::BoundedExecute => cursor = statement_count,
             ProofTactic::ExecuteThenStep
             | ProofTactic::ExecuteElseStep

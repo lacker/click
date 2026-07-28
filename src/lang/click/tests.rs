@@ -7660,6 +7660,49 @@ int32 caller(int32 x) {
 }
 
 #[test]
+fn tactic_expansion_includes_a_call_at_the_execute_until_endpoint() {
+    let callee_c = r#"
+int32 callee(int32 x) {
+    return x;
+}
+"#;
+    let caller_c = r#"
+int32 caller(int32 x) {
+    int32 result;
+    result = callee(x);
+    return result;
+}
+"#;
+    let click_source = r#"
+verifying "callee.c";
+verifying "caller.c";
+
+int32 callee(int32 x) {
+    ensures result == x;
+} by {
+    execute_rest();
+    simp();
+}
+
+int32 caller(int32 x) {
+    ensures result == x;
+} by {
+    execute_until(statement(1));
+    execute_rest();
+    simp();
+}
+"#;
+    let sources = [("callee.c", callee_c), ("caller.c", caller_c)];
+    let selected = click_source.find("execute_until").unwrap();
+    let position = expansion::position_at_offset(click_source, selected);
+
+    let expanded =
+        expand_c0_tactic_source_at(click_source, &sources, position.line, position.column)
+            .expect("the endpoint call dependency should be verified before expansion");
+    assert!(!expanded.contains("execute_until(statement(1));"));
+}
+
+#[test]
 fn verification_session_reuses_certified_dependencies_and_rechecks_target() {
     let callee_c = r#"
 int32 callee(int32 x) {
