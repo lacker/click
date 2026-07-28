@@ -74,6 +74,76 @@ fn c0_syntax_reports_unterminated_block_comments() {
 }
 
 #[test]
+fn c0_syntax_lowers_scalar_declaration_initializers_in_source_order() {
+    let function = syntax::parse_function(
+        r#"
+        int32 initialized() {
+            int32 value = 7;
+            return value;
+        }
+        "#,
+    )
+    .expect("a scalar declaration initializer should parse");
+
+    assert!(matches!(
+        function.body(),
+        syntax::C0Statement::Seq(first, _)
+            if matches!(
+                first.as_ref(),
+                syntax::C0Statement::Seq(declaration, assignment)
+                    if matches!(
+                        declaration.as_ref(),
+                        syntax::C0Statement::Declare {
+                            c_type: syntax::C0Type::Int32,
+                            name
+                        } if name == "value"
+                    )
+                    && matches!(
+                        assignment.as_ref(),
+                        syntax::C0Statement::Assign {
+                            name,
+                            expression: syntax::C0Expression::Int32Literal(7)
+                        } if name == "value"
+                    )
+            )
+    ));
+}
+
+#[test]
+fn c0_syntax_accepts_declaration_initializer_in_for_loop() {
+    syntax::parse_function(
+        r#"
+        int32 count() {
+            int32 total = 0;
+            for (int32 i = 0; i < 3; i++) {
+                total += 1;
+            }
+            return total;
+        }
+        "#,
+    )
+    .expect("a scalar for-loop declaration initializer should parse");
+}
+
+#[test]
+fn c0_syntax_names_unsupported_local_array_initializers() {
+    let error = syntax::parse_function(
+        r#"
+        int32 unsupported() {
+            int32 values[2] = 0;
+            return 0;
+        }
+        "#,
+    )
+    .expect_err("array initialization is not in the C0 subset");
+
+    assert_eq!(
+        error.message(),
+        "local array initializers are not supported"
+    );
+}
+
+#[test]
 fn c0_syntax_targets_kernel_max_body() {
     let function = syntax::parse_function(
         r#"

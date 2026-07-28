@@ -856,8 +856,26 @@ impl Parser {
                         parsed_type.struct_name.expect("struct_name checked above"),
                     );
                 }
+                let declaration = C0Statement::Declare {
+                    c_type,
+                    name: name.clone(),
+                };
+                if self.peek() == Some(&Token::Equal) {
+                    if matches!(c_type, C0Type::Int32Array(_) | C0Type::UInt8Array(_)) {
+                        return Err(C0SyntaxError::new(
+                            "local array initializers are not supported",
+                        ));
+                    }
+                    self.position += 1;
+                    let expression = self.parse_expression()?;
+                    self.expect(Token::Semicolon)?;
+                    return Ok(C0Statement::Seq(
+                        Box::new(declaration),
+                        Box::new(C0Statement::Assign { name, expression }),
+                    ));
+                }
                 self.expect(Token::Semicolon)?;
-                Ok(C0Statement::Declare { c_type, name })
+                Ok(declaration)
             }
             Some(Token::Ident(_)) => match self.peek_ident() {
                 Some("return") => {
@@ -920,16 +938,29 @@ impl Parser {
     }
 
     fn parse_for_initializer(&mut self) -> Result<C0Statement, C0SyntaxError> {
+        if matches!(self.peek_ident(), Some("int32" | "uint8")) {
+            let parsed_type = self.parse_type()?;
+            let name = self.expect_ident("for-loop local name")?;
+            if self.peek() != Some(&Token::Equal) {
+                return Err(C0SyntaxError::new(
+                    "for-loop declarations require an initializer",
+                ));
+            }
+            self.position += 1;
+            let expression = self.parse_expression()?;
+            return Ok(C0Statement::Seq(
+                Box::new(C0Statement::Declare {
+                    c_type: parsed_type.c_type,
+                    name: name.clone(),
+                }),
+                Box::new(C0Statement::Assign { name, expression }),
+            ));
+        }
         let Some(Token::Ident(name)) = self.next() else {
             return Err(C0SyntaxError::new(
                 "expected assignment target in for-loop initializer".to_string(),
             ));
         };
-        if name == "int32" || name == "uint8" {
-            return Err(C0SyntaxError::new(
-                "declarations are not supported in for-loop initializer",
-            ));
-        }
         self.expect(Token::Equal)?;
         let expression = self.parse_expression()?;
         Ok(C0Statement::Assign { name, expression })
@@ -1429,9 +1460,7 @@ fn tokenize(source: &str) -> Result<Vec<Token>, C0SyntaxError> {
 
         if ch == '/' && chars.get(index + 1) == Some(&'*') {
             index += 2;
-            while index + 1 < chars.len()
-                && !(chars[index] == '*' && chars[index + 1] == '/')
-            {
+            while index + 1 < chars.len() && !(chars[index] == '*' && chars[index + 1] == '/') {
                 index += 1;
             }
             if index + 1 == chars.len() {
