@@ -6022,6 +6022,40 @@ fn function_execution_theorem_retains_non_assumable_verification_conditions() {
 }
 
 #[test]
+fn symbolic_path_can_only_certify_its_exact_function_specification() {
+    let function = c_function(
+        CType::Int32,
+        "exact_path",
+        Vec::new(),
+        c_return(c_int32_literal(0)),
+    );
+    let execution = prove_symbolic_c_function_execution_paths(
+        CState::new(),
+        function.clone(),
+        Vec::new(),
+        Assumptions::new(),
+    );
+    let false_specification = c_function_specification(
+        CState::new(),
+        Vec::new(),
+        Vec::new(),
+        CFunctionOutcome::Return {
+            value: int32(1),
+            state: CState::new(),
+        },
+    );
+
+    assert!(
+        prove_c_function_satisfies_specification_from_symbolic_path(
+            function,
+            false_specification,
+            &execution.paths()[0],
+        )
+        .is_none()
+    );
+}
+
+#[test]
 fn verified_function_rule_applies_contract_without_executing_body() {
     let helper = c_function(
         CType::Int32,

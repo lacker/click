@@ -2253,23 +2253,43 @@ pub fn certify_c_function_execution_paths_from_outcomes(
 pub fn prove_c_function_satisfies_specification_from_symbolic_path(
     function: CFunction,
     specification: CFunctionSpecification,
-    assumptions: Assumptions,
-    facts: &[ExecutionPureFact],
-    obligations: &[ProofObligation],
-) -> Theorem {
+    path: &SymbolicCExecutionPath,
+) -> Option<Theorem> {
+    let mut proved = path.theorem().proposition();
+    let mut premises = Vec::new();
+    while let Proposition::Implies(premise, body) = proved {
+        premises.push(premise.as_ref().clone());
+        proved = body;
+    }
+    let Proposition::CFunctionExecutes {
+        state,
+        function: proved_function,
+        arguments,
+        outcome,
+    } = proved
+    else {
+        return None;
+    };
+    if state != specification.state()
+        || proved_function != &function
+        || arguments != specification.arguments()
+        || outcome != specification.outcome()
+    {
+        return None;
+    }
+
     let requires = specification.requires().to_vec();
-    let proposition = requires.iter().rev().fold(
+    let proposition = requires.into_iter().rev().fold(
         Proposition::CFunctionSatisfiesSpecification {
             function,
             specification,
         },
-        |body, requirement| Proposition::Implies(Box::new(requirement.clone()), Box::new(body)),
+        |body, requirement| Proposition::Implies(Box::new(requirement), Box::new(body)),
     );
-    Theorem::new(wrap_proof_facts(
-        proposition,
-        &assumptions,
-        facts,
-        obligations,
+    Some(Theorem::new(
+        premises.into_iter().rev().fold(proposition, |body, premise| {
+            Proposition::Implies(Box::new(premise), Box::new(body))
+        }),
     ))
 }
 

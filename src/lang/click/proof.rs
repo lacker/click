@@ -10326,10 +10326,13 @@ fn finish_ordered_proof_replay(
             let theorem = prove_c_function_satisfies_specification_from_symbolic_path(
                 function.clone(),
                 specification.clone(),
-                Assumptions::new(),
-                path.facts(),
-                path.obligations(),
-            );
+                path,
+            )
+            .ok_or_else(|| {
+                ClickError::new(format!(
+                    "execution proof for `{proof_label}` path {path_index} does not certify its exact function specification"
+                ))
+            })?;
             for claim in claims {
                 verified.push(VerifiedCTheorem {
                     source_path: source_path.to_string(),
