@@ -1129,6 +1129,83 @@ fn c0_syntax_local_array_decays_to_pointer_argument() {
 }
 
 #[test]
+fn c0_struct_layout_uses_lp64_alignment_and_tail_padding() {
+    let function = syntax::parse_function(
+        r#"
+        struct mixed {
+            int32 tag;
+            int32* data;
+            int32 length;
+        };
+
+        int32 read_tag(struct mixed* value) {
+            return value->tag;
+        }
+        "#,
+    )
+    .expect("LP64 struct should parse");
+    let layout = function.structs().get("mixed").expect("mixed layout");
+
+    assert_eq!(layout.field("tag").unwrap().offset_bytes(), 0);
+    assert_eq!(layout.field("data").unwrap().offset_bytes(), 8);
+    assert_eq!(layout.field("length").unwrap().offset_bytes(), 16);
+    assert_eq!(layout.alignment_bytes(), 8);
+    assert_eq!(layout.size_bytes(), 24);
+}
+
+#[test]
+fn c0_lp64_layout_matches_the_host_c_abi() {
+    #[repr(C)]
+    struct HostMixed {
+        tag: i32,
+        data: *mut i32,
+        length: i32,
+    }
+
+    assert_eq!(
+        std::mem::size_of::<*mut i32>(),
+        8,
+        "this cross-check requires an LP64 host"
+    );
+    let function = syntax::parse_function(
+        r#"
+        struct mixed {
+            int32 tag;
+            int32* data;
+            int32 length;
+        };
+
+        int32 read_tag(struct mixed* value) {
+            return value->tag;
+        }
+        "#,
+    )
+    .expect("LP64 struct should parse");
+    let layout = function.structs().get("mixed").expect("mixed layout");
+
+    assert_eq!(
+        layout.field("tag").unwrap().offset_bytes() as usize,
+        std::mem::offset_of!(HostMixed, tag)
+    );
+    assert_eq!(
+        layout.field("data").unwrap().offset_bytes() as usize,
+        std::mem::offset_of!(HostMixed, data)
+    );
+    assert_eq!(
+        layout.field("length").unwrap().offset_bytes() as usize,
+        std::mem::offset_of!(HostMixed, length)
+    );
+    assert_eq!(
+        layout.size_bytes() as usize,
+        std::mem::size_of::<HostMixed>()
+    );
+    assert_eq!(
+        layout.alignment_bytes() as usize,
+        std::mem::align_of::<HostMixed>()
+    );
+}
+
+#[test]
 fn c0_syntax_rejects_assignment_to_local_array_object() {
     let function = syntax::parse_function(
         r#"

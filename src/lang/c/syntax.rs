@@ -27,6 +27,8 @@ struct ParsedType {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct C0StructLayout {
     fields: BTreeMap<String, C0StructField>,
+    size_bytes: u32,
+    alignment_bytes: u32,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -43,6 +45,25 @@ pub enum C0Type {
     UInt8Pointer,
     Int32Array(u32),
     UInt8Array(u32),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CAbi {
+    Lp64,
+}
+
+impl CAbi {
+    pub const SUPPORTED: Self = Self::Lp64;
+
+    fn size_and_alignment(self, c_type: C0Type) -> (u32, u32) {
+        match (self, c_type) {
+            (Self::Lp64, C0Type::Int32) => (4, 4),
+            (Self::Lp64, C0Type::UInt8) => (1, 1),
+            (Self::Lp64, C0Type::Int32Pointer | C0Type::UInt8Pointer) => (8, 8),
+            (Self::Lp64, C0Type::Int32Array(length)) => (length.saturating_mul(4), 4),
+            (Self::Lp64, C0Type::UInt8Array(length)) => (length, 1),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -162,6 +183,14 @@ impl C0StructLayout {
 
     pub fn field(&self, name: &str) -> Option<&C0StructField> {
         self.fields.get(name)
+    }
+
+    pub fn size_bytes(&self) -> u32 {
+        self.size_bytes
+    }
+
+    pub fn alignment_bytes(&self) -> u32 {
+        self.alignment_bytes
     }
 }
 
@@ -382,25 +411,28 @@ impl C0SyntaxError {
 }
 
 pub fn parse_function(source: &str) -> Result<C0Function, C0SyntaxError> {
-    Parser::new(source)?.parse_function()
+    parse_function_for_abi(source, CAbi::SUPPORTED)
 }
 
-fn offset_field_pointer(
-    base: C0Expression,
-    offset_bytes: u32,
-) -> Result<C0Expression, C0SyntaxError> {
+pub fn parse_function_for_abi(source: &str, abi: CAbi) -> Result<C0Function, C0SyntaxError> {
+    Parser::new(source, abi)?.parse_function()
+}
+
+fn align_up(offset: u32, alignment: u32) -> Option<u32> {
+    debug_assert!(alignment.is_power_of_two());
+    offset
+        .checked_add(alignment - 1)
+        .map(|value| value & !(alignment - 1))
+}
+
+fn offset_field_pointer(base: C0Expression, offset_bytes: u32) -> C0Expression {
     if offset_bytes == 0 {
-        return Ok(base);
+        return base;
     }
-    if !offset_bytes.is_multiple_of(4) {
-        return Err(C0SyntaxError::new(
-            "struct field offsets must be int32-aligned in this C0 slice",
-        ));
-    }
-    Ok(C0Expression::Add(
+    C0Expression::Add(
         Box::new(base),
         Box::new(C0Expression::Int32Literal(offset_bytes / 4)),
-    ))
+    )
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -466,15 +498,17 @@ struct Parser {
     position: usize,
     structs: BTreeMap<String, C0StructLayout>,
     variable_structs: BTreeMap<String, String>,
+    abi: CAbi,
 }
 
 impl Parser {
-    fn new(source: &str) -> Result<Self, C0SyntaxError> {
+    fn new(source: &str, abi: CAbi) -> Result<Self, C0SyntaxError> {
         Ok(Self {
             tokens: tokenize(source)?,
             position: 0,
             structs: BTreeMap::new(),
             variable_structs: BTreeMap::new(),
+            abi,
         })
     }
 
@@ -506,6 +540,7 @@ impl Parser {
 
             let mut fields = BTreeMap::new();
             let mut offset_bytes = 0u32;
+            let mut struct_alignment = 1u32;
             while self.peek() != Some(&Token::RBrace) {
                 if self.peek().is_none() {
                     return Err(C0SyntaxError::new(
@@ -523,6 +558,10 @@ impl Parser {
                 }
                 let field_name = self.expect_ident("struct field name")?;
                 self.expect(Token::Semicolon)?;
+                let (field_size, field_alignment) = self.abi.size_and_alignment(field_type.c_type);
+                offset_bytes = align_up(offset_bytes, field_alignment).ok_or_else(|| {
+                    C0SyntaxError::new(format!("struct `{name}` layout is too large"))
+                })?;
                 if fields
                     .insert(
                         field_name.clone(),
@@ -537,11 +576,10 @@ impl Parser {
                         "duplicate field `{field_name}` in struct `{name}`"
                     )));
                 }
-                offset_bytes = offset_bytes
-                    .checked_add(field_type.c_type.to_kernel_type().byte_width())
-                    .ok_or_else(|| {
-                        C0SyntaxError::new(format!("struct `{name}` layout is too large"))
-                    })?;
+                offset_bytes = offset_bytes.checked_add(field_size).ok_or_else(|| {
+                    C0SyntaxError::new(format!("struct `{name}` layout is too large"))
+                })?;
+                struct_alignment = struct_alignment.max(field_alignment);
             }
 
             self.expect(Token::RBrace)?;
@@ -552,9 +590,19 @@ impl Parser {
                     "struct declarations must contain at least one field",
                 ));
             }
+            let size_bytes = align_up(offset_bytes, struct_alignment).ok_or_else(|| {
+                C0SyntaxError::new(format!("struct `{name}` layout is too large"))
+            })?;
             if self
                 .structs
-                .insert(name.clone(), C0StructLayout { fields })
+                .insert(
+                    name.clone(),
+                    C0StructLayout {
+                        fields,
+                        size_bytes,
+                        alignment_bytes: struct_alignment,
+                    },
+                )
                 .is_some()
             {
                 return Err(C0SyntaxError::new(format!(
@@ -1242,7 +1290,7 @@ impl Parser {
             ))
         })?;
         Ok((
-            offset_field_pointer(base.clone(), field.offset_bytes)?,
+            offset_field_pointer(base.clone(), field.offset_bytes),
             field.c_type,
         ))
     }
