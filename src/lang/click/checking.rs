@@ -6126,6 +6126,19 @@ pub(super) fn evaluate_c_contract_expression(
             .get(name)
             .cloned()
             .ok_or_else(|| format!("unknown contract variable `{name}`")),
+        CExpression::PointerOffsetBytes { pointer, bytes } => {
+            let pointer = evaluate_c_contract_expression(
+                parameter_values,
+                state,
+                result,
+                assumptions,
+                pointer,
+            )?;
+            let CValue::Pointer(pointer) = pointer else {
+                return Err("byte-offset base is not a pointer".to_string());
+            };
+            Ok(CValue::Pointer(pointer.offset_by_bytes(*bytes)))
+        }
         CExpression::Add(left, right) => {
             let left =
                 evaluate_c_contract_expression(parameter_values, state, result, assumptions, left)?;

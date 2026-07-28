@@ -103,6 +103,31 @@ Stores and function returns use checked `int32`-to-`uint8` narrowing; the
 coercion adds proof obligations for `0 <= value <= 255` unless the current path
 already proves them.
 
+## C ABI And Memory Layout
+
+The C0 importer models one explicit ABI: LP64. In that ABI, `int32` has size
+and alignment 4, `uint8` has size and alignment 1, and every supported pointer
+has size and alignment 8. Struct fields are aligned individually and the
+struct size includes the tail padding required by its maximum field alignment.
+For example, `{ int32 a; int32* p; }` places `a` at byte offset 0 and `p` at
+byte offset 8, and has size 16.
+
+Field lowering retains these byte offsets as `CExpression::PointerOffsetBytes`;
+it must not encode a struct offset by pretending that a struct pointer is an
+`int32*`. Tests compare mixed scalar/pointer layouts against Rust `repr(C)` on
+the supported LP64 host ABI.
+
+This is not a target-independent C model. Packed structs, unions, bitfields,
+non-LP64 targets, and field types outside the documented C0 subset are not
+silently approximated; they must remain unsupported until their ABI rules are
+represented explicitly.
+
+Untyped pointer operations likewise do not infer an `int32` pointee. An
+untyped load, index, or pointer addition whose pointee type cannot be recovered
+produces `CRuntimeError::IndeterminatePointeeType`. Importers should normally
+emit typed loads/stores and preserve enough pointer-type information to avoid
+that model error.
+
 ## Symbolic Execution
 
 The symbolic executor produces execution paths. Each path includes:

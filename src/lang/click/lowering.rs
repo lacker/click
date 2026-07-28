@@ -1089,6 +1089,13 @@ impl AnnotationLowerer<'_> {
                     name.clone(),
                 ))),
             },
+            CExpression::PointerOffsetBytes { pointer, bytes } => {
+                Ok(SpecExpression::PointerOffset {
+                    pointer: Box::new(self.lower_c_fragment_to_spec(pointer, environment)?),
+                    elements: Box::new(SpecExpression::Value(int32(*bytes))),
+                    byte_width: 1,
+                })
+            }
             CExpression::Add(left, right) => Ok(SpecExpression::Add(
                 Box::new(self.lower_c_fragment_to_spec(left, environment)?),
                 Box::new(self.lower_c_fragment_to_spec(right, environment)?),
@@ -4937,6 +4944,15 @@ impl KernelPropositionLowerer {
                     &Assumptions::new(),
                 )
                 .map_err(ClickError::new)
+            }
+            CExpression::PointerOffsetBytes { pointer, bytes } => {
+                let pointer = self.lower_requirement_c_expression(pointer)?;
+                let CValue::Pointer(pointer) = pointer else {
+                    return Err(ClickError::new(
+                        "byte-offset expression base is not a pointer",
+                    ));
+                };
+                Ok(CValue::Pointer(pointer.offset_by_bytes(*bytes)))
             }
             _ => Err(ClickError::new(format!(
                 "unsupported expression in `requires` proposition: `{expression:?}`"

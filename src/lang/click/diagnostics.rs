@@ -228,6 +228,9 @@ pub(super) fn describe_runtime_error(
             format!("unknown function `{name}`")
         }
         crate::kernel::CRuntimeError::TypeMismatch => "type mismatch".to_string(),
+        crate::kernel::CRuntimeError::IndeterminatePointeeType => {
+            "pointer operation has no known pointee type".to_string()
+        }
         crate::kernel::CRuntimeError::WrongArity { expected, actual } => {
             format!("wrong argument count: expected {expected}, got {actual}")
         }

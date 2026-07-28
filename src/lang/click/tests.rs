@@ -1571,9 +1571,10 @@ fn simple_statement_transition_does_not_transport_facts_automatically() {
         ),
         true,
     );
-    let statement = CStatement::Store {
+    let statement = CStatement::TypedStore {
         pointer: CExpression::Value(CValue::Pointer(second)),
         value: CExpression::Value(int32(9)),
+        value_type: CType::Int32,
     };
     let mut next_opaque_call = 0;
     let mut next_verification_variable = 0;

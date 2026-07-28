@@ -2688,7 +2688,7 @@ fn logical_and_or_short_circuit_right_operand() {
         block: "missing".into(),
         offset: PointerOffsetTerm::Constant(0),
     };
-    let invalid_load = c_load(c_pointer_value(invalid_pointer));
+    let invalid_load = c_typed_load(c_pointer_value(invalid_pointer), CType::Int32);
     let state = CState::new().with_resource_context(read_context(
         Pointer {
             block: "missing".into(),
@@ -2723,6 +2723,34 @@ fn logical_and_or_short_circuit_right_operand() {
         .is_none()
     );
     assert!(prove_c_expression_evaluation(state, c_or(c_int32_literal(0), invalid_load)).is_none());
+}
+
+#[test]
+fn untyped_pointer_operations_report_indeterminate_pointee_type() {
+    let pointer = Pointer {
+        block: "array".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let pointer_value = || c_pointer_value(pointer.clone());
+    let expressions = [
+        c_load(pointer_value()),
+        c_index(pointer_value(), c_int32_literal(1)),
+        c_add(pointer_value(), c_int32_literal(1)),
+        c_add(c_int32_literal(1), pointer_value()),
+    ];
+
+    for expression in expressions {
+        let theorem = prove_c_expression_evaluation(CState::new(), expression.clone())
+            .expect("an untyped pointer operation should produce an explicit model error");
+        assert_eq!(
+            theorem.proposition(),
+            &Proposition::CExpressionEvaluates {
+                state: CState::new(),
+                expression,
+                outcome: CExpressionOutcome::RuntimeError(CRuntimeError::IndeterminatePointeeType,),
+            }
+        );
+    }
 }
 
 #[test]
@@ -2862,8 +2890,12 @@ fn store_then_load_threads_native_memory() {
     let resources = write_context(pointer.clone(), 0, 1);
     let state = CState::new().with_resource_context(resources.clone());
     let statement = c_seq(
-        c_store(c_pointer_value(pointer.clone()), c_int32_literal(9)),
-        c_return(c_load(c_pointer_value(pointer.clone()))),
+        c_typed_store(
+            c_pointer_value(pointer.clone()),
+            c_int32_literal(9),
+            CType::Int32,
+        ),
+        c_return(c_typed_load(c_pointer_value(pointer.clone()), CType::Int32)),
     );
     let final_state = CState::new()
         .with_memory(CMemory::new().store(pointer.clone(), int32(9)))
@@ -2927,8 +2959,12 @@ fn block_backed_store_then_load_needs_no_memory_obligation() {
         .with_memory(memory.clone())
         .with_resource_context(resources.clone());
     let statement = c_seq(
-        c_store(c_pointer_value(pointer.clone()), c_int32_literal(9)),
-        c_return(c_load(c_pointer_value(pointer.clone()))),
+        c_typed_store(
+            c_pointer_value(pointer.clone()),
+            c_int32_literal(9),
+            CType::Int32,
+        ),
+        c_return(c_typed_load(c_pointer_value(pointer.clone()), CType::Int32)),
     );
     let final_state = CState::new()
         .with_memory(memory.store(pointer, int32(9)))

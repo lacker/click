@@ -559,6 +559,7 @@ pub enum CRuntimeError {
     UnboundVariable(String),
     UnknownFunction(String),
     TypeMismatch,
+    IndeterminatePointeeType,
     WrongArity {
         expected: usize,
         actual: usize,
@@ -1790,7 +1791,7 @@ impl Pointer {
         self.offset_by_elements(elements, 4)
     }
 
-    pub(super) fn offset_by_bytes(&self, bytes: u32) -> Self {
+    pub(crate) fn offset_by_bytes(&self, bytes: u32) -> Self {
         Self {
             block: self.block.clone(),
             offset: PointerOffsetTerm::add(

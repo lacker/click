@@ -473,20 +473,20 @@ fn c0_syntax_targets_kernel_struct_pointer_field_roundtrip() {
     };
     let owner_data = crate::kernel::Pointer {
         block: "owner".into(),
-        offset: crate::kernel::PointerOffsetTerm::Constant(4),
+        offset: crate::kernel::PointerOffsetTerm::Constant(8),
     };
     let data = crate::kernel::Pointer {
         block: "data".into(),
         offset: crate::kernel::PointerOffsetTerm::Constant(0),
     };
     let resources = crate::kernel::ResourceContext::new().unchecked_with_facts(vec![
-        crate::kernel::CResourceFact::own_memory(memory_range(owner.clone(), 0, 3)),
+        crate::kernel::CResourceFact::own_memory(memory_range(owner.clone(), 0, 4)),
         crate::kernel::CResourceFact::own_memory(memory_range(data.clone(), 0, 1)),
     ]);
     let state = crate::kernel::CState::new()
         .with_memory(
             crate::kernel::CMemory::new()
-                .with_block("owner", 12)
+                .with_block("owner", 16)
                 .with_block("data", 4),
         )
         .with_resource_context(resources);

@@ -386,9 +386,14 @@ pub(super) fn evaluate_c_lvalue_paths(
             obligations: Vec::new(),
         }],
         CExpression::Load(pointer_expression) => {
+            let Some(value_type) = c_expression_pointee_type(state, pointer_expression) else {
+                return Ok(vec![CLValuePath {
+                    outcome: CLValueOutcome::RuntimeError(CRuntimeError::IndeterminatePointeeType),
+                    facts: Vec::new(),
+                    obligations: Vec::new(),
+                }]);
+            };
             let mut paths = Vec::new();
-            let value_type =
-                c_expression_pointee_type(state, pointer_expression).unwrap_or(CType::Int32);
             for pointer_path in
                 evaluate_c_expression_paths(state, pointer_expression, assumptions, budget)?
             {
@@ -451,8 +456,14 @@ pub(super) fn evaluate_c_lvalue_paths(
             paths
         }
         CExpression::Index(base, index) => {
+            let Some(value_type) = c_expression_pointee_type(state, base) else {
+                return Ok(vec![CLValuePath {
+                    outcome: CLValueOutcome::RuntimeError(CRuntimeError::IndeterminatePointeeType),
+                    facts: Vec::new(),
+                    obligations: Vec::new(),
+                }]);
+            };
             let mut paths = Vec::new();
-            let value_type = c_expression_pointee_type(state, base).unwrap_or(CType::Int32);
             for pointer_path in evaluate_c_add_paths(state, base, index, assumptions, budget)? {
                 paths.push(match pointer_path.outcome {
                     CExpressionOutcome::Value(CValue::Pointer(pointer)) => CLValuePath {
@@ -1192,7 +1203,15 @@ pub(super) fn apply_c_add(
             let Some(offset) = promote_c_int32_path_value(offset, &mut facts, assumptions) else {
                 return Vec::new();
             };
-            let byte_width = left_step_width.unwrap_or(4);
+            let Some(byte_width) = left_step_width else {
+                return vec![CExpressionPath {
+                    outcome: CExpressionOutcome::RuntimeError(
+                        CRuntimeError::IndeterminatePointeeType,
+                    ),
+                    facts,
+                    obligations,
+                }];
+            };
             vec![CExpressionPath {
                 outcome: CExpressionOutcome::Value(CValue::Pointer(
                     pointer.offset_by_elements(offset, byte_width),
@@ -1206,7 +1225,15 @@ pub(super) fn apply_c_add(
             let Some(offset) = promote_c_int32_path_value(offset, &mut facts, assumptions) else {
                 return Vec::new();
             };
-            let byte_width = right_step_width.unwrap_or(4);
+            let Some(byte_width) = right_step_width else {
+                return vec![CExpressionPath {
+                    outcome: CExpressionOutcome::RuntimeError(
+                        CRuntimeError::IndeterminatePointeeType,
+                    ),
+                    facts,
+                    obligations,
+                }];
+            };
             vec![CExpressionPath {
                 outcome: CExpressionOutcome::Value(CValue::Pointer(
                     pointer.offset_by_elements(offset, byte_width),

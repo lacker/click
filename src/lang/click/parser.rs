@@ -2461,6 +2461,34 @@ impl Parser {
             return Ok(ContractExpression::CBinding(name));
         }
 
+        if self.peek_ident() == Some("byte_offset") && self.peek_next() == Some(&Token::LParen) {
+            self.position += 2;
+            let pointer = self.parse_contract_expression()?;
+            let Some(pointer) = contract_expression_as_c_fragment(&pointer) else {
+                return Err(self.error("byte offset expects a current C pointer expression"));
+            };
+            self.expect(Token::Comma)?;
+            let bytes = match self.next() {
+                Some(Token::Number(bytes)) => bytes,
+                Some(token) => {
+                    return Err(self.error(format!(
+                        "byte offset expects a nonnegative byte count, got {token:?}"
+                    )));
+                }
+                None => {
+                    return Err(self
+                        .error("byte offset expects a nonnegative byte count, got end of input"));
+                }
+            };
+            self.expect(Token::RParen)?;
+            return Ok(ContractExpression::CFragment(
+                CExpression::PointerOffsetBytes {
+                    pointer: Box::new(pointer),
+                    bytes,
+                },
+            ));
+        }
+
         let typed_load = match self.peek_ident() {
             Some("load_int32") => Some(CType::Int32),
             Some("load_uint8") => Some(CType::UInt8),
