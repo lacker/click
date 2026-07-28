@@ -48,8 +48,7 @@ pub fn expand_c0_claim_source(
         find_claim_proof_edit(&tokens, &function, claim)?
     };
     let target = position_at_offset(click_source, edit.selector());
-    let verified =
-        verify_c0_sources_at(click_source, c_sources, target.line, target.column)?;
+    let verified = verify_c0_sources_at(click_source, c_sources, target.line, target.column)?;
     let theorem = select_expansion_theorem(&verified, function_name, claim)?;
     let replacement = theorem.expanded_proof_source()?;
     let span = edit.span();
@@ -270,8 +269,7 @@ pub(super) fn verification_target_at(
         let in_body = tokens[source.body_open].span.start <= wanted
             && wanted <= tokens[source.body_close].span.end;
         let in_grouped_proof = function.grouped_proof().is_some()
-            && find_grouped_proof_span(&tokens, &source)?
-                .contains(&wanted);
+            && find_grouped_proof_span(&tokens, &source)?.contains(&wanted);
         if in_body || in_grouped_proof {
             return Ok(VerificationTarget::Function(function_name.to_string()));
         }
@@ -2539,13 +2537,9 @@ int32 bad(int32 x) {
             .expect_err("the unrelated bad proof should fail complete verification");
         let selected = position_at_offset(click_source, click_source.find("ensures").unwrap());
 
-        let expanded = expand_c0_tactic_source_at(
-            click_source,
-            &sources,
-            selected.line,
-            selected.column,
-        )
-        .expect("whole-proof expansion should verify only the selected function");
+        let expanded =
+            expand_c0_tactic_source_at(click_source, &sources, selected.line, selected.column)
+                .expect("whole-proof expansion should verify only the selected function");
 
         assert!(expanded.contains("ensures result == x by {"));
         verify_c0_sources_at(&expanded, &sources, selected.line, selected.column)

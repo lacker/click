@@ -491,9 +491,8 @@ fn proof_source_printing_preserves_proposition_precedence() {
         source.contains("forall (int32 k) { x <= 0 and x < 2 implies x == 1 }"),
         "{source}"
     );
-    let proof_source = format!(
-        "int32 example(int32 x) {{ ensures result == x; }} by {{\n{source}\n}}"
-    );
+    let proof_source =
+        format!("int32 example(int32 x) {{ ensures result == x; }} by {{\n{source}\n}}");
     parser::parse(&proof_source).expect("printed quantified proof source should parse");
 
     let context_free =
@@ -3938,9 +3937,13 @@ fn source_expander_locates_statement_assertion_proofs() {
             .unwrap_or(0)
         + 1;
 
-    let expanded =
-        expand_c0_tactic_source_at(click_source, &[("statement_assert.c", c_source)], line, column)
-            .expect("the statement assertion proof should expand");
+    let expanded = expand_c0_tactic_source_at(
+        click_source,
+        &[("statement_assert.c", c_source)],
+        line,
+        column,
+    )
+    .expect("the statement assertion proof should expand");
     assert_ne!(expanded, click_source);
     verify_c0_sources(&expanded, &[("statement_assert.c", c_source)])
         .expect("the expanded statement assertion should replay");
@@ -7691,12 +7694,13 @@ int32 bad(int32 x) {
 
     verify_c0_sources(click_source, &sources)
         .expect_err("complete verification should reject the bad function");
-    let verified =
-        verify_c0_sources_at(click_source, &sources, position.line, position.column)
-            .expect("location verification should skip the unrelated bad proof");
-    assert!(verified
-        .iter()
-        .all(|theorem| theorem.function_block.signature().name() == "good"));
+    let verified = verify_c0_sources_at(click_source, &sources, position.line, position.column)
+        .expect("location verification should skip the unrelated bad proof");
+    assert!(
+        verified
+            .iter()
+            .all(|theorem| theorem.function_block.signature().name() == "good")
+    );
 }
 
 #[test]
@@ -7866,20 +7870,18 @@ int32 caller(int32 x) {
         C0VerificationSession::new(click_source, &sources).expect("baseline should verify");
     let caller_simp = click_source.rfind("simp();").unwrap();
     let position = expansion::position_at_offset(click_source, caller_simp);
-    let expanded = expand_c0_tactic_source_at(
-        click_source,
-        &sources,
-        position.line,
-        position.column,
-    )
-    .expect("caller simp should expand");
+    let expanded =
+        expand_c0_tactic_source_at(click_source, &sources, position.line, position.column)
+            .expect("caller simp should expand");
 
     let verified = session
         .verify_at(&expanded, position.line, position.column)
         .expect("session should verify the rewritten caller");
-    assert!(verified
-        .iter()
-        .all(|theorem| theorem.function_block.signature().name() == "caller"));
+    assert!(
+        verified
+            .iter()
+            .all(|theorem| theorem.function_block.signature().name() == "caller")
+    );
 
     let broken_target = expanded.replacen("assumption();", "left();", 1);
     session

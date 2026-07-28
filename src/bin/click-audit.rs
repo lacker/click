@@ -1274,8 +1274,7 @@ int32 count_to_one() {
             "{inventory:?}"
         );
         assert!(inventory.iter().any(|site| {
-            site.claim_label == "count_to_one.loop(0).initialize"
-                && site.tactic_name == "simp"
+            site.claim_label == "count_to_one.loop(0).initialize" && site.tactic_name == "simp"
         }));
         assert!(inventory.iter().any(|site| {
             site.claim_label == "count_to_one.loop(0).preserve" && site.tactic_name == "simp"

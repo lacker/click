@@ -74,11 +74,7 @@ mod tests {
     fn parses_location_from_the_right() {
         assert_eq!(
             parse_source_location("dir:with:colon/example.click:12:5"),
-            Ok((
-                PathBuf::from("dir:with:colon/example.click"),
-                12,
-                5
-            ))
+            Ok((PathBuf::from("dir:with:colon/example.click"), 12, 5))
         );
         assert!(parse_source_location("example.click:0:5").is_err());
         assert!(parse_source_location("example.click:12").is_err());

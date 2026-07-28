@@ -24,9 +24,9 @@ use crate::kernel::{
     c_loop_invariant_obligations_at_entry, c_loop_invariants_hold_at_back_edge_using,
     c_loop_invariants_hold_at_entry, c_loop_preservation_contexts,
     c_pointer_offsets_proven_equal_for_effect, c_pointer_value, c_resources_directly_match, c_seq,
-    c_verified_function_contract_claim,
-    c_verified_function_rule, c_while_with_invariant_and_effect_checks,
-    canonical_c_memory_for_pointer_load, certify_c_function_execution_paths_from_outcomes, int32,
+    c_verified_function_contract_claim, c_verified_function_rule,
+    c_while_with_invariant_and_effect_checks, canonical_c_memory_for_pointer_load,
+    certify_c_function_execution_paths_from_outcomes, int32,
     prove_c_condition_fact_direct_transport, prove_c_condition_fact_transport,
     prove_c_function_satisfies_specification_from_symbolic_path,
     prove_symbolic_c_condition_evaluation,
@@ -45,12 +45,12 @@ mod printing;
 mod proof;
 mod validation;
 use checking::*;
-use expansion::{ProofSite, VerificationTarget, verification_target_at};
 pub use expansion::{
     CProofClaim, SmartTacticSourceSite, SourcePosition, c0_smart_tactic_source_sites,
     c0_tactic_source_position, expand_c0_claim_source, expand_c0_tactic_source_at,
     verifying_source_paths,
 };
+use expansion::{ProofSite, VerificationTarget, verification_target_at};
 use lowering::*;
 use parser::ContractLetBinding;
 pub use printing::{format_proof_tactics, format_tactic_certificate};
@@ -1867,10 +1867,7 @@ fn parse_c0_click_file(
     parser::parse_with_struct_layouts(click_source, struct_layouts)
 }
 
-fn proof_unit_erased_click_file(
-    mut file: ClickFile,
-    target: &VerificationTarget,
-) -> ClickFile {
+fn proof_unit_erased_click_file(mut file: ClickFile, target: &VerificationTarget) -> ClickFile {
     if let VerificationTarget::Theorem(target_name) = target {
         for theorem in &mut file.theorem_definitions {
             if theorem.name == *target_name {
@@ -1960,8 +1957,7 @@ impl C0VerificationSession {
             ));
         }
         let rewritten_file = parse_c0_click_file(click_source, &c_sources)?;
-        let baseline_interface =
-            proof_unit_erased_click_file(self.baseline_file.clone(), &target);
+        let baseline_interface = proof_unit_erased_click_file(self.baseline_file.clone(), &target);
         let rewritten_interface = proof_unit_erased_click_file(rewritten_file, &target);
         if rewritten_interface != baseline_interface {
             return Err(ClickError::new(
