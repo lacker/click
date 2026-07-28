@@ -8,15 +8,16 @@ Click does not parse general C. See [c0-subset.md](c0-subset.md). Missing
 features include full structs, unsigned integers beyond the narrow `uint8` byte
 type, casts, globals, heap allocation, `switch`, and many operators.
 
-Struct support is partial. C0 accepts compact multi-field struct declarations
-with `int32` and pointer-valued fields, plus `p->field` loads/stores through
-struct pointers. It still has no C ABI padding/alignment model, struct values,
-nested struct values, arrays of structs, or general field-address expressions.
+Struct support is partial. C0 accepts LP64-layout multi-field struct
+declarations with `int32` and pointer-valued fields, plus chained
+`p->child->field` loads/stores through struct pointers. It retains pointee
+struct names through those chains and models field alignment and tail padding.
+It still has no struct values, embedded struct values, arrays of structs,
+unions, bitfields, packed layout, or general field-address expressions.
 Click contracts can use field places with `views` and the owned-resource verbs,
-but this is still compact-layout support, not C ABI layout. Explicit ranges
-such as `owns owner[0..3]` remain useful for broader footprints. C and Click function
-signatures check struct pointer names, but deeper expression typing still
-mostly sees erased pointer types.
+and explicit ranges such as `owns owner[0..3]` remain useful for broader
+footprints. The supported ABI is LP64; other target ABIs are rejected rather
+than approximated.
 
 ## Type Support Is Still Narrow
 
@@ -44,11 +45,12 @@ there is still no first-class Click string value and no full libc string model.
 Broader casts, additional integer widths, and the full usual arithmetic
 conversion story remain future work.
 
-The first `for` support is assignment-style sugar over `while`, and its step
-can use scalar update-statement sugar such as `i++`. Declarations in the
-initializer, omitted clauses, `continue`, and general C expression side effects
-are still unsupported. `i++` is accepted as a standalone statement, but not as a
-value-producing expression inside `j = i++`.
+The first `for` support is sugar over `while`, and its initializer may be a
+scalar assignment or scalar declaration initializer. Its step can use scalar
+update-statement sugar such as `i++`. Omitted clauses, `continue`, and general
+C expression side effects are still unsupported. `i++` is accepted as a
+standalone statement, but not as a value-producing expression inside
+`j = i++`.
 
 ## Aliasing Is Default
 

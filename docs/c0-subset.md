@@ -23,7 +23,10 @@ They are not modeled as `int32` values. The current target layout assumes
 
 Supported C0 surface includes:
 
+- ordinary `//` line comments and `/* ... */` block comments
 - integer literals and variables
+- negative integer literals and unary `-`; negating `INT_MIN` remains signed
+  overflow, while the literal `-2147483648` is representable
 - ASCII byte character literals such as `'x'`, `'\n'`, and `'\0'`
 - signed `+`, `-`, `*`, `/`, and `%`
 - `int32` shifts `<<` and `>>`
@@ -31,10 +34,11 @@ Supported C0 surface includes:
   two's-complement bitvector semantics
 - signed comparisons and equality
 - C logical `&&`, `||`, and unary `!` with short-circuit C scalar truthiness
-- assignment and sequencing
+- assignment, sequencing, empty blocks, and empty `;` statements
+- scalar declaration initializers such as `int32 i = 0;`
 - statement update sugar: `x++`, `x--`, `x += expr`, `x -= expr`, and
   `x *= expr`, and `x ^= expr`
-- `if` / `else` using C scalar truthiness
+- `if` with an optional `else`, using C scalar truthiness
 - `while`
 - assignment-style `for (init; condition; step)` loops lowered to `while`
 - `return`
@@ -43,7 +47,7 @@ Supported C0 surface includes:
 - pointer loads and stores
 - `p[i]` indexing for `int32*` and `uint8*`
 - a small struct slice: `struct name { ... };`, `struct name*` pointers, and
-  `p->field` loads/stores for `int32` and pointer fields
+  chained `p->child->field` loads/stores for `int32` and pointer fields
 - known function calls through the current function environment
 - local scalar, pointer, and fixed-size array declarations for `int32` and
   `uint8`
@@ -114,14 +118,17 @@ int32 set_first(struct owner* owner, int32 data[]) {
 
 This is intentionally not a full C struct model yet. Struct fields may be
 `int32` or pointer-typed fields such as `int32*`, `uint8*`, and `struct name*`.
-`struct name*` is accepted for parameters and local pointers, and `p->field` is
-lowered as a typed load or store at the field's compact byte offset. There is
-no C ABI padding/alignment model yet, and struct values, nested struct values,
-arrays of structs, and general field-address expressions are still unsupported.
+`struct name*` is accepted for parameters, local pointers, and fields. The
+importer retains the pointee struct name across intermediate field loads, so
+`p->child->field` remains typed. Fields use the documented LP64 ABI: each field
+is aligned, pointers occupy eight bytes, and the struct size includes tail
+padding. Struct values, embedded struct values, arrays of structs, unions,
+bitfields, packed layout, and general field-address expressions are still
+unsupported.
 
 Click contracts can use field places in resource clauses, such as
 `views owner->len` and `owns owner->data`. These lower through the same
-compact field offsets, and the access resource makes the field loadable for
+ABI field offsets, and the access resource makes the field loadable for
 symbolic execution. Explicit ranges such as `owns owner[0..3]` are still
 available when a contract needs to describe a broader footprint. Field places
 also work in `loadable(p->field)`, and `mutable_field(p->field)` remains
@@ -137,10 +144,10 @@ available as a field-sized effect helper.
 
 The first `for` slice is sugar for existing `while` semantics:
 `for (i = init; condition; step) { body }` lowers to `i = init; while
-(condition) { body; step; }`. The initializer must be a scalar assignment. The
-step may be a scalar assignment or one of the supported scalar update-statement
-forms. Declarations inside the `for` initializer, omitted clauses, and
-`continue` are not supported yet.
+(condition) { body; step; }`. The initializer may be a scalar assignment or a
+scalar declaration initializer such as `int32 i = 0`. The step may be a scalar
+assignment or one of the supported scalar update-statement forms. Omitted
+clauses and `continue` are not supported yet.
 
 Symbolic pointer-writing loops should use invariants and explicit loop effects.
 Do not expect unconstrained symbolic loops to be unrolled automatically.
@@ -159,10 +166,10 @@ These are not general C features yet:
 - function pointers
 - global variables
 - `do while`, `switch`, `break`, `continue`
-- declarations or omitted clauses inside `for` loops
+- omitted clauses inside `for` loops
 - update expressions inside larger expressions, such as `j = i++`
 - compound/update operations on non-scalar lvalues, such as `p[i]++`
-- arbitrary expressions in declarations
+- local array initializers and aggregate initializers
 
 If you need one of these, add the smallest mdtest that motivates it before
 expanding the parser or kernel.

@@ -620,8 +620,9 @@ The prelude currently provides byte-slice helpers over `uint8[]`: `byte_count`,
 functions and predicates, not built-in kernel concepts.
 
 C0 accepts a small multi-field struct slice with `int32` and pointer-valued
-fields. The C side can lower `obj->field` loads and stores at compact field
-offsets. Click contracts can use field places in resources:
+fields. The C side lowers chained `obj->child->field` loads and stores at
+LP64-aligned byte offsets while retaining intermediate struct-pointer types.
+Click contracts can use field places in resources:
 `views obj->field` and `owns obj->field`. The access resource also makes the
 field loadable for symbolic execution. Explicit ranges such as
 `owns owner[0..3]` are still available for broader footprints. A pointer
