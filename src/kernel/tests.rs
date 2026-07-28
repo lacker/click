@@ -6177,6 +6177,75 @@ fn verified_function_rule_applies_contract_without_executing_body() {
 }
 
 #[test]
+fn opaque_pointer_result_can_alias_its_argument() {
+    let argument = Pointer {
+        block: "heap".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let helper = c_function(
+        CType::Int32Pointer,
+        "opaque_identity_pointer",
+        vec![c_parameter("p", CType::Int32Pointer)],
+        c_return(c_variable("p")),
+    )
+    .with_contract(
+        Vec::new(),
+        vec![SpecProposition::Comparison {
+            left: SpecExpression::CExpression(c_variable("result")),
+            operator: CComparisonOperator::Equal,
+            right: SpecExpression::CExpression(c_variable("p")),
+        }],
+        Vec::new(),
+        vec![CFunctionContractClaim::ensure_proposition(0, 0)],
+        true,
+    );
+    let environment = CExecutionEnvironment::new()
+        .with_function(helper.clone())
+        .with_verified_function_rule(CVerifiedFunctionRule { function: helper });
+    let execution = prove_symbolic_c_execution_paths_with_environment(
+        CState::new(),
+        c_call_assign(
+            "result",
+            "opaque_identity_pointer",
+            vec![c_pointer_value(argument.clone())],
+        ),
+        Assumptions::new(),
+        environment,
+        CExecutionSemantics::APPLY_VERIFIED_RULES,
+    );
+    let path = execution.paths().first().expect("opaque call path");
+    let mut proposition = path.theorem().proposition();
+    while let Proposition::Implies(_, body) = proposition {
+        proposition = body;
+    }
+    let Proposition::CStatementExecutes {
+        outcome: CStatementOutcome::Normal(state),
+        ..
+    } = proposition
+    else {
+        panic!("opaque pointer call should return normally")
+    };
+    let Some(CValue::Pointer(result)) = state.locals().get("result") else {
+        panic!("call result should be a pointer")
+    };
+
+    assert!(result.has_symbolic_block());
+    assert!(!result.blocks_proven_distinct(&argument));
+    let assumptions = assumptions_with_propositions(
+        &Assumptions::new(),
+        &path
+            .facts()
+            .iter()
+            .map(|fact| fact.proposition().clone())
+            .collect::<Vec<_>>(),
+    );
+    assert!(assumptions.proves(&Proposition::ConditionIs(
+        ConditionTerm::pointer_equal(result.clone(), argument),
+        true,
+    )));
+}
+
+#[test]
 fn verified_immutable_calls_allocate_distinct_results() {
     let helper = c_function(
         CType::Int32,

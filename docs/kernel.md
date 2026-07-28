@@ -147,12 +147,22 @@ whether or not a matching rule is present. `CExecutionSemantics` also exposes
 `APPLY_CALL_RULES_AND_VERIFY_LOOPS` for the certificate-construction phase,
 where calls remain modular while the current loop body is verified directly.
 
+An opaque pointer return is a symbolic pointer block that may alias any
+existing block. Only a certified postcondition or resource fact can establish
+that it equals an argument or is distinct from existing storage; an opaque
+return is not treated as an allocation.
+
 ## Assumption Reasoning
 
 `Assumptions::proves` is the main deterministic proposition checker. It handles
 trivial propositions, condition facts, conjunctions, disjunction cases,
 implications, finite forall instantiation, memory access, equality facts, order
 facts, and selected memory/frame patterns.
+
+Universal introduction treats the quantified variable as a binder, not as an
+ambient free variable with the same numeric identifier. Facts containing that
+free identifier are shadowed while checking the body, and explicit derivations
+replay under the same shadowed context.
 
 When adding proof power, prefer a narrow deterministic rule with a test over a
 large heuristic. Good rules usually belong near:
