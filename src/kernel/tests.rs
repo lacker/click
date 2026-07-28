@@ -1593,6 +1593,40 @@ fn implication_derivation_context_excludes_its_local_antecedent() {
 }
 
 #[test]
+fn forall_introduction_rejects_a_variable_free_in_ambient_assumptions() {
+    let variable = Variable(186);
+    let body = Proposition::Predicate {
+        name: "holds".to_string(),
+        arguments: vec![Term::Bitvector32(Bitvector32Term::Variable(variable))],
+    };
+    let goal = forall_int32(variable, body.clone());
+    let assumptions = Assumptions::new().assume_proposition(body);
+
+    assert!(!assumptions.proves(&goal));
+    assert!(assumptions.derive_proposition(&goal).is_none());
+}
+
+#[test]
+fn forall_derivation_replay_enforces_the_eigenvariable_condition() {
+    let variable = Variable(187);
+    let value = Bitvector32Term::Variable(variable);
+    let goal = forall_int32(
+        variable,
+        Proposition::ConditionIs(ConditionTerm::equal(value.clone(), value), true),
+    );
+    let derivation = Assumptions::new()
+        .derive_proposition(&goal)
+        .expect("reflexivity should prove a universal in an empty context");
+    let contaminated = Assumptions::new().assume_proposition(Proposition::Predicate {
+        name: "ambient".to_string(),
+        arguments: vec![Term::Bitvector32(Bitvector32Term::Variable(variable))],
+    });
+
+    assert!(derivation.replay(&Assumptions::new()));
+    assert!(!derivation.replay(&contaminated));
+}
+
+#[test]
 fn finite_context_split_derivation_records_its_range_premises() {
     let variable = Variable(87);
     let value = Bitvector32Term::Variable(variable);

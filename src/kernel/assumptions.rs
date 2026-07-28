@@ -165,6 +165,26 @@ fn bitvector_terms_equal_after_exact_materialization(
     normalize(left) == normalize(right)
 }
 
+fn proposition_has_free_bitvector_variable(proposition: &Proposition, variable: Variable) -> bool {
+    match proposition {
+        Proposition::And(left, right)
+        | Proposition::Or(left, right)
+        | Proposition::Implies(left, right) => {
+            proposition_has_free_bitvector_variable(left, variable)
+                || proposition_has_free_bitvector_variable(right, variable)
+        }
+        Proposition::Not(body) => proposition_has_free_bitvector_variable(body, variable),
+        Proposition::ForAll { var, body, .. } | Proposition::Exists { var, body, .. } => {
+            *var != variable && proposition_has_free_bitvector_variable(body, variable)
+        }
+        proposition => {
+            let mut variables = BTreeSet::new();
+            collect_proposition_bitvector_variables(proposition, &mut variables);
+            variables.contains(&variable)
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum SignedConstantResolution {
     Unknown,
@@ -316,6 +336,17 @@ impl Assumptions {
             .collect::<Vec<_>>();
         facts.extend(self.prop_facts.iter().cloned());
         facts
+    }
+
+    fn has_free_bitvector_variable(&self, variable: Variable) -> bool {
+        self.condition_facts.keys().any(|condition| {
+            let mut variables = BTreeSet::new();
+            collect_condition_bitvector_variables(condition, &mut variables);
+            variables.contains(&variable)
+        }) || self
+            .prop_facts
+            .iter()
+            .any(|proposition| proposition_has_free_bitvector_variable(proposition, variable))
     }
 
     pub(super) fn includes(&self, required: &Self) -> bool {
@@ -2781,10 +2812,14 @@ impl Assumptions {
                 .assume_proposition(left.as_ref().clone())
                 .proves(right),
             Proposition::ForAll {
+                var,
                 sort: Sort::CInt32,
                 body,
                 ..
-            } => self.proves_finite_forall(proposition) || self.proves(body),
+            } => {
+                self.proves_finite_forall(proposition)
+                    || (!self.has_free_bitvector_variable(*var) && self.proves(body))
+            }
             Proposition::CMemoryLoadable {
                 memory,
                 base,
@@ -3026,10 +3061,13 @@ impl Assumptions {
                         })
                     })
             }
-            Proposition::ForAll { body, .. } => self
-                .derive_proposition_using(body, for_simp)
-                .map(|proof| PropositionDerivationRule::ForAllBody(Box::new(proof)))
-                .or_else(|| self.derive_finite_forall(proposition, for_simp)),
+            Proposition::ForAll { var, body, .. } => {
+                let body_derivation = (!self.has_free_bitvector_variable(*var))
+                    .then(|| self.derive_proposition_using(body, for_simp))
+                    .flatten()
+                    .map(|proof| PropositionDerivationRule::ForAllBody(Box::new(proof)));
+                body_derivation.or_else(|| self.derive_finite_forall(proposition, for_simp))
+            }
             _ => self
                 .atomic_derivation_premises(proposition, for_simp)
                 .map(|premises| PropositionDerivationRule::ContextualAtomic { premises, for_simp }),
@@ -5288,10 +5326,12 @@ impl PropositionDerivation {
                     && proof.replay(available)
             }
             PropositionDerivationRule::ForAllBody(proof) => {
-                let Proposition::ForAll { body, .. } = &self.conclusion else {
+                let Proposition::ForAll { var, body, .. } = &self.conclusion else {
                     return false;
                 };
-                proof.conclusion == **body && proof.replay(available)
+                !available.has_free_bitvector_variable(*var)
+                    && proof.conclusion == **body
+                    && proof.replay(available)
             }
             PropositionDerivationRule::FiniteForAll { instances } => {
                 let expected = available.finite_forall_instantiations(&self.conclusion);
