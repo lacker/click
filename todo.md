@@ -195,6 +195,35 @@ order query until Rust aborted with a stack overflow. Re-entry returns
 conservative "not decided"; it does not add a larger stack or hide the cycle
 behind a timeout.
 
+### Kernel theorem boundary
+
+The theorem-minting boundary was redesigned on 2026-07-28:
+
+- execution theorems retain all verification conditions as premises;
+- caller-replayed outcomes are theorem-free candidates;
+- path specifications must match the exact certified function, entry,
+  arguments, and outcome;
+- opaque contract evidence is bound to the complete annotated `CFunction`,
+  not merely its name, signature, or source body;
+- exact body-safety, ensure, resource-ensure, and effect claims are certified
+  individually, and an opaque rule requires the complete claim set;
+- the accepted contract frontier is kernel-private and derives assumptions
+  only from the exact entry state and contract; proposed elaboration facts are
+  admitted only when the kernel re-derives them;
+- bounded concrete execution versus loop-rule verification is an explicit
+  certificate mode, not a fallback;
+- composite resource definitions and their logical facts are lowered into the
+  kernel and checked during fold/unfold and claim certification;
+- all execution obligations are discharged before even a body-safety claim can
+  be certified.
+
+Failure to reproduce a complete exact claim set simply leaves the function
+without an opaque rule. There is no weaker packaging fallback.
+
+Regression tests cover retained non-assumable conditions, mismatched symbolic
+paths, same-body/different-contract substitution, incomplete claim sets, and
+body-safety evidence with an unresolved verification condition.
+
 ## Remaining correctness work
 
 ### 1. Complete the global certificate audit

@@ -39,6 +39,37 @@ construct arbitrary theorems directly. Public functions that return `Theorem`
 are trusted theorem-producing operations. In Click terminology these are
 axioms, even when Rust names them `prove_*`.
 
+Execution theorems retain every verification condition as an implication
+premise, including conditions that are not assumable during execution.
+`CFunctionExecutionCandidates` is deliberately theorem-free: replayed or
+caller-supplied outcomes are only candidates until a kernel execution
+reproduces them.
+
+Opaque function rules have a narrower boundary:
+
+- the rule is bound to the complete `CFunction`, including its lowered body,
+  contract, exact claim targets, resource definitions, and execution metadata;
+- `CFunctionContractExecution` can only be created by the kernel from the
+  exact function's entry state and contract-derived assumptions. Proposed
+  elaboration facts are admitted only when the kernel re-derives them from
+  that canonical entry, so callers cannot inject hypotheses;
+- contract execution mode is explicit. `VerifyLoops` checks annotated loop
+  rules, while `ExecuteLoops` independently repeats a bounded concrete
+  execution certificate;
+- every path verification condition is discharged before any body-safety,
+  postcondition, resource, or effect claim is certified;
+- all recorded contract claims must have certificates for that same exact
+  function before `CVerifiedFunctionRule` can be constructed.
+
+If exact certification cannot reproduce a complete claim set, Click installs
+no opaque rule for that function. It does not fall back to a weaker identity
+check or to the proof replay's ambient assumptions.
+
+Composite resource unfolding is also checked at this boundary. Resource
+definitions carry their logical facts into the kernel, and fold/unfold,
+loadability, separation, and post-resource checks are performed against the
+exact definition rather than accepted as caller assertions.
+
 ## Important Types
 
 In `src/kernel/`:
@@ -60,6 +91,10 @@ In `src/kernel/`:
 - `ProofObligation`, `ExecutionPureFact`: obligations and facts produced during symbolic
   execution.
 - `Theorem`: abstract proven proposition.
+- `CFunctionContractExecution`: kernel-produced complete execution evidence
+  used only for exact opaque-contract certification.
+- `CVerifiedFunctionContractClaim`, `CVerifiedFunctionRule`: unforgeable
+  evidence for one exact claim and for a complete exact opaque contract.
 
 The current integer conversion slice is deliberately small. `eval.rs` promotes
 `uint8` rvalues to `int32` terms for arithmetic, ordered comparisons, shifts,
@@ -85,6 +120,11 @@ select `if` edges without constructing a synthetic C statement.
 The function-specification prover checks that all paths satisfy the function
 contract and that remaining facts/obligations are justified by requirements and
 proof machinery.
+
+`prove_c_function_satisfies_specification_from_symbolic_path` accepts only the
+exact function, entry state, arguments, and outcome recorded in the certified
+path. It does not turn arbitrary outcomes into theorems. The separate
+`c_function_execution_candidates_from_outcomes` API constructs no theorem.
 
 Budget exhaustion is represented as `ExecutionLimit`. It is a proof/executor
 failure, not C undefined behavior.
