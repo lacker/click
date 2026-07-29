@@ -633,10 +633,74 @@ fn canonical_memory_for_pointer_load_with_depth(
     canonical.blocks.retain(|block, _| {
         block == &pointer.block || block.starts_with("havoc:") || block.starts_with("call-havoc:")
     });
+    canonical.cells.retain(|cell_pointer, value| {
+        cell_pointer.block == pointer.block
+            && !cell_disjoint_from_load_by_constant_offset(cell_pointer, value, pointer)
+    });
     canonical
-        .cells
-        .retain(|cell_pointer, _| cell_pointer.block == pointer.block);
-    canonical
+}
+
+/// The widest scalar load the kernel performs; assuming it when the true
+/// width is unknown only ever shrinks the provable-disjoint set.
+const MAX_SCALAR_LOAD_BYTES: i64 = 4;
+
+/// Splits a pointer offset into its non-constant atoms and total constant
+/// byte shift, folding constants nested inside scaled indices.
+fn offset_atoms_and_constant(offset: &PointerOffsetTerm) -> (Vec<PointerOffsetTerm>, i64) {
+    fn collect(offset: &PointerOffsetTerm, atoms: &mut Vec<PointerOffsetTerm>, shift: &mut i64) {
+        match offset {
+            PointerOffsetTerm::Constant(value) => *shift += *value,
+            PointerOffsetTerm::Add(left, right) => {
+                collect(left, atoms, shift);
+                collect(right, atoms, shift);
+            }
+            PointerOffsetTerm::Int32Scaled { value, byte_width } => {
+                if let Some((base, constant)) = value.add_const_parts() {
+                    *shift += (constant as i32 as i64) * *byte_width;
+                    atoms.push(PointerOffsetTerm::Int32Scaled {
+                        value: Box::new(base),
+                        byte_width: *byte_width,
+                    });
+                } else if let Some((base, constant)) = value.subtract_const_parts() {
+                    *shift -= (constant as i32 as i64) * *byte_width;
+                    atoms.push(PointerOffsetTerm::Int32Scaled {
+                        value: Box::new(base),
+                        byte_width: *byte_width,
+                    });
+                } else {
+                    atoms.push(offset.clone());
+                }
+            }
+            other => atoms.push(other.clone()),
+        }
+    }
+    let mut atoms = Vec::new();
+    let mut shift = 0;
+    collect(offset, &mut atoms, &mut shift);
+    atoms.sort();
+    (atoms, shift)
+}
+
+/// True when a cached cell provably cannot alias the loaded pointer because
+/// both offsets share the same non-constant atoms and their constant byte
+/// intervals are disjoint. This needs no assumptions, so canonicalization
+/// may drop the cell for any load width up to [`MAX_SCALAR_LOAD_BYTES`].
+fn cell_disjoint_from_load_by_constant_offset(
+    cell_pointer: &Pointer,
+    value: &CValue,
+    load_pointer: &Pointer,
+) -> bool {
+    let (cell_atoms, cell_shift) = offset_atoms_and_constant(&cell_pointer.offset);
+    let (load_atoms, load_shift) = offset_atoms_and_constant(&load_pointer.offset);
+    if cell_atoms != load_atoms {
+        return false;
+    }
+    let cell_width = match value {
+        CValue::Int32(_) => 4,
+        CValue::UInt8(_) => 1,
+        CValue::Pointer(_) => return false,
+    };
+    cell_shift + cell_width <= load_shift || load_shift + MAX_SCALAR_LOAD_BYTES <= cell_shift
 }
 
 fn materialized_cell_source<'a>(cell_pointer: &Pointer, value: &'a CValue) -> Option<&'a CMemory> {
