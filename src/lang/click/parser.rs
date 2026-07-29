@@ -58,8 +58,61 @@ enum Token {
     Pipe,
 }
 
+impl Token {
+    /// A human-readable rendering for diagnostics, such as `` identifier `x` ``
+    /// or `` `;` ``.
+    fn describe(&self) -> String {
+        match self {
+            Self::Ident(name) => format!("identifier `{name}`"),
+            Self::Number(value) => format!("number `{value}`"),
+            Self::CharLiteral(value) => {
+                format!("character literal `{}`", (*value as char).escape_default())
+            }
+            Self::String(value) => format!("string literal `\"{value}\"`"),
+            other => format!("`{}`", other.spelling()),
+        }
+    }
+
+    fn spelling(&self) -> &'static str {
+        match self {
+            Self::Ident(_) | Self::Number(_) | Self::CharLiteral(_) | Self::String(_) => "",
+            Self::LBrace => "{",
+            Self::RBrace => "}",
+            Self::LParen => "(",
+            Self::RParen => ")",
+            Self::LBracket => "[",
+            Self::RBracket => "]",
+            Self::Colon => ":",
+            Self::Comma => ",",
+            Self::Semicolon => ";",
+            Self::Dot => ".",
+            Self::DotDot => "..",
+            Self::Arrow => "->",
+            Self::Equal => "=",
+            Self::EqualEqual => "==",
+            Self::BangEqual => "!=",
+            Self::LessThan => "<",
+            Self::LessEqual => "<=",
+            Self::ShiftLeft => "<<",
+            Self::GreaterThan => ">",
+            Self::GreaterEqual => ">=",
+            Self::ShiftRight => ">>",
+            Self::Plus => "+",
+            Self::Minus => "-",
+            Self::Star => "*",
+            Self::Slash => "/",
+            Self::Percent => "%",
+            Self::Amp => "&",
+            Self::Caret => "^",
+            Self::Tilde => "~",
+            Self::Pipe => "|",
+        }
+    }
+}
+
 struct Parser {
     tokens: Vec<Token>,
+    positions: Vec<SourcePosition>,
     position: usize,
     struct_layouts: BTreeMap<String, syntax::C0StructLayout>,
     current_struct_params: BTreeMap<String, String>,
@@ -129,8 +182,10 @@ impl Parser {
         source: &str,
         struct_layouts: BTreeMap<String, syntax::C0StructLayout>,
     ) -> Result<Self, ClickError> {
+        let (tokens, positions) = tokenize(source)?;
         Ok(Self {
-            tokens: tokenize(source)?,
+            tokens,
+            positions,
             position: 0,
             struct_layouts,
             current_struct_params: BTreeMap::new(),
@@ -2844,29 +2899,38 @@ impl Parser {
     }
 
     fn expect_ident(&mut self, expected: &str) -> Result<String, ClickError> {
+        let at = self.error_context();
         match self.next() {
             Some(Token::Ident(name)) => Ok(name),
-            Some(token) => Err(self.error(format!("expected {expected}, got {token:?}"))),
-            None => Err(self.error(format!("expected {expected}, got end of input"))),
+            Some(token) => Err(self.error_at(
+                at,
+                format!("expected {expected}, got {}", token.describe()),
+            )),
+            None => Err(self.error_at(at, format!("expected {expected}, got end of input"))),
         }
     }
 
     fn expect_ident_spelling(&mut self, expected: &str) -> Result<(), ClickError> {
+        let at = self.error_context();
         match self.next() {
             Some(Token::Ident(name)) if name == expected => Ok(()),
-            Some(Token::Ident(name)) => {
-                Err(self.error(format!("expected `{expected}`, got `{name}`")))
-            }
-            Some(token) => Err(self.error(format!("expected `{expected}`, got {token:?}"))),
-            None => Err(self.error(format!("expected `{expected}`, got end of input"))),
+            Some(token) => Err(self.error_at(
+                at,
+                format!("expected `{expected}`, got {}", token.describe()),
+            )),
+            None => Err(self.error_at(at, format!("expected `{expected}`, got end of input"))),
         }
     }
 
     fn expect_number(&mut self, expected: &str) -> Result<u32, ClickError> {
+        let at = self.error_context();
         match self.next() {
             Some(Token::Number(value)) => Ok(value),
-            Some(token) => Err(self.error(format!("expected {expected}, got {token:?}"))),
-            None => Err(self.error(format!("expected {expected}, got end of input"))),
+            Some(token) => Err(self.error_at(
+                at,
+                format!("expected {expected}, got {}", token.describe()),
+            )),
+            None => Err(self.error_at(at, format!("expected {expected}, got end of input"))),
         }
     }
 
@@ -2876,18 +2940,33 @@ impl Parser {
     }
 
     fn expect_string(&mut self, expected: &str) -> Result<String, ClickError> {
+        let at = self.error_context();
         match self.next() {
             Some(Token::String(value)) => Ok(value),
-            Some(token) => Err(self.error(format!("expected {expected}, got {token:?}"))),
-            None => Err(self.error(format!("expected {expected}, got end of input"))),
+            Some(token) => Err(self.error_at(
+                at,
+                format!("expected {expected}, got {}", token.describe()),
+            )),
+            None => Err(self.error_at(at, format!("expected {expected}, got end of input"))),
         }
     }
 
     fn expect(&mut self, expected: Token) -> Result<(), ClickError> {
+        let at = self.error_context();
         match self.next() {
             Some(token) if token == expected => Ok(()),
-            Some(token) => Err(self.error(format!("expected {expected:?}, got {token:?}"))),
-            None => Err(self.error(format!("expected {expected:?}, got end of input"))),
+            Some(token) => Err(self.error_at(
+                at,
+                format!(
+                    "expected {}, got {}",
+                    expected.describe(),
+                    token.describe()
+                ),
+            )),
+            None => Err(self.error_at(
+                at,
+                format!("expected {}, got end of input", expected.describe()),
+            )),
         }
     }
 
@@ -2912,17 +2991,43 @@ impl Parser {
         }
     }
 
+    /// The source position of the next unconsumed token, or of the last
+    /// token when every token has been consumed.
+    fn here(&self) -> Option<SourcePosition> {
+        self.positions
+            .get(self.position)
+            .or_else(|| self.positions.last())
+            .copied()
+    }
+
+    /// Captures the position of the next unconsumed token so an error can
+    /// still point at it after the token is consumed.
+    fn error_context(&self) -> Option<SourcePosition> {
+        self.here()
+    }
+
+    fn error_at(&self, at: Option<SourcePosition>, message: impl Into<String>) -> ClickError {
+        match at {
+            Some(position) => ClickError::new(format!("{position}: {}", message.into())),
+            None => ClickError::new(message),
+        }
+    }
+
     fn error(&self, message: impl Into<String>) -> ClickError {
-        ClickError::new(format!("at token {}: {}", self.position, message.into()))
+        self.error_at(self.here(), message)
     }
 }
 
-fn tokenize(source: &str) -> Result<Vec<Token>, ClickError> {
+fn tokenize(source: &str) -> Result<(Vec<Token>, Vec<SourcePosition>), ClickError> {
     let chars: Vec<char> = source.chars().collect();
+    let char_positions = crate::lang::character_positions(source);
     let mut tokens = Vec::new();
+    let mut positions = Vec::new();
     let mut index = 0;
 
     while let Some(ch) = chars.get(index).copied() {
+        let position = char_positions[index];
+        let tokens_before = tokens.len();
         match ch {
             ch if ch.is_whitespace() => {
                 index += 1;
@@ -3043,7 +3148,7 @@ fn tokenize(source: &str) -> Result<Vec<Token>, ClickError> {
                     index += 2;
                 } else {
                     return Err(ClickError::new(format!(
-                        "expected `!=`, got `!` at byte offset {index}"
+                        "{position}: expected `!=`, got `!`"
                     )));
                 }
             }
@@ -3057,12 +3162,14 @@ fn tokenize(source: &str) -> Result<Vec<Token>, ClickError> {
                 }
             }
             '"' => {
-                let (value, next_index) = tokenize_string(&chars, index)?;
+                let (value, next_index) = tokenize_string(&chars, index)
+                    .map_err(|error| ClickError::new(format!("{position}: {}", error.message())))?;
                 tokens.push(Token::String(value));
                 index = next_index;
             }
             '\'' => {
-                let (value, next_index) = tokenize_char_literal(&chars, index)?;
+                let (value, next_index) = tokenize_char_literal(&chars, index)
+                    .map_err(|error| ClickError::new(format!("{position}: {}", error.message())))?;
                 tokens.push(Token::CharLiteral(value));
                 index = next_index;
             }
@@ -3073,7 +3180,7 @@ fn tokenize(source: &str) -> Result<Vec<Token>, ClickError> {
                 }
                 let spelling: String = chars[start..index].iter().collect();
                 let value = spelling.parse::<u32>().map_err(|_| {
-                    ClickError::new(format!("number `{spelling}` does not fit in u32"))
+                    ClickError::new(format!("{position}: number `{spelling}` does not fit in u32"))
                 })?;
                 tokens.push(Token::Number(value));
             }
@@ -3090,13 +3197,17 @@ fn tokenize(source: &str) -> Result<Vec<Token>, ClickError> {
             }
             other => {
                 return Err(ClickError::new(format!(
-                    "unexpected character `{other}` at byte offset {index}"
+                    "{position}: unexpected character `{other}`"
                 )));
             }
         }
+        debug_assert!(tokens.len() <= tokens_before + 1);
+        if tokens.len() > tokens_before {
+            positions.push(position);
+        }
     }
 
-    Ok(tokens)
+    Ok((tokens, positions))
 }
 
 fn tokenize_char_literal(chars: &[char], start: usize) -> Result<(u8, usize), ClickError> {

@@ -74,11 +74,7 @@ pub fn expand_c0_claim_source(
     Ok(expanded)
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct SourcePosition {
-    pub line: usize,
-    pub column: usize,
-}
+pub use crate::lang::SourcePosition;
 
 /// One source-selectable smart tactic in a parsed `.click` sidecar.
 ///
