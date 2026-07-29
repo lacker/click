@@ -3165,8 +3165,79 @@ impl Assumptions {
             | Proposition::Or(_, _)
             | Proposition::Implies(_, _)
             | Proposition::ForAll { .. } => false,
+            Proposition::Exists { var, sort, body, .. } => {
+                self.prop_facts.contains(proposition)
+                    || self.proves_exists_from_facts(*var, sort, body)
+            }
             _ => self.prop_facts.contains(proposition),
         }
+    }
+
+    /// Proves an existential goal without search: an assumed existential over
+    /// the same sort proves it up to bound-variable renaming, and an equality
+    /// conjunct pinning the bound variable supplies a one-point witness whose
+    /// instantiated conjuncts must each prove atomically.
+    fn proves_exists_from_facts(&self, var: Variable, sort: &Sort, body: &Proposition) -> bool {
+        fn conjuncts_of(proposition: &Proposition, into: &mut Vec<Proposition>) {
+            match proposition {
+                Proposition::And(left, right) => {
+                    conjuncts_of(left, into);
+                    conjuncts_of(right, into);
+                }
+                other => into.push(other.clone()),
+            }
+        }
+        let alpha = self.prop_facts.iter().any(|fact| {
+            let Proposition::Exists {
+                var: fact_var,
+                sort: fact_sort,
+                body: fact_body,
+                ..
+            } = fact
+            else {
+                return false;
+            };
+            fact_sort == sort
+                && substitute_bitvector_variable_in_proposition(
+                    fact_body,
+                    *fact_var,
+                    &Bitvector32Term::Variable(var),
+                ) == *body
+        });
+        if alpha {
+            return true;
+        }
+        if !matches!(sort, Sort::CInt32 | Sort::Bitvector32) {
+            return false;
+        }
+        let mut conjuncts = Vec::new();
+        conjuncts_of(body, &mut conjuncts);
+        let bound = Bitvector32Term::Variable(var);
+        let mut witnesses = Vec::new();
+        for conjunct in &conjuncts {
+            let Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), true) =
+                conjunct
+            else {
+                continue;
+            };
+            for (side, other) in [(left, right), (right, left)] {
+                let mentions_var = substitute_bitvector_variable(
+                    other,
+                    var,
+                    &Bitvector32Term::Constant(0),
+                ) != **other;
+                if **side == bound && !mentions_var {
+                    witnesses.push((**other).clone());
+                }
+            }
+        }
+        witnesses.iter().any(|witness| {
+            conjuncts.iter().all(|conjunct| {
+                let instantiated =
+                    substitute_bitvector_variable_in_proposition(conjunct, var, witness);
+                self.proves_atomic_without_search(&instantiated)
+            })
+        })
     }
 
     fn proves_atomic_for_derivation(&self, proposition: &Proposition, for_simp: bool) -> bool {
