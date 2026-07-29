@@ -3943,7 +3943,12 @@ fn lower_resource_segment_with_values(
             "could not lower `{resource_name}` resource: resource segments cannot use `old(...)`"
         )));
     }
-    let assumptions = Assumptions::new();
+    // Resource ranges embed field loads symbolically (the canonical
+    // `load(arg-memory@...)` spellings), so segment evaluation must not
+    // demand concrete loadability.
+    let assumptions = Assumptions::new()
+        .allow_symbolic_contract_loads()
+        .prefer_symbolic_external_loads();
     let base = evaluate_c_contract_expression(values, state, None, &assumptions, &segment.base)
         .map_err(|message| {
             ClickError::new(format!(
