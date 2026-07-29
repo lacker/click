@@ -140,7 +140,42 @@ int32 input_cursor_take(struct input_cursor* owner) {
     }
     fold(input_cursor(owner));
     frame();
-    simp();
+    have loadable(old((load_int32_pointer(byte_offset(owner, 8)) + load_int32(owner))[0..1])) by {
+        derive(loadable(old((load_int32_pointer(byte_offset(owner, 8)) + load_int32(owner))[0..1]))) using {
+            fact at(statement(2).entry, separate(memory(owner->pos), memory(owner->len)));
+            fact at(statement(2).entry, separate(memory(owner->pos), memory(owner->data)));
+            fact at(statement(2).entry, separate(memory(owner->len), memory(owner->data)));
+            fact at(statement(2).entry, contains(input_cursor(owner), memory(owner->pos)));
+            fact at(statement(2).entry, contains(input_cursor(owner), memory(owner->len)));
+            fact at(statement(2).entry, contains(input_cursor(owner), memory(owner->data)));
+            fact at(statement(2).entry, loadable(old(owner->pos)));
+            fact at(statement(2).entry, loadable(old(owner->len)));
+            fact at(statement(2).entry, loadable(old(owner->data)));
+            fact 0 <= old(owner->pos);
+            fact at(statement(2).entry, separate(memory(object(owner)), memory((owner->data)[0..owner->len])));
+            fact at(statement(2).entry, loadable(old((owner->data)[0..owner->len])));
+            fact old(owner->pos) < owner->len;
+            fact old(owner->pos) <= owner->len;
+            fact 0 <= owner->len;
+        }
+    }
+    have result == old(owner->data[owner->pos]) by {
+        normalize();
+    }
+    have owner->pos == (old(owner->pos) + 1) by {
+        normalize();
+    }
+    have owner->len == old(owner->len) by {
+        normalize();
+    }
+    have owner->data == old(owner->data) by {
+        normalize();
+    }
+    assumption();
+    assumption();
+    assumption();
+    assumption();
+    assumption();
 }
 
 int32 input_cursor_clone(
