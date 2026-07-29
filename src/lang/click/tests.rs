@@ -3275,7 +3275,7 @@ fn rejects_legacy_proof_tactic_region_syntax() {
     let error = parse(&source).expect_err("legacy proof tactic region syntax should fail");
 
     assert!(
-        error.message().contains("expected LParen"),
+        error.message().contains("expected `(`"),
         "{}",
         error.message()
     );

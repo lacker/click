@@ -23,5 +23,5 @@ int32 statement_update_rejects_expression() {
 ```
 
 ```expect
-fail: expected Semicolon, got PlusPlus
+fail: expected `;`, got `++`
 ```
