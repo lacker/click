@@ -3268,6 +3268,44 @@ fn shifted_order_condition_proven(
     )
 }
 
+/// Compares two range folds up to renaming of their bound accumulator and
+/// item variables; bound variables are freshened per lowering pass.
+fn range_folds_alpha_equivalent(left: &Bitvector32Term, right: &Bitvector32Term) -> bool {
+    let (
+        Bitvector32Term::RangeFold {
+            start: left_start,
+            end: left_end,
+            initial: left_initial,
+            accumulator: left_accumulator,
+            item: left_item,
+            body: left_body,
+        },
+        Bitvector32Term::RangeFold {
+            start: right_start,
+            end: right_end,
+            initial: right_initial,
+            accumulator: right_accumulator,
+            item: right_item,
+            body: right_body,
+        },
+    ) = (left, right)
+    else {
+        return false;
+    };
+    left_start == right_start && left_end == right_end && left_initial == right_initial && {
+        let renamed = super::reasoning::substitute_bitvector_variable(
+            &super::reasoning::substitute_bitvector_variable(
+                right_body,
+                *right_accumulator,
+                &Bitvector32Term::Variable(*left_accumulator),
+            ),
+            *right_item,
+            &Bitvector32Term::Variable(*left_item),
+        );
+        renamed == **left_body
+    }
+}
+
 fn certification_proves_proposition(assumptions: &Assumptions, proposition: &Proposition) -> bool {
     if assumptions.proves_exact(proposition) {
         return true;
@@ -3282,6 +3320,11 @@ fn certification_proves_proposition(assumptions: &Assumptions, proposition: &Pro
         }
         Proposition::ConditionIs(condition, value)
             if shifted_order_condition_proven(assumptions, condition, *value) =>
+        {
+            true
+        }
+        Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), true)
+            if range_folds_alpha_equivalent(left, right) =>
         {
             true
         }
