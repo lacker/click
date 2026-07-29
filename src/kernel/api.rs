@@ -2417,6 +2417,158 @@ pub fn prove_c_function_contract_execution_paths_with_environment(
     CFunctionContractExecution { execution }
 }
 
+/// Splits a proposition into its conjunct leaves.
+fn proposition_conjuncts(proposition: &Proposition, into: &mut Vec<Proposition>) {
+    match proposition {
+        Proposition::And(left, right) => {
+            proposition_conjuncts(left, into);
+            proposition_conjuncts(right, into);
+        }
+        other => into.push(other.clone()),
+    }
+}
+
+/// Converts a pointer offset to its size in bytes as a bitvector term.
+fn pointer_offset_bytes(offset: &PointerOffsetTerm) -> Option<Bitvector32Term> {
+    match offset {
+        PointerOffsetTerm::Constant(value) => {
+            u32::try_from(*value).ok().map(Bitvector32Term::Constant)
+        }
+        PointerOffsetTerm::Variable(_) => None,
+        PointerOffsetTerm::Add(left, right) => Some(Bitvector32Term::add(
+            pointer_offset_bytes(left)?,
+            pointer_offset_bytes(right)?,
+        )),
+        PointerOffsetTerm::Int32Scaled { value, byte_width } => {
+            u32::try_from(*byte_width).ok().map(|width| {
+                Bitvector32Term::multiply(
+                    value.as_ref().clone(),
+                    Bitvector32Term::Constant(width),
+                )
+            })
+        }
+    }
+}
+
+/// The byte distance from `fact_offset` to `goal_offset` when the goal
+/// offset extends the fact offset additively.
+fn pointer_offset_byte_delta(
+    goal_offset: &PointerOffsetTerm,
+    fact_offset: &PointerOffsetTerm,
+) -> Option<Bitvector32Term> {
+    if goal_offset == fact_offset {
+        return Some(Bitvector32Term::Constant(0));
+    }
+    if let PointerOffsetTerm::Add(left, right) = goal_offset {
+        if left.as_ref() == fact_offset {
+            return pointer_offset_bytes(right);
+        }
+        if right.as_ref() == fact_offset {
+            return pointer_offset_bytes(left);
+        }
+    }
+    None
+}
+
+/// Certifies a loadability goal from an assumed wider loadable fact over the
+/// same memory snapshot: the goal's base must sit at a provably in-bounds
+/// byte offset within the fact's span.
+fn loadable_covered_by_fact(assumptions: &Assumptions, goal: &Proposition) -> bool {
+    let Proposition::CMemoryLoadable {
+        memory,
+        base,
+        bytes,
+    } = goal
+    else {
+        return false;
+    };
+    assumptions.prop_facts.iter().any(|fact| {
+        let Proposition::CMemoryLoadable {
+            memory: fact_memory,
+            base: fact_base,
+            bytes: fact_bytes,
+        } = fact
+        else {
+            return false;
+        };
+        if fact_memory != memory || fact_base.block != base.block {
+            return false;
+        }
+        let Some(delta_bytes) = pointer_offset_byte_delta(&base.offset, &fact_base.offset) else {
+            return false;
+        };
+        let start = assumptions
+            .simplify_bitvector_under_assumptions(&Bitvector32Term::Constant(0));
+        let delta = assumptions.simplify_bitvector_under_assumptions(&delta_bytes);
+        let end = assumptions.simplify_bitvector_under_assumptions(&Bitvector32Term::add(
+            delta_bytes,
+            bytes.clone(),
+        ));
+        let span = assumptions.simplify_bitvector_under_assumptions(fact_bytes);
+        let starts_in_bounds = assumptions.proves(&Proposition::ConditionIs(
+            ConditionTerm::signed_less_equal(start.clone(), delta.clone()),
+            true,
+        )) || assumptions.proves_order_condition_for_memory_resolution(
+            &ConditionTerm::signed_less_equal(start, delta),
+            true,
+        );
+        let ends_in_bounds = assumptions.proves(&Proposition::ConditionIs(
+            ConditionTerm::signed_less_equal(end.clone(), span.clone()),
+            true,
+        )) || assumptions.proves_order_condition_for_memory_resolution(
+            &ConditionTerm::signed_less_equal(end, span),
+            true,
+        );
+        starts_in_bounds && ends_in_bounds
+    })
+}
+
+/// Certifies an existential requirement side-obligation (typically the
+/// loadability safety of an existential requirement body): the witness of an
+/// assumed existential over the same sort supplies the bound variable, its
+/// body conjuncts become facts, and the obligation body must then certify
+/// pointwise.
+fn certification_proves_exists_obligation_from_facts(
+    assumptions: &Assumptions,
+    obligation: &Proposition,
+) -> bool {
+    let Proposition::Exists {
+        var, sort, body, ..
+    } = obligation
+    else {
+        return false;
+    };
+    let fact_candidates = assumptions.prop_facts.iter().cloned().collect::<Vec<_>>();
+    fact_candidates.iter().any(|fact| {
+        let Proposition::Exists {
+            var: fact_var,
+            sort: fact_sort,
+            body: fact_body,
+            ..
+        } = fact
+        else {
+            return false;
+        };
+        if fact_sort != sort {
+            return false;
+        }
+        let renamed = substitute_bitvector_variable_in_proposition(
+            fact_body,
+            *fact_var,
+            &Bitvector32Term::Variable(*var),
+        );
+        let mut witness_facts = Vec::new();
+        proposition_conjuncts(&renamed, &mut witness_facts);
+        let witness_assumptions = assumptions_with_propositions(assumptions, &witness_facts);
+        let mut goals = Vec::new();
+        proposition_conjuncts(body, &mut goals);
+        goals.iter().all(|goal| {
+            certification_proves_proposition(&witness_assumptions, goal)
+                || loadable_covered_by_fact(&witness_assumptions, goal)
+        })
+    })
+}
+
 fn c_function_contract_certification_assumptions(
     caller_state: &CState,
     function: &CFunction,
@@ -2540,6 +2692,11 @@ fn c_function_contract_certification_assumptions(
                 &entry_resources,
                 obligation.proposition(),
                 &assumptions,
+            )
+            || loadable_covered_by_fact(&assumptions, obligation.proposition())
+            || certification_proves_exists_obligation_from_facts(
+                &assumptions,
+                obligation.proposition(),
             )
     }) {
         if std::env::var_os("CLICK_TIMINGS").is_some() {
