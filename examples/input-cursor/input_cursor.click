@@ -146,7 +146,28 @@ int32 input_cursor_clone(
     observe(input_cursor(source));
     execute_step();
     execute_step();
-    execute_step();
+    step using {
+        fact at(statement(0).entry, separate(memory(object(target)), memory(object(source))));
+        fact at(statement(0).entry, separate(memory(object(target)), memory((source->data)[0..source->len])));
+        fact at(statement(0).entry, loadable(target[0..4]));
+        fact at(statement(0).entry, separate(memory(source->pos), memory(source->len)));
+        fact at(statement(0).entry, separate(memory(source->pos), memory(source->data)));
+        fact at(statement(0).entry, separate(memory(source->len), memory(source->data)));
+        fact at(statement(0).entry, contains(input_cursor(source), memory(source->pos)));
+        fact at(statement(0).entry, contains(input_cursor(source), memory(source->len)));
+        fact at(statement(0).entry, contains(input_cursor(source), memory(source->data)));
+        fact at(statement(0).entry, loadable(source->pos));
+        fact at(statement(0).entry, loadable(source->len));
+        fact at(statement(0).entry, loadable(source->data));
+        fact at(statement(0).entry, separate(memory(object(source)), memory((source->data)[0..source->len])));
+        fact at(statement(0).entry, loadable((source->data)[0..source->len]));
+        fact 0 <= source->pos;
+        fact source->pos <= source->len;
+        fact 0 <= source->len;
+        fact at(statement(1).entry, 0) <= at(statement(1).entry, source->pos);
+        fact at(statement(1).entry, source->pos) <= at(statement(1).entry, source->len);
+        fact at(statement(1).entry, 0) <= at(statement(1).entry, source->len);
+    }
     step using {
         fact separate(memory(object(target)), memory(object(source)));
         fact separate(memory(object(target)), memory((source->data)[0..source->len]));
