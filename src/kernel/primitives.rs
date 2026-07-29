@@ -2669,11 +2669,20 @@ impl ResourceContext {
         facts: impl IntoIterator<Item = CResourceFact>,
         assumptions: &Assumptions,
     ) -> Result<Self, ResourceContextValidityError> {
+        self.try_compose_with_facts_delaying_normalization(facts, assumptions)
+            .map(|context| context.normalized(assumptions))
+    }
+
+    pub(super) fn try_compose_with_facts_delaying_normalization(
+        self,
+        facts: impl IntoIterator<Item = CResourceFact>,
+        assumptions: &Assumptions,
+    ) -> Result<Self, ResourceContextValidityError> {
         let context = self.unchecked_with_facts(facts);
         if let Some(error) = context.validity_error(assumptions) {
             return Err(error);
         }
-        Ok(context.normalized(assumptions))
+        Ok(context)
     }
 
     pub fn facts(&self) -> &[CResourceFact] {
@@ -2801,11 +2810,17 @@ impl ResourceContext {
     }
 
     pub fn without_fact(self, fact: &CResourceFact, assumptions: &Assumptions) -> Option<Self> {
-        let mut context = self;
-        if !context.consume_fact_without_normalizing(fact, assumptions) {
-            return None;
-        }
-        Some(context.normalized(assumptions))
+        self.without_fact_delaying_normalization(fact, assumptions)
+            .map(|context| context.normalized(assumptions))
+    }
+
+    pub(super) fn without_fact_delaying_normalization(
+        mut self,
+        fact: &CResourceFact,
+        assumptions: &Assumptions,
+    ) -> Option<Self> {
+        self.consume_fact_without_normalizing(fact, assumptions)
+            .then_some(self)
     }
 
     pub(super) fn without_exact_representation(mut self, fact: &CResourceFact) -> Option<Self> {

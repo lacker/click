@@ -572,7 +572,7 @@ fn execute_verified_function_rule(
         };
         let return_resources = match transfer
             .caller_resources_after_requirements
-            .try_compose_with_facts(
+            .try_compose_with_facts_delaying_normalization(
                 ensured_resources.facts().iter().cloned(),
                 &effective_assumptions,
             ) {
@@ -873,7 +873,10 @@ fn prepare_function_resource_transfer(
     }
     let caller_resources_after_requirements = return_resources.clone();
     return_resources = match return_resources
-        .try_compose_with_facts(ensured_resources.facts().iter().cloned(), assumptions)
+        .try_compose_with_facts_delaying_normalization(
+            ensured_resources.facts().iter().cloned(),
+            assumptions,
+        )
     {
         Ok(resources) => resources,
         Err(error) => return Ok(Err(resource_context_runtime_error(error))),
@@ -965,12 +968,16 @@ pub(super) fn expand_composite_resource_fact(
             .collect()
     };
     let mut expanded = context.clone().without_exact_representation(composite)?;
+    let mut missing = Vec::new();
     for child in children {
         if expanded.satisfies_fact(&child, assumptions) {
             continue;
         }
-        expanded = expanded.try_compose_with_fact(child, assumptions).ok()?;
+        missing.push(child);
     }
+    expanded = expanded
+        .try_compose_with_facts_delaying_normalization(missing, assumptions)
+        .ok()?;
     Some(expanded)
 }
 
@@ -1216,7 +1223,17 @@ fn consume_resource_fact_definitionally(
         if !seen.insert((available.clone(), required.clone())) {
             return None;
         }
-        if let Some(remaining) = available.clone().without_fact(required, assumptions) {
+        if let Some(remaining) = available
+            .clone()
+            .without_fact_delaying_normalization(required, assumptions)
+        {
+            return Some(remaining);
+        }
+        let normalized = available.clone().normalized(assumptions);
+        if &normalized != available
+            && let Some(remaining) =
+                normalized.without_fact_delaying_normalization(required, assumptions)
+        {
             return Some(remaining);
         }
 
