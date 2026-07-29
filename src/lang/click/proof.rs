@@ -2583,8 +2583,6 @@ struct DeferredTacticCapture {
     branch_skeleton: Vec<ProofTactic>,
 }
 
-const TACTIC_EXPANSION_COMPLETE: &str = "internal: selected tactic expansion complete";
-
 struct TacticExpansionProbe {
     site: ProofSite,
     source_index: Option<usize>,
@@ -2630,7 +2628,7 @@ pub(super) fn capture_c0_tactic_expansion(
         return result.map_err(ClickError::new);
     }
     match verification {
-        Err(error) if error.message() != TACTIC_EXPANSION_COMPLETE => Err(error),
+        Err(error) if !error.is_expansion_complete() => Err(error),
         Err(_) => Err(ClickError::new(
             "selected tactic completed without recording an expansion",
         )),
@@ -2680,7 +2678,7 @@ pub(super) fn capture_c0_proof_site_expansion(
         return result.map_err(ClickError::new);
     }
     match verification {
-        Err(error) if error.message() != TACTIC_EXPANSION_COMPLETE => Err(error),
+        Err(error) if !error.is_expansion_complete() => Err(error),
         Err(_) => Err(ClickError::new(
             "selected proof completed without recording an expansion",
         )),
@@ -2708,7 +2706,7 @@ fn finish_proof_site_expansion_capture(
         true
     });
     if captured {
-        Err(ClickError::new(TACTIC_EXPANSION_COMPLETE))
+        Err(ClickError::expansion_complete())
     } else {
         Ok(())
     }
@@ -2814,7 +2812,7 @@ fn finish_tactic_expansion_capture(surface_replay: &SurfaceReplay) -> ClickError
             None => Ok(surface_replay.tactics.clone()),
         });
     });
-    ClickError::new(TACTIC_EXPANSION_COMPLETE)
+    ClickError::expansion_complete()
 }
 
 fn tactic_expansion_capture_is_active() -> bool {

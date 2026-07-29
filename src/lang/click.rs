@@ -1437,6 +1437,11 @@ pub enum ProofKind {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ClickError {
     message: String,
+    /// Internal marker for the selected-tactic expansion capture: when a
+    /// probe records its expansion, verification is aborted with an error
+    /// carrying this flag instead of a real failure. Control flow must test
+    /// this flag, never the message text.
+    expansion_complete: bool,
 }
 
 #[derive(Clone)]
@@ -1846,7 +1851,21 @@ impl ClickError {
     fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
+            expansion_complete: false,
         }
+    }
+
+    /// The internal sentinel that unwinds verification once a selected-tactic
+    /// expansion has been captured; see `proof::capture_c0_tactic_expansion`.
+    pub(crate) fn expansion_complete() -> Self {
+        Self {
+            message: "internal: selected tactic expansion complete".into(),
+            expansion_complete: true,
+        }
+    }
+
+    pub(crate) fn is_expansion_complete(&self) -> bool {
+        self.expansion_complete
     }
 
     pub fn message(&self) -> &str {
