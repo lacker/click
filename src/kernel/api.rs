@@ -3176,11 +3176,115 @@ fn exists_equality_witness_candidates(
     }
 }
 
+/// Proves an order condition against a constant by removing an additive
+/// constant shift from the term side, when the assumptions prove the shifted
+/// addition overflow-free (the executing code already checked it). For
+/// example `x + 1 > 0` becomes `x >= 0` under `!AddOverflows(x, 1)`.
+fn shifted_order_condition_proven(
+    assumptions: &Assumptions,
+    condition: &ConditionTerm,
+    value: bool,
+) -> bool {
+    if !value {
+        return false;
+    }
+    // Normalize to `left OP right` with OP in {<, <=}.
+    let (left, right, strict) = match condition {
+        ConditionTerm::Bitvector32SignedLessThan(left, right) => (left, right, true),
+        ConditionTerm::Bitvector32SignedLessEqual(left, right) => (left, right, false),
+        ConditionTerm::Bitvector32SignedGreaterThan(left, right) => (right, left, true),
+        ConditionTerm::Bitvector32SignedGreaterEqual(left, right) => (right, left, false),
+        _ => return false,
+    };
+    let overflow_free = |base: &Bitvector32Term, shift: u32| {
+        let exact = assumptions.proves_exact(&Proposition::ConditionIs(
+            ConditionTerm::Bitvector32SignedAddOverflows(
+                Box::new(base.clone()),
+                Box::new(Bitvector32Term::Constant(shift)),
+            ),
+            false,
+        )) || assumptions.proves_exact(&Proposition::ConditionIs(
+            ConditionTerm::Bitvector32SignedAddOverflows(
+                Box::new(Bitvector32Term::Constant(shift)),
+                Box::new(base.clone()),
+            ),
+            false,
+        ));
+        if exact {
+            return true;
+        }
+        // Overflow-freedom also follows from a proven bound keeping the
+        // shifted sum inside the signed range.
+        let signed_shift = shift as i32;
+        if signed_shift > 0 {
+            let le_bound = Bitvector32Term::Constant((i32::MAX - signed_shift) as u32);
+            let le = ConditionTerm::signed_less_equal(base.clone(), le_bound);
+            let lt_bound = Bitvector32Term::Constant((i32::MAX - signed_shift + 1) as u32);
+            let lt = ConditionTerm::signed_less_than(base.clone(), lt_bound);
+            assumptions.proves_exact(&Proposition::ConditionIs(le.clone(), true))
+                || assumptions.proves_order_condition_for_memory_resolution(&le, true)
+                || assumptions.proves_exact(&Proposition::ConditionIs(lt.clone(), true))
+                || assumptions.proves_order_condition_for_memory_resolution(&lt, true)
+        } else if signed_shift < 0 {
+            let bound = Bitvector32Term::Constant((i32::MIN - signed_shift) as u32);
+            let condition = ConditionTerm::signed_less_equal(bound, base.clone());
+            assumptions.proves_exact(&Proposition::ConditionIs(condition.clone(), true))
+                || assumptions.proves_order_condition_for_memory_resolution(&condition, true)
+        } else {
+            true
+        }
+    };
+    let shifted = match (left.as_ref(), right.as_ref()) {
+        (shifted_term, Bitvector32Term::Constant(bound)) => {
+            let (base, shift) = split_additive_constant(shifted_term);
+            if shift == 0 || !overflow_free(&base, shift) {
+                return false;
+            }
+            let Some(new_bound) = (*bound as i32).checked_sub(shift as i32) else {
+                return false;
+            };
+            (base, Bitvector32Term::Constant(new_bound as u32), false)
+        }
+        (Bitvector32Term::Constant(bound), shifted_term) => {
+            let (base, shift) = split_additive_constant(shifted_term);
+            if shift == 0 || !overflow_free(&base, shift) {
+                return false;
+            }
+            let Some(new_bound) = (*bound as i32).checked_sub(shift as i32) else {
+                return false;
+            };
+            (Bitvector32Term::Constant(new_bound as u32), base, true)
+        }
+        _ => return false,
+    };
+    let (new_left, new_right, constant_on_left) = shifted;
+    let condition = match (strict, constant_on_left) {
+        (true, false) | (true, true) => ConditionTerm::signed_less_than(new_left, new_right),
+        (false, _) => ConditionTerm::signed_less_equal(new_left, new_right),
+    };
+    certification_proves_proposition(
+        assumptions,
+        &Proposition::ConditionIs(condition, true),
+    )
+}
+
 fn certification_proves_proposition(assumptions: &Assumptions, proposition: &Proposition) -> bool {
     if assumptions.proves_exact(proposition) {
         return true;
     }
     match proposition {
+        // Order conditions use the deterministic bounded order prover; the
+        // fuel-dependent simp decision procedure stays out of certification.
+        Proposition::ConditionIs(condition, value)
+            if assumptions.proves_order_condition_for_memory_resolution(condition, *value) =>
+        {
+            true
+        }
+        Proposition::ConditionIs(condition, value)
+            if shifted_order_condition_proven(assumptions, condition, *value) =>
+        {
+            true
+        }
         Proposition::And(left, right) => {
             certification_proves_proposition(assumptions, left)
                 && certification_proves_proposition(assumptions, right)
