@@ -20,6 +20,26 @@ Run the larger example-project verifier with:
 cargo test --test examples
 ```
 
+## Time-Bounded Runs
+
+Prover regressions usually manifest as hangs rather than failures, so the
+suite has a hard per-test time budget enforced by cargo-nextest. Install it
+once with `cargo install cargo-nextest --locked` (or `brew install
+cargo-nextest`), then run:
+
+```sh
+cargo nextest run
+```
+
+`.config/nextest.toml` reports any test slower than 10 seconds as slow and
+kills any test still running after 60 seconds. Treat a test that trips either
+threshold as a bug: split it, or fix the prover slowdown it is exposing. The
+mdtest and example-project harnesses are exempted up to 20 minutes because
+each is a single test function that already bounds its own child processes.
+
+Plain `cargo test` still works and applies no time limits; use it as the
+escape hatch while fixing a slow test.
+
 ## Mdtests
 
 Mdtests live in `mdtests/`. Each file can contain prose, one or more C blocks,

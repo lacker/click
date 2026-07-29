@@ -1,0 +1,14 @@
+# Hard per-test time budget for `cargo nextest run`: any test slower than 10
+# seconds is reported as slow, and a test still running after 60 seconds is
+# killed and fails. Treat a test that trips either threshold as a bug: split
+# it, or fix the prover slowdown it is exposing. Prover regressions tend to
+# manifest as hangs, so they must fail fast instead of stalling the suite.
+[profile.default]
+slow-timeout = { period = "10s", terminate-after = 6 }
+
+# The mdtest and example-project harnesses are single test functions that each
+# run a whole suite of isolated child processes with their own per-child time
+# limits, so the parent functions get a larger budget (20 minutes).
+[[profile.default.overrides]]
+filter = "binary(mdtests) | binary(examples)"
+slow-timeout = { period = "60s", terminate-after = 20 }
