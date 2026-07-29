@@ -11886,6 +11886,7 @@ fn lower_outcome_simp_tactic(
         plan_simp_certificate(goal, &assumptions_from_propositions(&atomic_available))
         && let [ProofTactic::ExactPropositionDerivation(derivation)] = plan.tactics()
     {
+        let ambient = assumptions_from_propositions(&atomic_available);
         let context = derivation
             .context_premises()
             .into_iter()
@@ -11896,6 +11897,11 @@ fn lower_outcome_simp_tactic(
                         Proposition::CMemoryMutatesOnly { .. }
                             | Proposition::CMemoryEffectSummary { .. }
                     )
+                    // A loadability premise the ambient context re-derives
+                    // (for example from materialized memory) needs no
+                    // surface spelling; replay re-derives it the same way.
+                    && !(matches!(premise, Proposition::CMemoryLoadable { .. })
+                        && ambient.derive_atomic_proposition(premise).is_some())
             })
             .collect::<Vec<_>>();
         let mut selected_premises = Vec::new();
