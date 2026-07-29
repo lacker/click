@@ -3776,6 +3776,58 @@ pub fn c_function_outcomes_definitionally_equal(
     }
 }
 
+/// Proves two return outcomes equal by store provenance: when both
+/// executions performed the same ordered sequence of certified stores
+/// (pointers and values definitionally equal), their final external
+/// memories are equal by construction, so the deep memory comparison is
+/// unnecessary and only return values and resources need checking.
+pub fn c_function_outcomes_equal_by_store_provenance(
+    function: &CFunction,
+    left: &CFunctionOutcome,
+    left_facts: &[ExecutionPureFact],
+    right: &CFunctionOutcome,
+    right_facts: &[ExecutionPureFact],
+    assumptions: &Assumptions,
+) -> bool {
+    let (
+        CFunctionOutcome::Return {
+            value: left_value,
+            state: left_state,
+        },
+        CFunctionOutcome::Return {
+            value: right_value,
+            state: right_state,
+        },
+    ) = (left, right)
+    else {
+        return false;
+    };
+    let left_stores = left_facts
+        .iter()
+        .filter_map(|fact| fact.certified_store_data())
+        .collect::<Vec<_>>();
+    let right_stores = right_facts
+        .iter()
+        .filter_map(|fact| fact.certified_store_data())
+        .collect::<Vec<_>>();
+    if left_stores.len() != right_stores.len() {
+        return false;
+    }
+    let chains_equal = left_stores.iter().zip(&right_stores).all(|(left, right)| {
+        pointers_proven_equal_for_memory_resolution(&left.pointer, &right.pointer, assumptions)
+            && c_values_proven_equal_for_memory_resolution(&left.value, &right.value, assumptions)
+    });
+    chains_equal
+        && c_values_proven_equal_for_memory_resolution(left_value, right_value, assumptions)
+        && resource_contexts_definitionally_equal(
+            function,
+            left_state.memory(),
+            left_state.resources(),
+            right_state.resources(),
+            assumptions,
+        )
+}
+
 fn c_memories_definitionally_equal(
     left: &CMemory,
     right: &CMemory,
@@ -3850,6 +3902,7 @@ fn materialized_load_is_unchanged(
 pub fn certify_c_function_execution_path_resource_representation(
     path: &SymbolicCExecutionPath,
     desired_outcome: CFunctionOutcome,
+    desired_facts: &[ExecutionPureFact],
 ) -> Option<SymbolicCExecutionPath> {
     let mut proposition = path.theorem().proposition();
     let mut premises = Vec::new();
@@ -3897,7 +3950,31 @@ pub fn certify_c_function_execution_path_resource_representation(
         return_state.memory(),
         desired_state.memory(),
         &assumptions,
-    );
+    ) || {
+        // Store provenance: the same ordered certified stores from the same
+        // entry produce the same external memory by construction.
+        let certified_stores = path
+            .execution_facts()
+            .iter()
+            .filter_map(|fact| fact.certified_store_data().cloned())
+            .collect::<Vec<_>>();
+        let desired_stores = desired_facts
+            .iter()
+            .filter_map(|fact| fact.certified_store_data())
+            .collect::<Vec<_>>();
+        certified_stores.len() == desired_stores.len()
+            && certified_stores.iter().zip(&desired_stores).all(|(left, right)| {
+                pointers_proven_equal_for_memory_resolution(
+                    &left.pointer,
+                    &right.pointer,
+                    &assumptions,
+                ) && c_values_proven_equal_for_memory_resolution(
+                    &left.value,
+                    &right.value,
+                    &assumptions,
+                )
+            })
+    };
     if !values_equal || !memories_equal {
         return None;
     }

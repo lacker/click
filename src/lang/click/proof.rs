@@ -9374,6 +9374,13 @@ fn finish_ordered_proof_replay(
                 replayed.outcome(),
                 certified,
                 &path_assumptions,
+            ) || crate::kernel::c_function_outcomes_equal_by_store_provenance(
+                function,
+                replayed.outcome(),
+                &replayed.execution_facts(),
+                certified,
+                &certified_path.execution_facts(),
+                &path_assumptions,
             )
         };
         let certified_path_for_replay = if replay.execution_abstraction {
@@ -10710,6 +10717,7 @@ fn finish_ordered_proof_replay(
                         certify_c_function_execution_path_resource_representation(
                             certified_path,
                             outcome.clone(),
+                            &path.execution_facts(),
                         )
                         .ok_or_else(|| {
                             ClickError::new(format!(
