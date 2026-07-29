@@ -2743,6 +2743,146 @@ fn resource_contexts_definitionally_equal(
     directly_equal(&left, &right)
 }
 
+/// Extracts constant bounds `lo <= var < hi` from a universal premise made
+/// exclusively of constant comparisons against `var`. Returns `None` when any
+/// conjunct is not such a bound, so instantiating the conclusion stays sound.
+fn constant_variable_bounds(var: Variable, premise: &Proposition) -> Option<(u32, u32)> {
+    fn collect(var: Variable, premise: &Proposition, lo: &mut Option<u32>, hi: &mut Option<u32>) -> bool {
+        let bound = Bitvector32Term::Variable(var);
+        match premise {
+            Proposition::And(left, right) => {
+                collect(var, left, lo, hi) && collect(var, right, lo, hi)
+            }
+            Proposition::ConditionIs(
+                ConditionTerm::Bitvector32SignedLessEqual(left, right),
+                true,
+            ) if **right == bound => {
+                let Bitvector32Term::Constant(value) = **left else {
+                    return false;
+                };
+                if value > i32::MAX as u32 {
+                    return false;
+                }
+                *lo = Some(lo.map_or(value, |current: u32| current.max(value)));
+                true
+            }
+            Proposition::ConditionIs(
+                ConditionTerm::Bitvector32SignedLessThan(left, right),
+                true,
+            ) if **left == bound => {
+                let Bitvector32Term::Constant(value) = **right else {
+                    return false;
+                };
+                if value > i32::MAX as u32 {
+                    return false;
+                }
+                *hi = Some(hi.map_or(value, |current: u32| current.min(value)));
+                true
+            }
+            _ => false,
+        }
+    }
+    let mut lo = None;
+    let mut hi = None;
+    if !collect(var, premise, &mut lo, &mut hi) {
+        return None;
+    }
+    Some((lo?, hi?))
+}
+
+const FORALL_INSTANTIATION_LIMIT: u32 = 16;
+
+/// Evaluates a premise whose variables have been substituted away to a
+/// constant truth value; `None` when it is not a closed constant condition.
+fn constant_premise_value(premise: &Proposition) -> Option<bool> {
+    match premise {
+        Proposition::And(left, right) => {
+            Some(constant_premise_value(left)? && constant_premise_value(right)?)
+        }
+        Proposition::ConditionIs(condition, expected) => {
+            let holds = match condition {
+                ConditionTerm::Constant(value) => *value,
+                ConditionTerm::Bitvector32SignedLessEqual(left, right) => {
+                    let (Bitvector32Term::Constant(left), Bitvector32Term::Constant(right)) =
+                        (left.as_ref(), right.as_ref())
+                    else {
+                        return None;
+                    };
+                    (*left as i32) <= (*right as i32)
+                }
+                ConditionTerm::Bitvector32SignedLessThan(left, right) => {
+                    let (Bitvector32Term::Constant(left), Bitvector32Term::Constant(right)) =
+                        (left.as_ref(), right.as_ref())
+                    else {
+                        return None;
+                    };
+                    (*left as i32) < (*right as i32)
+                }
+                ConditionTerm::Bitvector32SignedAddOverflows(left, right) => {
+                    let (Bitvector32Term::Constant(left), Bitvector32Term::Constant(right)) =
+                        (left.as_ref(), right.as_ref())
+                    else {
+                        return None;
+                    };
+                    (*left as i32).checked_add(*right as i32).is_none()
+                }
+                _ => return None,
+            };
+            Some(holds == *expected)
+        }
+        _ => None,
+    }
+}
+
+/// Instantiates finitely-bounded universal facts (`forall x. guards -> lo <=
+/// x < hi -> P(x)` with small constant bounds) at every point in the bound,
+/// so the certifier can use per-index conclusions the way an unfolded proof
+/// does. Guard premises (such as overflow side conditions) must evaluate to
+/// constant truth after substitution, or the point is skipped.
+fn finite_forall_instantiations(facts: &[Proposition]) -> Vec<Proposition> {
+    let mut instantiated = Vec::new();
+    for fact in facts {
+        let Proposition::ForAll {
+            var,
+            sort: Sort::CInt32 | Sort::Bitvector32,
+            body,
+        } = fact
+        else {
+            continue;
+        };
+        let mut premises = Vec::new();
+        let mut conclusion = body.as_ref();
+        while let Proposition::Implies(premise, rest) = conclusion {
+            premises.push(premise.as_ref());
+            conclusion = rest.as_ref();
+        }
+        let Some((lo, hi)) = premises
+            .iter()
+            .find_map(|premise| constant_variable_bounds(*var, premise))
+        else {
+            continue;
+        };
+        if hi <= lo || hi - lo > FORALL_INSTANTIATION_LIMIT {
+            continue;
+        }
+        for value in lo..hi {
+            let witness = Bitvector32Term::Constant(value);
+            let premises_hold = premises.iter().all(|premise| {
+                constant_variable_bounds(*var, premise).is_some()
+                    || constant_premise_value(&substitute_bitvector_variable_in_proposition(
+                        premise, *var, &witness,
+                    )) == Some(true)
+            });
+            if premises_hold {
+                instantiated.push(substitute_bitvector_variable_in_proposition(
+                    conclusion, *var, &witness,
+                ));
+            }
+        }
+    }
+    instantiated
+}
+
 /// Collects one-point-rule witness candidates for an existential body: any
 /// conjunct shaped `var == term` (on either side) pins the bound variable to
 /// `term`, provided `term` does not itself mention the variable.
@@ -2784,10 +2924,33 @@ fn certification_proves_proposition(assumptions: &Assumptions, proposition: &Pro
         }
         Proposition::Exists {
             var,
-            sort: Sort::CInt32 | Sort::Bitvector32,
+            sort: sort @ (Sort::CInt32 | Sort::Bitvector32),
             body,
             ..
         } => {
+            // An assumed existential proves the goal up to renaming of the
+            // bound variable; bound variables are freshened per lowering
+            // pass, so exact matching alone would never fire.
+            let alpha_matched = assumptions.prop_facts.iter().any(|fact| {
+                let Proposition::Exists {
+                    var: fact_var,
+                    sort: fact_sort,
+                    body: fact_body,
+                    ..
+                } = fact
+                else {
+                    return false;
+                };
+                fact_sort == sort
+                    && substitute_bitvector_variable_in_proposition(
+                        fact_body,
+                        *fact_var,
+                        &Bitvector32Term::Variable(*var),
+                    ) == **body
+            });
+            if alpha_matched {
+                return true;
+            }
             // One-point rule: `P[t/x]` proves `exists x. P` when a conjunct
             // pins `x` to a witness term `t`.
             let mut candidates = Vec::new();
@@ -3254,14 +3417,16 @@ fn function_claim_holds_on_prepared_path(
                             &assumptions,
                         )
                 });
-                let path_assumptions = assumptions_with_propositions(
-                    &assumptions,
-                    &path
-                        .facts
-                        .iter()
-                        .map(|fact| fact.proposition().clone())
-                        .collect::<Vec<_>>(),
-                );
+                let mut path_propositions = path
+                    .facts
+                    .iter()
+                    .map(|fact| fact.proposition().clone())
+                    .collect::<Vec<_>>();
+                let assumption_facts = assumptions.prop_facts.iter().cloned().collect::<Vec<_>>();
+                path_propositions.extend(finite_forall_instantiations(&assumption_facts));
+                path_propositions.extend(finite_forall_instantiations(&path_propositions.clone()));
+                let path_assumptions =
+                    assumptions_with_propositions(&assumptions, &path_propositions);
                 let proposition_holds = certification_proves_post_proposition(
                     &path_assumptions,
                     &path.proposition,

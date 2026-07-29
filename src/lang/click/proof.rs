@@ -4075,18 +4075,33 @@ fn facts_for_smart_have_lowering(propositions: &[Proposition]) -> Vec<Propositio
 fn facts_for_simple_goal_lowering(propositions: &[Proposition]) -> Vec<Proposition> {
     let mut facts = facts_for_smart_have_lowering(propositions);
     for proposition in propositions {
-        if matches!(
-            proposition,
+        let include = match proposition {
             Proposition::ConditionIs(
                 ConditionTerm::Bitvector32SignedLessThan(_, _)
-                    | ConditionTerm::Bitvector32SignedLessEqual(_, _)
-                    | ConditionTerm::Bitvector32SignedGreaterThan(_, _)
-                    | ConditionTerm::Bitvector32SignedGreaterEqual(_, _)
-                    | ConditionTerm::PointerOffsetEqual(_, _),
-                _
-            )
-        ) && !facts.contains(proposition)
-        {
+                | ConditionTerm::Bitvector32SignedLessEqual(_, _)
+                | ConditionTerm::Bitvector32SignedGreaterThan(_, _)
+                | ConditionTerm::Bitvector32SignedGreaterEqual(_, _)
+                | ConditionTerm::PointerOffsetEqual(_, _),
+                _,
+            ) => true,
+            // A false-polarity atomic alias decides branch conditions
+            // (`if (p[i] == x)`) whose negative arm the goal's `If` terms
+            // still carry; the smart-have set only admits the true polarity.
+            Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), false) => {
+                matches!(
+                    (left.as_ref(), right.as_ref()),
+                    (
+                        Bitvector32Term::MemoryLoad(_, _),
+                        Bitvector32Term::Constant(_) | Bitvector32Term::Variable(_)
+                    ) | (
+                        Bitvector32Term::Constant(_) | Bitvector32Term::Variable(_),
+                        Bitvector32Term::MemoryLoad(_, _)
+                    )
+                )
+            }
+            _ => false,
+        };
+        if include && !facts.contains(proposition) {
             facts.push(proposition.clone());
         }
     }
