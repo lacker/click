@@ -3380,6 +3380,24 @@ fn shifted_order_condition_proven(
         if exact {
             return true;
         }
+        // A recorded overflow fact may spell the operand through loads at a
+        // different snapshot; compare canonically.
+        let canonical_base = canonicalize_atomic_loads(base);
+        let recorded = assumptions.condition_facts.iter().any(|(condition, value)| {
+            !*value
+                && match condition {
+                    ConditionTerm::Bitvector32SignedAddOverflows(left, right) => {
+                        (matches!(right.as_ref(), Bitvector32Term::Constant(c) if *c == shift)
+                            && canonicalize_atomic_loads(left) == canonical_base)
+                            || (matches!(left.as_ref(), Bitvector32Term::Constant(c) if *c == shift)
+                                && canonicalize_atomic_loads(right) == canonical_base)
+                    }
+                    _ => false,
+                }
+        });
+        if recorded {
+            return true;
+        }
         // Overflow-freedom also follows from a proven bound keeping the
         // shifted sum inside the signed range.
         let signed_shift = shift as i32;
@@ -3401,6 +3419,23 @@ fn shifted_order_condition_proven(
             true
         }
     };
+    // `a + 1 <= b` follows from `a < b` for any terms when `a + 1` is
+    // provably overflow-free; this converts a strict requirement into the
+    // non-strict spelling a successor produces.
+    if !strict {
+        let (base, shift) = split_additive_constant(left);
+        if shift == 1 {
+            // `a < b` alone implies both that `a + 1` cannot overflow
+            // (`a < b <= i32::MAX`) and the goal `a + 1 <= b`.
+            let strict_form = ConditionTerm::signed_less_than(base, right.as_ref().clone());
+            if certification_proves_proposition(
+                assumptions,
+                &Proposition::ConditionIs(strict_form, true),
+            ) {
+                return true;
+            }
+        }
+    }
     let shifted = match (left.as_ref(), right.as_ref()) {
         (shifted_term, Bitvector32Term::Constant(bound)) => {
             let (base, shift) = split_additive_constant(shifted_term);
@@ -3473,8 +3508,52 @@ fn range_folds_alpha_equivalent(left: &Bitvector32Term, right: &Bitvector32Term)
     }
 }
 
+/// Canonicalizes the loads inside a binary condition so spellings differing
+/// only in redundant cached cells compare and prove identically.
+fn condition_with_canonical_loads(condition: &ConditionTerm) -> Option<ConditionTerm> {
+    let binary = |left: &Bitvector32Term, right: &Bitvector32Term| {
+        (
+            Box::new(canonicalize_atomic_loads(left)),
+            Box::new(canonicalize_atomic_loads(right)),
+        )
+    };
+    Some(match condition {
+        ConditionTerm::Bitvector32SignedLessThan(left, right) => {
+            let (left, right) = binary(left, right);
+            ConditionTerm::Bitvector32SignedLessThan(left, right)
+        }
+        ConditionTerm::Bitvector32SignedLessEqual(left, right) => {
+            let (left, right) = binary(left, right);
+            ConditionTerm::Bitvector32SignedLessEqual(left, right)
+        }
+        ConditionTerm::Bitvector32SignedGreaterThan(left, right) => {
+            let (left, right) = binary(left, right);
+            ConditionTerm::Bitvector32SignedGreaterThan(left, right)
+        }
+        ConditionTerm::Bitvector32SignedGreaterEqual(left, right) => {
+            let (left, right) = binary(left, right);
+            ConditionTerm::Bitvector32SignedGreaterEqual(left, right)
+        }
+        ConditionTerm::Bitvector32Equal(left, right) => {
+            let (left, right) = binary(left, right);
+            ConditionTerm::Bitvector32Equal(left, right)
+        }
+        _ => return None,
+    })
+}
+
 fn certification_proves_proposition(assumptions: &Assumptions, proposition: &Proposition) -> bool {
     if assumptions.proves_exact(proposition) {
+        return true;
+    }
+    if let Proposition::ConditionIs(condition, value) = proposition
+        && let Some(canonical) = condition_with_canonical_loads(condition)
+        && &canonical != condition
+        && certification_proves_proposition(
+            assumptions,
+            &Proposition::ConditionIs(canonical, *value),
+        )
+    {
         return true;
     }
     match proposition {
@@ -4186,6 +4265,9 @@ fn function_claim_holds_on_prepared_path(
                     return_state.memory(),
                     execution_facts,
                 );
+                if !proposition_holds && std::env::var_os("CLICK_ENSURE_PROBE").is_some() {
+                    eprintln!("ENSURE-PROBE: post proposition not proven: {:?}", path.proposition);
+                }
                 obligations_hold && proposition_holds
             })
         }
