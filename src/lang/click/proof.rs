@@ -7613,6 +7613,114 @@ fn plan_explicit_fact_transport_at_outcome(
     Ok(selected.into_iter().map(|(_, surface)| surface).collect())
 }
 
+/// Erases every embedded memory snapshot from a comparison proposition so
+/// two spellings of the same comparison at different snapshots compare
+/// equal; used as a cheap prefilter before attempting a transport proof.
+fn memory_erased_comparison(proposition: &Proposition) -> Option<Proposition> {
+    fn erase_term(term: &Bitvector32Term) -> Bitvector32Term {
+        match term {
+            Bitvector32Term::MemoryLoad(_, pointer) => Bitvector32Term::MemoryLoad(
+                Box::new(CMemory::default()),
+                Box::new(Pointer {
+                    block: pointer.block.clone(),
+                    offset: erase_offset(&pointer.offset),
+                }),
+            ),
+            Bitvector32Term::Add(left, right) => {
+                Bitvector32Term::Add(Box::new(erase_term(left)), Box::new(erase_term(right)))
+            }
+            Bitvector32Term::Subtract(left, right) => {
+                Bitvector32Term::Subtract(Box::new(erase_term(left)), Box::new(erase_term(right)))
+            }
+            Bitvector32Term::Multiply(left, right) => {
+                Bitvector32Term::Multiply(Box::new(erase_term(left)), Box::new(erase_term(right)))
+            }
+            other => other.clone(),
+        }
+    }
+    fn erase_offset(offset: &PointerOffsetTerm) -> PointerOffsetTerm {
+        match offset {
+            PointerOffsetTerm::Add(left, right) => PointerOffsetTerm::Add(
+                Box::new(erase_offset(left)),
+                Box::new(erase_offset(right)),
+            ),
+            PointerOffsetTerm::Int32Scaled { value, byte_width } => {
+                PointerOffsetTerm::Int32Scaled {
+                    value: Box::new(erase_term(value)),
+                    byte_width: *byte_width,
+                }
+            }
+            other => other.clone(),
+        }
+    }
+    let Proposition::ConditionIs(condition, value) = proposition else {
+        return None;
+    };
+    let erased = match condition {
+        ConditionTerm::Bitvector32SignedLessThan(left, right) => {
+            ConditionTerm::Bitvector32SignedLessThan(
+                Box::new(erase_term(left)),
+                Box::new(erase_term(right)),
+            )
+        }
+        ConditionTerm::Bitvector32SignedLessEqual(left, right) => {
+            ConditionTerm::Bitvector32SignedLessEqual(
+                Box::new(erase_term(left)),
+                Box::new(erase_term(right)),
+            )
+        }
+        ConditionTerm::Bitvector32SignedGreaterThan(left, right) => {
+            ConditionTerm::Bitvector32SignedGreaterThan(
+                Box::new(erase_term(left)),
+                Box::new(erase_term(right)),
+            )
+        }
+        ConditionTerm::Bitvector32SignedGreaterEqual(left, right) => {
+            ConditionTerm::Bitvector32SignedGreaterEqual(
+                Box::new(erase_term(left)),
+                Box::new(erase_term(right)),
+            )
+        }
+        ConditionTerm::Bitvector32Equal(left, right) => ConditionTerm::Bitvector32Equal(
+            Box::new(erase_term(left)),
+            Box::new(erase_term(right)),
+        ),
+        _ => return None,
+    };
+    Some(Proposition::ConditionIs(erased, *value))
+}
+
+/// The outermost memory snapshot a comparison proposition loads from, used
+/// to pick the transport destination for certified-fact matching.
+fn proposition_outer_load_memory(proposition: &Proposition) -> Option<&CMemory> {
+    fn term_outer(term: &Bitvector32Term) -> Option<&CMemory> {
+        match term {
+            Bitvector32Term::MemoryLoad(memory, _) => Some(memory),
+            Bitvector32Term::Add(left, right)
+            | Bitvector32Term::Subtract(left, right)
+            | Bitvector32Term::Multiply(left, right)
+            | Bitvector32Term::Divide(left, right)
+            | Bitvector32Term::Remainder(left, right) => {
+                term_outer(left).or_else(|| term_outer(right))
+            }
+            _ => None,
+        }
+    }
+    let Proposition::ConditionIs(condition, _) = proposition else {
+        return None;
+    };
+    match condition {
+        ConditionTerm::Bitvector32SignedLessThan(left, right)
+        | ConditionTerm::Bitvector32SignedLessEqual(left, right)
+        | ConditionTerm::Bitvector32SignedGreaterThan(left, right)
+        | ConditionTerm::Bitvector32SignedGreaterEqual(left, right)
+        | ConditionTerm::Bitvector32Equal(left, right) => {
+            term_outer(left).or_else(|| term_outer(right))
+        }
+        _ => None,
+    }
+}
+
 fn certified_fact_transport_reaches(
     source: &Proposition,
     target: &Proposition,
@@ -13504,6 +13612,7 @@ fn record_surface_replay_tactic(
                     .block("fact transport has no preceding statement-entry snapshot");
                 return;
             };
+            let transport_assumptions = assumptions_from_propositions(available);
             let mut base_surfaces = Vec::new();
             for proposition in [source, target] {
                 for surface in replay.surface_propositions.surfaces(proposition) {
@@ -13519,7 +13628,19 @@ fn record_surface_replay_tactic(
                 }
                 let normalized = normalize_direct_atomic_memory_loads(proposition);
                 for recorded in replay.surface_propositions.kernel_facts() {
-                    if normalize_direct_atomic_memory_loads(recorded) != normalized {
+    let matches = normalize_direct_atomic_memory_loads(recorded) == normalized
+                        || (memory_erased_comparison(recorded).is_some()
+                            && memory_erased_comparison(recorded)
+                                == memory_erased_comparison(proposition)
+                            && proposition_outer_load_memory(proposition).is_some_and(|after| {
+                                certified_fact_transport_reaches(
+                                    recorded,
+                                    proposition,
+                                    after,
+                                    &transport_assumptions,
+                                )
+                            }));
+                    if !matches {
                         continue;
                     }
                     for surface in replay.surface_propositions.surfaces(recorded) {
@@ -13575,8 +13696,27 @@ fn record_surface_replay_tactic(
                 };
                 candidates.iter().find_map(|candidate| {
                     let actual = lower(candidate)?;
-                    (normalize_direct_atomic_memory_loads(&actual) == normalized_expected)
-                        .then(|| (candidate.clone(), actual))
+                    if normalize_direct_atomic_memory_loads(&actual) == normalized_expected {
+                        return Some((candidate.clone(), actual));
+                    }
+                    // The certified pair may sit at a snapshot no recorded
+                    // point reproduces syntactically; accept a candidate
+                    // whose lowering provably transports to the certified
+                    // spelling.
+                    if memory_erased_comparison(&actual).is_some()
+                        && memory_erased_comparison(&actual)
+                            == memory_erased_comparison(expected)
+                        && let Some(after) = proposition_outer_load_memory(expected)
+                        && certified_fact_transport_reaches(
+                            &actual,
+                            expected,
+                            after,
+                            &transport_assumptions,
+                        )
+                    {
+                        return Some((candidate.clone(), actual));
+                    }
+                    None
                 })
             };
             let selected_by_preceding_step = replay
