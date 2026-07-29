@@ -113,33 +113,38 @@ fn pointer_offsets_with_common_base_proven_distinct_for_memory_resolution(
         return false;
     }
     let zero = PointerOffsetTerm::Constant(0);
+    let offsets_equal = |left: &PointerOffsetTerm, right: &PointerOffsetTerm| {
+        left == right
+            || pointer_offsets_equal_for_memory_resolution(left, right, assumptions, depth + 1)
+                == Some(true)
+    };
     let index_pair = match (&left.offset, &right.offset) {
         (
             PointerOffsetTerm::Add(left_base, left_index),
             PointerOffsetTerm::Add(right_base, right_index),
         ) => {
-            if left_base == right_base {
+            if offsets_equal(left_base, right_base) {
                 Some((left_index.as_ref(), right_index.as_ref()))
-            } else if left_base == right_index {
+            } else if offsets_equal(left_base, right_index) {
                 Some((left_index.as_ref(), right_base.as_ref()))
-            } else if left_index == right_base {
+            } else if offsets_equal(left_index, right_base) {
                 Some((left_base.as_ref(), right_index.as_ref()))
-            } else if left_index == right_index {
+            } else if offsets_equal(left_index, right_index) {
                 Some((left_base.as_ref(), right_base.as_ref()))
             } else {
                 None
             }
         }
-        (PointerOffsetTerm::Add(base, index), right) if base.as_ref() == right => {
+        (PointerOffsetTerm::Add(base, index), right) if offsets_equal(base, right) => {
             Some((index.as_ref(), &zero))
         }
-        (PointerOffsetTerm::Add(index, base), right) if base.as_ref() == right => {
+        (PointerOffsetTerm::Add(index, base), right) if offsets_equal(base, right) => {
             Some((index.as_ref(), &zero))
         }
-        (left, PointerOffsetTerm::Add(base, index)) if left == base.as_ref() => {
+        (left, PointerOffsetTerm::Add(base, index)) if offsets_equal(left, base) => {
             Some((&zero, index.as_ref()))
         }
-        (left, PointerOffsetTerm::Add(index, base)) if left == base.as_ref() => {
+        (left, PointerOffsetTerm::Add(index, base)) if offsets_equal(left, base) => {
             Some((&zero, index.as_ref()))
         }
         _ => None,
@@ -155,6 +160,14 @@ fn pointer_offsets_with_common_base_proven_distinct_for_memory_resolution(
     };
 
     assumptions.decide_bitvector_equality_shallow(&left_index, &right_index) == Some(false)
+        || assumptions.proves_order_condition_for_memory_resolution(
+            &ConditionTerm::signed_less_than(left_index.clone(), right_index.clone()),
+            true,
+        )
+        || assumptions.proves_order_condition_for_memory_resolution(
+            &ConditionTerm::signed_less_than(right_index, left_index),
+            true,
+        )
 }
 
 pub(super) fn pointers_proven_equal_for_memory_resolution(
@@ -179,6 +192,11 @@ fn pointers_proven_equal_for_memory_resolution_with_depth(
     assumptions: &Assumptions,
     depth: usize,
 ) -> bool {
+    if left != right
+        && assumptions.pointers_proven_disjoint_by_explicit_range_for_memory_resolution(left, right)
+    {
+        return false;
+    }
     left == right
         || left.block == right.block
             && pointer_offsets_equal_for_memory_resolution(
@@ -252,10 +270,38 @@ fn bitvector_terms_equal_for_memory_resolution(
     {
         return true;
     }
+    if let Bitvector32Term::MemoryLoad(memory, pointer) = left
+        && let Some((_, CValue::Int32(value))) = memory.cells.iter().find(|(stored_pointer, _)| {
+            pointers_proven_equal_for_memory_resolution_with_depth(
+                pointer,
+                stored_pointer,
+                assumptions,
+                depth + 1,
+            )
+        })
+        && value != left
+        && bitvector_terms_equal_for_memory_resolution(value, right, assumptions, depth + 1)
+    {
+        return true;
+    }
     if let Bitvector32Term::MemoryLoad(memory, pointer) = right
         && let Some(CValue::Int32(value)) = memory.known_value(pointer)
         && &value != right
         && bitvector_terms_equal_for_memory_resolution(left, &value, assumptions, depth + 1)
+    {
+        return true;
+    }
+    if let Bitvector32Term::MemoryLoad(memory, pointer) = right
+        && let Some((_, CValue::Int32(value))) = memory.cells.iter().find(|(stored_pointer, _)| {
+            pointers_proven_equal_for_memory_resolution_with_depth(
+                pointer,
+                stored_pointer,
+                assumptions,
+                depth + 1,
+            )
+        })
+        && value != right
+        && bitvector_terms_equal_for_memory_resolution(left, value, assumptions, depth + 1)
     {
         return true;
     }
@@ -695,8 +741,11 @@ pub(crate) fn memory_effect_write_pointers(facts: &[ExecutionPureFact]) -> BTree
     // memories would mistake join abstraction and call havoc for writes.
     let mut writes = BTreeSet::new();
     for fact in facts {
-        if let Proposition::CMemoryMutatesOnly { pointers, .. } = fact.proposition() {
-            writes.extend(pointers.iter().cloned());
+        match fact.proposition() {
+            Proposition::CMemoryMutatesOnly { pointers, .. } => {
+                writes.extend(pointers.iter().cloned());
+            }
+            _ => {}
         }
     }
 
@@ -2163,15 +2212,6 @@ pub(super) fn resource_context_has_read(
     assumptions: &Assumptions,
 ) -> bool {
     resources.permits_memory_read(pointer, byte_width, assumptions)
-}
-
-pub(super) fn resource_context_has_write(
-    resources: &ResourceContext,
-    pointer: &Pointer,
-    byte_width: u32,
-    assumptions: &Assumptions,
-) -> bool {
-    resources.permits_memory_write(pointer, byte_width, assumptions)
 }
 
 pub(super) fn collect_condition_bitvector_variables(
@@ -4033,14 +4073,6 @@ pub(super) fn add_path_fact(
     proposition: Proposition,
 ) -> Option<()> {
     add_path_fact_with_visibility(facts, assumptions, proposition, true)
-}
-
-pub(super) fn add_internal_path_fact(
-    facts: &mut Vec<ExecutionPureFact>,
-    assumptions: &Assumptions,
-    proposition: Proposition,
-) -> Option<()> {
-    add_path_fact_with_visibility(facts, assumptions, proposition, false)
 }
 
 pub(super) fn add_path_fact_with_visibility(

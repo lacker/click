@@ -1487,24 +1487,76 @@ impl Assumptions {
         require_strict: bool,
     ) -> bool {
         let order_facts = self.condition_order_facts();
+        let order_terms_match = |left: &Bitvector32Term, right: &Bitvector32Term| {
+            if left == right {
+                return true;
+            }
+            let (
+                Bitvector32Term::MemoryLoad(left_memory, left_pointer),
+                Bitvector32Term::MemoryLoad(right_memory, right_pointer),
+            ) = (left, right)
+            else {
+                return false;
+            };
+            left_pointer == right_pointer
+                && memories_proven_equal_for_memory_resolution(left_memory, right_memory, self)
+        };
         let mut stack = vec![(left.clone(), false)];
         let mut seen = BTreeSet::new();
         while let Some((current, strict_so_far)) = stack.pop() {
             if !seen.insert((current.clone(), strict_so_far)) {
                 continue;
             }
-            if bitvector_terms_proven_equal_for_memory_resolution(&current, right, self)
-                && (!require_strict || strict_so_far)
+            let target_constant_connection = signed_bitvector_constant(&current)
+                .zip(signed_bitvector_constant(right))
+                .and_then(|(current, right)| (current <= right).then_some(current < right));
+            if (bitvector_terms_proven_equal_for_memory_resolution(&current, right, self)
+                || target_constant_connection.is_some())
+                && (!require_strict || strict_so_far || target_constant_connection == Some(true))
             {
                 return true;
             }
             for (edge_left, edge_right, edge_strict) in &order_facts {
-                if bitvector_terms_proven_equal_for_memory_resolution(&current, edge_left, self) {
-                    stack.push((edge_right.clone(), strict_so_far || *edge_strict));
+                let constant_connection = signed_bitvector_constant(&current)
+                    .zip(signed_bitvector_constant(edge_left))
+                    .and_then(|(current, edge_left)| {
+                        (current <= edge_left).then_some(current < edge_left)
+                    });
+                if bitvector_terms_proven_equal_for_memory_resolution(&current, edge_left, self)
+                    || constant_connection.is_some()
+                {
+                    stack.push((
+                        edge_right.clone(),
+                        strict_so_far || *edge_strict || constant_connection == Some(true),
+                    ));
+                }
+            }
+            for (condition, value) in &self.condition_facts {
+                let (ConditionTerm::Bitvector32Equal(left, right), true) = (condition, value)
+                else {
+                    continue;
+                };
+                if order_terms_match(&current, left) {
+                    stack.push((right.as_ref().clone(), strict_so_far));
+                }
+                if order_terms_match(&current, right) {
+                    stack.push((left.as_ref().clone(), strict_so_far));
                 }
             }
         }
         false
+    }
+
+    pub(super) fn proves_order_condition_for_memory_resolution(
+        &self,
+        condition: &ConditionTerm,
+        value: bool,
+    ) -> bool {
+        condition_as_order_fact(condition, value).is_some_and(|(left, right, strict)| {
+            let left = self.simplify_bitvector_under_assumptions(&left);
+            let right = self.simplify_bitvector_under_assumptions(&right);
+            self.has_order_path_for_memory_resolution(&left, &right, strict)
+        })
     }
 
     pub(crate) fn decide_condition_for_simp(&self, condition: &ConditionTerm) -> Option<bool> {
@@ -1687,6 +1739,28 @@ impl Assumptions {
     ) -> bool {
         self.condition_facts.iter().any(|(fact, fact_value)| {
             *fact_value == value && self.condition_matches_for_simp(fact, condition)
+        })
+    }
+
+    pub(super) fn has_anchored_bitvector_equality_fact_for_memory_resolution(
+        &self,
+        left: &Bitvector32Term,
+        right: &Bitvector32Term,
+    ) -> bool {
+        self.condition_facts.iter().any(|(fact, value)| {
+            let (ConditionTerm::Bitvector32Equal(fact_left, fact_right), true) = (fact, value)
+            else {
+                return false;
+            };
+            let anchored = fact_left.as_ref() == left
+                || fact_left.as_ref() == right
+                || fact_right.as_ref() == left
+                || fact_right.as_ref() == right;
+            anchored
+                && self.condition_matches_for_simp(
+                    fact,
+                    &ConditionTerm::equal(left.clone(), right.clone()),
+                )
         })
     }
 
@@ -4393,6 +4467,38 @@ impl Assumptions {
         left: &Pointer,
         right: &Pointer,
     ) -> bool {
+        // Most execution-time separation certificates name the exact ranges
+        // being accessed. Resolve those structurally before asking the
+        // snapshot-aware containment prover, which may itself inspect memory
+        // loads and is deliberately the more expensive second phase.
+        if self.prop_facts.iter().any(|proposition| match proposition {
+            Proposition::CMemoryDisjoint {
+                left_base,
+                left_start,
+                left_end,
+                right_base,
+                right_start,
+                right_end,
+            } => {
+                pointer_in_range_shallow(left, left_base, left_start, left_end)
+                    && pointer_in_range_shallow(right, right_base, right_start, right_end)
+                    || pointer_in_range_shallow(right, left_base, left_start, left_end)
+                        && pointer_in_range_shallow(left, right_base, right_start, right_end)
+            }
+            Proposition::CResourceSeparate {
+                left: CResource::Memory(left_range),
+                right: CResource::Memory(right_range),
+            } => {
+                pointer_in_memory_range_shallow(left, left_range)
+                    && pointer_in_memory_range_shallow(right, right_range)
+                    || pointer_in_memory_range_shallow(right, left_range)
+                        && pointer_in_memory_range_shallow(left, right_range)
+            }
+            _ => false,
+        }) {
+            return true;
+        }
+
         self.prop_facts.iter().any(|proposition| match proposition {
             Proposition::CMemoryDisjoint {
                 left_base,
@@ -5934,6 +6040,7 @@ impl ExecutionPureFact {
             proposition,
             public: true,
             certified: false,
+            certified_store: None,
         }
     }
 
@@ -5942,6 +6049,7 @@ impl ExecutionPureFact {
             proposition,
             public: false,
             certified: false,
+            certified_store: None,
         }
     }
 
@@ -5950,6 +6058,32 @@ impl ExecutionPureFact {
             proposition,
             public: true,
             certified: true,
+            certified_store: None,
+        }
+    }
+
+    pub(super) fn certified_store(
+        before: CMemory,
+        after: CMemory,
+        pointer: Pointer,
+        value: CValue,
+        authorized_range: Option<CMemoryRange>,
+    ) -> Self {
+        Self {
+            proposition: Proposition::CMemoryMutatesOnly {
+                before: before.clone(),
+                after: after.clone(),
+                pointers: vec![pointer.clone()],
+            },
+            public: false,
+            certified: true,
+            certified_store: Some(CertifiedMemoryStore {
+                before,
+                after,
+                pointer,
+                value,
+                authorized_range,
+            }),
         }
     }
 
@@ -5977,6 +6111,10 @@ impl ExecutionPureFact {
 
     pub(crate) fn is_certified(&self) -> bool {
         self.certified
+    }
+
+    pub(super) fn certified_store_data(&self) -> Option<&CertifiedMemoryStore> {
+        self.certified_store.as_ref()
     }
 }
 

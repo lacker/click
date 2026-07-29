@@ -992,6 +992,16 @@ pub struct ExecutionPureFact {
     pub(super) proposition: Proposition,
     pub(super) public: bool,
     pub(super) certified: bool,
+    pub(super) certified_store: Option<CertifiedMemoryStore>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub(super) struct CertifiedMemoryStore {
+    pub(super) before: CMemory,
+    pub(super) after: CMemory,
+    pub(super) pointer: Pointer,
+    pub(super) value: CValue,
+    pub(super) authorized_range: Option<CMemoryRange>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -2474,8 +2484,6 @@ impl CMemory {
         let mut memory = self.clone();
         memory.cells.retain(|cell_pointer, _| {
             !pointers_proven_distinct_for_memory_resolution(cell_pointer, pointer, assumptions)
-                && (assumptions.should_defer_non_exact_condition_reasoning()
-                    || !pointers_proven_distinct(cell_pointer, pointer, assumptions))
         });
         memory
     }
@@ -2499,7 +2507,11 @@ impl CMemory {
                     0,
                 ),
             };
-            pointers_proven_distinct(&normalized_cell_pointer, &normalized_pointer, assumptions)
+            pointers_proven_distinct_for_memory_resolution(
+                &normalized_cell_pointer,
+                &normalized_pointer,
+                assumptions,
+            )
         });
         memory
     }
@@ -2700,9 +2712,11 @@ impl ResourceContext {
                 if left.family() != right.family() {
                     continue;
                 }
-                if let Some(error) = resource_family_algebra(left.family())
-                    .pair_validity_error(left, right, assumptions)
-                {
+                if let Some(error) = resource_family_algebra(left.family()).pair_validity_error(
+                    left,
+                    right,
+                    assumptions,
+                ) {
                     return Err(error);
                 }
             }
@@ -2816,12 +2830,12 @@ impl ResourceContext {
         })
     }
 
-    pub(super) fn permits_memory_write(
+    pub(super) fn memory_write_range(
         &self,
         pointer: &Pointer,
         byte_width: u32,
         assumptions: &Assumptions,
-    ) -> bool {
+    ) -> Option<&CMemoryRange> {
         for resource in &self.facts {
             let CResourceFact::Own(CResource::Memory(range)) = resource else {
                 continue;
@@ -2829,11 +2843,13 @@ impl ResourceContext {
             if pointer_has_structural_range_base(pointer, range.base())
                 && memory_resource_fact_permits_write(resource, pointer, byte_width, assumptions)
             {
-                return true;
+                return Some(range);
             }
         }
-        self.facts.iter().any(|resource| {
+        self.facts.iter().find_map(|resource| {
             memory_resource_fact_permits_write(resource, pointer, byte_width, assumptions)
+                .then(|| resource.memory_own_range())
+                .flatten()
         })
     }
 
@@ -3389,7 +3405,11 @@ fn memory_ranges_proven_overlapping(
     if left.base().blocks_proven_distinct(right.base()) {
         return false;
     }
-
+    if assumptions
+        .memory_ranges_proven_disjoint_by_explicit_separation_for_memory_resolution(left, right)
+    {
+        return false;
+    }
     let Some(base_delta) = right.base().element_index_from_base(left.base()) else {
         return false;
     };

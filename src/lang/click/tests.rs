@@ -4964,6 +4964,7 @@ fn source_expander_derives_separation_from_call_postconditions() {
         .expect("call postconditions should expand into an explicit separation derivation");
     assert!(expanded.contains("fact left->len == length"), "{expanded}");
     assert!(expanded.contains("fact left->data == data"), "{expanded}");
+    assert!(!expanded.contains("load_int32_pointer"), "{expanded}");
     assert!(expanded.contains("derive(separate("), "{expanded}");
     verify_c0_sources(&expanded, &c_sources)
         .expect("the expanded separation derivation should replay");
@@ -7766,15 +7767,18 @@ fn explicit_store_step_with_unfolded_resource_facts_verifies() {
             unfold(terminated_at);
             step using {
                 fact 0 <= index;
-                fact index < load_int32(owner);
-                fact loadable(owner[0..1]);
-                fact loadable((owner + 1)[0..1]);
-                fact loadable((owner + 2)[0..2]);
-                fact 0 <= load_int32(owner);
-                fact load_int32(owner) < load_int32((owner + 1));
-                fact terminated_at(load_int32_pointer((owner + 2)), load_int32(owner));
-                fact separate(memory(owner[0..4]), memory(load_int32_pointer((owner + 2))[0..load_int32((owner + 1))]));
-                fact load_int32_pointer((owner + 2))[load_int32(owner)] == 0;
+                fact index < owner->len;
+                fact loadable(owner->len);
+                fact loadable(owner->cap);
+                fact loadable(owner->data);
+                fact 0 <= owner->len;
+                fact owner->len < owner->cap;
+                fact terminated_at(owner->data, owner->len);
+                fact separate(
+                    memory(owner[0..4]),
+                    memory((owner->data)[0..owner->cap])
+                );
+                fact (owner->data)[owner->len] == 0;
             }
             have terminated_at(owner->data, owner->len) by {
                 unfold(terminated_at);

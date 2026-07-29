@@ -2426,12 +2426,17 @@ fn c_function_contract_certification_assumptions(
 ) -> Option<Assumptions> {
     let mut entry_state = c_function_entry_state(caller_state, function, arguments)?;
     let mut budget = ExecutionBudget::default();
+    let mut requirement_obligations = Vec::new();
     for requirement in function.contract_requires() {
+        let lowering_assumptions = assumptions
+            .clone()
+            .allow_symbolic_contract_loads()
+            .prefer_symbolic_external_loads();
         let paths = lower_spec_proposition_at_state_with_loop_entry(
             &entry_state,
             requirement,
             None,
-            &assumptions,
+            &lowering_assumptions,
             &mut budget,
         )
         .ok()?;
@@ -2470,7 +2475,9 @@ fn c_function_contract_certification_assumptions(
             }
         };
         for obligation in &path.obligations {
-            assumptions = assumptions.assume_proposition(obligation.proposition().clone());
+            if !requirement_obligations.contains(obligation) {
+                requirement_obligations.push(obligation.clone());
+            }
         }
         for fact in &path.facts {
             assumptions = assumptions.assume_proposition(fact.proposition().clone());
@@ -2483,35 +2490,65 @@ fn c_function_contract_certification_assumptions(
         &assumptions,
         &mut budget,
     )
-    .ok()?
-    .ok()?;
-    let (_, resource_definition_facts) = expand_all_composite_resource_facts_and_propositions(
+    .ok()
+    .and_then(Result::ok);
+    let Some(required_resources) = required_resources else {
+        return None;
+    };
+    let expanded = expand_all_composite_resource_facts_and_propositions(
         &required_resources,
         function.composite_resource_definitions(),
         entry_state.memory(),
         &assumptions,
-    )?;
+    );
+    let Some((_, resource_definition_facts)) = expanded else {
+        return None;
+    };
     for proposition in resource_definition_facts {
         assumptions = assumptions.assume_proposition(proposition);
     }
-    let expanded_required_resources = expand_all_composite_resource_facts(
+    let Some(expanded_required_resources) = expand_all_composite_resource_facts(
         &required_resources,
         function.composite_resource_definitions(),
         entry_state.memory(),
         &assumptions,
-    )?;
-    let entry_resources = expand_all_composite_resource_facts(
+    ) else {
+        return None;
+    };
+    let Some(entry_resources) = expand_all_composite_resource_facts(
         entry_state.resources(),
         function.composite_resource_definitions(),
         entry_state.memory(),
         &assumptions,
-    )?;
+    ) else {
+        return None;
+    };
     if !expanded_required_resources
         .facts()
         .iter()
         .all(|required| entry_resources.satisfies_fact(required, &assumptions))
     {
+        if std::env::var_os("CLICK_TIMINGS").is_some() {
+            eprintln!("click timing: contract entry resources do not satisfy requirements");
+        }
         return None;
+    }
+    if !requirement_obligations.iter().all(|obligation| {
+        certification_proves_proposition(&assumptions, obligation.proposition())
+            || resources_certify_loadability(
+                &entry_state,
+                &entry_resources,
+                obligation.proposition(),
+                &assumptions,
+            )
+    }) {
+        if std::env::var_os("CLICK_TIMINGS").is_some() {
+            eprintln!("click timing: contract entry resources do not certify requirement safety");
+        }
+        return None;
+    }
+    for obligation in requirement_obligations {
+        assumptions = assumptions.assume_proposition(obligation.proposition().clone());
     }
     for proposition in entry_resources.observable_facts(&assumptions).ok()? {
         assumptions = assumptions.assume_proposition(proposition);
@@ -2914,7 +2951,7 @@ fn exists_equality_witness_candidates(
 }
 
 fn certification_proves_proposition(assumptions: &Assumptions, proposition: &Proposition) -> bool {
-    if assumptions.proves(proposition) {
+    if assumptions.proves_exact(proposition) {
         return true;
     }
     match proposition {
@@ -2961,18 +2998,23 @@ fn certification_proves_proposition(assumptions: &Assumptions, proposition: &Pro
                 certification_proves_proposition(assumptions, &instantiated)
             })
         }
-        Proposition::ConditionIs(condition, value)
-            if assumptions.decide_condition_for_simp(condition) == Some(*value) =>
-        {
-            true
-        }
-        Proposition::ConditionIs(condition, value)
-            if assumptions.has_matching_condition_fact_for_memory_resolution(condition, *value) =>
-        {
-            true
-        }
         Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), true) => {
             bitvector_terms_proven_equal_for_memory_resolution(left, right, assumptions)
+                || assumptions
+                    .has_anchored_bitvector_equality_fact_for_memory_resolution(left, right)
+                || assumptions.proves_order_condition_for_memory_resolution(
+                    &ConditionTerm::signed_less_equal(
+                        left.as_ref().clone(),
+                        right.as_ref().clone(),
+                    ),
+                    true,
+                ) && assumptions.proves_order_condition_for_memory_resolution(
+                    &ConditionTerm::signed_less_equal(
+                        right.as_ref().clone(),
+                        left.as_ref().clone(),
+                    ),
+                    true,
+                )
         }
         Proposition::ConditionIs(ConditionTerm::PointerEqual(left, right), true) => {
             pointers_proven_equal_for_memory_resolution(left, right, assumptions)
@@ -2983,7 +3025,11 @@ fn certification_proves_proposition(assumptions: &Assumptions, proposition: &Pro
         Proposition::Equal(Term::CValue(left), Term::CValue(right)) => {
             c_values_proven_equal_for_memory_resolution(left, right, assumptions)
         }
-        _ => false,
+        Proposition::ConditionIs(condition, value) => {
+            assumptions.proves_order_condition_for_memory_resolution(condition, *value)
+                || assumptions.has_matching_condition_fact_for_memory_resolution(condition, *value)
+        }
+        _ => assumptions.proves(proposition),
     }
 }
 
@@ -2991,37 +3037,117 @@ fn certification_proves_post_proposition(
     assumptions: &Assumptions,
     proposition: &Proposition,
     post_memory: &CMemory,
+    execution_facts: &[ExecutionPureFact],
 ) -> bool {
     if certification_proves_proposition(assumptions, proposition) {
         return true;
     }
-    assumptions
-        .prop_facts
+    if execution_facts
+        .iter()
+        .enumerate()
+        .filter(|(_, fact)| fact.is_certified())
+        .any(|(source_index, fact)| {
+            let Some(CertifiedMemoryStore {
+                after,
+                pointer,
+                value: CValue::Int32(value) | CValue::UInt8(value),
+                authorized_range,
+                ..
+            }) = fact.certified_store_data()
+            else {
+                return false;
+            };
+            let mut current = after;
+            for later in &execution_facts[source_index + 1..] {
+                let Some(CertifiedMemoryStore {
+                    before,
+                    after,
+                    pointer: later_pointer,
+                    authorized_range: later_range,
+                    ..
+                }) = later.certified_store_data()
+                else {
+                    continue;
+                };
+                if before != current {
+                    continue;
+                }
+                let disjoint = pointer.blocks_proven_distinct(later_pointer)
+                    || pointers_proven_distinct_for_memory_resolution(
+                        pointer,
+                        later_pointer,
+                        assumptions,
+                    )
+                    || authorized_range.as_ref().is_some_and(|source_range| {
+                        later_range.as_ref().is_some_and(|later_range| {
+                            assumptions
+                                .memory_ranges_proven_disjoint_by_explicit_separation_for_memory_resolution(
+                                    source_range,
+                                    later_range,
+                                )
+                        })
+                    });
+                if !disjoint {
+                    return false;
+                }
+                current = after;
+            }
+            if current != post_memory
+                && !c_memory_load_is_unchanged(current, post_memory, pointer, assumptions)
+            {
+                return false;
+            }
+            let stored_fact = Proposition::ConditionIs(
+                ConditionTerm::equal(
+                    Bitvector32Term::MemoryLoad(
+                        Box::new(post_memory.clone()),
+                        Box::new(pointer.clone()),
+                    ),
+                    value.clone(),
+                ),
+                true,
+            );
+            let stored_assumptions =
+                assumptions_with_propositions(assumptions, &[stored_fact]);
+            certification_proves_proposition(&stored_assumptions, proposition)
+        })
+    {
+        return true;
+    }
+    let transported_fact_proves = |fact: &Proposition| {
+        let Some(theorem) = prove_c_condition_fact_transport(fact, post_memory, assumptions) else {
+            return false;
+        };
+        let Proposition::Implies(source, target) = theorem.proposition() else {
+            return false;
+        };
+        if source.as_ref() != fact {
+            return false;
+        }
+        let transported_assumptions =
+            assumptions_with_propositions(assumptions, &[target.as_ref().clone()]);
+        certification_proves_proposition(&transported_assumptions, proposition)
+    };
+    let explicit_facts = execution_facts
+        .iter()
+        .filter(|fact| fact.is_certified())
+        .filter_map(|fact| match fact.proposition() {
+            proposition @ Proposition::ConditionIs(_, _) => Some(proposition.clone()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    explicit_facts
         .iter()
         .filter(|fact| {
             matches!(
-                (fact, proposition),
+                (*fact, proposition),
                 (
                     Proposition::ConditionIs(_, _),
                     Proposition::ConditionIs(_, _)
                 ) | (Proposition::Equal(_, _), Proposition::Equal(_, _))
             )
         })
-        .any(|fact| {
-            let Some(theorem) = prove_c_condition_fact_transport(fact, post_memory, assumptions)
-            else {
-                return false;
-            };
-            let Proposition::Implies(source, target) = theorem.proposition() else {
-                return false;
-            };
-            if source.as_ref() != fact {
-                return false;
-            }
-            let transported_assumptions =
-                assumptions_with_propositions(assumptions, &[target.as_ref().clone()]);
-            certification_proves_proposition(&transported_assumptions, proposition)
-        })
+        .any(transported_fact_proves)
 }
 
 fn resources_certify_loadability(
@@ -3225,13 +3351,14 @@ pub fn certify_c_function_execution_path_resource_representation(
         .ok()?;
     premises.extend(observable_resource_facts);
     let assumptions = assumptions_with_propositions(&path.assumptions, &premises);
-    if !c_values_proven_equal_for_memory_resolution(value, desired_value, &assumptions)
-        || !c_memories_definitionally_equal(
-            return_state.memory(),
-            desired_state.memory(),
-            &assumptions,
-        )
-    {
+    let values_equal =
+        c_values_proven_equal_for_memory_resolution(value, desired_value, &assumptions);
+    let memories_equal = c_memories_definitionally_equal(
+        return_state.memory(),
+        desired_state.memory(),
+        &assumptions,
+    );
+    if !values_equal || !memories_equal {
         return None;
     }
     if !resource_contexts_definitionally_equal(
@@ -3276,6 +3403,7 @@ struct CertifiedFunctionClaimPath {
     post_resources: ResourceContext,
     assumptions: Assumptions,
     execution_facts: Vec<ExecutionPureFact>,
+    effect_facts: Vec<ExecutionPureFact>,
 }
 
 fn prepare_function_claim_path(
@@ -3340,6 +3468,8 @@ fn prepare_function_claim_path(
         return Err("the returned resource context is not observable".to_string());
     };
     let assumptions = assumptions_with_propositions(&assumptions, &post_resource_facts);
+    let execution_facts = path.execution_facts();
+    let effect_facts = path.effect_facts.clone();
     let mut post_state = entry_state
         .clone()
         .with_memory(return_state.memory().clone());
@@ -3347,7 +3477,7 @@ fn prepare_function_claim_path(
     post_state
         .locals
         .set_typed("result".to_string(), value.clone(), function.return_type());
-    if !path.obligations().iter().all(|obligation| {
+    if let Some(obligation) = path.obligations().iter().find(|obligation| {
         let proved = certification_proves_proposition(&assumptions, obligation.proposition())
             || contract_endpoints_certify_loadability(
                 &entry_state,
@@ -3357,9 +3487,13 @@ fn prepare_function_claim_path(
                 obligation.proposition(),
                 &assumptions,
             );
-        proved
+        !proved
     }) {
-        return Err("the execution path has an unproved verification condition".to_string());
+        return Err(format!(
+            "the execution path has an unproved verification condition: {:?} ({})",
+            obligation.proposition(),
+            obligation.context().unwrap_or("no context")
+        ));
     }
 
     Ok(CertifiedFunctionClaimPath {
@@ -3370,7 +3504,8 @@ fn prepare_function_claim_path(
         post_state,
         post_resources,
         assumptions,
-        execution_facts: path.execution_facts().to_vec(),
+        execution_facts,
+        effect_facts,
     })
 }
 
@@ -3388,6 +3523,7 @@ fn function_claim_holds_on_prepared_path(
         post_resources,
         assumptions,
         execution_facts,
+        effect_facts,
     } = path;
     let mut budget = ExecutionBudget::default();
     match claim.target() {
@@ -3431,6 +3567,7 @@ fn function_claim_holds_on_prepared_path(
                     &path_assumptions,
                     &path.proposition,
                     return_state.memory(),
+                    execution_facts,
                 );
                 obligations_hold && proposition_holds
             })
@@ -3468,23 +3605,27 @@ fn function_claim_holds_on_prepared_path(
                 mutable_ranges.push(CMemoryRange::new(segment.base, segment.start, segment.end));
             }
             let mut effect_memory = caller_state.memory().clone();
-            // A verified region can emit several effect summaries for the
-            // same before/after transition (for example a loop's explicit
-            // effects clause plus the inherited function effect). The first
-            // advances the tracked memory; the others are parallel bounds on
-            // the same transition and must not be chained sequentially.
-            let mut previous_transition: Option<&CMemory> = None;
-            let effects_are_bounded = execution_facts.iter().all(|fact| match fact.proposition() {
+            let mut seen_transitions = Vec::<(CMemory, CMemory)>::new();
+            let effects_are_bounded = effect_facts.iter().all(|fact| match fact.proposition() {
                 Proposition::CMemoryMutatesOnly {
                     before,
                     after,
                     pointers,
                 } => {
-                    if !c_memories_definitionally_equal(&effect_memory, before, &assumptions) {
+                    let repeats_transition =
+                        seen_transitions.iter().any(|(seen_before, seen_after)| {
+                            c_memories_definitionally_equal(seen_before, before, &assumptions)
+                                && c_memories_definitionally_equal(seen_after, after, &assumptions)
+                        });
+                    if !repeats_transition
+                        && !c_memories_definitionally_equal(&effect_memory, before, &assumptions)
+                    {
                         return false;
                     }
-                    previous_transition = None;
-                    effect_memory = after.clone();
+                    if !repeats_transition {
+                        effect_memory = after.clone();
+                        seen_transitions.push((before.clone(), after.clone()));
+                    }
                     pointers
                         .iter()
                         .filter(|pointer| !pointer.block.starts_with("local:"))
@@ -3505,18 +3646,19 @@ fn function_claim_holds_on_prepared_path(
                     after,
                     mutable_ranges: nested_ranges,
                 } => {
-                    if c_memories_definitionally_equal(&effect_memory, before, &assumptions) {
-                        previous_transition = Some(before);
-                        effect_memory = after.clone();
-                    } else if !previous_transition.is_some_and(|previous_before| {
-                        c_memories_definitionally_equal(previous_before, before, &assumptions)
-                            && c_memories_definitionally_equal(
-                                &effect_memory,
-                                after,
-                                &assumptions,
-                            )
-                    }) {
+                    let repeats_transition =
+                        seen_transitions.iter().any(|(seen_before, seen_after)| {
+                            c_memories_definitionally_equal(seen_before, before, &assumptions)
+                                && c_memories_definitionally_equal(seen_after, after, &assumptions)
+                        });
+                    if !repeats_transition
+                        && !c_memories_definitionally_equal(&effect_memory, before, &assumptions)
+                    {
                         return false;
+                    }
+                    if !repeats_transition {
+                        effect_memory = after.clone();
+                        seen_transitions.push((before.clone(), after.clone()));
                     }
                     nested_ranges.iter().all(|nested| {
                         mutable_ranges

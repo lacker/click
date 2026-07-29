@@ -4548,6 +4548,24 @@ fn certified_transitions_from_execution(
                 let mut seen_prerequisites = BTreeSet::new();
                 let mut theorem_context = pure_facts.to_vec();
                 for premise in theorem_implication_premises(path.theorem()) {
+                    if matches!(premise, Proposition::ConditionIs(_, _))
+                        && let Some(derivation) =
+                            bounded_condition_derivation(&premise, pure_facts)
+                        && !derivation.context_premises().is_empty()
+                    {
+                        if !prerequisite_derivations
+                            .iter()
+                            .any(|existing: &PropositionDerivation| {
+                                existing.conclusion() == derivation.conclusion()
+                            })
+                        {
+                            prerequisite_derivations.push(derivation);
+                        }
+                        if !theorem_context.contains(&premise) {
+                            theorem_context.push(premise);
+                        }
+                        continue;
+                    }
                     let already_certified = exact_fact_is_available(&premise, &theorem_context)
                         || materialization_equivalent_available_fact(
                             &premise,
@@ -4555,16 +4573,18 @@ fn certified_transitions_from_execution(
                         )
                         .is_some()
                         || matches!(normalize_proposition(&premise), SimpProposition::True)
-                        || execution_facts
-                            .iter()
-                            .any(|fact| fact.is_certified() && fact.proposition() == &premise)
-                        || path
-                            .obligations()
-                            .iter()
-                            .any(|obligation| obligation.proposition() == &premise);
+                        || execution_facts.iter().any(|fact| {
+                                fact.is_certified() && fact.proposition() == &premise
+                            })
+                            && !path
+                                .obligations()
+                                .iter()
+                                .any(|obligation| obligation.proposition() == &premise);
                     if !already_certified {
                         let derivation =
-                            minimal_proposition_derivation(&premise, &theorem_context);
+                            minimal_proposition_derivation(&premise, &theorem_context).or_else(
+                                || bounded_condition_derivation(&premise, &theorem_context),
+                            );
                         let Some(derivation) = derivation else {
                             if has_failure_path {
                                 if !theorem_context.contains(&premise) {
@@ -6843,6 +6863,7 @@ fn checked_surface_fact_at_outcome(
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<ClickProposition, ClickError> {
+    let lowering_facts = facts_for_smart_have_lowering(available);
     let check = |surface: &ClickProposition| {
         lower_outcome_proposition_with_program_points(
             parameters,
@@ -6850,7 +6871,7 @@ fn checked_surface_fact_at_outcome(
             pre_state,
             post_state,
             result,
-            available,
+            &lowering_facts,
             surface,
             predicate_environment,
             click_function_environment,
@@ -6873,6 +6894,13 @@ fn checked_surface_fact_at_outcome(
             || quantified_replay_equivalent_available_fact(kernel, std::slice::from_ref(lowered))
                 .is_some()
     };
+    // Recorded source spellings are the cheapest exact candidates and cover
+    // ordinary premises. Check them before synthesizing variants at every
+    // retained program point; an ambiguous spelling simply fails `check` and
+    // falls through to the point-qualified search below.
+    if let Ok(surface) = replay.surface_propositions.checked_surface(kernel, check) {
+        return Ok(surface);
+    }
     for (point, point_state) in replay.program_point_states.iter().rev() {
         let Some(base) = synthesize_surface_proposition(kernel, parameters, arguments, point_state)
         else {
@@ -6887,9 +6915,6 @@ fn checked_surface_fact_at_outcome(
                 return Ok(candidate);
             }
         }
-    }
-    if let Ok(surface) = replay.surface_propositions.checked_surface(kernel, check) {
-        return Ok(surface);
     }
     let mut bases = Vec::new();
     if let Ok(surface) = replay.surface_propositions.surface(kernel) {
@@ -11619,44 +11644,7 @@ fn lower_outcome_simp_tactic(
         .collect::<Vec<_>>();
     let source_for_required = |required: &Proposition| {
         let loadability_source = directly_covering_loadability_fact(required, &atomic_available);
-        atomic_available
-            .iter()
-            .filter(|fact| {
-                condition_polarity_equivalent(
-                    &normalize_direct_atomic_memory_loads(fact),
-                    &normalize_direct_atomic_memory_loads(required),
-                ) || matches!(
-                    (fact, required),
-                    (Proposition::ForAll { .. }, Proposition::ForAll { .. })
-                ) || loadability_source
-                    .as_ref()
-                    .is_some_and(|source| source == *fact)
-            })
-            .find_map(|fact| {
-                checked_surface_fact_at_outcome(
-                    replay,
-                    fact,
-                    SurfaceFactMatch::CanonicalExact,
-                    available,
-                    parameters,
-                    arguments,
-                    pre_state,
-                    post_state,
-                    result,
-                    predicate_environment,
-                    click_function_environment,
-                )
-                .ok()
-                .filter(|surface| {
-                    check(surface)
-                        .is_ok_and(|lowered| condition_polarity_equivalent(&lowered, fact))
-                })
-                .map(|surface| (fact.clone(), surface))
-            })
-    };
-    let expressible_available = atomic_available
-        .iter()
-        .filter(|fact| {
+        let checked_source = |fact: &Proposition| {
             checked_surface_fact_at_outcome(
                 replay,
                 fact,
@@ -11670,14 +11658,47 @@ fn lower_outcome_simp_tactic(
                 predicate_environment,
                 click_function_environment,
             )
-            .is_ok_and(|surface| {
-                check(&surface).is_ok_and(|lowered| condition_polarity_equivalent(&lowered, fact))
+            .ok()
+            .filter(|surface| {
+                check(surface).is_ok_and(|lowered| condition_polarity_equivalent(&lowered, fact))
             })
-        })
-        .cloned()
-        .collect::<Vec<_>>();
+            .map(|surface| (fact.clone(), surface))
+        };
+
+        // Exact facts (and the one preselected covering loadability fact) are
+        // overwhelmingly the common case. Do not surface-lower every
+        // snapshot-equivalent ambient fact before trying them.
+        atomic_available
+            .iter()
+            .filter(|fact| {
+                *fact == required
+                    || loadability_source
+                        .as_ref()
+                        .is_some_and(|source| source == *fact)
+            })
+            .find_map(&checked_source)
+            .or_else(|| {
+                atomic_available
+                    .iter()
+                    .filter(|fact| {
+                        condition_polarity_equivalent(
+                            &normalize_direct_atomic_memory_loads(fact),
+                            &normalize_direct_atomic_memory_loads(required),
+                        ) || matches!(
+                            (fact, required),
+                            (Proposition::ForAll { .. }, Proposition::ForAll { .. })
+                        )
+                    })
+                    .find_map(checked_source)
+            })
+    };
+    // Plan against the kernel facts, then require an exact checked Surface
+    // spelling for every premise the derivation actually selected. The
+    // derivation context is the complete dependency boundary; eagerly
+    // translating every ambient fact is both unnecessary and pathologically
+    // expensive when facts contain symbolic memory snapshots.
     if let Some(plan) =
-        plan_simp_certificate(goal, &assumptions_from_propositions(&expressible_available))
+        plan_simp_certificate(goal, &assumptions_from_propositions(&atomic_available))
         && let [ProofTactic::ExactPropositionDerivation(derivation)] = plan.tactics()
     {
         let context = derivation
@@ -12344,17 +12365,23 @@ fn certify_outcome_simp_have(
                 else {
                     unreachable!("loadability source candidates are loadability propositions")
                 };
-                let source_context = certified_available
-                    .iter()
-                    .filter(|fact| {
-                        matches!(fact, Proposition::ConditionIs(_, _))
-                            || matches!(fact, Proposition::CMemoryLoadable { memory, .. }
-                            if memory.has_same_snapshot_markers(source_memory))
-                    })
-                    .cloned()
-                    .collect::<Vec<_>>();
-                let derivation = assumptions_from_propositions(&source_context)
-                    .derive_atomic_proposition(&source)?;
+                let derivation = if exact_fact_is_available(&source, &certified_available) {
+                    None
+                } else {
+                    let source_context = certified_available
+                        .iter()
+                        .filter(|fact| {
+                            matches!(fact, Proposition::ConditionIs(_, _))
+                                || matches!(fact, Proposition::CMemoryLoadable { memory, .. }
+                                if memory.has_same_snapshot_markers(source_memory))
+                        })
+                        .cloned()
+                        .collect::<Vec<_>>();
+                    Some(
+                        assumptions_from_propositions(&source_context)
+                            .derive_atomic_proposition(&source)?,
+                    )
+                };
                 derivable_source_count += 1;
                 let transition_facts =
                     fact_transport_transition_facts(&replay.effect_facts, &source);
@@ -12384,6 +12411,9 @@ fn certify_outcome_simp_have(
             )));
         };
         if !exact_fact_is_available(&source, &certified_available) {
+            let source_derivation = source_derivation.expect(
+                "a non-exact loadability transport source must carry its checked derivation",
+            );
             let (_, source_proof) = lower_surface_atomic_derivation(
                 replay,
                 &source_derivation,
@@ -12885,58 +12915,6 @@ fn lower_surface_candidate_at_point(
     .map_err(ClickError::new)
 }
 
-fn expression_reads_memory(expression: &CExpression) -> bool {
-    match expression {
-        CExpression::Load(_) | CExpression::TypedLoad { .. } | CExpression::Index(_, _) => true,
-        CExpression::Value(_) | CExpression::Variable(_) => false,
-        CExpression::AddressOf(inner)
-        | CExpression::PointerOffsetBytes { pointer: inner, .. }
-        | CExpression::Not(inner)
-        | CExpression::BitwiseNot(inner) => expression_reads_memory(inner),
-        CExpression::LessThan(left, right)
-        | CExpression::LessEqual(left, right)
-        | CExpression::GreaterThan(left, right)
-        | CExpression::GreaterEqual(left, right)
-        | CExpression::Equal(left, right)
-        | CExpression::NotEqual(left, right)
-        | CExpression::And(left, right)
-        | CExpression::Or(left, right)
-        | CExpression::Add(left, right)
-        | CExpression::Subtract(left, right)
-        | CExpression::Multiply(left, right)
-        | CExpression::Divide(left, right)
-        | CExpression::Remainder(left, right)
-        | CExpression::ShiftLeft(left, right)
-        | CExpression::ShiftRight(left, right)
-        | CExpression::BitwiseAnd(left, right)
-        | CExpression::BitwiseOr(left, right)
-        | CExpression::BitwiseXor(left, right) => {
-            expression_reads_memory(left) || expression_reads_memory(right)
-        }
-    }
-}
-
-fn statement_uses_ambient_memory_context(statement: &CStatement) -> bool {
-    match statement {
-        CStatement::Skip | CStatement::Declare { .. } => false,
-        CStatement::Assign { expression, .. }
-        | CStatement::Assert {
-            condition: expression,
-            ..
-        }
-        | CStatement::Return(expression) => expression_reads_memory(expression),
-        CStatement::CallAssign { .. }
-        | CStatement::Store { .. }
-        | CStatement::TypedStore { .. }
-        | CStatement::If { .. }
-        | CStatement::While { .. } => true,
-        CStatement::Seq(first, second) => {
-            statement_uses_ambient_memory_context(first)
-                || statement_uses_ambient_memory_context(second)
-        }
-    }
-}
-
 #[allow(clippy::too_many_arguments)]
 fn record_surface_replay_tactic(
     replay: &mut TacticReplayState,
@@ -12955,36 +12933,6 @@ fn record_surface_replay_tactic(
     }
     match tactic {
         ProofTactic::CertifiedStatementReplay(evidence) => {
-            let statement = match implication_body(evidence.transition.theorem.proposition()) {
-                Proposition::CStatementExecutes { statement, .. } => Some(statement),
-                _ => None,
-            };
-            let statement_uses_memory_context =
-                statement.is_none_or(statement_uses_ambient_memory_context);
-            // Execution theorems are monotone in their input assumptions, so
-            // their implication prefixes normally contain the complete
-            // ambient context. Evaluating a local or literal return value is
-            // total and does not read or mutate memory; it consumes none of
-            // those assumptions, and all existing facts remain valid.
-            let exact_premises = if matches!(
-                statement,
-                Some(CStatement::Return(
-                    CExpression::Value(_) | CExpression::Variable(_)
-                ))
-            ) {
-                Vec::new()
-            } else {
-                theorem_implication_premises(&evidence.transition.theorem)
-                    .into_iter()
-                    .filter(|premise| {
-                        !evidence
-                            .transition
-                            .execution_facts
-                            .iter()
-                            .any(|fact| fact.is_certified() && fact.proposition() == premise)
-                    })
-                    .collect()
-            };
             record_surface_replay_tactic(
                 replay,
                 state,
@@ -12996,9 +12944,9 @@ fn record_surface_replay_tactic(
                 click_function_environment,
                 &ProofTactic::CertifiedStatementStep {
                     prerequisite_derivations: evidence.transition.prerequisite_derivations.clone(),
-                    exact_premises,
+                    exact_premises: Vec::new(),
                 },
-                Some(statement_uses_memory_context),
+                None,
             );
             let post_state = match &evidence.transition.outcome {
                 CStatementOutcome::Normal(state) | CStatementOutcome::Return { state, .. } => {
@@ -13083,11 +13031,19 @@ fn record_surface_replay_tactic(
                     .iter()
                     .flat_map(PropositionDerivation::context_premises)
                     .collect::<BTreeSet<_>>();
-                // Preserve the facts selected by prerequisite derivations,
-                // plus exact condition facts that can affect arithmetic,
-                // access-range, or alias selection. Resource/loadability facts
-                // are projected deterministically from the current resource
-                // state after these explicit conditions are installed.
+                let explicit_dependency_facts = derivation_context
+                    .iter()
+                    .map(|fact| (*fact).clone())
+                    .chain(exact_premises.iter().cloned())
+                    .collect::<Vec<_>>();
+                let projected_resource_facts = state.resources().observable_facts_assuming_valid(
+                    &assumptions_from_propositions(&explicit_dependency_facts),
+                );
+                // Preserve exactly the facts selected by prerequisite
+                // derivations or explicitly tracked by the transition.
+                // Resource/loadability facts are projected deterministically
+                // from the current resource state after these premises are
+                // installed.
                 //
                 // Do not copy every implication premise from the execution
                 // theorem: it contains the transitive ambient context,
@@ -13108,17 +13064,17 @@ fn record_surface_replay_tactic(
                             || normalize_direct_atomic_memory_loads(required)
                                 == normalize_direct_atomic_memory_loads(fact)
                     });
-                    let structural_context = statement_uses_memory_context.unwrap_or(true)
-                        && matches!(
+                    let non_reconstructible_separation =
+                        matches!(
                             fact,
-                            Proposition::ConditionIs(_, _)
-                                | Proposition::CMemoryLoadable { .. }
-                                | Proposition::CMemoryCanStore { .. }
-                                | Proposition::CMemoryDisjoint { .. }
+                            Proposition::CMemoryDisjoint { .. }
                                 | Proposition::CResourceSeparate { .. }
-                                | Proposition::CResourceContains { .. }
-                        );
-                    if !selected_by_derivation && !structural_context {
+                        ) && !exact_fact_is_available(fact, &projected_resource_facts);
+                    let claim_transition_context = matches!(fact, Proposition::ConditionIs(_, _));
+                    if !selected_by_derivation
+                        && !claim_transition_context
+                        && !non_reconstructible_separation
+                    {
                         continue;
                     }
                     // A certified statement prerequisite may be represented by
