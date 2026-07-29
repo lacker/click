@@ -3164,7 +3164,16 @@ impl Assumptions {
                     .without_free_bitvector_variable(*var)
                     .derive_proposition_using(body, for_simp)
                     .map(|proof| PropositionDerivationRule::ForAllBody(Box::new(proof)));
-                body_derivation.or_else(|| self.derive_finite_forall(proposition, for_simp))
+                body_derivation
+                    .or_else(|| self.derive_finite_forall(proposition, for_simp))
+                    .or_else(|| {
+                        self.atomic_derivation_premises(proposition, for_simp).map(
+                            |premises| PropositionDerivationRule::ContextualAtomic {
+                                premises,
+                                for_simp,
+                            },
+                        )
+                    })
             }
             _ => self
                 .atomic_derivation_premises(proposition, for_simp)
@@ -3243,10 +3252,26 @@ impl Assumptions {
                 self.prop_facts.contains(proposition)
                     || self.proves_resource_contains(parent, child)
             }
-            Proposition::And(_, _)
-            | Proposition::Or(_, _)
-            | Proposition::Implies(_, _)
-            | Proposition::ForAll { .. } => false,
+            Proposition::And(_, _) | Proposition::Or(_, _) | Proposition::Implies(_, _) => false,
+            Proposition::ForAll { var, sort, body } => {
+                self.prop_facts.contains(proposition)
+                    || self.prop_facts.iter().any(|fact| {
+                        let Proposition::ForAll {
+                            var: fact_var,
+                            sort: fact_sort,
+                            body: fact_body,
+                        } = fact
+                        else {
+                            return false;
+                        };
+                        fact_sort == sort
+                            && substitute_bitvector_variable_in_proposition(
+                                fact_body,
+                                *fact_var,
+                                &Bitvector32Term::Variable(*var),
+                            ) == **body
+                    })
+            }
             Proposition::Exists { var, sort, body, .. } => {
                 self.prop_facts.contains(proposition)
                     || self.proves_exists_from_facts(*var, sort, body)
