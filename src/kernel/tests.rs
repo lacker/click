@@ -4966,6 +4966,33 @@ fn adjacent_disjoint_fact_ranges_cover_larger_disjoint_goal() {
 }
 
 #[test]
+fn constant_non_overlapping_ranges_on_one_base_are_separate() {
+    let base = Pointer {
+        block: "object".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let left = CResource::Memory(CMemoryRange::new(
+        base.clone(),
+        Bitvector32Term::Constant(0),
+        Bitvector32Term::Constant(1),
+    ));
+    let right = CResource::Memory(CMemoryRange::new(
+        base,
+        Bitvector32Term::Constant(2),
+        Bitvector32Term::Constant(4),
+    ));
+
+    assert!(Assumptions::new().proves(&Proposition::CResourceSeparate {
+        left: left.clone(),
+        right: right.clone(),
+    }));
+    assert!(Assumptions::new().proves(&Proposition::CResourceSeparate {
+        left: right,
+        right: left,
+    }));
+}
+
+#[test]
 fn symbolic_disjoint_fact_proves_itself() {
     let n_bits = Bitvector32Term::Variable(Variable(89));
     let p_base = Pointer {

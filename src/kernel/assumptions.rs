@@ -4629,6 +4629,19 @@ impl Assumptions {
     }
 
     pub(super) fn proves_resource_separate(&self, left: &CResource, right: &CResource) -> bool {
+        if let (CResource::Memory(left), CResource::Memory(right)) = (left, right)
+            && left.base() == right.base()
+            && let (Some(left_start), Some(left_end), Some(right_start), Some(right_end)) = (
+                signed_bitvector_constant(left.start()),
+                signed_bitvector_constant(left.end()),
+                signed_bitvector_constant(right.start()),
+                signed_bitvector_constant(right.end()),
+            )
+            && (left_end <= right_start || right_end <= left_start)
+        {
+            return true;
+        }
+
         if self.prop_facts.iter().any(|proposition| {
             let Proposition::CResourceSeparate {
                 left: fact_left,
