@@ -112,7 +112,25 @@ int32 input_cursor_take(struct input_cursor* owner) {
     unfold(input_cursor(owner));
     observe(readable_input(owner->data, owner->len));
     execute_rest();
-    have 0 <= owner->pos by { simp(); }
+    have 0 <= owner->pos by {
+        derive(0 <= owner->pos) using {
+            fact at(statement(2).entry, separate(memory(owner->pos), memory(owner->len)));
+            fact at(statement(2).entry, separate(memory(owner->pos), memory(owner->data)));
+            fact at(statement(2).entry, separate(memory(owner->len), memory(owner->data)));
+            fact at(statement(2).entry, contains(input_cursor(owner), memory(owner->pos)));
+            fact at(statement(2).entry, contains(input_cursor(owner), memory(owner->len)));
+            fact at(statement(2).entry, contains(input_cursor(owner), memory(owner->data)));
+            fact at(statement(2).entry, loadable(old(owner->pos)));
+            fact at(statement(2).entry, loadable(old(owner->len)));
+            fact at(statement(2).entry, loadable(old(owner->data)));
+            fact 0 <= old(owner->pos);
+            fact at(statement(2).entry, separate(memory(object(owner)), memory((owner->data)[0..owner->len])));
+            fact at(statement(2).entry, loadable(old((owner->data)[0..owner->len])));
+            fact old(owner->pos) < owner->len;
+            fact old(owner->pos) <= owner->len;
+            fact 0 <= owner->len;
+        }
+    }
     have owner->pos <= owner->len by { simp(); }
     have separate(
         memory(object(owner)),
