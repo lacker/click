@@ -2,6 +2,8 @@
 
 use std::collections::BTreeMap;
 
+use crate::lang::{SourcePosition, character_positions};
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct C0Function {
     return_type: C0Type,
@@ -144,6 +146,7 @@ pub enum C0Expression {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct C0SyntaxError {
     message: String,
+    position: Option<SourcePosition>,
 }
 
 impl C0Function {
@@ -424,11 +427,38 @@ impl C0SyntaxError {
     fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
+            position: None,
         }
+    }
+
+    fn at(position: SourcePosition, message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            position: Some(position),
+        }
+    }
+
+    /// Attaches `position` if the error does not already carry one.
+    fn with_position(mut self, position: SourcePosition) -> Self {
+        self.position.get_or_insert(position);
+        self
     }
 
     pub fn message(&self) -> &str {
         &self.message
+    }
+
+    pub fn position(&self) -> Option<SourcePosition> {
+        self.position
+    }
+}
+
+impl std::fmt::Display for C0SyntaxError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.position {
+            Some(position) => write!(f, "{position}: {}", self.message),
+            None => write!(f, "{}", self.message),
+        }
     }
 }
 
@@ -501,6 +531,61 @@ enum Token {
 }
 
 impl Token {
+    /// A human-readable rendering for diagnostics, such as `` identifier `x` ``
+    /// or `` `;` ``.
+    fn describe(&self) -> String {
+        match self {
+            Self::Ident(name) => format!("identifier `{name}`"),
+            Self::Number(number) => format!("number `{number}`"),
+            Self::CharLiteral(value) => {
+                format!("character literal `{}`", (*value as char).escape_default())
+            }
+            other => format!("`{}`", other.spelling()),
+        }
+    }
+
+    fn spelling(&self) -> &'static str {
+        match self {
+            Self::Ident(_) | Self::Number(_) | Self::CharLiteral(_) => "",
+            Self::LParen => "(",
+            Self::RParen => ")",
+            Self::LBracket => "[",
+            Self::RBracket => "]",
+            Self::LBrace => "{",
+            Self::RBrace => "}",
+            Self::Comma => ",",
+            Self::Semicolon => ";",
+            Self::Plus => "+",
+            Self::PlusPlus => "++",
+            Self::PlusEqual => "+=",
+            Self::Minus => "-",
+            Self::Arrow => "->",
+            Self::MinusMinus => "--",
+            Self::MinusEqual => "-=",
+            Self::LessThan => "<",
+            Self::LessEqual => "<=",
+            Self::ShiftLeft => "<<",
+            Self::GreaterThan => ">",
+            Self::GreaterEqual => ">=",
+            Self::ShiftRight => ">>",
+            Self::EqualEqual => "==",
+            Self::BangEqual => "!=",
+            Self::Bang => "!",
+            Self::AmpAmp => "&&",
+            Self::PipePipe => "||",
+            Self::Star => "*",
+            Self::StarEqual => "*=",
+            Self::CaretEqual => "^=",
+            Self::Slash => "/",
+            Self::Percent => "%",
+            Self::Amp => "&",
+            Self::Pipe => "|",
+            Self::Caret => "^",
+            Self::Tilde => "~",
+            Self::Equal => "=",
+        }
+    }
+
     fn is_scalar_update(&self) -> bool {
         matches!(
             self,
@@ -515,8 +600,23 @@ impl Token {
     }
 }
 
+/// A captured error position; see [`Parser::error_context`].
+struct ErrorContext {
+    position: Option<SourcePosition>,
+}
+
+impl ErrorContext {
+    fn error(&self, message: impl Into<String>) -> C0SyntaxError {
+        match self.position {
+            Some(position) => C0SyntaxError::at(position, message),
+            None => C0SyntaxError::new(message),
+        }
+    }
+}
+
 struct Parser {
     tokens: Vec<Token>,
+    positions: Vec<SourcePosition>,
     position: usize,
     structs: BTreeMap<String, C0StructLayout>,
     variable_structs: BTreeMap<String, String>,
@@ -525,13 +625,42 @@ struct Parser {
 
 impl Parser {
     fn new(source: &str, abi: CAbi) -> Result<Self, C0SyntaxError> {
+        let (tokens, positions) = tokenize(source)?;
         Ok(Self {
-            tokens: tokenize(source)?,
+            tokens,
+            positions,
             position: 0,
             structs: BTreeMap::new(),
             variable_structs: BTreeMap::new(),
             abi,
         })
+    }
+
+    /// The source position of the next unconsumed token, or of the end of
+    /// input when every token has been consumed.
+    fn here(&self) -> Option<SourcePosition> {
+        self.positions
+            .get(self.position)
+            .or_else(|| self.positions.last())
+            .copied()
+    }
+
+    /// An error at the next unconsumed token.
+    fn error_here(&self, message: impl Into<String>) -> C0SyntaxError {
+        match self.here() {
+            Some(position) => C0SyntaxError::at(position, message),
+            None => C0SyntaxError::new(message),
+        }
+    }
+
+    /// An error at the most recently consumed token; use after `next()` has
+    /// already advanced past the offending token.
+    fn error_at_previous(&self, message: impl Into<String>) -> C0SyntaxError {
+        let index = self.position.saturating_sub(1);
+        match self.positions.get(index).or_else(|| self.positions.last()) {
+            Some(position) => C0SyntaxError::at(*position, message),
+            None => C0SyntaxError::new(message),
+        }
     }
 
     fn parse_function(mut self) -> Result<C0Function, C0SyntaxError> {
@@ -565,7 +694,7 @@ impl Parser {
             let mut struct_alignment = 1u32;
             while self.peek() != Some(&Token::RBrace) {
                 if self.peek().is_none() {
-                    return Err(C0SyntaxError::new(
+                    return Err(self.error_here(
                         "expected struct field or `}`, got end of input",
                     ));
                 }
@@ -574,7 +703,7 @@ impl Parser {
                     field_type.c_type,
                     C0Type::Int32 | C0Type::Int32Pointer | C0Type::UInt8Pointer
                 ) {
-                    return Err(C0SyntaxError::new(
+                    return Err(self.error_here(
                         "struct fields currently support int32 and pointer fields",
                     ));
                 }
@@ -582,7 +711,7 @@ impl Parser {
                 self.expect(Token::Semicolon)?;
                 let (field_size, field_alignment) = self.abi.size_and_alignment(field_type.c_type);
                 offset_bytes = align_up(offset_bytes, field_alignment).ok_or_else(|| {
-                    C0SyntaxError::new(format!("struct `{name}` layout is too large"))
+                    self.error_here(format!("struct `{name}` layout is too large"))
                 })?;
                 if fields
                     .insert(
@@ -595,12 +724,12 @@ impl Parser {
                     )
                     .is_some()
                 {
-                    return Err(C0SyntaxError::new(format!(
+                    return Err(self.error_here(format!(
                         "duplicate field `{field_name}` in struct `{name}`"
                     )));
                 }
                 offset_bytes = offset_bytes.checked_add(field_size).ok_or_else(|| {
-                    C0SyntaxError::new(format!("struct `{name}` layout is too large"))
+                    self.error_here(format!("struct `{name}` layout is too large"))
                 })?;
                 struct_alignment = struct_alignment.max(field_alignment);
             }
@@ -609,12 +738,12 @@ impl Parser {
             self.expect(Token::Semicolon)?;
 
             if fields.is_empty() {
-                return Err(C0SyntaxError::new(
+                return Err(self.error_here(
                     "struct declarations must contain at least one field",
                 ));
             }
             let size_bytes = align_up(offset_bytes, struct_alignment).ok_or_else(|| {
-                C0SyntaxError::new(format!("struct `{name}` layout is too large"))
+                self.error_here(format!("struct `{name}` layout is too large"))
             })?;
             if self
                 .structs
@@ -628,7 +757,7 @@ impl Parser {
                 )
                 .is_some()
             {
-                return Err(C0SyntaxError::new(format!(
+                return Err(self.error_here(format!(
                     "duplicate struct declaration `{name}`"
                 )));
             }
@@ -650,7 +779,7 @@ impl Parser {
             let struct_name = parsed_type.struct_name;
             if struct_name.is_some() {
                 if c_type != parsed_type.c_type {
-                    return Err(C0SyntaxError::new(
+                    return Err(self.error_here(
                         "array parameters of struct type are not supported",
                     ));
                 }
@@ -687,7 +816,7 @@ impl Parser {
                         struct_name: Some(struct_name),
                     })
                 } else {
-                    Err(C0SyntaxError::new(
+                    Err(self.error_here(
                         "only pointer-to-struct types are supported",
                     ))
                 }
@@ -715,10 +844,11 @@ impl Parser {
                     })
                 }
             }
-            Some(token) => Err(C0SyntaxError::new(format!(
-                "expected type `int32`, `uint8`, or `struct`, got {token:?}"
+            Some(token) => Err(self.error_at_previous(format!(
+                "expected type `int32`, `uint8`, or `struct`, got {}",
+                token.describe()
             ))),
-            None => Err(C0SyntaxError::new(
+            None => Err(self.error_here(
                 "expected type `int32`, `uint8`, or `struct`, got end of input",
             )),
         }
@@ -732,14 +862,14 @@ impl Parser {
             C0Type::Int32 => C0Type::Int32Pointer,
             C0Type::UInt8 => C0Type::UInt8Pointer,
             _ => {
-                return Err(C0SyntaxError::new(
+                return Err(self.error_here(
                     "only scalar array parameters are supported",
                 ));
             }
         };
 
         if !matches!(c_type, C0Type::Int32 | C0Type::UInt8) {
-            return Err(C0SyntaxError::new(
+            return Err(self.error_here(
                 "only scalar array parameters are supported",
             ));
         }
@@ -760,32 +890,33 @@ impl Parser {
         {
             C0Type::Int32 => (C0Type::Int32Array, 4u32, "int32"),
             C0Type::UInt8 => (C0Type::UInt8Array, 1u32, "uint8"),
-            _ => return Err(C0SyntaxError::new("only scalar local arrays are supported")),
+            _ => return Err(self.error_here("only scalar local arrays are supported")),
         };
 
         self.position += 1;
         let length = match self.next() {
             Some(Token::Number(number)) => {
                 let length = number.parse::<u32>().map_err(|_| {
-                    C0SyntaxError::new(format!("array length `{number}` is out of range"))
+                    self.error_here(format!("array length `{number}` is out of range"))
                 })?;
                 if length == 0 {
-                    return Err(C0SyntaxError::new("local arrays must have positive length"));
+                    return Err(self.error_here("local arrays must have positive length"));
                 }
                 if length.checked_mul(element_width).is_none() {
-                    return Err(C0SyntaxError::new(format!(
+                    return Err(self.error_here(format!(
                         "array length `{number}` is too large for {element_name} elements"
                     )));
                 }
                 length
             }
             Some(token) => {
-                return Err(C0SyntaxError::new(format!(
-                    "expected local array length, got {token:?}"
+                return Err(self.error_at_previous(format!(
+                    "expected local array length, got {}",
+                    token.describe()
                 )));
             }
             None => {
-                return Err(C0SyntaxError::new(
+                return Err(self.error_here(
                     "expected local array length, got end of input",
                 ));
             }
@@ -799,7 +930,7 @@ impl Parser {
         let mut statements = Vec::new();
         while self.peek() != Some(&Token::RBrace) {
             if self.peek().is_none() {
-                return Err(C0SyntaxError::new(
+                return Err(self.error_here(
                     "expected statement or `}`, got end of input",
                 ));
             }
@@ -869,7 +1000,7 @@ impl Parser {
                 let c_type = self.parse_local_array_suffix(parsed_type.c_type)?;
                 if parsed_type.struct_name.is_some() {
                     if c_type != parsed_type.c_type {
-                        return Err(C0SyntaxError::new(
+                        return Err(self.error_here(
                             "local arrays of struct type are not supported",
                         ));
                     }
@@ -884,7 +1015,7 @@ impl Parser {
                 };
                 if self.peek() == Some(&Token::Equal) {
                     if matches!(c_type, C0Type::Int32Array(_) | C0Type::UInt8Array(_)) {
-                        return Err(C0SyntaxError::new(
+                        return Err(self.error_here(
                             "local array initializers are not supported",
                         ));
                     }
@@ -951,15 +1082,16 @@ impl Parser {
                         }),
                     ))
                 }
-                Some(other) => Err(C0SyntaxError::new(format!(
+                Some(other) => Err(self.error_here(format!(
                     "expected statement, got identifier `{other}`"
                 ))),
                 None => unreachable!("identifier token should have identifier spelling"),
             },
-            Some(token) => Err(C0SyntaxError::new(format!(
-                "expected statement, got {token:?}"
+            Some(token) => Err(self.error_here(format!(
+                "expected statement, got {}",
+                token.describe()
             ))),
-            None => Err(C0SyntaxError::new("expected statement, got end of input")),
+            None => Err(self.error_here("expected statement, got end of input")),
         }
     }
 
@@ -968,7 +1100,7 @@ impl Parser {
             let parsed_type = self.parse_type()?;
             let name = self.expect_ident("for-loop local name")?;
             if self.peek() != Some(&Token::Equal) {
-                return Err(C0SyntaxError::new(
+                return Err(self.error_here(
                     "for-loop declarations require an initializer",
                 ));
             }
@@ -983,7 +1115,7 @@ impl Parser {
             ));
         }
         let Some(Token::Ident(name)) = self.next() else {
-            return Err(C0SyntaxError::new(
+            return Err(self.error_here(
                 "expected assignment target in for-loop initializer".to_string(),
             ));
         };
@@ -999,23 +1131,24 @@ impl Parser {
         let name = match self.next() {
             Some(Token::Ident(name)) if name != "int32" && name != "uint8" => name,
             Some(Token::Ident(name)) => {
-                return Err(C0SyntaxError::new(format!(
+                return Err(self.error_here(format!(
                     "expected scalar update target in {context}, got `{name}`"
                 )));
             }
             Some(token) => {
-                return Err(C0SyntaxError::new(format!(
-                    "expected scalar update target in {context}, got {token:?}"
+                return Err(self.error_at_previous(format!(
+                    "expected scalar update target in {context}, got {}",
+                    token.describe()
                 )));
             }
             None => {
-                return Err(C0SyntaxError::new(format!(
+                return Err(self.error_here(format!(
                     "expected scalar update target in {context}, got end of input"
                 )));
             }
         };
         let operator = self.next().ok_or_else(|| {
-            C0SyntaxError::new(format!(
+            self.error_here(format!(
                 "expected scalar update operator in {context}, got end of input"
             ))
         })?;
@@ -1059,8 +1192,9 @@ impl Parser {
                 Box::new(self.parse_expression()?),
             ),
             token => {
-                return Err(C0SyntaxError::new(format!(
-                    "expected scalar update operator in {context}, got {token:?}"
+                return Err(self.error_here(format!(
+                    "expected scalar update operator in {context}, got {}",
+                    token.describe()
                 )));
             }
         };
@@ -1090,12 +1224,13 @@ impl Parser {
                     return Ok(arguments);
                 }
                 Some(token) => {
-                    return Err(C0SyntaxError::new(format!(
-                        "expected `,` or `)`, got {token:?}"
+                    return Err(self.error_at_previous(format!(
+                        "expected `,` or `)`, got {}",
+                        token.describe()
                     )));
                 }
                 None => {
-                    return Err(C0SyntaxError::new("expected `,` or `)`, got end of input"));
+                    return Err(self.error_here("expected `,` or `)`, got end of input"));
                 }
             }
         }
@@ -1261,12 +1396,12 @@ impl Parser {
             if let Some(Token::Number(number)) = self.peek().cloned() {
                 self.position += 1;
                 let magnitude = number.parse::<u64>().map_err(|_| {
-                    C0SyntaxError::new(format!(
+                    self.error_here(format!(
                         "negative int32 literal `-{number}` is out of range"
                     ))
                 })?;
                 if magnitude > (i32::MAX as u64) + 1 {
-                    return Err(C0SyntaxError::new(format!(
+                    return Err(self.error_here(format!(
                         "negative int32 literal `-{number}` is out of range"
                     )));
                 }
@@ -1351,7 +1486,7 @@ impl Parser {
                 ..
             } => Ok((*pointer, Some(field_type))),
             C0Expression::Index(base, index) => Ok((C0Expression::Add(base, index), None)),
-            expression => Err(C0SyntaxError::new(format!(
+            expression => Err(self.error_here(format!(
                 "expected field or indexed assignment target, got {expression:?}"
             ))),
         }
@@ -1370,15 +1505,15 @@ impl Parser {
             _ => None,
         };
         let struct_name = struct_name.ok_or_else(|| {
-            C0SyntaxError::new(format!(
+            self.error_here(format!(
                 "cannot access field `{field_name}` through a non-struct-pointer expression"
             ))
         })?;
         let layout = self.structs.get(struct_name).ok_or_else(|| {
-            C0SyntaxError::new(format!("unknown struct declaration `{struct_name}`"))
+            self.error_here(format!("unknown struct declaration `{struct_name}`"))
         })?;
         let field = layout.fields.get(field_name).ok_or_else(|| {
-            C0SyntaxError::new(format!(
+            self.error_here(format!(
                 "struct `{struct_name}` has no field `{field_name}`"
             ))
         })?;
@@ -1390,16 +1525,15 @@ impl Parser {
     }
 
     fn parse_primary(&mut self) -> Result<C0Expression, C0SyntaxError> {
+        let at = self.error_context();
         match self.next() {
             Some(Token::Ident(name)) => Ok(C0Expression::Variable(name)),
             Some(Token::Number(number)) => {
-                let value = number.parse::<u32>().map_err(|_| {
-                    C0SyntaxError::new(format!("int32 literal `{number}` is out of range"))
-                })?;
+                let value = number
+                    .parse::<u32>()
+                    .map_err(|_| at.error(format!("int32 literal `{number}` is out of range")))?;
                 if value > i32::MAX as u32 {
-                    return Err(C0SyntaxError::new(format!(
-                        "int32 literal `{number}` is out of range"
-                    )));
+                    return Err(at.error(format!("int32 literal `{number}` is out of range")));
                 }
                 Ok(C0Expression::Int32Literal(value))
             }
@@ -1409,49 +1543,53 @@ impl Parser {
                 self.expect(Token::RParen)?;
                 Ok(expression)
             }
-            Some(token) => Err(C0SyntaxError::new(format!(
-                "expected expression, got {token:?}"
-            ))),
-            None => Err(C0SyntaxError::new("expected expression, got end of input")),
+            Some(token) => Err(at.error(format!("expected expression, got {}", token.describe()))),
+            None => Err(at.error("expected expression, got end of input")),
         }
     }
 
     fn expect(&mut self, expected: Token) -> Result<(), C0SyntaxError> {
+        let at = self.error_context();
         match self.next() {
             Some(token) if token == expected => Ok(()),
-            Some(token) => Err(C0SyntaxError::new(format!(
-                "expected {expected:?}, got {token:?}"
+            Some(token) => Err(at.error(format!(
+                "expected {}, got {}",
+                expected.describe(),
+                token.describe()
             ))),
-            None => Err(C0SyntaxError::new(format!(
-                "expected {expected:?}, got end of input"
+            None => Err(at.error(format!(
+                "expected {}, got end of input",
+                expected.describe()
             ))),
         }
     }
 
     fn expect_ident(&mut self, label: &str) -> Result<String, C0SyntaxError> {
+        let at = self.error_context();
         match self.next() {
             Some(Token::Ident(name)) => Ok(name),
-            Some(token) => Err(C0SyntaxError::new(format!(
-                "expected {label}, got {token:?}"
-            ))),
-            None => Err(C0SyntaxError::new(format!(
-                "expected {label}, got end of input"
-            ))),
+            Some(token) => Err(at.error(format!("expected {label}, got {}", token.describe()))),
+            None => Err(at.error(format!("expected {label}, got end of input"))),
         }
     }
 
     fn expect_ident_spelling(&mut self, expected: &str) -> Result<(), C0SyntaxError> {
+        let at = self.error_context();
         match self.next() {
             Some(Token::Ident(name)) if name == expected => Ok(()),
-            Some(Token::Ident(name)) => Err(C0SyntaxError::new(format!(
-                "expected `{expected}`, got `{name}`"
+            Some(token) => Err(at.error(format!(
+                "expected `{expected}`, got {}",
+                token.describe()
             ))),
-            Some(token) => Err(C0SyntaxError::new(format!(
-                "expected `{expected}`, got {token:?}"
-            ))),
-            None => Err(C0SyntaxError::new(format!(
-                "expected `{expected}`, got end of input"
-            ))),
+            None => Err(at.error(format!("expected `{expected}`, got end of input"))),
+        }
+    }
+
+    /// Captures the position of the next unconsumed token so an error can
+    /// still point at it after the token is consumed.
+    fn error_context(&self) -> ErrorContext {
+        ErrorContext {
+            position: self.here(),
         }
     }
 
@@ -1459,7 +1597,7 @@ impl Parser {
         if self.position == self.tokens.len() {
             Ok(())
         } else {
-            Err(C0SyntaxError::new(format!(
+            Err(self.error_here(format!(
                 "expected end of input, got {:?}",
                 self.tokens[self.position]
             )))
@@ -1494,13 +1632,16 @@ impl Parser {
     }
 }
 
-fn tokenize(source: &str) -> Result<Vec<Token>, C0SyntaxError> {
+fn tokenize(source: &str) -> Result<(Vec<Token>, Vec<SourcePosition>), C0SyntaxError> {
     let chars = source.chars().collect::<Vec<_>>();
+    let char_positions = character_positions(source);
     let mut tokens = Vec::new();
+    let mut positions = Vec::new();
     let mut index = 0;
 
     while index < chars.len() {
         let ch = chars[index];
+        let position = char_positions[index];
         if ch.is_whitespace() {
             index += 1;
             continue;
@@ -1520,7 +1661,7 @@ fn tokenize(source: &str) -> Result<Vec<Token>, C0SyntaxError> {
                 index += 1;
             }
             if index + 1 == chars.len() {
-                return Err(C0SyntaxError::new("unterminated block comment"));
+                return Err(C0SyntaxError::at(position, "unterminated block comment"));
             }
             index += 2;
             continue;
@@ -1533,6 +1674,7 @@ fn tokenize(source: &str) -> Result<Vec<Token>, C0SyntaxError> {
                 index += 1;
             }
             tokens.push(Token::Ident(chars[start..index].iter().collect()));
+            positions.push(position);
             continue;
         }
 
@@ -1543,12 +1685,15 @@ fn tokenize(source: &str) -> Result<Vec<Token>, C0SyntaxError> {
                 index += 1;
             }
             tokens.push(Token::Number(chars[start..index].iter().collect()));
+            positions.push(position);
             continue;
         }
 
         if ch == '\'' {
-            let (value, next_index) = parse_char_literal(&chars, index)?;
+            let (value, next_index) =
+                parse_char_literal(&chars, index).map_err(|error| error.with_position(position))?;
             tokens.push(Token::CharLiteral(value));
+            positions.push(position);
             index = next_index;
             continue;
         }
@@ -1574,6 +1719,7 @@ fn tokenize(source: &str) -> Result<Vec<Token>, C0SyntaxError> {
             };
             if let Some(token) = token {
                 tokens.push(token);
+                positions.push(position);
                 index += 2;
                 continue;
             }
@@ -1602,14 +1748,18 @@ fn tokenize(source: &str) -> Result<Vec<Token>, C0SyntaxError> {
             '!' => Token::Bang,
             '=' => Token::Equal,
             _ => {
-                return Err(C0SyntaxError::new(format!("unexpected character `{ch}`")));
+                return Err(C0SyntaxError::at(
+                    position,
+                    format!("unexpected character `{ch}`"),
+                ));
             }
         };
         tokens.push(token);
+        positions.push(position);
         index += 1;
     }
 
-    Ok(tokens)
+    Ok((tokens, positions))
 }
 
 fn parse_char_literal(chars: &[char], start: usize) -> Result<(u8, usize), C0SyntaxError> {

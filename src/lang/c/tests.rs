@@ -74,6 +74,32 @@ fn c0_syntax_reports_unterminated_block_comments() {
 }
 
 #[test]
+fn c0_syntax_errors_carry_source_positions() {
+    let error = syntax::parse_function("int32 broken(int32 x) {\n    return x\n}\n")
+        .expect_err("a missing semicolon should be rejected");
+
+    assert_eq!(error.message(), "expected `;`, got `}`");
+    assert_eq!(
+        error.position(),
+        Some(crate::lang::SourcePosition::new(3, 1))
+    );
+    assert_eq!(error.to_string(), "line 3, column 1: expected `;`, got `}`");
+}
+
+#[test]
+fn c0_syntax_positions_point_at_the_offending_token() {
+    let error =
+        syntax::parse_function("int32 broken() {\n    int32 x;\n    x = $;\n    return x;\n}\n")
+            .expect_err("an unexpected character should be rejected");
+
+    assert_eq!(error.message(), "unexpected character `$`");
+    assert_eq!(
+        error.position(),
+        Some(crate::lang::SourcePosition::new(3, 9))
+    );
+}
+
+#[test]
 fn c0_syntax_lowers_scalar_declaration_initializers_in_source_order() {
     let function = syntax::parse_function(
         r#"

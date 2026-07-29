@@ -2541,8 +2541,7 @@ fn parse_c_struct_layouts(
     for (source_path, c_source) in c_sources {
         let function = syntax::parse_function(c_source).map_err(|error| {
             ClickError::new(format!(
-                "failed to parse C source `{source_path}`: {}",
-                error.message()
+                "failed to parse C source `{source_path}`: {error}"
             ))
         })?;
         for (name, layout) in function.structs() {
@@ -2580,8 +2579,7 @@ fn parse_verified_sources(
         })?;
         let function = syntax::parse_function(c_source).map_err(|error| {
             ClickError::new(format!(
-                "failed to parse C source `{source_path}`: {}",
-                error.message()
+                "failed to parse C source `{source_path}`: {error}"
             ))
         })?;
         let function_name = function.name().to_string();
