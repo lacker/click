@@ -1,12 +1,14 @@
 use std::env;
 use std::fmt::Write as _;
 use std::fs;
-use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
-use std::thread;
-use std::time::{Duration, Instant};
+use std::process::Command;
+use std::time::Duration;
 
+use click::cli::{
+    BoundedOutput, files_with_extension, find_projects, format_duration,
+    format_fractional_duration, parse_duration, run_bounded,
+};
 use click::lang::click::{SourcePosition, c0_tactic_source_position, verify_c0_sources};
 
 const DEFAULT_SMART_THRESHOLD: Duration = Duration::from_secs(2);
@@ -232,71 +234,6 @@ fn parse_arguments(arguments: impl IntoIterator<Item = String>) -> Result<Argume
     })
 }
 
-fn parse_duration(source: &str) -> Result<Duration, String> {
-    let (digits, multiplier) = if let Some(digits) = source.strip_suffix("ms") {
-        (digits, 1_u128)
-    } else if let Some(digits) = source.strip_suffix('s') {
-        (digits, 1_000)
-    } else if let Some(digits) = source.strip_suffix('m') {
-        (digits, 60_000)
-    } else {
-        (source, 1_000)
-    };
-    let amount = digits.parse::<u128>().map_err(|_| {
-        format!(
-            "invalid duration `{source}`; use milliseconds, seconds, or minutes (for example `500ms`, `30s`, or `2m`)"
-        )
-    })?;
-    let milliseconds = amount
-        .checked_mul(multiplier)
-        .ok_or_else(|| format!("duration `{source}` is too large"))?;
-    if milliseconds == 0 {
-        return Err("duration must be greater than zero".to_string());
-    }
-    Ok(Duration::from_millis(u64::try_from(milliseconds).map_err(
-        |_| format!("duration `{source}` is too large"),
-    )?))
-}
-
-fn find_projects(path: &Path) -> Result<Vec<PathBuf>, String> {
-    if !path.is_dir() {
-        return Err(format!("`{}` is not a directory", path.display()));
-    }
-    if contains_click_file(path)? {
-        return Ok(vec![path.to_path_buf()]);
-    }
-    let mut projects = fs::read_dir(path)
-        .map_err(|error| format!("failed to read `{}`: {error}", path.display()))?
-        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
-        .filter(|candidate| candidate.is_dir())
-        .filter_map(|candidate| match contains_click_file(&candidate) {
-            Ok(true) => Some(Ok(candidate)),
-            Ok(false) => None,
-            Err(error) => Some(Err(error)),
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    projects.sort();
-    if projects.is_empty() {
-        return Err(format!(
-            "`{}` contains no example projects with Click sidecars",
-            path.display()
-        ));
-    }
-    Ok(projects)
-}
-
-fn contains_click_file(path: &Path) -> Result<bool, String> {
-    Ok(fs::read_dir(path)
-        .map_err(|error| format!("failed to read `{}`: {error}", path.display()))?
-        .filter_map(Result::ok)
-        .any(|entry| {
-            entry
-                .path()
-                .extension()
-                .is_some_and(|extension| extension == "click")
-        }))
-}
-
 fn profile_project(
     project: &Path,
     thresholds: Thresholds,
@@ -304,51 +241,17 @@ fn profile_project(
 ) -> Result<ProjectProfile, String> {
     let executable = env::current_exe()
         .map_err(|error| format!("failed to locate click-profile executable: {error}"))?;
-    let mut child = Command::new(executable)
+    let mut command = Command::new(executable);
+    command
         .arg("--child")
         .arg(project)
         .env("CLICK_TIMINGS", "1")
-        .env("CLICK_TIMING_STARTS", "1")
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|error| {
-            format!(
-                "failed to start profiler for `{}`: {error}",
-                project.display()
-            )
-        })?;
-    let stdout = child
-        .stdout
-        .take()
-        .ok_or_else(|| "failed to capture profiler output".to_string())?;
-    let stderr = child
-        .stderr
-        .take()
-        .ok_or_else(|| "failed to capture profiler diagnostics".to_string())?;
-    let stdout_reader = thread::spawn(move || read_all(stdout));
-    let stderr_reader = thread::spawn(move || read_all(stderr));
-    let start = Instant::now();
-    let status = loop {
-        if let Some(status) = child
-            .try_wait()
-            .map_err(|error| format!("failed to poll profiler child: {error}"))?
-        {
-            break Some(status);
-        }
-        if start.elapsed() >= time_limit {
-            let _ = child.kill();
-            let _ = child.wait();
-            break None;
-        }
-        thread::sleep(
-            time_limit
-                .saturating_sub(start.elapsed())
-                .min(Duration::from_millis(10)),
-        );
+        .env("CLICK_TIMING_STARTS", "1");
+    let label = format!("profiler for `{}`", project.display());
+    let (status, stdout, stderr) = match run_bounded(command, time_limit, &label)? {
+        BoundedOutput::Completed(output) => (Some(output.status), output.stdout, output.stderr),
+        BoundedOutput::TimedOut { stdout, stderr, .. } => (None, stdout, stderr),
     };
-    let stdout = join_reader(stdout_reader, "output")?;
-    let stderr = join_reader(stderr_reader, "diagnostics")?;
     let project_name = project
         .file_name()
         .and_then(|name| name.to_str())
@@ -519,10 +422,10 @@ fn render_profiles(
     writeln!(
         output,
         "Click proof profile (smart >= {}, simple >= {}, control >= {}; project limit {})",
-        format_duration(thresholds.smart),
-        format_duration(thresholds.simple),
-        format_duration(thresholds.control),
-        format_duration(time_limit),
+        format_fractional_duration(thresholds.smart),
+        format_fractional_duration(thresholds.simple),
+        format_fractional_duration(thresholds.control),
+        format_fractional_duration(time_limit),
     )
     .expect("writing a String cannot fail");
     writeln!(
@@ -584,7 +487,7 @@ fn render_profiles(
             output,
             "  timed out: {} after {}",
             profile.project,
-            format_duration(time_limit)
+            format_fractional_duration(time_limit)
         )
         .expect("writing a String cannot fail");
         for key in &profile.active {
@@ -710,7 +613,7 @@ fn render_category(
         writeln!(
             output,
             "  {:>10}  {}:{}:{}  {}  {}  statement {}",
-            format_duration(step.elapsed),
+            format_fractional_duration(step.elapsed),
             step.key.source_path.display(),
             position.line,
             position.column,
@@ -729,7 +632,7 @@ fn render_expansion_command(output: &mut String, key: &StepKey, position: Source
     writeln!(
         output,
         "              expand: cargo run --quiet --bin click-expand -- --time-limit {} {}:{}:{}",
-        format_cli_duration(EXPANSION_TIME_LIMIT),
+        format_duration(EXPANSION_TIME_LIMIT),
         key.source_path.display(),
         position.line,
         position.column,
@@ -780,48 +683,6 @@ fn verify_project(project: &Path) -> Result<(), String> {
         })?;
     }
     Ok(())
-}
-
-fn files_with_extension(directory: &Path, extension: &str) -> Result<Vec<PathBuf>, String> {
-    Ok(fs::read_dir(directory)
-        .map_err(|error| format!("failed to read `{}`: {error}", directory.display()))?
-        .filter_map(Result::ok)
-        .map(|entry| entry.path())
-        .filter(|path| path.extension().is_some_and(|actual| actual == extension))
-        .collect())
-}
-
-fn read_all(mut reader: impl Read) -> std::io::Result<Vec<u8>> {
-    let mut bytes = Vec::new();
-    reader.read_to_end(&mut bytes)?;
-    Ok(bytes)
-}
-
-fn join_reader(
-    reader: thread::JoinHandle<std::io::Result<Vec<u8>>>,
-    description: &str,
-) -> Result<Vec<u8>, String> {
-    reader
-        .join()
-        .map_err(|_| format!("profiler {description} reader panicked"))?
-        .map_err(|error| format!("failed to read profiler {description}: {error}"))
-}
-
-fn format_duration(duration: Duration) -> String {
-    let milliseconds = duration.as_secs_f64() * 1_000.0;
-    if milliseconds >= 1_000.0 {
-        format!("{:.3}s", milliseconds / 1_000.0)
-    } else {
-        format!("{milliseconds:.0}ms")
-    }
-}
-
-fn format_cli_duration(duration: Duration) -> String {
-    if duration.subsec_millis() == 0 {
-        format!("{}s", duration.as_secs())
-    } else {
-        format!("{}ms", duration.as_millis())
-    }
 }
 
 #[cfg(test)]
@@ -917,7 +778,7 @@ click timing: tactic example.contract 2 have class control statement 3 source 30
         assert!(report.contains("CONTROL — INSPECT NESTED STEPS"));
         assert!(report.contains("NEXT: fix or reduce the SIMPLE bottleneck first"));
         assert_eq!(report.matches("expand: cargo run").count(), 1);
-        assert!(report.contains("--time-limit 60s"));
+        assert!(report.contains("--time-limit 1m"));
     }
 
     #[test]

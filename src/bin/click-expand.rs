@@ -1,12 +1,15 @@
 use std::env;
 use std::fs;
-use std::io::{Read, Write};
+use std::io::Write;
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
-use std::thread;
-use std::time::{Duration, Instant};
+use std::process::Command;
+use std::time::Duration;
 
-use click::lang::click::{expand_c0_tactic_source_at, verifying_source_paths};
+use click::cli::{
+    BoundedOutput, format_duration, parse_duration, parse_source_location, read_verifying_sources,
+    run_bounded, source_refs,
+};
+use click::lang::click::expand_c0_tactic_source_at;
 
 const USAGE: &str = "usage: click-expand [--time-limit <DURATION>] <sidecar.click>:<line>:<column>";
 
@@ -19,7 +22,7 @@ fn main() {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct Arguments {
-    click_path: String,
+    click_path: PathBuf,
     line: usize,
     column: usize,
     time_limit: Option<Duration>,
@@ -65,152 +68,62 @@ fn parse_arguments(arguments: impl IntoIterator<Item = String>) -> Result<Argume
     })
 }
 
-fn parse_duration(source: &str) -> Result<Duration, String> {
-    let (digits, multiplier) = if let Some(digits) = source.strip_suffix("ms") {
-        (digits, 1_u128)
-    } else if let Some(digits) = source.strip_suffix('s') {
-        (digits, 1_000)
-    } else if let Some(digits) = source.strip_suffix('m') {
-        (digits, 60_000)
-    } else {
-        (source, 1_000)
-    };
-    let amount = digits
-        .parse::<u128>()
-        .map_err(|_| format!("invalid time limit `{source}`; use milliseconds, seconds, or minutes (for example `500ms`, `30s`, or `2m`)"))?;
-    let milliseconds = amount
-        .checked_mul(multiplier)
-        .ok_or_else(|| format!("time limit `{source}` is too large"))?;
-    if milliseconds == 0 {
-        return Err("time limit must be greater than zero".to_string());
-    }
-    let milliseconds =
-        u64::try_from(milliseconds).map_err(|_| format!("time limit `{source}` is too large"))?;
-    Ok(Duration::from_millis(milliseconds))
-}
-
 fn run_with_time_limit(arguments: &Arguments, time_limit: Duration) -> Result<(), String> {
     let executable = env::current_exe()
         .map_err(|error| format!("failed to locate click-expand executable: {error}"))?;
     let mut command = Command::new(executable);
     command.arg(format!(
         "{}:{}:{}",
-        arguments.click_path, arguments.line, arguments.column
+        arguments.click_path.display(),
+        arguments.line,
+        arguments.column
     ));
-    let mut child = command
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|error| format!("failed to start timed expansion: {error}"))?;
-    let stdout = child
-        .stdout
-        .take()
-        .ok_or_else(|| "failed to capture timed expansion output".to_string())?;
-    let stderr = child
-        .stderr
-        .take()
-        .ok_or_else(|| "failed to capture timed expansion diagnostics".to_string())?;
-    let stdout_reader = thread::spawn(move || read_all(stdout));
-    let stderr_reader = thread::spawn(move || read_all(stderr));
-    let start = Instant::now();
-    let status = loop {
-        if let Some(status) = child
-            .try_wait()
-            .map_err(|error| format!("failed to poll timed expansion: {error}"))?
-        {
-            break Some(status);
+    let output = match run_bounded(command, time_limit, "timed expansion")? {
+        BoundedOutput::TimedOut { stderr, .. } => {
+            let diagnostics = String::from_utf8_lossy(&stderr);
+            let diagnostics = diagnostics.trim();
+            return Err(if diagnostics.is_empty() {
+                format!("time limit of {} exceeded", format_duration(time_limit))
+            } else {
+                format!(
+                    "time limit of {} exceeded\nlast diagnostics:\n{}",
+                    format_duration(time_limit),
+                    diagnostics
+                )
+            });
         }
-        if start.elapsed() >= time_limit {
-            let _ = child.kill();
-            let _ = child.wait();
-            break None;
-        }
-        let remaining = time_limit.saturating_sub(start.elapsed());
-        thread::sleep(remaining.min(Duration::from_millis(10)));
+        BoundedOutput::Completed(output) => output,
     };
-    let stdout = join_reader(stdout_reader, "output")?;
-    let stderr = join_reader(stderr_reader, "diagnostics")?;
-    let Some(status) = status else {
-        let diagnostics = String::from_utf8_lossy(&stderr);
-        let diagnostics = diagnostics.trim();
-        return Err(if diagnostics.is_empty() {
-            format!("time limit of {} exceeded", format_duration(time_limit))
-        } else {
-            format!(
-                "time limit of {} exceeded\nlast diagnostics:\n{}",
-                format_duration(time_limit),
-                diagnostics
-            )
-        });
-    };
-    if !status.success() {
-        let message = String::from_utf8_lossy(&stderr);
+    if !output.status.success() {
+        let message = String::from_utf8_lossy(&output.stderr);
         let message = message
             .trim()
             .strip_prefix("click-expand: ")
             .unwrap_or(message.trim());
         return Err(if message.is_empty() {
-            format!("timed expansion exited with {status}")
+            format!("timed expansion exited with {}", output.status)
         } else {
             message.to_string()
         });
     }
     std::io::stdout()
-        .write_all(&stdout)
+        .write_all(&output.stdout)
         .map_err(|error| format!("failed to write expanded source: {error}"))?;
     std::io::stderr()
-        .write_all(&stderr)
+        .write_all(&output.stderr)
         .map_err(|error| format!("failed to write expansion diagnostics: {error}"))?;
     Ok(())
 }
 
-fn read_all(mut reader: impl Read) -> std::io::Result<Vec<u8>> {
-    let mut bytes = Vec::new();
-    reader.read_to_end(&mut bytes)?;
-    Ok(bytes)
-}
-
-fn join_reader(
-    reader: thread::JoinHandle<std::io::Result<Vec<u8>>>,
-    description: &str,
-) -> Result<Vec<u8>, String> {
-    reader
-        .join()
-        .map_err(|_| format!("timed expansion {description} reader panicked"))?
-        .map_err(|error| format!("failed to read timed expansion {description}: {error}"))
-}
-
-fn format_duration(duration: Duration) -> String {
-    let milliseconds = duration.as_millis();
-    if milliseconds % 60_000 == 0 {
-        format!("{}m", milliseconds / 60_000)
-    } else if milliseconds % 1_000 == 0 {
-        format!("{}s", milliseconds / 1_000)
-    } else {
-        format!("{milliseconds}ms")
-    }
-}
-
 fn run(arguments: &Arguments) -> Result<(), String> {
-    let click_path = PathBuf::from(&arguments.click_path);
-    let click_source = fs::read_to_string(&click_path)
-        .map_err(|error| format!("failed to read `{}`: {error}", click_path.display()))?;
-    let parent = click_path
-        .parent()
-        .unwrap_or_else(|| std::path::Path::new("."));
-    let mut owned_sources = Vec::new();
-    for source_path in
-        verifying_source_paths(&click_source).map_err(|error| error.message().to_string())?
-    {
-        let disk_path = parent.join(&source_path);
-        let source = fs::read_to_string(&disk_path)
-            .map_err(|error| format!("failed to read `{}`: {error}", disk_path.display()))?;
-        owned_sources.push((source_path, source));
-    }
-    let sources = owned_sources
-        .iter()
-        .map(|(path, source)| (path.as_str(), source.as_str()))
-        .collect::<Vec<_>>();
+    let click_source = fs::read_to_string(&arguments.click_path).map_err(|error| {
+        format!(
+            "failed to read `{}`: {error}",
+            arguments.click_path.display()
+        )
+    })?;
+    let owned_sources = read_verifying_sources(&arguments.click_path, &click_source)?;
+    let sources = source_refs(&owned_sources);
     let expanded =
         expand_c0_tactic_source_at(&click_source, &sources, arguments.line, arguments.column)
             .map_err(|error| error.message().to_string())?;
@@ -218,41 +131,9 @@ fn run(arguments: &Arguments) -> Result<(), String> {
     Ok(())
 }
 
-fn parse_source_location(source: &str) -> Result<(String, usize, usize), String> {
-    let (path_and_line, column) = source
-        .rsplit_once(':')
-        .ok_or_else(|| format!("invalid source location `{source}`; expected PATH:LINE:COLUMN"))?;
-    let (path, line) = path_and_line
-        .rsplit_once(':')
-        .ok_or_else(|| format!("invalid source location `{source}`; expected PATH:LINE:COLUMN"))?;
-    if path.is_empty() {
-        return Err("source path must not be empty".to_string());
-    }
-    let line = line
-        .parse::<usize>()
-        .map_err(|_| format!("invalid source line `{line}`"))?;
-    let column = column
-        .parse::<usize>()
-        .map_err(|_| format!("invalid source column `{column}`"))?;
-    if line == 0 || column == 0 {
-        return Err("source lines and columns are one-based".to_string());
-    }
-    Ok((path.to_string(), line, column))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn parses_time_limit_units_and_plain_seconds() {
-        assert_eq!(parse_duration("250ms"), Ok(Duration::from_millis(250)));
-        assert_eq!(parse_duration("30s"), Ok(Duration::from_secs(30)));
-        assert_eq!(parse_duration("2m"), Ok(Duration::from_secs(120)));
-        assert_eq!(parse_duration("7"), Ok(Duration::from_secs(7)));
-        assert!(parse_duration("0").is_err());
-        assert!(parse_duration("later").is_err());
-    }
 
     #[test]
     fn parses_time_limit_before_or_after_positionals() {
@@ -274,7 +155,10 @@ mod tests {
         )
         .expect("source location should parse");
 
-        assert_eq!(arguments.click_path, "volume:name/example.click");
+        assert_eq!(
+            arguments.click_path,
+            PathBuf::from("volume:name/example.click")
+        );
         assert_eq!(arguments.line, 12);
         assert_eq!(arguments.column, 7);
         assert_eq!(arguments.time_limit, Some(Duration::from_secs(30)));

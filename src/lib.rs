@@ -6,5 +6,6 @@
 #![allow(clippy::result_large_err)]
 #![allow(clippy::too_many_arguments)]
 
+pub mod cli;
 pub mod kernel;
 pub mod lang;

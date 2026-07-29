@@ -3,11 +3,15 @@ use std::env;
 use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStdin, Command, ExitStatus, Stdio};
+use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use click::cli::{
+    self, BoundedOutput, ChildOutput, files_with_extension, find_projects, format_duration,
+    parse_duration, read_verifying_sources, run_bounded, source_refs,
+};
 #[cfg(test)]
 use click::lang::click::verify_c0_sources;
 use click::lang::click::{
@@ -72,24 +76,6 @@ struct AuditSite {
     position: SourcePosition,
     claim: String,
     tactic_name: String,
-}
-
-#[derive(Debug)]
-struct ChildOutput {
-    status: ExitStatus,
-    stdout: Vec<u8>,
-    stderr: Vec<u8>,
-    elapsed: Duration,
-}
-
-#[derive(Debug)]
-enum BoundedOutput {
-    Completed(ChildOutput),
-    TimedOut {
-        stdout: Vec<u8>,
-        stderr: Vec<u8>,
-        elapsed: Duration,
-    },
 }
 
 struct AuditSessionWorker {
@@ -283,29 +269,8 @@ fn parse_arguments(arguments: impl IntoIterator<Item = String>) -> Result<Argume
 }
 
 fn parse_source_location(source: &str) -> Result<SourceLocation, String> {
-    let (path_and_line, column) = source
-        .rsplit_once(':')
-        .ok_or_else(|| format!("invalid source location `{source}`; expected PATH:LINE:COLUMN"))?;
-    let (path, line) = path_and_line
-        .rsplit_once(':')
-        .ok_or_else(|| format!("invalid source location `{source}`; expected PATH:LINE:COLUMN"))?;
-    if path.is_empty() {
-        return Err(format!("invalid source location `{source}`: path is empty"));
-    }
-    let line = line
-        .parse::<usize>()
-        .map_err(|_| format!("invalid source line `{line}`"))?;
-    let column = column
-        .parse::<usize>()
-        .map_err(|_| format!("invalid source column `{column}`"))?;
-    if line == 0 || column == 0 {
-        return Err("source lines and columns are one-based".to_string());
-    }
-    Ok(SourceLocation {
-        path: PathBuf::from(path),
-        line,
-        column,
-    })
+    let (path, line, column) = cli::parse_source_location(source)?;
+    Ok(SourceLocation { path, line, column })
 }
 
 fn parse_next_duration(
@@ -316,32 +281,6 @@ fn parse_next_duration(
         .next()
         .ok_or_else(|| format!("missing duration after `{option}`\n{USAGE}"))?;
     parse_duration(&source)
-}
-
-fn parse_duration(source: &str) -> Result<Duration, String> {
-    let (digits, multiplier) = if let Some(digits) = source.strip_suffix("ms") {
-        (digits, 1_u128)
-    } else if let Some(digits) = source.strip_suffix('s') {
-        (digits, 1_000)
-    } else if let Some(digits) = source.strip_suffix('m') {
-        (digits, 60_000)
-    } else {
-        (source, 1_000)
-    };
-    let amount = digits.parse::<u128>().map_err(|_| {
-        format!(
-            "invalid duration `{source}`; use milliseconds, seconds, or minutes (for example `500ms`, `30s`, or `2m`)"
-        )
-    })?;
-    let milliseconds = amount
-        .checked_mul(multiplier)
-        .ok_or_else(|| format!("duration `{source}` is too large"))?;
-    if milliseconds == 0 {
-        return Err("duration must be greater than zero".to_string());
-    }
-    Ok(Duration::from_millis(u64::try_from(milliseconds).map_err(
-        |_| format!("duration `{source}` is too large"),
-    )?))
 }
 
 fn run_audit(arguments: Arguments) -> Result<(), String> {
@@ -654,91 +593,13 @@ fn audit_site(
 }
 
 fn expand_location(location: &str) -> Result<String, String> {
-    let (path_and_line, column) = location
-        .rsplit_once(':')
-        .ok_or_else(|| format!("invalid source location `{location}`"))?;
-    let (path, line) = path_and_line
-        .rsplit_once(':')
-        .ok_or_else(|| format!("invalid source location `{location}`"))?;
-    let line = line
-        .parse::<usize>()
-        .map_err(|_| format!("invalid source line `{line}`"))?;
-    let column = column
-        .parse::<usize>()
-        .map_err(|_| format!("invalid source column `{column}`"))?;
-    let click_path = Path::new(path);
-    let click_source = fs::read_to_string(click_path)
+    let (click_path, line, column) = cli::parse_source_location(location)?;
+    let click_source = fs::read_to_string(&click_path)
         .map_err(|error| format!("failed to read `{}`: {error}", click_path.display()))?;
-    let parent = click_path.parent().unwrap_or_else(|| Path::new("."));
-    let sources = verifying_source_paths(&click_source)
-        .map_err(|error| error.message().to_string())?
-        .into_iter()
-        .map(|name| {
-            let source = fs::read_to_string(parent.join(&name))
-                .map_err(|error| format!("failed to read `{name}`: {error}"))?;
-            Ok((name, source))
-        })
-        .collect::<Result<Vec<_>, String>>()?;
+    let sources = read_verifying_sources(&click_path, &click_source)?;
     let refs = source_refs(&sources);
     expand_c0_tactic_source_at(&click_source, &refs, line, column)
         .map_err(|error| error.message().to_string())
-}
-
-fn run_bounded(
-    mut command: Command,
-    limit: Duration,
-    label: &str,
-) -> Result<BoundedOutput, String> {
-    let mut child = command
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|error| format!("failed to start {label}: {error}"))?;
-    let stdout = child
-        .stdout
-        .take()
-        .ok_or_else(|| format!("failed to capture {label} output"))?;
-    let stderr = child
-        .stderr
-        .take()
-        .ok_or_else(|| format!("failed to capture {label} diagnostics"))?;
-    let stdout_reader = thread::spawn(move || read_all(stdout));
-    let stderr_reader = thread::spawn(move || read_all(stderr));
-    let start = Instant::now();
-    let status = loop {
-        if let Some(status) = child
-            .try_wait()
-            .map_err(|error| format!("failed to poll {label}: {error}"))?
-        {
-            break Some(status);
-        }
-        if start.elapsed() >= limit {
-            let _ = child.kill();
-            let _ = child.wait();
-            break None;
-        }
-        thread::sleep(
-            limit
-                .saturating_sub(start.elapsed())
-                .min(Duration::from_millis(10)),
-        );
-    };
-    let elapsed = start.elapsed();
-    let stdout = join_reader(stdout_reader, label, "output")?;
-    let stderr = join_reader(stderr_reader, label, "diagnostics")?;
-    Ok(match status {
-        Some(status) => BoundedOutput::Completed(ChildOutput {
-            status,
-            stdout,
-            stderr,
-            elapsed,
-        }),
-        None => BoundedOutput::TimedOut {
-            stdout,
-            stderr,
-            elapsed,
-        },
-    })
 }
 
 fn require_success(
@@ -830,22 +691,6 @@ fn run_session_worker(click_path: &Path) -> Result<(), String> {
             .map_err(|error| error.message().to_string());
         write_session_response(&mut std::io::stdout(), result)?;
     }
-}
-
-fn read_verifying_sources(
-    click_path: &Path,
-    click_source: &str,
-) -> Result<Vec<(String, String)>, String> {
-    let parent = click_path.parent().unwrap_or_else(|| Path::new("."));
-    verifying_source_paths(click_source)
-        .map_err(|error| error.message().to_string())?
-        .into_iter()
-        .map(|name| {
-            let source = fs::read_to_string(parent.join(&name))
-                .map_err(|error| format!("failed to read `{name}`: {error}"))?;
-            Ok((name, source))
-        })
-        .collect()
 }
 
 fn write_session_request(
@@ -957,95 +802,6 @@ fn read_u64(input: &mut impl Read) -> Result<Option<u64>, String> {
 
 fn read_required_u64(input: &mut impl Read, field: &str) -> Result<u64, String> {
     read_u64(input)?.ok_or_else(|| format!("verification-session frame ended before its {field}"))
-}
-
-fn find_projects(path: &Path) -> Result<Vec<PathBuf>, String> {
-    if !path.is_dir() {
-        return Err(format!("`{}` is not a directory", path.display()));
-    }
-    if contains_click_file(path)? {
-        return Ok(vec![fs::canonicalize(path).map_err(|error| {
-            format!("failed to resolve `{}`: {error}", path.display())
-        })?]);
-    }
-    let mut projects =
-        fs::read_dir(path)
-            .map_err(|error| format!("failed to read `{}`: {error}", path.display()))?
-            .filter_map(Result::ok)
-            .map(|entry| entry.path())
-            .filter(|candidate| candidate.is_dir())
-            .filter_map(|candidate| match contains_click_file(&candidate) {
-                Ok(true) => Some(fs::canonicalize(&candidate).map_err(|error| {
-                    format!("failed to resolve `{}`: {error}", candidate.display())
-                })),
-                Ok(false) => None,
-                Err(error) => Some(Err(error)),
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-    projects.sort();
-    if projects.is_empty() {
-        return Err(format!(
-            "`{}` contains no projects with Click sidecars",
-            path.display()
-        ));
-    }
-    Ok(projects)
-}
-
-fn contains_click_file(path: &Path) -> Result<bool, String> {
-    Ok(fs::read_dir(path)
-        .map_err(|error| format!("failed to read `{}`: {error}", path.display()))?
-        .filter_map(Result::ok)
-        .any(|entry| {
-            entry
-                .path()
-                .extension()
-                .is_some_and(|extension| extension == "click")
-        }))
-}
-
-fn files_with_extension(directory: &Path, extension: &str) -> Result<Vec<PathBuf>, String> {
-    Ok(fs::read_dir(directory)
-        .map_err(|error| format!("failed to read `{}`: {error}", directory.display()))?
-        .filter_map(Result::ok)
-        .map(|entry| entry.path())
-        .filter(|path| path.extension().is_some_and(|actual| actual == extension))
-        .collect())
-}
-
-fn source_refs(sources: &[(String, String)]) -> Vec<(&str, &str)> {
-    sources
-        .iter()
-        .map(|(name, source)| (name.as_str(), source.as_str()))
-        .collect()
-}
-
-fn read_all(mut reader: impl Read) -> std::io::Result<Vec<u8>> {
-    let mut bytes = Vec::new();
-    reader.read_to_end(&mut bytes)?;
-    Ok(bytes)
-}
-
-fn join_reader(
-    reader: thread::JoinHandle<std::io::Result<Vec<u8>>>,
-    label: &str,
-    stream: &str,
-) -> Result<Vec<u8>, String> {
-    reader
-        .join()
-        .map_err(|_| format!("{label} {stream} reader panicked"))?
-        .map_err(|error| format!("failed to read {label} {stream}: {error}"))
-}
-
-fn format_duration(duration: Duration) -> String {
-    let milliseconds = duration.as_millis();
-    if milliseconds % 60_000 == 0 {
-        format!("{}m", milliseconds / 60_000)
-    } else if milliseconds % 1_000 == 0 {
-        format!("{}s", milliseconds / 1_000)
-    } else {
-        format!("{milliseconds}ms")
-    }
 }
 
 #[cfg(test)]
@@ -1189,14 +945,6 @@ mod tests {
             read_session_response(&mut failure.as_slice()).unwrap(),
             Some(Err("bad certificate".to_string()))
         );
-    }
-
-    #[test]
-    fn bounded_children_are_killed_at_their_limit() {
-        let mut command = Command::new("sleep");
-        command.arg("1");
-        let output = run_bounded(command, Duration::from_millis(10), "test sleeper").unwrap();
-        assert!(matches!(output, BoundedOutput::TimedOut { .. }));
     }
 
     #[test]

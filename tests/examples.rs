@@ -1,6 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use click::cli::files_with_extension;
 use click::lang::click::verify_c0_sources;
 
 #[test]
@@ -37,8 +38,10 @@ fn example_projects() {
 }
 
 fn run_example_project(project: &Path) {
-    let mut c_paths = files_with_extension(project, "c");
-    let mut click_paths = files_with_extension(project, "click");
+    let mut c_paths =
+        files_with_extension(project, "c").unwrap_or_else(|message| panic!("{message}"));
+    let mut click_paths =
+        files_with_extension(project, "click").unwrap_or_else(|message| panic!("{message}"));
 
     assert!(
         !click_paths.is_empty(),
@@ -80,14 +83,3 @@ fn run_example_project(project: &Path) {
     }
 }
 
-fn files_with_extension(directory: &Path, extension: &str) -> Vec<PathBuf> {
-    fs::read_dir(directory)
-        .unwrap_or_else(|error| panic!("failed to read `{}`: {error}", directory.display()))
-        .map(|entry| {
-            entry
-                .unwrap_or_else(|error| panic!("failed to read directory entry: {error}"))
-                .path()
-        })
-        .filter(|path| path.extension().is_some_and(|actual| actual == extension))
-        .collect()
-}

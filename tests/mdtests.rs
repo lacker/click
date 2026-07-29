@@ -1,10 +1,9 @@
 use std::fs;
-use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
-use std::thread;
-use std::time::{Duration, Instant};
+use std::process::Command;
+use std::time::Duration;
 
+use click::cli::{BoundedOutput, format_duration, parse_duration, run_bounded};
 use click::lang::click::verify_c0_sources;
 
 const MDTEST_CHILD_PATH: &str = "CLICK_MDTEST_CHILD_PATH";
@@ -72,75 +71,22 @@ fn mdtest_time_limit() -> Duration {
     parse_duration(source).unwrap_or_else(|message| panic!("{MDTEST_TIME_LIMIT}: {message}"))
 }
 
-fn parse_duration(source: &str) -> Result<Duration, String> {
-    let source = source.trim();
-    let (number, unit) = if let Some(number) = source.strip_suffix("ms") {
-        (number, "ms")
-    } else if let Some(number) = source.strip_suffix('s') {
-        (number, "s")
-    } else if let Some(number) = source.strip_suffix('m') {
-        (number, "m")
-    } else {
-        return Err(format!(
-            "invalid duration `{source}`; expected milliseconds, seconds, or minutes such as `500ms`, `30s`, or `2m`"
-        ));
-    };
-    let value = number
-        .trim()
-        .parse::<u64>()
-        .map_err(|_| format!("invalid duration `{source}`"))?;
-    match unit {
-        "ms" => Ok(Duration::from_millis(value)),
-        "s" => Ok(Duration::from_secs(value)),
-        "m" => value
-            .checked_mul(60)
-            .map(Duration::from_secs)
-            .ok_or_else(|| format!("duration `{source}` is too large")),
-        _ => unreachable!(),
-    }
-}
-
 fn run_mdtest_with_timeout(path: &Path, time_limit: Duration) {
     let executable =
         std::env::current_exe().expect("failed to locate the mdtest integration-test executable");
-    let mut child = Command::new(executable)
+    let mut command = Command::new(executable);
+    command
         .arg("--exact")
         .arg("mdtests")
         .arg("--nocapture")
-        .env(MDTEST_CHILD_PATH, path)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap_or_else(|error| {
-            panic!(
-                "failed to start isolated mdtest `{}`: {error}",
-                path.display()
-            )
-        });
-    let stdout = child.stdout.take().expect("mdtest child stdout was piped");
-    let stderr = child.stderr.take().expect("mdtest child stderr was piped");
-    let stdout_reader = thread::spawn(move || read_all(stdout));
-    let stderr_reader = thread::spawn(move || read_all(stderr));
-    let start = Instant::now();
-    let status = loop {
-        if let Some(status) = child.try_wait().unwrap_or_else(|error| {
-            panic!("failed to poll mdtest child `{}`: {error}", path.display())
-        }) {
-            break Some(status);
-        }
-        if start.elapsed() >= time_limit {
-            let _ = child.kill();
-            let _ = child.wait();
-            break None;
-        }
-        thread::sleep(
-            time_limit
-                .saturating_sub(start.elapsed())
-                .min(Duration::from_millis(10)),
-        );
+        .env(MDTEST_CHILD_PATH, path);
+    let label = format!("isolated mdtest `{}`", path.display());
+    let outcome = run_bounded(command, time_limit, &label)
+        .unwrap_or_else(|message| panic!("failed to run {label}: {message}"));
+    let (status, stdout, stderr) = match outcome {
+        BoundedOutput::Completed(output) => (Some(output.status), output.stdout, output.stderr),
+        BoundedOutput::TimedOut { stdout, stderr, .. } => (None, stdout, stderr),
     };
-    let stdout = stdout_reader.join().expect("mdtest stdout reader panicked");
-    let stderr = stderr_reader.join().expect("mdtest stderr reader panicked");
     let output = format!(
         "{}{}",
         String::from_utf8_lossy(&stdout),
@@ -160,24 +106,6 @@ fn run_mdtest_with_timeout(path: &Path, time_limit: Duration) {
             path.display(),
             indented_output(&output)
         );
-    }
-}
-
-fn read_all(mut input: impl Read) -> Vec<u8> {
-    let mut bytes = Vec::new();
-    input
-        .read_to_end(&mut bytes)
-        .expect("failed to read mdtest child output");
-    bytes
-}
-
-fn format_duration(duration: Duration) -> String {
-    if duration.as_secs() == 0 {
-        format!("{}ms", duration.as_millis())
-    } else if duration.subsec_nanos() == 0 {
-        format!("{}s", duration.as_secs())
-    } else {
-        format!("{}ms", duration.as_millis())
     }
 }
 
