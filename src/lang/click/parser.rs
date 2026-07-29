@@ -128,12 +128,14 @@ struct ParsedType {
 struct ParsedParameter {
     parameter: FunctionParameter,
     struct_name: Option<String>,
+    declared_bytes: Option<u32>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct ParsedParameters {
     parameters: Vec<FunctionParameter>,
     struct_params: BTreeMap<String, String>,
+    declared_loadable_bytes: Vec<(String, u32)>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -370,10 +372,12 @@ impl Parser {
     fn parse_resource_parameters(&mut self) -> Result<ParsedParameters, ClickError> {
         let mut parameters = Vec::new();
         let mut struct_params = BTreeMap::new();
+        let mut declared_loadable_bytes = Vec::new();
         if self.peek() == Some(&Token::RParen) {
             return Ok(ParsedParameters {
                 parameters,
                 struct_params,
+                declared_loadable_bytes,
             });
         }
 
@@ -385,6 +389,9 @@ impl Parser {
             if let Some(struct_name) = parsed_parameter.struct_name {
                 struct_params.insert(parsed_parameter.parameter.name.clone(), struct_name);
             }
+            if let Some(bytes) = parsed_parameter.declared_bytes {
+                declared_loadable_bytes.push((parsed_parameter.parameter.name.clone(), bytes));
+            }
             parameters.push(parsed_parameter.parameter);
 
             match self.peek() {
@@ -395,6 +402,7 @@ impl Parser {
                     return Ok(ParsedParameters {
                         parameters,
                         struct_params,
+                        declared_loadable_bytes,
                     });
                 }
                 Some(token) => {
@@ -790,6 +798,7 @@ impl Parser {
                 return_type,
                 name,
                 parameters: parsed_parameters.parameters,
+                declared_loadable_bytes: parsed_parameters.declared_loadable_bytes,
             },
             struct_params,
         ))
@@ -798,10 +807,12 @@ impl Parser {
     fn parse_parameters(&mut self) -> Result<ParsedParameters, ClickError> {
         let mut parameters = Vec::new();
         let mut struct_params = BTreeMap::new();
+        let mut declared_loadable_bytes = Vec::new();
         if self.peek() == Some(&Token::RParen) {
             return Ok(ParsedParameters {
                 parameters,
                 struct_params,
+                declared_loadable_bytes,
             });
         }
 
@@ -811,6 +822,9 @@ impl Parser {
             let parsed_parameter = self.parse_parameter_array_suffix(name, parsed_type)?;
             if let Some(struct_name) = parsed_parameter.struct_name {
                 struct_params.insert(parsed_parameter.parameter.name.clone(), struct_name);
+            }
+            if let Some(bytes) = parsed_parameter.declared_bytes {
+                declared_loadable_bytes.push((parsed_parameter.parameter.name.clone(), bytes));
             }
             parameters.push(parsed_parameter.parameter);
 
@@ -822,6 +836,7 @@ impl Parser {
                     return Ok(ParsedParameters {
                         parameters,
                         struct_params,
+                        declared_loadable_bytes,
                     });
                 }
                 Some(token) => {
@@ -887,6 +902,7 @@ impl Parser {
                     struct_name: struct_name.clone(),
                 },
                 struct_name,
+                declared_bytes: None,
             });
         }
         if parsed_type.struct_name.is_some() {
@@ -899,7 +915,13 @@ impl Parser {
         };
 
         self.position += 1;
-        if matches!(self.peek(), Some(Token::Number(_))) {
+        let mut declared_bytes = None;
+        if let Some(Token::Number(length)) = self.peek() {
+            let element_width = match pointer_type {
+                C0Type::UInt8Pointer => 1,
+                _ => 4,
+            };
+            declared_bytes = length.checked_mul(element_width);
             self.position += 1;
         }
         self.expect(Token::RBracket)?;
@@ -910,6 +932,7 @@ impl Parser {
                 struct_name: None,
             },
             struct_name: None,
+            declared_bytes,
         })
     }
 

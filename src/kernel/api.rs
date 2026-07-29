@@ -2440,12 +2440,15 @@ fn pointer_offset_bytes(offset: &PointerOffsetTerm) -> Option<Bitvector32Term> {
             pointer_offset_bytes(right)?,
         )),
         PointerOffsetTerm::Int32Scaled { value, byte_width } => {
-            u32::try_from(*byte_width).ok().map(|width| {
-                Bitvector32Term::multiply(
+            let width = u32::try_from(*byte_width).ok()?;
+            if width == 1 {
+                Some(value.as_ref().clone())
+            } else {
+                Some(Bitvector32Term::multiply(
                     value.as_ref().clone(),
                     Bitvector32Term::Constant(width),
-                )
-            })
+                ))
+            }
         }
     }
 }
@@ -2468,6 +2471,22 @@ fn pointer_offset_byte_delta(
         }
     }
     None
+}
+
+/// Splits `term + c` into its base term and additive constant (0 when none).
+fn split_additive_constant(term: &Bitvector32Term) -> (Bitvector32Term, u32) {
+    match term {
+        Bitvector32Term::Add(left, right) => {
+            if let Bitvector32Term::Constant(value) = right.as_ref() {
+                return (left.as_ref().clone(), *value);
+            }
+            if let Bitvector32Term::Constant(value) = left.as_ref() {
+                return (right.as_ref().clone(), *value);
+            }
+            (term.clone(), 0)
+        }
+        _ => (term.clone(), 0),
+    }
 }
 
 /// Certifies a loadability goal from an assumed wider loadable fact over the
@@ -2516,11 +2535,50 @@ fn loadable_covered_by_fact(assumptions: &Assumptions, goal: &Proposition) -> bo
             ConditionTerm::signed_less_equal(end.clone(), span.clone()),
             true,
         )) || assumptions.proves_order_condition_for_memory_resolution(
-            &ConditionTerm::signed_less_equal(end, span),
+            &ConditionTerm::signed_less_equal(end.clone(), span.clone()),
             true,
-        );
+        ) || {
+            // Strip a shared additive constant: `a + b <= x + c` follows
+            // from `a <= x` when `b <= c`.
+            let (end_base, end_shift) = split_additive_constant(&end);
+            let (span_base, span_shift) = split_additive_constant(&span);
+            (end_shift as i32) <= (span_shift as i32)
+                && (assumptions.proves(&Proposition::ConditionIs(
+                    ConditionTerm::signed_less_equal(end_base.clone(), span_base.clone()),
+                    true,
+                )) || assumptions.proves_order_condition_for_memory_resolution(
+                    &ConditionTerm::signed_less_equal(end_base, span_base),
+                    true,
+                ))
+        };
         starts_in_bounds && ends_in_bounds
     })
+}
+
+/// Certifies a universally-quantified loadability side-obligation from
+/// assumed loadable facts: the bound premises become facts about the free
+/// bound variable, and the loadable body must then be covered by a wider
+/// assumed span.
+fn forall_loadable_covered_by_fact(assumptions: &Assumptions, goal: &Proposition) -> bool {
+    let Proposition::ForAll {
+        sort: Sort::CInt32 | Sort::Bitvector32,
+        body,
+        ..
+    } = goal
+    else {
+        return false;
+    };
+    let mut premises = Vec::new();
+    let mut conclusion = body.as_ref();
+    while let Proposition::Implies(premise, rest) = conclusion {
+        proposition_conjuncts(premise, &mut premises);
+        conclusion = rest.as_ref();
+    }
+    if !matches!(conclusion, Proposition::CMemoryLoadable { .. }) {
+        return false;
+    }
+    let premise_assumptions = assumptions_with_propositions(assumptions, &premises);
+    loadable_covered_by_fact(&premise_assumptions, conclusion)
 }
 
 /// Certifies an existential requirement side-obligation (typically the
@@ -2578,6 +2636,15 @@ fn c_function_contract_certification_assumptions(
 ) -> Option<Assumptions> {
     let mut entry_state = c_function_entry_state(caller_state, function, arguments)?;
     let mut budget = ExecutionBudget::default();
+    // Entry facts derived from declared parameter spellings (for example
+    // sized array parameters) carry loadability that is part of the calling
+    // convention; assume them before lowering requirements so requirement
+    // side-obligations can be certified against them.
+    for fact in &selection_assumptions.prop_facts {
+        if matches!(fact, Proposition::CMemoryLoadable { .. }) {
+            assumptions = assumptions.assume_proposition(fact.clone());
+        }
+    }
     let mut requirement_obligations = Vec::new();
     for requirement in function.contract_requires() {
         let lowering_assumptions = assumptions
@@ -2686,7 +2753,7 @@ fn c_function_contract_certification_assumptions(
         return None;
     }
     if !requirement_obligations.iter().all(|obligation| {
-        certification_proves_proposition(&assumptions, obligation.proposition())
+        let ok = certification_proves_proposition(&assumptions, obligation.proposition())
             || resources_certify_loadability(
                 &entry_state,
                 &entry_resources,
@@ -2694,10 +2761,12 @@ fn c_function_contract_certification_assumptions(
                 &assumptions,
             )
             || loadable_covered_by_fact(&assumptions, obligation.proposition())
+            || forall_loadable_covered_by_fact(&assumptions, obligation.proposition())
             || certification_proves_exists_obligation_from_facts(
                 &assumptions,
                 obligation.proposition(),
-            )
+            );
+        ok
     }) {
         if std::env::var_os("CLICK_TIMINGS").is_some() {
             eprintln!("click timing: contract entry resources do not certify requirement safety");
