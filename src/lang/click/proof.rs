@@ -7721,6 +7721,35 @@ fn proposition_outer_load_memory(proposition: &Proposition) -> Option<&CMemory> 
     }
 }
 
+/// Like [`certified_fact_transport_reaches`], but first rewrites the source
+/// through the transition facts' certified stores, so a fact spelled in
+/// pre-store terms can reach a post-store spelling.
+fn certified_fact_transport_reaches_through(
+    source: &Proposition,
+    target: &Proposition,
+    after: &CMemory,
+    assumptions: &Assumptions,
+    transitions: &[ExecutionPureFact],
+) -> bool {
+    if certified_fact_transport_reaches(source, target, after, assumptions) {
+        return true;
+    }
+    let rewritten =
+        crate::kernel::rewrite_condition_through_certified_stores(source, transitions);
+    if &rewritten == source {
+        return false;
+    }
+    let spelled = normalize_direct_atomic_memory_loads(&rewritten)
+        == normalize_direct_atomic_memory_loads(target)
+        || crate::kernel::c_condition_facts_equivalent_for_memory_resolution(
+            &rewritten,
+            target,
+            assumptions,
+        )
+        || certified_fact_transport_reaches(&rewritten, target, after, assumptions);
+    spelled
+}
+
 fn certified_fact_transport_reaches(
     source: &Proposition,
     target: &Proposition,
@@ -13633,11 +13662,12 @@ fn record_surface_replay_tactic(
                             && memory_erased_comparison(recorded)
                                 == memory_erased_comparison(proposition)
                             && proposition_outer_load_memory(proposition).is_some_and(|after| {
-                                certified_fact_transport_reaches(
+                                certified_fact_transport_reaches_through(
                                     recorded,
                                     proposition,
                                     after,
                                     &transport_assumptions,
+                                    &replay.effect_facts,
                                 )
                             }));
                     if !matches {
@@ -13707,11 +13737,12 @@ fn record_surface_replay_tactic(
                         && memory_erased_comparison(&actual)
                             == memory_erased_comparison(expected)
                         && let Some(after) = proposition_outer_load_memory(expected)
-                        && certified_fact_transport_reaches(
+                        && certified_fact_transport_reaches_through(
                             &actual,
                             expected,
                             after,
                             &transport_assumptions,
+                            &replay.effect_facts,
                         )
                     {
                         return Some((candidate.clone(), actual));
@@ -14875,11 +14906,12 @@ fn replay_linear_tactics(
                         assumptions.assume_proposition(fact.proposition().clone())
                     })
                     .assume_proposition(source.clone());
-                if !certified_fact_transport_reaches(
+                if !certified_fact_transport_reaches_through(
                     &source,
                     &target,
                     state.memory(),
                     &transport_assumptions,
+                    &transition_facts,
                 ) {
                     return Err(ClickError::new(format!(
                         "`{claim_label}` tactic {tactic_index}: no certified frame transport applies to the exact source fact\n  source: {source:?}\n  current memory: {:?}\n  effect facts: {:?}",

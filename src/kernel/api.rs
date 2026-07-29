@@ -310,6 +310,173 @@ fn prove_c_condition_fact_transport_with_assumptions(
     )))
 }
 
+/// Rewrites subterms of a condition fact that equal a certified store's
+/// value into loads from that store's post-memory, so a fact spelled in
+/// pre-store terms can be transported across the store. The rewriting is
+/// definitional: a certified store guarantees `load(after, pointer)` equals
+/// the stored value.
+pub(crate) fn rewrite_condition_through_certified_stores(
+    fact: &Proposition,
+    transitions: &[ExecutionPureFact],
+) -> Proposition {
+    let mut equations = Vec::new();
+    for transition in transitions {
+        let Some(store) = &transition.certified_store else {
+            continue;
+        };
+        let value_term = match &store.value {
+            CValue::Int32(term) | CValue::UInt8(term) => term.clone(),
+            _ => continue,
+        };
+        equations.push((
+            canonicalize_atomic_loads(&value_term),
+            Bitvector32Term::MemoryLoad(
+                Box::new(store.after.clone()),
+                Box::new(store.pointer.clone()),
+            ),
+        ));
+    }
+    if equations.is_empty() {
+        return fact.clone();
+    }
+    fn rewrite_term(
+        term: &Bitvector32Term,
+        equations: &[(Bitvector32Term, Bitvector32Term)],
+    ) -> Bitvector32Term {
+        let canonical = canonicalize_atomic_loads(term);
+        for (value, load) in equations {
+            if &canonical == value {
+                return load.clone();
+            }
+        }
+        match term {
+            Bitvector32Term::Add(left, right) => Bitvector32Term::Add(
+                Box::new(rewrite_term(left, equations)),
+                Box::new(rewrite_term(right, equations)),
+            ),
+            Bitvector32Term::Subtract(left, right) => Bitvector32Term::Subtract(
+                Box::new(rewrite_term(left, equations)),
+                Box::new(rewrite_term(right, equations)),
+            ),
+            Bitvector32Term::Multiply(left, right) => Bitvector32Term::Multiply(
+                Box::new(rewrite_term(left, equations)),
+                Box::new(rewrite_term(right, equations)),
+            ),
+            other => other.clone(),
+        }
+    }
+    let Proposition::ConditionIs(condition, value) = fact else {
+        return fact.clone();
+    };
+    let binary = |left: &Bitvector32Term, right: &Bitvector32Term| {
+        (
+            Box::new(rewrite_term(left, &equations)),
+            Box::new(rewrite_term(right, &equations)),
+        )
+    };
+    let rewritten = match condition {
+        ConditionTerm::Bitvector32SignedLessThan(left, right) => {
+            let (left, right) = binary(left, right);
+            ConditionTerm::Bitvector32SignedLessThan(left, right)
+        }
+        ConditionTerm::Bitvector32SignedLessEqual(left, right) => {
+            let (left, right) = binary(left, right);
+            ConditionTerm::Bitvector32SignedLessEqual(left, right)
+        }
+        ConditionTerm::Bitvector32SignedGreaterThan(left, right) => {
+            let (left, right) = binary(left, right);
+            ConditionTerm::Bitvector32SignedGreaterThan(left, right)
+        }
+        ConditionTerm::Bitvector32SignedGreaterEqual(left, right) => {
+            let (left, right) = binary(left, right);
+            ConditionTerm::Bitvector32SignedGreaterEqual(left, right)
+        }
+        ConditionTerm::Bitvector32Equal(left, right) => {
+            let (left, right) = binary(left, right);
+            ConditionTerm::Bitvector32Equal(left, right)
+        }
+        _ => return fact.clone(),
+    };
+    Proposition::ConditionIs(rewritten, *value)
+}
+
+/// Canonicalizes every load in a term for structural comparison: cached
+/// cells resolve to their values and remaining loads use the canonical
+/// memory for their pointer.
+fn canonicalize_atomic_loads(term: &Bitvector32Term) -> Bitvector32Term {
+    match term {
+        Bitvector32Term::MemoryLoad(memory, pointer) => match memory.load(pointer) {
+            CExpressionOutcome::Value(CValue::Int32(value) | CValue::UInt8(value))
+                if &value != term =>
+            {
+                canonicalize_atomic_loads(&value)
+            }
+            _ => Bitvector32Term::MemoryLoad(
+                Box::new(canonical_c_memory_for_pointer_load(memory, pointer)),
+                Box::new((**pointer).clone()),
+            ),
+        },
+        Bitvector32Term::Add(left, right) => Bitvector32Term::Add(
+            Box::new(canonicalize_atomic_loads(left)),
+            Box::new(canonicalize_atomic_loads(right)),
+        ),
+        Bitvector32Term::Subtract(left, right) => Bitvector32Term::Subtract(
+            Box::new(canonicalize_atomic_loads(left)),
+            Box::new(canonicalize_atomic_loads(right)),
+        ),
+        Bitvector32Term::Multiply(left, right) => Bitvector32Term::Multiply(
+            Box::new(canonicalize_atomic_loads(left)),
+            Box::new(canonicalize_atomic_loads(right)),
+        ),
+        other => other.clone(),
+    }
+}
+
+/// Compares two condition facts operandwise under memory-resolution
+/// equality, so spellings that differ only in provably-irrelevant cached
+/// cells compare equal.
+pub(crate) fn c_condition_facts_equivalent_for_memory_resolution(
+    left: &Proposition,
+    right: &Proposition,
+    assumptions: &Assumptions,
+) -> bool {
+    let (Proposition::ConditionIs(left, left_value), Proposition::ConditionIs(right, right_value)) =
+        (left, right)
+    else {
+        return false;
+    };
+    if left_value != right_value {
+        return false;
+    }
+    let operands = match (left, right) {
+        (
+            ConditionTerm::Bitvector32SignedLessThan(a, b),
+            ConditionTerm::Bitvector32SignedLessThan(c, d),
+        )
+        | (
+            ConditionTerm::Bitvector32SignedLessEqual(a, b),
+            ConditionTerm::Bitvector32SignedLessEqual(c, d),
+        )
+        | (
+            ConditionTerm::Bitvector32SignedGreaterThan(a, b),
+            ConditionTerm::Bitvector32SignedGreaterThan(c, d),
+        )
+        | (
+            ConditionTerm::Bitvector32SignedGreaterEqual(a, b),
+            ConditionTerm::Bitvector32SignedGreaterEqual(c, d),
+        )
+        | (ConditionTerm::Bitvector32Equal(a, b), ConditionTerm::Bitvector32Equal(c, d)) => {
+            Some((a, b, c, d))
+        }
+        _ => None,
+    };
+    let Some((a, b, c, d)) = operands else {
+        return false;
+    };
+    bitvector_terms_proven_equal_for_memory_resolution(a, c, assumptions)
+        && bitvector_terms_proven_equal_for_memory_resolution(b, d, assumptions)
+}
+
 pub(crate) fn c_condition_fact_memories(fact: &Proposition) -> Vec<CMemory> {
     let Proposition::ConditionIs(condition, _) = fact else {
         return Vec::new();
