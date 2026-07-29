@@ -577,6 +577,46 @@ fn pure_theorem_surface_certificate(
     }
 
     if let Some(tactics) = source_tactics
+        && tactics.iter().any(|tactic| {
+            matches!(
+                tactic,
+                ProofTactic::ApplyTheorem(_) | ProofTactic::ApplyTheoremUsing { .. }
+            )
+        })
+        && tactics.iter().all(|tactic| {
+            matches!(tactic.class(), TacticClass::Simple(_))
+                || matches!(tactic, ProofTactic::Simp | ProofTactic::ApplyTheorem(_))
+        })
+    {
+        // An applied theorem's conclusion is an available fact, so a
+        // trailing smart `simp` lowers to the deterministic `assumption`,
+        // and a bare `apply` lowers to `apply using` with the proved
+        // theorem's own requires as the explicit premise pool.
+        let requirement_premises = theorem
+            .requires()
+            .iter()
+            .filter_map(Requirement::proposition)
+            .cloned()
+            .collect::<Vec<_>>();
+        let tactics = tactics
+            .iter()
+            .map(|tactic| match tactic {
+                ProofTactic::Simp => ProofTactic::Assumption,
+                ProofTactic::ApplyTheorem(application) => ProofTactic::ApplyTheoremUsing {
+                    application: application.clone(),
+                    premises: requirement_premises.clone(),
+                },
+                other => other.clone(),
+            })
+            .collect::<Vec<_>>();
+        return TacticCertificate::from_proof_tactics(&tactics).map_err(|error| {
+            ClickError::new(format!(
+                "smart proof for `{claim_label}` produced an invalid application certificate: {error:?}"
+            ))
+        });
+    }
+
+    if let Some(tactics) = source_tactics
         && tactics
             .iter()
             .any(|tactic| matches!(tactic, ProofTactic::Rewrite(_)))
