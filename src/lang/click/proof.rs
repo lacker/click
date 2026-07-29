@@ -4719,6 +4719,17 @@ fn certified_transitions_from_execution(
                                 Proposition::ConditionIs(_, _)
                             ) {
                                 bounded_condition_derivation(proposition, pure_facts)
+                            } else if matches!(
+                                proposition,
+                                Proposition::CResourceContains { .. }
+                                    | Proposition::CResourceSeparate { .. }
+                            ) {
+                                // Resource containment and separation are
+                                // internal evaluator predicates like the
+                                // no-overflow conditions above; derive them
+                                // atomically over the same explicit set.
+                                assumptions_from_propositions(pure_facts)
+                                    .derive_atomic_proposition(proposition)
                             } else {
                                 None
                             };
