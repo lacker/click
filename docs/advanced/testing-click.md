@@ -40,6 +40,24 @@ each is a single test function that already bounds its own child processes.
 Plain `cargo test` still works and applies no time limits; use it as the
 escape hatch while fixing a slow test.
 
+## Quarantine
+
+Known-broken and pathologically slow tests are quarantined so the default
+suite is a meaningful green gate: any red is new signal, and nothing should
+land red. Quarantine is always explicit and temporary — every entry names its
+reason, and the goal is to shrink the list to zero, not to let it grow.
+
+- Lib tests are quarantined with `#[ignore = "quarantined: ..."]` in the test
+  source. Run them with `cargo test -- --ignored` or
+  `cargo nextest run --run-ignored=only`.
+- Example projects are quarantined in the `QUARANTINED` list at the top of
+  `tests/examples.rs`. Run one with `CLICK_EXAMPLE=<name>`, or all of them
+  with `CLICK_RUN_QUARANTINED=1`.
+
+Before adding an entry, prefer fixing or reverting the offending change —
+`git bisect` against a scratch worktree is cheap now that single tests are
+fast to run. When a fix lands, remove the entry in the same change.
+
 ## Mdtests
 
 Mdtests live in `mdtests/`. Each file can contain prose, one or more C blocks,
