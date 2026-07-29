@@ -3,7 +3,10 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
-use click::cli::{BoundedOutput, format_duration, parse_duration, run_bounded};
+use click::cli::{
+    BoundedOutput, default_worker_count, format_duration, parse_duration, run_bounded,
+    run_parallel,
+};
 use click::lang::click::verify_c0_sources;
 
 const MDTEST_CHILD_PATH: &str = "CLICK_MDTEST_CHILD_PATH";
@@ -56,9 +59,18 @@ fn mdtests() {
     );
 
     let time_limit = mdtest_time_limit();
-    for path in paths {
-        run_mdtest_with_timeout(&path, time_limit);
+    let failures = run_parallel(&paths, default_worker_count(paths.len()), |path| {
+        run_mdtest_with_timeout(path, time_limit)
+    });
+    if failures.is_empty() {
+        return;
     }
+
+    let mut message = format!("{} of {} mdtests failed:\n", failures.len(), paths.len());
+    for (index, diagnostics) in failures {
+        message.push_str(&format!("\n`{}` {diagnostics}\n", paths[index].display()));
+    }
+    panic!("{message}");
 }
 
 fn mdtest_time_limit() -> Duration {
@@ -71,9 +83,13 @@ fn mdtest_time_limit() -> Duration {
     parse_duration(source).unwrap_or_else(|message| panic!("{MDTEST_TIME_LIMIT}: {message}"))
 }
 
-fn run_mdtest_with_timeout(path: &Path, time_limit: Duration) {
-    let executable =
-        std::env::current_exe().expect("failed to locate the mdtest integration-test executable");
+/// Runs one mdtest in an isolated child process (Click proofs have
+/// overflowed the stack before; isolation keeps one crash from hiding the
+/// other results) under a wall-clock limit.
+fn run_mdtest_with_timeout(path: &Path, time_limit: Duration) -> Result<(), String> {
+    let executable = std::env::current_exe().map_err(|error| {
+        format!("failed to locate the mdtest integration-test executable: {error}")
+    })?;
     let mut command = Command::new(executable);
     command
         .arg("--exact")
@@ -81,9 +97,7 @@ fn run_mdtest_with_timeout(path: &Path, time_limit: Duration) {
         .arg("--nocapture")
         .env(MDTEST_CHILD_PATH, path);
     let label = format!("isolated mdtest `{}`", path.display());
-    let outcome = run_bounded(command, time_limit, &label)
-        .unwrap_or_else(|message| panic!("failed to run {label}: {message}"));
-    let (status, stdout, stderr) = match outcome {
+    let (status, stdout, stderr) = match run_bounded(command, time_limit, &label)? {
         BoundedOutput::Completed(output) => (Some(output.status), output.stdout, output.stderr),
         BoundedOutput::TimedOut { stdout, stderr, .. } => (None, stdout, stderr),
     };
@@ -93,20 +107,19 @@ fn run_mdtest_with_timeout(path: &Path, time_limit: Duration) {
         String::from_utf8_lossy(&stderr)
     );
     let Some(status) = status else {
-        panic!(
-            "`{}` exceeded the per-file mdtest time limit of {}; set {MDTEST_TIME_LIMIT} to override it{}",
-            path.display(),
+        return Err(format!(
+            "exceeded the per-file mdtest time limit of {}; set {MDTEST_TIME_LIMIT} to override it{}",
             format_duration(time_limit),
             indented_output(&output)
-        );
+        ));
     };
     if !status.success() {
-        panic!(
-            "`{}` failed in its isolated mdtest process{}",
-            path.display(),
+        return Err(format!(
+            "failed in its isolated mdtest process{}",
             indented_output(&output)
-        );
+        ));
     }
+    Ok(())
 }
 
 fn indented_output(output: &str) -> String {

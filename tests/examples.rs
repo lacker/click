@@ -1,11 +1,25 @@
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::time::Duration;
 
-use click::cli::files_with_extension;
+use click::cli::{
+    BoundedOutput, default_worker_count, files_with_extension, format_duration, parse_duration,
+    run_bounded, run_parallel, source_refs,
+};
 use click::lang::click::verify_c0_sources;
+
+const EXAMPLE_CHILD_PATH: &str = "CLICK_EXAMPLE_CHILD_PATH";
+const EXAMPLE_TIME_LIMIT: &str = "CLICK_EXAMPLE_TIME_LIMIT";
+const DEFAULT_EXAMPLE_TIME_LIMIT: Duration = Duration::from_secs(10 * 60);
 
 #[test]
 fn example_projects() {
+    if let Some(path) = std::env::var_os(EXAMPLE_CHILD_PATH) {
+        run_example_project(Path::new(&path));
+        return;
+    }
+
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let examples_dir = manifest_dir.join("examples");
     let requested = std::env::var_os("CLICK_EXAMPLE");
@@ -32,8 +46,86 @@ fn example_projects() {
         examples_dir.display(),
     );
 
-    for project in projects {
-        run_example_project(&project);
+    let time_limit = example_time_limit();
+    let failures = run_parallel(&projects, default_worker_count(projects.len()), |project| {
+        run_example_with_timeout(project, time_limit)
+    });
+    if failures.is_empty() {
+        return;
+    }
+
+    let mut message = format!(
+        "{} of {} example projects failed:\n",
+        failures.len(),
+        projects.len()
+    );
+    for (index, diagnostics) in failures {
+        message.push_str(&format!("\n`{}` {diagnostics}\n", projects[index].display()));
+    }
+    panic!("{message}");
+}
+
+fn example_time_limit() -> Duration {
+    let Some(source) = std::env::var_os(EXAMPLE_TIME_LIMIT) else {
+        return DEFAULT_EXAMPLE_TIME_LIMIT;
+    };
+    let source = source
+        .to_str()
+        .unwrap_or_else(|| panic!("{EXAMPLE_TIME_LIMIT} must be valid UTF-8"));
+    parse_duration(source).unwrap_or_else(|message| panic!("{EXAMPLE_TIME_LIMIT}: {message}"))
+}
+
+/// Runs one example project in an isolated child process (Click proofs have
+/// overflowed the stack before; isolation keeps one crash from hiding the
+/// other results) under a wall-clock limit.
+fn run_example_with_timeout(project: &Path, time_limit: Duration) -> Result<(), String> {
+    let executable = std::env::current_exe()
+        .map_err(|error| format!("failed to locate the examples integration-test executable: {error}"))?;
+    let mut command = Command::new(executable);
+    command
+        .arg("--exact")
+        .arg("example_projects")
+        .arg("--nocapture")
+        .env(EXAMPLE_CHILD_PATH, project);
+    let label = format!("isolated example project `{}`", project.display());
+    let (status, stdout, stderr) = match run_bounded(command, time_limit, &label)? {
+        BoundedOutput::Completed(output) => (Some(output.status), output.stdout, output.stderr),
+        BoundedOutput::TimedOut { stdout, stderr, .. } => (None, stdout, stderr),
+    };
+    let output = format!(
+        "{}{}",
+        String::from_utf8_lossy(&stdout),
+        String::from_utf8_lossy(&stderr)
+    );
+    let Some(status) = status else {
+        return Err(format!(
+            "exceeded the per-project example time limit of {}; set {EXAMPLE_TIME_LIMIT} to override it{}",
+            format_duration(time_limit),
+            indented_output(&output)
+        ));
+    };
+    if !status.success() {
+        return Err(format!(
+            "failed in its isolated example process{}",
+            indented_output(&output)
+        ));
+    }
+    Ok(())
+}
+
+fn indented_output(output: &str) -> String {
+    let output = output.trim();
+    if output.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "\n{}",
+            output
+                .lines()
+                .map(|line| format!("  {line}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        )
     }
 }
 
@@ -65,10 +157,7 @@ fn run_example_project(project: &Path) {
             (filename, source)
         })
         .collect::<Vec<_>>();
-    let c_source_refs = c_sources
-        .iter()
-        .map(|(filename, source)| (filename.as_str(), source.as_str()))
-        .collect::<Vec<_>>();
+    let c_source_refs = source_refs(&c_sources);
 
     for click_path in click_paths {
         let click_source = fs::read_to_string(&click_path)
@@ -82,4 +171,3 @@ fn run_example_project(project: &Path) {
         });
     }
 }
-
