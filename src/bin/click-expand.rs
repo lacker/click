@@ -29,7 +29,12 @@ struct Arguments {
 }
 
 fn entry() -> Result<(), String> {
-    let arguments = parse_arguments(env::args().skip(1))?;
+    let raw = env::args().skip(1).collect::<Vec<_>>();
+    if matches!(raw.as_slice(), [argument] if argument == "--help" || argument == "-h") {
+        println!("{USAGE}");
+        return Ok(());
+    }
+    let arguments = parse_arguments(raw)?;
     if let Some(time_limit) = arguments.time_limit {
         run_with_time_limit(&arguments, time_limit)
     } else {
