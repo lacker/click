@@ -1262,6 +1262,37 @@ pub(super) fn resource_context_satisfies_definitional_fact(
         .all(|fact| available.satisfies_fact(fact, assumptions))
 }
 
+/// True when every element of a constant-bounded memory range is concretely
+/// loadable, so a view of it is represented by the materialized cells rather
+/// than a resource fact.
+fn view_range_concretely_loadable(memory: &CMemory, range: &CMemoryRange) -> bool {
+    let (Some(start), Some(end)) = (range.start().as_const(), range.end().as_const()) else {
+        return false;
+    };
+    if end <= start || end - start > 64 {
+        return false;
+    }
+    let width = match &range.base().offset {
+        PointerOffsetTerm::Int32Scaled { byte_width, .. } => {
+            u32::try_from(*byte_width).unwrap_or(4)
+        }
+        _ => 4,
+    };
+    (start..end).all(|index| {
+        let pointer = Pointer {
+            block: range.base().block.clone(),
+            offset: PointerOffsetTerm::add(
+                range.base().offset.clone(),
+                PointerOffsetTerm::scale_int32(
+                    Bitvector32Term::Constant(index),
+                    i64::from(width),
+                ),
+            ),
+        };
+        memory.is_loadable_concretely(&pointer, width)
+    })
+}
+
 fn consume_resource_fact_definitionally(
     available: &ResourceContext,
     required: &CResourceFact,
@@ -1279,6 +1310,14 @@ fn consume_resource_fact_definitionally(
     ) -> Option<ResourceContext> {
         if !seen.insert((available.clone(), required.clone())) {
             return None;
+        }
+        // A view of memory the caller has concretely materialized is freely
+        // satisfiable: read access is represented by the materialized cells,
+        // mirroring the local-block view rule at call transfer.
+        if let CResourceFact::View(CResource::Memory(range)) = required
+            && view_range_concretely_loadable(memory, range)
+        {
+            return Some(available.clone());
         }
         if let Some(remaining) = available
             .clone()
