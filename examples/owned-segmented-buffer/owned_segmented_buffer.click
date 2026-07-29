@@ -39,10 +39,10 @@ int32 owned_segmented_buffer_init(
 ) {
     requires 1 <= first_len;
     requires 1 <= second_len;
-    consumes owner[0..6];
+    consumes object(owner);
     consumes first_data[0..first_len];
     consumes second_data[0..second_len];
-    mutable owner[0..6];
+    mutable object(owner);
     produces owned_segmented_buffer(owner);
     ensures result == first_len;
     ensures owner->first_len == first_len;
@@ -78,10 +78,10 @@ int32 owned_segmented_buffer_get_first(
     observe(owned_segment(owner->first_data, owner->first_len));
     step using {
         fact 0 <= index;
-        fact index < load_int32(owner);
-        fact loadable(owner[0..1]);
-        fact loadable(owner[2..4]);
-        fact loadable(load_int32_pointer((owner + 2))[0..load_int32(owner)]);
+        fact index < owner->first_len;
+        fact loadable(owner->first_len);
+        fact loadable(owner->first_data);
+        fact loadable((owner->first_data)[0..owner->first_len]);
     }
     frame();
     simp();
@@ -108,14 +108,14 @@ int32 owned_segmented_buffer_set_first(
     execute_step();
     step using {
         fact 0 <= index;
-        fact index < load_int32(owner);
-        fact loadable(old(owner[0..1]));
-        fact loadable(old((owner + 1)[0..1]));
-        fact loadable(old((owner + 2)[0..2]));
-        fact loadable(old((owner + 4)[0..2]));
-        fact 1 <= load_int32(owner);
-        fact 1 <= load_int32((owner + 1));
-        fact 0 <= load_int32(owner);
+        fact index < owner->first_len;
+        fact loadable(old(owner->first_len));
+        fact loadable(old(owner->second_len));
+        fact loadable(old(owner->first_data));
+        fact loadable(old(owner->second_data));
+        fact 1 <= owner->first_len;
+        fact 1 <= owner->second_len;
+        fact 0 <= owner->first_len;
     }
     have 0 <= owner->first_len by { simp(); }
     fold(owned_segment(owner->first_data, owner->first_len));
@@ -148,14 +148,14 @@ int32 owned_segmented_buffer_set_second(
     execute_step();
     step using {
         fact 0 <= index;
-        fact index < load_int32((owner + 1));
-        fact loadable(old(owner[0..1]));
-        fact loadable(old((owner + 1)[0..1]));
-        fact loadable(old((owner + 2)[0..2]));
-        fact loadable(old((owner + 4)[0..2]));
-        fact 1 <= load_int32(owner);
-        fact 1 <= load_int32((owner + 1));
-        fact 0 <= load_int32((owner + 1));
+        fact index < owner->second_len;
+        fact loadable(old(owner->first_len));
+        fact loadable(old(owner->second_len));
+        fact loadable(old(owner->first_data));
+        fact loadable(old(owner->second_data));
+        fact 1 <= owner->first_len;
+        fact 1 <= owner->second_len;
+        fact 0 <= owner->second_len;
     }
     have 0 <= owner->second_len by { simp(); }
     fold(owned_segment(owner->second_data, owner->second_len));
@@ -169,7 +169,7 @@ int32 owned_segmented_buffer_set_second(
 
 int32 owned_segmented_buffer_swap(struct owned_segmented_buffer* owner) {
     owns owned_segmented_buffer(owner);
-    mutable owner[0..6];
+    mutable object(owner);
     ensures result == old(owner->second_len);
     ensures owner->first_len == old(owner->second_len);
     ensures owner->second_len == old(owner->first_len);
@@ -198,7 +198,7 @@ int32 owned_segmented_buffer_pipeline(
 ) {
     requires 1 <= first_len;
     requires 1 <= second_len;
-    consumes owner[0..6];
+    consumes object(owner);
     consumes first_data[0..first_len];
     consumes second_data[0..second_len];
     produces owned_segmented_buffer(owner);
@@ -226,19 +226,19 @@ int32 owned_segmented_buffer_pipeline(
     step using {
         fact 1 <= first_len;
         fact 1 <= second_len;
-        fact loadable(old(owner[0..6]));
+        fact loadable(old(object(owner)));
         fact loadable(old(first_data[0..first_len]));
         fact loadable(old(second_data[0..second_len]));
         fact separate(memory(owner[read_value..6]), memory(first_data[read_value..first_len]));
         fact separate(memory(owner[read_value..6]), memory(second_data[read_value..second_len]));
         fact separate(memory(first_data[read_value..first_len]), memory(second_data[read_value..second_len]));
         fact ignored == first_len;
-        fact *owner == first_len;
-        fact *(owner + 1) == second_len;
-        fact 0 < load_int32(owner);
-        fact 0 < load_int32((owner + 1));
-        fact load_int32_pointer((owner + 2)) == first_data;
-        fact load_int32_pointer((owner + 4)) == second_data;
+        fact owner->first_len == first_len;
+        fact owner->second_len == second_len;
+        fact 0 < owner->first_len;
+        fact 0 < owner->second_len;
+        fact owner->first_data == first_data;
+        fact owner->second_data == second_data;
     }
     have 0 < owner->second_len by {
         simp();
@@ -251,8 +251,8 @@ int32 owned_segmented_buffer_pipeline(
     }
     have at(statement(4).entry, first_data[0]) == at(statement(4).entry, first_value) by {
         derive(at(statement(4).entry, first_data[0]) == at(statement(4).entry, first_value)) using {
-            fact at(statement(4).entry, *load_int32_pointer((owner + 2))) == at(statement(4).entry, first_value);
-            fact at(statement(4).entry, load_int32_pointer((owner + 2))) == at(statement(4).entry, first_data);
+            fact at(statement(4).entry, (owner->first_data)[0]) == at(statement(4).entry, first_value);
+            fact at(statement(4).entry, owner->first_data) == at(statement(4).entry, first_data);
         }
     }
     transport(
@@ -262,51 +262,51 @@ int32 owned_segmented_buffer_pipeline(
         fact at(statement(4).entry, first_data[0]) == at(statement(4).entry, first_value);
     }
     step using {
-        fact loadable(old(owner[0..6]));
-        fact at(statement(4).entry, 0) < at(statement(4).entry, load_int32((owner + 1)));
-        fact read_value < *owner;
+        fact loadable(old(object(owner)));
+        fact at(statement(4).entry, 0) < at(statement(4).entry, owner->second_len);
+        fact read_value < owner->first_len;
         fact 1 <= first_len;
         fact 1 <= second_len;
         fact ignored == first_value;
-        fact *(owner + 1) == second_len;
-        fact *owner == first_len;
+        fact owner->second_len == second_len;
+        fact owner->first_len == first_len;
         fact first_data[0] == first_value;
-        fact load_int32_pointer((owner + 2)) == first_data;
-        fact load_int32_pointer((owner + 4)) == second_data;
+        fact owner->first_data == first_data;
+        fact owner->second_data == second_data;
     }
-    transport(at(statement(4).entry, *owner) == at(statement(4).entry, first_len), *owner == first_len) using {
+    transport(at(statement(4).entry, owner->first_len) == at(statement(4).entry, first_len), owner->first_len == first_len) using {
         fact 1 <= second_len;
-        fact at(statement(4).entry, *owner) == first_len;
-        fact at(statement(4).entry, load_int32_pointer((owner + 4))) == second_data;
+        fact at(statement(4).entry, owner->first_len) == first_len;
+        fact at(statement(4).entry, owner->second_data) == second_data;
     }
-    transport(at(statement(4).entry, *(owner + 1)) == at(statement(4).entry, second_len), *(owner + 1) == second_len) using {
+    transport(at(statement(4).entry, owner->second_len) == at(statement(4).entry, second_len), owner->second_len == second_len) using {
         fact 1 <= second_len;
-        fact at(statement(4).entry, *(owner + 1)) == second_len;
-        fact at(statement(4).entry, load_int32_pointer((owner + 4))) == second_data;
+        fact at(statement(4).entry, owner->second_len) == second_len;
+        fact at(statement(4).entry, owner->second_data) == second_data;
     }
-    transport(at(statement(4).entry, read_value) < at(statement(4).entry, *owner), read_value < *owner) using {
-        fact read_value < at(statement(4).entry, *owner);
+    transport(at(statement(4).entry, read_value) < at(statement(4).entry, owner->first_len), read_value < owner->first_len) using {
+        fact read_value < at(statement(4).entry, owner->first_len);
         fact 1 <= second_len;
-        fact at(statement(4).entry, load_int32_pointer((owner + 4))) == second_data;
+        fact at(statement(4).entry, owner->second_data) == second_data;
     }
-    transport(at(statement(4).entry, 0) < at(statement(4).entry, load_int32((owner + 1))), 0 < load_int32((owner + 1))) using {
-        fact 0 < at(statement(4).entry, load_int32((owner + 1)));
-        fact at(statement(4).entry, *(owner + 1)) == second_len;
-        fact at(statement(4).entry, load_int32_pointer((owner + 4))) == second_data;
+    transport(at(statement(4).entry, 0) < at(statement(4).entry, owner->second_len), 0 < owner->second_len) using {
+        fact 0 < at(statement(4).entry, owner->second_len);
+        fact at(statement(4).entry, owner->second_len) == second_len;
+        fact at(statement(4).entry, owner->second_data) == second_data;
     }
     transport(at(statement(4).entry, first_data[0]) == at(statement(4).entry, first_value), first_data[0] == first_value) using {
         fact 1 <= first_len;
         fact 1 <= second_len;
         fact at(statement(4).entry, first_data[0]) == first_value;
-        fact at(statement(4).entry, load_int32_pointer((owner + 4))) == second_data;
+        fact at(statement(4).entry, owner->second_data) == second_data;
     }
-    transport(at(statement(4).entry, load_int32_pointer((owner + 2))) == at(statement(4).entry, first_data), load_int32_pointer((owner + 2)) == first_data) using {
+    transport(at(statement(4).entry, owner->first_data) == at(statement(4).entry, first_data), owner->first_data == first_data) using {
         fact 1 <= second_len;
-        fact at(statement(4).entry, load_int32_pointer((owner + 2))) == first_data;
-        fact at(statement(4).entry, load_int32_pointer((owner + 4))) == second_data;
+        fact at(statement(4).entry, owner->first_data) == first_data;
+        fact at(statement(4).entry, owner->second_data) == second_data;
     }
-    transport(at(statement(4).entry, load_int32_pointer((owner + 4))) == at(statement(4).entry, second_data), load_int32_pointer((owner + 4)) == second_data) using {
-        fact at(statement(4).entry, load_int32_pointer((owner + 4))) == at(statement(4).entry, second_data);
+    transport(at(statement(4).entry, owner->second_data) == at(statement(4).entry, second_data), owner->second_data == second_data) using {
+        fact at(statement(4).entry, owner->second_data) == at(statement(4).entry, second_data);
         fact 1 <= second_len;
     }
     have 0 < owner->first_len by {
@@ -320,8 +320,8 @@ int32 owned_segmented_buffer_pipeline(
     }
     have at(statement(5).entry, second_data[0]) == at(statement(5).entry, second_value) by {
         derive(at(statement(5).entry, second_data[0]) == at(statement(5).entry, second_value)) using {
-            fact at(statement(5).entry, *load_int32_pointer((owner + 4))) == at(statement(5).entry, second_value);
-            fact at(statement(5).entry, load_int32_pointer((owner + 4))) == at(statement(5).entry, second_data);
+            fact at(statement(5).entry, (owner->second_data)[0]) == at(statement(5).entry, second_value);
+            fact at(statement(5).entry, owner->second_data) == at(statement(5).entry, second_data);
         }
     }
     transport(
@@ -332,14 +332,14 @@ int32 owned_segmented_buffer_pipeline(
     }
     step using {
         fact 0 < owner->first_len;
-        fact loadable(owner[0..6]);
+        fact loadable(object(owner));
         fact owner->first_data == first_data;
         fact first_data[0] == first_value;
     }
     have read_value == first_data[0] by {
         derive(read_value == first_data[0]) using {
-            fact at(statement(6).entry, read_value) == at(statement(6).entry, *load_int32_pointer((owner + 2)));
-            fact load_int32_pointer((owner + 2)) == first_data;
+            fact at(statement(6).entry, read_value) == at(statement(6).entry, (owner->first_data)[0]);
+            fact owner->first_data == first_data;
         }
     }
     apply(int32_equality_transitive(

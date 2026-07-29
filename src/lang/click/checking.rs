@@ -1598,9 +1598,11 @@ pub(super) fn evaluate_predicate_contract_expression(
 ) -> Result<CValue, String> {
     let state = CState::new().with_memory(memory.clone());
     match expression {
-        ContractExpression::CFragment(expression) => {
-            evaluate_c_contract_expression(values, &state, None, assumptions, expression)
-        }
+        ContractExpression::CFragment(expression)
+        | ContractExpression::Field {
+            lowered: expression,
+            ..
+        } => evaluate_c_contract_expression(values, &state, None, assumptions, expression),
         ContractExpression::CBinding(name) => Err(format!(
             "`c({name})` is not available in predicate definitions"
         )),
@@ -4010,9 +4012,14 @@ fn record_surface_loadability_segment(
         };
         obligation.segment = Some(ContractSegment {
             state: ContractSegmentState::Current,
-            base,
-            start,
-            end,
+            base: base.clone(),
+            start: start.clone(),
+            end: end.clone(),
+            surface: ContractSegmentSurface::Range {
+                base: ContractExpression::CFragment(base),
+                start: ContractExpression::CFragment(start),
+                end: ContractExpression::CFragment(end),
+            },
         });
     });
 }
@@ -4827,7 +4834,11 @@ pub(super) fn evaluate_contract_expression_with_environment(
     active_functions: &mut BTreeSet<String>,
 ) -> Result<CValue, String> {
     match expression {
-        ContractExpression::CFragment(expression) => evaluate_c_contract_expression(
+        ContractExpression::CFragment(expression)
+        | ContractExpression::Field {
+            lowered: expression,
+            ..
+        } => evaluate_c_contract_expression(
             parameter_values,
             post_state,
             result,

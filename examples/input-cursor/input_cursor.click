@@ -44,7 +44,7 @@ resource input_cursor(owner: struct input_cursor*) {
     fact 0 <= owner->pos;
     fact owner->pos <= owner->len;
     fact separate(
-        memory(owner[0..4]),
+        memory(object(owner)),
         memory((owner->data)[0..owner->len])
     );
 }
@@ -62,10 +62,10 @@ int32 input_cursor_init(
     int32 length
 ) {
     requires 0 <= length;
-    requires separate(memory(owner[0..4]), memory(data[0..length]));
-    consumes owner[0..4];
+    requires separate(memory(object(owner)), memory(data[0..length]));
+    consumes object(owner);
     views readable_input(data, length);
-    mutable owner[0..4];
+    mutable object(owner);
     produces input_cursor(owner);
     ensures result == 0;
     ensures owner->pos == 0;
@@ -115,7 +115,7 @@ int32 input_cursor_take(struct input_cursor* owner) {
     have 0 <= owner->pos by { simp(); }
     have owner->pos <= owner->len by { simp(); }
     have separate(
-        memory(owner[0..4]),
+        memory(object(owner)),
         memory((owner->data)[0..owner->len])
     ) by {
         simp();
@@ -129,14 +129,14 @@ int32 input_cursor_clone(
     struct input_cursor* target,
     struct input_cursor* source
 ) {
-    requires separate(memory(target[0..4]), memory(source[0..4]));
+    requires separate(memory(object(target)), memory(object(source)));
     requires separate(
-        memory(target[0..4]),
+        memory(object(target)),
         memory((source->data)[0..source->len])
     );
-    consumes target[0..4];
+    consumes object(target);
     views input_cursor(source);
-    mutable target[0..4];
+    mutable object(target);
     produces input_cursor(target);
     ensures result == source->pos;
     ensures target->pos == source->pos;
@@ -148,12 +148,12 @@ int32 input_cursor_clone(
     execute_step();
     execute_step();
     step using {
-        fact separate(memory(target[0..4]), memory(source[0..4]));
-        fact separate(memory(target[0..4]), memory(load_int32_pointer((source + 2))[0..load_int32((source + 1))]));
-        fact loadable(old(target[0..4]));
-        fact loadable(old(source[0..1]));
-        fact loadable(old((source + 1)[0..1]));
-        fact loadable(old((source + 2)[0..2]));
+        fact separate(memory(object(target)), memory(object(source)));
+        fact separate(memory(object(target)), memory((source->data)[0..source->len]));
+        fact loadable(old(object(target)));
+        fact loadable(old(source->pos));
+        fact loadable(old(source->len));
+        fact loadable(old(source->data));
     }
     fold(input_cursor(target));
     frame();
@@ -167,12 +167,12 @@ int32 input_cursor_shared_pipeline(
     int32 length
 ) {
     requires 1 <= length;
-    requires separate(memory(left[0..4]), memory(data[0..length]));
-    requires separate(memory(right[0..4]), memory(data[0..length]));
-    consumes left[0..4];
-    consumes right[0..4];
+    requires separate(memory(object(left)), memory(data[0..length]));
+    requires separate(memory(object(right)), memory(data[0..length]));
+    consumes object(left);
+    consumes object(right);
     views readable_input(data, length);
-    mutable left[0..4], right[0..4];
+    mutable object(left), object(right);
     produces input_cursor(left);
     produces input_cursor(right);
     ensures left->pos == 1;
@@ -180,18 +180,18 @@ int32 input_cursor_shared_pipeline(
     ensures result == data[0];
 } by {
     execute_until(statement(4));
-    have separate(memory(right[0..4]), memory(load_int32_pointer((left + 2))[0..load_int32((left + 1))])) by {
-        derive(separate(memory(right[0..4]), memory(load_int32_pointer((left + 2))[0..load_int32((left + 1))]))) using {
-            fact *(left + 1) == length;
-            fact load_int32_pointer((left + 2)) == data;
-            fact separate(memory(right[0..4]), memory(data[0..length]));
+    have separate(memory(object(right)), memory((left->data)[0..left->len])) by {
+        derive(separate(memory(object(right)), memory((left->data)[0..left->len]))) using {
+            fact left->len == length;
+            fact left->data == data;
+            fact separate(memory(object(right)), memory(data[0..length]));
         }
     }
     have left->pos < left->len by {
-        derive(load_int32(left) < load_int32((left + 1))) using {
+        derive(left->pos < left->len) using {
             fact 1 <= length;
-            fact *(left + 1) == length;
-            fact *left == left_value;
+            fact left->len == length;
+            fact left->pos == left_value;
         }
     }
     have left->pos == 0 by {
@@ -201,31 +201,31 @@ int32 input_cursor_shared_pipeline(
         simp();
     }
     step using {
-        fact *left < *(left + 1);
+        fact left->pos < left->len;
         fact 1 <= length;
-        fact *left == 0;
-        fact *(left + 1) == length;
-        fact load_int32_pointer((left + 2)) == data;
-        fact loadable(old(left[0..4]));
-        fact loadable(old(right[0..4]));
-        fact separate(memory(left[0..4]), memory(right[0..4]));
-        fact separate(memory(left[0..4]), memory(data[0..length]));
-        fact separate(memory(right[0..4]), memory(load_int32_pointer((left + 2))[0..load_int32((left + 1))]));
+        fact left->pos == 0;
+        fact left->len == length;
+        fact left->data == data;
+        fact loadable(old(object(left)));
+        fact loadable(old(object(right)));
+        fact separate(memory(object(left)), memory(object(right)));
+        fact separate(memory(object(left)), memory(data[0..length]));
+        fact separate(memory(object(right)), memory((left->data)[0..left->len]));
     }
-    transport(at(statement(4).entry, *left) < at(statement(4).entry, *(left + 1)), *left < *(left + 1)) using {
-        fact at(statement(4).entry, *left) < at(statement(4).entry, *(left + 1));
+    transport(at(statement(4).entry, left->pos) < at(statement(4).entry, left->len), left->pos < left->len) using {
+        fact at(statement(4).entry, left->pos) < at(statement(4).entry, left->len);
     }
-    have load_int32(right) < load_int32((right + 1)) by {
-        derive(load_int32(right) < load_int32((right + 1))) using {
-            fact *left < *(left + 1);
-            fact *(right + 1) == *(left + 1);
-            fact *right == *left;
+    have right->pos < right->len by {
+        derive(right->pos < right->len) using {
+            fact left->pos < left->len;
+            fact right->len == left->len;
+            fact right->pos == left->pos;
         }
     }
-    have load_int32(right) == 0 by {
-        derive(load_int32(right) == 0) using {
-            fact *left == left_value;
-            fact *right == *left;
+    have right->pos == 0 by {
+        derive(right->pos == 0) using {
+            fact left->pos == left_value;
+            fact right->pos == left->pos;
         }
     }
     have right->data == left->data by {
@@ -236,63 +236,63 @@ int32 input_cursor_shared_pipeline(
     }
     apply(pointer_equality_transitive(right->data, left->data, data));
     step using {
-        fact loadable(old(left[0..4]));
-        fact loadable(old(right[0..4]));
-        fact load_int32_pointer((right + 2)) == load_int32_pointer((left + 2));
-        fact load_int32_pointer((left + 2)) == data;
-        fact load_int32_pointer((right + 2)) == data;
+        fact loadable(old(object(left)));
+        fact loadable(old(object(right)));
+        fact right->data == left->data;
+        fact left->data == data;
+        fact right->data == data;
         fact 1 <= length;
-        fact separate(memory(left[0..4]), memory(right[0..4]));
-        fact separate(memory(left[0..4]), memory(data[0..length]));
-        fact ignored == *left;
-        fact *right == *left;
-        fact *(right + 1) == *(left + 1);
-        fact *left < *(left + 1);
-        fact *left == left_value;
-        fact *(left + 1) == length;
-        fact separate(memory(right[0..4]), memory(data[0..length]));
+        fact separate(memory(object(left)), memory(object(right)));
+        fact separate(memory(object(left)), memory(data[0..length]));
+        fact ignored == left->pos;
+        fact right->pos == left->pos;
+        fact right->len == left->len;
+        fact left->pos < left->len;
+        fact left->pos == left_value;
+        fact left->len == length;
+        fact separate(memory(object(right)), memory(data[0..length]));
         fact separate(memory(left[left_value..4]), memory(right[left_value..4]));
         fact loadable(old(data[0..length]));
         fact 0 <= length;
-        fact at(statement(4).entry, *left) == at(statement(4).entry, 0);
-        fact at(statement(4).entry, *(left + 1)) == at(statement(4).entry, length);
-        fact at(statement(4).entry, load_int32_pointer((left + 2))) == at(statement(4).entry, data);
-        fact at(statement(4).entry, *left) < at(statement(4).entry, *(left + 1));
-        fact load_int32(right) < load_int32((right + 1));
-        fact load_int32(right) == 0;
+        fact at(statement(4).entry, left->pos) == at(statement(4).entry, 0);
+        fact at(statement(4).entry, left->len) == at(statement(4).entry, length);
+        fact at(statement(4).entry, left->data) == at(statement(4).entry, data);
+        fact at(statement(4).entry, left->pos) < at(statement(4).entry, left->len);
+        fact right->pos < right->len;
+        fact right->pos == 0;
     }
-    have *(left + 1) == *(left + 1) by {
+    have left->len == left->len by {
         normalize();
     }
-    have load_int32_pointer((left + 2)) == load_int32_pointer((left + 2)) by {
+    have left->data == left->data by {
         normalize();
     }
-    transport(at(statement(5).entry, load_int32_pointer((right + 2))) == at(statement(5).entry, load_int32_pointer((left + 2))), load_int32_pointer((right + 2)) == load_int32_pointer((left + 2))) using {
-        fact at(statement(5).entry, load_int32_pointer((right + 2))) == at(statement(5).entry, load_int32_pointer((left + 2)));
+    transport(at(statement(5).entry, right->data) == at(statement(5).entry, left->data), right->data == left->data) using {
+        fact at(statement(5).entry, right->data) == at(statement(5).entry, left->data);
     }
-    transport(at(statement(5).entry, load_int32_pointer((left + 2))) == data, load_int32_pointer((left + 2)) == data) using {
-        fact at(statement(5).entry, load_int32_pointer((left + 2))) == data;
+    transport(at(statement(5).entry, left->data) == data, left->data == data) using {
+        fact at(statement(5).entry, left->data) == data;
     }
-    transport(at(statement(5).entry, load_int32_pointer((right + 2))) == data, load_int32_pointer((right + 2)) == data) using {
-        fact at(statement(5).entry, load_int32_pointer((right + 2))) == data;
+    transport(at(statement(5).entry, right->data) == data, right->data == data) using {
+        fact at(statement(5).entry, right->data) == data;
     }
-    transport(at(statement(5).entry, *right) == at(statement(5).entry, *left), *right == at(statement(5).entry, *left)) using {
-        fact at(statement(5).entry, *right) == at(statement(5).entry, *left);
+    transport(at(statement(5).entry, right->pos) == at(statement(5).entry, left->pos), right->pos == at(statement(5).entry, left->pos)) using {
+        fact at(statement(5).entry, right->pos) == at(statement(5).entry, left->pos);
     }
-    transport(at(statement(5).entry, *(right + 1)) == at(statement(5).entry, *(left + 1)), *(right + 1) == *(left + 1)) using {
-        fact at(statement(5).entry, *(right + 1)) == at(statement(5).entry, *(left + 1));
+    transport(at(statement(5).entry, right->len) == at(statement(5).entry, left->len), right->len == left->len) using {
+        fact at(statement(5).entry, right->len) == at(statement(5).entry, left->len);
     }
-    transport(at(statement(5).entry, *left) < at(statement(5).entry, *(left + 1)), at(statement(5).entry, *left) < *(left + 1)) using {
-        fact at(statement(5).entry, *left) < at(statement(5).entry, *(left + 1));
+    transport(at(statement(5).entry, left->pos) < at(statement(5).entry, left->len), at(statement(5).entry, left->pos) < left->len) using {
+        fact at(statement(5).entry, left->pos) < at(statement(5).entry, left->len);
     }
-    transport(at(statement(5).entry, *(left + 1)) == length, *(left + 1) == length) using {
-        fact at(statement(5).entry, *(left + 1)) == length;
+    transport(at(statement(5).entry, left->len) == length, left->len == length) using {
+        fact at(statement(5).entry, left->len) == length;
     }
-    transport(at(statement(5).entry, load_int32(right)) < at(statement(5).entry, load_int32((right + 1))), load_int32(right) < load_int32((right + 1))) using {
-        fact at(statement(5).entry, load_int32(right)) < at(statement(5).entry, load_int32((right + 1)));
+    transport(at(statement(5).entry, right->pos) < at(statement(5).entry, right->len), right->pos < right->len) using {
+        fact at(statement(5).entry, right->pos) < at(statement(5).entry, right->len);
     }
-    transport(at(statement(5).entry, load_int32(right)) == 0, load_int32(right) == 0) using {
-        fact at(statement(5).entry, load_int32(right)) == 0;
+    transport(at(statement(5).entry, right->pos) == 0, right->pos == 0) using {
+        fact at(statement(5).entry, right->pos) == 0;
     }
     have at(statement(5).entry, left->pos) == 0 by {
         simp();
@@ -305,19 +305,19 @@ int32 input_cursor_shared_pipeline(
         left->pos
     ));
     step using {
-        fact *right < *(right + 1);
+        fact right->pos < right->len;
         fact 1 <= length;
-        fact *(right + 1) == *(left + 1);
-        fact *left == 1;
-        fact load_int32(left) == (at(statement(5).entry, load_int32(left)) + 1);
-        fact *right == right_value;
-        fact at(statement(5).entry, load_int32(left)) == 0;
-        fact loadable(old(left[0..4]));
-        fact loadable(old(right[0..4]));
-        fact separate(memory(left[0..4]), memory(data[0..length]));
-        fact separate(memory(right[0..4]), memory(data[0..length]));
+        fact right->len == left->len;
+        fact left->pos == 1;
+        fact left->pos == (at(statement(5).entry, left->pos) + 1);
+        fact right->pos == right_value;
+        fact at(statement(5).entry, left->pos) == 0;
+        fact loadable(old(object(left)));
+        fact loadable(old(object(right)));
+        fact separate(memory(object(left)), memory(data[0..length]));
+        fact separate(memory(object(right)), memory(data[0..length]));
         fact right_value <= length;
-        fact *(left + 1) == *(left + 1);
+        fact left->len == left->len;
     }
     have right->pos == 0 by {
         simp();
@@ -328,16 +328,16 @@ int32 input_cursor_shared_pipeline(
     have right_value == (right->data)[right->pos] by {
         simp();
     }
-    have load_int32_pointer((right + 2))[load_int32(right)] == data[0] by {
-        derive(load_int32_pointer((right + 2))[load_int32(right)] == data[0]) using {
-            fact load_int32(right) == 0;
-            fact load_int32_pointer((right + 2)) == data;
+    have (right->data)[right->pos] == data[0] by {
+        derive((right->data)[right->pos] == data[0]) using {
+            fact right->pos == 0;
+            fact right->data == data;
         }
     }
-    apply(int32_equality_transitive(right_value, load_int32_pointer((right + 2))[load_int32(right)], data[0])) using {
-        fact loadable(old(right[0..4]));
-        fact right_value == load_int32_pointer((right + 2))[load_int32(right)];
-        fact load_int32_pointer((right + 2))[load_int32(right)] == data[0];
+    apply(int32_equality_transitive(right_value, (right->data)[right->pos], data[0])) using {
+        fact loadable(old(object(right)));
+        fact right_value == (right->data)[right->pos];
+        fact (right->data)[right->pos] == data[0];
     }
     execute_rest();
     frame();

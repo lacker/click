@@ -16,6 +16,28 @@ pub(super) fn execute_c_function_paths(
     execution_semantics: CExecutionSemantics,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<CFunctionPath>> {
+    execute_c_function_paths_with_contract_resources(
+        state,
+        function,
+        arguments,
+        assumptions,
+        environment,
+        execution_semantics,
+        budget,
+        false,
+    )
+}
+
+pub(super) fn execute_c_function_paths_with_contract_resources(
+    state: &CState,
+    function: &CFunction,
+    arguments: &[CExpression],
+    assumptions: &Assumptions,
+    environment: &CExecutionEnvironment,
+    execution_semantics: CExecutionSemantics,
+    budget: &mut ExecutionBudget,
+    prepare_contract_resources: bool,
+) -> ExecutionResult<Vec<CFunctionPath>> {
     budget.consume_function_call()?;
     if arguments.len() != function.parameters.len() {
         return Ok(vec![CFunctionPath {
@@ -54,6 +76,28 @@ pub(super) fn execute_c_function_paths(
             &arguments_path.facts,
             &arguments_path.obligations,
         );
+        let callee_state = if prepare_contract_resources {
+            let resource_transfer = match prepare_function_resource_transfer(
+                state,
+                &callee_state,
+                function,
+                &body_assumptions,
+                budget,
+            )? {
+                Ok(resource_transfer) => resource_transfer,
+                Err(error) => {
+                    paths.push(CFunctionPath {
+                        outcome: CFunctionOutcome::RuntimeError(error),
+                        facts: arguments_path.facts,
+                        obligations: arguments_path.obligations,
+                    });
+                    continue;
+                }
+            };
+            callee_state.with_resource_context(resource_transfer.callee_resources)
+        } else {
+            callee_state
+        };
         for body_path in execute_c_statement_paths(
             &callee_state,
             function.body(),
@@ -542,6 +586,32 @@ fn execute_verified_function_rule(
                 continue;
             }
         };
+        let Some(expanded_ensured_resources) = expand_all_composite_resource_facts(
+            &ensured_resources,
+            function.composite_resource_definitions(),
+            post_state.memory(),
+            &effective_assumptions,
+        ) else {
+            paths.push(CFunctionPath {
+                outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(
+                    "could not project ensured composite resource cores".to_string(),
+                )),
+                facts,
+                obligations,
+            });
+            continue;
+        };
+        let projected_cores = expanded_ensured_resources
+            .facts()
+            .iter()
+            .filter_map(CResourceFact::core)
+            .filter(|core| !return_resources.facts().contains(core))
+            .collect::<Vec<_>>();
+        // The callee has already certified every ensured composite and its
+        // instantiated body. Its duplicable cores are therefore observations
+        // of certified ownership, not newly composed ownership that needs
+        // another global validity/normalization pass.
+        let return_resources = return_resources.unchecked_with_facts(projected_cores);
         post_state.resources = return_resources.clone();
         let post_contract_state = with_contract_argument_views(&post_state, &arguments_path.values);
 
@@ -768,6 +838,26 @@ fn prepare_function_resource_transfer(
         ) {
             continue;
         }
+        if resource.is_own() && matches!(resource.resource(), CResource::Composite { .. }) {
+            let required = ResourceContext::new().unchecked_with_fact(resource.clone());
+            let Some(expanded) = expand_all_composite_resource_facts(
+                &required,
+                function.composite_resource_definitions(),
+                caller_state.memory(),
+                assumptions,
+            ) else {
+                return Ok(Err(CRuntimeError::FunctionContract(format!(
+                    "invalid composite resource while consuming {resource:?}"
+                ))));
+            };
+            for core in expanded.facts().iter().filter_map(CResourceFact::core) {
+                if return_resources.facts().contains(&core) {
+                    return_resources = return_resources
+                        .without_exact_representation(&core)
+                        .expect("an exact projected resource core should be removable");
+                }
+            }
+        }
         let Some(resources) = consume_resource_fact_definitionally(
             &return_resources,
             resource,
@@ -794,6 +884,32 @@ fn prepare_function_resource_transfer(
         caller_resources_after_requirements,
         return_resources,
     }))
+}
+
+pub(super) fn prepare_function_contract_entry_state_with_values(
+    caller_state: &CState,
+    function: &CFunction,
+    argument_values: &[CValue],
+    assumptions: &Assumptions,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Result<CState, CRuntimeError>> {
+    let Some(callee_state) = bind_c_function_arguments(caller_state, function, argument_values)
+    else {
+        return Ok(Err(CRuntimeError::TypeMismatch));
+    };
+    let transfer = match prepare_function_resource_transfer(
+        caller_state,
+        &callee_state,
+        function,
+        assumptions,
+        budget,
+    )? {
+        Ok(transfer) => transfer,
+        Err(error) => return Ok(Err(error)),
+    };
+    Ok(Ok(
+        callee_state.with_resource_context(transfer.callee_resources)
+    ))
 }
 
 pub(super) fn expand_composite_resource_fact(
@@ -889,6 +1005,12 @@ pub(super) fn expand_all_composite_resource_facts_and_propositions(
         else {
             let mut propositions = Vec::new();
             for composite in composites {
+                propositions.extend(evaluate_composite_resource_relation_propositions(
+                    &composite,
+                    definitions,
+                    memory,
+                    assumptions,
+                )?);
                 propositions.extend(evaluate_composite_resource_fact_propositions(
                     &composite,
                     definitions,
@@ -908,6 +1030,67 @@ pub(super) fn expand_all_composite_resource_facts_and_propositions(
             assumptions,
         )?;
     }
+}
+
+fn evaluate_composite_resource_relation_propositions(
+    composite: &CResourceFact,
+    definitions: &[CCompositeResourceDefinition],
+    memory: &CMemory,
+    assumptions: &Assumptions,
+) -> Option<Vec<Proposition>> {
+    let CResource::Composite { name, arguments } = composite.resource() else {
+        return None;
+    };
+    let definition = definitions
+        .iter()
+        .find(|definition| definition.name() == name)?;
+    if definition.parameters().len() != arguments.len() {
+        return None;
+    }
+    let mut state = CState::new()
+        .with_memory(memory.clone())
+        .with_resource_context(ResourceContext::new().unchecked_with_fact(composite.clone()));
+    for (parameter, argument) in definition.parameters().iter().zip(arguments) {
+        if parameter.c_type() != argument.c_type() {
+            return None;
+        }
+        state.locals.set_typed(
+            parameter.name().to_string(),
+            argument.clone(),
+            parameter.c_type(),
+        );
+    }
+    let mut budget = ExecutionBudget::default();
+    let mut children = Vec::new();
+    for contained in definition.contains() {
+        let Ok(Ok(child)) =
+            evaluate_function_resource_spec(&state, contained, assumptions, &mut budget)
+        else {
+            return None;
+        };
+        state.resources = state.resources.clone().unchecked_with_fact(child.clone());
+        if composite.is_own()
+            && let Some(child) = child.owned_resource()
+        {
+            children.push(child.clone());
+        }
+    }
+    let mut propositions = Vec::new();
+    for child in &children {
+        propositions.push(Proposition::CResourceContains {
+            parent: composite.resource().clone(),
+            child: child.clone(),
+        });
+    }
+    for index in 0..children.len() {
+        for right in &children[index + 1..] {
+            propositions.push(Proposition::CResourceSeparate {
+                left: children[index].clone(),
+                right: right.clone(),
+            });
+        }
+    }
+    Some(propositions)
 }
 
 fn evaluate_composite_resource_fact_propositions(

@@ -48,6 +48,32 @@ or compound claim, including the memory and range expressions in
 and rewriting. It covers function claims, theorem claims, loop phases, and
 structural items.
 
+### Surface-language boundary
+
+Kernel Click is an internal typed Rust representation. It has no textual
+syntax. Every `.click` file, diagnostic expression, profiler hint, and
+`click-expand` result is Surface Click and must parse with the ordinary parser.
+
+Canonical Surface Click uses:
+
+- `owner->field` for one imported struct field;
+- `(owner->pointer_field)[start..end]` for storage reached through a pointer
+  field;
+- `object(owner)` for the complete ABI-aligned struct object;
+- `c(name)` when a C lexical binding must be distinguished from a contract
+  binding.
+
+`load_int32`, `load_uint8`, their pointer-valued variants, and `byte_offset`
+remain documented low-level Surface Click escape hatches for addresses whose
+C source provenance is unavailable. They are not Kernel Click concrete syntax.
+The canonical renderer must prefer retained field/object provenance and must
+never reconstruct surface text by pretty-printing kernel terms.
+
+`ContractExpression::Field` and the surface component of `ContractSegment`
+retain this provenance separately from their lowered semantic expression.
+Substitution must update both representations. A certificate is not valid
+surface output unless parsing it again preserves the same lowered meaning.
+
 ### Source selection
 
 The public command is:
@@ -151,17 +177,19 @@ Notable strict boundaries include:
 
 Current focused validation:
 
-- 423 library tests pass;
+- 458 library tests are currently discovered. The complete serial run reaches
+  the historically slow expansion regressions; all completed tests pass after
+  fixing the newly exposed surface-roundtrip failures.
 - 7 `click-profile` binary tests pass;
 - 9 `click-audit` binary tests pass;
-- the `execute_rest` order/alias recursion regression passes in an isolated
-  mdtest process;
-- the owned-string proof units changed by the current audit verify through
-  location-targeted verification;
-- a 10 ms diagnostic owned-string profile completes without source-mapping
-  errors;
-- the default-threshold 15-second corpus profile reports no completed slow
-  simple tactics and no verification failures.
+- `click-audit` inventories and parses all 249 current smart source sites with
+  the ordinary Surface Click parser;
+- focused regressions pass for `object(owner)`, chained field access, indexed
+  pointer fields, unfolded composite certificate printing, shifted range
+  lowering, bounded loop execution, symbolic loop effects, implication
+  certification, and same-block pointer congruence;
+- the five struct-heavy flagship sidecars contain no remaining `load_*`,
+  `byte_offset(...)`, or raw struct-cell range spellings.
 
 The C/contract name-identity issue found by the corpus audit is fixed.
 `c(name)` now denotes the C lexical binding explicitly, while an unqualified
@@ -171,13 +199,11 @@ Generated surface certificates preserve this distinction, including beneath
 `at(...)`, and a focused grouped-`simp` regression expands and reverifies the
 collision.
 
-The audit remains blocked at the final grouped `simp` in
-`owned_string_pop_preserves_first.contract` for a separate performance reason.
-Its certificate planner eagerly re-lowers the available surface context while
-looking for expressible premises and does not finish within the two-minute
-expansion budget. Fix this without changing proof selection semantics; an
-earlier attempt to make the planner opportunistically lazy changed the selected
-proof and broke ordinary owned-string verification.
+The current bounded audit frontier is performance rather than parsing:
+initializing the first input-cursor verification session exceeds a one-minute
+diagnostic limit after all 249 sites have been inventoried. Do not classify
+that timeout as an expansion correctness failure without profiling the
+initialization path.
 
 The grouped loadability boundary now lowers the complete source proposition at
 an exact `function.entry` or recorded program point. It no longer constructs a
@@ -234,14 +260,13 @@ concrete failure.
 
 Current sweep status:
 
-- `input-cursor`: 32/32 sites green;
-- `json-refcount`: 3/3 sites green;
-- `owned-segmented-buffer`: 38/38 sites green;
-- `owned-split-buffer`: 35/35 sites green;
-- `owned-vector`: 71/71 sites green;
-- `owned-string`: two slow grouped `simp` sites were expanded and independently
-  reverified; the sweep is blocked by eager certificate-premise lowering in
-  `owned_string_pop_preserves_first.contract` as described above.
+- parser inventory: 249/249 sites discovered and parsed;
+- prior retained-session sweeps remain useful historical evidence, but must
+  not be described as a current full-corpus pass after changing the surface
+  representation;
+- the next full audit should start at
+  `examples/input-cursor/input_cursor.click:8:9` with a realistic session
+  budget, after profiling session initialization.
 
 For every syntactic smart-tactic occurrence, the audit should:
 
@@ -277,10 +302,9 @@ automation must have one gateway.
   expands the whole implicit proof.
 - Expansion replays the sidecar prefix for every request. There is no
   certificate cache or persistent verification session.
-- `click-audit --start-at` cannot advance past a grouped-certificate failure
-  that occurs while initializing the file's reusable verification session.
-  The owned-string failure therefore masks later sites even when the resume
-  coordinate is after it.
+- `click-audit --start-at` cannot advance within a file when reusable-session
+  initialization itself times out. Profile and fix that initialization path;
+  increasing the budget is diagnostic, not a final performance solution.
 - `click-expand` prints the whole sidecar rather than a patch. This is
   deliberate until the certificate audit is complete.
 

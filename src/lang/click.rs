@@ -20,12 +20,13 @@ use crate::kernel::{
     SpecMemory, SpecPredicateArgument, SpecProposition, SpecResource, SymbolicCExecution, Term,
     Theorem, Variable, abstract_c_state_for_join, c_condition_fact_has_memory,
     c_condition_fact_memories, c_expression_definedness_proposition, c_function,
-    c_function_entry_state, c_function_execution_candidates_from_outcomes,
-    c_function_outcome_from_statement_outcome, c_function_outcomes_definitionally_equal,
-    c_function_specification, c_if, c_labeled_assert, c_loop_effects_hold_at_back_edge,
-    c_loop_invariant_obligations_at_entry, c_loop_invariants_hold_at_back_edge_using,
-    c_loop_invariants_hold_at_entry, c_loop_preservation_contexts,
-    c_pointer_offsets_proven_equal_for_effect, c_pointer_value, c_resources_directly_match, c_seq,
+    c_function_contract_entry_state, c_function_entry_state,
+    c_function_execution_candidates_from_outcomes, c_function_outcome_from_statement_outcome,
+    c_function_outcomes_definitionally_equal, c_function_specification, c_if, c_labeled_assert,
+    c_loop_effects_hold_at_back_edge, c_loop_invariant_obligations_at_entry,
+    c_loop_invariants_hold_at_back_edge_using, c_loop_invariants_hold_at_entry,
+    c_loop_preservation_contexts, c_pointer_offsets_proven_equal_for_effect, c_pointer_value,
+    c_resources_directly_match, c_seq, c_unverified_function_contract_claims,
     c_verified_function_contract_claims, c_verified_function_rule,
     c_while_with_invariant_and_effect_checks, canonical_c_memory_for_pointer_load,
     certify_c_function_execution_path_resource_representation, int32,
@@ -488,6 +489,15 @@ impl SurfacePropositionMap {
 pub enum ContractExpression {
     /// A C0 expression fragment appearing inside Surface Click.
     CFragment(CExpression),
+    /// A source-level struct field place paired with its lowered C expression.
+    ///
+    /// The source place is retained for certificates and diagnostics; only
+    /// `lowered` crosses into semantic checking.
+    Field {
+        base: Box<ContractExpression>,
+        field: String,
+        lowered: CExpression,
+    },
     /// A binding from the verified C function's lexical environment.
     ///
     /// This is distinct from contract built-ins such as bare `result`, even
@@ -639,6 +649,18 @@ pub struct ContractSegment {
     base: CExpression,
     start: CExpression,
     end: CExpression,
+    surface: ContractSegmentSurface,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum ContractSegmentSurface {
+    Range {
+        base: ContractExpression,
+        start: ContractExpression,
+        end: ContractExpression,
+    },
+    Field(String),
+    Object(String),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -2238,6 +2260,7 @@ fn verify_c0_sources_with_environment(
             &predicate_environment,
             &click_function_environment,
             &resource_environment,
+            true,
         )?;
         if contract_function.opaque_contract_supported() {
             let contract_execution_mode = if function_verified
@@ -2265,12 +2288,29 @@ fn verify_c0_sources_with_environment(
                 contract_execution_mode,
             );
             if contract_execution.path_count() == 0 && contract_execution.limit().is_none() {
-                continue;
+                return Err(ClickError::new(format!(
+                    "could not certify contract for `{}`: exact symbolic execution produced no valid paths",
+                    function_block.signature.name(),
+                )));
             }
             let Some(certified_claims) =
                 c_verified_function_contract_claims(&contract_function, &contract_execution)
             else {
-                continue;
+                let detail = match c_unverified_function_contract_claims(
+                    &contract_function,
+                    &contract_execution,
+                ) {
+                    Ok(keys) if !keys.is_empty() => {
+                        format!("; unverified claims: {keys:?}")
+                    }
+                    Ok(_) => String::new(),
+                    Err(reason) => format!("; {reason}"),
+                };
+                return Err(ClickError::new(format!(
+                    "could not certify contract for `{}`: exact symbolic execution did not establish every contract claim{}",
+                    function_block.signature.name(),
+                    detail,
+                )));
             };
             let proof_objects = function_verified
                 .iter()
@@ -2733,11 +2773,20 @@ fn substitute_contract_segment(
     segment: &ContractSegment,
     substitutions: &BTreeMap<String, ContractExpression>,
 ) -> Result<ContractSegment, String> {
+    let surface = match &segment.surface {
+        ContractSegmentSurface::Range { base, start, end } => ContractSegmentSurface::Range {
+            base: substitute_contract_expression(base, substitutions)?,
+            start: substitute_contract_expression(start, substitutions)?,
+            end: substitute_contract_expression(end, substitutions)?,
+        },
+        surface => surface.clone(),
+    };
     Ok(ContractSegment {
         state: segment.state,
         base: substitute_c_fragment(&segment.base, substitutions)?,
         start: substitute_c_fragment(&segment.start, substitutions)?,
         end: substitute_c_fragment(&segment.end, substitutions)?,
+        surface,
     })
 }
 

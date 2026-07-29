@@ -2209,42 +2209,66 @@ impl CExecutionEnvironment {
         assumptions: &Assumptions,
     ) -> Option<&CVerifiedLoopRule> {
         self.verified_loop_rules.iter().find(|rule| {
-            rule.symbolic_entry_state == *state
-                && rule.loop_statement == *statement
-                && rule
-                    .required_assumptions
-                    .pure_facts()
-                    .iter()
-                    .all(|required| {
-                        assumptions.proves(required)
-                            || match required {
-                                Proposition::CMemoryLoadable {
+            let state_matches = rule.symbolic_entry_state == *state;
+            let statement_matches = rule.loop_statement == *statement;
+            let assumptions_match = rule
+                .required_assumptions
+                .pure_facts()
+                .iter()
+                .all(|required| {
+                    assumptions.proves(required)
+                        || match required {
+                            Proposition::CMemoryLoadable {
+                                memory,
+                                base,
+                                bytes,
+                            } => {
+                                memory_snapshots_proven_equal_at_pointer(
                                     memory,
+                                    state.memory(),
                                     base,
-                                    bytes,
-                                } => {
-                                    memory_snapshots_proven_equal_at_pointer(
-                                        memory,
-                                        state.memory(),
+                                    assumptions,
+                                ) && (bytes
+                                    .as_const()
+                                    .and_then(|bytes| u32::try_from(bytes).ok())
+                                    .is_some_and(|bytes| {
+                                        resource_context_has_read(
+                                            state.resources(),
+                                            base,
+                                            bytes,
+                                            assumptions,
+                                        )
+                                    })
+                                    || resource_context_has_symbolic_int32_range_read(
+                                        state.resources(),
                                         base,
-                                        assumptions,
-                                    ) && bytes
-                                        .as_const()
-                                        .and_then(|bytes| u32::try_from(bytes).ok())
-                                        .is_some_and(|bytes| {
-                                            resource_context_has_read(
-                                                state.resources(),
-                                                base,
-                                                bytes,
-                                                assumptions,
-                                            )
-                                        })
-                                }
-                                _ => false,
+                                        bytes,
+                                    ))
                             }
-                    })
+                            _ => false,
+                        }
+                });
+            state_matches && statement_matches && assumptions_match
         })
     }
+}
+
+fn resource_context_has_symbolic_int32_range_read(
+    resources: &ResourceContext,
+    base: &Pointer,
+    bytes: &Bitvector32Term,
+) -> bool {
+    resources.facts().iter().any(|fact| {
+        let Some(range) = fact.memory_range() else {
+            return false;
+        };
+        let range_base = range.base().offset_by_int32_elements(range.start().clone());
+        let range_bytes = Bitvector32Term::multiply(
+            Bitvector32Term::subtract(range.end().clone(), range.start().clone()),
+            Bitvector32Term::Constant(4),
+        );
+        &range_base == base && &range_bytes == bytes
+    })
 }
 
 impl CLocalEnvironment {

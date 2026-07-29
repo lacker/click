@@ -2169,7 +2169,7 @@ resource owned_box(owner: struct box*) {
     fact owner->len < owner->cap;
     fact terminated_at(owner->data, owner->len);
     fact separate(
-        memory(owner[0..3]),
+        memory(object(owner)),
         memory((owner->data)[0..owner->cap])
     );
 }
@@ -2197,16 +2197,19 @@ int32 inspect(struct box* owner) {
         )
         .expect("the declaration should expand with unfolded surface facts");
 
-        assert!(expanded.contains(
-            "fact terminated_at(load_int32_pointer(byte_offset(owner, 8)), load_int32(owner));"
-        ));
-        assert!(expanded.contains(
-            "fact separate(memory(owner[0..3]), memory(load_int32_pointer(byte_offset(owner, 8))[0..load_int32(byte_offset(owner, 4))]));"
-        ));
+        assert!(
+            expanded.contains("fact terminated_at(owner->data, owner->len);"),
+            "{expanded}"
+        );
         assert!(
             expanded.contains(
-                "fact load_int32_pointer(byte_offset(owner, 8))[load_int32(owner)] == 0;"
-            )
+                "fact separate(memory(object(owner)), memory((owner->data)[0..owner->cap]));"
+            ),
+            "{expanded}"
+        );
+        assert!(
+            expanded.contains("fact owner->data[owner->len] == 0;"),
+            "{expanded}"
         );
     }
 

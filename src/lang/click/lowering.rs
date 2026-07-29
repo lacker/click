@@ -19,6 +19,7 @@ pub(super) fn lower_composite_resource_facts(
     let entry_state = CState::new();
     let mut lowerer = AnnotationLowerer {
         structural_clauses: &[],
+        function_effects: &[],
         predicate_environment,
         click_function_environment,
         entry_state: &entry_state,
@@ -68,9 +69,15 @@ pub(super) fn annotated_function(
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
     resource_environment: &ResourceEnvironment,
+    inherit_function_effects_into_loops: bool,
 ) -> Result<CFunction, ClickError> {
     let mut lowerer = AnnotationLowerer {
         structural_clauses: function_block.structural_clauses(),
+        function_effects: if inherit_function_effects_into_loops {
+            function_block.effects()
+        } else {
+            &[]
+        },
         predicate_environment,
         click_function_environment,
         entry_state,
@@ -143,6 +150,7 @@ pub(super) fn function_contract_summary(
     let entry_state = CState::new();
     let mut lowerer = AnnotationLowerer {
         structural_clauses: function_block.structural_clauses(),
+        function_effects: &[],
         predicate_environment,
         click_function_environment,
         entry_state: &entry_state,
@@ -389,6 +397,7 @@ fn collect_owned_resource_memory_segments(
 
 struct AnnotationLowerer<'a> {
     structural_clauses: &'a [StructuralClause],
+    function_effects: &'a [EffectClause],
     predicate_environment: &'a PredicateEnvironment,
     click_function_environment: &'a ClickFunctionEnvironment,
     entry_state: &'a CState,
@@ -580,7 +589,8 @@ impl AnnotationLowerer<'_> {
                 let segment_environment = self.spec_segment_environment(segment, environment)?;
                 Ok(SpecProposition::MemoryLoadable {
                     memory: segment_environment.current_memory.clone(),
-                    base: self.lower_c_fragment_to_spec(&segment.base, &segment_environment)?,
+                    base: self
+                        .lower_contract_segment_base_to_spec(&segment.base, &segment_environment)?,
                     start: self.lower_c_fragment_to_spec(&segment.start, &segment_environment)?,
                     end: self.lower_c_fragment_to_spec(&segment.end, &segment_environment)?,
                     element_width: self.contract_segment_element_width(segment),
@@ -789,9 +799,11 @@ impl AnnotationLowerer<'_> {
         environment: &SpecElaborationContext,
     ) -> Result<SpecExpression, String> {
         match expression {
-            ContractExpression::CFragment(expression) => {
-                self.lower_c_fragment_to_spec(expression, environment)
-            }
+            ContractExpression::CFragment(expression)
+            | ContractExpression::Field {
+                lowered: expression,
+                ..
+            } => self.lower_c_fragment_to_spec(expression, environment),
             ContractExpression::CBinding(name) => {
                 self.lower_c_fragment_to_spec(&CExpression::Variable(name.clone()), environment)
             }
@@ -942,15 +954,36 @@ impl AnnotationLowerer<'_> {
     }
 
     fn contract_segment_element_width(&self, segment: &ContractSegment) -> u32 {
-        match &segment.base {
-            CExpression::Variable(name) => self
-                .parameter_array_element_types
-                .get(name)
-                .copied()
-                .unwrap_or(CType::Int32)
-                .byte_width(),
-            _ => CType::Int32.byte_width(),
+        self.c_expression_array_element_type(
+            &segment.base,
+            &SpecElaborationContext::for_function_contract(),
+        )
+        .unwrap_or(CType::Int32)
+        .byte_width()
+    }
+
+    fn lower_contract_segment_base_to_spec(
+        &self,
+        expression: &CExpression,
+        environment: &SpecElaborationContext,
+    ) -> Result<SpecExpression, String> {
+        if let CExpression::Add(left, right) = expression {
+            if let Some(element_type) = self.c_expression_array_element_type(left, environment) {
+                return Ok(SpecExpression::PointerOffset {
+                    pointer: Box::new(self.lower_c_fragment_to_spec(left, environment)?),
+                    elements: Box::new(self.lower_c_fragment_to_spec(right, environment)?),
+                    byte_width: element_type.byte_width(),
+                });
+            }
+            if let Some(element_type) = self.c_expression_array_element_type(right, environment) {
+                return Ok(SpecExpression::PointerOffset {
+                    pointer: Box::new(self.lower_c_fragment_to_spec(right, environment)?),
+                    elements: Box::new(self.lower_c_fragment_to_spec(left, environment)?),
+                    byte_width: element_type.byte_width(),
+                });
+            }
         }
+        self.lower_c_fragment_to_spec(expression, environment)
     }
 
     fn lower_resource_subject_to_spec(
@@ -962,7 +995,7 @@ impl AnnotationLowerer<'_> {
             ResourceSubject::Memory(segment) => {
                 let environment = self.spec_segment_environment(segment, environment)?;
                 Ok(SpecResource::Memory {
-                    base: self.lower_c_fragment_to_spec(&segment.base, &environment)?,
+                    base: self.lower_contract_segment_base_to_spec(&segment.base, &environment)?,
                     start: self.lower_c_fragment_to_spec(&segment.start, &environment)?,
                     end: self.lower_c_fragment_to_spec(&segment.end, &environment)?,
                 })
@@ -1406,6 +1439,10 @@ impl AnnotationLowerer<'_> {
                 .get(name)
                 .map(|array_ref| array_ref.element_type)
                 .or_else(|| self.parameter_array_element_types.get(name).copied()),
+            CExpression::TypedLoad { value_type, .. } => value_type.pointee_type(),
+            CExpression::PointerOffsetBytes { pointer, .. } => {
+                self.c_expression_array_element_type(pointer, environment)
+            }
             CExpression::Add(left, right) => self
                 .c_expression_array_element_type(left, environment)
                 .or_else(|| self.c_expression_array_element_type(right, environment)),
@@ -1431,6 +1468,12 @@ impl AnnotationLowerer<'_> {
             CExpression::AddressOf(expression) => Ok(CExpression::AddressOf(Box::new(
                 self.lower_current_invariant_c_expression(expression)?,
             ))),
+            CExpression::PointerOffsetBytes { pointer, bytes } => {
+                Ok(CExpression::PointerOffsetBytes {
+                    pointer: Box::new(self.lower_current_invariant_c_expression(pointer)?),
+                    bytes: *bytes,
+                })
+            }
             CExpression::Add(left, right) => Ok(CExpression::Add(
                 Box::new(self.lower_current_invariant_c_expression(left)?),
                 Box::new(self.lower_current_invariant_c_expression(right)?),
@@ -1518,7 +1561,8 @@ impl AnnotationLowerer<'_> {
         body: &syntax::C0Statement,
     ) -> Result<Vec<CLoopEffectCheck>, ClickError> {
         let modified_locals = c0_loop_modified_locals(body);
-        self.structural_clauses
+        let mut checks = self
+            .structural_clauses
             .iter()
             .filter(|clause| clause.region() == &CodeRegion::Loop(loop_index))
             .flat_map(StructuralClause::items)
@@ -1562,7 +1606,41 @@ impl AnnotationLowerer<'_> {
                     Some(context),
                 ))
             })
-            .collect()
+            .collect::<Result<Vec<_>, _>>()?;
+        let function_mutable = self
+            .function_effects
+            .iter()
+            .flat_map(|clause| match clause.effect() {
+                Effect::Mutable(segments) => segments.clone(),
+                Effect::Immutable => Vec::new(),
+            })
+            .collect::<Vec<_>>();
+        let implicit_effect = if !function_mutable.is_empty() {
+            Some(Effect::Mutable(function_mutable))
+        } else if self
+            .function_effects
+            .iter()
+            .any(|clause| matches!(clause.effect(), Effect::Immutable))
+        {
+            Some(Effect::Immutable)
+        } else {
+            None
+        };
+        if let Some(effect) = implicit_effect {
+            let lowered = self
+                .lower_loop_effect(&effect, CLoopEffectSpan::Whole, &modified_locals)
+                .map_err(|message| {
+                    ClickError::new(format!(
+                        "loop {loop_index} inherited function effect: {message}"
+                    ))
+                })?;
+            checks.push(CLoopEffectCheck::new_with_span(
+                lowered,
+                CLoopEffectSpan::Whole,
+                Some(format!("loop {loop_index} inherited function effect")),
+            ));
+        }
+        Ok(checks)
     }
 
     fn lower_loop_effect(
@@ -1937,11 +2015,20 @@ fn substitute_contract_segment(
     segment: &ContractSegment,
     substitutions: &BTreeMap<String, ContractExpression>,
 ) -> Result<ContractSegment, String> {
+    let surface = match &segment.surface {
+        ContractSegmentSurface::Range { base, start, end } => ContractSegmentSurface::Range {
+            base: substitute_contract_expression(base, substitutions)?,
+            start: substitute_contract_expression(start, substitutions)?,
+            end: substitute_contract_expression(end, substitutions)?,
+        },
+        surface => surface.clone(),
+    };
     Ok(ContractSegment {
         state: segment.state,
         base: substitute_c_fragment(&segment.base, substitutions)?,
         start: substitute_c_fragment(&segment.start, substitutions)?,
         end: substitute_c_fragment(&segment.end, substitutions)?,
+        surface,
     })
 }
 
@@ -2145,11 +2232,20 @@ pub(super) fn apply_contract_lets_to_segment(
     bindings: &[ContractLetBinding],
 ) -> Result<ContractSegment, String> {
     let substitutions = contract_let_substitutions(bindings);
+    let surface = match segment.surface {
+        ContractSegmentSurface::Range { base, start, end } => ContractSegmentSurface::Range {
+            base: substitute_contract_expression(&base, &substitutions)?,
+            start: substitute_contract_expression(&start, &substitutions)?,
+            end: substitute_contract_expression(&end, &substitutions)?,
+        },
+        surface => surface,
+    };
     let segment = ContractSegment {
         state: segment.state,
         base: substitute_c_fragment(&segment.base, &substitutions)?,
         start: substitute_c_fragment(&segment.start, &substitutions)?,
         end: substitute_c_fragment(&segment.end, &substitutions)?,
+        surface,
     };
     reject_contract_where_let_references(
         &contract_segment_referenced_names(&segment),
@@ -2495,6 +2591,9 @@ pub(super) fn collect_contract_expression_referenced_names(
         ContractExpression::CFragment(expression) => {
             collect_c_expression_referenced_names(expression, names);
         }
+        ContractExpression::Field { base, .. } => {
+            collect_contract_expression_referenced_names(base, names);
+        }
         ContractExpression::CBinding(name) => {
             names.insert(name.clone());
         }
@@ -2654,6 +2753,15 @@ pub(super) fn substitute_contract_expression(
         ContractExpression::CFragment(expression) => {
             substitute_c_fragment_as_contract(expression, substitutions)
         }
+        ContractExpression::Field {
+            base,
+            field,
+            lowered,
+        } => Ok(ContractExpression::Field {
+            base: Box::new(substitute_contract_expression(base, substitutions)?),
+            field: field.clone(),
+            lowered: substitute_c_fragment(lowered, substitutions)?,
+        }),
         ContractExpression::Old(expression) => Ok(ContractExpression::Old(Box::new(
             substitute_contract_expression(expression, substitutions)?,
         ))),
@@ -2954,6 +3062,7 @@ pub(super) fn contract_expression_as_c_fragment(
 ) -> Option<CExpression> {
     match expression {
         ContractExpression::CFragment(expression) => Some(expression.clone()),
+        ContractExpression::Field { lowered, .. } => Some(lowered.clone()),
         ContractExpression::CBinding(name) => Some(CExpression::Variable(name.clone())),
         ContractExpression::Old(_) => None,
         ContractExpression::At { .. } => None,
@@ -3105,6 +3214,7 @@ pub(super) fn contract_expression_to_c_fragment(
 ) -> Option<CExpression> {
     match expression {
         ContractExpression::CFragment(expression) => Some(expression.clone()),
+        ContractExpression::Field { lowered, .. } => Some(lowered.clone()),
         ContractExpression::CBinding(name) => Some(CExpression::Variable(name.clone())),
         ContractExpression::Old(_) => None,
         ContractExpression::At { .. } => None,
@@ -3762,6 +3872,7 @@ pub(super) fn resource_argument_to_c_expression(
 ) -> Result<CExpression, ClickError> {
     match argument {
         ContractExpression::CFragment(expression) => Ok(expression.clone()),
+        ContractExpression::Field { lowered, .. } => Ok(lowered.clone()),
         ContractExpression::CBinding(name) => Ok(CExpression::Variable(name.clone())),
         ContractExpression::Add(left, right) => Ok(CExpression::Add(
             Box::new(resource_argument_to_c_expression(left)?),
@@ -4668,9 +4779,11 @@ impl KernelPropositionLowerer {
         expression: &ContractExpression,
     ) -> Result<CValue, ClickError> {
         match expression {
-            ContractExpression::CFragment(expression) => {
-                self.lower_requirement_c_expression(expression)
-            }
+            ContractExpression::CFragment(expression)
+            | ContractExpression::Field {
+                lowered: expression,
+                ..
+            } => self.lower_requirement_c_expression(expression),
             ContractExpression::CBinding(name) => {
                 self.lower_requirement_c_expression(&CExpression::Variable(name.clone()))
             }

@@ -117,7 +117,8 @@ later file does not initialize earlier files. The resulting certified function
 environment stays alive while the audit handles that file:
 
 1. run expansion in a bounded child process;
-2. require a changed, syntactically readable sidecar;
+2. require a changed sidecar that round-trips through the ordinary Surface
+   Click parser (there is no separate generated or Kernel Click grammar);
 3. require the rewritten AST to differ only in the selected theorem or
    function proof;
 4. remove the selected function's rule from the certified baseline

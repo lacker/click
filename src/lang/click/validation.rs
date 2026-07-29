@@ -1565,7 +1565,11 @@ fn collect_resource_fact_reads_from_contract_expression(
     resource_name: &str,
 ) -> Result<(), ClickError> {
     match expression {
-        ContractExpression::CFragment(expression) => {
+        ContractExpression::CFragment(expression)
+        | ContractExpression::Field {
+            lowered: expression,
+            ..
+        } => {
             collect_resource_fact_reads_from_c_expression(expression, reads);
             Ok(())
         }
@@ -2492,9 +2496,11 @@ fn infer_contract_expression_type(
     context: &str,
 ) -> Result<Option<C0Type>, ClickError> {
     match expression {
-        ContractExpression::CFragment(expression) => {
-            Ok(infer_c_expression_type(expression, variables))
-        }
+        ContractExpression::CFragment(expression)
+        | ContractExpression::Field {
+            lowered: expression,
+            ..
+        } => Ok(infer_c_expression_type(expression, variables)),
         // C locals are resolved against the concrete program state during
         // lowering, not against the contract namespace used here. In
         // particular, `c(result)` must not inherit the type of built-in
@@ -2969,6 +2975,9 @@ fn validate_contract_expression_calls(
 ) -> Result<(), ClickError> {
     match expression {
         ContractExpression::CFragment(_) | ContractExpression::CBinding(_) => Ok(()),
+        ContractExpression::Field { base, .. } => {
+            validate_contract_expression_calls(base, click_functions, context)
+        }
         ContractExpression::Old(body) => {
             validate_contract_expression_calls(body, click_functions, context)
         }
@@ -3113,6 +3122,7 @@ pub(super) fn contains_old_expression(expression: &ContractExpression) -> bool {
     match expression {
         ContractExpression::Old(_) => true,
         ContractExpression::CFragment(_) | ContractExpression::CBinding(_) => false,
+        ContractExpression::Field { base, .. } => contains_old_expression(base),
         ContractExpression::At { expression, .. } => contains_old_expression(expression),
         ContractExpression::Add(left, right)
         | ContractExpression::Subtract(left, right)
@@ -3219,6 +3229,7 @@ pub(super) fn contains_at_expression(expression: &ContractExpression) -> bool {
     match expression {
         ContractExpression::At { .. } => true,
         ContractExpression::CFragment(_) | ContractExpression::CBinding(_) => false,
+        ContractExpression::Field { base, .. } => contains_at_expression(base),
         ContractExpression::Old(expression) | ContractExpression::BitwiseNot(expression) => {
             contains_at_expression(expression)
         }
@@ -3321,6 +3332,7 @@ pub(super) fn proposition_contains_at_expression(proposition: &ClickProposition)
 fn collect_click_function_calls(expression: &ContractExpression, calls: &mut BTreeSet<String>) {
     match expression {
         ContractExpression::CFragment(_) | ContractExpression::CBinding(_) => {}
+        ContractExpression::Field { base, .. } => collect_click_function_calls(base, calls),
         ContractExpression::Old(body) => collect_click_function_calls(body, calls),
         ContractExpression::At { expression, .. } => {
             collect_click_function_calls(expression, calls)

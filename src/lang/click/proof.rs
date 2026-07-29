@@ -2262,6 +2262,27 @@ pub(super) fn initial_claim_context(
     ))
 }
 
+fn canonical_claim_caller_state(
+    state: CState,
+    has_verified_loops: bool,
+    function: &CFunction,
+    arguments: &[CExpression],
+    pure_facts: &[Proposition],
+    claim_label: &str,
+) -> Result<CState, ClickError> {
+    if !has_verified_loops {
+        return Ok(state);
+    }
+    let entry = c_function_contract_entry_state(
+        &state,
+        function,
+        arguments,
+        &assumptions_from_propositions(pure_facts),
+    )
+    .map_err(|message| ClickError::new(format!("`{claim_label}` {message}")))?;
+    Ok(state.with_resource_context(entry.resources().clone()))
+}
+
 pub(super) fn prove_claim_by_auto(
     source_path: &str,
     function_block: &FunctionBlock,
@@ -2522,6 +2543,11 @@ struct TacticReplayState {
     next_path_choice: usize,
     execution_start_facts: Vec<Proposition>,
     concrete_loop_execution: bool,
+    /// The execution frontier was intentionally replaced by an `advance`
+    /// interface. Its state is a specification abstraction, not an exact
+    /// symbolic body outcome; whole-function kernel certification checks every
+    /// concrete path before any contract claim is exported.
+    execution_abstraction: bool,
     planned_tactics: Vec<ProofTactic>,
     surface_propositions: SurfacePropositionMap,
     surface_replay: SurfaceReplay,
@@ -3166,10 +3192,16 @@ pub(super) fn verify_loop_execution_proofs(
         predicate_environment,
         click_function_environment,
         resource_environment,
+        false,
     )?;
 
-    let entry_state = c_function_entry_state(&initial_state, &function, &arguments)
-        .ok_or_else(|| ClickError::new(format!("`{label}` could not bind function arguments")))?;
+    let entry_state = c_function_contract_entry_state(
+        &initial_state,
+        &function,
+        &arguments,
+        &assumptions_from_propositions(&requirement_facts),
+    )
+    .map_err(|message| ClickError::new(format!("`{label}` {message}")))?;
     let environment = ExecutionProofEnvironment {
         initial_state: &initial_state,
         function_block,
@@ -3183,8 +3215,8 @@ pub(super) fn verify_loop_execution_proofs(
         arguments: &arguments,
         surface_propositions: &surface_propositions,
     };
-    let mut next_loop_index = 0;
     let mut verified_loop_rules = Vec::new();
+    let mut next_loop_index = 0;
     verify_execution_proofs_forward(
         function.body(),
         vec![ExecutionProofContext {
@@ -8703,6 +8735,18 @@ pub(super) fn prove_claim_by_tactics(
         predicate_environment,
         click_function_environment,
         resource_environment,
+        false,
+    )?;
+    let state = canonical_claim_caller_state(
+        state,
+        function_block
+            .structural_clauses()
+            .iter()
+            .any(|clause| matches!(clause.region(), CodeRegion::Loop(_))),
+        &function,
+        &arguments,
+        &pure_facts,
+        claim_label,
     )?;
     let proof_claims = [*claim];
     let mut replay = TacticReplayState {
@@ -8812,6 +8856,18 @@ pub(super) fn prove_claims_by_grouped_tactics(
         predicate_environment,
         click_function_environment,
         resource_environment,
+        false,
+    )?;
+    let state = canonical_claim_caller_state(
+        state,
+        function_block
+            .structural_clauses()
+            .iter()
+            .any(|clause| matches!(clause.region(), CodeRegion::Loop(_))),
+        &function,
+        &arguments,
+        &pure_facts,
+        &proof_label,
     )?;
     let mut replay = TacticReplayState {
         proof_site: proof_site_for_claims(function_block, claims, true),
@@ -9068,7 +9124,8 @@ fn finish_ordered_proof_replay(
             .iter()
             .map(|path| path.outcome().clone())
             .collect::<Vec<_>>();
-        let outcomes_match = |replayed: &CFunctionOutcome, certified_index: usize| {
+        let outcomes_match = |replayed: &crate::kernel::CFunctionExecutionCandidate,
+                              certified_index: usize| {
             let certified = &certified_outcomes[certified_index];
             let certified_path = &certified_execution.paths()[certified_index];
             let certified_facts = certified_path
@@ -9080,6 +9137,12 @@ fn finish_ordered_proof_replay(
             for fact in certification_facts.iter().chain(&certified_facts) {
                 path_assumptions = path_assumptions.assume_proposition(fact.clone());
             }
+            for fact in &pure_facts {
+                path_assumptions = path_assumptions.assume_proposition(fact.clone());
+            }
+            for fact in replayed.execution_facts() {
+                path_assumptions = path_assumptions.assume_proposition(fact.proposition().clone());
+            }
             if let CFunctionOutcome::Return { state, .. } = certified
                 && let Ok(resource_facts) = state.resources().observable_facts(&path_assumptions)
             {
@@ -9089,18 +9152,23 @@ fn finish_ordered_proof_replay(
             }
             c_function_outcomes_definitionally_equal(
                 function,
-                replayed,
+                replayed.outcome(),
                 certified,
                 &path_assumptions,
             )
         };
-        let certified_path_for_replay = replay_outcomes
-            .iter()
-            .map(|replayed| {
-                (0..certified_outcomes.len())
-                    .find(|certified_index| outcomes_match(replayed, *certified_index))
-            })
-            .collect::<Option<Vec<_>>>();
+        let certified_path_for_replay = if replay.execution_abstraction {
+            (!certified_outcomes.is_empty()).then(|| vec![0; execution.paths().len()])
+        } else {
+            execution
+                .paths()
+                .iter()
+                .map(|replayed| {
+                    (0..certified_outcomes.len())
+                        .find(|certified_index| outcomes_match(replayed, *certified_index))
+                })
+                .collect::<Option<Vec<_>>>()
+        };
         let Some(certified_path_for_replay) = certified_path_for_replay else {
             return Err(ClickError::new(format!(
                 "execution replay for `{proof_label}` contains a path not reproduced by kernel certification\n  replay: {replay_outcomes:?}\n  certified: {certified_outcomes:?}"
@@ -10410,21 +10478,33 @@ fn finish_ordered_proof_replay(
                 )));
             }
 
-            let certified_path = certify_c_function_execution_path_resource_representation(
-                certified_path,
-                outcome.clone(),
-            )
-            .ok_or_else(|| {
-                ClickError::new(format!(
-                    "execution proof for `{proof_label}` path {path_index} changed more than the certified ghost resource representation\n  desired outcome: {outcome:?}\n  certified path: {:?}",
-                    certified_path.theorem().proposition()
-                ))
-            })?;
+            let (certified_path, specification_outcome, specification_requirements) = if replay
+                .execution_abstraction
+            {
+                (
+                    certified_path.clone(),
+                    certified_outcomes[certified_path_for_replay[path_index]].clone(),
+                    certification_facts.clone(),
+                )
+            } else {
+                let certified_path =
+                        certify_c_function_execution_path_resource_representation(
+                            certified_path,
+                            outcome.clone(),
+                        )
+                        .ok_or_else(|| {
+                            ClickError::new(format!(
+                                "execution proof for `{proof_label}` path {path_index} changed more than the certified ghost resource representation\n  desired outcome: {outcome:?}\n  certified path: {:?}",
+                                certified_path.theorem().proposition()
+                            ))
+                        })?;
+                (certified_path, outcome.clone(), path_requirements.clone())
+            };
             let specification = c_function_specification(
                 pre_state.clone(),
                 arguments.to_vec(),
-                path_requirements,
-                outcome,
+                specification_requirements,
+                specification_outcome,
             );
             let theorem = prove_c_function_satisfies_specification_from_symbolic_path(
                 function.clone(),
@@ -10920,12 +11000,21 @@ pub(super) fn synthesize_surface_proposition(
         } else {
             return None;
         };
+        let semantic_base = synthesize_surface_pointer(base, parameters, arguments, state)?;
+        let surface_base =
+            synthesize_surface_pointer_offset(&base.offset, parameters, arguments, state)
+                .unwrap_or_else(|| ContractExpression::CFragment(semantic_base.clone()));
         return Some(ClickProposition::Loadable {
             segment: ContractSegment {
                 state: ContractSegmentState::Current,
-                base: synthesize_surface_pointer(base, parameters, arguments, state)?,
+                base: semantic_base,
                 start: CExpression::Value(int32(0)),
-                end: element_count,
+                end: element_count.clone(),
+                surface: ContractSegmentSurface::Range {
+                    base: surface_base,
+                    start: ContractExpression::CFragment(CExpression::Value(int32(0))),
+                    end: ContractExpression::CFragment(element_count),
+                },
             },
         });
     }
@@ -11020,21 +11109,24 @@ fn synthesize_surface_resource_subject(
     let CResource::Memory(range) = resource else {
         return None;
     };
+    let semantic_base = synthesize_surface_pointer(range.base(), parameters, arguments, state)?;
+    let surface_base =
+        synthesize_surface_pointer_offset(&range.base().offset, parameters, arguments, state)
+            .unwrap_or_else(|| ContractExpression::CFragment(semantic_base.clone()));
+    let surface_start = synthesize_surface_bitvector(range.start(), parameters, arguments, state)?;
+    let surface_end = synthesize_surface_bitvector(range.end(), parameters, arguments, state)?;
+    let start = contract_expression_to_c_fragment(&surface_start)?;
+    let end = contract_expression_to_c_fragment(&surface_end)?;
     Some(ResourceSubject::Memory(ContractSegment {
         state: ContractSegmentState::Current,
-        base: synthesize_surface_pointer(range.base(), parameters, arguments, state)?,
-        start: contract_expression_to_c_fragment(&synthesize_surface_bitvector(
-            range.start(),
-            parameters,
-            arguments,
-            state,
-        )?)?,
-        end: contract_expression_to_c_fragment(&synthesize_surface_bitvector(
-            range.end(),
-            parameters,
-            arguments,
-            state,
-        )?)?,
+        base: semantic_base,
+        start,
+        end,
+        surface: ContractSegmentSurface::Range {
+            base: surface_base,
+            start: surface_start,
+            end: surface_end,
+        },
     }))
 }
 
@@ -11061,12 +11153,18 @@ fn synthesize_surface_pointer_offset(
             let Bitvector32Term::MemoryLoad(_, pointer) = value.as_ref() else {
                 unreachable!()
             };
-            Some(ContractExpression::CFragment(CExpression::TypedLoad {
-                pointer: Box::new(synthesize_surface_pointer(
-                    pointer, parameters, arguments, state,
-                )?),
-                value_type: CType::Int32Pointer,
-            }))
+            if let Some(field) =
+                synthesize_parameter_field_load(pointer, CType::Int32Pointer, parameters, arguments)
+            {
+                Some(field)
+            } else {
+                Some(ContractExpression::CFragment(CExpression::TypedLoad {
+                    pointer: Box::new(synthesize_surface_pointer(
+                        pointer, parameters, arguments, state,
+                    )?),
+                    value_type: CType::Int32Pointer,
+                }))
+            }
         }
         PointerOffsetTerm::Add(left, right) => {
             let indexed_pointer = |base: &PointerOffsetTerm, byte_offset: &PointerOffsetTerm| {
@@ -11179,15 +11277,119 @@ fn synthesize_surface_bitvector(
             synthesize_surface_bitvector(value, parameters, arguments, state)?,
         ))),
         Bitvector32Term::MemoryLoad(_, pointer) => {
-            let pointer = synthesize_surface_pointer(pointer, parameters, arguments, state)?;
-            Some(ContractExpression::CFragment(CExpression::Load(Box::new(
-                pointer,
-            ))))
+            if let Some(field) =
+                synthesize_parameter_field_load(pointer, CType::Int32, parameters, arguments)
+            {
+                Some(field)
+            } else if let Some(indexed_field) =
+                synthesize_parameter_field_indexed_int32_load(pointer, parameters, arguments, state)
+            {
+                Some(indexed_field)
+            } else {
+                let pointer = synthesize_surface_pointer(pointer, parameters, arguments, state)?;
+                Some(ContractExpression::CFragment(CExpression::Load(Box::new(
+                    pointer,
+                ))))
+            }
         }
         Bitvector32Term::Variable(_)
         | Bitvector32Term::If { .. }
         | Bitvector32Term::RangeFold { .. } => None,
     }
+}
+
+fn synthesize_parameter_field_indexed_int32_load(
+    pointer: &Pointer,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    state: &CState,
+) -> Option<ContractExpression> {
+    let pointer_field_and_index = |base: &PointerOffsetTerm,
+                                   index: Option<&PointerOffsetTerm>|
+     -> Option<(ContractExpression, ContractExpression)> {
+        let PointerOffsetTerm::Int32Scaled {
+            value,
+            byte_width: 4,
+        } = base
+        else {
+            return None;
+        };
+        let Bitvector32Term::MemoryLoad(_, field_pointer) = value.as_ref() else {
+            return None;
+        };
+        let field = synthesize_parameter_field_load(
+            field_pointer,
+            CType::Int32Pointer,
+            parameters,
+            arguments,
+        )?;
+        let index = match index {
+            None => ContractExpression::CFragment(CExpression::Value(int32(0))),
+            Some(PointerOffsetTerm::Int32Scaled {
+                value,
+                byte_width: 4,
+            }) => synthesize_surface_bitvector(value, parameters, arguments, state)?,
+            Some(_) => return None,
+        };
+        Some((field, index))
+    };
+    let (field, index) = match &pointer.offset {
+        base @ PointerOffsetTerm::Int32Scaled { .. } => pointer_field_and_index(base, None)?,
+        PointerOffsetTerm::Add(left, right) => pointer_field_and_index(left, Some(right))
+            .or_else(|| pointer_field_and_index(right, Some(left)))?,
+        PointerOffsetTerm::Constant(_) | PointerOffsetTerm::Variable(_) => return None,
+    };
+    Some(ContractExpression::Index(Box::new(field), Box::new(index)))
+}
+
+fn synthesize_parameter_field_load(
+    pointer: &Pointer,
+    value_type: CType,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+) -> Option<ContractExpression> {
+    for (parameter, argument) in parameters.iter().zip(arguments) {
+        let (Some(layout), CExpression::Value(CValue::Pointer(base))) =
+            (parameter.struct_layout(), argument)
+        else {
+            continue;
+        };
+        let Some(element_offset) = pointer
+            .element_index_from_base(base)
+            .and_then(|offset| offset.as_const())
+        else {
+            continue;
+        };
+        let offset_bytes = element_offset.checked_mul(4)?;
+        let Some((field_name, field)) = layout
+            .fields()
+            .iter()
+            .find(|(_, field)| field.offset_bytes() == offset_bytes)
+        else {
+            continue;
+        };
+        if field.c_type().to_kernel_type() != value_type {
+            continue;
+        }
+        let base = CExpression::Variable(parameter.name().to_string());
+        let field_pointer = if offset_bytes == 0 {
+            base.clone()
+        } else {
+            CExpression::PointerOffsetBytes {
+                pointer: Box::new(base.clone()),
+                bytes: offset_bytes,
+            }
+        };
+        return Some(ContractExpression::Field {
+            base: Box::new(ContractExpression::CFragment(base)),
+            field: field_name.clone(),
+            lowered: CExpression::TypedLoad {
+                pointer: Box::new(field_pointer),
+                value_type,
+            },
+        });
+    }
+    None
 }
 
 fn synthesize_surface_pointer(
@@ -16898,6 +17100,7 @@ fn apply_advance_interface(
         .insert(target.clone(), abstract_state.clone());
     replay.unfolded_predicates.clear();
     replay.case_assumptions.clear();
+    replay.execution_abstraction = true;
 
     let mut exported_resources = ResourceContext::new();
     let mut exported_pure_facts = Vec::new();
@@ -19868,25 +20071,58 @@ fn unfold_composite_resource(
         resource_argument_substitutions(definition, resource, claim_label, tactic_index)?;
     let abstract_resource = lower_resource_clause(resource, parameters, arguments, state.memory())?;
     let assumptions = assumptions_from_propositions(available_pure_facts);
-    let resources = state
+    let folded_resources = state
         .resources()
         .clone()
-        .without_fact(&abstract_resource, &assumptions)
-        .ok_or_else(|| {
-            ClickError::new(format!(
-                "`{claim_label}` tactic {tactic_index}: `unfold({})` failed: {}",
-                describe_resource_clause(resource),
-                describe_missing_resource_fact(
-                    &abstract_resource,
-                    available_pure_facts,
-                    state.resources().facts(),
-                    parameters,
-                    arguments,
-                    &[]
-                )
-            ))
-        })?;
+        .without_fact(&abstract_resource, &assumptions);
+    let already_unfolded = folded_resources.is_none();
+    let resources = if let Some(resources) = folded_resources {
+        resources
+    } else {
+        let mut remaining = state.resources().clone();
+        for contained in composite_body.contains() {
+            let contained =
+                instantiate_resource_clause(contained, &substitutions).map_err(|message| {
+                    ClickError::new(format!(
+                        "`{claim_label}` tactic {tactic_index}: could not inspect canonical `unfold({})`: {message}",
+                        describe_resource_clause(resource)
+                    ))
+                })?;
+            let lowered = lower_resource_clause(&contained, parameters, arguments, state.memory())?;
+            let Some(next) = remaining.without_fact(&lowered, &assumptions) else {
+                return Err(ClickError::new(format!(
+                    "`{claim_label}` tactic {tactic_index}: `unfold({})` failed: {}",
+                    describe_resource_clause(resource),
+                    describe_missing_resource_fact(
+                        &abstract_resource,
+                        available_pure_facts,
+                        state.resources().facts(),
+                        parameters,
+                        arguments,
+                        &[]
+                    )
+                )));
+            };
+            remaining = next;
+        }
+        state.resources().clone()
+    };
     state = state.with_resource_context(resources);
+
+    if already_unfolded && composite_body.contains().is_empty() {
+        return Err(ClickError::new(format!(
+            "`{claim_label}` tactic {tactic_index}: `unfold({})` failed: {}",
+            describe_resource_clause(resource),
+            describe_missing_resource_fact(
+                &abstract_resource,
+                available_pure_facts,
+                state.resources().facts(),
+                parameters,
+                arguments,
+                &[]
+            )
+        )));
+    }
 
     let mut unfolded_facts = Vec::new();
     for contained in composite_body.contains() {
@@ -19904,17 +20140,21 @@ fn unfold_composite_resource(
             &lowered,
             parameters,
         );
-        let resources = state
-            .resources()
-            .clone()
-            .try_compose_with_fact(lowered, &assumptions)
-            .map_err(|error| {
-                ClickError::new(format!(
-                    "`{claim_label}` tactic {tactic_index}: `unfold({})` produced {}",
-                    describe_resource_clause(resource),
-                    describe_resource_context_validity_error(error, parameters, arguments)
-                ))
-            })?;
+        let resources = if already_unfolded {
+            state.resources().clone()
+        } else {
+            state
+                .resources()
+                .clone()
+                .try_compose_with_fact(lowered, &assumptions)
+                .map_err(|error| {
+                    ClickError::new(format!(
+                        "`{claim_label}` tactic {tactic_index}: `unfold({})` produced {}",
+                        describe_resource_clause(resource),
+                        describe_resource_context_validity_error(error, parameters, arguments)
+                    ))
+                })?
+        };
         state = state.with_memory(memory).with_resource_context(resources);
         append_resource_clause_loadable_fact(
             &contained,
@@ -20281,11 +20521,20 @@ fn instantiate_contract_segment(
     segment: &ContractSegment,
     substitutions: &BTreeMap<String, ContractExpression>,
 ) -> Result<ContractSegment, String> {
+    let surface = match &segment.surface {
+        ContractSegmentSurface::Range { base, start, end } => ContractSegmentSurface::Range {
+            base: substitute_contract_expression(base, substitutions)?,
+            start: substitute_contract_expression(start, substitutions)?,
+            end: substitute_contract_expression(end, substitutions)?,
+        },
+        surface => surface.clone(),
+    };
     Ok(ContractSegment {
         state: segment.state,
         base: substitute_c_fragment(&segment.base, substitutions)?,
         start: substitute_c_fragment(&segment.start, substitutions)?,
         end: substitute_c_fragment(&segment.end, substitutions)?,
+        surface,
     })
 }
 

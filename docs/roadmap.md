@@ -16,7 +16,8 @@ is:
 ## Design Principles
 
 - Keep the three-language model clear:
-  - **Kernel Click** is pure, explicit, and has no ambient C state.
+  - **Kernel Click** is pure, explicit, has no ambient C state, and has no
+    user-facing textual syntax.
   - **Surface Click** is the user-written proof/specification language.
   - **C fragments** are pieces of C syntax embedded in Surface Click and
     elaborated into Kernel Click.
@@ -30,6 +31,8 @@ is:
   should move toward stable tactics when a proof becomes important.
 - Diagnostics are a design surface. A failed proof should point at the missing
   requirement, invariant, frame fact, or unsupported C feature.
+- Surface Click is closed under tooling: expansion, profiling hints, and
+  diagnostics emit only documented syntax accepted by the ordinary parser.
 
 ## Milestone 0: Keep The Current Core Coherent
 

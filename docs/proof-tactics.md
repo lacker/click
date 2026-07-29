@@ -111,6 +111,9 @@ not participate in verification; it observes the same successful replay.
 parseable `by { ... }` clause. `format_proof_tactics()` first validates a raw
 tactic slice, so smart tactics and private replay evidence cannot be printed
 as expanded Click source.
+The canonical renderer is a Surface Click renderer: retained field places print
+as `owner->field`, complete struct storage prints as `object(owner)`, and an
+internal kernel term is never exposed as a private textual spelling.
 `VerifiedCTheorem::expanded_proof_certificate()` exposes the checked artifact;
 `expanded_proof_source()` validates and prints it in one call. Both report the
 recorded expansion blocker instead of returning partial source.

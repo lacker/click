@@ -14,7 +14,7 @@ resource empty_vector(owner: struct vector*) {
     owns (owner->data)[0..owner->cap];
     fact owner->len == 0;
     fact 1 <= owner->cap;
-    fact separate(memory(owner[0..4]), memory((owner->data)[0..owner->cap]));
+    fact separate(memory(object(owner)), memory((owner->data)[0..owner->cap]));
 }
 
 resource nonempty_vector(owner: struct vector*) {
@@ -24,7 +24,7 @@ resource nonempty_vector(owner: struct vector*) {
     owns (owner->data)[0..owner->cap];
     fact 1 <= owner->len;
     fact owner->len <= owner->cap;
-    fact separate(memory(owner[0..4]), memory((owner->data)[0..owner->cap]));
+    fact separate(memory(object(owner)), memory((owner->data)[0..owner->cap]));
 }
 
 verifying "vector_init.c";
@@ -39,7 +39,7 @@ verifying "vector_pipeline.c";
 
 int32 vector_init(struct vector* owner, int32 data[], int32 capacity) {
     requires 1 <= capacity;
-    consumes owner[0..4];
+    consumes object(owner);
     consumes data[0..capacity];
     mutable_field(owner->len), (owner->cap), (owner->data);
     produces empty_vector(owner);
@@ -72,11 +72,11 @@ int32 vector_get(struct vector* owner, int32 index) {
 } by {
     execute_rest();
     frame();
-    have result == load_int32_pointer((owner + 2))[index] by {
+    have result == (owner->data)[index] by {
         normalize();
     }
     assumption();
-    have result == old(load_int32_pointer((owner + 2))[index]) by {
+    have result == old((owner->data)[index]) by {
         assumption();
     }
     assumption();
@@ -99,13 +99,13 @@ int32 vector_set(struct vector* owner, int32 index, int32 value) {
     execute_step();
     step using {
         fact 0 <= index;
-        fact index < load_int32(owner);
-        fact loadable(old(owner[0..1]));
-        fact loadable(old((owner + 1)[0..1]));
-        fact loadable(old((owner + 2)[0..2]));
-        fact 1 <= load_int32(owner);
-        fact load_int32(owner) <= load_int32((owner + 1));
-        fact separate(memory(owner[0..4]), memory(load_int32_pointer((owner + 2))[0..load_int32((owner + 1))]));
+        fact index < owner->len;
+        fact loadable(old(owner->len));
+        fact loadable(old(owner->cap));
+        fact loadable(old(owner->data));
+        fact 1 <= owner->len;
+        fact owner->len <= owner->cap;
+        fact separate(memory(object(owner)), memory((owner->data)[0..owner->cap]));
     }
     fold(nonempty_vector(owner));
     have index < index + 1 by { simp(); }
@@ -125,7 +125,6 @@ int32 vector_fill(struct vector* owner, int32 value) {
         mutable (owner->data)[0..owner->len] by frame;
         initialize by simp;
         preserve by {
-            unfold(nonempty_vector(owner));
             have i < owner->cap by simp;
             execute_step();
             execute_step();
@@ -139,151 +138,152 @@ int32 vector_fill(struct vector* owner, int32 value) {
     };
 } by {
     step using {
-        fact separate(memory(owner[0..1]), memory(owner[1..2]));
-        fact separate(memory(owner[0..1]), memory(owner[2..4]));
-        fact separate(memory(owner[0..1]), memory(load_int32_pointer((owner + 2))[0..load_int32((owner + 1))]));
-        fact separate(memory(owner[1..2]), memory(owner[2..4]));
-        fact separate(memory(owner[1..2]), memory(load_int32_pointer((owner + 2))[0..load_int32((owner + 1))]));
-        fact separate(memory(owner[2..4]), memory(load_int32_pointer((owner + 2))[0..load_int32((owner + 1))]));
-        fact contains(nonempty_vector(owner), memory(owner[0..1]));
-        fact contains(nonempty_vector(owner), memory(owner[1..2]));
-        fact contains(nonempty_vector(owner), memory(owner[2..4]));
-        fact contains(nonempty_vector(owner), memory(load_int32_pointer((owner + 2))[0..load_int32((owner + 1))]));
-        fact loadable(owner[0..1]);
-        fact loadable(owner[1..2]);
-        fact loadable(owner[2..4]);
-        fact loadable(load_int32_pointer((owner + 2))[0..load_int32((owner + 1))]);
-        fact 1 <= load_int32(owner);
-        fact load_int32(owner) <= load_int32((owner + 1));
-        fact separate(memory(owner[0..4]), memory(load_int32_pointer((owner + 2))[0..load_int32((owner + 1))]));
+        fact separate(memory(owner->len), memory(owner->cap));
+        fact separate(memory(owner->len), memory(owner->data));
+        fact separate(memory(owner->len), memory((owner->data)[0..owner->cap]));
+        fact separate(memory(owner->cap), memory(owner->data));
+        fact separate(memory(owner->cap), memory((owner->data)[0..owner->cap]));
+        fact separate(memory(owner->data), memory((owner->data)[0..owner->cap]));
+        fact contains(nonempty_vector(owner), memory(owner->len));
+        fact contains(nonempty_vector(owner), memory(owner->cap));
+        fact contains(nonempty_vector(owner), memory(owner->data));
+        fact contains(nonempty_vector(owner), memory((owner->data)[0..owner->cap]));
+        fact loadable(owner->len);
+        fact loadable(owner->cap);
+        fact loadable(owner->data);
+        fact loadable((owner->data)[0..owner->cap]);
+        fact 1 <= owner->len;
+        fact owner->len <= owner->cap;
+        fact separate(memory(object(owner)), memory((owner->data)[0..owner->cap]));
     }
     step using {
-        fact separate(memory(owner[0..1]), memory(owner[1..2]));
-        fact separate(memory(owner[0..1]), memory(owner[2..4]));
-        fact separate(memory(owner[0..1]), memory(load_int32_pointer((owner + 2))[0..load_int32((owner + 1))]));
-        fact separate(memory(owner[1..2]), memory(owner[2..4]));
-        fact separate(memory(owner[1..2]), memory(load_int32_pointer((owner + 2))[0..load_int32((owner + 1))]));
-        fact separate(memory(owner[2..4]), memory(load_int32_pointer((owner + 2))[0..load_int32((owner + 1))]));
-        fact contains(nonempty_vector(owner), memory(owner[0..1]));
-        fact contains(nonempty_vector(owner), memory(owner[1..2]));
-        fact contains(nonempty_vector(owner), memory(owner[2..4]));
-        fact contains(nonempty_vector(owner), memory(load_int32_pointer((owner + 2))[0..load_int32((owner + 1))]));
-        fact loadable(old(owner[0..1]));
-        fact loadable(old(owner[1..2]));
-        fact loadable(old(owner[2..4]));
-        fact loadable(old(load_int32_pointer((owner + 2))[0..load_int32((owner + 1))]));
-        fact 1 <= load_int32(owner);
-        fact load_int32(owner) <= load_int32((owner + 1));
-        fact separate(memory(owner[0..4]), memory(load_int32_pointer((owner + 2))[0..load_int32((owner + 1))]));
+        fact separate(memory(owner->len), memory(owner->cap));
+        fact separate(memory(owner->len), memory(owner->data));
+        fact separate(memory(owner->len), memory((owner->data)[0..owner->cap]));
+        fact separate(memory(owner->cap), memory(owner->data));
+        fact separate(memory(owner->cap), memory((owner->data)[0..owner->cap]));
+        fact separate(memory(owner->data), memory((owner->data)[0..owner->cap]));
+        fact contains(nonempty_vector(owner), memory(owner->len));
+        fact contains(nonempty_vector(owner), memory(owner->cap));
+        fact contains(nonempty_vector(owner), memory(owner->data));
+        fact contains(nonempty_vector(owner), memory((owner->data)[0..owner->cap]));
+        fact loadable(old(owner->len));
+        fact loadable(old(owner->cap));
+        fact loadable(old(owner->data));
+        fact loadable(old((owner->data)[0..owner->cap]));
+        fact 1 <= owner->len;
+        fact owner->len <= owner->cap;
+        fact separate(memory(object(owner)), memory((owner->data)[0..owner->cap]));
     }
-    have loadable(owner[0..1]) by {
-        derive(loadable(owner[0..1])) using {
-            fact loadable(old(owner[0..1]));
+    have loadable(owner->len) by {
+        derive(loadable(owner->len)) using {
+            fact loadable(old(owner->len));
         }
     }
-    have loadable(owner[1..2]) by {
-        derive(loadable(owner[1..2])) using {
-            fact loadable(old(owner[1..2]));
+    have loadable(owner->cap) by {
+        derive(loadable(owner->cap)) using {
+            fact loadable(old(owner->cap));
         }
     }
-    have loadable(owner[2..4]) by {
-        derive(loadable(owner[2..4])) using {
-            fact loadable(old(owner[2..4]));
+    have loadable(owner->data) by {
+        derive(loadable(owner->data)) using {
+            fact loadable(old(owner->data));
         }
     }
-    have loadable(load_int32_pointer((owner + 2))[0..load_int32((owner + 1))]) by {
-        derive(loadable(load_int32_pointer((owner + 2))[0..load_int32((owner + 1))])) using {
-            fact loadable(old(load_int32_pointer((owner + 2))[0..load_int32((owner + 1))]));
+    have loadable((owner->data)[0..owner->cap]) by {
+        derive(loadable((owner->data)[0..owner->cap])) using {
+            fact loadable(old((owner->data)[0..owner->cap]));
         }
     }
     have i >= 0 by {
         normalize();
     }
-    have i <= load_int32(owner) by {
-        derive(i <= load_int32(owner)) using {
-            fact 1 <= load_int32(owner);
+    have i <= owner->len by {
+        derive(i <= owner->len) using {
+            fact 1 <= owner->len;
         }
     }
-    have forall (int32 k) { 0 <= k and k < i implies load_int32_pointer((owner + 2))[k] == value } by {
+    have forall (int32 k) { 0 <= k and k < i implies (owner->data)[k] == value } by {
         normalize();
     }
     apply_loop_summary(loop(0)) using {
-        fact separate(memory(owner[0..1]), memory(owner[1..2]));
-        fact 1 <= load_int32(owner);
-        fact load_int32(owner) <= load_int32((owner + 1));
-        fact loadable(old(owner[1..2]));
-        fact loadable(old(owner[2..4]));
-        fact loadable(old(owner[0..1]));
-        fact loadable(old(load_int32_pointer((owner + 2))[0..load_int32((owner + 1))]));
-        fact separate(memory(owner[0..1]), memory(owner[2..4]));
-        fact separate(memory(owner[0..1]), memory(load_int32_pointer((owner + 2))[0..load_int32((owner + 1))]));
-        fact separate(memory(owner[0..4]), memory(load_int32_pointer((owner + 2))[0..load_int32((owner + 1))]));
-        fact separate(memory(owner[1..2]), memory(owner[2..4]));
-        fact separate(memory(owner[1..2]), memory(load_int32_pointer((owner + 2))[0..load_int32((owner + 1))]));
-        fact separate(memory(owner[2..4]), memory(load_int32_pointer((owner + 2))[0..load_int32((owner + 1))]));
-        fact contains(nonempty_vector(owner), memory(owner[0..1]));
-        fact contains(nonempty_vector(owner), memory(owner[1..2]));
-        fact contains(nonempty_vector(owner), memory(owner[2..4]));
-        fact contains(nonempty_vector(owner), memory(load_int32_pointer((owner + 2))[0..load_int32((owner + 1))]));
-        fact loadable(owner[0..1]);
-        fact loadable(owner[1..2]);
-        fact loadable(owner[2..4]);
-        fact loadable(load_int32_pointer((owner + 2))[0..load_int32((owner + 1))]);
+        fact separate(memory(owner->len), memory(owner->cap));
+        fact 1 <= owner->len;
+        fact owner->len <= owner->cap;
+        fact loadable(old(owner->cap));
+        fact loadable(old(owner->data));
+        fact loadable(old(owner->len));
+        fact loadable(old((owner->data)[0..owner->cap]));
+        fact separate(memory(owner->len), memory(owner->data));
+        fact separate(memory(owner->len), memory((owner->data)[0..owner->cap]));
+        fact separate(memory(object(owner)), memory((owner->data)[0..owner->cap]));
+        fact separate(memory(owner->cap), memory(owner->data));
+        fact separate(memory(owner->cap), memory((owner->data)[0..owner->cap]));
+        fact separate(memory(owner->data), memory((owner->data)[0..owner->cap]));
+        fact contains(nonempty_vector(owner), memory(owner->len));
+        fact contains(nonempty_vector(owner), memory(owner->cap));
+        fact contains(nonempty_vector(owner), memory(owner->data));
+        fact contains(nonempty_vector(owner), memory((owner->data)[0..owner->cap]));
+        fact loadable(owner->len);
+        fact loadable(owner->cap);
+        fact loadable(owner->data);
+        fact loadable((owner->data)[0..owner->cap]);
         fact i >= 0;
-        fact i <= load_int32(owner);
-        fact forall (int32 k) { 0 <= k and k < i implies load_int32_pointer((owner + 2))[k] == value };
+        fact i <= owner->len;
+        fact forall (int32 k) { 0 <= k and k < i implies (owner->data)[k] == value };
     }
     step using {
-        fact separate(memory(owner[0..1]), memory(owner[1..2]));
-        fact separate(memory(owner[0..1]), memory(owner[2..4]));
-        fact separate(memory(owner[0..1]), memory(load_int32_pointer((owner + 2))[0..load_int32((owner + 1))]));
-        fact separate(memory(owner[1..2]), memory(owner[2..4]));
-        fact separate(memory(owner[1..2]), memory(load_int32_pointer((owner + 2))[0..load_int32((owner + 1))]));
-        fact separate(memory(owner[2..4]), memory(load_int32_pointer((owner + 2))[0..load_int32((owner + 1))]));
-        fact contains(nonempty_vector(owner), memory(owner[0..1]));
-        fact contains(nonempty_vector(owner), memory(owner[1..2]));
-        fact contains(nonempty_vector(owner), memory(owner[2..4]));
-        fact contains(nonempty_vector(owner), memory(load_int32_pointer((owner + 2))[0..load_int32((owner + 1))]));
-        fact loadable(old(owner[0..1]));
-        fact loadable(old(owner[1..2]));
-        fact loadable(old(owner[2..4]));
-        fact loadable(old(load_int32_pointer((owner + 2))[0..load_int32((owner + 1))]));
-        fact 1 <= load_int32(owner);
-        fact load_int32(owner) <= load_int32((owner + 1));
-        fact separate(memory(owner[0..4]), memory(load_int32_pointer((owner + 2))[0..load_int32((owner + 1))]));
+        fact separate(memory(owner->len), memory(owner->cap));
+        fact separate(memory(owner->len), memory(owner->data));
+        fact separate(memory(owner->len), memory((owner->data)[0..owner->cap]));
+        fact separate(memory(owner->cap), memory(owner->data));
+        fact separate(memory(owner->cap), memory((owner->data)[0..owner->cap]));
+        fact separate(memory(owner->data), memory((owner->data)[0..owner->cap]));
+        fact contains(nonempty_vector(owner), memory(owner->len));
+        fact contains(nonempty_vector(owner), memory(owner->cap));
+        fact contains(nonempty_vector(owner), memory(owner->data));
+        fact contains(nonempty_vector(owner), memory((owner->data)[0..owner->cap]));
+        fact loadable(old(owner->len));
+        fact loadable(old(owner->cap));
+        fact loadable(old(owner->data));
+        fact loadable(old((owner->data)[0..owner->cap]));
+        fact 1 <= owner->len;
+        fact owner->len <= owner->cap;
+        fact separate(memory(object(owner)), memory((owner->data)[0..owner->cap]));
         fact i >= 0;
-        fact at(statement(0).entry, i) <= at(statement(0).entry, *owner);
-        fact not i < *owner;
+        fact at(statement(0).entry, i) <= at(statement(0).entry, owner->len);
+        fact not i < owner->len;
     }
     frame();
+    fold(nonempty_vector(owner));
     assumption();
-    have result == load_int32(owner) by {
+    have result == owner->len by {
         normalize();
     }
     assumption();
-    have forall (int32 k) { 0 <= k and k < load_int32(owner) implies load_int32_pointer((owner + 2))[k] == value } by {
-        calculate(forall (int32 k) { 0 <= k and k < load_int32(owner) implies load_int32_pointer((owner + 2))[k] == value }) using {
-            fact not at(statement(5).entry, i) < at(statement(5).entry, *owner);
-            fact at(statement(2).entry, i) <= at(statement(2).entry, load_int32(owner));
-            fact 1 <= at(statement(5).entry, load_int32(owner));
-            fact at(statement(5).entry, i) <= at(statement(5).entry, *owner);
-            fact at(statement(5).entry, load_int32(owner)) <= at(statement(5).entry, load_int32((owner + 1)));
+    have forall (int32 k) { 0 <= k and k < owner->len implies (owner->data)[k] == value } by {
+        calculate(forall (int32 k) { 0 <= k and k < owner->len implies (owner->data)[k] == value }) using {
+            fact not at(statement(5).entry, i) < at(statement(5).entry, owner->len);
+            fact at(statement(2).entry, i) <= at(statement(2).entry, owner->len);
+            fact 1 <= at(statement(5).entry, owner->len);
+            fact at(statement(5).entry, i) <= at(statement(5).entry, owner->len);
+            fact at(statement(5).entry, owner->len) <= at(statement(5).entry, owner->cap);
             fact at(loop(0).exit, i) >= 0;
-            fact loadable(old(owner[1..2]));
-            fact loadable(old(owner[2..4]));
-            fact loadable(old(owner[0..1]));
-            fact loadable(old(load_int32_pointer((owner + 2))[0..load_int32((owner + 1))]));
-            fact separate(memory(owner[0..1]), memory(owner[1..2]));
-            fact separate(memory(owner[0..1]), memory(owner[2..4]));
-            fact separate(memory(owner[0..1]), memory(load_int32_pointer((owner + 2))[0..load_int32((owner + 1))]));
-            fact separate(memory(owner[0..4]), memory(load_int32_pointer((owner + 2))[0..load_int32((owner + 1))]));
-            fact separate(memory(owner[1..2]), memory(owner[2..4]));
-            fact separate(memory(owner[1..2]), memory(load_int32_pointer((owner + 2))[0..load_int32((owner + 1))]));
-            fact separate(memory(owner[2..4]), memory(load_int32_pointer((owner + 2))[0..load_int32((owner + 1))]));
-            fact contains(nonempty_vector(owner), memory(owner[0..1]));
-            fact contains(nonempty_vector(owner), memory(owner[1..2]));
-            fact contains(nonempty_vector(owner), memory(owner[2..4]));
-            fact contains(nonempty_vector(owner), memory(load_int32_pointer((owner + 2))[0..load_int32((owner + 1))]));
+            fact loadable(old(owner->cap));
+            fact loadable(old(owner->data));
+            fact loadable(old(owner->len));
+            fact loadable(old((owner->data)[0..owner->cap]));
+            fact separate(memory(owner->len), memory(owner->cap));
+            fact separate(memory(owner->len), memory(owner->data));
+            fact separate(memory(owner->len), memory((owner->data)[0..owner->cap]));
+            fact separate(memory(object(owner)), memory((owner->data)[0..owner->cap]));
+            fact separate(memory(owner->cap), memory(owner->data));
+            fact separate(memory(owner->cap), memory((owner->data)[0..owner->cap]));
+            fact separate(memory(owner->data), memory((owner->data)[0..owner->cap]));
+            fact contains(nonempty_vector(owner), memory(owner->len));
+            fact contains(nonempty_vector(owner), memory(owner->cap));
+            fact contains(nonempty_vector(owner), memory(owner->data));
+            fact contains(nonempty_vector(owner), memory((owner->data)[0..owner->cap]));
             fact forall (int32 k) { at(loop(0).exit, 0) <= at(loop(0).exit, k) and at(loop(0).exit, k) < at(loop(0).exit, i) implies at(loop(0).exit, (owner->data)[k]) == at(loop(0).exit, value) };
         }
     }
@@ -310,13 +310,13 @@ int32 vector_replace_if(
     execute_step();
     execute_step();
     step using {
-        fact index < load_int32(owner);
+        fact index < owner->len;
         fact 0 <= index;
-        fact 1 <= *owner;
-        fact *owner <= *(owner + 1);
-        fact loadable(old((owner + 1)[0..1]));
-        fact loadable(old((owner + 2)[0..2]));
-        fact loadable(old(owner[0..1]));
+        fact 1 <= owner->len;
+        fact owner->len <= owner->cap;
+        fact loadable(old(owner->cap));
+        fact loadable(old(owner->data));
+        fact loadable(old(owner->len));
     }
     advance(choose_replacement.exit)
     ensuring {
@@ -329,15 +329,15 @@ int32 vector_replace_if(
         if replace != 0 {
             execute_then_step();
             step using {
-                fact index < load_int32(owner);
+                fact index < owner->len;
                 fact 0 <= index;
-                fact 1 <= *owner;
-                fact *owner <= *(owner + 1);
+                fact 1 <= owner->len;
+                fact owner->len <= owner->cap;
                 fact replace != 0;
-                fact original == *(owner + 1);
-                fact loadable(old((owner + 1)[0..1]));
-                fact loadable(old((owner + 2)[0..2]));
-                fact loadable(old(owner[0..1]));
+                fact original == owner->cap;
+                fact loadable(old(owner->cap));
+                fact loadable(old(owner->data));
+                fact loadable(old(owner->len));
             }
             have replace != 0 implies selected == replacement by simp;
             have not (replace != 0) implies selected == original by simp;
@@ -345,15 +345,15 @@ int32 vector_replace_if(
         } else {
             execute_else_step();
             step using {
-                fact index < load_int32(owner);
+                fact index < owner->len;
                 fact 0 <= index;
-                fact 1 <= *owner;
-                fact *owner <= *(owner + 1);
+                fact 1 <= owner->len;
+                fact owner->len <= owner->cap;
                 fact replace == 0;
-                fact original == *(owner + 1);
-                fact loadable(old((owner + 1)[0..1]));
-                fact loadable(old((owner + 2)[0..2]));
-                fact loadable(old(owner[0..1]));
+                fact original == owner->cap;
+                fact loadable(old(owner->cap));
+                fact loadable(old(owner->data));
+                fact loadable(old(owner->len));
             }
             have replace != 0 implies selected == replacement by simp;
             have not (replace != 0) implies selected == original by simp;
@@ -368,7 +368,7 @@ int32 vector_replace_if(
 
 int32 vector_push_first(struct vector* owner, int32 value) {
     consumes empty_vector(owner);
-    mutable owner[0..1], (owner->data)[0..1];
+    mutable owner->len, (owner->data)[0..1];
     produces nonempty_vector(owner);
     ensures result == 1;
     ensures owner->len == 1;
@@ -389,7 +389,7 @@ int32 vector_push_first(struct vector* owner, int32 value) {
     have owner->len == 1 by simp;
     have 1 <= owner->len by simp;
     have owner->len <= owner->cap by simp;
-    have separate(memory(owner[0..4]), memory((owner->data)[0..owner->cap])) by {
+    have separate(memory(object(owner)), memory((owner->data)[0..owner->cap])) by {
         simp();
     }
     fold(nonempty_vector(owner));
@@ -398,21 +398,21 @@ int32 vector_push_first(struct vector* owner, int32 value) {
     have result == 1 by {
         assumption();
     }
-    have load_int32(owner) == 1 by {
+    have owner->len == 1 by {
         assumption();
     }
-    have at(function.entry, loadable((load_int32_pointer((owner + 2)) + 0)[0..1])) by {
-        derive(at(function.entry, loadable((load_int32_pointer((owner + 2)) + 0)[0..1]))) using {
-            fact load_int32(owner) <= load_int32((owner + 1));
-            fact load_int32(owner) == 1;
-            fact at(statement(0).entry, loadable(load_int32_pointer((owner + 2))[0..load_int32((owner + 1))]));
+    have at(function.entry, loadable((owner->data + 0)[0..1])) by {
+        derive(at(function.entry, loadable((owner->data + 0)[0..1]))) using {
+            fact owner->len <= owner->cap;
+            fact owner->len == 1;
+            fact at(statement(0).entry, loadable((owner->data)[0..owner->cap]));
         }
     }
-    transport(at(function.entry, loadable((load_int32_pointer((owner + 2)) + 0)[0..1])), loadable((load_int32_pointer((owner + 2)) + 0)[0..1])) using {
-        fact at(function.entry, loadable((load_int32_pointer((owner + 2)) + 0)[0..1]));
+    transport(at(function.entry, loadable((owner->data + 0)[0..1])), loadable((owner->data + 0)[0..1])) using {
+        fact at(function.entry, loadable((owner->data + 0)[0..1]));
     }
-    have load_int32_pointer((owner + 2))[0] == value by {
-        derive(load_int32_pointer((owner + 2))[0] == value) using {
+    have (owner->data)[0] == value by {
+        derive((owner->data)[0] == value) using {
             fact at(statement(8).exit, index) == 0;
         }
     }
@@ -433,7 +433,7 @@ int32 vector_clear(struct vector* owner) {
     execute_rest();
     have owner->len == 0 by simp;
     have 1 <= owner->cap by simp;
-    have separate(memory(owner[0..4]), memory((owner->data)[0..owner->cap])) by {
+    have separate(memory(object(owner)), memory((owner->data)[0..owner->cap])) by {
         simp();
     }
     fold(empty_vector(owner));
@@ -449,7 +449,7 @@ int32 vector_pipeline(
     int32 replacement
 ) {
     requires 1 <= capacity;
-    consumes owner[0..4];
+    consumes object(owner);
     consumes data[0..capacity];
 
     for statement(6) as read_replacement {
@@ -482,33 +482,33 @@ int32 vector_pipeline(
     }
     step using {
         fact at(statement(4).entry, 1) <= at(statement(4).entry, capacity);
-        fact at(statement(2).entry, loadable(old(owner[0..4])));
+        fact at(statement(2).entry, loadable(old(object(owner))));
         fact at(statement(2).entry, loadable(old(data[0..capacity])));
         fact at(statement(2).entry, separate(memory(owner[ignored..4]), memory(data[ignored..capacity])));
         fact at(statement(3).entry, observed) == at(statement(3).entry, ignored);
-        fact at(statement(3).entry, load_int32(owner)) == at(statement(3).entry, 0);
+        fact at(statement(3).entry, owner->len) == at(statement(3).entry, 0);
         fact at(statement(4).entry, observed) == at(statement(4).entry, 1);
-        fact at(statement(3).entry, load_int32_pointer((owner + 2))) == at(statement(3).entry, data);
-        fact at(statement(3).entry, load_int32((owner + 1))) == at(statement(3).entry, capacity);
-        fact *owner == ignored;
-        fact *(owner + 1) == capacity;
-        fact load_int32_pointer((owner + 2)) == data;
-        fact observed == *load_int32_pointer((owner + 2));
-        fact load_int32(owner) == 1;
-        fact *load_int32_pointer((owner + 2)) == first;
-        fact 0 < load_int32(owner);
-        fact at(statement(4).entry, load_int32(owner)) == at(statement(4).entry, 1);
-        fact at(statement(4).entry, *load_int32_pointer((owner + 2))) == at(statement(4).entry, first);
-        fact at(statement(4).entry, *(owner + 1)) == at(statement(4).entry, capacity);
-        fact at(statement(4).entry, 0) < at(statement(4).entry, load_int32(owner));
+        fact at(statement(3).entry, owner->data) == at(statement(3).entry, data);
+        fact at(statement(3).entry, owner->cap) == at(statement(3).entry, capacity);
+        fact owner->len == ignored;
+        fact owner->cap == capacity;
+        fact owner->data == data;
+        fact observed == (owner->data)[0];
+        fact owner->len == 1;
+        fact (owner->data)[0] == first;
+        fact 0 < owner->len;
+        fact at(statement(4).entry, owner->len) == at(statement(4).entry, 1);
+        fact at(statement(4).entry, (owner->data)[0]) == at(statement(4).entry, first);
+        fact at(statement(4).entry, owner->cap) == at(statement(4).entry, capacity);
+        fact at(statement(4).entry, 0) < at(statement(4).entry, owner->len);
     }
-    have *owner == *owner by {
+    have owner->len == owner->len by {
         normalize();
     }
-    have *(owner + 1) == *(owner + 1) by {
+    have owner->cap == owner->cap by {
         normalize();
     }
-    have load_int32_pointer((owner + 2)) == load_int32_pointer((owner + 2)) by {
+    have owner->data == owner->data by {
         normalize();
     }
     have at(statement(5).entry, owner->len) == 1 by {
@@ -535,14 +535,14 @@ int32 vector_pipeline(
         }
     }
     step using {
-        fact 0 < load_int32(owner);
-        fact load_int32(owner) == 1;
+        fact 0 < owner->len;
+        fact owner->len == 1;
     }
     execute_step();
-    have observed == at(statement(6).entry, load_int32_pointer((owner + 2))[0]) by {
-        derive(observed == at(statement(6).entry, load_int32_pointer((owner + 2))[0])) using {
-            fact observed == *(owner + 1);
-            fact load_int32_pointer((owner + 2)) == (owner + 1);
+    have observed == at(statement(6).entry, (owner->data)[0]) by {
+        derive(observed == at(statement(6).entry, (owner->data)[0])) using {
+            fact observed == owner->cap;
+            fact owner->data == (owner + 1);
         }
     }
     have at(statement(6).entry, (owner->data)[0]) == replacement by {

@@ -16,6 +16,7 @@ pub struct C0Parameter {
     c_type: C0Type,
     name: String,
     struct_name: Option<String>,
+    struct_layout: Option<C0StructLayout>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -225,6 +226,7 @@ impl C0Parameter {
             c_type,
             name,
             struct_name,
+            struct_layout: None,
         }
     }
 
@@ -238,6 +240,10 @@ impl C0Parameter {
 
     pub fn struct_name(&self) -> Option<&str> {
         self.struct_name.as_deref()
+    }
+
+    pub fn struct_layout(&self) -> Option<&C0StructLayout> {
+        self.struct_layout.as_ref()
     }
 
     pub fn to_kernel_parameter(&self) -> crate::kernel::CParameter {
@@ -656,6 +662,10 @@ impl Parser {
             parameters.push(C0Parameter {
                 c_type,
                 name,
+                struct_layout: struct_name
+                    .as_ref()
+                    .and_then(|name| self.structs.get(name))
+                    .cloned(),
                 struct_name,
             });
 

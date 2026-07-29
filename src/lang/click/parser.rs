@@ -971,7 +971,9 @@ impl Parser {
         {
             return self.parse_resource_clause();
         }
-        if matches!(self.peek(), Some(Token::Ident(_))) && self.peek_next() == Some(&Token::LParen)
+        if matches!(self.peek(), Some(Token::Ident(_)))
+            && self.peek_ident() != Some("object")
+            && self.peek_next() == Some(&Token::LParen)
         {
             return self.parse_declared_resource_call_with_access(access);
         }
@@ -2126,24 +2128,63 @@ impl Parser {
     }
 
     fn parse_current_contract_segment(&mut self) -> Result<ContractSegment, ClickError> {
-        let base = if matches!(
+        if self.peek_ident() == Some("object") && self.peek_next() == Some(&Token::LParen) {
+            self.position += 2;
+            let expression = self.parse_contract_expression()?;
+            self.expect(Token::RParen)?;
+            let base = contract_expression_as_c_fragment(&expression).ok_or_else(|| {
+                self.error("`object(...)` expects a current C struct pointer expression")
+            })?;
+            let CExpression::Variable(base_name) = &base else {
+                return Err(self
+                    .error("`object(...)` currently expects a named C struct pointer parameter"));
+            };
+            let struct_name = self.current_struct_params.get(base_name).ok_or_else(|| {
+                self.error(format!(
+                    "`object({base_name})` requires `{base_name}` to be a C struct pointer"
+                ))
+            })?;
+            let layout = self.struct_layouts.get(struct_name).ok_or_else(|| {
+                self.error(format!(
+                    "`object({base_name})` has no imported layout for `struct {struct_name}`"
+                ))
+            })?;
+            if layout.size_bytes() % 4 != 0 {
+                return Err(self.error(format!(
+                    "`object({base_name})` cannot represent the {}-byte `struct {struct_name}` as an int32-aligned memory segment",
+                    layout.size_bytes()
+                )));
+            }
+            return Ok(ContractSegment {
+                state: ContractSegmentState::Current,
+                base,
+                start: CExpression::Value(int32(0)),
+                end: CExpression::Value(int32(layout.size_bytes() / 4)),
+                surface: ContractSegmentSurface::Object(struct_name.clone()),
+            });
+        }
+        let (surface_base, base) = if matches!(
             self.peek_ident(),
             Some("load_int32" | "load_uint8" | "load_int32_pointer" | "load_uint8_pointer")
         ) && self.peek_next() == Some(&Token::LParen)
         {
             let expression = self.parse_contract_primary()?;
-            contract_expression_as_c_fragment(&expression).ok_or_else(|| {
+            let base = contract_expression_as_c_fragment(&expression).ok_or_else(|| {
                 self.error("memory segment base must be a current C pointer expression")
-            })?
+            })?;
+            (expression, base)
         } else if self.peek() == Some(&Token::LParen) {
             self.position += 1;
             let expression = self.parse_contract_expression()?;
             self.expect(Token::RParen)?;
-            contract_expression_as_c_fragment(&expression).ok_or_else(|| {
+            let base = contract_expression_as_c_fragment(&expression).ok_or_else(|| {
                 self.error("memory segment base must be a current C pointer expression")
-            })?
+            })?;
+            (expression, base)
         } else {
-            self.parse_ensure_primary()?.to_kernel_expression()
+            let expression = self.parse_ensure_primary()?;
+            let base = expression.to_kernel_expression();
+            (ContractExpression::CFragment(base.clone()), base)
         };
         if self.peek() == Some(&Token::Arrow) {
             self.position += 1;
@@ -2164,6 +2205,11 @@ impl Parser {
             base,
             start,
             end,
+            surface: ContractSegmentSurface::Range {
+                base: surface_base,
+                start: start_expression,
+                end: end_expression,
+            },
         })
     }
 
@@ -2178,6 +2224,7 @@ impl Parser {
                 base,
                 start: CExpression::Value(int32(0)),
                 end: CExpression::Value(int32(1)),
+                surface: ContractSegmentSurface::Field(field_name.to_string()),
             });
         };
         Ok(ContractSegment {
@@ -2185,6 +2232,7 @@ impl Parser {
             base,
             start: CExpression::Value(int32(field.offset_bytes / 4)),
             end: CExpression::Value(int32((field.offset_bytes + field.byte_width) / 4)),
+            surface: ContractSegmentSurface::Field(field_name.to_string()),
         })
     }
 
@@ -2414,6 +2462,7 @@ impl Parser {
                 Some(Token::Arrow) => {
                     self.position += 1;
                     let field_name = self.expect_ident("field name")?;
+                    let surface_base = expression.clone();
                     let Some(base) = contract_expression_as_c_fragment(&expression) else {
                         return Err(
                             self.error("field access is only supported on current C fragments")
@@ -2426,14 +2475,20 @@ impl Parser {
                             self.resolve_struct_field_metadata(base_struct_name, &field_name)?;
                         let pointer = self.offset_field_pointer(base, field.offset_bytes);
                         struct_name = field.struct_name;
-                        expression = ContractExpression::CFragment(CExpression::TypedLoad {
-                            pointer: Box::new(pointer),
-                            value_type: field.c_type.to_kernel_type(),
-                        });
+                        expression = ContractExpression::Field {
+                            base: Box::new(surface_base),
+                            field: field_name,
+                            lowered: CExpression::TypedLoad {
+                                pointer: Box::new(pointer),
+                                value_type: field.c_type.to_kernel_type(),
+                            },
+                        };
                     } else {
-                        expression = ContractExpression::CFragment(
-                            self.resolve_field_load(base, &field_name)?,
-                        );
+                        expression = ContractExpression::Field {
+                            base: Box::new(surface_base),
+                            field: field_name.clone(),
+                            lowered: self.resolve_field_load(base, &field_name)?,
+                        };
                     }
                 }
                 _ => return Ok(expression),

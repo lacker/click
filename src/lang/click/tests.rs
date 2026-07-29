@@ -1,3 +1,4 @@
+use super::diagnostics::describe_contract_expression;
 use super::*;
 use crate::kernel::int32;
 
@@ -198,6 +199,11 @@ fn parses_checked_signature_and_contract_clauses() {
                 base: CExpression::Variable("p".to_string()),
                 start: CExpression::Value(int32(0)),
                 end: CExpression::Value(int32(3)),
+                surface: ContractSegmentSurface::Range {
+                    base: current_var("p"),
+                    start: current_int(0),
+                    end: current_int(3),
+                },
             }))
         ]
     );
@@ -468,6 +474,83 @@ fn surface_synthesis_qualifies_a_c_local_named_result() {
 }
 
 #[test]
+fn surface_synthesis_prefers_struct_field_places_to_typed_loads() {
+    let function = syntax::parse_function(
+        r#"
+            struct vector {
+                int32 len;
+                int32 cap;
+                int32* data;
+            };
+            int32 vector_len(struct vector* owner) {
+                return owner->len;
+            }
+        "#,
+    )
+    .expect("struct parameter layout should parse");
+    let owner = Pointer {
+        block: "arg-memory".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let proposition = Proposition::ConditionIs(
+        ConditionTerm::Bitvector32Equal(
+            Box::new(Bitvector32Term::MemoryLoad(
+                Box::new(CMemory::new()),
+                Box::new(owner.clone()),
+            )),
+            Box::new(Bitvector32Term::Constant(0)),
+        ),
+        true,
+    );
+    let surface = synthesize_surface_proposition(
+        &proposition,
+        function.parameters(),
+        &[CExpression::Value(CValue::Pointer(owner.clone()))],
+        &CState::new(),
+    )
+    .expect("known struct field load should have a surface spelling");
+    let ClickProposition::Comparison { left, .. } = surface else {
+        panic!("expected a comparison spelling");
+    };
+    assert!(matches!(
+        &left,
+        ContractExpression::Field { field, .. } if field == "len"
+    ));
+    assert_eq!(describe_contract_expression(&left), "owner->len");
+
+    let data_pointer =
+        Bitvector32Term::MemoryLoad(Box::new(CMemory::new()), Box::new(owner.offset_by_bytes(8)));
+    let first_data_cell = Pointer {
+        block: "arg-memory".into(),
+        offset: PointerOffsetTerm::Int32Scaled {
+            value: Box::new(data_pointer),
+            byte_width: 4,
+        },
+    };
+    let proposition = Proposition::ConditionIs(
+        ConditionTerm::Bitvector32Equal(
+            Box::new(Bitvector32Term::MemoryLoad(
+                Box::new(CMemory::new()),
+                Box::new(first_data_cell),
+            )),
+            Box::new(Bitvector32Term::Constant(0)),
+        ),
+        true,
+    );
+    let surface = synthesize_surface_proposition(
+        &proposition,
+        function.parameters(),
+        &[CExpression::Value(CValue::Pointer(owner))],
+        &CState::new(),
+    )
+    .expect("indexed pointer field load should have a surface spelling");
+    let ClickProposition::Comparison { left, .. } = surface else {
+        panic!("expected a comparison spelling");
+    };
+    assert_eq!(describe_contract_expression(&left), "owner->data[0]");
+}
+
+#[test]
 fn proof_source_printing_preserves_proposition_precedence() {
     let comparison = |operator, value| ClickProposition::Comparison {
         left: current_var("x"),
@@ -644,6 +727,11 @@ fn parses_loadable_segment_syntax() {
                 base: CExpression::Variable("p".to_string()),
                 start: CExpression::Value(int32(0)),
                 end: CExpression::Variable("n".to_string()),
+                surface: ContractSegmentSurface::Range {
+                    base: current_var("p"),
+                    start: current_int(0),
+                    end: current_var("n"),
+                },
             },
         }]
     );
@@ -673,6 +761,14 @@ fn parses_loadable_pointer_base_segment() {
                 ),
                 start: CExpression::Value(int32(0)),
                 end: CExpression::Value(int32(1)),
+                surface: ContractSegmentSurface::Range {
+                    base: ContractExpression::Add(
+                        Box::new(current_var("p")),
+                        Box::new(current_int(1)),
+                    ),
+                    start: current_int(0),
+                    end: current_int(1),
+                },
             },
         }]
     );
@@ -722,6 +818,14 @@ fn parses_loadable_segment_proposition() {
                     ),
                     start: CExpression::Value(int32(0)),
                     end: CExpression::Variable("n".to_string()),
+                    surface: ContractSegmentSurface::Range {
+                        base: ContractExpression::Add(
+                            Box::new(current_var("p")),
+                            Box::new(current_int(1)),
+                        ),
+                        start: current_int(0),
+                        end: current_var("n"),
+                    },
                 },
             },
             Requirement::Proposition(ClickProposition::PredicateCall {
@@ -878,15 +982,17 @@ fn parses_pilot_struct_pointer_signature_and_field_load() {
                 base: CExpression::Variable("obj".to_string()),
                 start: CExpression::Value(int32(0)),
                 end: CExpression::Value(int32(1)),
+                surface: ContractSegmentSurface::Field("ref_count".to_string()),
             },
         }]
     );
     assert!(matches!(
         function.ensures()[0].ensure(),
         Ensure::Proposition(ClickProposition::Comparison { right, .. })
-            if right == &ContractExpression::CFragment(
-                CExpression::Load(Box::new(CExpression::Variable("obj".to_string())))
-        )
+            if matches!(
+                right,
+                ContractExpression::Field { field, .. } if field == "ref_count"
+            )
     ));
 }
 
@@ -923,31 +1029,58 @@ fn parses_chained_struct_fields_with_imported_pointee_types() {
         panic!("expected comparison ensure")
     };
 
+    assert_eq!(
+        super::diagnostics::describe_contract_expression(right),
+        "root->child->value"
+    );
     assert!(matches!(
         right,
-        ContractExpression::CFragment(CExpression::TypedLoad {
-            pointer,
-            value_type: CType::Int32,
-        }) if matches!(
-            pointer.as_ref(),
-            CExpression::PointerOffsetBytes {
-                pointer: child,
-                bytes: 4,
-            } if matches!(
-                child.as_ref(),
-                CExpression::TypedLoad {
-                    pointer,
-                    value_type: CType::Int32Pointer,
-                } if matches!(
-                    pointer.as_ref(),
-                    CExpression::PointerOffsetBytes {
-                        bytes: 8,
-                        ..
-                    }
-                )
-            )
-        )
+        ContractExpression::Field {
+            field,
+            ..
+        } if field == "value"
     ));
+}
+
+#[test]
+fn parses_struct_object_segments_without_exposing_layout_cells() {
+    let c_source = r#"
+        struct vector {
+            int32 len;
+            int32 cap;
+            int32* data;
+        };
+
+        int32 initialize(struct vector* owner) {
+            return 0;
+        }
+    "#;
+    let click_source = r#"
+        verifying "initialize.c";
+
+        int32 initialize(struct vector* owner) {
+            consumes object(owner);
+            produces object(owner);
+            ensures separate(memory(object(owner)), memory((owner->data)[0..owner->cap]));
+        }
+    "#;
+    let file = parse_c0_click_file(click_source, &[("initialize.c", c_source)])
+        .expect("whole struct objects should have a source-level segment spelling");
+    let function = &file.function_blocks()[0];
+    let Requirement::Resource(ResourceClause::Write(segment)) = &function.requires()[0] else {
+        panic!("expected an owned object requirement")
+    };
+
+    assert_eq!(
+        super::diagnostics::describe_contract_segment(segment),
+        "object(owner)"
+    );
+    assert_eq!(segment.start, CExpression::Value(int32(0)));
+    assert_eq!(segment.end, CExpression::Value(int32(4)));
+    assert_eq!(
+        segment.surface,
+        ContractSegmentSurface::Object("vector".to_string())
+    );
 }
 
 #[test]
@@ -971,6 +1104,7 @@ fn parses_pilot_struct_field_mutable_effect() {
             base: CExpression::Variable("obj".to_string()),
             start: CExpression::Value(int32(0)),
             end: CExpression::Value(int32(1)),
+            surface: ContractSegmentSurface::Field("ref_count".to_string()),
         }])
     );
 }
@@ -1258,6 +1392,11 @@ fn parses_composite_resource_definition() {
                 base: CExpression::Variable("flag".to_string()),
                 start: CExpression::Value(int32(0)),
                 end: CExpression::Value(int32(1)),
+                surface: ContractSegmentSurface::Range {
+                    base: current_var("flag"),
+                    start: current_int(0),
+                    end: current_int(1),
+                },
             })
         ]
     );
@@ -1342,6 +1481,11 @@ fn parses_resource_verb_function_clauses() {
                 base: CExpression::Variable("flag".to_string()),
                 start: CExpression::Value(int32(0)),
                 end: CExpression::Value(int32(1)),
+                surface: ContractSegmentSurface::Range {
+                    base: current_var("flag"),
+                    start: current_int(0),
+                    end: current_int(1),
+                },
             })),
             Requirement::Resource(ResourceClause::Declared {
                 access: ResourceAccessMode::View,
@@ -1369,6 +1513,11 @@ fn parses_resource_verb_function_clauses() {
                     base: CExpression::Variable("flag".to_string()),
                     start: CExpression::Value(int32(0)),
                     end: CExpression::Value(int32(1)),
+                    surface: ContractSegmentSurface::Range {
+                        base: current_var("flag"),
+                        start: current_int(0),
+                        end: current_int(1),
+                    },
                 })),
                 proof: Proof::Default,
             },
@@ -4391,7 +4540,7 @@ fn source_expander_lowers_smart_simp_after_unfold_inside_have() {
 }
 
 #[test]
-fn source_expander_preserves_pointer_spelling_inside_smart_have() {
+fn source_expander_preserves_pointer_field_spelling_inside_smart_have() {
     let c_source = r#"
             struct holder {
                 int32* data;
@@ -4406,7 +4555,7 @@ fn source_expander_preserves_pointer_spelling_inside_smart_have() {
 
             int32 holder_zero(struct holder* owner, int32 data[]) {
                 requires owner->data == data;
-                views owner[0..2];
+                views object(owner);
                 immutable;
                 ensures result == 0;
             } by {
@@ -4437,7 +4586,7 @@ fn source_expander_preserves_pointer_spelling_inside_smart_have() {
         expand_c0_tactic_source_at(click_source, &[("holder.c", c_source)], line, column)
             .expect("the pointer-valued smart have should expand");
     assert!(
-        expanded.contains("have load_int32_pointer(owner) == data by {"),
+        expanded.contains("have owner->data == data by {"),
         "{expanded}"
     );
     assert!(expanded.contains("assumption();"), "{expanded}");
@@ -4469,8 +4618,9 @@ fn source_expander_spells_an_indexed_load_through_a_pointer_field() {
                 int32 value
             ) {
                 requires owner->data == data;
+                requires separate(memory(object(owner)), memory(data[1..2]));
                 requires second_is(owner, value);
-                views owner[0..2];
+                views object(owner);
                 views data[1..2];
                 immutable;
                 ensures result == 0;
@@ -4502,10 +4652,7 @@ fn source_expander_spells_an_indexed_load_through_a_pointer_field() {
     let expanded =
         expand_c0_tactic_source_at(click_source, &[("holder.c", c_source)], line, column)
             .expect("the indexed pointer-field fact should have a surface spelling");
-    assert!(
-        expanded.contains("load_int32_pointer(owner)[1] == value"),
-        "{expanded}"
-    );
+    assert!(expanded.contains("owner->data[1] == value"), "{expanded}");
     verify_c0_sources(&expanded, &[("holder.c", c_source)])
         .expect("the indexed pointer-field expansion should replay");
 }

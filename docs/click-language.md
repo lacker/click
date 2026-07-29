@@ -7,8 +7,12 @@ Terminology:
 - **Surface Click** is the user-written `.click` language described here.
 - **C fragments** are pieces of C0 syntax inside Surface Click, such as
   `p[k]`, `x + 1`, and `result == n`.
-- **Kernel Click** is the explicit proof core produced by elaboration. Users
-  normally do not write it directly.
+- **Kernel Click** is the internal, typed proof core produced by elaboration.
+  It has no `.click` concrete syntax and is never emitted as proof text.
+
+Surface Click is closed under expansion: every expression printed by
+`click-expand`, the profiler, or a diagnostic is ordinary documented `.click`
+syntax accepted by the same parser. Generated text is not a private dialect.
 
 ## File Shape
 
@@ -624,9 +628,32 @@ fields. The C side lowers chained `obj->child->field` loads and stores at
 LP64-aligned byte offsets while retaining intermediate struct-pointer types.
 Click contracts can use field places in resources:
 `views obj->field` and `owns obj->field`. The access resource also makes the
-field loadable for symbolic execution. Explicit ranges such as
-`owns owner[0..3]` are still available for broader footprints. A pointer
-field occupies two int32 cells in that range spelling.
+field loadable for symbolic execution.
+
+Use `object(obj)` for the complete storage of a struct object:
+
+```click
+consumes object(owner);
+fact separate(memory(object(owner)), memory((owner->data)[0..owner->cap]));
+```
+
+`object(owner)` is layout-aware: it denotes the imported C struct's aligned
+size without exposing byte offsets or pretending that a pointer field is a
+pair of source-level `int32` fields. Use `owner->field` for one field and
+`object(owner)` for the complete object. Explicit ranges such as
+`p[0..count]` remain the normal spelling for array storage.
+
+Surface Click also has documented low-level memory reads for addresses that do
+not have a recoverable C source place:
+
+- `load_int32(pointer)` and `load_uint8(pointer)`
+- `load_int32_pointer(pointer)` and `load_uint8_pointer(pointer)`
+- `byte_offset(pointer, bytes)`
+
+These are Surface Click escape hatches, not Kernel Click syntax. The canonical
+renderer prefers `owner->field` whenever imported layout provenance identifies
+the address. Expansion may emit a low-level read only when no source field
+place is available.
 
 Concrete folds are unrolled. Symbolic folds remain `RangeFold` value terms in
 the kernel and can be reasoned about by supported fold laws.

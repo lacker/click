@@ -39,13 +39,17 @@ Click has three layers:
 
 - **C0**: the C-like code being verified.
 - **Surface Click**: the user-written sidecar language.
-- **Kernel Click**: the explicit internal proof representation.
+- **Kernel Click**: the explicit internal proof representation. It has no
+  user-facing textual syntax.
 
 Most users write Surface Click and C fragments. Contributors sometimes need the
 Kernel Click model, especially when changing lowering, loop invariants, pure
 functions, or `old(...)`.
 
 The core representation reference explains that lower layer in detail.
+Tools never ask users to copy that representation into a sidecar:
+`click-expand` and diagnostics render documented Surface Click, and their
+output is expected to round-trip through the normal parser.
 
 ## Why This Exists
 

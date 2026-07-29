@@ -300,6 +300,14 @@ impl Assumptions {
         {
             self = self.assume_condition(ConditionTerm::equal(left, right), value);
         }
+        if let ConditionTerm::PointerEqual(left, right) = &condition
+            && left.block == right.block
+        {
+            self = self.assume_condition(
+                ConditionTerm::pointer_offset_equal(left.offset.clone(), right.offset.clone()),
+                value,
+            );
+        }
         self.condition_facts.insert(condition, value);
         self
     }
@@ -676,6 +684,9 @@ impl Assumptions {
         &self,
         term: &Bitvector32Term,
     ) -> Bitvector32Term {
+        if let Some(value) = self.bitvector_constant_from_direct_equalities(term) {
+            return Bitvector32Term::Constant(value);
+        }
         match term {
             Bitvector32Term::Constant(value) => Bitvector32Term::Constant(*value),
             Bitvector32Term::Variable(variable) => Bitvector32Term::Variable(*variable),
@@ -2809,10 +2820,13 @@ impl Assumptions {
             Proposition::And(left, right) => self.proves(left) && self.proves(right),
             Proposition::Or(left, right) => self.proves(left) || self.proves(right),
             Proposition::Not(body) => self.proves_not(body),
-            Proposition::Implies(left, right) => self
-                .clone()
-                .assume_proposition(left.as_ref().clone())
-                .proves(right),
+            Proposition::Implies(left, right) => {
+                self.proves_not(left)
+                    || self
+                        .clone()
+                        .assume_proposition(left.as_ref().clone())
+                        .proves(right)
+            }
             Proposition::ForAll {
                 var,
                 sort: Sort::CInt32,

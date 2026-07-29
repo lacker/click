@@ -27,7 +27,7 @@ resource owned_split_buffer(owner: struct owned_split_buffer*) {
     fact 0 <= owner->split;
     fact owner->split <= owner->len;
     fact separate(
-        memory(owner[0..4]),
+        memory(object(owner)),
         memory((owner->data)[0..owner->len])
     );
 }
@@ -47,9 +47,9 @@ int32 owned_split_buffer_init(
 ) {
     requires 0 <= split;
     requires split <= length;
-    consumes owner[0..4];
+    consumes object(owner);
     consumes data[0..length];
-    mutable owner[0..4];
+    mutable object(owner);
     produces owned_split_buffer(owner);
     ensures result == split;
     ensures owner->split == split;
@@ -102,24 +102,24 @@ int32 owned_split_buffer_set_right(
 } by {
     unfold(owned_split_buffer(owner));
     step using {
-        fact load_int32(owner) <= index;
-        fact index < load_int32((owner + 1));
-        fact loadable(owner[0..1]);
-        fact loadable((owner + 1)[0..1]);
-        fact loadable((owner + 2)[0..2]);
-        fact 0 <= load_int32(owner);
-        fact load_int32(owner) <= load_int32((owner + 1));
-        fact separate(memory(owner[0..4]), memory(load_int32_pointer((owner + 2))[0..load_int32((owner + 1))]));
+        fact owner->split <= index;
+        fact index < owner->len;
+        fact loadable(owner->split);
+        fact loadable(owner->len);
+        fact loadable(owner->data);
+        fact 0 <= owner->split;
+        fact owner->split <= owner->len;
+        fact separate(memory(object(owner)), memory((owner->data)[0..owner->len]));
     }
     step using {
-        fact load_int32(owner) <= index;
-        fact index < load_int32((owner + 1));
-        fact loadable(old(owner[0..1]));
-        fact loadable(old((owner + 1)[0..1]));
-        fact loadable(old((owner + 2)[0..2]));
-        fact 0 <= load_int32(owner);
-        fact load_int32(owner) <= load_int32((owner + 1));
-        fact separate(memory(owner[0..4]), memory(load_int32_pointer((owner + 2))[0..load_int32((owner + 1))]));
+        fact owner->split <= index;
+        fact index < owner->len;
+        fact loadable(old(owner->split));
+        fact loadable(old(owner->len));
+        fact loadable(old(owner->data));
+        fact 0 <= owner->split;
+        fact owner->split <= owner->len;
+        fact separate(memory(object(owner)), memory((owner->data)[0..owner->len]));
     }
     fold(owned_split_buffer(owner));
     have index < index + 1 by { simp(); }
@@ -142,7 +142,7 @@ int32 owned_split_buffer_move_right(struct owned_split_buffer* owner) {
     have 0 <= owner->split by { simp(); }
     have owner->split <= owner->len by { simp(); }
     have separate(
-        memory(owner[0..4]),
+        memory(object(owner)),
         memory((owner->data)[0..owner->len])
     ) by {
         simp();
@@ -171,7 +171,7 @@ int32 owned_split_buffer_pipeline(
     int32 right_value
 ) {
     requires 2 <= length;
-    consumes owner[0..4];
+    consumes object(owner);
     consumes data[0..length];
     produces owned_split_buffer(owner);
     ensures owner->split == 2;
@@ -183,53 +183,53 @@ int32 owned_split_buffer_pipeline(
 } by {
     step using {
         fact 2 <= length;
-        fact loadable(owner[0..4]);
+        fact loadable(object(owner));
         fact loadable(data[0..length]);
-        fact separate(memory(owner[0..4]), memory(data[0..length]));
+        fact separate(memory(object(owner)), memory(data[0..length]));
     }
     step using {
         fact 2 <= length;
-        fact loadable(old(owner[0..4]));
+        fact loadable(old(object(owner)));
         fact loadable(old(data[0..length]));
         fact separate(memory(owner[ignored..4]), memory(data[ignored..length]));
     }
     step using {
         fact 2 <= length;
-        fact loadable(old(owner[0..4]));
+        fact loadable(old(object(owner)));
         fact loadable(old(data[0..length]));
         fact separate(memory(owner[ignored..4]), memory(data[ignored..length]));
     }
     step using {
         fact 2 <= length;
-        fact loadable(old(owner[0..4]));
+        fact loadable(old(object(owner)));
         fact loadable(old(data[0..length]));
         fact separate(memory(owner[read_value..4]), memory(data[read_value..length]));
         fact ignored == 1;
-        fact *owner == 1;
-        fact *(owner + 1) == length;
-        fact load_int32_pointer((owner + 2)) == data;
+        fact owner->split == 1;
+        fact owner->len == length;
+        fact owner->data == data;
     }
-    have *owner == *owner by {
+    have owner->split == owner->split by {
         normalize();
     }
-    have *(owner + 1) == *(owner + 1) by {
+    have owner->len == owner->len by {
         normalize();
     }
-    have load_int32_pointer((owner + 2)) == load_int32_pointer((owner + 2)) by {
+    have owner->data == owner->data by {
         normalize();
     }
-    transport(at(statement(3).entry, *owner) == 1, *owner == 1) using {
-        fact at(statement(3).entry, *owner) == 1;
+    transport(at(statement(3).entry, owner->split) == 1, owner->split == 1) using {
+        fact at(statement(3).entry, owner->split) == 1;
         fact 2 <= length;
-        fact at(statement(3).entry, load_int32_pointer((owner + 2))) == data;
+        fact at(statement(3).entry, owner->data) == data;
     }
-    transport(at(statement(3).entry, *(owner + 1)) == length, *(owner + 1) == length) using {
-        fact at(statement(3).entry, *(owner + 1)) == length;
+    transport(at(statement(3).entry, owner->len) == length, owner->len == length) using {
+        fact at(statement(3).entry, owner->len) == length;
         fact 2 <= length;
-        fact at(statement(3).entry, load_int32_pointer((owner + 2))) == data;
+        fact at(statement(3).entry, owner->data) == data;
     }
-    transport(at(statement(3).entry, load_int32_pointer((owner + 2))) == data, load_int32_pointer((owner + 2)) == data) using {
-        fact at(statement(3).entry, load_int32_pointer((owner + 2))) == data;
+    transport(at(statement(3).entry, owner->data) == data, owner->data == data) using {
+        fact at(statement(3).entry, owner->data) == data;
         fact 2 <= length;
     }
     have owner->data == data by {
@@ -237,44 +237,44 @@ int32 owned_split_buffer_pipeline(
     }
     have data[0] == left_value by {
         derive(data[0] == left_value) using {
-            fact at(statement(4).entry, *load_int32_pointer((owner + 2))) == at(statement(4).entry, left_value);
-            fact load_int32_pointer((owner + 2)) == data;
+            fact at(statement(4).entry, (owner->data)[0]) == at(statement(4).entry, left_value);
+            fact owner->data == data;
         }
     }
-    have 1 < load_int32((owner + 1)) by {
-        calculate(1 < *(owner + 1)) using {
+    have 1 < owner->len by {
+        calculate(1 < owner->len) using {
             fact 2 <= length;
             fact ignored == left_value;
-            fact *(owner + 1) == length;
-            fact *(owner + 1) == *(owner + 1);
-            fact *owner == 1;
-            fact *owner == *owner;
+            fact owner->len == length;
+            fact owner->len == owner->len;
+            fact owner->split == 1;
+            fact owner->split == owner->split;
             fact data[0] == left_value;
-            fact load_int32_pointer((owner + 2)) == data;
-            fact loadable(old(owner[0..4]));
+            fact owner->data == data;
+            fact loadable(old(object(owner)));
         }
     }
     step using {
-        fact 1 < load_int32((owner + 1));
+        fact 1 < owner->len;
         fact 2 <= length;
         fact ignored == left_value;
-        fact *(owner + 1) == length;
-        fact *owner == 1;
+        fact owner->len == length;
+        fact owner->split == 1;
         fact data[0] == left_value;
-        fact load_int32_pointer((owner + 2)) == data;
-        fact loadable(old(owner[0..4]));
-        fact *owner == *owner;
-        fact *(owner + 1) == *(owner + 1);
-        fact separate(memory(owner[0..4]), memory(data[0..length]));
+        fact owner->data == data;
+        fact loadable(old(object(owner)));
+        fact owner->split == owner->split;
+        fact owner->len == owner->len;
+        fact separate(memory(object(owner)), memory(data[0..length]));
     }
-    transport(at(statement(4).entry, load_int32_pointer((owner + 2))) == data, load_int32_pointer((owner + 2)) == data) using {
-        fact at(statement(4).entry, load_int32_pointer((owner + 2))) == data;
+    transport(at(statement(4).entry, owner->data) == data, owner->data == data) using {
+        fact at(statement(4).entry, owner->data) == data;
         fact 2 <= length;
     }
-    transport(at(statement(4).entry, 1) < at(statement(4).entry, *(owner + 1)), 1 < *(owner + 1)) using {
-        fact at(statement(4).entry, 1) < at(statement(4).entry, *(owner + 1));
-        fact load_int32_pointer((owner + 2)) == data;
-        fact separate(memory(owner[0..4]), memory(data[0..length]));
+    transport(at(statement(4).entry, 1) < at(statement(4).entry, owner->len), 1 < owner->len) using {
+        fact at(statement(4).entry, 1) < at(statement(4).entry, owner->len);
+        fact owner->data == data;
+        fact separate(memory(object(owner)), memory(data[0..length]));
         fact 2 <= length;
     }
     have data[0] == left_value by {
@@ -282,31 +282,31 @@ int32 owned_split_buffer_pipeline(
     }
     have data[1] == right_value by {
         derive(data[1] == right_value) using {
-            fact at(statement(5).entry, *(load_int32_pointer((owner + 2)) + 1)) == at(statement(5).entry, right_value);
-            fact load_int32_pointer((owner + 2)) == data;
+            fact at(statement(5).entry, *(owner->data + 1)) == at(statement(5).entry, right_value);
+            fact owner->data == data;
         }
     }
-    have load_int32(owner) < load_int32((owner + 1)) by {
-        derive(load_int32(owner) < load_int32((owner + 1))) using {
-            fact 1 < *(owner + 1);
-            fact *owner == 1;
+    have owner->split < owner->len by {
+        derive(owner->split < owner->len) using {
+            fact 1 < owner->len;
+            fact owner->split == 1;
         }
     }
     step using {
-        fact load_int32(owner) < load_int32((owner + 1));
+        fact owner->split < owner->len;
         fact 2 <= length;
-        fact loadable(owner[0..4]);
-        fact *(owner + 1) == length;
-        fact load_int32_pointer((owner + 2)) == data;
+        fact loadable(object(owner));
+        fact owner->len == length;
+        fact owner->data == data;
         fact data[0] == left_value;
         fact data[1] == right_value;
-        fact separate(memory(owner[0..4]), memory(data[0..length]));
+        fact separate(memory(object(owner)), memory(data[0..length]));
     }
-    have load_int32_pointer((owner + 2)) == data by {
-        derive(load_int32_pointer((owner + 2)) == data) using {
-            fact load_int32_pointer((owner + 2)) == at(statement(4).entry, load_int32_pointer((owner + 2)));
-            fact at(statement(4).entry, load_int32_pointer((owner + 2))) == at(statement(3).entry, load_int32_pointer((owner + 2)));
-            fact at(statement(3).entry, load_int32_pointer((owner + 2))) == at(statement(3).entry, data);
+    have owner->data == data by {
+        derive(owner->data == data) using {
+            fact owner->data == at(statement(4).entry, owner->data);
+            fact at(statement(4).entry, owner->data) == at(statement(3).entry, owner->data);
+            fact at(statement(3).entry, owner->data) == at(statement(3).entry, data);
         }
     }
     have data[0] == left_value by {
@@ -346,7 +346,7 @@ int32 owned_split_buffer_pipeline(
     }
     step using {
         fact 1 < owner->split;
-        fact loadable(owner[0..4]);
+        fact loadable(object(owner));
         fact owner->split == 2;
         fact owner->len == length;
         fact owner->data == data;
@@ -370,8 +370,8 @@ int32 owned_split_buffer_pipeline(
     }
     have read_value == data[1] by {
         derive(read_value == data[1]) using {
-            fact at(statement(7).entry, read_value) == at(statement(7).entry, *(load_int32_pointer((owner + 2)) + 1));
-            fact load_int32_pointer((owner + 2)) == data;
+            fact at(statement(7).entry, read_value) == at(statement(7).entry, *(owner->data + 1));
+            fact owner->data == data;
         }
     }
     apply(int32_equality_transitive(

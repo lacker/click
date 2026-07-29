@@ -1400,6 +1400,42 @@ pub fn c_function_entry_state(
     bind_c_function_arguments(caller_state, function, &values)
 }
 
+/// Produces the exact callee entry state used by contract verification.
+///
+/// In particular, composite resource requirements are expanded to their
+/// canonical contained resources. Proof replay and independent whole-function
+/// certification must use this same boundary state when certifying reusable
+/// rules.
+pub fn c_function_contract_entry_state(
+    caller_state: &CState,
+    function: &CFunction,
+    arguments: &[CExpression],
+    assumptions: &Assumptions,
+) -> Result<CState, String> {
+    let values = arguments
+        .iter()
+        .map(|argument| match argument {
+            CExpression::Value(value) => Some(value.clone()),
+            _ => None,
+        })
+        .collect::<Option<Vec<_>>>()
+        .ok_or_else(|| "contract entry arguments must be concrete symbolic values".to_string())?;
+    let mut budget = ExecutionBudget::default();
+    match prepare_function_contract_entry_state_with_values(
+        caller_state,
+        function,
+        &values,
+        assumptions,
+        &mut budget,
+    ) {
+        Ok(Ok(state)) => Ok(state),
+        Ok(Err(error)) => Err(format!("could not prepare contract resources: {error:?}")),
+        Err(limit) => Err(format!(
+            "contract resource preparation hit execution limit {limit:?}"
+        )),
+    }
+}
+
 pub fn c_function_outcome_from_statement_outcome(
     caller_state: &CState,
     function: &CFunction,
@@ -1969,9 +2005,10 @@ fn symbolic_c_statement_execution_with_loop_rule(
     paths: Vec<CStatementExecutionPath>,
 ) -> (SymbolicCExecution, Option<CVerifiedLoopRule>) {
     let loop_rule = (matches!(statement, CStatement::While { .. })
-        && paths
-            .iter()
-            .all(|path| path.obligations.iter().all(ProofObligation::is_assumable)))
+        && paths.iter().all(|path| {
+            matches!(path.outcome, CStatementOutcome::Normal(_))
+                && path.obligations.iter().all(ProofObligation::is_assumable)
+        }))
     .then(|| CVerifiedLoopRule {
         symbolic_entry_state: state.clone(),
         loop_statement: statement.clone(),
@@ -2147,9 +2184,32 @@ pub fn prove_symbolic_c_function_execution_paths_with_environment_and_budget(
     assumptions: Assumptions,
     environment: CExecutionEnvironment,
     execution_semantics: CExecutionSemantics,
-    mut budget: ExecutionBudget,
+    budget: ExecutionBudget,
 ) -> SymbolicCExecution {
-    let paths = match execute_c_function_paths(
+    prove_symbolic_c_function_execution_paths_with_environment_and_budget_mode(
+        state,
+        function,
+        arguments,
+        assumptions,
+        environment,
+        execution_semantics,
+        budget,
+        false,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn prove_symbolic_c_function_execution_paths_with_environment_and_budget_mode(
+    state: CState,
+    function: CFunction,
+    arguments: Vec<CExpression>,
+    assumptions: Assumptions,
+    environment: CExecutionEnvironment,
+    execution_semantics: CExecutionSemantics,
+    mut budget: ExecutionBudget,
+    prepare_contract_resources: bool,
+) -> SymbolicCExecution {
+    let paths = match execute_c_function_paths_with_contract_resources(
         &state,
         &function,
         &arguments,
@@ -2157,6 +2217,7 @@ pub fn prove_symbolic_c_function_execution_paths_with_environment_and_budget(
         &environment,
         execution_semantics,
         &mut budget,
+        prepare_contract_resources,
     ) {
         Ok(paths) => paths,
         Err(limit) => {
@@ -2335,7 +2396,7 @@ pub fn prove_c_function_contract_execution_paths_with_environment(
                     )
                 }
                 CFunctionContractExecutionMode::ExecuteLoops => {
-                    prove_symbolic_c_function_execution_paths_with_environment_and_budget(
+                    prove_symbolic_c_function_execution_paths_with_environment_and_budget_mode(
                         state,
                         function,
                         arguments,
@@ -2343,6 +2404,7 @@ pub fn prove_c_function_contract_execution_paths_with_environment(
                         environment,
                         execution_semantics,
                         ExecutionBudget::default(),
+                        true,
                     )
                 }
             }
@@ -3006,21 +3068,21 @@ struct CertifiedFunctionClaimPath {
 fn prepare_function_claim_path(
     function: &CFunction,
     path: &SymbolicCExecutionPath,
-) -> Option<CertifiedFunctionClaimPath> {
+) -> Result<CertifiedFunctionClaimPath, String> {
     let Some((caller_state, arguments, outcome, assumptions)) =
         certified_function_path_parts(function, path)
     else {
-        return None;
+        return Err("the certified path does not belong to the exact function".to_string());
     };
     let CFunctionOutcome::Return {
         value,
         state: return_state,
     } = outcome
     else {
-        return None;
+        return Err(format!("the certified path does not return: {outcome:?}"));
     };
     let Some(mut entry_state) = c_function_entry_state(caller_state, function, arguments) else {
-        return None;
+        return Err("the function entry state cannot be reconstructed".to_string());
     };
     let mut budget = ExecutionBudget::default();
     let Ok(Ok(required_resources)) = evaluate_function_resource_context(
@@ -3029,7 +3091,7 @@ fn prepare_function_claim_path(
         &assumptions,
         &mut budget,
     ) else {
-        return None;
+        return Err("the required resource context cannot be evaluated".to_string());
     };
     let Some((_, definition_facts)) = expand_all_composite_resource_facts_and_propositions(
         &required_resources,
@@ -3037,7 +3099,7 @@ fn prepare_function_claim_path(
         entry_state.memory(),
         &assumptions,
     ) else {
-        return None;
+        return Err("the required composite resources cannot be expanded".to_string());
     };
     let assumptions = assumptions_with_propositions(&assumptions, &definition_facts);
     let Some(entry_resources) = expand_all_composite_resource_facts(
@@ -3046,10 +3108,10 @@ fn prepare_function_claim_path(
         entry_state.memory(),
         &assumptions,
     ) else {
-        return None;
+        return Err("the entry resource context cannot be expanded".to_string());
     };
     let Ok(resource_facts) = entry_resources.observable_facts(&assumptions) else {
-        return None;
+        return Err("the entry resource context is not observable".to_string());
     };
     entry_state.resources = entry_resources.clone();
     let assumptions = assumptions_with_propositions(&assumptions, &resource_facts);
@@ -3059,10 +3121,10 @@ fn prepare_function_claim_path(
         return_state.memory(),
         &assumptions,
     ) else {
-        return None;
+        return Err("the returned resource context cannot be expanded".to_string());
     };
     let Ok(post_resource_facts) = post_resources.observable_facts(&assumptions) else {
-        return None;
+        return Err("the returned resource context is not observable".to_string());
     };
     let assumptions = assumptions_with_propositions(&assumptions, &post_resource_facts);
     let mut post_state = entry_state
@@ -3084,10 +3146,10 @@ fn prepare_function_claim_path(
             );
         proved
     }) {
-        return None;
+        return Err("the execution path has an unproved verification condition".to_string());
     }
 
-    Some(CertifiedFunctionClaimPath {
+    Ok(CertifiedFunctionClaimPath {
         caller_state: caller_state.clone(),
         return_state: return_state.clone(),
         entry_state,
@@ -3260,7 +3322,8 @@ pub fn c_verified_function_contract_claims(
         .paths()
         .iter()
         .map(|path| prepare_function_claim_path(function, path))
-        .collect::<Option<Vec<_>>>()?;
+        .collect::<Result<Vec<_>, _>>()
+        .ok()?;
     function
         .contract_claims()
         .iter()
@@ -3274,6 +3337,44 @@ pub fn c_verified_function_contract_claims(
                 })
         })
         .collect()
+}
+
+/// Reports the exact contract claims that the checked execution frontier does
+/// not establish. This is diagnostic information only: unlike the companion
+/// certification API, it cannot mint proof objects.
+///
+/// `None` means the frontier itself is incomplete or could not be prepared for
+/// claim checking. An empty vector means every claim holds.
+pub fn c_unverified_function_contract_claims(
+    function: &CFunction,
+    contract_execution: &CFunctionContractExecution,
+) -> Result<Vec<CFunctionContractClaimKey>, String> {
+    let execution = &contract_execution.execution;
+    if let Some(limit) = execution.limit() {
+        return Err(format!("symbolic execution reached its {limit:?} limit"));
+    }
+    if execution.paths().is_empty() {
+        return Err("symbolic execution produced no paths".to_string());
+    }
+    let paths = execution
+        .paths()
+        .iter()
+        .enumerate()
+        .map(|(index, path)| {
+            prepare_function_claim_path(function, path)
+                .map_err(|reason| format!("execution path {index} is invalid: {reason}"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(function
+        .contract_claims()
+        .iter()
+        .filter(|claim| {
+            !paths
+                .iter()
+                .all(|path| function_claim_holds_on_prepared_path(function, claim, path))
+        })
+        .map(|claim| claim.key().clone())
+        .collect())
 }
 
 /// Certifies one contract claim only after a kernel-produced complete

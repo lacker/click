@@ -8,7 +8,8 @@ is the mental model agents should use when changing lowering code.
 Click has three layers:
 
 1. **Kernel Click**: pure, explicit specification values and propositions sent
-   to the kernel.
+   to the kernel. It is a Rust data model, not a textual language users can
+   place in a `.click` file.
 2. **Surface Click**: user-written `.click` syntax such as `requires`,
    `ensures`, `invariant`, `old`, pure functions, predicates, quantifiers,
    and folds.
@@ -18,6 +19,12 @@ Click has three layers:
 Surface Click is convenience syntax. It may contain C fragments, but Surface
 Click owns their meaning and elaborates everything into Kernel Click over
 explicit memory states.
+
+Expansion travels in the other direction only through retained surface
+provenance and a canonical Surface Click renderer. It must never pretty-print
+the kernel data model directly. Consequently, output from expansion and
+diagnostics is part of the public Surface Click language and must parse again
+with the ordinary parser.
 
 ## Surface Versus Core
 

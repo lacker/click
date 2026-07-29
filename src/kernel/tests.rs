@@ -2184,6 +2184,68 @@ fn assumptions_do_not_prove_implication_by_treating_unknown_antecedent_as_false(
 }
 
 #[test]
+fn assumptions_prove_implication_with_refuted_antecedent() {
+    let x = Bitvector32Term::Variable(Variable(91));
+    let condition = ConditionTerm::equal(x, Bitvector32Term::Constant(0));
+    let assumptions = Assumptions::new().assume_condition(condition.clone(), true);
+    let antecedent = Proposition::ConditionIs(condition, false);
+    let consequent = Proposition::ConditionIs(
+        ConditionTerm::equal(
+            Bitvector32Term::Variable(Variable(92)),
+            Bitvector32Term::Constant(7),
+        ),
+        true,
+    );
+
+    assert!(assumptions.proves(&Proposition::Implies(
+        Box::new(antecedent),
+        Box::new(consequent),
+    )));
+}
+
+#[test]
+fn assumptions_simplify_overflow_through_equality_chain() {
+    let index = Bitvector32Term::Variable(Variable(91));
+    let length = Bitvector32Term::Variable(Variable(92));
+    let assumptions = Assumptions::new()
+        .assume_condition(ConditionTerm::equal(index.clone(), length.clone()), true)
+        .assume_condition(
+            ConditionTerm::equal(length, Bitvector32Term::Constant(0)),
+            true,
+        );
+
+    assert_eq!(
+        assumptions.decide(&ConditionTerm::signed_add_overflows(
+            index,
+            Bitvector32Term::Constant(1),
+        )),
+        Some(false),
+    );
+}
+
+#[test]
+fn same_block_pointer_equality_transports_through_equal_offsets() {
+    let left = Pointer {
+        block: "shared".into(),
+        offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(91)), 4),
+    };
+    let right = Pointer {
+        block: "shared".into(),
+        offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(92)), 4),
+    };
+    let assumptions = Assumptions::new().assume_condition(
+        ConditionTerm::pointer_equal(left.clone(), right.clone()),
+        true,
+    );
+
+    assert!(pointers_proven_equal_for_memory_resolution(
+        &left.offset_by_int32_elements(Bitvector32Term::Constant(1)),
+        &right.offset_by_int32_elements(Bitvector32Term::Constant(1)),
+        &assumptions,
+    ));
+}
+
+#[test]
 fn builtin_obligation_solver_discharges_concrete_invariant() {
     let pointer = Pointer {
         block: "block".into(),

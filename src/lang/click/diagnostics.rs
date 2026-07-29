@@ -546,12 +546,24 @@ pub(super) fn describe_c_value(
 }
 
 pub(super) fn describe_contract_segment(segment: &ContractSegment) -> String {
-    let current = format!(
-        "{}[{}..{}]",
-        describe_c_expression(&segment.base),
-        describe_c_expression(&segment.start),
-        describe_c_expression(&segment.end)
-    );
+    let base = describe_c_expression(&segment.base);
+    let current = match &segment.surface {
+        ContractSegmentSurface::Range { base, start, end } => {
+            let rendered_base = describe_contract_expression(base);
+            let rendered_base = if matches!(base, ContractExpression::Field { .. }) {
+                format!("({rendered_base})")
+            } else {
+                rendered_base
+            };
+            format!(
+                "{rendered_base}[{}..{}]",
+                describe_contract_expression(start),
+                describe_contract_expression(end)
+            )
+        }
+        ContractSegmentSurface::Field(field) => format!("{base}->{field}"),
+        ContractSegmentSurface::Object(_) => format!("object({base})"),
+    };
     match segment.state {
         ContractSegmentState::Current => current,
         ContractSegmentState::Old => format!("old({current})"),
@@ -657,6 +669,9 @@ pub(super) fn describe_binary_c_expression(
 pub(super) fn describe_contract_expression(expression: &ContractExpression) -> String {
     match expression {
         ContractExpression::CFragment(expression) => describe_c_expression(expression),
+        ContractExpression::Field { base, field, .. } => {
+            format!("{}->{field}", describe_contract_expression(base))
+        }
         ContractExpression::CBinding(name) => format!("c({name})"),
         ContractExpression::Old(expression) => {
             format!("old({})", describe_contract_expression(expression))
