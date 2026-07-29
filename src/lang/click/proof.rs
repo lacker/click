@@ -20490,6 +20490,12 @@ fn fold_composite_resources_on_outcome(
             })?;
             if !exact_fact_is_available(&required, available_pure_facts)
                 && !matches!(normalize_proposition(&required), SimpProposition::True)
+                // An available fact may spell the same body fact through
+                // loads at an earlier snapshot; the bounded derivation
+                // prover bridges those spellings deterministically.
+                && assumptions_from_propositions(available_pure_facts)
+                    .derive_atomic_proposition(&required)
+                    .is_none()
             {
                 let resources = match &outcome {
                     CFunctionOutcome::Return { state, .. } => state.resources().facts(),
