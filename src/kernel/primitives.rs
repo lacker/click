@@ -2685,6 +2685,31 @@ impl ResourceContext {
         Ok(context)
     }
 
+    /// Extends a context whose validity has already been checked, validating
+    /// only pairs that contain at least one newly added fact.
+    pub(super) fn try_compose_into_valid_context_delaying_normalization(
+        mut self,
+        facts: impl IntoIterator<Item = CResourceFact>,
+        assumptions: &Assumptions,
+    ) -> Result<Self, ResourceContextValidityError> {
+        let first_new = self.facts.len();
+        self.facts.extend(facts);
+        for right_index in first_new..self.facts.len() {
+            let right = &self.facts[right_index];
+            for left in &self.facts[..right_index] {
+                if left.family() != right.family() {
+                    continue;
+                }
+                if let Some(error) = resource_family_algebra(left.family())
+                    .pair_validity_error(left, right, assumptions)
+                {
+                    return Err(error);
+                }
+            }
+        }
+        Ok(self)
+    }
+
     pub fn facts(&self) -> &[CResourceFact] {
         &self.facts
     }
@@ -2768,6 +2793,9 @@ impl ResourceContext {
     }
 
     pub fn satisfies_fact(&self, fact: &CResourceFact, assumptions: &Assumptions) -> bool {
+        if self.facts.contains(fact) {
+            return true;
+        }
         self.facts
             .iter()
             .any(|available| resource_fact_entails(available, fact, assumptions))
@@ -3267,6 +3295,13 @@ pub(super) fn memory_range_covers(
     }
     if let Some(covers) = memory_range_structurally_covers(available, required) {
         return covers;
+    }
+    if super::assumptions::memory_range_contained_for_memory_resolution(
+        required,
+        available,
+        assumptions,
+    ) {
+        return true;
     }
     assumptions.range_covered_by_fact_range(
         required,

@@ -476,14 +476,24 @@ fn execute_verified_function_rule(
             };
             obligations.extend(requirement_path.obligations);
             established_requirements.push(requirement_path.proposition.clone());
-            let requirement_is_proven = requirement_assumptions
-                .proves(&requirement_path.proposition)
-                || matches!(
-                    &requirement_path.proposition,
-                    Proposition::ConditionIs(condition, value)
-                        if requirement_assumptions.decide_condition_for_simp(condition)
-                            == Some(*value)
-                );
+            let requirement_is_proven = match &requirement_path.proposition {
+                Proposition::ConditionIs(condition, value) => {
+                    requirement_assumptions.proves_exact(&requirement_path.proposition)
+                        || requirement_assumptions
+                            .has_matching_condition_fact_for_memory_resolution(condition, *value)
+                }
+                Proposition::CResourceSeparate {
+                    left: CResource::Memory(left),
+                    right: CResource::Memory(right),
+                } => {
+                    requirement_assumptions.proves_exact(&requirement_path.proposition)
+                        || requirement_assumptions
+                            .memory_ranges_proven_disjoint_by_explicit_separation_for_memory_resolution(
+                                left, right,
+                            )
+                }
+                proposition => requirement_assumptions.proves_exact(proposition),
+            };
             if !requirement_is_proven {
                 obligations.push(
                     ProofObligation::verification_condition(requirement_path.proposition)
@@ -968,15 +978,12 @@ pub(super) fn expand_composite_resource_fact(
             .collect()
     };
     let mut expanded = context.clone().without_exact_representation(composite)?;
-    let mut missing = Vec::new();
-    for child in children {
-        if expanded.satisfies_fact(&child, assumptions) {
-            continue;
-        }
-        missing.push(child);
-    }
+    let missing = children
+        .into_iter()
+        .filter(|child| !expanded.facts().contains(child))
+        .collect::<Vec<_>>();
     expanded = expanded
-        .try_compose_with_facts_delaying_normalization(missing, assumptions)
+        .try_compose_into_valid_context_delaying_normalization(missing, assumptions)
         .ok()?;
     Some(expanded)
 }

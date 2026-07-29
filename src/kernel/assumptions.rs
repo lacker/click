@@ -4126,6 +4126,10 @@ impl Assumptions {
             return true;
         }
 
+        if self.proves_memory_loadable_for_memory_resolution(memory, base, bytes) {
+            return true;
+        }
+
         self.prop_facts.iter().any(|proposition| {
             let Proposition::CMemoryLoadable {
                 memory: range_memory,
@@ -5523,7 +5527,7 @@ fn memory_range_shallowly_contained(range: &CMemoryRange, parent: &CMemoryRange)
             .is_some_and(|delta| delta >= 0)
 }
 
-fn memory_range_contained_for_memory_resolution(
+pub(super) fn memory_range_contained_for_memory_resolution(
     range: &CMemoryRange,
     parent: &CMemoryRange,
     assumptions: &Assumptions,
