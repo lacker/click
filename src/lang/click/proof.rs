@@ -2769,32 +2769,36 @@ fn proof_site_for_claims(
     })
 }
 
+/// Begins a selected-tactic capture when the probe matches this tactic.
+/// Returns the branch skeleton of the surface tactics recorded so far
+/// (computed before the surface replay is reset), or `None` when no capture
+/// begins. The skeleton is only materialized on the single capturing
+/// iteration, keeping ordinary verification free of that per-tactic cost.
 fn begin_tactic_expansion_capture(
     source_index: usize,
     _tactic: &ProofTactic,
     replay: &mut TacticReplayState,
-) -> bool {
+) -> Option<Vec<ProofTactic>> {
     if SUPPRESS_TACTIC_EXPANSION_CAPTURE.with(std::cell::Cell::get) {
-        return false;
+        return None;
     }
     TACTIC_EXPANSION_PROBE.with(|probe| {
         let mut slot = probe.borrow_mut();
-        let Some(probe) = slot.as_mut() else {
-            return false;
-        };
+        let probe = slot.as_mut()?;
         if probe.active
             || probe.source_index != Some(source_index)
             || replay.proof_site.as_ref() != Some(&probe.site)
         {
-            return false;
+            return None;
         }
         probe.active = true;
+        let branch_skeleton = surface_branch_skeleton(&replay.surface_replay.tactics);
         let last_step_entry = replay.surface_replay.last_step_entry.clone();
         replay.surface_replay = SurfaceReplay {
             last_step_entry,
             ..SurfaceReplay::default()
         };
-        true
+        Some(branch_skeleton)
     })
 }
 
@@ -14275,12 +14279,15 @@ fn replay_linear_tactics(
             && replay.is_at_function_exit()
             && tactic_is_deferred_post_execution(tactic);
         let deferred_region_simp = replay.region_proof && matches!(tactic, ProofTactic::Simp);
-        let pre_capture_branch_skeleton = surface_branch_skeleton(&replay.surface_replay.tactics);
-        let capture_this_tactic = begin_tactic_expansion_capture(source_index, tactic, &mut replay);
-        if capture_this_tactic && deferred_post_execution {
+        let pre_capture_branch_skeleton =
+            begin_tactic_expansion_capture(source_index, tactic, &mut replay);
+        let capture_this_tactic = pre_capture_branch_skeleton.is_some();
+        if let Some(branch_skeleton) = pre_capture_branch_skeleton
+            && deferred_post_execution
+        {
             replay.deferred_tactic_capture = Some(DeferredTacticCapture {
                 tactic_index,
-                branch_skeleton: pre_capture_branch_skeleton,
+                branch_skeleton,
             });
         }
         if !deferred_post_execution {
@@ -14320,13 +14327,13 @@ fn replay_linear_tactics(
                     "`{claim_label}` tactic {tactic_index}: `transport` requires a current statement frontier after at least one execution step"
                 )));
             }
-            let pre_state = replay.execution_start_state(&state).clone();
+            let pre_state = replay.execution_start_state(&state);
             let source = lower_point_proposition(
                 surface_source,
                 &requirement_pure_facts,
                 parsed_function.parameters(),
                 arguments,
-                &pre_state,
+                pre_state,
                 &state,
                 None,
                 &replay.program_point_states,
@@ -14356,7 +14363,7 @@ fn replay_linear_tactics(
                 &requirement_pure_facts,
                 parsed_function.parameters(),
                 arguments,
-                &pre_state,
+                pre_state,
                 &state,
                 None,
                 &replay.program_point_states,
