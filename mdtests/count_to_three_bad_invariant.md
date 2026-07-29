@@ -26,5 +26,5 @@ int32 count_to_three_bad_invariant() {
 ```
 
 ```expect
-fail: loop 0 invariant 0 preservation
+fail: loop 0 invariant bundle preservation
 ```

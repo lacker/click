@@ -24,5 +24,5 @@ int32 for_loop_rejects_declaration() {
 ```
 
 ```expect
-fail: declarations are not supported in for-loop initializer
+fail: for-loop declarations require an initializer
 ```
