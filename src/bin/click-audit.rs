@@ -10,13 +10,11 @@ use std::time::{Duration, Instant};
 
 use click::cli::{
     self, BoundedOutput, ChildOutput, files_with_extension, find_projects, format_duration,
-    parse_duration, read_verifying_sources, run_bounded, source_refs,
+    parse_duration, read_verifying_sources, run_bounded, run_bounded_with_input, source_refs,
 };
-#[cfg(test)]
-use click::lang::click::verify_c0_sources;
 use click::lang::click::{
     C0VerificationSession, SourcePosition, c0_smart_tactic_source_sites, c0_tactic_source_position,
-    expand_c0_tactic_source_at, verifying_source_paths,
+    expand_c0_tactic_source_at, verify_c0_sources, verifying_source_paths,
 };
 
 const DEFAULT_SESSION_LIMIT: Duration = Duration::from_secs(5 * 60);
@@ -26,9 +24,12 @@ const MAX_DIAGNOSTIC_CHARS: usize = 2_000;
 const USAGE: &str = "\
 usage: click-audit [OPTIONS] <example-project|examples-directory>
 
-The audit inventories smart tactics without executing proofs, then verifies,
-expands, and reverifies each selected proof unit in source order. By default it
-stops at the first failure and prints an inclusive --start-at resume command.
+The audit inventories smart tactics without executing proofs, then audits each
+selected site in source order: it expands the site, verifies the rewritten
+proof unit in the retained session, reverifies the rewritten sidecar through
+the normal whole-file entry point, and re-expands the same site requiring
+byte-identical output. By default it stops at the first failure and prints an
+inclusive --start-at resume command.
 
 defaults:
   --session-time-limit 5m     original-sidecar session initialization
@@ -203,6 +204,12 @@ fn run_internal_command(arguments: &[String]) -> Option<Result<(), String>> {
         }
         [command, location] if command == "--internal-expand" => {
             Some(expand_location(location).map(|source| print!("{source}")))
+        }
+        [command, path] if command == "--internal-verify-rewritten" => {
+            Some(verify_rewritten_from_stdin(Path::new(path)))
+        }
+        [command, location] if command == "--internal-reexpand" => {
+            Some(reexpand_from_stdin(location).map(|source| print!("{source}")))
         }
         _ => None,
     }
@@ -384,12 +391,14 @@ fn run_audit(arguments: Arguments) -> Result<(), String> {
             arguments.expansion_limit,
             arguments.verification_limit,
         ) {
-            Ok((expansion_elapsed, verification_elapsed)) => {
+            Ok(timings) => {
                 audited_sites += 1;
                 println!(
-                    "ok (expand {}, verify {})",
-                    format_duration(expansion_elapsed),
-                    format_duration(verification_elapsed)
+                    "ok (expand {}, verify {}, reverify {}, reexpand {})",
+                    format_duration(timings.expansion),
+                    format_duration(timings.session_verification),
+                    format_duration(timings.reverification),
+                    format_duration(timings.reexpansion),
                 );
                 cursor += 1;
             }
@@ -557,12 +566,20 @@ fn shell_quote(word: &str) -> String {
     }
 }
 
+/// Timings for the checks performed on one audited site.
+struct SiteTimings {
+    expansion: Duration,
+    session_verification: Duration,
+    reverification: Duration,
+    reexpansion: Duration,
+}
+
 fn audit_site(
     site: &AuditSite,
     worker: &mut AuditSessionWorker,
     expansion_limit: Duration,
     verification_limit: Duration,
-) -> Result<(Duration, Duration), String> {
+) -> Result<SiteTimings, String> {
     let executable =
         env::current_exe().map_err(|error| format!("failed to locate click-audit: {error}"))?;
     let location = format!(
@@ -589,7 +606,59 @@ fn audit_site(
         .map_err(|error| format!("expanded sidecar did not parse: {}", error.message()))?;
 
     let verification_elapsed = worker.verify(&expanded, site.position, verification_limit)?;
-    Ok((expansion.elapsed, verification_elapsed))
+
+    // Checklist step 6: reverify the rewritten sidecar from normal inputs by
+    // running the whole-file entry point in a fresh process under the
+    // verification time limit.
+    let mut reverification = Command::new(&executable);
+    reverification
+        .arg("--internal-verify-rewritten")
+        .arg(&site.click_path);
+    let reverification = require_success(
+        run_bounded_with_input(
+            reverification,
+            Some(expanded.clone().into_bytes()),
+            verification_limit,
+            "whole-file reverification",
+        )?,
+        verification_limit,
+        "whole-file reverification",
+    )?;
+
+    // Checklist step 7: re-expanding the same site against the rewritten
+    // source must be a fixed point, byte for byte.
+    let mut reexpansion = Command::new(&executable);
+    reexpansion.arg("--internal-reexpand").arg(&location);
+    let reexpansion = require_success(
+        run_bounded_with_input(
+            reexpansion,
+            Some(expanded.clone().into_bytes()),
+            expansion_limit,
+            "re-expansion",
+        )?,
+        expansion_limit,
+        "re-expansion",
+    )?;
+    let reexpanded = String::from_utf8(reexpansion.stdout)
+        .map_err(|error| format!("re-expansion output was not UTF-8: {error}"))?;
+    if reexpanded != expanded {
+        return Err(format!(
+            "re-expansion was not byte-identical to the first rewrite \
+             ({} bytes rewritten, {} bytes re-expanded)",
+            expanded.len(),
+            reexpanded.len()
+        ));
+    }
+
+    // Checklist step 8 (comparing branch/path outcomes between the original
+    // and rewritten proofs) is intentionally not implemented yet.
+
+    Ok(SiteTimings {
+        expansion: expansion.elapsed,
+        session_verification: verification_elapsed,
+        reverification: reverification.elapsed,
+        reexpansion: reexpansion.elapsed,
+    })
 }
 
 fn expand_location(location: &str) -> Result<String, String> {
@@ -599,6 +668,36 @@ fn expand_location(location: &str) -> Result<String, String> {
     let sources = read_verifying_sources(&click_path, &click_source)?;
     let refs = source_refs(&sources);
     expand_c0_tactic_source_at(&click_source, &refs, line, column)
+        .map_err(|error| error.message().to_string())
+}
+
+fn read_stdin_source(label: &str) -> Result<String, String> {
+    let mut source = String::new();
+    std::io::stdin()
+        .read_to_string(&mut source)
+        .map_err(|error| format!("failed to read {label} from stdin: {error}"))?;
+    Ok(source)
+}
+
+/// Checklist step 6 worker: verifies a rewritten sidecar, read from stdin,
+/// through the normal whole-file entry point, resolving its C sources
+/// relative to the original on-disk sidecar path.
+fn verify_rewritten_from_stdin(original_click_path: &Path) -> Result<(), String> {
+    let rewritten = read_stdin_source("rewritten sidecar")?;
+    let sources = read_verifying_sources(original_click_path, &rewritten)?;
+    verify_c0_sources(&rewritten, &source_refs(&sources))
+        .map(|_| ())
+        .map_err(|error| error.message().to_string())
+}
+
+/// Checklist step 7 worker: expands the given source location against a
+/// rewritten sidecar read from stdin, resolving its C sources relative to the
+/// original on-disk sidecar path.
+fn reexpand_from_stdin(location: &str) -> Result<String, String> {
+    let (click_path, line, column) = cli::parse_source_location(location)?;
+    let rewritten = read_stdin_source("rewritten sidecar")?;
+    let sources = read_verifying_sources(&click_path, &rewritten)?;
+    expand_c0_tactic_source_at(&rewritten, &source_refs(&sources), line, column)
         .map_err(|error| error.message().to_string())
 }
 
