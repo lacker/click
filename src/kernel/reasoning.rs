@@ -1,6 +1,90 @@
 use super::prelude::*;
 
-const MEMORY_RESOLUTION_ALIAS_DEPTH_LIMIT: usize = 64;
+pub(super) const MEMORY_RESOLUTION_ALIAS_DEPTH_LIMIT: usize = 64;
+
+/// Budget for the expensive memory-resolution edges: recursive base matching
+/// inside distinctness checks and stored-cell equality scans. The store
+/// provenance these support only needs shallow reasoning, and an unbounded
+/// budget makes the fact-scan leaves combinatorial.
+pub(super) const MEMORY_RESOLUTION_EXPENSIVE_DEPTH_LIMIT: usize = 8;
+
+/// Total node budget for one top-level memory-resolution query. The
+/// resolution helpers are mutually recursive across reasoning.rs and
+/// assumptions.rs, and several fact-scan edges re-enter through depth-0
+/// wrappers, so a per-call depth limit alone cannot bound total work. The
+/// fuel is armed at each public entry point and shared by every recursive
+/// step underneath it, which keeps deep linear chains (repeated loads
+/// through stores) affordable while cutting off exponential branching.
+/// Results stay deterministic because the budget is per query, not global.
+pub(super) const MEMORY_RESOLUTION_NODE_BUDGET: usize = 8_000;
+
+thread_local! {
+    static MEMORY_RESOLUTION_FUEL: std::cell::Cell<Option<usize>> =
+        const { std::cell::Cell::new(None) };
+}
+
+/// Runs `body` with the memory-resolution node budget armed. Nested calls
+/// (a wrapper reached from inside another query) keep the outer budget.
+pub(super) fn with_memory_resolution_fuel<T>(body: impl FnOnce() -> T) -> T {
+    MEMORY_RESOLUTION_FUEL.with(|fuel| {
+        if fuel.get().is_some() {
+            return body();
+        }
+        fuel.set(Some(MEMORY_RESOLUTION_NODE_BUDGET));
+        let result = body();
+        fuel.set(None);
+        result
+    })
+}
+
+/// Consumes one unit of the armed budget. Returns false when the budget is
+/// exhausted; callers must fail their check (never claim a proof) then.
+/// Outside any armed query this is a no-op that returns true.
+pub(super) fn consume_memory_resolution_fuel() -> bool {
+    MEMORY_RESOLUTION_FUEL.with(|fuel| match fuel.get() {
+        None => true,
+        Some(0) => false,
+        Some(remaining) => {
+            fuel.set(Some(remaining - 1));
+            true
+        }
+    })
+}
+
+/// Node budget for one top-level resource containment/separation query.
+/// `proves_resource_separate` scans separation facts, each check running a
+/// containment search that rescans the fact set per visited resource, with
+/// order-graph decisions at the leaves — quartic-shaped work that needs a
+/// hard per-query bound. Armed at the resource-prover entry points.
+pub(super) const RESOURCE_PROVER_NODE_BUDGET: usize = 5_000;
+
+thread_local! {
+    static RESOURCE_PROVER_FUEL: std::cell::Cell<Option<usize>> =
+        const { std::cell::Cell::new(None) };
+}
+
+pub(super) fn with_resource_prover_fuel<T>(body: impl FnOnce() -> T) -> T {
+    RESOURCE_PROVER_FUEL.with(|fuel| {
+        if fuel.get().is_some() {
+            return body();
+        }
+        fuel.set(Some(RESOURCE_PROVER_NODE_BUDGET));
+        let result = body();
+        fuel.set(None);
+        result
+    })
+}
+
+pub(super) fn consume_resource_prover_fuel() -> bool {
+    RESOURCE_PROVER_FUEL.with(|fuel| match fuel.get() {
+        None => true,
+        Some(0) => false,
+        Some(remaining) => {
+            fuel.set(Some(remaining - 1));
+            true
+        }
+    })
+}
 
 pub(super) fn condition_contexts_for_truthiness(
     state: &CState,
@@ -71,7 +155,9 @@ pub(super) fn pointers_proven_distinct_for_memory_resolution(
     right: &Pointer,
     assumptions: &Assumptions,
 ) -> bool {
-    pointers_proven_distinct_for_memory_resolution_with_depth(left, right, assumptions, 0)
+    with_memory_resolution_fuel(|| {
+        pointers_proven_distinct_for_memory_resolution_with_depth(left, right, assumptions, 0)
+    })
 }
 
 fn pointers_proven_distinct_for_memory_resolution_with_depth(
@@ -80,11 +166,18 @@ fn pointers_proven_distinct_for_memory_resolution_with_depth(
     assumptions: &Assumptions,
     depth: usize,
 ) -> bool {
-    if left == right {
+    if left == right
+        || depth > MEMORY_RESOLUTION_ALIAS_DEPTH_LIMIT
+        || !consume_memory_resolution_fuel()
+    {
         return false;
     }
     left.blocks_proven_distinct(right)
-        || assumptions.pointers_proven_disjoint_by_explicit_range_for_memory_resolution(left, right)
+        || assumptions.pointers_proven_disjoint_by_explicit_range_for_memory_resolution_with_depth(
+            left,
+            right,
+            depth + 1,
+        )
         || pointer_offsets_with_common_base_proven_distinct_for_memory_resolution(
             left,
             right,
@@ -115,8 +208,9 @@ fn pointer_offsets_with_common_base_proven_distinct_for_memory_resolution(
     let zero = PointerOffsetTerm::Constant(0);
     let offsets_equal = |left: &PointerOffsetTerm, right: &PointerOffsetTerm| {
         left == right
-            || pointer_offsets_equal_for_memory_resolution(left, right, assumptions, depth + 1)
-                == Some(true)
+            || depth <= MEMORY_RESOLUTION_EXPENSIVE_DEPTH_LIMIT
+                && pointer_offsets_equal_for_memory_resolution(left, right, assumptions, depth + 1)
+                    == Some(true)
     };
     let index_pair = match (&left.offset, &right.offset) {
         (
@@ -175,7 +269,9 @@ pub(super) fn pointers_proven_equal_for_memory_resolution(
     right: &Pointer,
     assumptions: &Assumptions,
 ) -> bool {
-    pointers_proven_equal_for_memory_resolution_with_depth(left, right, assumptions, 0)
+    with_memory_resolution_fuel(|| {
+        pointers_proven_equal_for_memory_resolution_with_depth(left, right, assumptions, 0)
+    })
 }
 
 pub(super) fn pointer_offsets_proven_equal_for_memory_resolution(
@@ -183,17 +279,26 @@ pub(super) fn pointer_offsets_proven_equal_for_memory_resolution(
     right: &PointerOffsetTerm,
     assumptions: &Assumptions,
 ) -> bool {
-    pointer_offsets_equal_for_memory_resolution(left, right, assumptions, 0) == Some(true)
+    with_memory_resolution_fuel(|| {
+        pointer_offsets_equal_for_memory_resolution(left, right, assumptions, 0) == Some(true)
+    })
 }
 
-fn pointers_proven_equal_for_memory_resolution_with_depth(
+pub(super) fn pointers_proven_equal_for_memory_resolution_with_depth(
     left: &Pointer,
     right: &Pointer,
     assumptions: &Assumptions,
     depth: usize,
 ) -> bool {
+    if depth > MEMORY_RESOLUTION_ALIAS_DEPTH_LIMIT || !consume_memory_resolution_fuel() {
+        return false;
+    }
     if left != right
-        && assumptions.pointers_proven_disjoint_by_explicit_range_for_memory_resolution(left, right)
+        && assumptions.pointers_proven_disjoint_by_explicit_range_for_memory_resolution_with_depth(
+            left,
+            right,
+            depth + 1,
+        )
     {
         return false;
     }
@@ -210,13 +315,13 @@ fn pointers_proven_equal_for_memory_resolution_with_depth(
             == Some(true)
 }
 
-fn pointer_offsets_equal_for_memory_resolution(
+pub(super) fn pointer_offsets_equal_for_memory_resolution(
     left: &PointerOffsetTerm,
     right: &PointerOffsetTerm,
     assumptions: &Assumptions,
     depth: usize,
 ) -> Option<bool> {
-    if depth > MEMORY_RESOLUTION_ALIAS_DEPTH_LIMIT {
+    if depth > MEMORY_RESOLUTION_ALIAS_DEPTH_LIMIT || !consume_memory_resolution_fuel() {
         return None;
     }
     if left == right {
@@ -249,7 +354,13 @@ fn bitvector_terms_equal_for_memory_resolution(
     assumptions: &Assumptions,
     depth: usize,
 ) -> bool {
-    if left == right || assumptions.bitvector_terms_equal_from_facts(left, right) {
+    if left == right {
+        return true;
+    }
+    if !consume_memory_resolution_fuel() {
+        return false;
+    }
+    if assumptions.bitvector_terms_equal_from_facts(left, right) {
         return true;
     }
     if [1, 4].into_iter().any(|byte_width| {
@@ -270,14 +381,16 @@ fn bitvector_terms_equal_for_memory_resolution(
     {
         return true;
     }
-    if let Bitvector32Term::MemoryLoad(memory, pointer) = left
+    if depth <= MEMORY_RESOLUTION_EXPENSIVE_DEPTH_LIMIT
+        && let Bitvector32Term::MemoryLoad(memory, pointer) = left
         && let Some((_, CValue::Int32(value))) = memory.cells.iter().find(|(stored_pointer, _)| {
-            pointers_proven_equal_for_memory_resolution_with_depth(
-                pointer,
-                stored_pointer,
-                assumptions,
-                depth + 1,
-            )
+            stored_pointer.block == pointer.block
+                && pointers_proven_equal_for_memory_resolution_with_depth(
+                    pointer,
+                    stored_pointer,
+                    assumptions,
+                    depth + 1,
+                )
         })
         && value != left
         && bitvector_terms_equal_for_memory_resolution(value, right, assumptions, depth + 1)
@@ -291,14 +404,16 @@ fn bitvector_terms_equal_for_memory_resolution(
     {
         return true;
     }
-    if let Bitvector32Term::MemoryLoad(memory, pointer) = right
+    if depth <= MEMORY_RESOLUTION_EXPENSIVE_DEPTH_LIMIT
+        && let Bitvector32Term::MemoryLoad(memory, pointer) = right
         && let Some((_, CValue::Int32(value))) = memory.cells.iter().find(|(stored_pointer, _)| {
-            pointers_proven_equal_for_memory_resolution_with_depth(
-                pointer,
-                stored_pointer,
-                assumptions,
-                depth + 1,
-            )
+            stored_pointer.block == pointer.block
+                && pointers_proven_equal_for_memory_resolution_with_depth(
+                    pointer,
+                    stored_pointer,
+                    assumptions,
+                    depth + 1,
+                )
         })
         && value != right
         && bitvector_terms_equal_for_memory_resolution(left, value, assumptions, depth + 1)
@@ -380,7 +495,9 @@ pub(super) fn bitvector_terms_proven_equal_for_memory_resolution(
     right: &Bitvector32Term,
     assumptions: &Assumptions,
 ) -> bool {
-    bitvector_terms_equal_for_memory_resolution(left, right, assumptions, 0)
+    with_memory_resolution_fuel(|| {
+        bitvector_terms_equal_for_memory_resolution(left, right, assumptions, 0)
+    })
 }
 
 pub(super) fn c_values_proven_equal_for_memory_resolution(
@@ -724,7 +841,15 @@ pub(super) fn memories_match_for_pointer_load_under_assumptions(
     left.differing_cell_pointers(right)
         .into_iter()
         .filter(|cell_pointer| !cell_pointer.block.starts_with("local:"))
-        .all(|cell_pointer| pointers_proven_distinct(&cell_pointer, pointer, assumptions))
+        .all(|cell_pointer| {
+            // Inside a condition decision only the bounded resolution check
+            // is safe: the general distinctness check consults `decide`,
+            // whose order-fact matching resolves memory loads and re-enters
+            // this function, forming an unbounded cycle.
+            pointers_proven_distinct_for_memory_resolution(&cell_pointer, pointer, assumptions)
+                || !super::assumptions::inside_condition_decision()
+                    && pointers_proven_distinct(&cell_pointer, pointer, assumptions)
+        })
 }
 
 pub(super) fn memory_matches_effect_summary_endpoint(

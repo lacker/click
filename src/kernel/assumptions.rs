@@ -54,6 +54,14 @@ thread_local! {
         const { RefCell::new(BTreeSet::new()) };
 }
 
+/// True while any condition decision is in progress on this thread. Deep
+/// reasoning helpers use this to avoid re-entering `decide` from inside a
+/// decision, which would cycle through order-fact matching and memory-load
+/// resolution.
+pub(super) fn inside_condition_decision() -> bool {
+    CONDITION_DECISIONS_IN_PROGRESS.with(|in_progress| !in_progress.borrow().is_empty())
+}
+
 const DEFAULT_SIMP_REASONING_FUEL: usize = 300;
 const MAX_SIMP_FACT_REASONING_DEPTH: usize = 8;
 
@@ -4467,6 +4475,19 @@ impl Assumptions {
         left: &Pointer,
         right: &Pointer,
     ) -> bool {
+        super::reasoning::with_memory_resolution_fuel(|| {
+            self.pointers_proven_disjoint_by_explicit_range_for_memory_resolution_with_depth(
+                left, right, 0,
+            )
+        })
+    }
+
+    pub(super) fn pointers_proven_disjoint_by_explicit_range_for_memory_resolution_with_depth(
+        &self,
+        left: &Pointer,
+        right: &Pointer,
+        depth: usize,
+    ) -> bool {
         // Most execution-time separation certificates name the exact ranges
         // being accessed. Resolve those structurally before asking the
         // snapshot-aware containment prover, which may itself inspect memory
@@ -4499,6 +4520,13 @@ impl Assumptions {
             return true;
         }
 
+        // The recursive second phase re-enters offset-equality reasoning.
+        // Keep it shallow: nested queries past the expensive-edge budget use
+        // the shallow answer above, which bounds the mutual recursion without
+        // losing the direct certificates.
+        if depth > super::reasoning::MEMORY_RESOLUTION_EXPENSIVE_DEPTH_LIMIT {
+            return false;
+        }
         self.prop_facts.iter().any(|proposition| match proposition {
             Proposition::CMemoryDisjoint {
                 left_base,
@@ -4508,32 +4536,37 @@ impl Assumptions {
                 right_start,
                 right_end,
             } => {
-                pointer_in_range_for_memory_resolution(left, left_base, left_start, left_end, self)
-                    && pointer_in_range_for_memory_resolution(
-                        right,
-                        right_base,
-                        right_start,
-                        right_end,
-                        self,
-                    )
-                    || pointer_in_range_for_memory_resolution(
-                        right, left_base, left_start, left_end, self,
-                    ) && pointer_in_range_for_memory_resolution(
-                        left,
-                        right_base,
-                        right_start,
-                        right_end,
-                        self,
-                    )
+                pointer_in_range_for_memory_resolution_with_depth(
+                    left, left_base, left_start, left_end, self, depth,
+                ) && pointer_in_range_for_memory_resolution_with_depth(
+                    right,
+                    right_base,
+                    right_start,
+                    right_end,
+                    self,
+                    depth,
+                ) || pointer_in_range_for_memory_resolution_with_depth(
+                    left, right_base, right_start, right_end, self, depth,
+                ) && pointer_in_range_for_memory_resolution_with_depth(
+                    right, left_base, left_start, left_end, self, depth,
+                )
             }
             Proposition::CResourceSeparate {
                 left: CResource::Memory(left_range),
                 right: CResource::Memory(right_range),
             } => {
-                pointer_in_memory_range_for_memory_resolution(left, left_range, self)
-                    && pointer_in_memory_range_for_memory_resolution(right, right_range, self)
-                    || pointer_in_memory_range_for_memory_resolution(right, left_range, self)
-                        && pointer_in_memory_range_for_memory_resolution(left, right_range, self)
+                pointer_in_memory_range_for_memory_resolution_with_depth(
+                    left, left_range, self, depth,
+                ) && pointer_in_memory_range_for_memory_resolution_with_depth(
+                    right,
+                    right_range,
+                    self,
+                    depth,
+                ) || pointer_in_memory_range_for_memory_resolution_with_depth(
+                    right, left_range, self, depth,
+                ) && pointer_in_memory_range_for_memory_resolution_with_depth(
+                    left, right_range, self, depth,
+                )
             }
             _ => false,
         })
@@ -4543,6 +4576,19 @@ impl Assumptions {
         &self,
         left: &CMemoryRange,
         right: &CMemoryRange,
+    ) -> bool {
+        super::reasoning::with_memory_resolution_fuel(|| {
+            self.memory_ranges_proven_disjoint_by_explicit_separation_for_memory_resolution_with_depth(
+                left, right, 0,
+            )
+        })
+    }
+
+    fn memory_ranges_proven_disjoint_by_explicit_separation_for_memory_resolution_with_depth(
+        &self,
+        left: &CMemoryRange,
+        right: &CMemoryRange,
+        depth: usize,
     ) -> bool {
         // Prefer certificates where one queried range is structurally inside
         // one side. This gives the other side a single, directed equivalence
@@ -4557,15 +4603,26 @@ impl Assumptions {
                 return false;
             };
             memory_range_shallowly_contained(left, fact_left)
-                && memory_range_contained_for_memory_resolution(right, fact_right, self)
+                && memory_range_contained_for_memory_resolution_with_depth(
+                    right, fact_right, self, depth,
+                )
                 || memory_range_shallowly_contained(right, fact_right)
-                    && memory_range_contained_for_memory_resolution(left, fact_left, self)
+                    && memory_range_contained_for_memory_resolution_with_depth(
+                        left, fact_left, self, depth,
+                    )
                 || memory_range_shallowly_contained(right, fact_left)
-                    && memory_range_contained_for_memory_resolution(left, fact_right, self)
+                    && memory_range_contained_for_memory_resolution_with_depth(
+                        left, fact_right, self, depth,
+                    )
                 || memory_range_shallowly_contained(left, fact_right)
-                    && memory_range_contained_for_memory_resolution(right, fact_left, self)
+                    && memory_range_contained_for_memory_resolution_with_depth(
+                        right, fact_left, self, depth,
+                    )
         }) {
             return true;
+        }
+        if depth > super::reasoning::MEMORY_RESOLUTION_ALIAS_DEPTH_LIMIT {
+            return false;
         }
 
         self.prop_facts.iter().any(|proposition| {
@@ -4576,10 +4633,15 @@ impl Assumptions {
             else {
                 return false;
             };
-            memory_range_contained_for_memory_resolution(left, fact_left, self)
-                && memory_range_contained_for_memory_resolution(right, fact_right, self)
-                || memory_range_contained_for_memory_resolution(right, fact_left, self)
-                    && memory_range_contained_for_memory_resolution(left, fact_right, self)
+            memory_range_contained_for_memory_resolution_with_depth(left, fact_left, self, depth)
+                && memory_range_contained_for_memory_resolution_with_depth(
+                    right, fact_right, self, depth,
+                )
+                || memory_range_contained_for_memory_resolution_with_depth(
+                    right, fact_left, self, depth,
+                ) && memory_range_contained_for_memory_resolution_with_depth(
+                    left, fact_right, self, depth,
+                )
         })
     }
 
@@ -4709,6 +4771,12 @@ impl Assumptions {
     }
 
     pub(super) fn proves_resource_contains(&self, parent: &CResource, child: &CResource) -> bool {
+        super::reasoning::with_resource_prover_fuel(|| {
+            self.proves_resource_contains_inner(parent, child)
+        })
+    }
+
+    fn proves_resource_contains_inner(&self, parent: &CResource, child: &CResource) -> bool {
         if self.resource_contains_builtin(parent, child) {
             return true;
         }
@@ -4718,6 +4786,9 @@ impl Assumptions {
         while let Some(current) = stack.pop() {
             if !seen.insert(current.clone()) {
                 continue;
+            }
+            if !super::reasoning::consume_resource_prover_fuel() {
+                return false;
             }
             if self.resource_contains_builtin(&current, child) {
                 return true;
@@ -4739,6 +4810,12 @@ impl Assumptions {
     }
 
     pub(super) fn proves_resource_separate(&self, left: &CResource, right: &CResource) -> bool {
+        super::reasoning::with_resource_prover_fuel(|| {
+            self.proves_resource_separate_inner(left, right)
+        })
+    }
+
+    fn proves_resource_separate_inner(&self, left: &CResource, right: &CResource) -> bool {
         if let (CResource::Memory(left), CResource::Memory(right)) = (left, right)
             && left.base() == right.base()
             && let (Some(left_start), Some(left_end), Some(right_start), Some(right_end)) = (
@@ -4760,10 +4837,11 @@ impl Assumptions {
             else {
                 return false;
             };
-            self.proves_resource_contains(fact_left, left)
-                && self.proves_resource_contains(fact_right, right)
-                || self.proves_resource_contains(fact_left, right)
-                    && self.proves_resource_contains(fact_right, left)
+            super::reasoning::consume_resource_prover_fuel()
+                && (self.proves_resource_contains_inner(fact_left, left)
+                    && self.proves_resource_contains_inner(fact_right, right)
+                    || self.proves_resource_contains_inner(fact_left, right)
+                        && self.proves_resource_contains_inner(fact_right, left))
         }) {
             return true;
         }
@@ -4779,6 +4857,9 @@ impl Assumptions {
     fn resource_contains_builtin(&self, parent: &CResource, child: &CResource) -> bool {
         if parent == child {
             return true;
+        }
+        if !super::reasoning::consume_resource_prover_fuel() {
+            return false;
         }
         let (CResource::Memory(parent), CResource::Memory(child)) = (parent, child) else {
             return false;
@@ -5638,18 +5719,44 @@ pub(super) fn memory_range_contained_for_memory_resolution(
     parent: &CMemoryRange,
     assumptions: &Assumptions,
 ) -> bool {
+    super::reasoning::with_memory_resolution_fuel(|| {
+        memory_range_contained_for_memory_resolution_with_depth(range, parent, assumptions, 0)
+    })
+}
+
+fn memory_range_contained_for_memory_resolution_with_depth(
+    range: &CMemoryRange,
+    parent: &CMemoryRange,
+    assumptions: &Assumptions,
+    depth: usize,
+) -> bool {
     if memory_range_shallowly_contained(range, parent) {
         return true;
     }
+    if depth > super::reasoning::MEMORY_RESOLUTION_ALIAS_DEPTH_LIMIT
+        || !super::reasoning::consume_memory_resolution_fuel()
+    {
+        return false;
+    }
 
-    if pointers_proven_equal_for_memory_resolution(range.base(), parent.base(), assumptions) {
+    if super::reasoning::pointers_proven_equal_for_memory_resolution_with_depth(
+        range.base(),
+        parent.base(),
+        assumptions,
+        depth + 1,
+    ) {
         return exact_less_equal_for_memory_resolution(parent.start(), range.start(), assumptions)
             && exact_less_equal_for_memory_resolution(range.end(), parent.end(), assumptions);
     }
 
     if affine_bitvector_difference_constant(range.end(), range.start()) == Some(1) {
         let pointer = range.base().offset_by_int32_elements(range.start().clone());
-        if pointer_in_memory_range_for_memory_resolution(&pointer, parent, assumptions) {
+        if pointer_in_memory_range_for_memory_resolution_with_depth(
+            &pointer,
+            parent,
+            assumptions,
+            depth + 1,
+        ) {
             return true;
         }
     }
@@ -5736,17 +5843,19 @@ fn pointer_in_memory_range_shallow(pointer: &Pointer, range: &CMemoryRange) -> b
     pointer_in_range_shallow(pointer, range.base(), range.start(), range.end())
 }
 
-fn pointer_in_memory_range_for_memory_resolution(
+fn pointer_in_memory_range_for_memory_resolution_with_depth(
     pointer: &Pointer,
     range: &CMemoryRange,
     assumptions: &Assumptions,
+    depth: usize,
 ) -> bool {
-    pointer_in_range_for_memory_resolution(
+    pointer_in_range_for_memory_resolution_with_depth(
         pointer,
         range.base(),
         range.start(),
         range.end(),
         assumptions,
+        depth,
     )
 }
 
@@ -5757,7 +5866,23 @@ fn pointer_in_range_for_memory_resolution(
     end: &Bitvector32Term,
     assumptions: &Assumptions,
 ) -> bool {
-    if pointer.block != base.block {
+    super::reasoning::with_memory_resolution_fuel(|| {
+        pointer_in_range_for_memory_resolution_with_depth(pointer, base, start, end, assumptions, 0)
+    })
+}
+
+fn pointer_in_range_for_memory_resolution_with_depth(
+    pointer: &Pointer,
+    base: &Pointer,
+    start: &Bitvector32Term,
+    end: &Bitvector32Term,
+    assumptions: &Assumptions,
+    depth: usize,
+) -> bool {
+    if pointer.block != base.block
+        || depth > super::reasoning::MEMORY_RESOLUTION_ALIAS_DEPTH_LIMIT
+        || !super::reasoning::consume_memory_resolution_fuel()
+    {
         return false;
     }
     let mut indexes = pointer
@@ -5765,13 +5890,23 @@ fn pointer_in_range_for_memory_resolution(
         .into_iter()
         .collect::<Vec<_>>();
     if let PointerOffsetTerm::Add(left, right) = &pointer.offset {
-        if pointer_offsets_proven_equal_for_memory_resolution(left, &base.offset, assumptions)
+        if super::reasoning::pointer_offsets_equal_for_memory_resolution(
+            left,
+            &base.offset,
+            assumptions,
+            depth + 1,
+        ) == Some(true)
             && let Some(index) = int32_element_index_from_offset(right)
             && !indexes.contains(&index)
         {
             indexes.push(index);
         }
-        if pointer_offsets_proven_equal_for_memory_resolution(right, &base.offset, assumptions)
+        if super::reasoning::pointer_offsets_equal_for_memory_resolution(
+            right,
+            &base.offset,
+            assumptions,
+            depth + 1,
+        ) == Some(true)
             && let Some(index) = int32_element_index_from_offset(left)
             && !indexes.contains(&index)
         {
