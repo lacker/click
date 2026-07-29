@@ -2743,11 +2743,61 @@ fn resource_contexts_definitionally_equal(
     directly_equal(&left, &right)
 }
 
+/// Collects one-point-rule witness candidates for an existential body: any
+/// conjunct shaped `var == term` (on either side) pins the bound variable to
+/// `term`, provided `term` does not itself mention the variable.
+fn exists_equality_witness_candidates(
+    var: Variable,
+    body: &Proposition,
+    candidates: &mut Vec<Bitvector32Term>,
+) {
+    match body {
+        Proposition::And(left, right) => {
+            exists_equality_witness_candidates(var, left, candidates);
+            exists_equality_witness_candidates(var, right, candidates);
+        }
+        Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), true) => {
+            let bound = Bitvector32Term::Variable(var);
+            for (side, other) in [(left, right), (right, left)] {
+                let mentions_var = super::reasoning::substitute_bitvector_variable(
+                    other,
+                    var,
+                    &Bitvector32Term::Constant(0),
+                ) != **other;
+                if **side == bound && !mentions_var {
+                    candidates.push((**other).clone());
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
 fn certification_proves_proposition(assumptions: &Assumptions, proposition: &Proposition) -> bool {
     if assumptions.proves(proposition) {
         return true;
     }
     match proposition {
+        Proposition::And(left, right) => {
+            certification_proves_proposition(assumptions, left)
+                && certification_proves_proposition(assumptions, right)
+        }
+        Proposition::Exists {
+            var,
+            sort: Sort::CInt32 | Sort::Bitvector32,
+            body,
+            ..
+        } => {
+            // One-point rule: `P[t/x]` proves `exists x. P` when a conjunct
+            // pins `x` to a witness term `t`.
+            let mut candidates = Vec::new();
+            exists_equality_witness_candidates(*var, body, &mut candidates);
+            candidates.into_iter().any(|witness| {
+                let instantiated =
+                    substitute_bitvector_variable_in_proposition(body, *var, &witness);
+                certification_proves_proposition(assumptions, &instantiated)
+            })
+        }
         Proposition::ConditionIs(condition, value)
             if assumptions.decide_condition_for_simp(condition) == Some(*value) =>
         {
@@ -3253,6 +3303,12 @@ fn function_claim_holds_on_prepared_path(
                 mutable_ranges.push(CMemoryRange::new(segment.base, segment.start, segment.end));
             }
             let mut effect_memory = caller_state.memory().clone();
+            // A verified region can emit several effect summaries for the
+            // same before/after transition (for example a loop's explicit
+            // effects clause plus the inherited function effect). The first
+            // advances the tracked memory; the others are parallel bounds on
+            // the same transition and must not be chained sequentially.
+            let mut previous_transition: Option<&CMemory> = None;
             let effects_are_bounded = execution_facts.iter().all(|fact| match fact.proposition() {
                 Proposition::CMemoryMutatesOnly {
                     before,
@@ -3262,6 +3318,7 @@ fn function_claim_holds_on_prepared_path(
                     if !c_memories_definitionally_equal(&effect_memory, before, &assumptions) {
                         return false;
                     }
+                    previous_transition = None;
                     effect_memory = after.clone();
                     pointers
                         .iter()
@@ -3283,10 +3340,19 @@ fn function_claim_holds_on_prepared_path(
                     after,
                     mutable_ranges: nested_ranges,
                 } => {
-                    if !c_memories_definitionally_equal(&effect_memory, before, &assumptions) {
+                    if c_memories_definitionally_equal(&effect_memory, before, &assumptions) {
+                        previous_transition = Some(before);
+                        effect_memory = after.clone();
+                    } else if !previous_transition.is_some_and(|previous_before| {
+                        c_memories_definitionally_equal(previous_before, before, &assumptions)
+                            && c_memories_definitionally_equal(
+                                &effect_memory,
+                                after,
+                                &assumptions,
+                            )
+                    }) {
                         return false;
                     }
-                    effect_memory = after.clone();
                     nested_ranges.iter().all(|nested| {
                         mutable_ranges
                             .iter()

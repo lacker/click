@@ -4962,7 +4962,8 @@ fn source_expander_derives_separation_from_call_postconditions() {
 
     let expanded = expand_c0_tactic_source_at(click_source, &c_sources, line, column)
         .expect("call postconditions should expand into an explicit separation derivation");
-    assert!(expanded.contains("load_int32_pointer"), "{expanded}");
+    assert!(expanded.contains("fact left->len == length"), "{expanded}");
+    assert!(expanded.contains("fact left->data == data"), "{expanded}");
     assert!(expanded.contains("derive(separate("), "{expanded}");
     verify_c0_sources(&expanded, &c_sources)
         .expect("the expanded separation derivation should replay");
