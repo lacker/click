@@ -20536,7 +20536,16 @@ fn fold_composite_resources_on_outcome(
             )));
         };
         let mut post_state = state;
-        let assumptions = assumptions_from_propositions(available_pure_facts);
+        // Range spellings in held resource facts embed loads at their
+        // creation snapshot; carrying them to the fold point needs the
+        // execution's store effect facts alongside the pure facts.
+        let mut fold_facts = available_pure_facts.to_vec();
+        fold_facts.extend(
+            execution_pure_facts
+                .iter()
+                .map(|fact| fact.proposition().clone()),
+        );
+        let assumptions = assumptions_from_propositions(&fold_facts);
         let mut lowered_contained = Vec::new();
         for contained in composite_body.contains() {
             let contained =

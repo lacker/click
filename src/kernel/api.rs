@@ -4265,9 +4265,6 @@ fn function_claim_holds_on_prepared_path(
                     return_state.memory(),
                     execution_facts,
                 );
-                if !proposition_holds && std::env::var_os("CLICK_ENSURE_PROBE").is_some() {
-                    eprintln!("ENSURE-PROBE: post proposition not proven: {:?}", path.proposition);
-                }
                 obligations_hold && proposition_holds
             })
         }
