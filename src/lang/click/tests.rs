@@ -7717,7 +7717,7 @@ fn observed_cursor_facts_produce_replayable_surface_certificates() {
 }
 
 #[test]
-#[ignore = "quarantined: fails on master, fixed on claude/store-provenance; run with --ignored"]
+#[ignore = "quarantined: ~22s (prover memory-snapshot blowup); run with --ignored"]
 fn explicit_store_step_with_unfolded_resource_facts_verifies() {
     let c_source = r#"
         struct owned_string {
@@ -7808,7 +7808,7 @@ fn explicit_store_step_with_unfolded_resource_facts_verifies() {
 }
 
 #[test]
-#[ignore = "quarantined: exceeds 60s on master, ~34s on claude/store-provenance; run with --ignored"]
+#[ignore = "quarantined: ~28s (prover memory-snapshot blowup); run with --ignored"]
 fn expanded_read_step_keeps_named_range_separation_premises() {
     let c_source = r#"
         struct owned_string {
