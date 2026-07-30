@@ -3004,7 +3004,7 @@ fn split_additive_constant(term: &Bitvector32Term) -> (Bitvector32Term, u32) {
 /// Certifies a loadability goal from an assumed wider loadable fact over the
 /// same memory snapshot: the goal's base must sit at a provably in-bounds
 /// byte offset within the fact's span.
-pub(super) fn loadable_covered_by_fact(assumptions: &Assumptions, goal: &Proposition) -> bool {
+pub fn loadable_covered_by_fact(assumptions: &Assumptions, goal: &Proposition) -> bool {
     let Proposition::CMemoryLoadable {
         memory,
         base,

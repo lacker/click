@@ -15629,9 +15629,14 @@ fn replay_linear_tactics(
                                 error.message()
                             ))
                         })?;
+                    // Loadability premises additionally transport across
+                    // snapshot spellings and recorded effects: the recorded
+                    // fact and the premise print identically but embed
+                    // different memory snapshots.
                     let premise_is_available = exact_fact_is_available(&premise, &all_pure_facts)
                         || materialization_equivalent_available_fact(&premise, &all_pure_facts)
-                            .is_some();
+                            .is_some()
+                        || crate::kernel::loadable_covered_by_fact(&assumptions, &premise);
                     if !premise_is_available {
                         return Err(ClickError::new(format!(
                             "`{claim_label}` tactic {tactic_index}: `{tactic_name}` requires an exact premise: {}",

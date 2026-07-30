@@ -2380,7 +2380,21 @@ fn verify_c0_sources_with_environment(
                     &contract_execution,
                 ) {
                     Ok(keys) if !keys.is_empty() => {
-                        format!("; unverified claims: {keys:?}")
+                        let described = keys
+                            .iter()
+                            .map(|key| match key {
+                                CFunctionContractClaimKey::Ensure(index) => contract_function
+                                    .contract_ensures()
+                                    .get(*index)
+                                    .map_or_else(
+                                        || format!("{key:?}"),
+                                        |ensure| format!("{key:?} = {ensure:?}"),
+                                    ),
+                                key => format!("{key:?}"),
+                            })
+                            .collect::<Vec<_>>()
+                            .join(", ");
+                        format!("; unverified claims: {described}")
                     }
                     Ok(_) => String::new(),
                     Err(reason) => format!("; {reason}"),
