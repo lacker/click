@@ -1,7 +1,7 @@
 # proof.rs panic sites reachable from user input
 
-Status: open
-Claimed:
+Status: in progress
+Claimed: claude/proof-panics, 2026-07-30
 
 Scope (design-review honorable mention): 35 panic!/unreachable! sites
 in src/lang/click/proof.rs are reachable from user-dependent data
