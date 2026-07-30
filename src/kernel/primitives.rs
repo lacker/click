@@ -3418,6 +3418,112 @@ fn pointer_has_structural_range_base(pointer: &Pointer, base: &Pointer) -> bool 
     )
 }
 
+/// Range endpoints compare like ordinary terms, and additionally two loads
+/// of one pointer are equal when the pointed-to cell is provably unchanged
+/// between their snapshots — a range spelled through metadata loads then
+/// survives writes to unrelated cells.
+fn range_endpoint_terms_equal(
+    left: &Bitvector32Term,
+    right: &Bitvector32Term,
+    assumptions: &Assumptions,
+) -> bool {
+    if left == right {
+        return true;
+    }
+    fn loads_bridged(
+        left: &Bitvector32Term,
+        right: &Bitvector32Term,
+        assumptions: &Assumptions,
+    ) -> bool {
+        if let (
+            Bitvector32Term::MemoryLoad(left_memory, left_pointer),
+            Bitvector32Term::MemoryLoad(right_memory, right_pointer),
+        ) = (left, right)
+            && left_pointer == right_pointer
+        {
+            return super::api::c_memory_load_is_unchanged(
+                left_memory,
+                right_memory,
+                left_pointer,
+                assumptions,
+            ) || super::api::c_memory_load_is_unchanged(
+                right_memory,
+                left_memory,
+                left_pointer,
+                assumptions,
+            );
+        }
+        false
+    }
+    if loads_bridged(left, right, assumptions) {
+        return true;
+    }
+    // Structural descent covers the common affine endpoint spellings
+    // (base + load, load - base, load * scale).
+    let structurally_bridged = match (left, right) {
+        (
+            Bitvector32Term::Add(left_a, left_b),
+            Bitvector32Term::Add(right_a, right_b),
+        )
+        | (
+            Bitvector32Term::Subtract(left_a, left_b),
+            Bitvector32Term::Subtract(right_a, right_b),
+        )
+        | (
+            Bitvector32Term::Multiply(left_a, left_b),
+            Bitvector32Term::Multiply(right_a, right_b),
+        ) => {
+            range_endpoint_terms_equal(left_a, right_a, assumptions)
+                && range_endpoint_terms_equal(left_b, right_b, assumptions)
+        }
+        _ => false,
+    };
+    structurally_bridged
+        || bitvector_terms_proven_equal_for_memory_resolution(left, right, assumptions)
+}
+
+/// Pointer bases compare with the same load bridging as range endpoints:
+/// two spellings of one loaded base pointer are equal when the loaded cell
+/// is provably unchanged between their snapshots.
+fn pointer_bases_equal_with_load_bridging(
+    left: &Pointer,
+    right: &Pointer,
+    assumptions: &Assumptions,
+) -> bool {
+    left.block == right.block
+        && pointer_offsets_equal_with_load_bridging(&left.offset, &right.offset, assumptions)
+}
+
+fn pointer_offsets_equal_with_load_bridging(
+    left: &PointerOffsetTerm,
+    right: &PointerOffsetTerm,
+    assumptions: &Assumptions,
+) -> bool {
+    if left == right {
+        return true;
+    }
+    match (left, right) {
+        (PointerOffsetTerm::Add(left_a, left_b), PointerOffsetTerm::Add(right_a, right_b)) => {
+            pointer_offsets_equal_with_load_bridging(left_a, right_a, assumptions)
+                && pointer_offsets_equal_with_load_bridging(left_b, right_b, assumptions)
+        }
+        (
+            PointerOffsetTerm::Int32Scaled {
+                value: left_value,
+                byte_width: left_width,
+            },
+            PointerOffsetTerm::Int32Scaled {
+                value: right_value,
+                byte_width: right_width,
+            },
+        ) => {
+            left_width == right_width
+                && range_endpoint_terms_equal(left_value, right_value, assumptions)
+        }
+        _ => false,
+    }
+}
+
 pub(super) fn memory_range_covers(
     available: &CMemoryRange,
     required: &CMemoryRange,
@@ -3434,17 +3540,13 @@ pub(super) fn memory_range_covers(
     ) {
         return false;
     }
-    if pointers_proven_equal_for_memory_resolution(available.base(), required.base(), assumptions)
-        && bitvector_terms_proven_equal_for_memory_resolution(
-            available.start(),
-            required.start(),
-            assumptions,
-        )
-        && bitvector_terms_proven_equal_for_memory_resolution(
-            available.end(),
-            required.end(),
-            assumptions,
-        )
+    if (pointers_proven_equal_for_memory_resolution(
+        available.base(),
+        required.base(),
+        assumptions,
+    ) || pointer_bases_equal_with_load_bridging(available.base(), required.base(), assumptions))
+        && range_endpoint_terms_equal(available.start(), required.start(), assumptions)
+        && range_endpoint_terms_equal(available.end(), required.end(), assumptions)
     {
         return true;
     }
@@ -3515,18 +3617,28 @@ fn split_memory_range(
     required: &CMemoryRange,
     assumptions: &Assumptions,
 ) -> Option<Vec<CMemoryRange>> {
-    let base_delta = required.base().element_index_from_base(available.base())?;
+    let base_delta = required
+        .base()
+        .element_index_from_base(available.base())
+        .or_else(|| {
+            pointer_bases_equal_with_load_bridging(required.base(), available.base(), assumptions)
+                .then(|| Bitvector32Term::Constant(0))
+        })?;
     let required_start = Bitvector32Term::add(base_delta.clone(), required.start().clone());
     let required_end = Bitvector32Term::add(base_delta, required.end().clone());
     let mut residues = Vec::new();
-    if !bitvector_terms_proven_equal(available.start(), &required_start, assumptions) {
+    if !bitvector_terms_proven_equal(available.start(), &required_start, assumptions)
+        && !range_endpoint_terms_equal(available.start(), &required_start, assumptions)
+    {
         residues.push(CMemoryRange::new(
             available.base().clone(),
             available.start().clone(),
             required_start.clone(),
         ));
     }
-    if !bitvector_terms_proven_equal(&required_end, available.end(), assumptions) {
+    if !bitvector_terms_proven_equal(&required_end, available.end(), assumptions)
+        && !range_endpoint_terms_equal(&required_end, available.end(), assumptions)
+    {
         residues.push(CMemoryRange::new(
             available.base().clone(),
             required_end,

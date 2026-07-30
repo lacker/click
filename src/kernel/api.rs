@@ -80,6 +80,22 @@ pub(crate) fn c_resources_directly_match(
 /// produced at different execution points compare equal when their
 /// difference is representational.
 pub(crate) fn canonical_c_memory_deep(memory: &CMemory) -> CMemory {
+    thread_local! {
+        static CACHE: std::cell::RefCell<
+            std::collections::HashMap<crate::kernel::SharedCMemory, CMemory>,
+        > = std::cell::RefCell::new(std::collections::HashMap::new());
+    }
+    // Assumption-free and deterministic; keyed by interned snapshot identity.
+    let key = crate::kernel::intern_c_memory(memory.clone());
+    if let Some(hit) = CACHE.with(|cache| cache.borrow().get(&key).cloned()) {
+        return hit;
+    }
+    let result = canonical_c_memory_deep_uncached(memory);
+    CACHE.with(|cache| cache.borrow_mut().insert(key, result.clone()));
+    result
+}
+
+fn canonical_c_memory_deep_uncached(memory: &CMemory) -> CMemory {
     let mut canonical = memory.clone();
     let cells = std::mem::take(&mut canonical.cells);
     for (pointer, value) in cells {
