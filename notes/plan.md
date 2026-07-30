@@ -34,17 +34,22 @@ Order of attack, one frontier at a time, commit each independently:
    certificate premises now must strictly replay-lower before emission
    (`checked_surface_comparison_fact_at_point`), and pointer-typed loads
    of framed int32 cells fall through to symbolic loads during
-   composite expansion (`evaluate_c_memory_load_paths`). Current layer:
-   the final kernel contract-certification gate
-   ("exact symbolic execution did not establish every contract claim")
-   cannot discharge `input_cursor_take`'s `pos < len` precondition VC at
-   statement 4. The needed chain is init's ensures (`pos == 0`,
-   `len == length`) transported across the clone call's havoc — clone's
-   effects don't touch `left`, so this must go through effect-fact
-   transport (canonicalization rightly keeps call-havoc blocks; see the
-   soundness trap). Investigate why `certification_proves_proposition`
-   cannot bridge the loads across the clone call (api.rs ~4948, the
-   requirement check in functions.rs ~458). Owner decision 2026-07-30:
+   composite expansion (`evaluate_c_memory_load_paths`). Two more
+   layers fixed in the certification gate: the bounded order prover
+   bridges load endpoints through effect-summary framing (take's
+   `pos < len` precondition VC), and equality claims resolve both sides
+   to constants via the bounded normalization walk (`left->pos == 1`).
+   Current layer — the last unverified claim: `result == data[0]`
+   (Ensure(4)), a load-equality goal. The fact set has
+   `result_var == load(m_p, (right->data)[right->pos] spelling)` plus
+   `right->pos == 0` and `PointerOffsetEqual(4*load(.data), 4*v_data)`;
+   the prover must equate the pointer offset
+   `4*load(.data) + 4*load(.pos)` with `4*v_data` by resolving
+   `load(.pos)` to the constant 0 and using the PointerOffsetEqual fact
+   — pointer-offset equality with constant-resolved load atoms
+   (candidates: `pointer_offsets_proven_equal_for_memory_resolution`,
+   or a certification arm mirroring the constant-normalization one for
+   load-load equalities). Owner decision 2026-07-30:
    certificate/implementation details do not need sign-off; only
    Surface Click semantics changes do.
 2. **Audit `by auto` re-expansion** : audit sites 28–30 (jsonc-refcount,
