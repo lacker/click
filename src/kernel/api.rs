@@ -253,6 +253,69 @@ fn load_unchanged_via_effect_chain(
     false
 }
 
+/// Bounded search for any chain of recorded effects connecting two memory
+/// snapshots, regardless of what the effects wrote. Used for properties
+/// that survive writes, such as loadability of a still-present range.
+pub(crate) fn c_memories_connected_by_effects(
+    before: &CMemory,
+    after: &CMemory,
+    assumptions: &Assumptions,
+) -> bool {
+    const EFFECT_CHAIN_HOP_LIMIT: usize = 8;
+    let mut steps = Vec::new();
+    for proposition in &assumptions.prop_facts {
+        match proposition {
+            Proposition::CMemoryMutatesOnly {
+                before: step_before,
+                after: step_after,
+                ..
+            }
+            | Proposition::CMemoryEffectSummary {
+                before: step_before,
+                after: step_after,
+                ..
+            } => {
+                steps.push((
+                    canonical_c_memory_deep(step_before),
+                    canonical_c_memory_deep(step_after),
+                ));
+            }
+            _ => {}
+        }
+    }
+    if steps.is_empty() {
+        return false;
+    }
+    let target = canonical_c_memory_deep(after);
+    let start = canonical_c_memory_deep(before);
+    if start == target {
+        return true;
+    }
+    let mut seen = vec![start.clone()];
+    let mut frontier = vec![start];
+    for _ in 0..EFFECT_CHAIN_HOP_LIMIT {
+        let mut next = Vec::new();
+        for current in &frontier {
+            for (step_before, step_after) in &steps {
+                for (from, to) in [(step_before, step_after), (step_after, step_before)] {
+                    if from == current && !seen.contains(to) {
+                        if to == &target {
+                            return true;
+                        }
+                        seen.push(to.clone());
+                        next.push(to.clone());
+                    }
+                }
+            }
+        }
+        if next.is_empty() {
+            return false;
+        }
+        frontier = next;
+    }
+    false
+}
+
 fn c_memory_load_is_directly_unchanged(
     before: &CMemory,
     after: &CMemory,
@@ -517,7 +580,7 @@ pub(crate) fn rewrite_condition_through_certified_stores(
 /// Canonicalizes every load in a term for structural comparison: cached
 /// cells resolve to their values and remaining loads use the canonical
 /// memory for their pointer.
-fn canonicalize_atomic_loads(term: &Bitvector32Term) -> Bitvector32Term {
+pub(super) fn canonicalize_atomic_loads(term: &Bitvector32Term) -> Bitvector32Term {
     canonicalize_atomic_loads_with_depth(term, 0)
 }
 
@@ -635,7 +698,7 @@ fn canonicalize_atomic_loads_with_depth(term: &Bitvector32Term, depth: usize) ->
 }
 
 /// Canonicalizes the loads inside a pointer's offset.
-fn canonicalize_pointer_loads(pointer: &Pointer, depth: usize) -> Pointer {
+pub(super) fn canonicalize_pointer_loads(pointer: &Pointer, depth: usize) -> Pointer {
     fn canonical_offset(offset: &PointerOffsetTerm, depth: usize) -> PointerOffsetTerm {
         match offset {
             PointerOffsetTerm::Constant(_) | PointerOffsetTerm::Variable(_) => offset.clone(),

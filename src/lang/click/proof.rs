@@ -12692,7 +12692,21 @@ fn certify_outcome_simp_have(
                         .collect::<Vec<_>>();
                     Some(
                         assumptions_from_propositions(&source_context)
-                            .derive_atomic_proposition(&source)?,
+                            .derive_atomic_proposition(&source)
+                            .or_else(|| {
+                                // The marker filter can starve the context;
+                                // retry over everything available plus the
+                                // path's effect facts, which connect the
+                                // snapshots loadability transports across.
+                                let mut context = certified_available.clone();
+                                for fact in &replay.effect_facts {
+                                    if !context.contains(fact.proposition()) {
+                                        context.push(fact.proposition().clone());
+                                    }
+                                }
+                                assumptions_from_propositions(&context)
+                                    .derive_atomic_proposition(&source)
+                            })?,
                     )
                 };
                 derivable_source_count += 1;

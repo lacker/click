@@ -3213,7 +3213,42 @@ impl Assumptions {
                 memory,
                 base,
                 bytes,
-            } => self.proves_memory_loadable(memory, base, bytes),
+            } => {
+                self.proves_memory_loadable(memory, base, bytes)
+                    // Loadability survives writes: an assumed loadable fact
+                    // for the same range transports across any chain of
+                    // recorded effects connecting the snapshots.
+                    || self.prop_facts.iter().any(|fact| {
+                        let Proposition::CMemoryLoadable {
+                            memory: fact_memory,
+                            base: fact_base,
+                            bytes: fact_bytes,
+                        } = fact
+                        else {
+                            return false;
+                        };
+                        {
+                            let base_match =
+                                super::api::canonicalize_pointer_loads(fact_base, 0)
+                                    == super::api::canonicalize_pointer_loads(base, 0)
+                                    || super::reasoning::pointers_proven_equal_for_memory_resolution(
+                                        fact_base, base, self,
+                                    );
+                            let bytes_match = super::api::canonicalize_atomic_loads(fact_bytes)
+                                == super::api::canonicalize_atomic_loads(bytes)
+                                || super::reasoning::bitvector_terms_proven_equal_for_memory_resolution(
+                                    fact_bytes, bytes, self,
+                                );
+                            base_match
+                                && bytes_match
+                                && super::api::c_memories_connected_by_effects(
+                                    fact_memory,
+                                    memory,
+                                    self,
+                                )
+                        }
+                    })
+            }
             Proposition::CMemoryCanStore {
                 memory,
                 pointer,
