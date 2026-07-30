@@ -3308,6 +3308,7 @@ impl Assumptions {
                             &Bitvector32Term::Variable(*var),
                         );
                         renamed == **body
+                            || super::api::propositions_alpha_equivalent(&renamed, body)
                             || self.propositions_equal_modulo_proven_terms(&renamed, body, 0)
                     })
             }
@@ -3431,11 +3432,14 @@ impl Assumptions {
                 return false;
             };
             fact_sort == sort
-                && substitute_bitvector_variable_in_proposition(
-                    fact_body,
-                    *fact_var,
-                    &Bitvector32Term::Variable(var),
-                ) == *body
+                && super::api::propositions_alpha_equivalent(
+                    &substitute_bitvector_variable_in_proposition(
+                        fact_body,
+                        *fact_var,
+                        &Bitvector32Term::Variable(var),
+                    ),
+                    body,
+                )
         });
         if alpha {
             return true;

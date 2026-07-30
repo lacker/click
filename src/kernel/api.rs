@@ -3627,6 +3627,68 @@ fn finite_forall_instantiations(facts: &[Proposition]) -> Vec<Proposition> {
     instantiated
 }
 
+/// Structural equality up to renaming of bound variables at every quantifier
+/// depth; bound variables are freshened per lowering pass, so nested
+/// quantified facts never match syntactically.
+pub(crate) fn propositions_alpha_equivalent(left: &Proposition, right: &Proposition) -> bool {
+    if left == right {
+        return true;
+    }
+    match (left, right) {
+        (
+            Proposition::Exists {
+                var: left_var,
+                sort: left_sort,
+                body: left_body,
+                ..
+            },
+            Proposition::Exists {
+                var: right_var,
+                sort: right_sort,
+                body: right_body,
+                ..
+            },
+        ) => {
+            left_sort == right_sort && {
+                let renamed = substitute_bitvector_variable_in_proposition(
+                    left_body,
+                    *left_var,
+                    &Bitvector32Term::Variable(*right_var),
+                );
+                propositions_alpha_equivalent(&renamed, right_body)
+            }
+        }
+        (
+            Proposition::ForAll {
+                var: left_var,
+                sort: left_sort,
+                body: left_body,
+            },
+            Proposition::ForAll {
+                var: right_var,
+                sort: right_sort,
+                body: right_body,
+            },
+        ) => {
+            left_sort == right_sort && {
+                let renamed = substitute_bitvector_variable_in_proposition(
+                    left_body,
+                    *left_var,
+                    &Bitvector32Term::Variable(*right_var),
+                );
+                propositions_alpha_equivalent(&renamed, right_body)
+            }
+        }
+        (Proposition::And(al, ar), Proposition::And(bl, br))
+        | (Proposition::Or(al, ar), Proposition::Or(bl, br))
+        | (Proposition::Implies(al, ar), Proposition::Implies(bl, br)) => {
+            propositions_alpha_equivalent(al, bl) && propositions_alpha_equivalent(ar, br)
+        }
+        (Proposition::Not(a), Proposition::Not(b)) => propositions_alpha_equivalent(a, b),
+        _ => false,
+    }
+}
+
 /// Collects one-point-rule witness candidates for an existential body: any
 /// conjunct shaped `var == term` (on either side) pins the bound variable to
 /// `term`, provided `term` does not itself mention the variable.
@@ -3923,12 +3985,29 @@ fn certification_proves_proposition(assumptions: &Assumptions, proposition: &Pro
                 else {
                     return false;
                 };
-                fact_sort == sort
-                    && substitute_bitvector_variable_in_proposition(
-                        fact_body,
-                        *fact_var,
-                        &Bitvector32Term::Variable(*var),
-                    ) == **body
+                if fact_sort != sort {
+                    return false;
+                }
+                let renamed = substitute_bitvector_variable_in_proposition(
+                    fact_body,
+                    *fact_var,
+                    &Bitvector32Term::Variable(*var),
+                );
+                if propositions_alpha_equivalent(&renamed, body) {
+                    return true;
+                }
+                // Weakening under the binder: an existential of a
+                // conjunction proves the existential of any subset of its
+                // conjuncts.
+                let mut fact_conjuncts = Vec::new();
+                proposition_conjuncts(&renamed, &mut fact_conjuncts);
+                let mut goal_conjuncts = Vec::new();
+                proposition_conjuncts(body, &mut goal_conjuncts);
+                goal_conjuncts.iter().all(|goal| {
+                    fact_conjuncts
+                        .iter()
+                        .any(|fact| propositions_alpha_equivalent(fact, goal))
+                })
             });
             if alpha_matched {
                 return true;
@@ -4573,6 +4652,12 @@ fn function_claim_holds_on_prepared_path(
                             &post_resources,
                             obligation.proposition(),
                             &assumptions,
+                        )
+                        || loadable_covered_by_fact(&assumptions, obligation.proposition())
+                        || forall_loadable_covered_by_fact(&assumptions, obligation.proposition())
+                        || certification_proves_exists_obligation_from_facts(
+                            &assumptions,
+                            obligation.proposition(),
                         )
                 });
                 let mut path_propositions = path
