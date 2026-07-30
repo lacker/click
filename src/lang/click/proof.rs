@@ -17635,6 +17635,37 @@ fn apply_advance_interface(
                 &abstract_state,
                 &mut exported_pure_facts,
             );
+            // An `old(...)`-interface ensure needs the exported view's
+            // loadability in its entry-memory spelling. Export it exactly
+            // when the clause lowers at entry at all and the pre-advance
+            // proof state establishes it, the same gate `fact` assertions
+            // pass through.
+            let mut entry_loadables = Vec::new();
+            if let Ok(entry_lowered) =
+                lower_resource_clause_at_state(resource, parameters, arguments, &entry_state)
+            {
+                append_lowered_resource_clause_loadable_fact(
+                    resource,
+                    parameters,
+                    &entry_lowered,
+                    &entry_state,
+                    &mut entry_loadables,
+                );
+            }
+            if !entry_loadables.is_empty() {
+                let mut pre_advance_facts = concrete_facts.clone();
+                for fact in &replay.effect_facts {
+                    if !pre_advance_facts.contains(fact.proposition()) {
+                        pre_advance_facts.push(fact.proposition().clone());
+                    }
+                }
+                let pre_advance = assumptions_from_propositions(&pre_advance_facts);
+                for fact in entry_loadables {
+                    if pre_advance.proves(&fact) && !exported_pure_facts.contains(&fact) {
+                        exported_pure_facts.push(fact);
+                    }
+                }
+            }
             if let ResourceClause::Declared {
                 kind: ResourceKind::Composite,
                 name,
