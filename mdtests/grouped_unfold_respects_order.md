@@ -26,5 +26,5 @@ int32 identity(int32 x) {
 ```
 
 ```expect
-fail: left `identity.ensures_0` unproved
+fail: grouped `simp` could not certify its complete claim transition
 ```

@@ -13,11 +13,11 @@ int32 identity(int32 x) {
 verifying "grouped_post_order.c";
 
 int32 identity(int32 x) {
-    ensures exists (int32 k) { k == result };
+    ensures exists (int32 k) { k + 1 == result + 1 };
 } by {
     execute_rest();
     simp();
-    have exists (int32 k) { k == result } by {
+    have exists (int32 k) { k + 1 == result + 1 } by {
         witness(k = result);
         simp();
     }
@@ -25,5 +25,5 @@ int32 identity(int32 x) {
 ```
 
 ```expect
-fail: left `identity.ensures_0` unproved
+fail: grouped `simp` could not certify its complete claim transition
 ```
