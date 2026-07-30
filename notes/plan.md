@@ -27,38 +27,22 @@ list below is updated from a fresh profile.
 
 Order of attack, one frontier at a time, commit each independently:
 
-1. **input-cursor whole-file verify** (was: session timeout — fixed;
-   then certificate-replay bug — fixed; then composite-expansion
-   TypeMismatch — fixed). Three layers peeled on 2026-07-30, all
-   pre-existing (confirmed with `CLICK_DISABLE_DECIDE_MEMO` A/B):
-   certificate premises now must strictly replay-lower before emission
-   (`checked_surface_comparison_fact_at_point`), and pointer-typed loads
-   of framed int32 cells fall through to symbolic loads during
-   composite expansion (`evaluate_c_memory_load_paths`). Two more
-   layers fixed in the certification gate: the bounded order prover
-   bridges load endpoints through effect-summary framing (take's
-   `pos < len` precondition VC), and equality claims resolve both sides
-   to constants via the bounded normalization walk (`left->pos == 1`).
-   Current layer — the last unverified claim: `result == data[0]`
-   (Ensure(4)), a load-equality goal. The fact set has
-   `result_var == load(m_p, (right->data)[right->pos] spelling)` plus
-   `right->pos == 0` and `PointerOffsetEqual(4*load(.data), 4*v_data)`;
-   the prover must equate the pointer offset
-   `4*load(.data) + 4*load(.pos)` with `4*v_data` by resolving
-   `load(.pos)` to the constant 0 and using the PointerOffsetEqual fact
-   — pointer-offset equality with constant-resolved load atoms.
-   Attempted and reverted: a zero-atom reduction arm inside
-   `bitvector_terms_equal_for_memory_resolution` (reasoning.rs) — the
-   per-call normalization walk in that hot loop cost 17 s → 253 s and
-   still did not fire on the goal. Next attempt should be a one-shot
-   certification arm: for an equality goal `var == load`, walk var's
-   equality fact to its load spelling once, then compare the two load
-   pointers' offset atoms with `known_signed_constant_after_normalization`
-   applied top-level (not inside the resolution recursion), plus the
-   existing scaled PointerOffsetEqual fact lookup. Owner decision
-   2026-07-30:
-   certificate/implementation details do not need sign-off; only
-   Surface Click semantics changes do.
+1. **input-cursor: DONE 2026-07-30.** Whole-file verification passes in
+   ~15 s and the example is de-quarantined (verifies inside the
+   examples gate). Six pre-existing layers were fixed, all confirmed
+   pre-existing via `CLICK_DISABLE_DECIDE_MEMO` A/B: (a) certificate
+   premises must strictly replay-lower before emission; (b)
+   pointer-typed loads of framed int32 cells fall through to symbolic
+   loads during composite expansion; (c) the bounded order prover
+   bridges load endpoints through effect-summary framing; (d) equality
+   claims resolve both sides to constants via the bounded normalization
+   walk; (e) `var == load` ensures certify by walking one equality fact
+   to its load spelling, matching pointer-offset atoms transitively
+   over the PointerOffsetEqual fact graph with snapshot-bridged load
+   equality, and requiring the cell framed between snapshots
+   (`certification_proves_equality_via_load_fact` in api.rs). Owner
+   decision 2026-07-30: certificate/implementation details do not need
+   sign-off; only Surface Click semantics changes do.
 2. **Audit `by auto` re-expansion** : audit sites 28–30 (jsonc-refcount,
    all `by auto`) fail re-expansion with "no explicit C proof tactic
    starts at 10:6" — expansion rewrites `auto` into a by-block, so the

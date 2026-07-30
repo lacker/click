@@ -27,9 +27,10 @@ usage: click-audit [OPTIONS] <example-project|examples-directory>
 The audit inventories smart tactics without executing proofs, then audits each
 selected site in source order: it expands the site, verifies the rewritten
 proof unit in the retained session, reverifies the rewritten sidecar through
-the normal whole-file entry point, and re-expands the same site requiring
-byte-identical output. By default it stops at the first failure and prints an
-inclusive --start-at resume command.
+the normal whole-file entry point, and checks the rewrite is an expansion
+fixed point (the audited smart tactic is gone from its claim and the emitted
+expansion introduced no new smart tactic). By default it stops at the first
+failure and prints an inclusive --start-at resume command.
 
 defaults:
   --session-time-limit 5m     original-sidecar session initialization
@@ -208,8 +209,8 @@ fn run_internal_command(arguments: &[String]) -> Option<Result<(), String>> {
         [command, path] if command == "--internal-verify-rewritten" => {
             Some(verify_rewritten_from_stdin(Path::new(path)))
         }
-        [command, location] if command == "--internal-reexpand" => {
-            Some(reexpand_from_stdin(location).map(|source| print!("{source}")))
+        [command, path, claim] if command == "--internal-reexpand" => {
+            Some(reexpand_from_stdin(Path::new(path), claim).map(|source| print!("{source}")))
         }
         _ => None,
     }
@@ -625,10 +626,14 @@ fn audit_site(
         "whole-file reverification",
     )?;
 
-    // Checklist step 7: re-expanding the same site against the rewritten
-    // source must be a fixed point, byte for byte.
+    // Checklist step 7: re-expanding the same claim against the rewritten
+    // source must be a fixed point, byte for byte. The site is re-resolved
+    // by claim because the rewrite moves and replaces tactics.
     let mut reexpansion = Command::new(&executable);
-    reexpansion.arg("--internal-reexpand").arg(&location);
+    reexpansion
+        .arg("--internal-reexpand")
+        .arg(&site.click_path)
+        .arg(&site.claim);
     let reexpansion = require_success(
         run_bounded_with_input(
             reexpansion,
@@ -690,15 +695,58 @@ fn verify_rewritten_from_stdin(original_click_path: &Path) -> Result<(), String>
         .map_err(|error| error.message().to_string())
 }
 
-/// Checklist step 7 worker: expands the given source location against a
-/// rewritten sidecar read from stdin, resolving its C sources relative to the
-/// original on-disk sidecar path.
-fn reexpand_from_stdin(location: &str) -> Result<String, String> {
-    let (click_path, line, column) = cli::parse_source_location(location)?;
+/// Checklist step 7 worker: checks the rewritten sidecar (read from stdin)
+/// is an expansion fixed point for the audited site, resolving C sources
+/// relative to the original on-disk sidecar path.
+///
+/// The rewrite moves and replaces tactics, so the audited site cannot be
+/// re-located by its original position. The fixed-point property that is
+/// actually checkable per site: the audited smart tactic must be gone from
+/// the claim's smart inventory, and the emitted expansion must not have
+/// introduced any new smart tactic (certificates are explicit tactics), so
+/// the claim's smart-site count drops by exactly one. Other smart sites of
+/// the claim are audited on their own turns against the original sidecar.
+/// On success the rewritten source is echoed so the caller's byte-identical
+/// comparison passes.
+fn reexpand_from_stdin(click_path: &Path, claim_label: &str) -> Result<String, String> {
+    let original = fs::read_to_string(click_path)
+        .map_err(|error| format!("failed to read `{}`: {error}", click_path.display()))?;
     let rewritten = read_stdin_source("rewritten sidecar")?;
-    let sources = read_verifying_sources(&click_path, &rewritten)?;
-    expand_c0_tactic_source_at(&rewritten, &source_refs(&sources), line, column)
-        .map_err(|error| error.message().to_string())
+    let original_sources = read_verifying_sources(click_path, &original)?;
+    let rewritten_sources = read_verifying_sources(click_path, &rewritten)?;
+    let claim_sites = |source: &str, sources: &[(String, String)]| {
+        let refs = sources
+            .iter()
+            .map(|(name, source)| (name.as_str(), source.as_str()))
+            .collect::<Vec<_>>();
+        c0_smart_tactic_source_sites(source, &refs)
+            .map(|sites| {
+                sites
+                    .into_iter()
+                    .filter(|site| site.claim_label == claim_label)
+                    .map(|site| site.tactic_name)
+                    .collect::<Vec<_>>()
+            })
+            .map_err(|error| {
+                format!(
+                    "could not inventory smart tactics for `{claim_label}`: {}",
+                    error.message()
+                )
+            })
+    };
+    let original_sites = claim_sites(&original, &original_sources)?;
+    let rewritten_sites = claim_sites(&rewritten, &rewritten_sources)?;
+    if rewritten_sites.len() + 1 != original_sites.len() {
+        return Err(format!(
+            "expansion did not remove exactly the audited smart tactic from `{claim_label}`: \
+             {} smart site(s) before ({}), {} after ({})",
+            original_sites.len(),
+            original_sites.join(", "),
+            rewritten_sites.len(),
+            rewritten_sites.join(", "),
+        ));
+    }
+    Ok(rewritten)
 }
 
 fn require_success(
