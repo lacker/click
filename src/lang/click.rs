@@ -10,7 +10,8 @@ use std::fmt;
 use crate::kernel::{
     Assumptions, Bitvector32Term, CComparisonOperator, CCompositeResourceDefinition,
     CConditionOutcome, CExecutionEnvironment, CExecutionSemantics, CExpression, CExpressionOutcome,
-    CFunction, CFunctionContractClaim, CFunctionContractClaimKey, CFunctionContractExecutionMode,
+    CFunction, CFunctionContractClaim, CFunctionContractClaimKey, CFunctionContractClaimTarget,
+    CFunctionContractExecutionMode,
     CFunctionExecutionCandidates, CFunctionOutcome, CFunctionSpecification, CLoopEffect,
     CLoopEffectCheck, CLoopEffectSpan, CLoopInvariantCheck, CMemory, CMemoryRange, CMemorySegment,
     CResource, CResourceAccessMode, CResourceFact, CResourceSpec, CState, CStatement,
@@ -2382,15 +2383,30 @@ fn verify_c0_sources_with_environment(
                     Ok(keys) if !keys.is_empty() => {
                         let described = keys
                             .iter()
-                            .map(|key| match key {
-                                CFunctionContractClaimKey::Ensure(index) => contract_function
-                                    .contract_ensures()
-                                    .get(*index)
-                                    .map_or_else(
-                                        || format!("{key:?}"),
-                                        |ensure| format!("{key:?} = {ensure:?}"),
-                                    ),
-                                key => format!("{key:?}"),
+                            .map(|key| {
+                                let target = contract_function
+                                    .contract_claims()
+                                    .iter()
+                                    .find(|claim| claim.key() == key)
+                                    .map(CFunctionContractClaim::target);
+                                match target {
+                                    Some(CFunctionContractClaimTarget::EnsureProposition(
+                                        index,
+                                    )) => contract_function
+                                        .contract_ensures()
+                                        .get(*index)
+                                        .map_or_else(
+                                            || format!("{key:?}"),
+                                            |ensure| format!("{key:?} = {ensure:?}"),
+                                        ),
+                                    Some(CFunctionContractClaimTarget::EnsureResource(index)) => {
+                                        contract_function.resource_ensures().get(*index).map_or_else(
+                                            || format!("{key:?}"),
+                                            |resource| format!("{key:?} = produces {resource:?}"),
+                                        )
+                                    }
+                                    _ => format!("{key:?}"),
+                                }
                             })
                             .collect::<Vec<_>>()
                             .join(", ");

@@ -4294,58 +4294,68 @@ fn pointer_offsets_equal_with_resolved_atoms(
     right_atoms.is_empty()
 }
 
-/// Certifies `term == load` by walking one equality fact of `term` to a load
-/// spelling and comparing the two loads: same block, offsets equal with
-/// constant-resolved atoms, and the loaded cell provably unchanged between
-/// the two snapshots.
+/// The load spellings a term denotes: the term itself when it is a load,
+/// plus every load one equality fact away.
+fn load_spellings_of<'a>(
+    assumptions: &'a Assumptions,
+    term: &'a Bitvector32Term,
+) -> Vec<(&'a CMemory, &'a Pointer)> {
+    let mut loads = Vec::new();
+    if let Bitvector32Term::MemoryLoad(memory, pointer) = term {
+        loads.push((&**memory, pointer.as_ref()));
+    }
+    for (condition, value) in &assumptions.condition_facts {
+        if !*value {
+            continue;
+        }
+        let ConditionTerm::Bitvector32Equal(fact_left, fact_right) = condition else {
+            continue;
+        };
+        for (fact_term, fact_load) in [(fact_left, fact_right), (fact_right, fact_left)] {
+            if fact_term.as_ref() != term {
+                continue;
+            }
+            if let Bitvector32Term::MemoryLoad(memory, pointer) = fact_load.as_ref() {
+                loads.push((&**memory, pointer.as_ref()));
+            }
+        }
+    }
+    loads
+}
+
+/// Certifies an equality by resolving each side to a load spelling (itself,
+/// or one equality fact away) and proving some pair of spellings denotes one
+/// framed cell: same block, offsets equal with constant-resolved atoms, and
+/// the loaded cell provably unchanged between the two snapshots.
 fn certification_proves_equality_via_load_fact(
     assumptions: &Assumptions,
     left: &Bitvector32Term,
     right: &Bitvector32Term,
 ) -> bool {
-    for (goal_term, goal_load) in [(left, right), (right, left)] {
-        let Bitvector32Term::MemoryLoad(goal_memory, goal_pointer) = goal_load else {
-            continue;
-        };
-        for (condition, value) in &assumptions.condition_facts {
-            if !*value {
-                continue;
-            }
-            let ConditionTerm::Bitvector32Equal(fact_left, fact_right) = condition else {
-                continue;
-            };
-            for (fact_term, fact_load) in [(fact_left, fact_right), (fact_right, fact_left)] {
-                if fact_term.as_ref() != goal_term {
-                    continue;
-                }
-                let Bitvector32Term::MemoryLoad(fact_memory, fact_pointer) = fact_load.as_ref()
-                else {
-                    continue;
-                };
-                if fact_pointer.block != goal_pointer.block {
-                    continue;
-                }
-                if !pointer_offsets_equal_with_resolved_atoms(
-                    &fact_pointer.offset,
-                    &goal_pointer.offset,
-                    assumptions,
-                ) {
-                    continue;
-                }
-                if c_memory_load_is_unchanged(fact_memory, goal_memory, goal_pointer, assumptions)
-                    || c_memory_load_is_unchanged(
-                        fact_memory,
-                        goal_memory,
-                        fact_pointer,
-                        assumptions,
-                    )
-                {
-                    return true;
-                }
-            }
-        }
+    let left_loads = load_spellings_of(assumptions, left);
+    if left_loads.is_empty() {
+        return false;
     }
-    false
+    let right_loads = load_spellings_of(assumptions, right);
+    left_loads.iter().any(|(left_memory, left_pointer)| {
+        right_loads.iter().any(|(right_memory, right_pointer)| {
+            left_pointer.block == right_pointer.block
+                && pointer_offsets_equal_with_resolved_atoms(
+                    &left_pointer.offset,
+                    &right_pointer.offset,
+                    assumptions,
+                )
+                && [left_pointer, right_pointer].into_iter().any(|pointer| {
+                    c_memory_load_is_unchanged(left_memory, right_memory, pointer, assumptions)
+                        || c_memory_load_is_unchanged(
+                            right_memory,
+                            left_memory,
+                            pointer,
+                            assumptions,
+                        )
+                })
+        })
+    })
 }
 
 fn certification_proves_proposition(assumptions: &Assumptions, proposition: &Proposition) -> bool {

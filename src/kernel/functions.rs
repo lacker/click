@@ -1242,24 +1242,35 @@ pub(super) fn resource_context_satisfies_definitional_fact(
     memory: &CMemory,
     assumptions: &Assumptions,
 ) -> bool {
+    // TEMPORARY PROBE
+    let probing = std::env::var_os("CLICK_PROBE_RESOURCE_EQ").is_some();
     if available.satisfies_fact(required, assumptions) {
         return true;
     }
     let Some(available) =
         expand_all_composite_resource_facts(available, definitions, memory, assumptions)
     else {
+        if probing {
+            eprintln!("click probe: definitional available side did not expand");
+        }
         return false;
     };
     let required_context = ResourceContext::new().unchecked_with_fact(required.clone());
     let Some(required) =
         expand_all_composite_resource_facts(&required_context, definitions, memory, assumptions)
     else {
+        if probing {
+            eprintln!("click probe: definitional required side did not expand");
+        }
         return false;
     };
-    required
-        .facts()
-        .iter()
-        .all(|fact| available.satisfies_fact(fact, assumptions))
+    required.facts().iter().all(|fact| {
+        let satisfied = available.satisfies_fact(fact, assumptions);
+        if !satisfied && probing {
+            eprintln!("click probe: expanded requirement not satisfied: {fact:?}");
+        }
+        satisfied
+    })
 }
 
 /// True when every element of a constant-bounded memory range is concretely

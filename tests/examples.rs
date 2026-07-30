@@ -20,10 +20,6 @@ const DEFAULT_EXAMPLE_TIME_LIMIT: Duration = Duration::from_secs(10 * 60);
 /// remove entries as they are fixed (see docs/advanced/testing-click.md).
 const QUARANTINED: &[(&str, &str)] = &[
     (
-        "owned-segmented-buffer",
-        "pipeline contract fails: `step using` misses a pure fact that prints identically to an available one (CMemory snapshot equality mismatch)",
-    ),
-    (
         "owned-split-buffer",
         "whole-file verification exceeds 10 minutes",
     ),
