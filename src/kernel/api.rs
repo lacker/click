@@ -4196,6 +4196,13 @@ fn certification_proves_proposition(assumptions: &Assumptions, proposition: &Pro
         {
             true
         }
+        // Both sides resolve to one known constant through equality facts
+        // and per-load snapshot bridging (deterministic and fuel-free).
+        Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), true)
+            if assumptions.constants_known_equal_after_normalization(left, right) =>
+        {
+            true
+        }
         Proposition::And(left, right) => {
             certification_proves_proposition(assumptions, left)
                 && certification_proves_proposition(assumptions, right)
