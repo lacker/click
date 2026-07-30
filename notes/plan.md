@@ -1,12 +1,12 @@
 # Short-term plan
 
-Last updated: 2026-07-30. This is the working list of near-term tasks —
-things doable now without big syntax expansions or resource-logic changes.
-Larger arcs are listed at the bottom so they don't get lost, but they are
-not part of this plan.
+Last updated: 2026-07-30 (later session). This is the working list of
+near-term tasks — things doable now without big syntax expansions or
+resource-logic changes. Larger arcs are listed at the bottom so they
+don't get lost, but they are not part of this plan.
 
 Current baseline: **master is green** on all three default gates
-(lib 464/464 via `cargo nextest run --lib`, mdtests 264 visible via
+(lib 465/465 via `cargo nextest run --lib`, mdtests 264 visible via
 `cargo test --test mdtests`, examples via `cargo test --test examples`).
 Keep it that way: every change validates all three gates before landing.
 
@@ -15,29 +15,51 @@ Keep it that way: every change validates all three gates before landing.
 The proof-performance workflow (`click-profile`, `click-expand`,
 `click-verify`, `click-audit`) should be routinely usable. The settled
 design invariants and the working rules live at the bottom of this file.
-The old measured frontiers (owned-split-buffer slow steps, vector_push
-smart lead, input-cursor session timeout) predate a large amount of
-verifier change — **reproduce before acting on any of them**.
+
+**2026-07-30 session results (decide-memo commit):** kernel `decide`
+searches were re-answering ~500 distinct conditions thousands of times
+each. Decisions are now memoized by fact-set content identity (see
+`src/kernel/assumptions.rs`; `CLICK_DISABLE_DECIDE_MEMO` bypasses it for
+A/B). Measured: input-cursor whole-file verify 30+ min → ~9 s; audit
+session init >1 m timeout → ~11 s; full mdtest suite ~12 s; full
+`click-profile` across examples completes in ~2 min. The old frontier
+list below is updated from a fresh profile.
 
 Order of attack, one frontier at a time, commit each independently:
 
-1. **Audit session baseline**: `click-audit --max-sites 1 examples`
-   previously timed out initializing the input-cursor session (>1m).
-   Profile where that minute goes (ordinary verification vs location
-   verification vs retained-session init) and fix the responsible path —
-   don't just raise the timeout. Note: input-cursor is currently a
-   quarantined example ("whole-file verification exceeds 30 minutes"), so
-   this doubles as the first de-quarantine attempt.
-2. **Slow simple tactics**: run `click-profile` project by project; fix
-   every completed SIMPLE row over 500 ms in the verifier (simple =
-   deterministic replay, must be fast), reprofile, repeat.
-3. **Slow smart tactics**: for each SMART row over 2 s, `click-expand` its
-   exact location, apply the emitted sidecar, reverify, commit, reprofile.
-4. **Full audit**: `cargo run --quiet --bin click-audit -- examples` to
-   completion. Fix concrete bugs immediately; treat timeouts as
-   performance bugs; stop for discussion before changing certificate
-   semantics; resume with `--start-at`.
-5. **One-gateway check**: after the corpus audit is green, one bounded
+1. **input-cursor certificate-replay bug** (was: session timeout — that
+   is fixed): whole-file verify now fails fast in
+   `input_cursor_shared_pipeline.contract` tactic 33 (execute_rest):
+   "generated surface certificate failed replay". Confirmed pre-existing
+   with the memo disabled (identical certificate, 469 s vs 9 s). Root
+   shape: certificate generation lowers candidate premise spellings with
+   the permissive `allow_symbolic_contract_loads` mode and accepts
+   `left_value == left->data[left->pos]` (true at statement(5), where the
+   fact was recorded) without its `at(...)` anchor; strict replay
+   lowering at statement 7 then fails its loadability obligation (and
+   the certificate also contains the nonsense spelling
+   `left->pos == (left->pos + 1)`). Fix direction: candidates accepted
+   during certificate generation must strictly lower at the replay
+   point (same obligations as `lower_point_proposition`), falling back
+   to at()-anchored spellings. **This changes certificate-generation
+   semantics — discuss before implementing** (per working rules).
+2. **Audit `by auto` re-expansion** : audit sites 28–30 (jsonc-refcount,
+   all `by auto`) fail re-expansion with "no explicit C proof tactic
+   starts at 10:6" — expansion rewrites `auto` into a by-block, so the
+   original cursor no longer points at a tactic. The byte-identical
+   re-expansion check needs position remapping for rewritten sites.
+3. **Slow simple tactics** (fresh profile, 120 s limit): input-cursor
+   shared_pipeline `step` 5.4 s (statement 7; likely same snapshot
+   blowup as item 1), owned-split-buffer pipeline `step` 577 ms.
+4. **Slow smart tactics** (fresh profile): owned-split-buffer
+   execute_rest 14.3 s, input-cursor execute_rest 12.2 s, owned-string
+   execute_step 5.4 s and have 5.1 s. Expand each, apply, reverify.
+5. **Full audit**: `cargo run --quiet --bin click-audit -- examples` to
+   completion (now feasible: bounded runs finish in minutes). Fix
+   concrete bugs immediately; treat timeouts as performance bugs; stop
+   for discussion before changing certificate semantics; resume with
+   `--start-at`.
+6. **One-gateway check**: after the corpus audit is green, one bounded
    code audit that every smart success commits through TacticCertificate
    replay with no bypass. Not an open-ended refactor.
 
