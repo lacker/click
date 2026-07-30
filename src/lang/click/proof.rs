@@ -152,7 +152,10 @@ fn equal_by_premise_chain(
                 )))
     };
     let mut classes: Vec<Vec<Bitvector32Term>> = Vec::new();
-    for premise in premises {
+    // Ambient equality facts are execution-certified (store equations,
+    // recorded aliases) and may link the listed premises, the same way
+    // frame facts justify load unification.
+    for premise in premises.iter().chain(available) {
         let Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), true) =
             crate::kernel::c_condition_fact_with_canonical_loads(premise)
         else {
@@ -12817,12 +12820,26 @@ fn certify_outcome_simp_have(
             "`{claim_label}` path {path_index}, tactic {tactic_index}: smart `simp` produced an invalid certificate: {error:?}"
         ))
     })?;
+    // Replay may frame loads across recorded effects; a fresh replay
+    // recomputes the same effect facts from execution, so including them
+    // keeps in-place and standalone replays aligned.
+    let mut replay_available = certified_available.clone();
+    for fact in &replay.effect_facts {
+        if !replay_available.contains(fact.proposition()) {
+            replay_available.push(fact.proposition().clone());
+        }
+    }
+    for equation in crate::kernel::certified_store_equations(&replay.effect_facts) {
+        if !replay_available.contains(&equation) {
+            replay_available.push(equation);
+        }
+    }
     let replayed_goal = prove_have_at_point(
         &surface_have,
         theorem_environment,
         claim_label,
         tactic_index,
-        &certified_available,
+        &replay_available,
         parameters,
         arguments,
         pre_state,

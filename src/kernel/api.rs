@@ -162,6 +162,94 @@ pub(crate) fn c_memory_load_is_unchanged(
     {
         return true;
     }
+    load_unchanged_via_effect_chain(before, after, pointer, assumptions)
+}
+
+/// Bounded search for a chain of recorded effects carrying a load from one
+/// snapshot to another with the pointer untouched at every hop. Endpoints
+/// link by deep-canonical equality, and each hop's write set must be
+/// provably distinct from the pointer, so the chain never crosses a write
+/// to the loaded cell and never bridges havoc without a recorded effect.
+fn load_unchanged_via_effect_chain(
+    before: &CMemory,
+    after: &CMemory,
+    pointer: &Pointer,
+    assumptions: &Assumptions,
+) -> bool {
+    const EFFECT_CHAIN_HOP_LIMIT: usize = 8;
+    let mut steps = Vec::new();
+    for proposition in &assumptions.prop_facts {
+        match proposition {
+            Proposition::CMemoryMutatesOnly {
+                before: step_before,
+                after: step_after,
+                pointers,
+            } => {
+                let untouched = pointers.iter().all(|write| {
+                    write.blocks_proven_distinct(pointer)
+                        || pointer_offsets_with_common_base_proven_distinct(
+                            write,
+                            pointer,
+                            assumptions,
+                        )
+                        || pointers_proven_distinct_for_memory_resolution(
+                            write,
+                            pointer,
+                            assumptions,
+                        )
+                });
+                if untouched {
+                    steps.push((
+                        canonical_c_memory_deep(step_before),
+                        canonical_c_memory_deep(step_after),
+                    ));
+                }
+            }
+            Proposition::CMemoryEffectSummary {
+                before: step_before,
+                after: step_after,
+                mutable_ranges,
+            } => {
+                if assumptions.ranges_proven_disjoint_from_pointer(mutable_ranges, pointer) {
+                    steps.push((
+                        canonical_c_memory_deep(step_before),
+                        canonical_c_memory_deep(step_after),
+                    ));
+                }
+            }
+            _ => {}
+        }
+    }
+    if steps.is_empty() {
+        return false;
+    }
+    let target = canonical_c_memory_deep(after);
+    let start = canonical_c_memory_deep(before);
+    if start == target {
+        return true;
+    }
+    let mut seen = vec![start.clone()];
+    let mut frontier = vec![start];
+    for _ in 0..EFFECT_CHAIN_HOP_LIMIT {
+        let mut next = Vec::new();
+        for current in &frontier {
+            for (step_before, step_after) in &steps {
+                for (from, to) in [(step_before, step_after), (step_after, step_before)] {
+                    if from == current && !seen.contains(to) {
+                        if to == &target {
+                            return true;
+                        }
+                        seen.push(to.clone());
+                        next.push(to.clone());
+                    }
+                }
+            }
+        }
+        if next.is_empty() {
+            return false;
+        }
+        frontier = next;
+    }
     false
 }
 
@@ -612,6 +700,32 @@ pub(crate) fn c_condition_facts_equivalent_for_memory_resolution(
     };
     bitvector_terms_proven_equal_for_memory_resolution(a, c, assumptions)
         && bitvector_terms_proven_equal_for_memory_resolution(b, d, assumptions)
+}
+
+/// Exports each certified store as the condition fact its record proves:
+/// loading the stored pointer from the post-store memory yields the stored
+/// value. These are execution-certified equations usable by replay.
+pub(crate) fn certified_store_equations(facts: &[ExecutionPureFact]) -> Vec<Proposition> {
+    facts
+        .iter()
+        .filter_map(|fact| {
+            let store = fact.certified_store_data()?;
+            let value = match &store.value {
+                CValue::Int32(term) | CValue::UInt8(term) => term.clone(),
+                CValue::Pointer(_) => return None,
+            };
+            Some(Proposition::ConditionIs(
+                ConditionTerm::Bitvector32Equal(
+                    Box::new(Bitvector32Term::MemoryLoad(
+                        Box::new(store.after.clone()),
+                        Box::new(store.pointer.clone()),
+                    )),
+                    Box::new(value),
+                ),
+                true,
+            ))
+        })
+        .collect()
 }
 
 pub(crate) fn c_condition_fact_memories(fact: &Proposition) -> Vec<CMemory> {
