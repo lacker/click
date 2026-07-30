@@ -118,6 +118,32 @@ deleted rather than extended. Migration risk concentrates in eval.rs
 (store paths), resource lowering, and everywhere `CMemory` appears in
 `Proposition`/`Term` variants.
 
+## Overnight findings 2026-07-30 (post-interning)
+
+Interning + memoization landed (ebe44f1, 4ff2be8; lib suite 2x faster) and
+endpoint/base load-bridging landed (928a6eb; opens field_derived's fold
+gate). The remaining five failures converge on ONE design question:
+
+**Effect-backed postconditions cannot be spelled in a pure surface
+certificate.** field_derived's `ensures owner->len == old(owner->len)+1`
+and fill_n's segment ForAll both DERIVE from the certified context
+(available + statement effect facts + certified_store_equations — verified
+by probe), and `ExactPropositionDerivation` replays them deterministically,
+but `TacticCertificate::from_proof_tactics` rejects that tactic: the
+b27015a hardening requires certificates to round-trip through the Surface
+Click parser, and a kernel derivation has no source spelling. Options:
+(a) admit kernel-derivation certificates into the certificate format
+(breaks "expanded proofs are canonical Surface Click" — needs owner
+sign-off); (b) synthesize surface At-point spellings for store equations
+(e.g. `at(statement(k).exit, owner->len) == index + 1` is spellable — the
+premise-expression search in the postcondition lowering would need to
+synthesize At spellings the way the loadability-obligation block does);
+(c) route these claims through the statement-transition layer (StepUsing
+carries certified prerequisites without spelling them). (b) is the most
+consistent with the existing design. A synthesized-TransportUsing fallback
+for survives-writes goals was implemented and reverted: these ensures are
+post-store facts, not transported facts, so it never fired.
+
 ## Related open questions (not part of A)
 
 - `composite_resource_owner_buffer_hidden_separate_projection`: the ensure
