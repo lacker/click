@@ -15569,7 +15569,8 @@ fn replay_linear_tactics(
                         )
                         .map_err(|message| {
                             ClickError::new(format!(
-                                "`{claim_label}` tactic {tactic_index}: could not lower `{tactic_name}` premise: {message}"
+                                "`{claim_label}` tactic {tactic_index}: could not lower `{tactic_name}` premise `{}`: {message}",
+                                super::printing::source_click_proposition(surface_premise)
                             ))
                         })?
                     };

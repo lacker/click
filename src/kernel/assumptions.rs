@@ -165,6 +165,18 @@ impl Drop for AssumptionsIdScope {
     }
 }
 
+/// True when CLICK_DISABLE_DECIDE_MEMO is set: decision and equality-graph
+/// memoization is bypassed so behavior can be compared against the
+/// unmemoized prover. Checked once per thread.
+fn decide_memo_disabled() -> bool {
+    thread_local! {
+        static DISABLED: std::cell::OnceCell<bool> = const { std::cell::OnceCell::new() };
+    }
+    DISABLED.with(|disabled| {
+        *disabled.get_or_init(|| std::env::var_os("CLICK_DISABLE_DECIDE_MEMO").is_some())
+    })
+}
+
 /// Records that a reasoning search was cut short by ambient thread-local
 /// state (a fuel budget, a recursion-depth guard, or an in-progress-decision
 /// cycle cut) rather than by the query itself. `decide` results computed
@@ -509,6 +521,12 @@ impl Assumptions {
         if !consume_simp_reasoning_fuel() {
             return None;
         }
+        // Debugging escape hatch: run every decision unmemoized to compare
+        // against memoized behavior.
+        if decide_memo_disabled() {
+            let _decision_guard = ConditionDecisionGuard::enter(condition)?;
+            return self.decide_inner(condition);
+        }
         // Resolve the memo identity from an enclosing scope, or establish
         // one when this is the outermost decision. Nested decisions on other
         // fact sets (intrinsic decisions on fresh empty sets) run unmemoized.
@@ -743,7 +761,11 @@ impl Assumptions {
         // Memoized only under an enclosing id scope; this search is called
         // from deep memory-resolution recursions where hashing the fact set
         // per call would cost more than the search itself.
-        let memo_id = ambient_assumptions_memo_id(self);
+        let memo_id = if decide_memo_disabled() {
+            None
+        } else {
+            ambient_assumptions_memo_id(self)
+        };
         let memo_key =
             memo_id.map(|memo_id| (memo_id, left.clone(), right.clone()));
         if let Some(memo_key) = &memo_key
