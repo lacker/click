@@ -1,219 +1,46 @@
-# Short-term plan
+# Plan — status board
 
-Last updated: 2026-07-30 (later session). This is the working list of
-near-term tasks — things doable now without big syntax expansions or
-resource-logic changes. Larger arcs are listed at the bottom so they
-don't get lost, but they are not part of this plan.
+Last updated: 2026-07-30 (evening). Read `conventions.md` before
+working; each task lives in its own self-contained file under `tasks/`
+so different agents can work different rows without colliding. Claim a
+task by setting the `Claimed:` line in its file.
 
-Current baseline: **master is green** on all three default gates
-(lib 465/465 via `cargo nextest run --lib`, mdtests 264 visible via
-`cargo test --test mdtests`, examples via `cargo test --test examples`).
-Keep it that way: every change validates all three gates before landing.
+Baseline: **master is green** on all three gates (lib 465, mdtests,
+examples — see conventions.md for the commands). The 2026-07-30
+sessions landed the decide memo (~200x on hot proofs), six
+certifier/kernel fixes, three example de-quarantines (input-cursor,
+owned-segmented-buffer, owned-split-buffer), and a usable bounded
+click-audit (full run 314 s, 98 sites passing).
 
-## 1. Make profile / expand / audit work, then fix what they find
+## Board
 
-The proof-performance workflow (`click-profile`, `click-expand`,
-`click-verify`, `click-audit`) should be routinely usable. The settled
-design invariants and the working rules live at the bottom of this file.
+| Task file (tasks/) | Status | One-line scope |
+|---|---|---|
+| split-buffer-perf.md | open | Kill the last 2 SLOW audit findings (~7.7 s unit; 3.6 s contract execution) |
+| one-gateway-check.md | open | Bounded code audit: every smart success routes through TacticCertificate replay |
+| cli-consolidation.md | open | Dedupe binary helpers; whole-file verify workflow; robust click-profile parsing |
+| proof-panics.md | open | Convert user-reachable panic!/unreachable! in proof.rs to diagnostics |
+| while-invariant-rule.md | open | Fix or fence the single-fork preservation check |
+| docs-vocabulary-pass.md | open | Tactic inventory/synonym cleanup; audit docs match the binary |
+| parser-ergonomics.md | open | required-else and a->b->c chains: fix small or park with writeup |
+| lib-ignored-expansion-tests.md | open | Retest 7 #[ignore] lib tests; un-ignore or diagnose |
+| store-provenance-family.md | parked | owned-string, owned-vector, 6 mdtests — blocked on the canonical-memory arc |
+| repo-hygiene.md | blocked | Stale branches/worktrees/stash — deletions need the owner |
 
-**2026-07-30 session results (decide-memo commit):** kernel `decide`
-searches were re-answering ~500 distinct conditions thousands of times
-each. Decisions are now memoized by fact-set content identity (see
-`src/kernel/assumptions.rs`; `CLICK_DISABLE_DECIDE_MEMO` bypasses it for
-A/B). Measured: input-cursor whole-file verify 30+ min → ~9 s; audit
-session init >1 m timeout → ~11 s; full mdtest suite ~12 s; full
-`click-profile` across examples completes in ~2 min. The old frontier
-list below is updated from a fresh profile.
+## Reference docs
 
-Order of attack, one frontier at a time, commit each independently:
+- `conventions.md` — gates, multi-agent workflow, decision boundaries,
+  working rules, settled invariants, tooling flags. Read first.
+- `canonical-memory.md` — the named-memory-states arc (the intended fix
+  for the store-provenance family). Larger than short-term; owner-gated.
+- `design-review.md` — the ranked 2026-07 review (historical reference;
+  actionable residue is in tasks/).
+- `language-proposals.md` — surface-language proposals (parked; any of
+  these is a Surface Click semantics change and needs the owner).
 
-1. **input-cursor: DONE 2026-07-30.** Whole-file verification passes in
-   ~15 s and the example is de-quarantined (verifies inside the
-   examples gate). Six pre-existing layers were fixed, all confirmed
-   pre-existing via `CLICK_DISABLE_DECIDE_MEMO` A/B: (a) certificate
-   premises must strictly replay-lower before emission; (b)
-   pointer-typed loads of framed int32 cells fall through to symbolic
-   loads during composite expansion; (c) the bounded order prover
-   bridges load endpoints through effect-summary framing; (d) equality
-   claims resolve both sides to constants via the bounded normalization
-   walk; (e) `var == load` ensures certify by walking one equality fact
-   to its load spelling, matching pointer-offset atoms transitively
-   over the PointerOffsetEqual fact graph with snapshot-bridged load
-   equality, and requiring the cell framed between snapshots
-   (`certification_proves_equality_via_load_fact` in api.rs). Owner
-   decision 2026-07-30: certificate/implementation details do not need
-   sign-off; only Surface Click semantics changes do.
-2. **Audit re-expansion: DONE 2026-07-30.** The fixed-point check is now
-   claim-based (the audited smart tactic must vanish from its claim's
-   smart inventory with no new smart tactic emitted); `by auto` and
-   whole-proof rewrites audit cleanly. Full `click-audit examples` run:
-   all 30 auditable sites pass; the only session failures were the
-   then-quarantined owned-* projects.
-3. **owned-string** (last non-parked quarantined example): the
-   `terminated_at` smart-have unfold cannot discharge
-   loadable(data[len]) at owned_string_push tactic 7. Diagnosed:
-   pointer_element_index_from_base extracts the right index only if the
-   goal's and the range fact's load atoms bridge, and the bounds decides
-   need `0 <= len`/`len < cap` facts whose load spellings differ from
-   the goal's by DIRECT-STORE provenance (push writes len and
-   data[len]); the planning assumptions carry no effect facts and
-   adding replay.effect_facts did not help (stores are execution facts,
-   not effect summaries; attempt reverted). This is the store-provenance
-   /named-memory-states representational family — consider parking with
-   owned-vector rather than more per-spelling bridging.
-4. **Slow smart tactics: CLEAN on the green corpus (2026-07-30 late
-   profile).** Full-examples profile shows no SIMPLE >500 ms and no
-   SMART >2 s in any passing project; the only remaining rows
-   (owned-string execute_step 3.6 s, have 3.5 s) are inside the parked
-   store-provenance project. Item 1's profile criterion is met for
-   everything that verifies.
-5. **Full audit to completion**: rerun `click-audit --keep-going
-   examples` after each de-quarantine; keep it at 0 site failures.
-   Slowness is now a finding (owner decision 2026-07-30): the audit
-   fails a passing site over `--slow-site-limit` (default 10 s) and
-   stops at `--time-limit` (default 10 m) with a resume cursor, so a
-   default run can never quietly take an hour. The 56 s pipeline-unit
-   finding is FIXED: the constant-normalization walk now prefilters
-   candidates by memory-blind structure (claims check 49 s -> 0.08 s),
-   and the pipeline's execute_rest is expanded; segmented whole-file
-   verify is ~5.8 s and the examples gate ~19 s. The cold-process
-   reverify now runs once per claim instead of per site (the retained
-   session covers the rest), and both pipelines' execute_rest searches
-   are expanded away. Full `--keep-going` audit: 314 s, 98 sites pass,
-   2 residual SLOW findings, both bound by owned_split_buffer_pipeline's
-   ~7.7 s unit verify (contract execution ~3.6 s is the next lever; the
-   sites are 235:5, first of its claim so it also pays the cold
-   reverify, and 427:5, whose own expansion costs ~5.9 s). Sessions for
-   owned-string/owned-vector still fail (parked family). CLICK_TIMINGS
-   now also emits contract execution / contract claims / per-claim
-   phase timings.
-6. **One-gateway check**: after the corpus audit is green, one bounded
-   code audit that every smart success commits through TacticCertificate
-   replay with no bypass. Not an open-ended refactor.
+## Done criteria for the current arc
 
-Done when: profile shows no SIMPLE >500ms / SMART >2s across examples,
-the audit completes every inventoried site with idempotent byte-identical
-rewrites, and child cleanup is confirmed after every watchdog kill.
-
-## 2. De-quarantine backlog
-
-Quarantine entries are explicit and temporary; shrink the lists.
-
-- **mdtests** (`tests/mdtests.rs` QUARANTINED, 6): four item-7 entries
-  (bubble_pass3, bubble_sort3, composite_owner_buffer_field_dependent,
-  fill_tail_keeps_first) plus the two named-memory-states residue entries
-  (vector_fill, field_derived). Re-tested 2026-07-30 after the
-  decide-memo and certification work: all four item-7 entries still
-  fail (bubble_pass3/bubble_sort3 in the invariant closer — same
-  missing-ForAll-path-goal shape as owned-vector's vector_fill). The two
-  residue entries are blocked on the named-memory-states arc (below);
-  don't burn time re-bridging them (see canonical-memory.md for the
-  exhaustion evidence and branch `claude/forall-extension-wip`).
-- **examples** (`tests/examples.rs` QUARANTINED, 2 — was 5;
-  input-cursor, owned-segmented-buffer, and owned-split-buffer were
-  de-quarantined 2026-07-30): owned-string fails the terminated_at
-  loadability have (see item 3 above; store-provenance family), and
-  owned-vector fails the vector_fill invariant closer (named-memory-
-  states residue, parked; now fails in ~12 s instead of timing out).
-- **lib** (7 `#[ignore]` expansion tests): expansion-era failures
-  (expands_nested_branch_tactic_by_source_location,
-  expansion_preserves_unfolded_resource_and_predicate_fact_spellings,
-  execute_rest_return_certificate_omits_unused_ambient_facts,
-  execute_step_expands_call_assign_fact_from_internal_snapshot,
-  verifies_opaque_predicate_from_requirement,
-  verifies_old_memory_loop_invariant,
-  expands_grouped_immutable_read_with_multiple_claim_successors).
-  These overlap heavily with the expand/audit work in section 1.
-
-## 3. Small design-review items
-
-From `design-review.md` (see it for full context). The big-ticket items
-(1–3 soundness, struct padding, parser comments/unary-minus/initializers)
-were fixed earlier; layout-slot field ownership landed 2026-07-30. What
-remains that is small-ish:
-
-- **Duplicated helpers across the four binaries** (item 12):
-  parse_source_location / parse_duration / format_duration / watchdog loop
-  exist 3–4 times with drifted semantics. Consolidate into one module.
-- **No whole-file verify CLI** (item 12): `click-verify` demands
-  file:line:column; add a whole-file/project mode so the documented
-  workflow is runnable.
-- **click-profile parses its child's stderr by whitespace field counts**
-  (honorable mention): format drift silently yields false-green reports.
-  Make the timing stream a stable format or parse defensively with errors.
-- **35 panic!/unreachable! sites in proof.rs reachable from user input**
-  (honorable mention): convert the reachable ones to diagnostics.
-- **while-invariant rule checks preservation in one fork context**
-  (honorable mention): currently test-only but exported; fix or fence.
-- **Doc vocabulary churn** (honorable mention): stale tactic synonyms,
-  close_invariants missing from the tactic inventory, "legacy spelling"
-  self-reference. One docs pass.
-- **Remaining parser ergonomics** (item 4): verify current status of
-  required-else and `a->b->c` chains; fix if small, otherwise leave for
-  the language arc.
-
-## 4. Small recent follow-ups
-
-- **Grouped-simp candidate-loop perf**: `atomic_derivation_premises`
-  clones the whole Assumptions per candidate and re-proves.
-  field_derived spends ~500 s there even to fail. Pre-filter candidates
-  by base-block relevance or restructure the loop. (Also gates the
-  field_derived de-quarantine.)
-- **Lib suite pace**: after the canonical/resolution equality arms, one
-  lib test occasionally reports slow (>10 s threshold). Keep an eye on
-  `cargo nextest run --lib` output; if a test goes slow consistently,
-  profile the new arms' cost there.
-- **Repo hygiene** (ask the owner before deleting): stale branches
-  (claude/engineering-debt and claude/store-provenance are merged;
-  claude/code-review-design-issues-763cd1, codex/click-expand,
-  wip/tactic-certificates-2026-07-18, worktree-claude are older),
-  worktrees under .claude/worktrees/, a `store-provenance WIP` stash
-  (byte-identical to the merged branch's first commit, safe to drop once
-  confirmed), and stale /private/tmp worktrees (click-head-audit,
-  click-head-probe, click-p0-baseline).
-
-## Settled design invariants (from the old todo.md — keep honoring)
-
-- TacticCertificate is the smart/simple boundary; a smart success must
-  replay through a surface-expressible certificate before acceptance.
-- Expansion emits the exact accepted certificate — no second proof
-  search, no generic fallback.
-- Simple tactics are deterministic replay and must be fast; don't hide a
-  slow simple tactic by expanding an enclosing smart tactic.
-- ProofSite + one-based PATH:LINE:COLUMN are shared by verification,
-  profiling, expansion, auditing, and rewriting.
-- click-expand emits a rewritten sidecar and does not reverify it;
-  verification and auditing stay separate composable operations.
-- Kernel Click has no textual syntax; all output is documented Surface
-  Click accepted by the ordinary parser. Canonical struct spellings are
-  `owner->field`, `(owner->pointer_field)[start..end]`, `object(owner)`;
-  `load_*` / `byte_offset` are escape hatches only.
-- CLI watchdogs must kill and reap their children.
-- Everything the certifier consumes gets a surface spelling (owner
-  decision 2026-07-30).
-
-## Working rules
-
-- Validate all three gates before landing; keep master green.
-- Fix correctness bugs before continuing any sweep.
-- Reproduce stale timing claims before acting on them.
-- One frontier at a time; commit each independently verified fix.
-- Probe pattern: env-gated eprintln/file dumps at the failing check, run
-  with MDTEST_FILTER, strip probes before committing.
-- Guard and depth-gate any new recursive prover arm: three separate stack
-  overflows in 2026-07-30 work all traced to structural recursion on deep
-  terms (the harnesses now give children 64 MB stacks, but that is a
-  backstop, not a license).
-- SOUNDNESS TRAP: never drop havoc/call-havoc blocks from canonical load
-  memories; kernel test
-  memory_load_equality_does_not_ignore_loop_havoc_identity guards this.
-
-## Larger arcs — explicitly NOT short-term
-
-- **Named memory states (option C)**: the representation rewrite that
-  clears the two residue mdtests, likely most of the quarantine backlog,
-  and the perf class. Design sketch and decision record in
-  `canonical-memory.md`.
-- **Language-design proposals** (write-only proofs, verbosity/abstraction,
-  memory-concept families): `language-proposals.md`. Parked.
-- Anything expanding surface syntax or changing resource logic.
+The profile/expand/audit ladder is done when the full audit reports
+zero site failures on the green corpus (only split-buffer-perf.md
+remains) and the profile stays clean (currently: no SIMPLE >500 ms, no
+SMART >2 s in any verifying project).
