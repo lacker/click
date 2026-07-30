@@ -3685,6 +3685,34 @@ pub(crate) fn propositions_alpha_equivalent(left: &Proposition, right: &Proposit
             propositions_alpha_equivalent(al, bl) && propositions_alpha_equivalent(ar, br)
         }
         (Proposition::Not(a), Proposition::Not(b)) => propositions_alpha_equivalent(a, b),
+        (
+            Proposition::ConditionIs(left_condition, left_value),
+            Proposition::ConditionIs(right_condition, right_value),
+        ) => {
+            left_value == right_value
+                && condition_with_canonical_loads(left_condition)
+                    .zip(condition_with_canonical_loads(right_condition))
+                    .is_some_and(|(left, right)| left == right)
+        }
+        (
+            Proposition::CMemoryLoadable {
+                memory: left_memory,
+                base: left_base,
+                bytes: left_bytes,
+            },
+            Proposition::CMemoryLoadable {
+                memory: right_memory,
+                base: right_base,
+                bytes: right_bytes,
+            },
+        ) => {
+            canonicalize_pointer_loads(left_base, 0) == canonicalize_pointer_loads(right_base, 0)
+                && canonicalize_atomic_loads(left_bytes)
+                    == canonicalize_atomic_loads(right_bytes)
+                // Loadability depends on the snapshot's blocks, not its
+                // cached cell values.
+                && left_memory.blocks == right_memory.blocks
+        }
         _ => false,
     }
 }
