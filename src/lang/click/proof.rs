@@ -11334,6 +11334,34 @@ fn checked_surface_comparison_fact_at_point(
                 .is_some()
             || quantified_binder_equivalent(&lowered, &kernel)
     };
+    // Candidates below are matched through the permissive candidate lowering
+    // (symbolic contract loads allowed), but the emitted certificate is
+    // replayed by the ordinary executor, whose strict lowering carries
+    // loadability obligations. A spelling that only lowers permissively —
+    // for example a snapshot fact whose `at(...)` anchor was dropped so its
+    // current-state loads are not provably loadable — must not be emitted.
+    let strictly_replayable = |surface: &ClickProposition| {
+        replay
+            .surface_propositions
+            .available_kernel(surface, available)
+            .is_some()
+            || lower_point_proposition(
+                surface,
+                available,
+                parameters,
+                arguments,
+                replay.execution_start_state(state),
+                state,
+                None,
+                &replay.program_point_states,
+                predicate_environment,
+                click_function_environment,
+            )
+            .is_ok_and(|premise| {
+                exact_fact_is_available(&premise, available)
+                    || materialization_equivalent_available_fact(&premise, available).is_some()
+            })
+    };
     if let Ok(surface) = checked_surface_fact_at_point(
         replay,
         kernel,
@@ -11394,6 +11422,7 @@ fn checked_surface_comparison_fact_at_point(
                     std::slice::from_ref(&lowered),
                 )
                 .is_some())
+            && strictly_replayable(base)
         {
             return Ok(base.clone());
         }
@@ -11440,7 +11469,9 @@ fn checked_surface_comparison_fact_at_point(
                     predicate_environment,
                     click_function_environment,
                 );
-                if lowered.is_ok_and(|lowered| matches_kernel(&lowered)) {
+                if lowered.is_ok_and(|lowered| matches_kernel(&lowered))
+                    && strictly_replayable(&candidate)
+                {
                     return Ok(candidate);
                 }
             }
@@ -11467,6 +11498,7 @@ fn checked_surface_comparison_fact_at_point(
                 click_function_environment,
             )
             .is_ok_and(|lowered| matches_kernel(&lowered))
+                && strictly_replayable(&candidate)
             {
                 return Ok(candidate);
             }
@@ -15568,6 +15600,15 @@ fn replay_linear_tactics(
                             click_function_environment,
                         )
                         .map_err(|message| {
+                            if std::env::var_os("CLICK_PROBE_STEP_PREMISES").is_some() {
+                                eprintln!(
+                                    "click probe: step premise failed at statement {} \
+                                     with {} pure facts, {} recorded surfaces",
+                                    replay.frontier.next_statement_index,
+                                    all_pure_facts.len(),
+                                    replay.surface_propositions.kernel_facts().count(),
+                                );
+                            }
                             ClickError::new(format!(
                                 "`{claim_label}` tactic {tactic_index}: could not lower `{tactic_name}` premise `{}`: {message}",
                                 super::printing::source_click_proposition(surface_premise)
