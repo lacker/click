@@ -46,10 +46,17 @@ Order of attack, one frontier at a time, commit each independently:
    the prover must equate the pointer offset
    `4*load(.data) + 4*load(.pos)` with `4*v_data` by resolving
    `load(.pos)` to the constant 0 and using the PointerOffsetEqual fact
-   — pointer-offset equality with constant-resolved load atoms
-   (candidates: `pointer_offsets_proven_equal_for_memory_resolution`,
-   or a certification arm mirroring the constant-normalization one for
-   load-load equalities). Owner decision 2026-07-30:
+   — pointer-offset equality with constant-resolved load atoms.
+   Attempted and reverted: a zero-atom reduction arm inside
+   `bitvector_terms_equal_for_memory_resolution` (reasoning.rs) — the
+   per-call normalization walk in that hot loop cost 17 s → 253 s and
+   still did not fire on the goal. Next attempt should be a one-shot
+   certification arm: for an equality goal `var == load`, walk var's
+   equality fact to its load spelling once, then compare the two load
+   pointers' offset atoms with `known_signed_constant_after_normalization`
+   applied top-level (not inside the resolution recursion), plus the
+   existing scaled PointerOffsetEqual fact lookup. Owner decision
+   2026-07-30:
    certificate/implementation details do not need sign-off; only
    Surface Click semantics changes do.
 2. **Audit `by auto` re-expansion** : audit sites 28–30 (jsonc-refcount,
