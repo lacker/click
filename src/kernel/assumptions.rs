@@ -1732,7 +1732,16 @@ impl Assumptions {
                 return false;
             };
             left_pointer == right_pointer
-                && memories_proven_equal_for_memory_resolution(left_memory, right_memory, self)
+                && (memories_proven_equal_for_memory_resolution(left_memory, right_memory, self)
+                    // Whole-memory equality fails across a call's havoc block
+                    // even when the loaded cell is provably framed; the
+                    // bounded per-load bridge accepts effect-summary framing
+                    // for exactly this pointer.
+                    || self.memory_snapshots_directly_proven_equal_for_memory_resolution(
+                        left_memory,
+                        right_memory,
+                        left_pointer,
+                    ))
         };
         let mut stack = vec![(left.clone(), false)];
         let mut seen = BTreeSet::new();
