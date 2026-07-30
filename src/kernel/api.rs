@@ -310,6 +310,173 @@ fn prove_c_condition_fact_transport_with_assumptions(
     )))
 }
 
+/// Rewrites subterms of a condition fact that equal a certified store's
+/// value into loads from that store's post-memory, so a fact spelled in
+/// pre-store terms can be transported across the store. The rewriting is
+/// definitional: a certified store guarantees `load(after, pointer)` equals
+/// the stored value.
+pub(crate) fn rewrite_condition_through_certified_stores(
+    fact: &Proposition,
+    transitions: &[ExecutionPureFact],
+) -> Proposition {
+    let mut equations = Vec::new();
+    for transition in transitions {
+        let Some(store) = &transition.certified_store else {
+            continue;
+        };
+        let value_term = match &store.value {
+            CValue::Int32(term) | CValue::UInt8(term) => term.clone(),
+            _ => continue,
+        };
+        equations.push((
+            canonicalize_atomic_loads(&value_term),
+            Bitvector32Term::MemoryLoad(
+                Box::new(store.after.clone()),
+                Box::new(store.pointer.clone()),
+            ),
+        ));
+    }
+    if equations.is_empty() {
+        return fact.clone();
+    }
+    fn rewrite_term(
+        term: &Bitvector32Term,
+        equations: &[(Bitvector32Term, Bitvector32Term)],
+    ) -> Bitvector32Term {
+        let canonical = canonicalize_atomic_loads(term);
+        for (value, load) in equations {
+            if &canonical == value {
+                return load.clone();
+            }
+        }
+        match term {
+            Bitvector32Term::Add(left, right) => Bitvector32Term::Add(
+                Box::new(rewrite_term(left, equations)),
+                Box::new(rewrite_term(right, equations)),
+            ),
+            Bitvector32Term::Subtract(left, right) => Bitvector32Term::Subtract(
+                Box::new(rewrite_term(left, equations)),
+                Box::new(rewrite_term(right, equations)),
+            ),
+            Bitvector32Term::Multiply(left, right) => Bitvector32Term::Multiply(
+                Box::new(rewrite_term(left, equations)),
+                Box::new(rewrite_term(right, equations)),
+            ),
+            other => other.clone(),
+        }
+    }
+    let Proposition::ConditionIs(condition, value) = fact else {
+        return fact.clone();
+    };
+    let binary = |left: &Bitvector32Term, right: &Bitvector32Term| {
+        (
+            Box::new(rewrite_term(left, &equations)),
+            Box::new(rewrite_term(right, &equations)),
+        )
+    };
+    let rewritten = match condition {
+        ConditionTerm::Bitvector32SignedLessThan(left, right) => {
+            let (left, right) = binary(left, right);
+            ConditionTerm::Bitvector32SignedLessThan(left, right)
+        }
+        ConditionTerm::Bitvector32SignedLessEqual(left, right) => {
+            let (left, right) = binary(left, right);
+            ConditionTerm::Bitvector32SignedLessEqual(left, right)
+        }
+        ConditionTerm::Bitvector32SignedGreaterThan(left, right) => {
+            let (left, right) = binary(left, right);
+            ConditionTerm::Bitvector32SignedGreaterThan(left, right)
+        }
+        ConditionTerm::Bitvector32SignedGreaterEqual(left, right) => {
+            let (left, right) = binary(left, right);
+            ConditionTerm::Bitvector32SignedGreaterEqual(left, right)
+        }
+        ConditionTerm::Bitvector32Equal(left, right) => {
+            let (left, right) = binary(left, right);
+            ConditionTerm::Bitvector32Equal(left, right)
+        }
+        _ => return fact.clone(),
+    };
+    Proposition::ConditionIs(rewritten, *value)
+}
+
+/// Canonicalizes every load in a term for structural comparison: cached
+/// cells resolve to their values and remaining loads use the canonical
+/// memory for their pointer.
+fn canonicalize_atomic_loads(term: &Bitvector32Term) -> Bitvector32Term {
+    match term {
+        Bitvector32Term::MemoryLoad(memory, pointer) => match memory.load(pointer) {
+            CExpressionOutcome::Value(CValue::Int32(value) | CValue::UInt8(value))
+                if &value != term =>
+            {
+                canonicalize_atomic_loads(&value)
+            }
+            _ => Bitvector32Term::MemoryLoad(
+                Box::new(canonical_c_memory_for_pointer_load(memory, pointer)),
+                Box::new((**pointer).clone()),
+            ),
+        },
+        Bitvector32Term::Add(left, right) => Bitvector32Term::Add(
+            Box::new(canonicalize_atomic_loads(left)),
+            Box::new(canonicalize_atomic_loads(right)),
+        ),
+        Bitvector32Term::Subtract(left, right) => Bitvector32Term::Subtract(
+            Box::new(canonicalize_atomic_loads(left)),
+            Box::new(canonicalize_atomic_loads(right)),
+        ),
+        Bitvector32Term::Multiply(left, right) => Bitvector32Term::Multiply(
+            Box::new(canonicalize_atomic_loads(left)),
+            Box::new(canonicalize_atomic_loads(right)),
+        ),
+        other => other.clone(),
+    }
+}
+
+/// Compares two condition facts operandwise under memory-resolution
+/// equality, so spellings that differ only in provably-irrelevant cached
+/// cells compare equal.
+pub(crate) fn c_condition_facts_equivalent_for_memory_resolution(
+    left: &Proposition,
+    right: &Proposition,
+    assumptions: &Assumptions,
+) -> bool {
+    let (Proposition::ConditionIs(left, left_value), Proposition::ConditionIs(right, right_value)) =
+        (left, right)
+    else {
+        return false;
+    };
+    if left_value != right_value {
+        return false;
+    }
+    let operands = match (left, right) {
+        (
+            ConditionTerm::Bitvector32SignedLessThan(a, b),
+            ConditionTerm::Bitvector32SignedLessThan(c, d),
+        )
+        | (
+            ConditionTerm::Bitvector32SignedLessEqual(a, b),
+            ConditionTerm::Bitvector32SignedLessEqual(c, d),
+        )
+        | (
+            ConditionTerm::Bitvector32SignedGreaterThan(a, b),
+            ConditionTerm::Bitvector32SignedGreaterThan(c, d),
+        )
+        | (
+            ConditionTerm::Bitvector32SignedGreaterEqual(a, b),
+            ConditionTerm::Bitvector32SignedGreaterEqual(c, d),
+        )
+        | (ConditionTerm::Bitvector32Equal(a, b), ConditionTerm::Bitvector32Equal(c, d)) => {
+            Some((a, b, c, d))
+        }
+        _ => None,
+    };
+    let Some((a, b, c, d)) = operands else {
+        return false;
+    };
+    bitvector_terms_proven_equal_for_memory_resolution(a, c, assumptions)
+        && bitvector_terms_proven_equal_for_memory_resolution(b, d, assumptions)
+}
+
 pub(crate) fn c_condition_fact_memories(fact: &Proposition) -> Vec<CMemory> {
     let Proposition::ConditionIs(condition, _) = fact else {
         return Vec::new();
@@ -2417,6 +2584,216 @@ pub fn prove_c_function_contract_execution_paths_with_environment(
     CFunctionContractExecution { execution }
 }
 
+/// Splits a proposition into its conjunct leaves.
+fn proposition_conjuncts(proposition: &Proposition, into: &mut Vec<Proposition>) {
+    match proposition {
+        Proposition::And(left, right) => {
+            proposition_conjuncts(left, into);
+            proposition_conjuncts(right, into);
+        }
+        other => into.push(other.clone()),
+    }
+}
+
+/// Converts a pointer offset to its size in bytes as a bitvector term.
+fn pointer_offset_bytes(offset: &PointerOffsetTerm) -> Option<Bitvector32Term> {
+    match offset {
+        PointerOffsetTerm::Constant(value) => {
+            u32::try_from(*value).ok().map(Bitvector32Term::Constant)
+        }
+        PointerOffsetTerm::Variable(_) => None,
+        PointerOffsetTerm::Add(left, right) => Some(Bitvector32Term::add(
+            pointer_offset_bytes(left)?,
+            pointer_offset_bytes(right)?,
+        )),
+        PointerOffsetTerm::Int32Scaled { value, byte_width } => {
+            let width = u32::try_from(*byte_width).ok()?;
+            if width == 1 {
+                Some(value.as_ref().clone())
+            } else {
+                Some(Bitvector32Term::multiply(
+                    value.as_ref().clone(),
+                    Bitvector32Term::Constant(width),
+                ))
+            }
+        }
+    }
+}
+
+/// The byte distance from `fact_offset` to `goal_offset` when the goal
+/// offset extends the fact offset additively.
+fn pointer_offset_byte_delta(
+    goal_offset: &PointerOffsetTerm,
+    fact_offset: &PointerOffsetTerm,
+) -> Option<Bitvector32Term> {
+    if goal_offset == fact_offset {
+        return Some(Bitvector32Term::Constant(0));
+    }
+    if let PointerOffsetTerm::Add(left, right) = goal_offset {
+        if left.as_ref() == fact_offset {
+            return pointer_offset_bytes(right);
+        }
+        if right.as_ref() == fact_offset {
+            return pointer_offset_bytes(left);
+        }
+    }
+    None
+}
+
+/// Splits `term + c` into its base term and additive constant (0 when none).
+fn split_additive_constant(term: &Bitvector32Term) -> (Bitvector32Term, u32) {
+    match term {
+        Bitvector32Term::Add(left, right) => {
+            if let Bitvector32Term::Constant(value) = right.as_ref() {
+                return (left.as_ref().clone(), *value);
+            }
+            if let Bitvector32Term::Constant(value) = left.as_ref() {
+                return (right.as_ref().clone(), *value);
+            }
+            (term.clone(), 0)
+        }
+        _ => (term.clone(), 0),
+    }
+}
+
+/// Certifies a loadability goal from an assumed wider loadable fact over the
+/// same memory snapshot: the goal's base must sit at a provably in-bounds
+/// byte offset within the fact's span.
+fn loadable_covered_by_fact(assumptions: &Assumptions, goal: &Proposition) -> bool {
+    let Proposition::CMemoryLoadable {
+        memory,
+        base,
+        bytes,
+    } = goal
+    else {
+        return false;
+    };
+    assumptions.prop_facts.iter().any(|fact| {
+        let Proposition::CMemoryLoadable {
+            memory: fact_memory,
+            base: fact_base,
+            bytes: fact_bytes,
+        } = fact
+        else {
+            return false;
+        };
+        if fact_memory != memory || fact_base.block != base.block {
+            return false;
+        }
+        let Some(delta_bytes) = pointer_offset_byte_delta(&base.offset, &fact_base.offset) else {
+            return false;
+        };
+        let start = assumptions
+            .simplify_bitvector_under_assumptions(&Bitvector32Term::Constant(0));
+        let delta = assumptions.simplify_bitvector_under_assumptions(&delta_bytes);
+        let end = assumptions.simplify_bitvector_under_assumptions(&Bitvector32Term::add(
+            delta_bytes,
+            bytes.clone(),
+        ));
+        let span = assumptions.simplify_bitvector_under_assumptions(fact_bytes);
+        let starts_in_bounds = assumptions.proves(&Proposition::ConditionIs(
+            ConditionTerm::signed_less_equal(start.clone(), delta.clone()),
+            true,
+        )) || assumptions.proves_order_condition_for_memory_resolution(
+            &ConditionTerm::signed_less_equal(start, delta),
+            true,
+        );
+        let ends_in_bounds = assumptions.proves(&Proposition::ConditionIs(
+            ConditionTerm::signed_less_equal(end.clone(), span.clone()),
+            true,
+        )) || assumptions.proves_order_condition_for_memory_resolution(
+            &ConditionTerm::signed_less_equal(end.clone(), span.clone()),
+            true,
+        ) || {
+            // Strip a shared additive constant: `a + b <= x + c` follows
+            // from `a <= x` when `b <= c`.
+            let (end_base, end_shift) = split_additive_constant(&end);
+            let (span_base, span_shift) = split_additive_constant(&span);
+            (end_shift as i32) <= (span_shift as i32)
+                && (assumptions.proves(&Proposition::ConditionIs(
+                    ConditionTerm::signed_less_equal(end_base.clone(), span_base.clone()),
+                    true,
+                )) || assumptions.proves_order_condition_for_memory_resolution(
+                    &ConditionTerm::signed_less_equal(end_base, span_base),
+                    true,
+                ))
+        };
+        starts_in_bounds && ends_in_bounds
+    })
+}
+
+/// Certifies a universally-quantified loadability side-obligation from
+/// assumed loadable facts: the bound premises become facts about the free
+/// bound variable, and the loadable body must then be covered by a wider
+/// assumed span.
+fn forall_loadable_covered_by_fact(assumptions: &Assumptions, goal: &Proposition) -> bool {
+    let Proposition::ForAll {
+        sort: Sort::CInt32 | Sort::Bitvector32,
+        body,
+        ..
+    } = goal
+    else {
+        return false;
+    };
+    let mut premises = Vec::new();
+    let mut conclusion = body.as_ref();
+    while let Proposition::Implies(premise, rest) = conclusion {
+        proposition_conjuncts(premise, &mut premises);
+        conclusion = rest.as_ref();
+    }
+    if !matches!(conclusion, Proposition::CMemoryLoadable { .. }) {
+        return false;
+    }
+    let premise_assumptions = assumptions_with_propositions(assumptions, &premises);
+    loadable_covered_by_fact(&premise_assumptions, conclusion)
+}
+
+/// Certifies an existential requirement side-obligation (typically the
+/// loadability safety of an existential requirement body): the witness of an
+/// assumed existential over the same sort supplies the bound variable, its
+/// body conjuncts become facts, and the obligation body must then certify
+/// pointwise.
+fn certification_proves_exists_obligation_from_facts(
+    assumptions: &Assumptions,
+    obligation: &Proposition,
+) -> bool {
+    let Proposition::Exists {
+        var, sort, body, ..
+    } = obligation
+    else {
+        return false;
+    };
+    let fact_candidates = assumptions.prop_facts.iter().cloned().collect::<Vec<_>>();
+    fact_candidates.iter().any(|fact| {
+        let Proposition::Exists {
+            var: fact_var,
+            sort: fact_sort,
+            body: fact_body,
+            ..
+        } = fact
+        else {
+            return false;
+        };
+        if fact_sort != sort {
+            return false;
+        }
+        let renamed = substitute_bitvector_variable_in_proposition(
+            fact_body,
+            *fact_var,
+            &Bitvector32Term::Variable(*var),
+        );
+        let mut witness_facts = Vec::new();
+        proposition_conjuncts(&renamed, &mut witness_facts);
+        let witness_assumptions = assumptions_with_propositions(assumptions, &witness_facts);
+        let mut goals = Vec::new();
+        proposition_conjuncts(body, &mut goals);
+        goals.iter().all(|goal| {
+            certification_proves_proposition(&witness_assumptions, goal)
+                || loadable_covered_by_fact(&witness_assumptions, goal)
+        })
+    })
+}
+
 fn c_function_contract_certification_assumptions(
     caller_state: &CState,
     function: &CFunction,
@@ -2426,12 +2803,26 @@ fn c_function_contract_certification_assumptions(
 ) -> Option<Assumptions> {
     let mut entry_state = c_function_entry_state(caller_state, function, arguments)?;
     let mut budget = ExecutionBudget::default();
+    // Entry facts derived from declared parameter spellings (for example
+    // sized array parameters) carry loadability that is part of the calling
+    // convention; assume them before lowering requirements so requirement
+    // side-obligations can be certified against them.
+    for fact in &selection_assumptions.prop_facts {
+        if matches!(fact, Proposition::CMemoryLoadable { .. }) {
+            assumptions = assumptions.assume_proposition(fact.clone());
+        }
+    }
+    let mut requirement_obligations = Vec::new();
     for requirement in function.contract_requires() {
+        let lowering_assumptions = assumptions
+            .clone()
+            .allow_symbolic_contract_loads()
+            .prefer_symbolic_external_loads();
         let paths = lower_spec_proposition_at_state_with_loop_entry(
             &entry_state,
             requirement,
             None,
-            &assumptions,
+            &lowering_assumptions,
             &mut budget,
         )
         .ok()?;
@@ -2470,7 +2861,9 @@ fn c_function_contract_certification_assumptions(
             }
         };
         for obligation in &path.obligations {
-            assumptions = assumptions.assume_proposition(obligation.proposition().clone());
+            if !requirement_obligations.contains(obligation) {
+                requirement_obligations.push(obligation.clone());
+            }
         }
         for fact in &path.facts {
             assumptions = assumptions.assume_proposition(fact.proposition().clone());
@@ -2483,35 +2876,72 @@ fn c_function_contract_certification_assumptions(
         &assumptions,
         &mut budget,
     )
-    .ok()?
-    .ok()?;
-    let (_, resource_definition_facts) = expand_all_composite_resource_facts_and_propositions(
+    .ok()
+    .and_then(Result::ok);
+    let Some(required_resources) = required_resources else {
+        return None;
+    };
+    let expanded = expand_all_composite_resource_facts_and_propositions(
         &required_resources,
         function.composite_resource_definitions(),
         entry_state.memory(),
         &assumptions,
-    )?;
+    );
+    let Some((_, resource_definition_facts)) = expanded else {
+        return None;
+    };
     for proposition in resource_definition_facts {
         assumptions = assumptions.assume_proposition(proposition);
     }
-    let expanded_required_resources = expand_all_composite_resource_facts(
+    let Some(expanded_required_resources) = expand_all_composite_resource_facts(
         &required_resources,
         function.composite_resource_definitions(),
         entry_state.memory(),
         &assumptions,
-    )?;
-    let entry_resources = expand_all_composite_resource_facts(
+    ) else {
+        return None;
+    };
+    let Some(entry_resources) = expand_all_composite_resource_facts(
         entry_state.resources(),
         function.composite_resource_definitions(),
         entry_state.memory(),
         &assumptions,
-    )?;
+    ) else {
+        return None;
+    };
     if !expanded_required_resources
         .facts()
         .iter()
         .all(|required| entry_resources.satisfies_fact(required, &assumptions))
     {
+        if std::env::var_os("CLICK_TIMINGS").is_some() {
+            eprintln!("click timing: contract entry resources do not satisfy requirements");
+        }
         return None;
+    }
+    if !requirement_obligations.iter().all(|obligation| {
+        let ok = certification_proves_proposition(&assumptions, obligation.proposition())
+            || resources_certify_loadability(
+                &entry_state,
+                &entry_resources,
+                obligation.proposition(),
+                &assumptions,
+            )
+            || loadable_covered_by_fact(&assumptions, obligation.proposition())
+            || forall_loadable_covered_by_fact(&assumptions, obligation.proposition())
+            || certification_proves_exists_obligation_from_facts(
+                &assumptions,
+                obligation.proposition(),
+            );
+        ok
+    }) {
+        if std::env::var_os("CLICK_TIMINGS").is_some() {
+            eprintln!("click timing: contract entry resources do not certify requirement safety");
+        }
+        return None;
+    }
+    for obligation in requirement_obligations {
+        assumptions = assumptions.assume_proposition(obligation.proposition().clone());
     }
     for proposition in entry_resources.observable_facts(&assumptions).ok()? {
         assumptions = assumptions.assume_proposition(proposition);
@@ -2913,11 +3343,237 @@ fn exists_equality_witness_candidates(
     }
 }
 
+/// Proves an order condition against a constant by removing an additive
+/// constant shift from the term side, when the assumptions prove the shifted
+/// addition overflow-free (the executing code already checked it). For
+/// example `x + 1 > 0` becomes `x >= 0` under `!AddOverflows(x, 1)`.
+fn shifted_order_condition_proven(
+    assumptions: &Assumptions,
+    condition: &ConditionTerm,
+    value: bool,
+) -> bool {
+    if !value {
+        return false;
+    }
+    // Normalize to `left OP right` with OP in {<, <=}.
+    let (left, right, strict) = match condition {
+        ConditionTerm::Bitvector32SignedLessThan(left, right) => (left, right, true),
+        ConditionTerm::Bitvector32SignedLessEqual(left, right) => (left, right, false),
+        ConditionTerm::Bitvector32SignedGreaterThan(left, right) => (right, left, true),
+        ConditionTerm::Bitvector32SignedGreaterEqual(left, right) => (right, left, false),
+        _ => return false,
+    };
+    let overflow_free = |base: &Bitvector32Term, shift: u32| {
+        let exact = assumptions.proves_exact(&Proposition::ConditionIs(
+            ConditionTerm::Bitvector32SignedAddOverflows(
+                Box::new(base.clone()),
+                Box::new(Bitvector32Term::Constant(shift)),
+            ),
+            false,
+        )) || assumptions.proves_exact(&Proposition::ConditionIs(
+            ConditionTerm::Bitvector32SignedAddOverflows(
+                Box::new(Bitvector32Term::Constant(shift)),
+                Box::new(base.clone()),
+            ),
+            false,
+        ));
+        if exact {
+            return true;
+        }
+        // A recorded overflow fact may spell the operand through loads at a
+        // different snapshot; compare canonically.
+        let canonical_base = canonicalize_atomic_loads(base);
+        let recorded = assumptions.condition_facts.iter().any(|(condition, value)| {
+            !*value
+                && match condition {
+                    ConditionTerm::Bitvector32SignedAddOverflows(left, right) => {
+                        (matches!(right.as_ref(), Bitvector32Term::Constant(c) if *c == shift)
+                            && canonicalize_atomic_loads(left) == canonical_base)
+                            || (matches!(left.as_ref(), Bitvector32Term::Constant(c) if *c == shift)
+                                && canonicalize_atomic_loads(right) == canonical_base)
+                    }
+                    _ => false,
+                }
+        });
+        if recorded {
+            return true;
+        }
+        // Overflow-freedom also follows from a proven bound keeping the
+        // shifted sum inside the signed range.
+        let signed_shift = shift as i32;
+        if signed_shift > 0 {
+            let le_bound = Bitvector32Term::Constant((i32::MAX - signed_shift) as u32);
+            let le = ConditionTerm::signed_less_equal(base.clone(), le_bound);
+            let lt_bound = Bitvector32Term::Constant((i32::MAX - signed_shift + 1) as u32);
+            let lt = ConditionTerm::signed_less_than(base.clone(), lt_bound);
+            assumptions.proves_exact(&Proposition::ConditionIs(le.clone(), true))
+                || assumptions.proves_order_condition_for_memory_resolution(&le, true)
+                || assumptions.proves_exact(&Proposition::ConditionIs(lt.clone(), true))
+                || assumptions.proves_order_condition_for_memory_resolution(&lt, true)
+        } else if signed_shift < 0 {
+            let bound = Bitvector32Term::Constant((i32::MIN - signed_shift) as u32);
+            let condition = ConditionTerm::signed_less_equal(bound, base.clone());
+            assumptions.proves_exact(&Proposition::ConditionIs(condition.clone(), true))
+                || assumptions.proves_order_condition_for_memory_resolution(&condition, true)
+        } else {
+            true
+        }
+    };
+    // `a + 1 <= b` follows from `a < b` for any terms when `a + 1` is
+    // provably overflow-free; this converts a strict requirement into the
+    // non-strict spelling a successor produces.
+    if !strict {
+        let (base, shift) = split_additive_constant(left);
+        if shift == 1 {
+            // `a < b` alone implies both that `a + 1` cannot overflow
+            // (`a < b <= i32::MAX`) and the goal `a + 1 <= b`.
+            let strict_form = ConditionTerm::signed_less_than(base, right.as_ref().clone());
+            if certification_proves_proposition(
+                assumptions,
+                &Proposition::ConditionIs(strict_form, true),
+            ) {
+                return true;
+            }
+        }
+    }
+    let shifted = match (left.as_ref(), right.as_ref()) {
+        (shifted_term, Bitvector32Term::Constant(bound)) => {
+            let (base, shift) = split_additive_constant(shifted_term);
+            if shift == 0 || !overflow_free(&base, shift) {
+                return false;
+            }
+            let Some(new_bound) = (*bound as i32).checked_sub(shift as i32) else {
+                return false;
+            };
+            (base, Bitvector32Term::Constant(new_bound as u32), false)
+        }
+        (Bitvector32Term::Constant(bound), shifted_term) => {
+            let (base, shift) = split_additive_constant(shifted_term);
+            if shift == 0 || !overflow_free(&base, shift) {
+                return false;
+            }
+            let Some(new_bound) = (*bound as i32).checked_sub(shift as i32) else {
+                return false;
+            };
+            (Bitvector32Term::Constant(new_bound as u32), base, true)
+        }
+        _ => return false,
+    };
+    let (new_left, new_right, constant_on_left) = shifted;
+    let condition = match (strict, constant_on_left) {
+        (true, false) | (true, true) => ConditionTerm::signed_less_than(new_left, new_right),
+        (false, _) => ConditionTerm::signed_less_equal(new_left, new_right),
+    };
+    certification_proves_proposition(
+        assumptions,
+        &Proposition::ConditionIs(condition, true),
+    )
+}
+
+/// Compares two range folds up to renaming of their bound accumulator and
+/// item variables; bound variables are freshened per lowering pass.
+fn range_folds_alpha_equivalent(left: &Bitvector32Term, right: &Bitvector32Term) -> bool {
+    let (
+        Bitvector32Term::RangeFold {
+            start: left_start,
+            end: left_end,
+            initial: left_initial,
+            accumulator: left_accumulator,
+            item: left_item,
+            body: left_body,
+        },
+        Bitvector32Term::RangeFold {
+            start: right_start,
+            end: right_end,
+            initial: right_initial,
+            accumulator: right_accumulator,
+            item: right_item,
+            body: right_body,
+        },
+    ) = (left, right)
+    else {
+        return false;
+    };
+    left_start == right_start && left_end == right_end && left_initial == right_initial && {
+        let renamed = super::reasoning::substitute_bitvector_variable(
+            &super::reasoning::substitute_bitvector_variable(
+                right_body,
+                *right_accumulator,
+                &Bitvector32Term::Variable(*left_accumulator),
+            ),
+            *right_item,
+            &Bitvector32Term::Variable(*left_item),
+        );
+        renamed == **left_body
+    }
+}
+
+/// Canonicalizes the loads inside a binary condition so spellings differing
+/// only in redundant cached cells compare and prove identically.
+fn condition_with_canonical_loads(condition: &ConditionTerm) -> Option<ConditionTerm> {
+    let binary = |left: &Bitvector32Term, right: &Bitvector32Term| {
+        (
+            Box::new(canonicalize_atomic_loads(left)),
+            Box::new(canonicalize_atomic_loads(right)),
+        )
+    };
+    Some(match condition {
+        ConditionTerm::Bitvector32SignedLessThan(left, right) => {
+            let (left, right) = binary(left, right);
+            ConditionTerm::Bitvector32SignedLessThan(left, right)
+        }
+        ConditionTerm::Bitvector32SignedLessEqual(left, right) => {
+            let (left, right) = binary(left, right);
+            ConditionTerm::Bitvector32SignedLessEqual(left, right)
+        }
+        ConditionTerm::Bitvector32SignedGreaterThan(left, right) => {
+            let (left, right) = binary(left, right);
+            ConditionTerm::Bitvector32SignedGreaterThan(left, right)
+        }
+        ConditionTerm::Bitvector32SignedGreaterEqual(left, right) => {
+            let (left, right) = binary(left, right);
+            ConditionTerm::Bitvector32SignedGreaterEqual(left, right)
+        }
+        ConditionTerm::Bitvector32Equal(left, right) => {
+            let (left, right) = binary(left, right);
+            ConditionTerm::Bitvector32Equal(left, right)
+        }
+        _ => return None,
+    })
+}
+
 fn certification_proves_proposition(assumptions: &Assumptions, proposition: &Proposition) -> bool {
-    if assumptions.proves(proposition) {
+    if assumptions.proves_exact(proposition) {
+        return true;
+    }
+    if let Proposition::ConditionIs(condition, value) = proposition
+        && let Some(canonical) = condition_with_canonical_loads(condition)
+        && &canonical != condition
+        && certification_proves_proposition(
+            assumptions,
+            &Proposition::ConditionIs(canonical, *value),
+        )
+    {
         return true;
     }
     match proposition {
+        // Order conditions use the deterministic bounded order prover; the
+        // fuel-dependent simp decision procedure stays out of certification.
+        Proposition::ConditionIs(condition, value)
+            if assumptions.proves_order_condition_for_memory_resolution(condition, *value) =>
+        {
+            true
+        }
+        Proposition::ConditionIs(condition, value)
+            if shifted_order_condition_proven(assumptions, condition, *value) =>
+        {
+            true
+        }
+        Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), true)
+            if range_folds_alpha_equivalent(left, right) =>
+        {
+            true
+        }
         Proposition::And(left, right) => {
             certification_proves_proposition(assumptions, left)
                 && certification_proves_proposition(assumptions, right)
@@ -2961,18 +3617,23 @@ fn certification_proves_proposition(assumptions: &Assumptions, proposition: &Pro
                 certification_proves_proposition(assumptions, &instantiated)
             })
         }
-        Proposition::ConditionIs(condition, value)
-            if assumptions.decide_condition_for_simp(condition) == Some(*value) =>
-        {
-            true
-        }
-        Proposition::ConditionIs(condition, value)
-            if assumptions.has_matching_condition_fact_for_memory_resolution(condition, *value) =>
-        {
-            true
-        }
         Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), true) => {
             bitvector_terms_proven_equal_for_memory_resolution(left, right, assumptions)
+                || assumptions
+                    .has_anchored_bitvector_equality_fact_for_memory_resolution(left, right)
+                || assumptions.proves_order_condition_for_memory_resolution(
+                    &ConditionTerm::signed_less_equal(
+                        left.as_ref().clone(),
+                        right.as_ref().clone(),
+                    ),
+                    true,
+                ) && assumptions.proves_order_condition_for_memory_resolution(
+                    &ConditionTerm::signed_less_equal(
+                        right.as_ref().clone(),
+                        left.as_ref().clone(),
+                    ),
+                    true,
+                )
         }
         Proposition::ConditionIs(ConditionTerm::PointerEqual(left, right), true) => {
             pointers_proven_equal_for_memory_resolution(left, right, assumptions)
@@ -2983,7 +3644,11 @@ fn certification_proves_proposition(assumptions: &Assumptions, proposition: &Pro
         Proposition::Equal(Term::CValue(left), Term::CValue(right)) => {
             c_values_proven_equal_for_memory_resolution(left, right, assumptions)
         }
-        _ => false,
+        Proposition::ConditionIs(condition, value) => {
+            assumptions.proves_order_condition_for_memory_resolution(condition, *value)
+                || assumptions.has_matching_condition_fact_for_memory_resolution(condition, *value)
+        }
+        _ => assumptions.proves(proposition),
     }
 }
 
@@ -2991,37 +3656,117 @@ fn certification_proves_post_proposition(
     assumptions: &Assumptions,
     proposition: &Proposition,
     post_memory: &CMemory,
+    execution_facts: &[ExecutionPureFact],
 ) -> bool {
     if certification_proves_proposition(assumptions, proposition) {
         return true;
     }
-    assumptions
-        .prop_facts
+    if execution_facts
+        .iter()
+        .enumerate()
+        .filter(|(_, fact)| fact.is_certified())
+        .any(|(source_index, fact)| {
+            let Some(CertifiedMemoryStore {
+                after,
+                pointer,
+                value: CValue::Int32(value) | CValue::UInt8(value),
+                authorized_range,
+                ..
+            }) = fact.certified_store_data()
+            else {
+                return false;
+            };
+            let mut current = after;
+            for later in &execution_facts[source_index + 1..] {
+                let Some(CertifiedMemoryStore {
+                    before,
+                    after,
+                    pointer: later_pointer,
+                    authorized_range: later_range,
+                    ..
+                }) = later.certified_store_data()
+                else {
+                    continue;
+                };
+                if before != current {
+                    continue;
+                }
+                let disjoint = pointer.blocks_proven_distinct(later_pointer)
+                    || pointers_proven_distinct_for_memory_resolution(
+                        pointer,
+                        later_pointer,
+                        assumptions,
+                    )
+                    || authorized_range.as_ref().is_some_and(|source_range| {
+                        later_range.as_ref().is_some_and(|later_range| {
+                            assumptions
+                                .memory_ranges_proven_disjoint_by_explicit_separation_for_memory_resolution(
+                                    source_range,
+                                    later_range,
+                                )
+                        })
+                    });
+                if !disjoint {
+                    return false;
+                }
+                current = after;
+            }
+            if current != post_memory
+                && !c_memory_load_is_unchanged(current, post_memory, pointer, assumptions)
+            {
+                return false;
+            }
+            let stored_fact = Proposition::ConditionIs(
+                ConditionTerm::equal(
+                    Bitvector32Term::MemoryLoad(
+                        Box::new(post_memory.clone()),
+                        Box::new(pointer.clone()),
+                    ),
+                    value.clone(),
+                ),
+                true,
+            );
+            let stored_assumptions =
+                assumptions_with_propositions(assumptions, &[stored_fact]);
+            certification_proves_proposition(&stored_assumptions, proposition)
+        })
+    {
+        return true;
+    }
+    let transported_fact_proves = |fact: &Proposition| {
+        let Some(theorem) = prove_c_condition_fact_transport(fact, post_memory, assumptions) else {
+            return false;
+        };
+        let Proposition::Implies(source, target) = theorem.proposition() else {
+            return false;
+        };
+        if source.as_ref() != fact {
+            return false;
+        }
+        let transported_assumptions =
+            assumptions_with_propositions(assumptions, &[target.as_ref().clone()]);
+        certification_proves_proposition(&transported_assumptions, proposition)
+    };
+    let explicit_facts = execution_facts
+        .iter()
+        .filter(|fact| fact.is_certified())
+        .filter_map(|fact| match fact.proposition() {
+            proposition @ Proposition::ConditionIs(_, _) => Some(proposition.clone()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    explicit_facts
         .iter()
         .filter(|fact| {
             matches!(
-                (fact, proposition),
+                (*fact, proposition),
                 (
                     Proposition::ConditionIs(_, _),
                     Proposition::ConditionIs(_, _)
                 ) | (Proposition::Equal(_, _), Proposition::Equal(_, _))
             )
         })
-        .any(|fact| {
-            let Some(theorem) = prove_c_condition_fact_transport(fact, post_memory, assumptions)
-            else {
-                return false;
-            };
-            let Proposition::Implies(source, target) = theorem.proposition() else {
-                return false;
-            };
-            if source.as_ref() != fact {
-                return false;
-            }
-            let transported_assumptions =
-                assumptions_with_propositions(assumptions, &[target.as_ref().clone()]);
-            certification_proves_proposition(&transported_assumptions, proposition)
-        })
+        .any(transported_fact_proves)
 }
 
 fn resources_certify_loadability(
@@ -3110,6 +3855,58 @@ pub fn c_function_outcomes_definitionally_equal(
     }
 }
 
+/// Proves two return outcomes equal by store provenance: when both
+/// executions performed the same ordered sequence of certified stores
+/// (pointers and values definitionally equal), their final external
+/// memories are equal by construction, so the deep memory comparison is
+/// unnecessary and only return values and resources need checking.
+pub fn c_function_outcomes_equal_by_store_provenance(
+    function: &CFunction,
+    left: &CFunctionOutcome,
+    left_facts: &[ExecutionPureFact],
+    right: &CFunctionOutcome,
+    right_facts: &[ExecutionPureFact],
+    assumptions: &Assumptions,
+) -> bool {
+    let (
+        CFunctionOutcome::Return {
+            value: left_value,
+            state: left_state,
+        },
+        CFunctionOutcome::Return {
+            value: right_value,
+            state: right_state,
+        },
+    ) = (left, right)
+    else {
+        return false;
+    };
+    let left_stores = left_facts
+        .iter()
+        .filter_map(|fact| fact.certified_store_data())
+        .collect::<Vec<_>>();
+    let right_stores = right_facts
+        .iter()
+        .filter_map(|fact| fact.certified_store_data())
+        .collect::<Vec<_>>();
+    if left_stores.len() != right_stores.len() {
+        return false;
+    }
+    let chains_equal = left_stores.iter().zip(&right_stores).all(|(left, right)| {
+        pointers_proven_equal_for_memory_resolution(&left.pointer, &right.pointer, assumptions)
+            && c_values_proven_equal_for_memory_resolution(&left.value, &right.value, assumptions)
+    });
+    chains_equal
+        && c_values_proven_equal_for_memory_resolution(left_value, right_value, assumptions)
+        && resource_contexts_definitionally_equal(
+            function,
+            left_state.memory(),
+            left_state.resources(),
+            right_state.resources(),
+            assumptions,
+        )
+}
+
 fn c_memories_definitionally_equal(
     left: &CMemory,
     right: &CMemory,
@@ -3184,6 +3981,7 @@ fn materialized_load_is_unchanged(
 pub fn certify_c_function_execution_path_resource_representation(
     path: &SymbolicCExecutionPath,
     desired_outcome: CFunctionOutcome,
+    desired_facts: &[ExecutionPureFact],
 ) -> Option<SymbolicCExecutionPath> {
     let mut proposition = path.theorem().proposition();
     let mut premises = Vec::new();
@@ -3225,13 +4023,38 @@ pub fn certify_c_function_execution_path_resource_representation(
         .ok()?;
     premises.extend(observable_resource_facts);
     let assumptions = assumptions_with_propositions(&path.assumptions, &premises);
-    if !c_values_proven_equal_for_memory_resolution(value, desired_value, &assumptions)
-        || !c_memories_definitionally_equal(
-            return_state.memory(),
-            desired_state.memory(),
-            &assumptions,
-        )
-    {
+    let values_equal =
+        c_values_proven_equal_for_memory_resolution(value, desired_value, &assumptions);
+    let memories_equal = c_memories_definitionally_equal(
+        return_state.memory(),
+        desired_state.memory(),
+        &assumptions,
+    ) || {
+        // Store provenance: the same ordered certified stores from the same
+        // entry produce the same external memory by construction.
+        let certified_stores = path
+            .execution_facts()
+            .iter()
+            .filter_map(|fact| fact.certified_store_data().cloned())
+            .collect::<Vec<_>>();
+        let desired_stores = desired_facts
+            .iter()
+            .filter_map(|fact| fact.certified_store_data())
+            .collect::<Vec<_>>();
+        certified_stores.len() == desired_stores.len()
+            && certified_stores.iter().zip(&desired_stores).all(|(left, right)| {
+                pointers_proven_equal_for_memory_resolution(
+                    &left.pointer,
+                    &right.pointer,
+                    &assumptions,
+                ) && c_values_proven_equal_for_memory_resolution(
+                    &left.value,
+                    &right.value,
+                    &assumptions,
+                )
+            })
+    };
+    if !values_equal || !memories_equal {
         return None;
     }
     if !resource_contexts_definitionally_equal(
@@ -3276,6 +4099,7 @@ struct CertifiedFunctionClaimPath {
     post_resources: ResourceContext,
     assumptions: Assumptions,
     execution_facts: Vec<ExecutionPureFact>,
+    effect_facts: Vec<ExecutionPureFact>,
 }
 
 fn prepare_function_claim_path(
@@ -3340,6 +4164,8 @@ fn prepare_function_claim_path(
         return Err("the returned resource context is not observable".to_string());
     };
     let assumptions = assumptions_with_propositions(&assumptions, &post_resource_facts);
+    let execution_facts = path.execution_facts();
+    let effect_facts = path.effect_facts.clone();
     let mut post_state = entry_state
         .clone()
         .with_memory(return_state.memory().clone());
@@ -3347,7 +4173,7 @@ fn prepare_function_claim_path(
     post_state
         .locals
         .set_typed("result".to_string(), value.clone(), function.return_type());
-    if !path.obligations().iter().all(|obligation| {
+    if let Some(obligation) = path.obligations().iter().find(|obligation| {
         let proved = certification_proves_proposition(&assumptions, obligation.proposition())
             || contract_endpoints_certify_loadability(
                 &entry_state,
@@ -3357,9 +4183,13 @@ fn prepare_function_claim_path(
                 obligation.proposition(),
                 &assumptions,
             );
-        proved
+        !proved
     }) {
-        return Err("the execution path has an unproved verification condition".to_string());
+        return Err(format!(
+            "the execution path has an unproved verification condition: {:?} ({})",
+            obligation.proposition(),
+            obligation.context().unwrap_or("no context")
+        ));
     }
 
     Ok(CertifiedFunctionClaimPath {
@@ -3370,7 +4200,8 @@ fn prepare_function_claim_path(
         post_state,
         post_resources,
         assumptions,
-        execution_facts: path.execution_facts().to_vec(),
+        execution_facts,
+        effect_facts,
     })
 }
 
@@ -3388,6 +4219,7 @@ fn function_claim_holds_on_prepared_path(
         post_resources,
         assumptions,
         execution_facts,
+        effect_facts,
     } = path;
     let mut budget = ExecutionBudget::default();
     match claim.target() {
@@ -3431,6 +4263,7 @@ fn function_claim_holds_on_prepared_path(
                     &path_assumptions,
                     &path.proposition,
                     return_state.memory(),
+                    execution_facts,
                 );
                 obligations_hold && proposition_holds
             })
@@ -3468,23 +4301,27 @@ fn function_claim_holds_on_prepared_path(
                 mutable_ranges.push(CMemoryRange::new(segment.base, segment.start, segment.end));
             }
             let mut effect_memory = caller_state.memory().clone();
-            // A verified region can emit several effect summaries for the
-            // same before/after transition (for example a loop's explicit
-            // effects clause plus the inherited function effect). The first
-            // advances the tracked memory; the others are parallel bounds on
-            // the same transition and must not be chained sequentially.
-            let mut previous_transition: Option<&CMemory> = None;
-            let effects_are_bounded = execution_facts.iter().all(|fact| match fact.proposition() {
+            let mut seen_transitions = Vec::<(CMemory, CMemory)>::new();
+            let effects_are_bounded = effect_facts.iter().all(|fact| match fact.proposition() {
                 Proposition::CMemoryMutatesOnly {
                     before,
                     after,
                     pointers,
                 } => {
-                    if !c_memories_definitionally_equal(&effect_memory, before, &assumptions) {
+                    let repeats_transition =
+                        seen_transitions.iter().any(|(seen_before, seen_after)| {
+                            c_memories_definitionally_equal(seen_before, before, &assumptions)
+                                && c_memories_definitionally_equal(seen_after, after, &assumptions)
+                        });
+                    if !repeats_transition
+                        && !c_memories_definitionally_equal(&effect_memory, before, &assumptions)
+                    {
                         return false;
                     }
-                    previous_transition = None;
-                    effect_memory = after.clone();
+                    if !repeats_transition {
+                        effect_memory = after.clone();
+                        seen_transitions.push((before.clone(), after.clone()));
+                    }
                     pointers
                         .iter()
                         .filter(|pointer| !pointer.block.starts_with("local:"))
@@ -3505,18 +4342,19 @@ fn function_claim_holds_on_prepared_path(
                     after,
                     mutable_ranges: nested_ranges,
                 } => {
-                    if c_memories_definitionally_equal(&effect_memory, before, &assumptions) {
-                        previous_transition = Some(before);
-                        effect_memory = after.clone();
-                    } else if !previous_transition.is_some_and(|previous_before| {
-                        c_memories_definitionally_equal(previous_before, before, &assumptions)
-                            && c_memories_definitionally_equal(
-                                &effect_memory,
-                                after,
-                                &assumptions,
-                            )
-                    }) {
+                    let repeats_transition =
+                        seen_transitions.iter().any(|(seen_before, seen_after)| {
+                            c_memories_definitionally_equal(seen_before, before, &assumptions)
+                                && c_memories_definitionally_equal(seen_after, after, &assumptions)
+                        });
+                    if !repeats_transition
+                        && !c_memories_definitionally_equal(&effect_memory, before, &assumptions)
+                    {
                         return false;
+                    }
+                    if !repeats_transition {
+                        effect_memory = after.clone();
+                        seen_transitions.push((before.clone(), after.clone()));
                     }
                     nested_ranges.iter().all(|nested| {
                         mutable_ranges

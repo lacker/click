@@ -485,13 +485,11 @@ fn execute_verified_function_rule(
                 Proposition::CResourceSeparate {
                     left: CResource::Memory(left),
                     right: CResource::Memory(right),
-                } => {
-                    requirement_assumptions.proves_exact(&requirement_path.proposition)
-                        || requirement_assumptions
-                            .memory_ranges_proven_disjoint_by_explicit_separation_for_memory_resolution(
-                                left, right,
-                            )
-                }
+                } => requirement_assumptions.proves_exact(&requirement_path.proposition)
+                    || requirement_assumptions
+                        .memory_ranges_proven_disjoint_by_explicit_separation_for_memory_resolution(
+                            left, right,
+                        ),
                 proposition => requirement_assumptions.proves_exact(proposition),
             };
             if !requirement_is_proven {
@@ -882,12 +880,10 @@ fn prepare_function_resource_transfer(
         return_resources = resources;
     }
     let caller_resources_after_requirements = return_resources.clone();
-    return_resources = match return_resources
-        .try_compose_with_facts_delaying_normalization(
-            ensured_resources.facts().iter().cloned(),
-            assumptions,
-        )
-    {
+    return_resources = match return_resources.try_compose_with_facts_delaying_normalization(
+        ensured_resources.facts().iter().cloned(),
+        assumptions,
+    ) {
         Ok(resources) => resources,
         Err(error) => return Ok(Err(resource_context_runtime_error(error))),
     };
@@ -955,11 +951,18 @@ pub(super) fn expand_composite_resource_fact(
         );
     }
     let mut budget = ExecutionBudget::default();
+    let evaluation_assumptions = assumptions
+        .clone()
+        .allow_symbolic_contract_loads()
+        .prefer_symbolic_external_loads();
     let mut child_facts = Vec::new();
     for contained in definition.contains() {
-        let Ok(Ok(child)) =
-            evaluate_function_resource_spec(&state, contained, assumptions, &mut budget)
-        else {
+        let Ok(Ok(child)) = evaluate_function_resource_spec(
+            &state,
+            contained,
+            &evaluation_assumptions,
+            &mut budget,
+        ) else {
             return None;
         };
         state.resources = state.resources.clone().unchecked_with_fact(child.clone());
@@ -994,16 +997,16 @@ pub(super) fn expand_all_composite_resource_facts(
     memory: &CMemory,
     assumptions: &Assumptions,
 ) -> Option<ResourceContext> {
-    expand_all_composite_resource_facts_and_propositions(context, definitions, memory, assumptions)
+    expand_composite_resource_context(context, definitions, memory, assumptions)
         .map(|(resources, _)| resources)
 }
 
-pub(super) fn expand_all_composite_resource_facts_and_propositions(
+fn expand_composite_resource_context(
     context: &ResourceContext,
     definitions: &[CCompositeResourceDefinition],
     memory: &CMemory,
     assumptions: &Assumptions,
-) -> Option<(ResourceContext, Vec<Proposition>)> {
+) -> Option<(ResourceContext, Vec<CResourceFact>)> {
     let mut expanded = context.clone();
     let mut seen = BTreeSet::new();
     let mut composites = Vec::new();
@@ -1017,23 +1020,7 @@ pub(super) fn expand_all_composite_resource_facts_and_propositions(
             .find(|fact| matches!(fact.resource(), CResource::Composite { .. }))
             .cloned()
         else {
-            let mut propositions = Vec::new();
-            for composite in composites {
-                propositions.extend(evaluate_composite_resource_relation_propositions(
-                    &composite,
-                    definitions,
-                    memory,
-                    assumptions,
-                )?);
-                propositions.extend(evaluate_composite_resource_fact_propositions(
-                    &composite,
-                    definitions,
-                    memory,
-                    &expanded,
-                    assumptions,
-                )?);
-            }
-            return Some((expanded, propositions));
+            return Some((expanded, composites));
         };
         composites.push(composite.clone());
         expanded = expand_composite_resource_fact(
@@ -1044,6 +1031,34 @@ pub(super) fn expand_all_composite_resource_facts_and_propositions(
             assumptions,
         )?;
     }
+}
+
+pub(super) fn expand_all_composite_resource_facts_and_propositions(
+    context: &ResourceContext,
+    definitions: &[CCompositeResourceDefinition],
+    memory: &CMemory,
+    assumptions: &Assumptions,
+) -> Option<(ResourceContext, Vec<Proposition>)> {
+    let (expanded, composites) =
+        expand_composite_resource_context(context, definitions, memory, assumptions)?;
+    let mut propositions = Vec::new();
+    for composite in composites {
+        propositions.extend(evaluate_composite_resource_relation_propositions(
+            &composite,
+            definitions,
+            memory,
+            assumptions,
+        )?);
+        let fact_assumptions = assumptions_with_propositions(assumptions, &propositions);
+        propositions.extend(evaluate_composite_resource_fact_propositions(
+            &composite,
+            definitions,
+            memory,
+            &expanded,
+            &fact_assumptions,
+        )?);
+    }
+    Some((expanded, propositions))
 }
 
 fn evaluate_composite_resource_relation_propositions(
@@ -1075,11 +1090,18 @@ fn evaluate_composite_resource_relation_propositions(
         );
     }
     let mut budget = ExecutionBudget::default();
+    let evaluation_assumptions = assumptions
+        .clone()
+        .allow_symbolic_contract_loads()
+        .prefer_symbolic_external_loads();
     let mut children = Vec::new();
     for contained in definition.contains() {
-        let Ok(Ok(child)) =
-            evaluate_function_resource_spec(&state, contained, assumptions, &mut budget)
-        else {
+        let Ok(Ok(child)) = evaluate_function_resource_spec(
+            &state,
+            contained,
+            &evaluation_assumptions,
+            &mut budget,
+        ) else {
             return None;
         };
         state.resources = state.resources.clone().unchecked_with_fact(child.clone());
@@ -1138,49 +1160,77 @@ fn evaluate_composite_resource_fact_propositions(
     }
     let mut result = Vec::new();
     let mut budget = ExecutionBudget::default();
-    for fact in definition.facts() {
-        let paths = lower_spec_proposition_at_state_with_loop_entry(
-            &state,
-            fact,
-            None,
-            assumptions,
-            &mut budget,
-        )
-        .ok()?;
-        let [path] = paths.as_slice() else {
-            return None;
-        };
-        if !path.obligations.iter().all(|obligation| {
-            if assumptions.proves(obligation.proposition()) {
-                return true;
-            }
-            let Proposition::CMemoryLoadable {
-                memory: obligation_memory,
-                base,
-                bytes,
-            } = obligation.proposition()
-            else {
-                return false;
+    let mut fact_assumptions = assumptions.clone();
+    let mut pending = definition.facts().iter().collect::<Vec<_>>();
+    while !pending.is_empty() {
+        let mut next_pending = Vec::new();
+        let mut made_progress = false;
+        for fact in pending {
+            let evaluation_assumptions = fact_assumptions
+                .clone()
+                .allow_symbolic_contract_loads()
+                .prefer_symbolic_external_loads();
+            let Ok(paths) = lower_spec_proposition_at_state_with_loop_entry(
+                &state,
+                fact,
+                None,
+                &evaluation_assumptions,
+                &mut budget,
+            ) else {
+                return None;
             };
-            memory_snapshots_proven_equal_at_pointer(obligation_memory, memory, base, assumptions)
-                && bytes
+            let [path] = paths.as_slice() else {
+                next_pending.push(fact);
+                continue;
+            };
+            if !path.obligations.iter().all(|obligation| {
+                if fact_assumptions.proves(obligation.proposition()) {
+                    return true;
+                }
+                let Proposition::CMemoryLoadable {
+                    memory: obligation_memory,
+                    base,
+                    bytes,
+                } = obligation.proposition()
+                else {
+                    return false;
+                };
+                memory_snapshots_proven_equal_at_pointer(
+                    obligation_memory,
+                    memory,
+                    base,
+                    &fact_assumptions,
+                ) && bytes
                     .as_const()
                     .and_then(|bytes| u32::try_from(bytes).ok())
                     .is_some_and(|bytes| {
-                        resource_context_has_read(resources, base, bytes, assumptions)
+                        resource_context_has_read(resources, base, bytes, &fact_assumptions)
                     })
-        }) {
+            }) {
+                next_pending.push(fact);
+                continue;
+            }
+            for obligation in &path.obligations {
+                fact_assumptions =
+                    fact_assumptions.assume_proposition(obligation.proposition().clone());
+            }
+            for path_fact in &path.facts {
+                let proposition = path_fact.proposition().clone();
+                if !result.contains(&proposition) {
+                    result.push(proposition.clone());
+                }
+                fact_assumptions = fact_assumptions.assume_proposition(proposition);
+            }
+            if !result.contains(&path.proposition) {
+                result.push(path.proposition.clone());
+            }
+            fact_assumptions = fact_assumptions.assume_proposition(path.proposition.clone());
+            made_progress = true;
+        }
+        if !made_progress {
             return None;
         }
-        for path_fact in &path.facts {
-            let proposition = path_fact.proposition().clone();
-            if !result.contains(&proposition) {
-                result.push(proposition);
-            }
-        }
-        if !result.contains(&path.proposition) {
-            result.push(path.proposition.clone());
-        }
+        pending = next_pending;
     }
     Some(result)
 }
@@ -1212,6 +1262,37 @@ pub(super) fn resource_context_satisfies_definitional_fact(
         .all(|fact| available.satisfies_fact(fact, assumptions))
 }
 
+/// True when every element of a constant-bounded memory range is concretely
+/// loadable, so a view of it is represented by the materialized cells rather
+/// than a resource fact.
+fn view_range_concretely_loadable(memory: &CMemory, range: &CMemoryRange) -> bool {
+    let (Some(start), Some(end)) = (range.start().as_const(), range.end().as_const()) else {
+        return false;
+    };
+    if end <= start || end - start > 64 {
+        return false;
+    }
+    let width = match &range.base().offset {
+        PointerOffsetTerm::Int32Scaled { byte_width, .. } => {
+            u32::try_from(*byte_width).unwrap_or(4)
+        }
+        _ => 4,
+    };
+    (start..end).all(|index| {
+        let pointer = Pointer {
+            block: range.base().block.clone(),
+            offset: PointerOffsetTerm::add(
+                range.base().offset.clone(),
+                PointerOffsetTerm::scale_int32(
+                    Bitvector32Term::Constant(index),
+                    i64::from(width),
+                ),
+            ),
+        };
+        memory.is_loadable_concretely(&pointer, width)
+    })
+}
+
 fn consume_resource_fact_definitionally(
     available: &ResourceContext,
     required: &CResourceFact,
@@ -1229,6 +1310,14 @@ fn consume_resource_fact_definitionally(
     ) -> Option<ResourceContext> {
         if !seen.insert((available.clone(), required.clone())) {
             return None;
+        }
+        // A view of memory the caller has concretely materialized is freely
+        // satisfiable: read access is represented by the materialized cells,
+        // mirroring the local-block view rule at call transfer.
+        if let CResourceFact::View(CResource::Memory(range)) = required
+            && view_range_concretely_loadable(memory, range)
+        {
+            return Some(available.clone());
         }
         if let Some(remaining) = available
             .clone()

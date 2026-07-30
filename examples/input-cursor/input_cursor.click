@@ -111,7 +111,58 @@ int32 input_cursor_take(struct input_cursor* owner) {
 } by {
     unfold(input_cursor(owner));
     observe(readable_input(owner->data, owner->len));
-    execute_rest();
+    step using {
+        fact owner->pos < owner->len;
+        fact separate(memory(owner->pos), memory(owner->len));
+        fact separate(memory(owner->pos), memory(owner->data));
+        fact separate(memory(owner->len), memory(owner->data));
+        fact contains(input_cursor(owner), memory(owner->pos));
+        fact contains(input_cursor(owner), memory(owner->len));
+        fact contains(input_cursor(owner), memory(owner->data));
+        fact loadable(owner->pos);
+        fact loadable(owner->len);
+        fact loadable(owner->data);
+        fact 0 <= owner->pos;
+        fact owner->pos <= owner->len;
+        fact separate(memory(object(owner)), memory((owner->data)[0..owner->len]));
+        fact loadable((owner->data)[0..owner->len]);
+        fact 0 <= owner->len;
+    }
+    step using {
+        fact owner->pos < owner->len;
+        fact separate(memory(owner->pos), memory(owner->len));
+        fact separate(memory(owner->pos), memory(owner->data));
+        fact separate(memory(owner->len), memory(owner->data));
+        fact contains(input_cursor(owner), memory(owner->pos));
+        fact contains(input_cursor(owner), memory(owner->len));
+        fact contains(input_cursor(owner), memory(owner->data));
+        fact loadable(old(owner->pos));
+        fact loadable(old(owner->len));
+        fact loadable(old(owner->data));
+        fact 0 <= owner->pos;
+        fact owner->pos <= owner->len;
+        fact separate(memory(object(owner)), memory((owner->data)[0..owner->len]));
+        fact loadable(old((owner->data)[0..owner->len]));
+        fact 0 <= owner->len;
+    }
+    step using {
+        fact owner->pos < owner->len;
+        fact separate(memory(owner->pos), memory(owner->len));
+        fact separate(memory(owner->pos), memory(owner->data));
+        fact separate(memory(owner->len), memory(owner->data));
+        fact contains(input_cursor(owner), memory(owner->pos));
+        fact contains(input_cursor(owner), memory(owner->len));
+        fact contains(input_cursor(owner), memory(owner->data));
+        fact loadable(old(owner->pos));
+        fact loadable(old(owner->len));
+        fact loadable(old(owner->data));
+        fact 0 <= owner->pos;
+        fact owner->pos <= owner->len;
+        fact separate(memory(object(owner)), memory((owner->data)[0..owner->len]));
+        fact loadable(old((owner->data)[0..owner->len]));
+        fact 0 <= owner->len;
+    }
+    step();
     have 0 <= owner->pos by {
         derive(0 <= owner->pos) using {
             fact at(statement(2).entry, separate(memory(owner->pos), memory(owner->len)));
@@ -131,7 +182,11 @@ int32 input_cursor_take(struct input_cursor* owner) {
             fact 0 <= owner->len;
         }
     }
-    have owner->pos <= owner->len by { simp(); }
+    have owner->pos <= owner->len by {
+        calculate(owner->pos <= owner->len) using {
+            fact old(owner->pos) < owner->len;
+        }
+    }
     have separate(
         memory(object(owner)),
         memory((owner->data)[0..owner->len])

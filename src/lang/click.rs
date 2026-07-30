@@ -142,6 +142,9 @@ pub struct FunctionSignature {
     return_type: C0Type,
     name: String,
     parameters: Vec<FunctionParameter>,
+    /// Byte spans declared by sized array parameter spellings
+    /// (`int32 p[2]`), used to certify requirement side-obligations.
+    declared_loadable_bytes: Vec<(String, u32)>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1579,6 +1582,10 @@ impl FunctionBlock {
 }
 
 impl FunctionSignature {
+    fn declared_loadable_bytes(&self) -> &[(String, u32)] {
+        &self.declared_loadable_bytes
+    }
+
     pub fn return_type(&self) -> C0Type {
         self.return_type
     }
@@ -2262,7 +2269,7 @@ fn verify_c0_sources_with_environment(
                 }
             }
         }
-        let (certification_state, certification_arguments, certification_facts, _) =
+        let (certification_state, certification_arguments, mut certification_facts, _) =
             initial_claim_context(
                 &function_block,
                 parsed_function,
@@ -2271,6 +2278,25 @@ fn verify_c0_sources_with_environment(
                 &click_function_environment,
                 &format!("{}.contract certification", function_block.signature.name()),
             )?;
+        // A sized array parameter spelling (`int32 p[2]`) declares its span
+        // loadable as part of the calling convention; certification may rely
+        // on it to discharge requirement side-obligations.
+        for (name, bytes) in function_block.signature.declared_loadable_bytes() {
+            let position = parsed_function
+                .parameters()
+                .iter()
+                .position(|parameter| parameter.name() == name);
+            let Some(CExpression::Value(CValue::Pointer(base))) =
+                position.and_then(|index| certification_arguments.get(index))
+            else {
+                continue;
+            };
+            certification_facts.push(Proposition::CMemoryLoadable {
+                memory: certification_state.memory().clone(),
+                base: base.clone(),
+                bytes: Bitvector32Term::Constant(*bytes),
+            });
+        }
         let contract_function = annotated_function(
             &function_block,
             parsed_function,

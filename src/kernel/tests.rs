@@ -126,6 +126,45 @@ fn condition_fact_matching_ignores_unrelated_local_memory() {
 }
 
 #[test]
+fn bounded_order_replay_ignores_unrelated_local_memory() {
+    let owner = Pointer {
+        block: "arg-memory".into(),
+        offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(100_001)), 4),
+    };
+    let position = owner.clone();
+    let length = owner.offset_by_int32_elements(Bitvector32Term::Constant(1));
+    let local = CMemory::local_pointer("temporary");
+    let fact_memory = CMemory::new()
+        .with_block("call-havoc:0", 0)
+        .with_block(local.block.clone(), 4)
+        .store(local, int32(7));
+    let target_memory = CMemory::new().with_block("call-havoc:0", 0);
+    let symbolic_length = Bitvector32Term::Variable(Variable(100_002));
+    let load = |memory: &CMemory, pointer: &Pointer| {
+        Bitvector32Term::MemoryLoad(Box::new(memory.clone()), Box::new(pointer.clone()))
+    };
+    let assumptions = Assumptions::new()
+        .assume_condition(
+            ConditionTerm::equal(load(&fact_memory, &position), Bitvector32Term::Constant(0)),
+            true,
+        )
+        .assume_condition(
+            ConditionTerm::equal(load(&fact_memory, &length), symbolic_length.clone()),
+            true,
+        )
+        .assume_condition(
+            ConditionTerm::signed_less_equal(Bitvector32Term::Constant(1), symbolic_length),
+            true,
+        );
+    let target = ConditionTerm::signed_less_than(
+        load(&target_memory, &position),
+        load(&target_memory, &length),
+    );
+
+    assert!(assumptions.proves_order_condition_for_memory_resolution(&target, true));
+}
+
+#[test]
 fn equality_chains_across_observationally_equivalent_memory_loads() {
     let owner = Pointer {
         block: "arg-memory".into(),
@@ -5332,6 +5371,11 @@ fn memory_resolution_alias_check_uses_explicit_separation() {
         &right_base.offset_by_int32_elements(Bitvector32Term::Constant(2)),
         &assumptions,
     ));
+    assert!(!pointers_proven_equal_for_memory_resolution(
+        &left_base.offset_by_int32_elements(Bitvector32Term::Constant(1)),
+        &right_base.offset_by_int32_elements(Bitvector32Term::Constant(2)),
+        &assumptions,
+    ));
 
     let right_start = Bitvector32Term::subtract(
         Bitvector32Term::Variable(Variable(91)),
@@ -5414,6 +5458,45 @@ fn memory_resolution_alias_check_uses_exact_transitive_range_bounds() {
 }
 
 #[test]
+fn memory_resolution_alias_check_uses_strict_indices_across_equal_loaded_bases() {
+    let owner = Pointer {
+        block: "arg-memory".into(),
+        offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(97)), 4),
+    };
+    let data_cell = owner.offset_by_bytes(8);
+    let before = CMemory::new();
+    let after = before.clone().with_block("local:temporary", 4);
+    let data_before =
+        Bitvector32Term::MemoryLoad(Box::new(before.clone()), Box::new(data_cell.clone()));
+    let data_after = Bitvector32Term::MemoryLoad(Box::new(after), Box::new(data_cell));
+    let length = Bitvector32Term::MemoryLoad(Box::new(before), Box::new(owner));
+    let index = Bitvector32Term::subtract(length.clone(), Bitvector32Term::Constant(1));
+    let indexed = Pointer {
+        block: "arg-memory".into(),
+        offset: PointerOffsetTerm::add(
+            PointerOffsetTerm::scale_int32(data_after.clone(), 4),
+            PointerOffsetTerm::scale_int32(index.clone(), 4),
+        ),
+    };
+    let terminator = Pointer {
+        block: "arg-memory".into(),
+        offset: PointerOffsetTerm::add(
+            PointerOffsetTerm::scale_int32(data_before.clone(), 4),
+            PointerOffsetTerm::scale_int32(length.clone(), 4),
+        ),
+    };
+    let assumptions = Assumptions::new()
+        .assume_condition(ConditionTerm::equal(data_after, data_before), true)
+        .assume_condition(ConditionTerm::signed_less_than(index, length), true);
+
+    assert!(pointers_proven_distinct_for_memory_resolution(
+        &indexed,
+        &terminator,
+        &assumptions,
+    ));
+}
+
+#[test]
 fn memory_resolution_alias_check_transports_unchanged_field_loads() {
     let owner = Pointer {
         block: "arg-memory".into(),
@@ -5468,10 +5551,12 @@ fn memory_resolution_separation_transports_unchanged_range_base_loads() {
     let data_before =
         Bitvector32Term::MemoryLoad(Box::new(before.clone()), Box::new(data_cell.clone()));
     let data_after = Bitvector32Term::MemoryLoad(Box::new(after), Box::new(data_cell));
-    let index = Bitvector32Term::subtract(
-        Bitvector32Term::MemoryLoad(Box::new(before), Box::new(owner.clone())),
-        Bitvector32Term::Constant(1),
+    let length = Bitvector32Term::MemoryLoad(Box::new(before.clone()), Box::new(owner.clone()));
+    let capacity = Bitvector32Term::MemoryLoad(
+        Box::new(before.clone()),
+        Box::new(owner.offset_by_int32_elements(Bitvector32Term::Constant(1))),
     );
+    let index = Bitvector32Term::subtract(length.clone(), Bitvector32Term::Constant(1));
     let data_base = Pointer {
         block: "arg-memory".into(),
         offset: PointerOffsetTerm::scale_int32(data_before, 4),
@@ -5486,16 +5571,21 @@ fn memory_resolution_separation_transports_unchanged_range_base_loads() {
     let assumptions = Assumptions::new()
         .assume_proposition(Proposition::CResourceSeparate {
             left: CResource::Memory(memory_range(owner.clone(), 0, 4)),
-            right: CResource::Memory(memory_range(data_base.clone(), 0, 10)),
+            right: CResource::Memory(CMemoryRange::new(
+                data_base.clone(),
+                Bitvector32Term::Constant(0),
+                capacity.clone(),
+            )),
         })
         .assume_condition(
             ConditionTerm::signed_less_equal(Bitvector32Term::Constant(0), index.clone()),
             true,
         )
         .assume_condition(
-            ConditionTerm::signed_less_than(index, Bitvector32Term::Constant(10)),
+            ConditionTerm::signed_less_than(index.clone(), length.clone()),
             true,
-        );
+        )
+        .assume_condition(ConditionTerm::signed_less_than(length, capacity), true);
 
     assert!(pointers_proven_distinct_for_memory_resolution(
         &owner,

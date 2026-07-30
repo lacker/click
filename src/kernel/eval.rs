@@ -545,14 +545,16 @@ pub(super) fn read_c_lvalue_paths(
             CLValueStorage::Memory { pointer } => {
                 let effective_assumptions =
                     assumptions_with_path_context(assumptions, &facts, &obligations);
-                let has_external_read_resource = is_external_memory_pointer(pointer)
-                    && resource_context_has_read(
-                        state.resources(),
-                        pointer,
-                        lvalue.value_type.byte_width(),
-                        &effective_assumptions,
-                    );
-                if is_external_memory_pointer(pointer) && !has_external_read_resource {
+                let is_external = is_external_memory_pointer(pointer);
+                let has_external_read_resource = is_external
+                    && (assumptions.should_allow_symbolic_contract_loads()
+                        || resource_context_has_read(
+                            state.resources(),
+                            pointer,
+                            lvalue.value_type.byte_width(),
+                            &effective_assumptions,
+                        ));
+                if is_external && !has_external_read_resource {
                     return vec![CExpressionPath {
                         outcome: CExpressionOutcome::RuntimeError(CRuntimeError::MissingResource {
                             resource: CResourceFact::view_memory(CMemoryRange::new(
@@ -873,6 +875,31 @@ pub(super) fn evaluate_c_memory_load_paths(
     // pointer. Avoid proving every other symbolic cell distinct before the
     // direct map lookup.
     if let Some(value) = memory.known_value(&pointer) {
+        if let Some(value) = symbolic_pointer_value_from_int_cell(&pointer, &value, value_type) {
+            return vec![CExpressionPath {
+                outcome: CExpressionOutcome::Value(value),
+                facts,
+                obligations,
+            }];
+        }
+        if !value_type.accepts(&value) {
+            return vec![CExpressionPath {
+                outcome: CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+                facts,
+                obligations,
+            }];
+        }
+        return vec![CExpressionPath {
+            outcome: CExpressionOutcome::Value(value),
+            facts,
+            obligations,
+        }];
+    }
+
+    if let Some((_, value)) = memory.cells.iter().find(|(stored_pointer, _)| {
+        pointers_proven_equal_for_memory_resolution(&pointer, stored_pointer, assumptions)
+    }) {
+        let value = value.clone();
         if let Some(value) = symbolic_pointer_value_from_int_cell(&pointer, &value, value_type) {
             return vec![CExpressionPath {
                 outcome: CExpressionOutcome::Value(value),
@@ -2549,13 +2576,18 @@ pub(super) fn write_c_lvalue_paths(
             }]
         }
         CLValueStorage::Memory { pointer } => {
-            let has_external_write_resource = is_external_memory_pointer(&pointer)
-                && resource_context_has_write(
-                    state.resources(),
-                    &pointer,
-                    value.byte_width(),
-                    &effective_assumptions,
-                );
+            let is_external = is_external_memory_pointer(&pointer);
+            let authorized_range = is_external
+                .then(|| {
+                    state.resources().memory_write_range(
+                        &pointer,
+                        value.byte_width(),
+                        &effective_assumptions,
+                    )
+                })
+                .flatten()
+                .cloned();
+            let has_external_write_resource = is_external && authorized_range.is_some();
             if is_external_memory_pointer(&pointer) && !has_external_write_resource {
                 return vec![CStatementExecutionPath {
                     outcome: CStatementOutcome::RuntimeError(CRuntimeError::MissingResource {
@@ -2590,19 +2622,13 @@ pub(super) fn write_c_lvalue_paths(
                 .without_possible_aliasing_cells(&pointer, &effective_assumptions)
                 .store(pointer.clone(), value.clone());
             let mut facts = facts;
-            if add_internal_path_fact(
-                &mut facts,
-                assumptions,
-                Proposition::CMemoryMutatesOnly {
-                    before: before_memory,
-                    after: state.memory.clone(),
-                    pointers: vec![pointer.clone()],
-                },
-            )
-            .is_none()
-            {
-                return Vec::new();
-            }
+            facts.push(ExecutionPureFact::certified_store(
+                before_memory,
+                state.memory.clone(),
+                pointer.clone(),
+                value.clone(),
+                authorized_range,
+            ));
             if let Some(name) = local_name_from_pointer(&pointer)
                 && let Some(c_type) = state.locals.scalar_object_type(name)
             {
