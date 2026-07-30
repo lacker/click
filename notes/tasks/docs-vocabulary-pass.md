@@ -1,7 +1,7 @@
 # Docs vocabulary pass
 
-Status: open
-Claimed:
+Status: in progress
+Claimed: worktree-agent-ae547bd447d583266, 2026-07-30
 
 Scope (design-review honorable mention): one documentation pass over
 docs/ fixing tactic-vocabulary churn:
