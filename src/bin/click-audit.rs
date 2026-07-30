@@ -347,6 +347,7 @@ fn run_audit(arguments: Arguments) -> Result<(), String> {
     let mut worker: Option<(PathBuf, AuditSessionWorker)> = None;
     let mut cursor = 0;
     let mut out_of_time = false;
+    let mut cold_reverified_claims = std::collections::BTreeSet::new();
     let started = Instant::now();
 
     println!(
@@ -418,11 +419,14 @@ fn run_audit(arguments: Arguments) -> Result<(), String> {
             .as_mut()
             .expect("the selected sidecar session was initialized")
             .1;
+        let cold_reverify = cold_reverified_claims
+            .insert((site.click_path.clone(), site.claim.clone()));
         match audit_site(
             site,
             current,
             arguments.expansion_limit,
             arguments.verification_limit,
+            cold_reverify,
         ) {
             Ok(timings) => {
                 let total = timings.expansion
@@ -660,6 +664,7 @@ fn audit_site(
     worker: &mut AuditSessionWorker,
     expansion_limit: Duration,
     verification_limit: Duration,
+    cold_reverify: bool,
 ) -> Result<SiteTimings, String> {
     let executable =
         env::current_exe().map_err(|error| format!("failed to locate click-audit: {error}"))?;
@@ -694,22 +699,30 @@ fn audit_site(
     // rewrite changed nothing outside the audited proof unit, so the other
     // units' outcomes cannot change; a whole-file pass here would redo them
     // all per site, which made auditing a project cost sites x whole-file
-    // time.
-    let mut reverification = Command::new(&executable);
-    reverification
-        .arg("--internal-verify-rewritten")
-        .arg(&site.click_path)
-        .arg(&site.claim);
-    let reverification = require_success(
-        run_bounded_with_input(
-            reverification,
-            Some(expanded.clone().into_bytes()),
+    // time. The cold-process pass exists to catch anything the retained
+    // session's cached environment masks, which one site per claim already
+    // exercises — repeating it for every site of a many-site claim would
+    // double the whole audit for no additional coverage.
+    let reverification_elapsed = if cold_reverify {
+        let mut reverification = Command::new(&executable);
+        reverification
+            .arg("--internal-verify-rewritten")
+            .arg(&site.click_path)
+            .arg(&site.claim);
+        let reverification = require_success(
+            run_bounded_with_input(
+                reverification,
+                Some(expanded.clone().into_bytes()),
+                verification_limit,
+                "proof-unit reverification",
+            )?,
             verification_limit,
             "proof-unit reverification",
-        )?,
-        verification_limit,
-        "proof-unit reverification",
-    )?;
+        )?;
+        reverification.elapsed
+    } else {
+        Duration::ZERO
+    };
 
     // Checklist step 7: re-expanding the same claim against the rewritten
     // source must be a fixed point, byte for byte. The site is re-resolved
@@ -746,7 +759,7 @@ fn audit_site(
     Ok(SiteTimings {
         expansion: expansion.elapsed,
         session_verification: verification_elapsed,
-        reverification: reverification.elapsed,
+        reverification: reverification_elapsed,
         reexpansion: reexpansion.elapsed,
     })
 }

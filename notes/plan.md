@@ -73,11 +73,17 @@ Order of attack, one frontier at a time, commit each independently:
    finding is FIXED: the constant-normalization walk now prefilters
    candidates by memory-blind structure (claims check 49 s -> 0.08 s),
    and the pipeline's execute_rest is expanded; segmented whole-file
-   verify is ~5.8 s and the examples gate ~19 s. The audit still
-   verifies each site's unit twice (retained session + fresh targeted
-   process); dropping or sampling one of the two would halve audit
-   cost. CLICK_TIMINGS now also emits contract execution / contract
-   claims / per-claim phase timings.
+   verify is ~5.8 s and the examples gate ~19 s. The cold-process
+   reverify now runs once per claim instead of per site (the retained
+   session covers the rest), and both pipelines' execute_rest searches
+   are expanded away. Full `--keep-going` audit: 314 s, 98 sites pass,
+   2 residual SLOW findings, both bound by owned_split_buffer_pipeline's
+   ~7.7 s unit verify (contract execution ~3.6 s is the next lever; the
+   sites are 235:5, first of its claim so it also pays the cold
+   reverify, and 427:5, whose own expansion costs ~5.9 s). Sessions for
+   owned-string/owned-vector still fail (parked family). CLICK_TIMINGS
+   now also emits contract execution / contract claims / per-claim
+   phase timings.
 6. **One-gateway check**: after the corpus audit is green, one bounded
    code audit that every smart success commits through TacticCertificate
    replay with no bypass. Not an open-ended refactor.
