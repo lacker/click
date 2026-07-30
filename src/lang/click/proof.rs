@@ -115,6 +115,77 @@ fn apply_logical_goal_tactic(
     }
 }
 
+/// Checks a bitvector equality target by transitive chaining of the listed
+/// equality premises, with canonical load spellings as term identity. The
+/// decide engine chains constants and variables; certificates also chain
+/// through load terms recorded at intermediate states.
+fn equal_by_premise_chain(
+    premises: &[Proposition],
+    target: &Proposition,
+    available: &[Proposition],
+) -> bool {
+    let Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(target_left, target_right), true) =
+        crate::kernel::c_condition_fact_with_canonical_loads(target)
+    else {
+        return false;
+    };
+    let frame_assumptions = assumptions_from_propositions(available);
+    // Two spellings denote the same term when identical, or when they load
+    // the same pointer from memories the recorded effect facts prove
+    // unchanged between (frame-justified, never by ignoring havoc alone).
+    let terms_equivalent = |left: &Bitvector32Term, right: &Bitvector32Term| {
+        left == right
+            || matches!((left, right), (
+                Bitvector32Term::MemoryLoad(left_memory, left_pointer),
+                Bitvector32Term::MemoryLoad(right_memory, right_pointer),
+            ) if left_pointer == right_pointer
+                && (crate::kernel::c_memory_load_is_unchanged(
+                    left_memory,
+                    right_memory,
+                    left_pointer,
+                    &frame_assumptions,
+                ) || crate::kernel::c_memory_load_is_unchanged(
+                    right_memory,
+                    left_memory,
+                    left_pointer,
+                    &frame_assumptions,
+                )))
+    };
+    let mut classes: Vec<Vec<Bitvector32Term>> = Vec::new();
+    for premise in premises {
+        let Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), true) =
+            crate::kernel::c_condition_fact_with_canonical_loads(premise)
+        else {
+            continue;
+        };
+        let left = *left;
+        let right = *right;
+        let left_class = classes
+            .iter()
+            .position(|class| class.iter().any(|term| terms_equivalent(term, &left)));
+        let right_class = classes
+            .iter()
+            .position(|class| class.iter().any(|term| terms_equivalent(term, &right)));
+        match (left_class, right_class) {
+            (Some(a), Some(b)) if a != b => {
+                let merged = classes.remove(a.max(b));
+                classes[a.min(b)].extend(merged);
+            }
+            (Some(_), Some(_)) => {}
+            (Some(a), None) => classes[a].push(right),
+            (None, Some(b)) => classes[b].push(left),
+            (None, None) => classes.push(vec![left, right]),
+        }
+    }
+    let target_left = *target_left;
+    let target_right = *target_right;
+    terms_equivalent(&target_left, &target_right)
+        || classes.iter().any(|class| {
+            class.iter().any(|term| terms_equivalent(term, &target_left))
+                && class.iter().any(|term| terms_equivalent(term, &target_right))
+        })
+}
+
 fn check_atomic_derivation_goal(
     tactic: &ProofTactic,
     target: Proposition,
@@ -168,6 +239,35 @@ fn check_atomic_derivation_goal(
             .or_else(|| assumptions.derive_simp_proposition(&normalized_target)),
         _ => return Err("not a derivation tactic".to_string()),
     };
+    // Premises recorded at different program points can spell the same load
+    // through different snapshots; retry with canonical loads so the chain
+    // unifies.
+    let derivation = derivation.or_else(|| {
+        let canonical_premises = normalized_premises
+            .iter()
+            .map(crate::kernel::c_condition_fact_with_canonical_loads)
+            .collect::<Vec<_>>();
+        let canonical_target =
+            crate::kernel::c_condition_fact_with_canonical_loads(&normalized_target);
+        if canonical_premises == normalized_premises && canonical_target == normalized_target {
+            return None;
+        }
+        let canonical_assumptions = assumptions_from_propositions(&canonical_premises);
+        match tactic {
+            ProofTactic::Derive(_) => canonical_assumptions
+                .derive_atomic_proposition(&canonical_target)
+                .or_else(|| canonical_assumptions.derive_proposition(&canonical_target)),
+            ProofTactic::Calculate(_) => canonical_assumptions
+                .derive_simp_atomic_proposition(&canonical_target)
+                .or_else(|| canonical_assumptions.derive_simp_proposition(&canonical_target)),
+            _ => None,
+        }
+    });
+    if derivation.is_none()
+        && equal_by_premise_chain(&normalized_premises, &normalized_target, available)
+    {
+        return Ok(());
+    }
     if derivation.is_none() {
         return Err(format!(
             "`{}` could not check the target from exactly the listed premises: {target:?}\n  premises: {normalized_premises:#?}",

@@ -3542,6 +3542,18 @@ fn condition_with_canonical_loads(condition: &ConditionTerm) -> Option<Condition
     })
 }
 
+/// Public form of canonical-load rewriting for condition facts: spellings
+/// that differ only in redundant cached cells canonicalize identically.
+pub(crate) fn c_condition_fact_with_canonical_loads(fact: &Proposition) -> Proposition {
+    let Proposition::ConditionIs(condition, value) = fact else {
+        return fact.clone();
+    };
+    match condition_with_canonical_loads(condition) {
+        Some(canonical) => Proposition::ConditionIs(canonical, *value),
+        None => fact.clone(),
+    }
+}
+
 fn certification_proves_proposition(assumptions: &Assumptions, proposition: &Proposition) -> bool {
     if assumptions.proves_exact(proposition) {
         return true;
