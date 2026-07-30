@@ -3264,12 +3264,16 @@ impl Assumptions {
                         else {
                             return false;
                         };
-                        fact_sort == sort
-                            && substitute_bitvector_variable_in_proposition(
-                                fact_body,
-                                *fact_var,
-                                &Bitvector32Term::Variable(*var),
-                            ) == **body
+                        if fact_sort != sort {
+                            return false;
+                        }
+                        let renamed = substitute_bitvector_variable_in_proposition(
+                            fact_body,
+                            *fact_var,
+                            &Bitvector32Term::Variable(*var),
+                        );
+                        renamed == **body
+                            || self.propositions_equal_modulo_proven_terms(&renamed, body, 0)
                     })
             }
             Proposition::Exists { var, sort, body, .. } => {
@@ -3278,6 +3282,93 @@ impl Assumptions {
             }
             _ => self.prop_facts.contains(proposition),
         }
+    }
+
+    /// Structural proposition equality where differing bitvector subterms
+    /// are accepted when this context proves them equal; an assumed
+    /// universal over a loop counter then matches the goal spelled with the
+    /// counter's proven final value.
+    fn propositions_equal_modulo_proven_terms(
+        &self,
+        left: &Proposition,
+        right: &Proposition,
+        depth: usize,
+    ) -> bool {
+        if depth > 16 {
+            return false;
+        }
+        if left == right {
+            return true;
+        }
+        match (left, right) {
+            (Proposition::And(al, ar), Proposition::And(bl, br))
+            | (Proposition::Or(al, ar), Proposition::Or(bl, br))
+            | (Proposition::Implies(al, ar), Proposition::Implies(bl, br)) => {
+                self.propositions_equal_modulo_proven_terms(al, bl, depth + 1)
+                    && self.propositions_equal_modulo_proven_terms(ar, br, depth + 1)
+            }
+            (Proposition::Not(a), Proposition::Not(b)) => {
+                self.propositions_equal_modulo_proven_terms(a, b, depth + 1)
+            }
+            (
+                Proposition::ConditionIs(left_condition, left_value),
+                Proposition::ConditionIs(right_condition, right_value),
+            ) if left_value == right_value => {
+                self.conditions_equal_modulo_proven_terms(left_condition, right_condition)
+            }
+            _ => false,
+        }
+    }
+
+    fn conditions_equal_modulo_proven_terms(
+        &self,
+        left: &ConditionTerm,
+        right: &ConditionTerm,
+    ) -> bool {
+        if left == right {
+            return true;
+        }
+        let operands = match (left, right) {
+            (
+                ConditionTerm::Bitvector32SignedLessThan(a, b),
+                ConditionTerm::Bitvector32SignedLessThan(c, d),
+            )
+            | (
+                ConditionTerm::Bitvector32SignedLessEqual(a, b),
+                ConditionTerm::Bitvector32SignedLessEqual(c, d),
+            )
+            | (
+                ConditionTerm::Bitvector32SignedGreaterThan(a, b),
+                ConditionTerm::Bitvector32SignedGreaterThan(c, d),
+            )
+            | (
+                ConditionTerm::Bitvector32SignedGreaterEqual(a, b),
+                ConditionTerm::Bitvector32SignedGreaterEqual(c, d),
+            )
+            | (ConditionTerm::Bitvector32Equal(a, b), ConditionTerm::Bitvector32Equal(c, d)) => {
+                Some((a, b, c, d))
+            }
+            _ => None,
+        };
+        let Some((a, b, c, d)) = operands else {
+            return false;
+        };
+        let le_holds = |x: &Bitvector32Term, y: &Bitvector32Term| {
+            let condition = ConditionTerm::signed_less_equal(x.clone(), y.clone());
+            self.decide(&condition) == Some(true)
+                || self.proves_condition_from_facts(&condition, true)
+        };
+        let terms_equal = |x: &Bitvector32Term, y: &Bitvector32Term| {
+            x == y
+                || self.decide(&ConditionTerm::equal(x.clone(), y.clone())) == Some(true)
+                || self.proves_condition_from_facts(
+                    &ConditionTerm::equal(x.clone(), y.clone()),
+                    true,
+                )
+                // Antisymmetry: mutual non-strict bounds prove equality.
+                || (le_holds(x, y) && le_holds(y, x))
+        };
+        terms_equal(a, c) && terms_equal(b, d)
     }
 
     /// Proves an existential goal without search: an assumed existential over

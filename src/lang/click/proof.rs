@@ -205,9 +205,9 @@ fn check_atomic_derivation_goal(
             tactic_name(tactic)
         ));
     }
-    if let Some(missing) = premises.iter().find(|premise| {
-        let normalized = normalize_direct_atomic_memory_loads(premise);
-        !available.iter().any(|available| {
+    let premise_part_available = |part: &Proposition| {
+        let normalized = normalize_direct_atomic_memory_loads(part);
+        available.iter().any(|available| {
             let mut conjuncts = Vec::new();
             atomic_conjuncts(available, &mut conjuncts);
             conjuncts.into_iter().any(|available| {
@@ -221,6 +221,14 @@ fn check_atomic_derivation_goal(
                             .is_some())
             })
         })
+    };
+    if let Some(missing) = premises.iter().find(|premise| {
+        // A conjunction premise is available when each conjunct is; facts
+        // are often assumed split even when the certificate lists them
+        // joined.
+        let mut parts = Vec::new();
+        atomic_conjuncts(premise, &mut parts);
+        !parts.into_iter().all(premise_part_available)
     }) {
         return Err(format!(
             "`{}` is missing an exact listed premise: {missing:?}",
