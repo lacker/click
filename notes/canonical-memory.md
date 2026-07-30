@@ -118,6 +118,22 @@ deleted rather than extended. Migration risk concentrates in eval.rs
 (store paths), resource lowering, and everywhere `CMemory` appears in
 `Proposition`/`Term` variants.
 
+## Status at end of overnight run (2026-07-30, master 5e8b8fb)
+
+Landed: field layout-slot ownership (d523e42, fixed
+hidden_separate_projection), CMemory interning (ebe44f1, lib suite 2x
+faster), assumption-free canonicalization memos (4ff2be8), endpoint/base
+load bridging (928a6eb, opens field_derived's fold gate; reentrancy
+guard 5e8b8fb), five lib tests de-quarantined (7dae13f — default lib
+suite now 464 green). Quarantined mdtests (4) and examples (5) retested:
+none pass yet; one quarantined example overflowed the stack through the
+bridge cycle (now guarded). The five visible mdtest failures all reduce
+to the certificate-spelling design question below — awaiting the owner's
+pick before more code. field_derived also needs the grouped-simp
+candidate-loop perf work regardless (runs ~420s; hot loop is
+atomic_derivation_premises candidate iteration under
+pointers_proven_disjoint_by_explicit_range).
+
 ## Overnight findings 2026-07-30 (post-interning)
 
 Interning + memoization landed (ebe44f1, 4ff2be8; lib suite 2x faster) and
