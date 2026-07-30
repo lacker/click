@@ -871,6 +871,18 @@ pub(super) fn evaluate_c_memory_load_paths(
     assumptions: &Assumptions,
     has_external_read_resource: bool,
 ) -> Vec<CExpressionPath> {
+    // A pointer-typed load of a materialized int32 cell that is not a bare
+    // load term (for example a call-havoc variable standing for the framed
+    // field) cannot be reinterpreted as a stable pointer spelling. When the
+    // caller permits symbolic external loads, fall through to the symbolic
+    // load below — its load-term spelling relates across snapshots — instead
+    // of failing the load.
+    let pointer_cell_defers_to_symbolic = |value: &CValue| {
+        matches!(value, CValue::Int32(_))
+            && matches!(value_type, CType::Int32Pointer | CType::UInt8Pointer)
+            && has_external_read_resource
+            && assumptions.should_prefer_symbolic_external_loads()
+    };
     // An exact materialized cell is already the authoritative value for this
     // pointer. Avoid proving every other symbolic cell distinct before the
     // direct map lookup.
@@ -882,21 +894,21 @@ pub(super) fn evaluate_c_memory_load_paths(
                 obligations,
             }];
         }
-        if !value_type.accepts(&value) {
+        if value_type.accepts(&value) {
+            return vec![CExpressionPath {
+                outcome: CExpressionOutcome::Value(value),
+                facts,
+                obligations,
+            }];
+        }
+        if !pointer_cell_defers_to_symbolic(&value) {
             return vec![CExpressionPath {
                 outcome: CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
                 facts,
                 obligations,
             }];
         }
-        return vec![CExpressionPath {
-            outcome: CExpressionOutcome::Value(value),
-            facts,
-            obligations,
-        }];
-    }
-
-    if let Some((_, value)) = memory.cells.iter().find(|(stored_pointer, _)| {
+    } else if let Some((_, value)) = memory.cells.iter().find(|(stored_pointer, _)| {
         pointers_proven_equal_for_memory_resolution(&pointer, stored_pointer, assumptions)
     }) {
         let value = value.clone();
@@ -907,18 +919,20 @@ pub(super) fn evaluate_c_memory_load_paths(
                 obligations,
             }];
         }
-        if !value_type.accepts(&value) {
+        if value_type.accepts(&value) {
+            return vec![CExpressionPath {
+                outcome: CExpressionOutcome::Value(value),
+                facts,
+                obligations,
+            }];
+        }
+        if !pointer_cell_defers_to_symbolic(&value) {
             return vec![CExpressionPath {
                 outcome: CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
                 facts,
                 obligations,
             }];
         }
-        return vec![CExpressionPath {
-            outcome: CExpressionOutcome::Value(value),
-            facts,
-            obligations,
-        }];
     }
 
     if has_external_read_resource && assumptions.should_prefer_symbolic_external_loads() {

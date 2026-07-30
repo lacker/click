@@ -41,8 +41,9 @@ Order of attack, one frontier at a time, commit each independently:
    `left->pos == (left->pos + 1)`). Fix direction: candidates accepted
    during certificate generation must strictly lower at the replay
    point (same obligations as `lower_point_proposition`), falling back
-   to at()-anchored spellings. **This changes certificate-generation
-   semantics — discuss before implementing** (per working rules).
+   to at()-anchored spellings. Owner decision 2026-07-30: certificate
+   format/implementation details do not need sign-off; only Surface
+   Click semantics changes do. Proceed.
 2. **Audit `by auto` re-expansion** : audit sites 28–30 (jsonc-refcount,
    all `by auto`) fail re-expansion with "no explicit C proof tactic
    starts at 10:6" — expansion rewrites `auto` into a by-block, so the

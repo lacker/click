@@ -15600,15 +15600,6 @@ fn replay_linear_tactics(
                             click_function_environment,
                         )
                         .map_err(|message| {
-                            if std::env::var_os("CLICK_PROBE_STEP_PREMISES").is_some() {
-                                eprintln!(
-                                    "click probe: step premise failed at statement {} \
-                                     with {} pure facts, {} recorded surfaces",
-                                    replay.frontier.next_statement_index,
-                                    all_pure_facts.len(),
-                                    replay.surface_propositions.kernel_facts().count(),
-                                );
-                            }
                             ClickError::new(format!(
                                 "`{claim_label}` tactic {tactic_index}: could not lower `{tactic_name}` premise `{}`: {message}",
                                 super::printing::source_click_proposition(surface_premise)
