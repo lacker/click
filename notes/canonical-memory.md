@@ -118,6 +118,33 @@ deleted rather than extended. Migration risk concentrates in eval.rs
 (store paths), resource lowering, and everywhere `CMemory` appears in
 `Proposition`/`Term` variants.
 
+## Status after option (b) implementation (2026-07-30 morning, master 24ad60b)
+
+Owner picked (b): everything gets a surface spelling. Landed: 26972e7
+(postcondition premises spelled via recorded lowerings / exact-lowering
+ambient facts / synthesized at(point,...) spellings, self-checked with the
+exact tactic-replay check, which now tries raw premise spellings before
+normalizing — fixed fill_n_segment_invariant) and 24ad60b (loadability
+from assumed load-mentioning facts at leaf/forall/nested-exists levels —
+fixed cstr_stdlib). THREE failures remain:
+
+- field_derived_precise_effect_after_metadata_write: probe shows
+  minimal_proposition_derivation over the FULL certified context
+  (available + effect facts + store equations) returns None for its
+  ensures — a prover-capability gap (needs load(m_out,len) resolved
+  through the materialized len cell, then arithmetic with index==old);
+  plus the known ~500s perf problem (grouped-simp candidate loop).
+- loop_stdlib_permutation_invariant: initialize `have` cannot establish a
+  quantified counting fact with If-terms over loads (Fold/If counting
+  prover gap).
+- composite_resource_vector_fill_loop_snapshot: kernel back-edge closer
+  (verify_invariant_checks_at_back_edge_using) cannot re-derive the
+  preserve-phase quantified conclusion across the iteration's stores.
+
+De-quarantine reminder: mdtest QUARANTINED (4 entries) and examples
+QUARANTINED (5 entries) still pending; lib is fully de-quarantined except
+7 expansion tests (#[ignore]) that fail from the WIP-era changes.
+
 ## Status at end of overnight run (2026-07-30, master 5e8b8fb)
 
 Landed: field layout-slot ownership (d523e42, fixed
