@@ -118,6 +118,38 @@ deleted rather than extended. Migration risk concentrates in eval.rs
 (store paths), resource lowering, and everywhere `CMemory` appears in
 `Proposition`/`Term` variants.
 
+## Morning session 2 (2026-07-30, master cf04159): TWO failures remain
+
+Fixed loop_stdlib_permutation_invariant (cf04159): canonicalize_atomic_loads
+now canonicalizes If conditions (depth-propagated via
+condition_with_canonical_loads_with_depth); proves/proves_atomic accept
+canonically-equal Bitvector32Equal goals and resolve load equalities via
+the memory-resolution prover (reentrancy-guarded, depth-gated at 64 via
+bitvector_term_deeper_than); mdtest/example harnesses give children 64MB
+stacks (prover recursion legitimately exceeds defaults on snapshot-heavy
+fixtures — three separate stack overflows during development all traced to
+structural recursion on deep terms, always guard + gate new arms).
+
+Remaining two and exact frontier state:
+
+- composite_resource_vector_fill_loop_snapshot: branch
+  `claude/forall-extension-wip` holds a nearly-complete forall
+  bound-extension rule (forall v<b + final-index → forall v<b+1) for the
+  kernel back-edge closer, plus invariant_closer_facts threading effect
+  facts + store equations into both closer call sites (proof.rs) and a
+  guarded PointerOffsetEqual resolution arm. Probes: decompose ✓, bounds
+  goal==succ ✓, conclusions align below bound ✓ (compared under v<b),
+  final-index conclusion ✗: `load(m_backedge, owner+4) == v1` does not
+  prove even with store equations in context — next probe is whether the
+  materialized store cell's key spelling (data-relative) defeats
+  known_value/cell-search in bitvector_terms_equal_for_memory_resolution,
+  or whether the assumed instantiated PointerOffsetEqual premise fails to
+  reach the pointer-equality path. Dumps: /tmp/click-extend-*.txt.
+- field_derived_precise_effect_after_metadata_write: ensures still do not
+  derive from the full certified context even with the resolution arms
+  (minimal derivation returns None; ~570s run). Needs the same
+  load-resolution chain plus the grouped-simp candidate-loop perf work.
+
 ## Status after option (b) implementation (2026-07-30 morning, master 24ad60b)
 
 Owner picked (b): everything gets a surface spelling. Landed: 26972e7
