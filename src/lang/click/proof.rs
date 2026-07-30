@@ -806,9 +806,75 @@ fn pure_theorem_surface_certificate(
         });
     }
 
+    if let Some(tactics) = source_tactics
+        && tactics
+            .iter()
+            .any(|tactic| matches!(tactic, ProofTactic::If(_)))
+    {
+        let premise_pool = theorem
+            .requires()
+            .iter()
+            .filter_map(Requirement::proposition)
+            .cloned()
+            .collect::<Vec<_>>();
+        if let Some(tactics) =
+            lower_pure_branching_tactics(surface_goal, &premise_pool, tactics)
+        {
+            return TacticCertificate::from_proof_tactics(&tactics).map_err(|error| {
+                ClickError::new(format!(
+                    "smart proof for `{claim_label}` produced an invalid branching certificate: {error:?}"
+                ))
+            });
+        }
+    }
+
     Err(ClickError::new(format!(
         "smart proof for `{claim_label}` succeeded but did not produce a pure surface certificate"
     )))
+}
+
+/// Lowers a branching pure proof script to deterministic tactics: each `if`
+/// keeps its shape while contributing its (negated) condition to the branch's
+/// premise pool, and each closing `simp` becomes a `derive` of the goal from
+/// exactly that pool.
+fn lower_pure_branching_tactics(
+    surface_goal: &ClickProposition,
+    premise_pool: &[ClickProposition],
+    tactics: &[ProofTactic],
+) -> Option<Vec<ProofTactic>> {
+    let mut lowered = Vec::new();
+    for tactic in tactics {
+        match tactic {
+            ProofTactic::If(proof_if) => {
+                let mut then_pool = premise_pool.to_vec();
+                then_pool.push(proof_if.condition.clone());
+                let mut else_pool = premise_pool.to_vec();
+                else_pool.push(ClickProposition::Not(Box::new(proof_if.condition.clone())));
+                lowered.push(ProofTactic::If(ProofIf {
+                    condition: proof_if.condition.clone(),
+                    then_tactics: lower_pure_branching_tactics(
+                        surface_goal,
+                        &then_pool,
+                        &proof_if.then_tactics,
+                    )?,
+                    else_tactics: lower_pure_branching_tactics(
+                        surface_goal,
+                        &else_pool,
+                        &proof_if.else_tactics,
+                    )?,
+                }));
+            }
+            ProofTactic::Simp => lowered.push(ProofTactic::Derive(ProofDerive {
+                proposition: surface_goal.clone(),
+                premises: premise_pool.to_vec(),
+            })),
+            tactic if matches!(tactic.class(), TacticClass::Simple(_)) => {
+                lowered.push(tactic.clone());
+            }
+            _ => return None,
+        }
+    }
+    Some(lowered)
 }
 
 /// Replay a validated certificate through the ordinary pure-tactic executor.
