@@ -137,7 +137,10 @@ fn run_example_with_timeout(project: &Path, time_limit: Duration) -> Result<(), 
         .arg("--exact")
         .arg("example_projects")
         .arg("--nocapture")
-        .env(EXAMPLE_CHILD_PATH, project);
+        .env(EXAMPLE_CHILD_PATH, project)
+        // Prover recursion follows term structure, which nests far deeper
+        // than the default test-thread stack on snapshot-heavy fixtures.
+        .env("RUST_MIN_STACK", "67108864");
     let label = format!("isolated example project `{}`", project.display());
     let (status, stdout, stderr) = match run_bounded(command, time_limit, &label)? {
         BoundedOutput::Completed(output) => (Some(output.status), output.stdout, output.stderr),

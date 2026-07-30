@@ -596,7 +596,7 @@ pub(crate) fn rewrite_condition_through_certified_stores(
 /// Canonicalizes every load in a term for structural comparison: cached
 /// cells resolve to their values and remaining loads use the canonical
 /// memory for their pointer.
-pub(super) fn canonicalize_atomic_loads(term: &Bitvector32Term) -> Bitvector32Term {
+pub(crate) fn canonicalize_atomic_loads(term: &Bitvector32Term) -> Bitvector32Term {
     thread_local! {
         static CACHE: std::cell::RefCell<
             std::collections::HashMap<Bitvector32Term, Bitvector32Term>,
@@ -703,7 +703,10 @@ fn canonicalize_atomic_loads_with_depth(term: &Bitvector32Term, depth: usize) ->
             then_term,
             else_term,
         } => Bitvector32Term::If {
-            condition: condition.clone(),
+            condition: Box::new(
+                condition_with_canonical_loads_with_depth(condition, depth + 1)
+                    .unwrap_or_else(|| condition.as_ref().clone()),
+            ),
             then_term: Box::new(canonicalize_atomic_loads_with_depth(then_term, depth + 1)),
             else_term: Box::new(canonicalize_atomic_loads_with_depth(else_term, depth + 1)),
         },
@@ -4111,10 +4114,17 @@ fn range_folds_alpha_equivalent(left: &Bitvector32Term, right: &Bitvector32Term)
 /// Canonicalizes the loads inside a binary condition so spellings differing
 /// only in redundant cached cells compare and prove identically.
 fn condition_with_canonical_loads(condition: &ConditionTerm) -> Option<ConditionTerm> {
+    condition_with_canonical_loads_with_depth(condition, 0)
+}
+
+fn condition_with_canonical_loads_with_depth(
+    condition: &ConditionTerm,
+    depth: usize,
+) -> Option<ConditionTerm> {
     let binary = |left: &Bitvector32Term, right: &Bitvector32Term| {
         (
-            Box::new(canonicalize_atomic_loads(left)),
-            Box::new(canonicalize_atomic_loads(right)),
+            Box::new(canonicalize_atomic_loads_with_depth(left, depth)),
+            Box::new(canonicalize_atomic_loads_with_depth(right, depth)),
         )
     };
     Some(match condition {
@@ -5608,4 +5618,119 @@ pub fn prove_c_while_invariant_rule(
         &[],
         &[],
     )))
+}
+
+/// True when a term's nesting depth exceeds the limit, counting through
+/// embedded memory snapshots. Bounded walk: returns as soon as the limit is
+/// crossed, so the check itself stays shallow-stack on pathological terms.
+pub(crate) fn bitvector_term_deeper_than(term: &Bitvector32Term, limit: usize) -> bool {
+    fn term_depth_exceeds(term: &Bitvector32Term, remaining: usize) -> bool {
+        if remaining == 0 {
+            return true;
+        }
+        match term {
+            Bitvector32Term::Constant(_) | Bitvector32Term::Variable(_) => false,
+            Bitvector32Term::MemoryLoad(memory, pointer) => {
+                memory_depth_exceeds(memory, remaining - 1)
+                    || pointer_depth_exceeds(pointer, remaining - 1)
+            }
+            Bitvector32Term::Add(left, right)
+            | Bitvector32Term::Subtract(left, right)
+            | Bitvector32Term::Multiply(left, right)
+            | Bitvector32Term::Divide(left, right)
+            | Bitvector32Term::Remainder(left, right)
+            | Bitvector32Term::ShiftLeft(left, right)
+            | Bitvector32Term::ArithmeticShiftRight(left, right)
+            | Bitvector32Term::BitwiseAnd(left, right)
+            | Bitvector32Term::BitwiseOr(left, right)
+            | Bitvector32Term::BitwiseXor(left, right) => {
+                term_depth_exceeds(left, remaining - 1) || term_depth_exceeds(right, remaining - 1)
+            }
+            Bitvector32Term::BitwiseNot(value) => term_depth_exceeds(value, remaining - 1),
+            Bitvector32Term::If {
+                condition,
+                then_term,
+                else_term,
+            } => {
+                condition_depth_exceeds(condition, remaining - 1)
+                    || term_depth_exceeds(then_term, remaining - 1)
+                    || term_depth_exceeds(else_term, remaining - 1)
+            }
+            Bitvector32Term::RangeFold {
+                start,
+                end,
+                initial,
+                body,
+                ..
+            } => {
+                term_depth_exceeds(start, remaining - 1)
+                    || term_depth_exceeds(end, remaining - 1)
+                    || term_depth_exceeds(initial, remaining - 1)
+                    || term_depth_exceeds(body, remaining - 1)
+            }
+        }
+    }
+    fn condition_depth_exceeds(condition: &ConditionTerm, remaining: usize) -> bool {
+        if remaining == 0 {
+            return true;
+        }
+        match condition {
+            ConditionTerm::Bitvector32SignedLessThan(left, right)
+            | ConditionTerm::Bitvector32SignedLessEqual(left, right)
+            | ConditionTerm::Bitvector32SignedGreaterThan(left, right)
+            | ConditionTerm::Bitvector32SignedGreaterEqual(left, right)
+            | ConditionTerm::Bitvector32Equal(left, right)
+            | ConditionTerm::Bitvector32SignedAddOverflows(left, right)
+            | ConditionTerm::Bitvector32SignedSubtractOverflows(left, right)
+            | ConditionTerm::Bitvector32SignedMultiplyOverflows(left, right)
+            | ConditionTerm::Bitvector32SignedDivideOverflows(left, right)
+            | ConditionTerm::Bitvector32SignedShiftLeftOverflows(left, right) => {
+                term_depth_exceeds(left, remaining - 1) || term_depth_exceeds(right, remaining - 1)
+            }
+            ConditionTerm::PointerOffsetEqual(left, right) => {
+                offset_depth_exceeds(left, remaining - 1) || offset_depth_exceeds(right, remaining - 1)
+            }
+            ConditionTerm::PointerEqual(left, right) => {
+                pointer_depth_exceeds(left, remaining - 1)
+                    || pointer_depth_exceeds(right, remaining - 1)
+            }
+            ConditionTerm::Constant(_) | ConditionTerm::Variable(_) => false,
+        }
+    }
+    fn pointer_depth_exceeds(pointer: &Pointer, remaining: usize) -> bool {
+        if remaining == 0 {
+            return true;
+        }
+        offset_depth_exceeds(&pointer.offset, remaining - 1)
+    }
+    fn offset_depth_exceeds(offset: &PointerOffsetTerm, remaining: usize) -> bool {
+        if remaining == 0 {
+            return true;
+        }
+        match offset {
+            PointerOffsetTerm::Constant(_) | PointerOffsetTerm::Variable(_) => false,
+            PointerOffsetTerm::Add(left, right) => {
+                offset_depth_exceeds(left, remaining - 1)
+                    || offset_depth_exceeds(right, remaining - 1)
+            }
+            PointerOffsetTerm::Int32Scaled { value, .. } => {
+                term_depth_exceeds(value, remaining - 1)
+            }
+        }
+    }
+    fn memory_depth_exceeds(memory: &CMemory, remaining: usize) -> bool {
+        if remaining == 0 {
+            return true;
+        }
+        memory.cells.iter().any(|(pointer, value)| {
+            pointer_depth_exceeds(pointer, remaining - 1)
+                || match value {
+                    CValue::Int32(term) | CValue::UInt8(term) => {
+                        term_depth_exceeds(term, remaining - 1)
+                    }
+                    CValue::Pointer(pointer) => pointer_depth_exceeds(pointer, remaining - 1),
+                }
+        })
+    }
+    term_depth_exceeds(term, limit)
 }

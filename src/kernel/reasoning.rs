@@ -360,6 +360,18 @@ fn bitvector_terms_equal_for_memory_resolution(
     if !consume_memory_resolution_fuel() {
         return false;
     }
+    // Deep canonicalization covers every term variant, including folds and
+    // conditionals the structural arms below do not descend into; two
+    // spellings of one value differing only representationally compare
+    // equal here. Both calls are memoized. Pathologically deep terms skip
+    // this arm: canonicalization and memo hashing recurse structurally.
+    const CANONICAL_COMPARE_DEPTH_LIMIT: usize = 64;
+    if !super::api::bitvector_term_deeper_than(left, CANONICAL_COMPARE_DEPTH_LIMIT)
+        && !super::api::bitvector_term_deeper_than(right, CANONICAL_COMPARE_DEPTH_LIMIT)
+        && super::api::canonicalize_atomic_loads(left) == super::api::canonicalize_atomic_loads(right)
+    {
+        return true;
+    }
     if assumptions.bitvector_terms_equal_from_facts(left, right) {
         return true;
     }

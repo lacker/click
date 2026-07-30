@@ -2897,6 +2897,19 @@ impl Assumptions {
         let direct = match proposition {
             Proposition::ConditionIs(condition, value) => {
                 self.decide(condition) == Some(*value)
+                    // Two spellings of one value that differ only
+                    // representationally (snapshot spellings inside loads,
+                    // including under folds and conditionals) are equal by
+                    // deep canonicalization; both calls are memoized.
+                    || *value
+                        && matches!(
+                            condition,
+                            ConditionTerm::Bitvector32Equal(left, right)
+                                if !super::api::bitvector_term_deeper_than(left, 64)
+                                    && !super::api::bitvector_term_deeper_than(right, 64)
+                                    && super::api::canonicalize_atomic_loads(left)
+                                        == super::api::canonicalize_atomic_loads(right)
+                        )
                     || self.proves_condition_from_facts(condition, *value)
             }
             Proposition::And(left, right) => self.proves(left) && self.proves(right),
@@ -3201,6 +3214,31 @@ impl Assumptions {
         match proposition {
             Proposition::ConditionIs(condition, value) => {
                 self.decide(condition) == Some(*value)
+                    // Two spellings of one value that differ only
+                    // representationally (snapshot spellings inside loads,
+                    // including under folds and conditionals) are equal by
+                    // deep canonicalization; both calls are memoized.
+                    || *value
+                        && matches!(
+                            condition,
+                            ConditionTerm::Bitvector32Equal(left, right)
+                                if !super::api::bitvector_term_deeper_than(left, 64)
+                                    && !super::api::bitvector_term_deeper_than(right, 64)
+                                    && super::api::canonicalize_atomic_loads(left)
+                                        == super::api::canonicalize_atomic_loads(right)
+                        )
+                    // Equalities over loads resolve through materialized
+                    // cells and snapshot matching; the bounded resolution
+                    // prover carries its own fuel but can re-enter this
+                    // prover, so guard against reentrancy.
+                    || *value
+                        && matches!(
+                            condition,
+                            ConditionTerm::Bitvector32Equal(left, right)
+                                if (bitvector_term_contains_load(left)
+                                    || bitvector_term_contains_load(right))
+                                    && atomic_load_equality_resolves(self, left, right)
+                        )
                     || self.proves_condition_from_facts(condition, *value)
             }
             Proposition::Not(body) => match body.as_ref() {
@@ -6594,4 +6632,70 @@ impl SymbolicCConditionEvaluationPath {
     pub fn theorem(&self) -> &Theorem {
         &self.theorem
     }
+}
+
+/// True when a term contains any memory load, at any depth.
+fn bitvector_term_contains_load(term: &Bitvector32Term) -> bool {
+    match term {
+        Bitvector32Term::MemoryLoad(_, _) => true,
+        Bitvector32Term::Constant(_) | Bitvector32Term::Variable(_) => false,
+        Bitvector32Term::Add(left, right)
+        | Bitvector32Term::Subtract(left, right)
+        | Bitvector32Term::Multiply(left, right)
+        | Bitvector32Term::Divide(left, right)
+        | Bitvector32Term::Remainder(left, right)
+        | Bitvector32Term::ShiftLeft(left, right)
+        | Bitvector32Term::ArithmeticShiftRight(left, right)
+        | Bitvector32Term::BitwiseAnd(left, right)
+        | Bitvector32Term::BitwiseOr(left, right)
+        | Bitvector32Term::BitwiseXor(left, right) => {
+            bitvector_term_contains_load(left) || bitvector_term_contains_load(right)
+        }
+        Bitvector32Term::BitwiseNot(value) => bitvector_term_contains_load(value),
+        Bitvector32Term::If {
+            then_term,
+            else_term,
+            ..
+        } => bitvector_term_contains_load(then_term) || bitvector_term_contains_load(else_term),
+        Bitvector32Term::RangeFold {
+            start,
+            end,
+            initial,
+            body,
+            ..
+        } => {
+            bitvector_term_contains_load(start)
+                || bitvector_term_contains_load(end)
+                || bitvector_term_contains_load(initial)
+                || bitvector_term_contains_load(body)
+        }
+    }
+}
+
+/// Reentrancy-guarded load-equality resolution: the memory-resolution prover
+/// can re-enter the atomic prover through condition decisions, so run it at
+/// most once per call tree.
+fn atomic_load_equality_resolves(
+    assumptions: &Assumptions,
+    left: &Bitvector32Term,
+    right: &Bitvector32Term,
+) -> bool {
+    thread_local! {
+        static LOAD_EQUALITY_RESOLUTION_ACTIVE: Cell<bool> = const { Cell::new(false) };
+    }
+    if LOAD_EQUALITY_RESOLUTION_ACTIVE.with(Cell::get) {
+        return false;
+    }
+    const LOAD_EQUALITY_RESOLUTION_DEPTH_LIMIT: usize = 64;
+    if super::api::bitvector_term_deeper_than(left, LOAD_EQUALITY_RESOLUTION_DEPTH_LIMIT)
+        || super::api::bitvector_term_deeper_than(right, LOAD_EQUALITY_RESOLUTION_DEPTH_LIMIT)
+    {
+        return false;
+    }
+    LOAD_EQUALITY_RESOLUTION_ACTIVE.with(|active| active.set(true));
+    let resolved = super::reasoning::bitvector_terms_proven_equal_for_memory_resolution(
+        left, right, assumptions,
+    );
+    LOAD_EQUALITY_RESOLUTION_ACTIVE.with(|active| active.set(false));
+    resolved
 }

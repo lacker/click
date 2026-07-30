@@ -139,7 +139,10 @@ fn run_mdtest_with_timeout(path: &Path, time_limit: Duration) -> Result<(), Stri
         .arg("--exact")
         .arg("mdtests")
         .arg("--nocapture")
-        .env(MDTEST_CHILD_PATH, path);
+        .env(MDTEST_CHILD_PATH, path)
+        // Prover recursion follows term structure, which nests far deeper
+        // than the default test-thread stack on snapshot-heavy fixtures.
+        .env("RUST_MIN_STACK", "67108864");
     let label = format!("isolated mdtest `{}`", path.display());
     let (status, stdout, stderr) = match run_bounded(command, time_limit, &label)? {
         BoundedOutput::Completed(output) => (Some(output.status), output.stdout, output.stderr),

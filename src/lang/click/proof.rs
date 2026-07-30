@@ -8359,6 +8359,27 @@ fn plan_smart_have_at_current_point(
     }
 
     let Some(plan) = plan_simp_certificate(&goal, &assumptions) else {
+        if let Ok(dir) = std::env::var("CLICK_HAVE_DUMP_DIR") {
+            let _ = std::fs::write(format!("{dir}/have-goal.txt"), format!("{goal:#?}"));
+            if let Proposition::ForAll { body, .. } = &goal
+                && let Proposition::ConditionIs(
+                    crate::kernel::ConditionTerm::Bitvector32Equal(left, right),
+                    _,
+                ) = body.as_ref()
+            {
+                let canonical_left = crate::kernel::canonicalize_atomic_loads(left);
+                let canonical_right = crate::kernel::canonicalize_atomic_loads(right);
+                eprintln!("HAVE PROBE canonical_eq={}", canonical_left == canonical_right);
+                let _ = std::fs::write(
+                    format!("{dir}/canonical-left.txt"),
+                    format!("{canonical_left:#?}"),
+                );
+                let _ = std::fs::write(
+                    format!("{dir}/canonical-right.txt"),
+                    format!("{canonical_right:#?}"),
+                );
+            }
+        }
         return Err(ClickError::new(format!(
             "`{claim_label}` tactic {outer_tactic_index}: `have` failed: {}",
             describe_missing_pure_fact(
@@ -12517,6 +12538,19 @@ fn lower_outcome_simp_tactic(
                 minimal_simp_proposition_derivation(goal, &certified_context)
                     .map(|derivation| (derivation, true))
             });
+        if minimized.is_none()
+            && let Ok(dir) = std::env::var("CLICK_DERIVE_DUMP_DIR")
+        {
+            let stamp = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|duration| duration.subsec_nanos())
+                .unwrap_or(0);
+            let _ = std::fs::write(format!("{dir}/goal-{stamp}.txt"), format!("{goal:#?}"));
+            let _ = std::fs::write(
+                format!("{dir}/context-{stamp}.txt"),
+                format!("{certified_context:#?}"),
+            );
+        }
         if let Some((derivation, for_simp)) = minimized {
             let entry_point = ProgramPointRef {
                 region: CodeRegionRef::Function,
