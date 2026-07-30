@@ -43,22 +43,29 @@ Order of attack, one frontier at a time, commit each independently:
    (`certification_proves_equality_via_load_fact` in api.rs). Owner
    decision 2026-07-30: certificate/implementation details do not need
    sign-off; only Surface Click semantics changes do.
-2. **Audit `by auto` re-expansion** : audit sites 28–30 (jsonc-refcount,
-   all `by auto`) fail re-expansion with "no explicit C proof tactic
-   starts at 10:6" — expansion rewrites `auto` into a by-block, so the
-   original cursor no longer points at a tactic. The byte-identical
-   re-expansion check needs position remapping for rewritten sites.
-3. **Slow simple tactics** (fresh profile, 120 s limit): input-cursor
-   shared_pipeline `step` 5.4 s (statement 7; likely same snapshot
-   blowup as item 1), owned-split-buffer pipeline `step` 577 ms.
-4. **Slow smart tactics** (fresh profile): owned-split-buffer
-   execute_rest 14.3 s, input-cursor execute_rest 12.2 s, owned-string
-   execute_step 5.4 s and have 5.1 s. Expand each, apply, reverify.
-5. **Full audit**: `cargo run --quiet --bin click-audit -- examples` to
-   completion (now feasible: bounded runs finish in minutes). Fix
-   concrete bugs immediately; treat timeouts as performance bugs; stop
-   for discussion before changing certificate semantics; resume with
-   `--start-at`.
+2. **Audit re-expansion: DONE 2026-07-30.** The fixed-point check is now
+   claim-based (the audited smart tactic must vanish from its claim's
+   smart inventory with no new smart tactic emitted); `by auto` and
+   whole-proof rewrites audit cleanly. Full `click-audit examples` run:
+   all 30 auditable sites pass; the only session failures were the
+   then-quarantined owned-* projects.
+3. **owned-string** (last non-parked quarantined example): the
+   `terminated_at` smart-have unfold cannot discharge
+   loadable(data[len]) at owned_string_push tactic 7. Diagnosed:
+   pointer_element_index_from_base extracts the right index only if the
+   goal's and the range fact's load atoms bridge, and the bounds decides
+   need `0 <= len`/`len < cap` facts whose load spellings differ from
+   the goal's by DIRECT-STORE provenance (push writes len and
+   data[len]); the planning assumptions carry no effect facts and
+   adding replay.effect_facts did not help (stores are execution facts,
+   not effect summaries; attempt reverted). This is the store-provenance
+   /named-memory-states representational family — consider parking with
+   owned-vector rather than more per-spelling bridging.
+4. **Slow smart tactics** (stale numbers; re-profile): owned-string
+   execute_step ~5 s and have ~5 s remain; input-cursor and
+   owned-split-buffer rows were fixed or expanded away.
+5. **Full audit to completion**: rerun `click-audit --keep-going
+   examples` after each de-quarantine; keep it at 0 site failures.
 6. **One-gateway check**: after the corpus audit is green, one bounded
    code audit that every smart success commits through TacticCertificate
    replay with no bypass. Not an open-ended refactor.
@@ -79,11 +86,12 @@ Quarantine entries are explicit and temporary; shrink the lists.
   residue entries are blocked on the named-memory-states arc (below);
   don't burn time re-bridging them (see canonical-memory.md for the
   exhaustion evidence and branch `claude/forall-extension-wip`).
-- **examples** (`tests/examples.rs` QUARANTINED, 5): last sweep
-  (early 2026-07-30): owned-string fails a loadability have, owned-vector
-  times out at 600 s, owned-split-buffer fails a call-precondition VC.
-  Each is its own investigation; the profile/expand/audit ladder above
-  will touch the same code paths.
+- **examples** (`tests/examples.rs` QUARANTINED, 2 — was 5;
+  input-cursor, owned-segmented-buffer, and owned-split-buffer were
+  de-quarantined 2026-07-30): owned-string fails the terminated_at
+  loadability have (see item 3 above; store-provenance family), and
+  owned-vector fails the vector_fill invariant closer (named-memory-
+  states residue, parked; now fails in ~12 s instead of timing out).
 - **lib** (7 `#[ignore]` expansion tests): expansion-era failures
   (expands_nested_branch_tactic_by_source_location,
   expansion_preserves_unfolded_resource_and_predicate_fact_spellings,
