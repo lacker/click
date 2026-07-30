@@ -118,6 +118,21 @@ deleted rather than extended. Migration risk concentrates in eval.rs
 (store paths), resource lowering, and everywhere `CMemory` appears in
 `Proposition`/`Term` variants.
 
+## MASTER GREEN (2026-07-30, all default gates)
+
+Lib 464/464, mdtests 264/264 visible, examples green. The last two
+failures (vector_fill, field_derived) are quarantined with reasons: they
+are the pure named-memory-states residue. Evidence of exhaustion: the
+back-edge bound-extension rule (branch claude/forall-extension-wip) got
+every gate passing except the final-index conclusion, whose proof needs
+an offset-premise match that itself drifts by snapshot spelling; adding
+resolution-aware matching in the equality-graph BFS blew the 300s
+budget. Each bridge begets another bridge — the representation is the
+problem. NEXT: option C (named memory states), plus the remaining
+de-quarantine backlog (6 mdtests, 5 examples, 7 lib expansion tests)
+which C should clear wholesale. The grouped-simp candidate-loop perf
+item also remains (field_derived ~500s even to fail).
+
 ## Morning session 2 (2026-07-30, master cf04159): TWO failures remain
 
 Fixed loop_stdlib_permutation_invariant (cf04159): canonicalize_atomic_loads
