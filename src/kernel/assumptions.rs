@@ -2250,6 +2250,33 @@ impl Assumptions {
         self.signed_constant_after_equality_normalization(term)
     }
 
+    /// Decides a signed comparison whose sides both resolve to known
+    /// constants through equality facts (with per-load snapshot bridging).
+    /// Bounded and fuel-free, so certification may use it.
+    pub(super) fn signed_comparison_by_constant_normalization(
+        &self,
+        condition: &ConditionTerm,
+    ) -> Option<bool> {
+        let (left, right, compare): (_, _, fn(i64, i64) -> bool) = match condition {
+            ConditionTerm::Bitvector32SignedLessThan(left, right) => {
+                (left, right, |left, right| left < right)
+            }
+            ConditionTerm::Bitvector32SignedLessEqual(left, right) => {
+                (left, right, |left, right| left <= right)
+            }
+            ConditionTerm::Bitvector32SignedGreaterThan(left, right) => {
+                (left, right, |left, right| left > right)
+            }
+            ConditionTerm::Bitvector32SignedGreaterEqual(left, right) => {
+                (left, right, |left, right| left >= right)
+            }
+            _ => return None,
+        };
+        let left = self.signed_constant_after_equality_normalization(left)?;
+        let right = self.signed_constant_after_equality_normalization(right)?;
+        Some(compare(left, right))
+    }
+
     fn order_path_connection_for_simp(
         &self,
         left: &Bitvector32Term,
@@ -5917,11 +5944,17 @@ impl Assumptions {
         }
 
         if let Some(index) = self.direct_pointer_element_index_from_base(pointer, &range.base) {
-            if let (Some(index), Some(start), Some(end)) = (
-                signed_bitvector_constant(&index),
-                signed_bitvector_constant(&range.start),
-                signed_bitvector_constant(&range.end),
-            ) && (index < start || end <= index)
+            // Literal constants first; otherwise resolve each bound through
+            // equality facts with per-load snapshot bridging, so a range
+            // like data[split..split+1] with split provably 1 proves
+            // disjoint from data[0].
+            let resolve = |term: &Bitvector32Term| {
+                signed_bitvector_constant(term)
+                    .or_else(|| self.known_signed_constant_after_normalization(term))
+            };
+            if let (Some(index), Some(start), Some(end)) =
+                (resolve(&index), resolve(&range.start), resolve(&range.end))
+                && (index < start || end <= index)
             {
                 return true;
             }

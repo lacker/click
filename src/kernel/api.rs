@@ -215,10 +215,7 @@ fn load_unchanged_via_effect_chain(
                         )
                 });
                 if untouched {
-                    steps.push((
-                        canonical_c_memory_deep(step_before),
-                        canonical_c_memory_deep(step_after),
-                    ));
+                    steps.push((step_before, step_after));
                 }
             }
             Proposition::CMemoryEffectSummary {
@@ -227,10 +224,7 @@ fn load_unchanged_via_effect_chain(
                 mutable_ranges,
             } => {
                 if assumptions.ranges_proven_disjoint_from_pointer(mutable_ranges, pointer) {
-                    steps.push((
-                        canonical_c_memory_deep(step_before),
-                        canonical_c_memory_deep(step_after),
-                    ));
+                    steps.push((step_before, step_after));
                 }
             }
             _ => {}
@@ -239,24 +233,30 @@ fn load_unchanged_via_effect_chain(
     if steps.is_empty() {
         return false;
     }
-    let target = canonical_c_memory_deep(after);
-    let start = canonical_c_memory_deep(before);
-    if start == target {
-        return true;
-    }
-    let mut seen = vec![start.clone()];
-    let mut frontier = vec![start];
+    // Hops link pointer-relatively: two spellings of one snapshot may carry
+    // different unrelated cells (deep-canonical equality then fails), but a
+    // load-preservation chain only needs the pointed-at cell to agree at
+    // every junction. Each effect is traversed at most once.
+    let joins = |expected: &CMemory, actual: &CMemory| {
+        memory_matches_effect_summary_endpoint(expected, actual, pointer)
+    };
+    let mut used = vec![false; steps.len()];
+    let mut frontier: Vec<&CMemory> = vec![before];
     for _ in 0..EFFECT_CHAIN_HOP_LIMIT {
         let mut next = Vec::new();
-        for current in &frontier {
-            for (step_before, step_after) in &steps {
+        for current in frontier {
+            for (index, (step_before, step_after)) in steps.iter().enumerate() {
+                if used[index] {
+                    continue;
+                }
                 for (from, to) in [(step_before, step_after), (step_after, step_before)] {
-                    if from == current && !seen.contains(to) {
-                        if to == &target {
+                    if joins(from, current) {
+                        if joins(to, after) {
                             return true;
                         }
-                        seen.push(to.clone());
-                        next.push(to.clone());
+                        used[index] = true;
+                        next.push(*to);
+                        break;
                     }
                 }
             }
@@ -4394,6 +4394,15 @@ fn certification_proves_proposition(assumptions: &Assumptions, proposition: &Pro
         // and per-load snapshot bridging (deterministic and fuel-free).
         Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), true)
             if assumptions.constants_known_equal_after_normalization(left, right) =>
+        {
+            true
+        }
+        // A signed comparison whose sides both resolve to known constants
+        // through equality facts and per-load snapshot bridging.
+        Proposition::ConditionIs(condition, value)
+            if assumptions
+                .signed_comparison_by_constant_normalization(condition)
+                .is_some_and(|known| known == *value) =>
         {
             true
         }

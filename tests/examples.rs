@@ -20,10 +20,6 @@ const DEFAULT_EXAMPLE_TIME_LIMIT: Duration = Duration::from_secs(10 * 60);
 /// remove entries as they are fixed (see docs/advanced/testing-click.md).
 const QUARANTINED: &[(&str, &str)] = &[
     (
-        "owned-split-buffer",
-        "whole-file verification exceeds 10 minutes",
-    ),
-    (
         "owned-string",
         "owned_string_len fails: exact symbolic execution produced no valid paths",
     ),
