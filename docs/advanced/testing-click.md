@@ -50,6 +50,9 @@ reason, and the goal is to shrink the list to zero, not to let it grow.
 - Lib tests are quarantined with `#[ignore = "quarantined: ..."]` in the test
   source. Run them with `cargo test -- --ignored` or
   `cargo nextest run --run-ignored=only`.
+- Mdtests are quarantined in the `QUARANTINED` list at the top of
+  `tests/mdtests.rs`. Run one with `MDTEST_FILTER=<name>`, or all of them
+  with `CLICK_RUN_QUARANTINED=1`.
 - Example projects are quarantined in the `QUARANTINED` list at the top of
   `tests/examples.rs`. Run one with `CLICK_EXAMPLE=<name>`, or all of them
   with `CLICK_RUN_QUARANTINED=1`.
