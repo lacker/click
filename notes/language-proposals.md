@@ -1,5 +1,8 @@
 # Click Language Design Proposals
 
+*Parked — these are deliberate language expansions, out of scope for the
+short-term plan (`plan.md`). Revisit when the owner opens a language arc.*
+
 Proposals for the three open language-design problems from the design review:
 write-only proofs, verbosity without abstraction, and the three overlapping
 memory-concept families. Each proposal is scoped to stay compatible with the

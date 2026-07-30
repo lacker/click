@@ -1,11 +1,14 @@
 # Click design review — ranked issues
 
-*Recovered verbatim from the session that produced it (2026-07); referenced by
-`handoff.md` as "the design review." Like `handoff.md`, this file is
-intentionally untracked; delete it once its contents are absorbed into issues.
-Note: items 9–12 were fixed on branch `claude/engineering-debt`, merged to
-master 2026-07-29; the top soundness items in tier 1 were fixed on master
-before the handoff. Line numbers refer to the tree at review time.*
+*Recovered verbatim from the session that produced it (2026-07). Reference
+document; the still-actionable small items are extracted into `plan.md`
+(section 3). Status as of 2026-07-30: tier-1 soundness items and struct
+padding fixed on master; items 9–12 largely fixed via the engineering-debt
+merge (residue: duplicated binary helpers, whole-file verify CLI); item 4
+partially fixed (comments, unary minus, declaration initializers); item 11's
+term-representation problem is the canonical-memory arc
+(`canonical-memory.md`); items 5–8 await the parked language proposals.
+Line numbers refer to the tree at review time.*
 
 ## Top tier: soundness of the trust chain
 
@@ -145,7 +148,7 @@ ad-hoc env vars.
 
 **12. The tooling doesn't enforce its own stated guarantees, and the four
 binaries have drifted copies of everything.**
-todo.md's audit contract requires re-expansion byte-identical checks and
+The audit contract (now in notes/plan.md) requires re-expansion byte-identical checks and
 branch-outcome comparison; audit_site (click-audit.rs:621) implements neither
 and verifies against a warm retained session rather than "from normal
 inputs" — so the corpus-wide enforcement tool for the certificate-replay
