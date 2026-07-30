@@ -61,9 +61,12 @@ Order of attack, one frontier at a time, commit each independently:
    not effect summaries; attempt reverted). This is the store-provenance
    /named-memory-states representational family — consider parking with
    owned-vector rather than more per-spelling bridging.
-4. **Slow smart tactics** (stale numbers; re-profile): owned-string
-   execute_step ~5 s and have ~5 s remain; input-cursor and
-   owned-split-buffer rows were fixed or expanded away.
+4. **Slow smart tactics: CLEAN on the green corpus (2026-07-30 late
+   profile).** Full-examples profile shows no SIMPLE >500 ms and no
+   SMART >2 s in any passing project; the only remaining rows
+   (owned-string execute_step 3.6 s, have 3.5 s) are inside the parked
+   store-provenance project. Item 1's profile criterion is met for
+   everything that verifies.
 5. **Full audit to completion**: rerun `click-audit --keep-going
    examples` after each de-quarantine; keep it at 0 site failures.
    Slowness is now a finding (owner decision 2026-07-30): the audit
