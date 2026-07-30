@@ -144,6 +144,7 @@ struct ResolvedField {
     struct_name: Option<String>,
     offset_bytes: u32,
     byte_width: u32,
+    slot_end_bytes: u32,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -2309,7 +2310,7 @@ impl Parser {
             state: ContractSegmentState::Current,
             base,
             start: CExpression::Value(int32(field.offset_bytes / 4)),
-            end: CExpression::Value(int32((field.offset_bytes + field.byte_width) / 4)),
+            end: CExpression::Value(int32(field.slot_end_bytes / 4)),
             surface: ContractSegmentSurface::Field(field_name.to_string()),
         })
     }
@@ -2387,11 +2388,27 @@ impl Parser {
                 self.error("field places currently require int32-aligned offsets and widths")
             );
         }
+        // A field's resource slot runs to the next field's offset (or the
+        // struct's end), so ownership covers trailing alignment padding:
+        // padding belongs to the object and no one else can own it.
+        let slot_end_bytes = layout
+            .fields()
+            .values()
+            .map(syntax::C0StructField::offset_bytes)
+            .filter(|offset| *offset > field.offset_bytes())
+            .min()
+            .unwrap_or_else(|| layout.size_bytes());
+        if slot_end_bytes % 4 != 0 {
+            return Err(
+                self.error("field places currently require int32-aligned offsets and widths")
+            );
+        }
         Ok(ResolvedField {
             c_type: field.c_type(),
             struct_name: field.struct_name().map(str::to_string),
             offset_bytes: field.offset_bytes(),
             byte_width: field.byte_width(),
+            slot_end_bytes,
         })
     }
 
