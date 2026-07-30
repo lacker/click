@@ -35,6 +35,14 @@ const QUARANTINED: &[(&str, &str)] = &[
         "fill_tail_keeps_first.md",
         "loop-havoc transport needs invariant-based load equality (item-7)",
     ),
+    (
+        "composite_resource_vector_fill_loop_snapshot.md",
+        "back-edge closer needs named memory states; per-spelling bridging exhausted (notes/canonical-memory.md, branch claude/forall-extension-wip)",
+    ),
+    (
+        "field_derived_precise_effect_after_metadata_write.md",
+        "ensures derivations need named memory states; certified context does not derive them (notes/canonical-memory.md)",
+    ),
 ];
 
 #[derive(Debug)]
