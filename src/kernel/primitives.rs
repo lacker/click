@@ -3435,13 +3435,24 @@ fn range_endpoint_terms_equal(
         right: &Bitvector32Term,
         assumptions: &Assumptions,
     ) -> bool {
+        // The load-unchanged check re-enters separation reasoning, which can
+        // re-enter range comparison; guard against unbounded mutual
+        // recursion rather than relying on structural depth.
+        thread_local! {
+            static ENDPOINT_BRIDGE_ACTIVE: std::cell::Cell<bool> =
+                const { std::cell::Cell::new(false) };
+        }
         if let (
             Bitvector32Term::MemoryLoad(left_memory, left_pointer),
             Bitvector32Term::MemoryLoad(right_memory, right_pointer),
         ) = (left, right)
             && left_pointer == right_pointer
         {
-            return super::api::c_memory_load_is_unchanged(
+            if ENDPOINT_BRIDGE_ACTIVE.with(std::cell::Cell::get) {
+                return false;
+            }
+            ENDPOINT_BRIDGE_ACTIVE.with(|active| active.set(true));
+            let bridged = super::api::c_memory_load_is_unchanged(
                 left_memory,
                 right_memory,
                 left_pointer,
@@ -3452,6 +3463,8 @@ fn range_endpoint_terms_equal(
                 left_pointer,
                 assumptions,
             );
+            ENDPOINT_BRIDGE_ACTIVE.with(|active| active.set(false));
+            return bridged;
         }
         false
     }
