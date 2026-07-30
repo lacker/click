@@ -14,7 +14,7 @@ use click::cli::{
 };
 use click::lang::click::{
     C0VerificationSession, SourcePosition, c0_smart_tactic_source_sites, c0_tactic_source_position,
-    expand_c0_tactic_source_at, verify_c0_sources, verifying_source_paths,
+    expand_c0_tactic_source_at, verify_c0_sources_at, verifying_source_paths,
 };
 
 const DEFAULT_SESSION_LIMIT: Duration = Duration::from_secs(5 * 60);
@@ -26,11 +26,11 @@ usage: click-audit [OPTIONS] <example-project|examples-directory>
 
 The audit inventories smart tactics without executing proofs, then audits each
 selected site in source order: it expands the site, verifies the rewritten
-proof unit in the retained session, reverifies the rewritten sidecar through
-the normal whole-file entry point, and checks the rewrite is an expansion
-fixed point (the audited smart tactic is gone from its claim and the emitted
-expansion introduced no new smart tactic). By default it stops at the first
-failure and prints an inclusive --start-at resume command.
+proof unit in the retained session, reverifies that proof unit through the
+normal targeted entry point in a fresh process, and checks the rewrite is an
+expansion fixed point (the audited smart tactic is gone from its claim and
+the emitted expansion introduced no new smart tactic). By default it stops at
+the first failure and prints an inclusive --start-at resume command.
 
 defaults:
   --session-time-limit 5m     original-sidecar session initialization
@@ -206,8 +206,8 @@ fn run_internal_command(arguments: &[String]) -> Option<Result<(), String>> {
         [command, location] if command == "--internal-expand" => {
             Some(expand_location(location).map(|source| print!("{source}")))
         }
-        [command, path] if command == "--internal-verify-rewritten" => {
-            Some(verify_rewritten_from_stdin(Path::new(path)))
+        [command, path, claim] if command == "--internal-verify-rewritten" => {
+            Some(verify_rewritten_from_stdin(Path::new(path), claim))
         }
         [command, path, claim] if command == "--internal-reexpand" => {
             Some(reexpand_from_stdin(Path::new(path), claim).map(|source| print!("{source}")))
@@ -608,22 +608,27 @@ fn audit_site(
 
     let verification_elapsed = worker.verify(&expanded, site.position, verification_limit)?;
 
-    // Checklist step 6: reverify the rewritten sidecar from normal inputs by
-    // running the whole-file entry point in a fresh process under the
-    // verification time limit.
+    // Checklist step 6: reverify the rewritten proof unit from normal
+    // inputs by running the targeted entry point in a fresh process under
+    // the verification time limit. The retained session already checked the
+    // rewrite changed nothing outside the audited proof unit, so the other
+    // units' outcomes cannot change; a whole-file pass here would redo them
+    // all per site, which made auditing a project cost sites x whole-file
+    // time.
     let mut reverification = Command::new(&executable);
     reverification
         .arg("--internal-verify-rewritten")
-        .arg(&site.click_path);
+        .arg(&site.click_path)
+        .arg(&site.claim);
     let reverification = require_success(
         run_bounded_with_input(
             reverification,
             Some(expanded.clone().into_bytes()),
             verification_limit,
-            "whole-file reverification",
+            "proof-unit reverification",
         )?,
         verification_limit,
-        "whole-file reverification",
+        "proof-unit reverification",
     )?;
 
     // Checklist step 7: re-expanding the same claim against the rewritten
@@ -684,13 +689,27 @@ fn read_stdin_source(label: &str) -> Result<String, String> {
     Ok(source)
 }
 
-/// Checklist step 6 worker: verifies a rewritten sidecar, read from stdin,
-/// through the normal whole-file entry point, resolving its C sources
-/// relative to the original on-disk sidecar path.
-fn verify_rewritten_from_stdin(original_click_path: &Path) -> Result<(), String> {
+/// Checklist step 6 worker: verifies the audited proof unit of a rewritten
+/// sidecar, read from stdin, through the normal targeted entry point,
+/// resolving its C sources relative to the original on-disk sidecar path.
+/// The unit is re-located by claim (its first tactic source) because the
+/// rewrite moves source positions.
+fn verify_rewritten_from_stdin(
+    original_click_path: &Path,
+    claim_label: &str,
+) -> Result<(), String> {
     let rewritten = read_stdin_source("rewritten sidecar")?;
     let sources = read_verifying_sources(original_click_path, &rewritten)?;
-    verify_c0_sources(&rewritten, &source_refs(&sources))
+    let refs = source_refs(&sources);
+    let position = c0_tactic_source_position(&rewritten, &refs, claim_label, 0).map_err(
+        |error| {
+            format!(
+                "could not locate `{claim_label}` in the rewritten sidecar: {}",
+                error.message()
+            )
+        },
+    )?;
+    verify_c0_sources_at(&rewritten, &refs, position.line, position.column)
         .map(|_| ())
         .map_err(|error| error.message().to_string())
 }
@@ -954,6 +973,7 @@ fn read_required_u64(input: &mut impl Read, field: &str) -> Result<u64, String> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use click::lang::click::verify_c0_sources;
 
     #[test]
     fn parses_arguments_and_duration_units() {
