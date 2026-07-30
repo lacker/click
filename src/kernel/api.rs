@@ -508,7 +508,7 @@ pub(crate) fn rewrite_condition_through_certified_stores(
         equations.push((
             canonicalize_atomic_loads(&value_term),
             Bitvector32Term::MemoryLoad(
-                Box::new(store.after.clone()),
+                crate::kernel::intern_c_memory(store.after.clone()),
                 Box::new(store.pointer.clone()),
             ),
         ));
@@ -618,7 +618,7 @@ fn canonicalize_atomic_loads_with_depth(term: &Bitvector32Term, depth: usize) ->
                         canonicalize_atomic_loads_with_depth(&value, depth + 1)
                     }
                     _ => Bitvector32Term::MemoryLoad(
-                        Box::new(canonical_c_memory_for_pointer_load(
+                        crate::kernel::intern_c_memory(canonical_c_memory_for_pointer_load(
                             memory,
                             &canonical_pointer,
                         )),
@@ -780,7 +780,7 @@ pub(crate) fn certified_store_equations(facts: &[ExecutionPureFact]) -> Vec<Prop
             Some(Proposition::ConditionIs(
                 ConditionTerm::Bitvector32Equal(
                     Box::new(Bitvector32Term::MemoryLoad(
-                        Box::new(store.after.clone()),
+                        crate::kernel::intern_c_memory(store.after.clone()),
                         Box::new(store.pointer.clone()),
                     )),
                     Box::new(value),
@@ -1047,7 +1047,7 @@ fn transport_framed_atomic_bitvector(
                     }
                 })
             {
-                Bitvector32Term::MemoryLoad(Box::new(after.clone()), Box::new(transported_pointer))
+                Bitvector32Term::MemoryLoad(crate::kernel::intern_c_memory(after.clone()), Box::new(transported_pointer))
             } else {
                 term.clone()
             }
@@ -4315,7 +4315,7 @@ fn certification_proves_post_proposition(
             let stored_fact = Proposition::ConditionIs(
                 ConditionTerm::equal(
                     Bitvector32Term::MemoryLoad(
-                        Box::new(post_memory.clone()),
+                        crate::kernel::intern_c_memory(post_memory.clone()),
                         Box::new(pointer.clone()),
                     ),
                     value.clone(),

@@ -58,7 +58,7 @@ pub enum Bitvector32Term {
         item: Variable,
         body: Box<Bitvector32Term>,
     },
-    MemoryLoad(Box<CMemory>, Box<Pointer>),
+    MemoryLoad(SharedCMemory, Box<Pointer>),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -657,6 +657,133 @@ pub struct CMemory {
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct CBlock {
     pub(super) size: u32,
+}
+
+/// An interned, immutable memory snapshot for embedding inside terms.
+///
+/// Equality and hashing are O(1) via the arena identity and a precomputed
+/// content hash; ordering keeps a same-identity fast path but falls back to
+/// structural comparison so BTreeMap iteration order stays the structural
+/// order (proof search is sensitive to iteration order, and arena-insertion
+/// order would be nondeterministic across replays).
+#[derive(Clone)]
+pub struct SharedCMemory {
+    arena: u32,
+    id: u32,
+    content_hash: u64,
+    memory: std::sync::Arc<CMemory>,
+}
+
+impl PartialEq for SharedCMemory {
+    fn eq(&self, other: &Self) -> bool {
+        if self.arena == other.arena {
+            return self.id == other.id;
+        }
+        self.content_hash == other.content_hash && self.memory == other.memory
+    }
+}
+
+impl Eq for SharedCMemory {}
+
+impl std::hash::Hash for SharedCMemory {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        state.write_u64(self.content_hash);
+    }
+}
+
+impl Ord for SharedCMemory {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        if self.arena == other.arena && self.id == other.id {
+            return std::cmp::Ordering::Equal;
+        }
+        self.memory.cmp(&other.memory)
+    }
+}
+
+impl PartialOrd for SharedCMemory {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl std::fmt::Debug for SharedCMemory {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.memory.fmt(formatter)
+    }
+}
+
+impl std::ops::Deref for SharedCMemory {
+    type Target = CMemory;
+
+    fn deref(&self) -> &CMemory {
+        &self.memory
+    }
+}
+
+impl AsRef<CMemory> for SharedCMemory {
+    fn as_ref(&self) -> &CMemory {
+        &self.memory
+    }
+}
+
+impl From<CMemory> for SharedCMemory {
+    fn from(memory: CMemory) -> Self {
+        intern_c_memory(memory)
+    }
+}
+
+impl From<&CMemory> for SharedCMemory {
+    fn from(memory: &CMemory) -> Self {
+        intern_c_memory(memory.clone())
+    }
+}
+
+static NEXT_MEMORY_ARENA_TOKEN: std::sync::atomic::AtomicU32 =
+    std::sync::atomic::AtomicU32::new(0);
+
+thread_local! {
+    static C_MEMORY_ARENA: (
+        u32,
+        std::cell::RefCell<std::collections::HashMap<std::sync::Arc<CMemory>, (u32, u64)>>,
+    ) = (
+        NEXT_MEMORY_ARENA_TOKEN.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+        std::cell::RefCell::new(std::collections::HashMap::new()),
+    );
+}
+
+fn c_memory_content_hash(memory: &CMemory) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    memory.hash(&mut hasher);
+    hasher.finish()
+}
+
+/// Interns a memory snapshot in the thread-local arena. Structurally equal
+/// snapshots interned on the same thread share one allocation and identity;
+/// snapshots that cross threads still compare correctly through the content
+/// hash and structural fallback.
+pub fn intern_c_memory(memory: CMemory) -> SharedCMemory {
+    C_MEMORY_ARENA.with(|(arena, table)| {
+        let mut table = table.borrow_mut();
+        if let Some((stored, (id, content_hash))) = table.get_key_value(&memory) {
+            return SharedCMemory {
+                arena: *arena,
+                id: *id,
+                content_hash: *content_hash,
+                memory: stored.clone(),
+            };
+        }
+        let id = u32::try_from(table.len()).expect("memory arena exhausted");
+        let content_hash = c_memory_content_hash(&memory);
+        let stored = std::sync::Arc::new(memory);
+        table.insert(stored.clone(), (id, content_hash));
+        SharedCMemory {
+            arena: *arena,
+            id,
+            content_hash,
+            memory: stored,
+        }
+    })
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -2578,14 +2705,14 @@ impl CMemory {
 
     pub(super) fn symbolic_int32_load(&self, pointer: &Pointer) -> CValue {
         int32(Bitvector32Term::MemoryLoad(
-            Box::new(self.clone()),
+            crate::kernel::intern_c_memory(self.clone()),
             Box::new(pointer.clone()),
         ))
     }
 
     pub(super) fn symbolic_uint8_load(&self, pointer: &Pointer) -> CValue {
         uint8(Bitvector32Term::MemoryLoad(
-            Box::new(self.clone()),
+            crate::kernel::intern_c_memory(self.clone()),
             Box::new(pointer.clone()),
         ))
     }
@@ -2598,7 +2725,7 @@ impl CMemory {
         CValue::Pointer(Pointer {
             block: pointer.block.clone(),
             offset: PointerOffsetTerm::scale_int32(
-                Bitvector32Term::MemoryLoad(Box::new(self.clone()), Box::new(pointer.clone())),
+                Bitvector32Term::MemoryLoad(crate::kernel::intern_c_memory(self.clone()), Box::new(pointer.clone())),
                 i64::from(pointee_byte_width),
             ),
         })

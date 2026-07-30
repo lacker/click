@@ -495,7 +495,7 @@ fn surface_synthesis_prefers_struct_field_places_to_typed_loads() {
     let proposition = Proposition::ConditionIs(
         ConditionTerm::Bitvector32Equal(
             Box::new(Bitvector32Term::MemoryLoad(
-                Box::new(CMemory::new()),
+                crate::kernel::intern_c_memory(CMemory::new()),
                 Box::new(owner.clone()),
             )),
             Box::new(Bitvector32Term::Constant(0)),
@@ -519,7 +519,7 @@ fn surface_synthesis_prefers_struct_field_places_to_typed_loads() {
     assert_eq!(describe_contract_expression(&left), "owner->len");
 
     let data_pointer =
-        Bitvector32Term::MemoryLoad(Box::new(CMemory::new()), Box::new(owner.offset_by_bytes(8)));
+        Bitvector32Term::MemoryLoad(crate::kernel::intern_c_memory(CMemory::new()), Box::new(owner.offset_by_bytes(8)));
     let first_data_cell = Pointer {
         block: "arg-memory".into(),
         offset: PointerOffsetTerm::Int32Scaled {
@@ -530,7 +530,7 @@ fn surface_synthesis_prefers_struct_field_places_to_typed_loads() {
     let proposition = Proposition::ConditionIs(
         ConditionTerm::Bitvector32Equal(
             Box::new(Bitvector32Term::MemoryLoad(
-                Box::new(CMemory::new()),
+                crate::kernel::intern_c_memory(CMemory::new()),
                 Box::new(first_data_cell),
             )),
             Box::new(Bitvector32Term::Constant(0)),
@@ -1754,14 +1754,14 @@ fn simple_statement_transition_does_not_transport_facts_automatically() {
         offset: PointerOffsetTerm::Constant(4),
     };
     let first_value =
-        Bitvector32Term::MemoryLoad(Box::new(base_memory.clone()), Box::new(first.clone()));
+        Bitvector32Term::MemoryLoad(crate::kernel::intern_c_memory(base_memory.clone()), Box::new(first.clone()));
     let before_memory = base_memory
         .clone()
         .store(first.clone(), int32(first_value.clone()))
         .store(
             second.clone(),
             int32(Bitvector32Term::MemoryLoad(
-                Box::new(base_memory.clone()),
+                crate::kernel::intern_c_memory(base_memory.clone()),
                 Box::new(second.clone()),
             )),
         );
@@ -1813,7 +1813,7 @@ fn simple_statement_transition_does_not_transport_facts_automatically() {
     let transported = Proposition::ConditionIs(
         ConditionTerm::Bitvector32Equal(
             Box::new(Bitvector32Term::MemoryLoad(
-                Box::new(post_state.memory().clone()),
+                crate::kernel::intern_c_memory(post_state.memory().clone()),
                 Box::new(first),
             )),
             Box::new(Bitvector32Term::Constant(7)),
@@ -2294,7 +2294,7 @@ fn synthesizes_pointer_offset_equality_as_pointer_comparison() {
         ConditionTerm::PointerOffsetEqual(
             Box::new(PointerOffsetTerm::Int32Scaled {
                 value: Box::new(Bitvector32Term::MemoryLoad(
-                    Box::new(CMemory::new()),
+                    crate::kernel::intern_c_memory(CMemory::new()),
                     Box::new(owner.clone()),
                 )),
                 byte_width: 4,

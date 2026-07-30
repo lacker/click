@@ -3630,7 +3630,7 @@ pub(super) fn memory_with_symbolic_loadable_cells(
                         1,
                     );
                     let value = CValue::UInt8(Bitvector32Term::MemoryLoad(
-                        Box::new(base_memory.clone()),
+                        crate::kernel::intern_c_memory(base_memory.clone()),
                         Box::new(pointer.clone()),
                     ));
                     memory = memory.store(pointer, value);
@@ -3644,7 +3644,7 @@ pub(super) fn memory_with_symbolic_loadable_cells(
                         Bitvector32Term::Constant(offset / 4),
                     );
                     let value = CValue::Int32(Bitvector32Term::MemoryLoad(
-                        Box::new(base_memory.clone()),
+                        crate::kernel::intern_c_memory(base_memory.clone()),
                         Box::new(pointer.clone()),
                     ));
                     memory = memory.store(pointer, value);
@@ -3706,7 +3706,7 @@ fn materialize_access_segment_cells(
             continue;
         }
         let load =
-            Bitvector32Term::MemoryLoad(Box::new(base_memory.clone()), Box::new(pointer.clone()));
+            Bitvector32Term::MemoryLoad(crate::kernel::intern_c_memory(base_memory.clone()), Box::new(pointer.clone()));
         let value = match element_width {
             1 => CValue::UInt8(load),
             _ => CValue::Int32(load),

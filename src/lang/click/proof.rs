@@ -7946,7 +7946,7 @@ fn memory_erased_comparison(proposition: &Proposition) -> Option<Proposition> {
     fn erase_term(term: &Bitvector32Term) -> Bitvector32Term {
         match term {
             Bitvector32Term::MemoryLoad(_, pointer) => Bitvector32Term::MemoryLoad(
-                Box::new(CMemory::default()),
+                crate::kernel::intern_c_memory(CMemory::default()),
                 Box::new(Pointer {
                     block: pointer.block.clone(),
                     offset: erase_offset(&pointer.offset),
@@ -21168,7 +21168,7 @@ fn materialize_composite_resource_cells(
             continue;
         }
         let load =
-            Bitvector32Term::MemoryLoad(Box::new(base_memory.clone()), Box::new(pointer.clone()));
+            Bitvector32Term::MemoryLoad(crate::kernel::intern_c_memory(base_memory.clone()), Box::new(pointer.clone()));
         let value = match element_width {
             1 => CValue::UInt8(load),
             _ => CValue::Int32(load),

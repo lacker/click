@@ -2480,7 +2480,7 @@ fn normalize_direct_atomic_memory_load(term: &Bitvector32Term) -> Bitvector32Ter
                 normalize_direct_atomic_memory_load(&value)
             }
             _ => Bitvector32Term::MemoryLoad(
-                Box::new(canonical_c_memory_for_pointer_load(memory, pointer)),
+                crate::kernel::intern_c_memory(canonical_c_memory_for_pointer_load(memory, pointer)),
                 Box::new(Pointer {
                     block: pointer.block.clone(),
                     offset: normalize_direct_atomic_pointer_offset_loads(&pointer.offset),
@@ -2514,9 +2514,9 @@ mod normalization_tests {
         };
         let dependent_load = |memory: CMemory| {
             let loaded_pointer =
-                Bitvector32Term::MemoryLoad(Box::new(memory.clone()), Box::new(field.clone()));
+                Bitvector32Term::MemoryLoad(crate::kernel::intern_c_memory(memory.clone()), Box::new(field.clone()));
             Bitvector32Term::MemoryLoad(
-                Box::new(memory),
+                crate::kernel::intern_c_memory(memory),
                 Box::new(Pointer {
                     block: "arg-memory".into(),
                     offset: PointerOffsetTerm::Int32Scaled {
@@ -6571,7 +6571,7 @@ pub(super) fn symbolic_contract_memory_load(
     pointer: Pointer,
     value_type: CType,
 ) -> Result<CValue, String> {
-    let load = Bitvector32Term::MemoryLoad(Box::new(memory.clone()), Box::new(pointer.clone()));
+    let load = Bitvector32Term::MemoryLoad(crate::kernel::intern_c_memory(memory.clone()), Box::new(pointer.clone()));
     match value_type {
         CType::Int32 => Ok(CValue::Int32(load)),
         CType::UInt8 => Ok(CValue::UInt8(load)),

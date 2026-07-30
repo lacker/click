@@ -3891,7 +3891,7 @@ pub(super) fn substitute_bitvector_variable(
             )
         }
         Bitvector32Term::MemoryLoad(memory, pointer) => Bitvector32Term::MemoryLoad(
-            Box::new(substitute_bitvector_variable_in_memory(memory, from, to)),
+            crate::kernel::intern_c_memory(substitute_bitvector_variable_in_memory(memory, from, to)),
             Box::new(substitute_bitvector_variable_in_pointer(pointer, from, to)),
         ),
     }
