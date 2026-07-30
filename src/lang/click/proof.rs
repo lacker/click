@@ -5892,17 +5892,43 @@ fn advance_execution_proof_statement(
             let mut surface_propositions = context.surface_propositions.clone();
             let mut program_point_states = context.program_point_states.clone();
             if matches!(statement, CStatement::While { .. }) {
+                let loop_labels = environment
+                    .function_block
+                    .structural_clauses()
+                    .iter()
+                    .filter(|clause| clause.region() == &CodeRegion::Loop(region_index))
+                    .filter_map(StructuralClause::label)
+                    .map(str::to_string)
+                    .collect::<Vec<_>>();
                 let entry_point = ProgramPointRef {
                     region: CodeRegionRef::Loop(region_index),
                     kind: ProgramPointKind::Entry,
                 };
                 program_point_states.insert(entry_point, context.state.clone());
+                for label in &loop_labels {
+                    program_point_states.insert(
+                        ProgramPointRef {
+                            region: CodeRegionRef::Label(label.clone()),
+                            kind: ProgramPointKind::Entry,
+                        },
+                        context.state.clone(),
+                    );
+                }
                 if let CStatementOutcome::Normal(exit_state) = &transition.outcome {
                     let exit_point = ProgramPointRef {
                         region: CodeRegionRef::Loop(region_index),
                         kind: ProgramPointKind::Exit,
                     };
                     program_point_states.insert(exit_point.clone(), exit_state.clone());
+                    for label in &loop_labels {
+                        program_point_states.insert(
+                            ProgramPointRef {
+                                region: CodeRegionRef::Label(label.clone()),
+                                kind: ProgramPointKind::Exit,
+                            },
+                            exit_state.clone(),
+                        );
+                    }
                     if let Some(loop_clause) = environment
                         .function_block
                         .structural_clauses()
@@ -6011,6 +6037,21 @@ fn verify_loop_initialization_pure_proof(
         },
         context.state.clone(),
     );
+    for label in environment
+        .function_block
+        .structural_clauses()
+        .iter()
+        .filter(|clause| clause.region() == &CodeRegion::Loop(loop_index))
+        .filter_map(StructuralClause::label)
+    {
+        program_point_states.insert(
+            ProgramPointRef {
+                region: CodeRegionRef::Label(label.to_string()),
+                kind: ProgramPointKind::Entry,
+            },
+            context.state.clone(),
+        );
+    }
     let invariant_items = clause
         .items()
         .iter()
@@ -6218,11 +6259,11 @@ fn plan_automatic_loop_preservation_body(
         ProgramPointKind::Entry,
         preservation.state().clone(),
     );
-    replay.program_point_states.insert(
-        ProgramPointRef {
-            region: CodeRegionRef::Loop(loop_index),
-            kind: ProgramPointKind::Entry,
-        },
+    record_loop_program_point_state(
+        &mut replay,
+        environment.function_block,
+        loop_index,
+        ProgramPointKind::Entry,
         preservation.loop_entry_state().clone(),
     );
     let mut pending = vec![ProofReplayContext {
