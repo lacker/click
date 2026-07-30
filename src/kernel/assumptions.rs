@@ -5307,7 +5307,10 @@ impl Assumptions {
         start: &Bitvector32Term,
         end: &Bitvector32Term,
     ) -> bool {
-        if byte_width == 4
+        // Scalar and pointer fields both occupy one surface element: ranges
+        // count fields, so a pointer-width access at an in-range element
+        // index is authorized exactly like an int32 access.
+        if (byte_width == 4 || byte_width == crate::kernel::C_POINTER_BYTE_WIDTH)
             && let Some(index) = pointer.element_index_from_base(base)
             && self.decide(&ConditionTerm::signed_less_equal(
                 start.clone(),
