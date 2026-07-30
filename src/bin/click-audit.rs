@@ -20,6 +20,8 @@ use click::lang::click::{
 const DEFAULT_SESSION_LIMIT: Duration = Duration::from_secs(5 * 60);
 const DEFAULT_EXPANSION_LIMIT: Duration = Duration::from_secs(2 * 60);
 const DEFAULT_VERIFICATION_LIMIT: Duration = Duration::from_secs(5 * 60);
+const DEFAULT_SLOW_SITE_LIMIT: Duration = Duration::from_secs(10);
+const DEFAULT_TIME_LIMIT: Duration = Duration::from_secs(10 * 60);
 const MAX_DIAGNOSTIC_CHARS: usize = 2_000;
 const USAGE: &str = "\
 usage: click-audit [OPTIONS] <example-project|examples-directory>
@@ -32,16 +34,25 @@ expansion fixed point (the audited smart tactic is gone from its claim and
 the emitted expansion introduced no new smart tactic). By default it stops at
 the first failure and prints an inclusive --start-at resume command.
 
+Slowness is a finding: a site whose four steps together exceed the slow-site
+limit fails the audit (profile it with click-profile), and the whole run
+stops at the time limit with a resume cursor, so an audit can never quietly
+run for an hour.
+
 defaults:
   --session-time-limit 5m     original-sidecar session initialization
   --expansion-time-limit 2m   one source expansion
   --verification-time-limit 5m rewritten-sidecar verification
+  --slow-site-limit 10s       a slower passing site is reported as a failure
+  --time-limit 10m            whole-run wall clock; prints the resume cursor
 
 options:
   --session-time-limit <DURATION>
                               (`--discovery-time-limit` is a compatibility alias)
   --expansion-time-limit <DURATION>
   --verification-time-limit <DURATION>
+  --slow-site-limit <DURATION>
+  --time-limit <DURATION>
   --start-at <PATH:LINE:COLUMN>
                               inclusively resume at this source location
   --keep-going                continue after failures instead of stopping
@@ -60,6 +71,8 @@ struct Arguments {
     session_limit: Duration,
     expansion_limit: Duration,
     verification_limit: Duration,
+    slow_site_limit: Duration,
+    time_limit: Duration,
     start_at: Option<SourceLocation>,
     keep_going: bool,
     max_sites: Option<usize>,
@@ -221,6 +234,8 @@ fn parse_arguments(arguments: impl IntoIterator<Item = String>) -> Result<Argume
     let mut session_limit = DEFAULT_SESSION_LIMIT;
     let mut expansion_limit = DEFAULT_EXPANSION_LIMIT;
     let mut verification_limit = DEFAULT_VERIFICATION_LIMIT;
+    let mut slow_site_limit = DEFAULT_SLOW_SITE_LIMIT;
+    let mut time_limit = DEFAULT_TIME_LIMIT;
     let mut start_at = None;
     let mut keep_going = false;
     let mut max_sites = None;
@@ -235,6 +250,12 @@ fn parse_arguments(arguments: impl IntoIterator<Item = String>) -> Result<Argume
             }
             "--verification-time-limit" => {
                 verification_limit = parse_next_duration(&mut arguments, &argument)?;
+            }
+            "--slow-site-limit" => {
+                slow_site_limit = parse_next_duration(&mut arguments, &argument)?;
+            }
+            "--time-limit" => {
+                time_limit = parse_next_duration(&mut arguments, &argument)?;
             }
             "--start-at" => {
                 if start_at.is_some() {
@@ -270,6 +291,8 @@ fn parse_arguments(arguments: impl IntoIterator<Item = String>) -> Result<Argume
         session_limit,
         expansion_limit,
         verification_limit,
+        slow_site_limit,
+        time_limit,
         start_at,
         keep_going,
         max_sites,
@@ -323,12 +346,17 @@ fn run_audit(arguments: Arguments) -> Result<(), String> {
     let mut attempted_sites = 0;
     let mut worker: Option<(PathBuf, AuditSessionWorker)> = None;
     let mut cursor = 0;
+    let mut out_of_time = false;
+    let started = Instant::now();
 
     println!(
-        "\nClick expansion audit (session {}, expansion {}, verification {})",
+        "\nClick expansion audit (session {}, expansion {}, verification {}, \
+         slow site {}, run limit {})",
         format_duration(arguments.session_limit),
         format_duration(arguments.expansion_limit),
         format_duration(arguments.verification_limit),
+        format_duration(arguments.slow_site_limit),
+        format_duration(arguments.time_limit),
     );
 
     while cursor < selected.len() {
@@ -336,6 +364,10 @@ fn run_audit(arguments: Arguments) -> Result<(), String> {
             .max_sites
             .is_some_and(|limit| attempted_sites == limit)
         {
+            break;
+        }
+        if started.elapsed() >= arguments.time_limit {
+            out_of_time = true;
             break;
         }
         let site = &selected[cursor];
@@ -393,6 +425,33 @@ fn run_audit(arguments: Arguments) -> Result<(), String> {
             arguments.verification_limit,
         ) {
             Ok(timings) => {
+                let total = timings.expansion
+                    + timings.session_verification
+                    + timings.reverification
+                    + timings.reexpansion;
+                if total > arguments.slow_site_limit {
+                    // Slowness is a finding: a passing site this slow is a
+                    // performance bug, not a success.
+                    println!("SLOW");
+                    println!(
+                        "    site passed but took {} (expand {}, verify {}, reverify {}, \
+                         reexpand {}), over the {} slow-site limit; profile it with \
+                         click-profile",
+                        format_duration(total),
+                        format_duration(timings.expansion),
+                        format_duration(timings.session_verification),
+                        format_duration(timings.reverification),
+                        format_duration(timings.reexpansion),
+                        format_duration(arguments.slow_site_limit),
+                    );
+                    print_resume(&arguments, site);
+                    site_failures += 1;
+                    if !arguments.keep_going {
+                        break;
+                    }
+                    cursor += 1;
+                    continue;
+                }
                 audited_sites += 1;
                 println!(
                     "ok (expand {}, verify {}, reverify {}, reexpand {})",
@@ -427,6 +486,23 @@ fn run_audit(arguments: Arguments) -> Result<(), String> {
         }
     );
     let failures = site_failures + session_failures;
+    if out_of_time {
+        if cursor < selected.len() {
+            println!();
+            print_resume(&arguments, &selected[cursor]);
+        }
+        return Err(format!(
+            "audit stopped at its {} run limit after {} of {} selected sites{}",
+            format_duration(arguments.time_limit),
+            attempted_sites,
+            selected.len(),
+            if failures == 0 {
+                String::new()
+            } else {
+                format!("; {failures} check(s) failed")
+            }
+        ));
+    }
     if failures == 0 {
         if cursor < selected.len() {
             println!();
@@ -537,6 +613,10 @@ fn resume_command(arguments: &Arguments, location: &SourceLocation) -> String {
         format_duration(arguments.expansion_limit),
         "--verification-time-limit".to_string(),
         format_duration(arguments.verification_limit),
+        "--slow-site-limit".to_string(),
+        format_duration(arguments.slow_site_limit),
+        "--time-limit".to_string(),
+        format_duration(arguments.time_limit),
     ];
     if arguments.keep_going {
         words.push("--keep-going".to_string());
@@ -1032,6 +1112,8 @@ mod tests {
             session_limit: Duration::from_secs(30),
             expansion_limit: Duration::from_secs(2),
             verification_limit: Duration::from_secs(3),
+            slow_site_limit: Duration::from_secs(10),
+            time_limit: Duration::from_secs(600),
             start_at: None,
             keep_going: false,
             max_sites: Some(1),
@@ -1044,8 +1126,8 @@ mod tests {
         assert_eq!(
             resume_command(&arguments, &location),
             "click-audit --session-time-limit 30s --expansion-time-limit 2s \
-             --verification-time-limit 3s --max-sites 1 --start-at \
-             /tmp/example.click:12:34 'examples with spaces'"
+             --verification-time-limit 3s --slow-site-limit 10s --time-limit 10m \
+             --max-sites 1 --start-at /tmp/example.click:12:34 'examples with spaces'"
         );
     }
 

@@ -66,6 +66,15 @@ Order of attack, one frontier at a time, commit each independently:
    owned-split-buffer rows were fixed or expanded away.
 5. **Full audit to completion**: rerun `click-audit --keep-going
    examples` after each de-quarantine; keep it at 0 site failures.
+   Slowness is now a finding (owner decision 2026-07-30): the audit
+   fails a passing site over `--slow-site-limit` (default 10 s) and
+   stops at `--time-limit` (default 10 m) with a resume cursor, so a
+   default run can never quietly take an hour. Current top finding:
+   `owned_segmented_buffer_pipeline` costs ~56 s per unit verification
+   (site 54, 116 s total with the session verify + targeted reverify) —
+   the #1 slow-tactic target. The audit also still verifies each site's
+   unit twice (retained session + fresh targeted process); dropping or
+   sampling one of the two would halve audit cost.
 6. **One-gateway check**: after the corpus audit is green, one bounded
    code audit that every smart success commits through TacticCertificate
    replay with no bypass. Not an open-ended refactor.
