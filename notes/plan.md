@@ -27,23 +27,26 @@ list below is updated from a fresh profile.
 
 Order of attack, one frontier at a time, commit each independently:
 
-1. **input-cursor certificate-replay bug** (was: session timeout — that
-   is fixed): whole-file verify now fails fast in
-   `input_cursor_shared_pipeline.contract` tactic 33 (execute_rest):
-   "generated surface certificate failed replay". Confirmed pre-existing
-   with the memo disabled (identical certificate, 469 s vs 9 s). Root
-   shape: certificate generation lowers candidate premise spellings with
-   the permissive `allow_symbolic_contract_loads` mode and accepts
-   `left_value == left->data[left->pos]` (true at statement(5), where the
-   fact was recorded) without its `at(...)` anchor; strict replay
-   lowering at statement 7 then fails its loadability obligation (and
-   the certificate also contains the nonsense spelling
-   `left->pos == (left->pos + 1)`). Fix direction: candidates accepted
-   during certificate generation must strictly lower at the replay
-   point (same obligations as `lower_point_proposition`), falling back
-   to at()-anchored spellings. Owner decision 2026-07-30: certificate
-   format/implementation details do not need sign-off; only Surface
-   Click semantics changes do. Proceed.
+1. **input-cursor whole-file verify** (was: session timeout — fixed;
+   then certificate-replay bug — fixed; then composite-expansion
+   TypeMismatch — fixed). Three layers peeled on 2026-07-30, all
+   pre-existing (confirmed with `CLICK_DISABLE_DECIDE_MEMO` A/B):
+   certificate premises now must strictly replay-lower before emission
+   (`checked_surface_comparison_fact_at_point`), and pointer-typed loads
+   of framed int32 cells fall through to symbolic loads during
+   composite expansion (`evaluate_c_memory_load_paths`). Current layer:
+   the final kernel contract-certification gate
+   ("exact symbolic execution did not establish every contract claim")
+   cannot discharge `input_cursor_take`'s `pos < len` precondition VC at
+   statement 4. The needed chain is init's ensures (`pos == 0`,
+   `len == length`) transported across the clone call's havoc — clone's
+   effects don't touch `left`, so this must go through effect-fact
+   transport (canonicalization rightly keeps call-havoc blocks; see the
+   soundness trap). Investigate why `certification_proves_proposition`
+   cannot bridge the loads across the clone call (api.rs ~4948, the
+   requirement check in functions.rs ~458). Owner decision 2026-07-30:
+   certificate/implementation details do not need sign-off; only
+   Surface Click semantics changes do.
 2. **Audit `by auto` re-expansion** : audit sites 28–30 (jsonc-refcount,
    all `by auto`) fail re-expansion with "no explicit C proof tactic
    starts at 10:6" — expansion rewrites `auto` into a by-block, so the
