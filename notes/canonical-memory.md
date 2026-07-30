@@ -1,8 +1,31 @@
 # Canonical memory: plan of record (2026-07-29)
 
-*Untracked working note (see `notes/README.md`). Decision made with the repo
-owner: interning now, named memory states later. Delete or fold into an issue
-once the work lands.*
+*Working note (see `notes/README.md`). Decision made with the repo owner:
+interning now, named memory states later. Delete or fold into an issue once
+the work lands.*
+
+## Decisions locked 2026-07-29 (with repo owner)
+
+- A first, re-land quantified-body bridging on top, C as eventual
+  destination. Skip construction-time canonicalization (B).
+- Thread-local arena; unbounded growth accepted; note in item-10 debt.
+- Work lands directly on master in small validated commits (no branch).
+- Intern `CMemory` only, at term-embedding boundaries; working CState
+  memory stays a plain value.
+- `Eq`/`Hash` by arena ID; `Ord` keeps same-ID fast path then structural
+  comparison (raw-ID ordering would make BTreeMap iteration follow arena
+  insertion order — nondeterminism risk in fuel-sensitive proof search).
+- Globally memoize only assumption-free work (canonical_memory_for_pointer_load,
+  canonicalize_atomic_loads) keyed by (memory ID, pointer);
+  c_memory_load_is_unchanged is assumption-dependent — no global cache,
+  gets fast via cheap equality; per-Assumptions cache is the fallback.
+- Debug assertions that ID equality agrees with structural equality.
+- Gates: zero regressions across all three suites; field_derived passes in
+  the normal 30s budget; then attempt de-quarantine of the item-7 backlog.
+- Padding semantics: owning a struct field covers its full layout slot
+  including trailing padding (C intuition: padding belongs to the object).
+  Fixes hidden_separate_projection via the projection emitting full spans.
+  This one is independent of interning and can land first.
 
 ## The problem
 
