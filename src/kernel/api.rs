@@ -3149,6 +3149,13 @@ fn c_function_contract_certification_assumptions(
         if matches!(fact, Proposition::CMemoryLoadable { .. }) {
             assumptions = assumptions.assume_proposition(fact.clone());
         }
+        // Universally-quantified implications concluding in an opaque
+        // predicate are surface-verified theorem facts. The predicate has no
+        // kernel definition, so the surface verifier is their authority,
+        // like the loadability calling convention above.
+        if quantified_predicate_implication_fact(fact) {
+            assumptions = assumptions.assume_proposition(fact.clone());
+        }
     }
     let mut requirement_obligations = Vec::new();
     for requirement in function.contract_requires() {
@@ -4129,8 +4136,116 @@ fn certification_proves_proposition(assumptions: &Assumptions, proposition: &Pro
             assumptions.proves_order_condition_for_memory_resolution(condition, *value)
                 || assumptions.has_matching_condition_fact_for_memory_resolution(condition, *value)
         }
+        Proposition::Predicate { .. } => {
+            assumptions.proves(proposition)
+                || certification_proves_predicate_from_quantified_implication(
+                    assumptions,
+                    proposition,
+                )
+        }
         _ => assumptions.proves(proposition),
     }
+}
+
+/// True for a closed universally-quantified implication chain that concludes
+/// in an opaque predicate — the shape of a surface-verified theorem fact.
+fn quantified_predicate_implication_fact(fact: &Proposition) -> bool {
+    let mut body = fact;
+    let mut binders = 0usize;
+    while let Proposition::ForAll { body: inner, .. } = body {
+        binders += 1;
+        body = inner.as_ref();
+    }
+    if binders == 0 {
+        return false;
+    }
+    while let Proposition::Implies(_, rest) = body {
+        body = rest.as_ref();
+    }
+    matches!(body, Proposition::Predicate { .. })
+}
+
+/// Certifies an opaque predicate goal by instantiating an assumed
+/// universally-quantified implication (typically a verified theorem): the
+/// fact's predicate conclusion pins each bound variable against the goal's
+/// arguments, and every premise must then certify under that instantiation.
+fn certification_proves_predicate_from_quantified_implication(
+    assumptions: &Assumptions,
+    goal: &Proposition,
+) -> bool {
+    let Proposition::Predicate { name, arguments } = goal else {
+        return false;
+    };
+    assumptions.prop_facts.iter().any(|fact| {
+        let mut binders = Vec::new();
+        let mut body = fact;
+        while let Proposition::ForAll {
+            var, body: inner, ..
+        } = body
+        {
+            binders.push(*var);
+            body = inner.as_ref();
+        }
+        if binders.is_empty() {
+            return false;
+        }
+        let mut premises = Vec::new();
+        let mut conclusion = body;
+        while let Proposition::Implies(premise, rest) = conclusion {
+            premises.push(premise.as_ref().clone());
+            conclusion = rest.as_ref();
+        }
+        let Proposition::Predicate {
+            name: fact_name,
+            arguments: fact_arguments,
+        } = conclusion
+        else {
+            return false;
+        };
+        if fact_name != name || fact_arguments.len() != arguments.len() {
+            return false;
+        }
+        let mut substitution: Vec<(Variable, Bitvector32Term)> = Vec::new();
+        for (fact_argument, goal_argument) in fact_arguments.iter().zip(arguments) {
+            let bound_variable = match fact_argument {
+                Term::CValue(
+                    CValue::Int32(Bitvector32Term::Variable(var))
+                    | CValue::UInt8(Bitvector32Term::Variable(var)),
+                ) if binders.contains(var) => Some(*var),
+                _ => None,
+            };
+            let Some(var) = bound_variable else {
+                if fact_argument != goal_argument {
+                    return false;
+                }
+                continue;
+            };
+            let goal_term = match goal_argument {
+                Term::CValue(CValue::Int32(term) | CValue::UInt8(term)) => term.clone(),
+                Term::Bitvector32(term) => term.clone(),
+                _ => return false,
+            };
+            match substitution.iter().find(|(existing, _)| *existing == var) {
+                None => substitution.push((var, goal_term)),
+                Some((_, existing)) if *existing == goal_term => {}
+                Some(_) => return false,
+            }
+        }
+        if binders
+            .iter()
+            .any(|var| !substitution.iter().any(|(bound, _)| bound == var))
+        {
+            return false;
+        }
+        premises.into_iter().all(|premise| {
+            let mut instantiated = premise;
+            for (var, witness) in &substitution {
+                instantiated =
+                    substitute_bitvector_variable_in_proposition(&instantiated, *var, witness);
+            }
+            certification_proves_proposition(assumptions, &instantiated)
+        })
+    })
 }
 
 fn certification_proves_post_proposition(

@@ -2110,11 +2110,44 @@ fn verify_c0_sources_with_environment(
     )?;
     let mut function_environment =
         initial_function_environment.unwrap_or(built_function_environment);
-    let _verified_theorems = verify_theorem_definitions(
+    let verified_theorems = verify_theorem_definitions(
         &theorem_definitions,
         &predicate_environment,
         &click_function_environment,
     )?;
+    // Verified pure theorems over scalar parameters become closed
+    // universally-quantified facts, so kernel contract certification can
+    // discharge obligations the surface proof established by `apply`.
+    let theorem_certification_facts = verified_theorems
+        .iter()
+        .filter(|theorem| {
+            theorem
+                .theorem_definition
+                .parameters()
+                .iter()
+                .all(|parameter| matches!(parameter.c_type(), C0Type::Int32))
+        })
+        .map(|theorem| {
+            let implication = theorem
+                .requires
+                .iter()
+                .rev()
+                .fold(theorem.conclusion.clone(), |body, requirement| {
+                    Proposition::Implies(Box::new(requirement.clone()), Box::new(body))
+                });
+            theorem
+                .theorem_definition
+                .parameters()
+                .iter()
+                .enumerate()
+                .rev()
+                .fold(implication, |body, (index, _)| Proposition::ForAll {
+                    var: crate::kernel::Variable(index as u64),
+                    sort: crate::kernel::Sort::CInt32,
+                    body: Box::new(body),
+                })
+        })
+        .collect::<Vec<_>>();
     let theorem_environment = TheoremEnvironment::new(&theorem_definitions);
     let mut verified = Vec::new();
 
@@ -2278,6 +2311,7 @@ fn verify_c0_sources_with_environment(
                 &click_function_environment,
                 &format!("{}.contract certification", function_block.signature.name()),
             )?;
+        certification_facts.extend(theorem_certification_facts.iter().cloned());
         // A sized array parameter spelling (`int32 p[2]`) declares its span
         // loadable as part of the calling convention; certification may rely
         // on it to discharge requirement side-obligations.

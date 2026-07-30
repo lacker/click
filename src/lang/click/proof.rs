@@ -791,12 +791,20 @@ fn pure_theorem_surface_certificate(
         for proposition in unfolded {
             flatten_surface_conjunction(proposition, &mut premises);
         }
+        // `unfold` rewrites the goal as well as the premises, so the closing
+        // derivation targets the unfolded goal spelling.
+        let unfolded_goal = unfold_structural_invariant_proposition(
+            predicate_environment,
+            surface_goal,
+            &unfolded_predicates,
+        )
+        .map_err(|message| ClickError::new(format!("`{claim_label}`: {message}")))?;
         let mut tactics = unfolded_predicates
             .into_iter()
             .map(ProofTactic::UnfoldPredicate)
             .collect::<Vec<_>>();
         tactics.push(ProofTactic::Derive(ProofDerive {
-            proposition: surface_goal.clone(),
+            proposition: unfolded_goal,
             premises,
         }));
         return TacticCertificate::from_proof_tactics(&tactics).map_err(|error| {
@@ -5577,7 +5585,52 @@ fn plan_point_pure_goal_certificate(
     click_function_environment: &ClickFunctionEnvironment,
     surface_propositions: &SurfacePropositionMap,
     prelowered_goal: Option<&Proposition>,
+    theorem_environment: &TheoremEnvironment,
 ) -> Result<(Proposition, TacticCertificate), ClickError> {
+    let applied_theorem_script;
+    let proof = if let Proof::Script(tactics) = proof
+        && tactics
+            .iter()
+            .any(|tactic| matches!(tactic, ProofTactic::ApplyTheorem(_)))
+        && tactics.iter().all(|tactic| {
+            matches!(tactic.class(), TacticClass::Simple(_))
+                || matches!(tactic, ProofTactic::Simp | ProofTactic::ApplyTheorem(_))
+        })
+    {
+        // An applied theorem's conclusion becomes an available fact, so the
+        // trailing smart `simp` lowers to the deterministic `assumption` and
+        // a bare `apply` lowers to `apply using` with the theorem's own
+        // requires as the explicit premise pool.
+        applied_theorem_script = Proof::Script(
+            tactics
+                .iter()
+                .map(|tactic| match tactic {
+                    ProofTactic::Simp => ProofTactic::Assumption,
+                    ProofTactic::ApplyTheorem(application) => {
+                        let premises = theorem_environment
+                            .get(&application.name)
+                            .map(|theorem| {
+                                theorem
+                                    .requires()
+                                    .iter()
+                                    .filter_map(Requirement::proposition)
+                                    .cloned()
+                                    .collect()
+                            })
+                            .unwrap_or_default();
+                        ProofTactic::ApplyTheoremUsing {
+                            application: application.clone(),
+                            premises,
+                        }
+                    }
+                    other => other.clone(),
+                })
+                .collect(),
+        );
+        &applied_theorem_script
+    } else {
+        proof
+    };
     if let Proof::Script(tactics) = proof
         && let Ok(certificate) = TacticCertificate::from_proof_tactics(tactics)
     {
@@ -5827,6 +5880,7 @@ fn certify_structural_assertions(
                 environment.click_function_environment,
                 &context.surface_propositions,
                 None,
+                environment.theorem_environment,
             )?;
             let (certificate, replayed_fact) = pure_goal_certificate_gateway(
                 &claim_label,
@@ -6180,6 +6234,7 @@ fn verify_loop_initialization_pure_proof(
                     environment.click_function_environment,
                     &context.surface_propositions,
                     expected_goal.as_ref(),
+                    environment.theorem_environment,
                 )?;
                 let (planned_fact, planned_certificate) = direct_plan;
                 initialization_surface_propositions
