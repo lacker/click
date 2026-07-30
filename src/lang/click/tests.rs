@@ -1680,7 +1680,6 @@ fn explicit_fact_transport_can_certify_a_derived_source() {
 }
 
 #[test]
-#[ignore = "quarantined: ~25s (prover memory-snapshot blowup); run with --ignored"]
 fn clone_field_stores_with_observed_source_resource_verify() {
     let c_source = r#"
         struct cursor {
@@ -6883,7 +6882,6 @@ fn loop_preserve_non_execution_tactics_do_not_fall_back_to_auto() {
 }
 
 #[test]
-#[ignore = "quarantined: exceeds 60s (prover memory-snapshot blowup); run with --ignored"]
 fn loop_phase_proofs_can_unfold_invariant_predicates() {
     let c_source = r#"
             int32 loop_sorted_range_invariant(int32 p[3]) {
@@ -7612,7 +7610,6 @@ fn failed_memory_postcondition_reports_loaded_value() {
 }
 
 #[test]
-#[ignore = "quarantined: ~40s (prover memory-snapshot blowup); run with --ignored"]
 fn observed_cursor_facts_produce_replayable_surface_certificates() {
     let c_source = r#"
         struct input_cursor {
@@ -7717,7 +7714,6 @@ fn observed_cursor_facts_produce_replayable_surface_certificates() {
 }
 
 #[test]
-#[ignore = "quarantined: ~22s (prover memory-snapshot blowup); run with --ignored"]
 fn explicit_store_step_with_unfolded_resource_facts_verifies() {
     let c_source = r#"
         struct owned_string {
@@ -7808,7 +7804,6 @@ fn explicit_store_step_with_unfolded_resource_facts_verifies() {
 }
 
 #[test]
-#[ignore = "quarantined: ~28s (prover memory-snapshot blowup); run with --ignored"]
 fn expanded_read_step_keeps_named_range_separation_premises() {
     let c_source = r#"
         struct owned_string {
