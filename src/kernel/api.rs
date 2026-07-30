@@ -75,6 +75,30 @@ pub(crate) fn c_resources_directly_match(
     }
 }
 
+/// Assumption-free canonical form of a whole memory: every cell key and
+/// value canonicalizes its embedded loads. Spellings of the same memory
+/// produced at different execution points compare equal when their
+/// difference is representational.
+pub(crate) fn canonical_c_memory_deep(memory: &CMemory) -> CMemory {
+    let mut canonical = memory.clone();
+    let cells = std::mem::take(&mut canonical.cells);
+    for (pointer, value) in cells {
+        let key = canonicalize_pointer_loads(&pointer, 0);
+        let value = match value {
+            CValue::Int32(term) => CValue::Int32(canonicalize_atomic_loads(&term)),
+            CValue::UInt8(term) => CValue::UInt8(canonicalize_atomic_loads(&term)),
+            CValue::Pointer(pointer) => CValue::Pointer(canonicalize_pointer_loads(&pointer, 0)),
+        };
+        canonical.cells.insert(key, value);
+    }
+    canonical
+}
+
+/// Deep-canonical memory equality; see [`canonical_c_memory_deep`].
+pub(crate) fn c_memories_canonically_equal(left: &CMemory, right: &CMemory) -> bool {
+    left == right || canonical_c_memory_deep(left) == canonical_c_memory_deep(right)
+}
+
 pub(crate) fn c_memory_load_is_unchanged(
     before: &CMemory,
     after: &CMemory,
@@ -99,8 +123,10 @@ pub(crate) fn c_memory_load_is_unchanged(
                 pointers,
             } => {
                 (effect_before == before
-                    || memory_materializes_atomic_load(effect_before, before, pointer))
-                    && effect_after == after
+                    || memory_materializes_atomic_load(effect_before, before, pointer)
+                    || c_memories_canonically_equal(effect_before, before))
+                    && (effect_after == after
+                        || c_memories_canonically_equal(effect_after, after))
                     && pointers.iter().all(|write| {
                         write.blocks_proven_distinct(pointer)
                             || pointer_offsets_with_common_base_proven_distinct(
@@ -404,31 +430,142 @@ pub(crate) fn rewrite_condition_through_certified_stores(
 /// cells resolve to their values and remaining loads use the canonical
 /// memory for their pointer.
 fn canonicalize_atomic_loads(term: &Bitvector32Term) -> Bitvector32Term {
+    canonicalize_atomic_loads_with_depth(term, 0)
+}
+
+const CANONICAL_LOAD_DEPTH_LIMIT: usize = 24;
+
+/// Deep, assumption-free canonical form for a term: every load resolves its
+/// cached cell or canonicalizes its snapshot and pointer, at every depth,
+/// including inside conditionals, folds, and pointer offsets. Two spellings
+/// of the same value produced at different execution points canonicalize
+/// identically whenever the difference is representational.
+fn canonicalize_atomic_loads_with_depth(term: &Bitvector32Term, depth: usize) -> Bitvector32Term {
+    if depth >= CANONICAL_LOAD_DEPTH_LIMIT {
+        return term.clone();
+    }
+    let binary = |left: &Bitvector32Term, right: &Bitvector32Term| {
+        (
+            Box::new(canonicalize_atomic_loads_with_depth(left, depth + 1)),
+            Box::new(canonicalize_atomic_loads_with_depth(right, depth + 1)),
+        )
+    };
     match term {
-        Bitvector32Term::MemoryLoad(memory, pointer) => match memory.load(pointer) {
-            CExpressionOutcome::Value(CValue::Int32(value) | CValue::UInt8(value))
-                if &value != term =>
-            {
-                canonicalize_atomic_loads(&value)
+        Bitvector32Term::Constant(_) | Bitvector32Term::Variable(_) => term.clone(),
+        Bitvector32Term::MemoryLoad(memory, pointer) => {
+            let canonical_pointer = canonicalize_pointer_loads(pointer, depth + 1);
+            match memory.load(&canonical_pointer) {
+                CExpressionOutcome::Value(CValue::Int32(value) | CValue::UInt8(value))
+                    if &value != term =>
+                {
+                    canonicalize_atomic_loads_with_depth(&value, depth + 1)
+                }
+                _ => match memory.load(pointer) {
+                    CExpressionOutcome::Value(CValue::Int32(value) | CValue::UInt8(value))
+                        if &value != term =>
+                    {
+                        canonicalize_atomic_loads_with_depth(&value, depth + 1)
+                    }
+                    _ => Bitvector32Term::MemoryLoad(
+                        Box::new(canonical_c_memory_for_pointer_load(
+                            memory,
+                            &canonical_pointer,
+                        )),
+                        Box::new(canonical_pointer),
+                    ),
+                },
             }
-            _ => Bitvector32Term::MemoryLoad(
-                Box::new(canonical_c_memory_for_pointer_load(memory, pointer)),
-                Box::new((**pointer).clone()),
-            ),
+        }
+        Bitvector32Term::Add(left, right) => {
+            let (left, right) = binary(left, right);
+            Bitvector32Term::Add(left, right)
+        }
+        Bitvector32Term::Subtract(left, right) => {
+            let (left, right) = binary(left, right);
+            Bitvector32Term::Subtract(left, right)
+        }
+        Bitvector32Term::Multiply(left, right) => {
+            let (left, right) = binary(left, right);
+            Bitvector32Term::Multiply(left, right)
+        }
+        Bitvector32Term::Divide(left, right) => {
+            let (left, right) = binary(left, right);
+            Bitvector32Term::Divide(left, right)
+        }
+        Bitvector32Term::Remainder(left, right) => {
+            let (left, right) = binary(left, right);
+            Bitvector32Term::Remainder(left, right)
+        }
+        Bitvector32Term::ShiftLeft(left, right) => {
+            let (left, right) = binary(left, right);
+            Bitvector32Term::ShiftLeft(left, right)
+        }
+        Bitvector32Term::ArithmeticShiftRight(left, right) => {
+            let (left, right) = binary(left, right);
+            Bitvector32Term::ArithmeticShiftRight(left, right)
+        }
+        Bitvector32Term::BitwiseAnd(left, right) => {
+            let (left, right) = binary(left, right);
+            Bitvector32Term::BitwiseAnd(left, right)
+        }
+        Bitvector32Term::BitwiseOr(left, right) => {
+            let (left, right) = binary(left, right);
+            Bitvector32Term::BitwiseOr(left, right)
+        }
+        Bitvector32Term::BitwiseXor(left, right) => {
+            let (left, right) = binary(left, right);
+            Bitvector32Term::BitwiseXor(left, right)
+        }
+        Bitvector32Term::BitwiseNot(value) => Bitvector32Term::BitwiseNot(Box::new(
+            canonicalize_atomic_loads_with_depth(value, depth + 1),
+        )),
+        Bitvector32Term::If {
+            condition,
+            then_term,
+            else_term,
+        } => Bitvector32Term::If {
+            condition: condition.clone(),
+            then_term: Box::new(canonicalize_atomic_loads_with_depth(then_term, depth + 1)),
+            else_term: Box::new(canonicalize_atomic_loads_with_depth(else_term, depth + 1)),
         },
-        Bitvector32Term::Add(left, right) => Bitvector32Term::Add(
-            Box::new(canonicalize_atomic_loads(left)),
-            Box::new(canonicalize_atomic_loads(right)),
-        ),
-        Bitvector32Term::Subtract(left, right) => Bitvector32Term::Subtract(
-            Box::new(canonicalize_atomic_loads(left)),
-            Box::new(canonicalize_atomic_loads(right)),
-        ),
-        Bitvector32Term::Multiply(left, right) => Bitvector32Term::Multiply(
-            Box::new(canonicalize_atomic_loads(left)),
-            Box::new(canonicalize_atomic_loads(right)),
-        ),
-        other => other.clone(),
+        Bitvector32Term::RangeFold {
+            start,
+            end,
+            initial,
+            accumulator,
+            item,
+            body,
+        } => Bitvector32Term::RangeFold {
+            start: Box::new(canonicalize_atomic_loads_with_depth(start, depth + 1)),
+            end: Box::new(canonicalize_atomic_loads_with_depth(end, depth + 1)),
+            initial: Box::new(canonicalize_atomic_loads_with_depth(initial, depth + 1)),
+            accumulator: *accumulator,
+            item: *item,
+            body: Box::new(canonicalize_atomic_loads_with_depth(body, depth + 1)),
+        },
+    }
+}
+
+/// Canonicalizes the loads inside a pointer's offset.
+fn canonicalize_pointer_loads(pointer: &Pointer, depth: usize) -> Pointer {
+    fn canonical_offset(offset: &PointerOffsetTerm, depth: usize) -> PointerOffsetTerm {
+        match offset {
+            PointerOffsetTerm::Constant(_) | PointerOffsetTerm::Variable(_) => offset.clone(),
+            PointerOffsetTerm::Add(left, right) => PointerOffsetTerm::add(
+                canonical_offset(left, depth),
+                canonical_offset(right, depth),
+            ),
+            PointerOffsetTerm::Int32Scaled { value, byte_width } => {
+                PointerOffsetTerm::scale_int32(
+                    canonicalize_atomic_loads_with_depth(value, depth),
+                    *byte_width,
+                )
+            }
+        }
+    }
+    Pointer {
+        block: pointer.block.clone(),
+        offset: canonical_offset(&pointer.offset, depth),
     }
 }
 
