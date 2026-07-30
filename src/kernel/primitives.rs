@@ -734,7 +734,7 @@ impl From<CMemory> for SharedCMemory {
 
 impl From<&CMemory> for SharedCMemory {
     fn from(memory: &CMemory) -> Self {
-        intern_c_memory(memory.clone())
+        intern_c_memory_ref(memory)
     }
 }
 
@@ -776,6 +776,33 @@ pub fn intern_c_memory(memory: CMemory) -> SharedCMemory {
         let id = u32::try_from(table.len()).expect("memory arena exhausted");
         let content_hash = c_memory_content_hash(&memory);
         let stored = std::sync::Arc::new(memory);
+        table.insert(stored.clone(), (id, content_hash));
+        SharedCMemory {
+            arena: *arena,
+            id,
+            content_hash,
+            memory: stored,
+        }
+    })
+}
+
+/// Interns by reference: an already-interned snapshot is found without
+/// cloning it, so hot memoization lookups keyed by interned identity pay a
+/// hash and comparison but no allocation.
+pub fn intern_c_memory_ref(memory: &CMemory) -> SharedCMemory {
+    C_MEMORY_ARENA.with(|(arena, table)| {
+        let mut table = table.borrow_mut();
+        if let Some((stored, (id, content_hash))) = table.get_key_value(memory) {
+            return SharedCMemory {
+                arena: *arena,
+                id: *id,
+                content_hash: *content_hash,
+                memory: stored.clone(),
+            };
+        }
+        let id = u32::try_from(table.len()).expect("memory arena exhausted");
+        let content_hash = c_memory_content_hash(memory);
+        let stored = std::sync::Arc::new(memory.clone());
         table.insert(stored.clone(), (id, content_hash));
         SharedCMemory {
             arena: *arena,
@@ -1097,7 +1124,7 @@ pub(super) enum PropositionDerivationRule {
     },
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
 pub struct Assumptions {
     pub(super) condition_facts: BTreeMap<ConditionTerm, bool>,
     pub(super) prop_facts: BTreeSet<Proposition>,
@@ -3449,6 +3476,7 @@ fn range_endpoint_terms_equal(
             && left_pointer == right_pointer
         {
             if ENDPOINT_BRIDGE_ACTIVE.with(std::cell::Cell::get) {
+                super::assumptions::note_search_truncation();
                 return false;
             }
             ENDPOINT_BRIDGE_ACTIVE.with(|active| active.set(true));

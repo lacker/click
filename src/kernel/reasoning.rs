@@ -43,7 +43,10 @@ pub(super) fn with_memory_resolution_fuel<T>(body: impl FnOnce() -> T) -> T {
 pub(super) fn consume_memory_resolution_fuel() -> bool {
     MEMORY_RESOLUTION_FUEL.with(|fuel| match fuel.get() {
         None => true,
-        Some(0) => false,
+        Some(0) => {
+            super::assumptions::note_search_truncation();
+            false
+        }
         Some(remaining) => {
             fuel.set(Some(remaining - 1));
             true
@@ -78,7 +81,10 @@ pub(super) fn with_resource_prover_fuel<T>(body: impl FnOnce() -> T) -> T {
 pub(super) fn consume_resource_prover_fuel() -> bool {
     RESOURCE_PROVER_FUEL.with(|fuel| match fuel.get() {
         None => true,
-        Some(0) => false,
+        Some(0) => {
+            super::assumptions::note_search_truncation();
+            false
+        }
         Some(remaining) => {
             fuel.set(Some(remaining - 1));
             true
@@ -777,7 +783,28 @@ pub(super) fn canonical_memory_for_pointer_load(memory: &CMemory, pointer: &Poin
     }
     // Canonicalization is assumption-free and deterministic, so memoize by
     // interned snapshot identity; the intern also dedups the key storage.
-    let key = (super::intern_c_memory(memory.clone()), pointer.clone());
+    let key = (super::intern_c_memory_ref(memory), pointer.clone());
+    if let Some(hit) = CACHE.with(|cache| cache.borrow().get(&key).cloned()) {
+        return hit;
+    }
+    let result = canonical_memory_for_pointer_load_with_depth(memory, pointer, 0);
+    CACHE.with(|cache| cache.borrow_mut().insert(key, result.clone()));
+    result
+}
+
+/// Canonicalization keyed by an already-interned snapshot: the cache lookup
+/// hashes and compares by interned identity, with no re-interning, no
+/// structural hash, and no clone on the hit path.
+pub(super) fn canonical_memory_for_shared_pointer_load(
+    memory: &super::SharedCMemory,
+    pointer: &Pointer,
+) -> CMemory {
+    thread_local! {
+        static CACHE: std::cell::RefCell<
+            std::collections::HashMap<(super::SharedCMemory, Pointer), CMemory>,
+        > = std::cell::RefCell::new(std::collections::HashMap::new());
+    }
+    let key = (memory.clone(), pointer.clone());
     if let Some(hit) = CACHE.with(|cache| cache.borrow().get(&key).cloned()) {
         return hit;
     }
@@ -934,10 +961,17 @@ pub(super) fn memories_match_for_pointer_load_under_assumptions(
             // Inside a condition decision only the bounded resolution check
             // is safe: the general distinctness check consults `decide`,
             // whose order-fact matching resolves memory loads and re-enters
-            // this function, forming an unbounded cycle.
+            // this function, forming an unbounded cycle. Suppressing the
+            // general check weakens the search, so record a truncation: a
+            // negative answer from this weaker context must not be memoized
+            // and replayed where the full check would have run.
             pointers_proven_distinct_for_memory_resolution(&cell_pointer, pointer, assumptions)
-                || !super::assumptions::inside_condition_decision()
-                    && pointers_proven_distinct(&cell_pointer, pointer, assumptions)
+                || if super::assumptions::inside_condition_decision() {
+                    super::assumptions::note_search_truncation();
+                    false
+                } else {
+                    pointers_proven_distinct(&cell_pointer, pointer, assumptions)
+                }
         })
 }
 

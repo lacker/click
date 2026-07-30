@@ -6806,3 +6806,22 @@ fn contract_claim_rejects_caller_supplied_false_entry_fact() {
         .is_none()
     );
 }
+
+#[test]
+fn decision_memo_distinguishes_equal_shaped_fact_sets_by_content() {
+    // The decide memo is keyed by fact-set content identity. Two fact sets
+    // that answer the same condition differently must never share a memo
+    // entry, no matter how the objects are allocated or reused, and asking
+    // one right after the other (in both orders) must not leak either
+    // answer to the other.
+    let x = Bitvector32Term::Variable(Variable(1));
+    let below = ConditionTerm::signed_less_than(x.clone(), Bitvector32Term::Constant(10));
+    let assumes_true = Assumptions::new().assume_condition(below.clone(), true);
+    let assumes_false = Assumptions::new().assume_condition(below.clone(), false);
+
+    for _ in 0..2 {
+        assert_eq!(assumes_true.decide(&below), Some(true));
+        assert_eq!(assumes_false.decide(&below), Some(false));
+        assert_eq!(assumes_true.decide(&below), Some(true));
+    }
+}

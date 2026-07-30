@@ -86,7 +86,7 @@ pub(crate) fn canonical_c_memory_deep(memory: &CMemory) -> CMemory {
         > = std::cell::RefCell::new(std::collections::HashMap::new());
     }
     // Assumption-free and deterministic; keyed by interned snapshot identity.
-    let key = crate::kernel::intern_c_memory(memory.clone());
+    let key = crate::kernel::intern_c_memory_ref(memory);
     if let Some(hit) = CACHE.with(|cache| cache.borrow().get(&key).cloned()) {
         return hit;
     }

@@ -17,6 +17,7 @@ impl MemoryLoadEqualityDepthGuard {
         MEMORY_LOAD_EQUALITY_DEPTH.with(|depth| {
             let current = depth.get();
             if current >= MEMORY_LOAD_EQUALITY_DEPTH_LIMIT {
+                note_search_truncation();
                 return None;
             }
             depth.set(current + 1);
@@ -43,8 +44,14 @@ fn equality_graph_terms_match(left: &Bitvector32Term, right: &Bitvector32Term) -
         return false;
     };
     left_pointer == right_pointer
-        && canonical_memory_for_pointer_load(left_memory, left_pointer)
-            == canonical_memory_for_pointer_load(right_memory, right_pointer)
+        && (left_memory == right_memory
+            || super::reasoning::canonical_memory_for_shared_pointer_load(
+                left_memory,
+                left_pointer,
+            ) == super::reasoning::canonical_memory_for_shared_pointer_load(
+                right_memory,
+                right_pointer,
+            ))
 }
 
 thread_local! {
@@ -60,6 +67,111 @@ thread_local! {
 /// resolution.
 pub(super) fn inside_condition_decision() -> bool {
     CONDITION_DECISIONS_IN_PROGRESS.with(|in_progress| !in_progress.borrow().is_empty())
+}
+
+thread_local! {
+    static SEARCH_TRUNCATIONS: Cell<u64> = const { Cell::new(0) };
+    static DECIDE_MEMO: RefCell<std::collections::HashMap<(u64, ConditionTerm), Option<bool>>> =
+        RefCell::new(std::collections::HashMap::new());
+    static ASSUMPTIONS_MEMO_IDS: RefCell<std::collections::HashMap<Assumptions, u64>> =
+        RefCell::new(std::collections::HashMap::new());
+    static NEXT_ASSUMPTIONS_MEMO_ID: Cell<u64> = const { Cell::new(0) };
+    static EQUAL_FROM_FACTS_MEMO: RefCell<
+        std::collections::HashMap<(u64, Bitvector32Term, Bitvector32Term), bool>,
+    > = RefCell::new(std::collections::HashMap::new());
+}
+
+// The memo tables are bounded so a long verification cannot grow them without
+// limit. Ids are drawn from a never-reset counter, so clearing the intern
+// table cannot alias an old id to different contents.
+const ASSUMPTIONS_MEMO_ID_LIMIT: usize = 20_000;
+const DECIDE_MEMO_LIMIT: usize = 500_000;
+
+/// Content-derived memo identity: equal fact sets share an id, and any
+/// in-place mutation changes the contents and therefore the id, so a decision
+/// memoized under an id can never be replayed against different facts.
+fn assumptions_memo_id(assumptions: &Assumptions) -> u64 {
+    ASSUMPTIONS_MEMO_IDS.with(|ids| {
+        let mut ids = ids.borrow_mut();
+        if let Some(id) = ids.get(assumptions) {
+            return *id;
+        }
+        if ids.len() >= ASSUMPTIONS_MEMO_ID_LIMIT {
+            ids.clear();
+        }
+        let id = NEXT_ASSUMPTIONS_MEMO_ID.with(|next| {
+            let id = next.get();
+            next.set(id + 1);
+            id
+        });
+        ids.insert(assumptions.clone(), id);
+        id
+    })
+}
+
+thread_local! {
+    static ASSUMPTIONS_ID_SCOPES: RefCell<Vec<(usize, u64)>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Resolves the memo id for a fact set that is borrowed for the duration of
+/// the returned guard, skipping the content hash when an enclosing scope
+/// already resolved the same object.
+///
+/// The address comparison is sound because every recorded scope belongs to a
+/// live borrow further up the stack: while such a borrow is alive its object
+/// cannot be dropped, so an equal address is the same object with the same
+/// contents.
+struct AssumptionsIdScope {
+    id: u64,
+    pushed: bool,
+}
+
+impl AssumptionsIdScope {
+    fn enter(assumptions: &Assumptions) -> Self {
+        if let Some(id) = ambient_assumptions_memo_id(assumptions) {
+            return Self { id, pushed: false };
+        }
+        let address = assumptions as *const Assumptions as usize;
+        let id = assumptions_memo_id(assumptions);
+        ASSUMPTIONS_ID_SCOPES.with(|scopes| scopes.borrow_mut().push((address, id)));
+        Self { id, pushed: true }
+    }
+}
+
+/// The memo id for this fact set if an enclosing [`AssumptionsIdScope`]
+/// already resolved this same object, with no content hashing. Interior
+/// reasoning helpers use this so only designated entry points ever pay the
+/// hash; outside any scope they simply run unmemoized, as before memoization
+/// existed.
+fn ambient_assumptions_memo_id(assumptions: &Assumptions) -> Option<u64> {
+    let address = assumptions as *const Assumptions as usize;
+    ASSUMPTIONS_ID_SCOPES.with(|scopes| {
+        scopes
+            .borrow()
+            .iter()
+            .rev()
+            .find(|(scope_address, _)| *scope_address == address)
+            .map(|(_, id)| *id)
+    })
+}
+
+impl Drop for AssumptionsIdScope {
+    fn drop(&mut self) {
+        if self.pushed {
+            ASSUMPTIONS_ID_SCOPES.with(|scopes| {
+                scopes.borrow_mut().pop();
+            });
+        }
+    }
+}
+
+/// Records that a reasoning search was cut short by ambient thread-local
+/// state (a fuel budget, a recursion-depth guard, or an in-progress-decision
+/// cycle cut) rather than by the query itself. `decide` results computed
+/// under such a cut are path-dependent, so the decision memo must not cache
+/// a `None` whose search was truncated.
+pub(super) fn note_search_truncation() {
+    SEARCH_TRUNCATIONS.with(|count| count.set(count.get() + 1));
 }
 
 const DEFAULT_SIMP_REASONING_FUEL: usize = 300;
@@ -90,7 +202,10 @@ impl Drop for SimpReasoningFuelGuard {
 fn consume_simp_reasoning_fuel() -> bool {
     SIMP_REASONING_FUEL.with(|fuel| match fuel.get() {
         None => true,
-        Some(0) => false,
+        Some(0) => {
+            note_search_truncation();
+            false
+        }
         Some(remaining) => {
             fuel.set(Some(remaining - 1));
             true
@@ -105,6 +220,7 @@ impl SimpFactReasoningDepthGuard {
         SIMP_FACT_REASONING_DEPTH.with(|depth| {
             let current = depth.get();
             if current >= MAX_SIMP_FACT_REASONING_DEPTH {
+                note_search_truncation();
                 return None;
             }
             depth.set(current + 1);
@@ -132,6 +248,7 @@ impl ConditionDecisionGuard {
         CONDITION_DECISIONS_IN_PROGRESS.with(|in_progress| {
             let mut in_progress = in_progress.borrow_mut();
             if !in_progress.insert(condition.clone()) {
+                note_search_truncation();
                 return None;
             }
             Some(Self {
@@ -378,12 +495,61 @@ impl Assumptions {
                 .all(|proposition| self.prop_facts.contains(proposition))
     }
 
+    /// Decides a condition against this fact set, memoizing results by the
+    /// fact set's content identity.
+    ///
+    /// A `Some` answer is evidence found in the facts and stays valid no
+    /// matter how the search was pruned. A `None` computed under an ambient
+    /// truncation (fuel, depth guards, cycle cuts — see
+    /// [`note_search_truncation`]) is path-dependent and is not cached.
     pub(super) fn decide(&self, condition: &ConditionTerm) -> Option<bool> {
+        // Fuel is consumed before the memo so a fueled search keeps its
+        // step budget: memoization makes each step cheaper, not the search
+        // wider.
         if !consume_simp_reasoning_fuel() {
             return None;
         }
+        // Resolve the memo identity from an enclosing scope, or establish
+        // one when this is the outermost decision. Nested decisions on other
+        // fact sets (intrinsic decisions on fresh empty sets) run unmemoized.
+        let scope = if inside_condition_decision() {
+            None
+        } else {
+            Some(AssumptionsIdScope::enter(self))
+        };
+        let memo_id = scope
+            .as_ref()
+            .map(|scope| scope.id)
+            .or_else(|| ambient_assumptions_memo_id(self));
+        let Some(memo_id) = memo_id else {
+            let _decision_guard = ConditionDecisionGuard::enter(condition)?;
+            return self.decide_inner(condition);
+        };
+        let key = (memo_id, condition.clone());
+        if let Some(hit) = DECIDE_MEMO.with(|memo| memo.borrow().get(&key).copied()) {
+            return hit;
+        }
+        self.decide_uncached(&key, condition)
+    }
+
+    fn decide_uncached(
+        &self,
+        key: &(u64, ConditionTerm),
+        condition: &ConditionTerm,
+    ) -> Option<bool> {
         let _decision_guard = ConditionDecisionGuard::enter(condition)?;
-        self.decide_inner(condition)
+        let truncations_before = SEARCH_TRUNCATIONS.with(Cell::get);
+        let result = self.decide_inner(condition);
+        if result.is_some() || SEARCH_TRUNCATIONS.with(Cell::get) == truncations_before {
+            DECIDE_MEMO.with(|memo| {
+                let mut memo = memo.borrow_mut();
+                if memo.len() >= DECIDE_MEMO_LIMIT {
+                    memo.clear();
+                }
+                memo.insert(key.clone(), result);
+            });
+        }
+        result
     }
 
     fn decide_inner(&self, condition: &ConditionTerm) -> Option<bool> {
@@ -574,6 +740,39 @@ impl Assumptions {
             return true;
         }
 
+        // Memoized only under an enclosing id scope; this search is called
+        // from deep memory-resolution recursions where hashing the fact set
+        // per call would cost more than the search itself.
+        let memo_id = ambient_assumptions_memo_id(self);
+        let memo_key =
+            memo_id.map(|memo_id| (memo_id, left.clone(), right.clone()));
+        if let Some(memo_key) = &memo_key
+            && let Some(hit) =
+                EQUAL_FROM_FACTS_MEMO.with(|memo| memo.borrow().get(memo_key).copied())
+        {
+            return hit;
+        }
+        let result = self.bitvector_terms_equal_from_facts_uncached(left, right);
+        if let Some(memo_key) = memo_key {
+            EQUAL_FROM_FACTS_MEMO.with(|memo| {
+                let mut memo = memo.borrow_mut();
+                if memo.len() >= DECIDE_MEMO_LIMIT {
+                    memo.clear();
+                }
+                memo.insert(memo_key, result);
+            });
+        }
+        result
+    }
+
+    /// The equality-graph search behind [`Self::bitvector_terms_equal_from_facts`].
+    /// This search is pure — it consults no fuel or depth guards — so both
+    /// positive and negative results are memoizable by content identity.
+    fn bitvector_terms_equal_from_facts_uncached(
+        &self,
+        left: &Bitvector32Term,
+        right: &Bitvector32Term,
+    ) -> bool {
         let mut seen = BTreeSet::new();
         let mut stack = vec![left.clone()];
         while let Some(term) = stack.pop() {
@@ -587,9 +786,14 @@ impl Assumptions {
                 if !*value {
                     continue;
                 }
-                let (fact_left, fact_right) = match condition {
+                match condition {
                     ConditionTerm::Bitvector32Equal(fact_left, fact_right) => {
-                        (fact_left.as_ref().clone(), fact_right.as_ref().clone())
+                        if equality_graph_terms_match(fact_left, &term) {
+                            stack.push(fact_right.as_ref().clone());
+                        }
+                        if equality_graph_terms_match(fact_right, &term) {
+                            stack.push(fact_left.as_ref().clone());
+                        }
                     }
                     ConditionTerm::PointerOffsetEqual(fact_left, fact_right) => {
                         let (Some(fact_left), Some(fact_right)) = (
@@ -598,15 +802,14 @@ impl Assumptions {
                         ) else {
                             continue;
                         };
-                        (fact_left, fact_right)
+                        if equality_graph_terms_match(&fact_left, &term) {
+                            stack.push(fact_right.clone());
+                        }
+                        if equality_graph_terms_match(&fact_right, &term) {
+                            stack.push(fact_left);
+                        }
                     }
-                    _ => continue,
-                };
-                if equality_graph_terms_match(&fact_left, &term) {
-                    stack.push(fact_right.clone());
-                }
-                if equality_graph_terms_match(&fact_right, &term) {
-                    stack.push(fact_left);
+                    _ => {}
                 }
             }
         }
@@ -2886,6 +3089,9 @@ impl Assumptions {
     }
 
     pub fn proves(&self, proposition: &Proposition) -> bool {
+        // One id resolution up front so every decision this proof attempt
+        // makes shares it instead of rehashing the fact set per decision.
+        let _id_scope = AssumptionsIdScope::enter(self);
         if solve_builtin_prop(proposition) {
             return true;
         }
@@ -4449,6 +4655,7 @@ impl Assumptions {
         base: &Pointer,
         bytes: &Bitvector32Term,
     ) -> bool {
+        let _id_scope = AssumptionsIdScope::enter(self);
         if bytes
             .as_const()
             .is_some_and(|bytes| memory.access_in_bounds(base, bytes))
