@@ -379,6 +379,50 @@ int32 owned_split_buffer_pipeline(
         data[1],
         right_value
     ));
-    execute_rest();
+    step using {
+        fact read_value == data[1];
+        fact data[1] == right_value;
+        fact read_value == right_value;
+        fact 1 < owner->split;
+        fact owner->split == 2;
+        fact owner->len == length;
+        fact owner->data == data;
+        fact data[0] == left_value;
+        fact at(statement(5).entry, owner->split) == 1;
+        fact at(statement(5).exit, owner->split) == (at(statement(5).entry, owner->split) + 1);
+        fact at(statement(5).entry, 2) <= at(statement(5).entry, length);
+        fact at(statement(5).entry, separate(memory(object(owner)), memory(data[0..length])));
+        fact ignored == (owner->split + 1);
+        fact owner->len == owner->len;
+        fact owner->data == owner->data;
+        fact owner->split == (owner->split + 1);
+        fact at(statement(5).entry, owner->split) < owner->len;
+        fact at(statement(6).entry, owner->len) == at(statement(6).entry, length);
+        fact at(statement(6).entry, owner->data) == at(statement(6).entry, data);
+        fact at(statement(6).entry, data[0]) == at(statement(6).entry, left_value);
+        fact at(statement(6).entry, data[1]) == at(statement(6).entry, right_value);
+        fact at(statement(4).entry, ignored) == at(statement(4).entry, left_value);
+        fact owner->split == owner->split;
+        fact at(statement(5).entry, 1) < at(statement(5).entry, owner->len);
+        fact at(statement(5).entry, owner->len) == at(statement(5).entry, length);
+        fact at(statement(5).entry, data[0]) == at(statement(5).entry, left_value);
+        fact at(statement(5).entry, owner->data) == at(statement(5).entry, data);
+        fact at(statement(3).entry, ignored) == at(statement(3).entry, 1);
+        fact owner->data[0] == left_value;
+        fact at(statement(4).entry, owner->split) == at(statement(4).entry, 1);
+        fact at(statement(4).entry, owner->len) == at(statement(4).entry, length);
+        fact at(statement(4).entry, owner->data) == data;
+        fact at(statement(3).entry, owner->split) == 1;
+        fact at(statement(3).entry, owner->len) == length;
+        fact at(statement(3).entry, owner->data) == data;
+        fact at(statement(4).entry, owner->split) == at(statement(4).entry, owner->split);
+        fact at(statement(4).entry, owner->len) == at(statement(4).entry, owner->len);
+        fact at(statement(4).entry, data[0]) == at(statement(4).entry, left_value);
+        fact at(statement(4).entry, 1) < at(statement(4).entry, owner->len);
+        fact at(statement(5).entry, data[1]) == at(statement(5).entry, right_value);
+        fact at(statement(5).entry, owner->split) < at(statement(5).entry, owner->len);
+        fact at(statement(6).entry, owner->split) == at(statement(6).entry, 2);
+        fact at(statement(6).entry, 1) < at(statement(6).entry, owner->split);
+    }
     simp();
 }
