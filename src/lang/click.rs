@@ -2351,6 +2351,7 @@ fn verify_c0_sources_with_environment(
             } else {
                 CFunctionContractExecutionMode::VerifyLoops
             };
+            let certification_started = std::time::Instant::now();
             let contract_execution = prove_c_function_contract_execution_paths_with_environment(
                 certification_state,
                 contract_function.clone(),
@@ -2367,15 +2368,30 @@ fn verify_c0_sources_with_environment(
                 },
                 contract_execution_mode,
             );
+            if std::env::var_os("CLICK_TIMINGS").is_some() {
+                eprintln!(
+                    "click timing: contract execution {} {:.6}s",
+                    function_block.signature.name(),
+                    certification_started.elapsed().as_secs_f64(),
+                );
+            }
+            let claims_started = std::time::Instant::now();
             if contract_execution.path_count() == 0 && contract_execution.limit().is_none() {
                 return Err(ClickError::new(format!(
                     "could not certify contract for `{}`: exact symbolic execution produced no valid paths",
                     function_block.signature.name(),
                 )));
             }
-            let Some(certified_claims) =
-                c_verified_function_contract_claims(&contract_function, &contract_execution)
-            else {
+            let certified_claims =
+                c_verified_function_contract_claims(&contract_function, &contract_execution);
+            if std::env::var_os("CLICK_TIMINGS").is_some() {
+                eprintln!(
+                    "click timing: contract claims {} {:.6}s",
+                    function_block.signature.name(),
+                    claims_started.elapsed().as_secs_f64(),
+                );
+            }
+            let Some(certified_claims) = certified_claims else {
                 let detail = match c_unverified_function_contract_claims(
                     &contract_function,
                     &contract_execution,

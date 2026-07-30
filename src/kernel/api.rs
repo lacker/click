@@ -4393,23 +4393,26 @@ fn certification_proves_proposition(assumptions: &Assumptions, proposition: &Pro
         // Both sides resolve to one known constant through equality facts
         // and per-load snapshot bridging (deterministic and fuel-free).
         Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), true)
-            if assumptions.constants_known_equal_after_normalization(left, right) =>
+            if std::env::var_os("CLICK_DISABLE_CERT_ARMS").is_none()
+                && assumptions.constants_known_equal_after_normalization(left, right) =>
         {
             true
         }
         // A signed comparison whose sides both resolve to known constants
         // through equality facts and per-load snapshot bridging.
         Proposition::ConditionIs(condition, value)
-            if assumptions
-                .signed_comparison_by_constant_normalization(condition)
-                .is_some_and(|known| known == *value) =>
+            if std::env::var_os("CLICK_DISABLE_CERT_ARMS").is_none()
+                && assumptions
+                    .signed_comparison_by_constant_normalization(condition)
+                    .is_some_and(|known| known == *value) =>
         {
             true
         }
         // One side equals a recorded load spelling by an equality fact and
         // the two loads denote the same framed cell.
         Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), true)
-            if certification_proves_equality_via_load_fact(assumptions, left, right) =>
+            if std::env::var_os("CLICK_DISABLE_CERT_ARMS").is_none()
+                && certification_proves_equality_via_load_fact(assumptions, left, right) =>
         {
             true
         }
@@ -5383,23 +5386,42 @@ pub fn c_verified_function_contract_claims(
     if execution.limit().is_some() || execution.paths().is_empty() {
         return None;
     }
+    let timings = std::env::var_os("CLICK_TIMINGS").is_some();
+    let prepare_started = std::time::Instant::now();
     let paths = execution
         .paths()
         .iter()
         .map(|path| prepare_function_claim_path(function, path))
         .collect::<Result<Vec<_>, _>>()
         .ok()?;
+    if timings {
+        eprintln!(
+            "click timing: claim paths {} prepared {} in {:.6}s",
+            function.name(),
+            paths.len(),
+            prepare_started.elapsed().as_secs_f64(),
+        );
+    }
     function
         .contract_claims()
         .iter()
         .map(|claim| {
-            paths
+            let claim_started = std::time::Instant::now();
+            let holds = paths
                 .iter()
-                .all(|path| function_claim_holds_on_prepared_path(function, claim, path))
-                .then(|| CVerifiedFunctionContractClaim {
-                    function: function.clone(),
-                    key: claim.key().clone(),
-                })
+                .all(|path| function_claim_holds_on_prepared_path(function, claim, path));
+            if timings {
+                eprintln!(
+                    "click timing: claim {} {:?} {:.6}s",
+                    function.name(),
+                    claim.key(),
+                    claim_started.elapsed().as_secs_f64(),
+                );
+            }
+            holds.then(|| CVerifiedFunctionContractClaim {
+                function: function.clone(),
+                key: claim.key().clone(),
+            })
         })
         .collect()
 }

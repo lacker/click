@@ -32,6 +32,47 @@ impl Drop for MemoryLoadEqualityDepthGuard {
     }
 }
 
+/// Structural pointer equality that treats two loads of one location as
+/// equal regardless of which memory snapshot each spelling carries. Cheap:
+/// no proving, no canonicalization.
+fn pointers_equal_ignoring_memories(left: &Pointer, right: &Pointer) -> bool {
+    left.block == right.block && offsets_equal_ignoring_memories(&left.offset, &right.offset)
+}
+
+fn offsets_equal_ignoring_memories(left: &PointerOffsetTerm, right: &PointerOffsetTerm) -> bool {
+    match (left, right) {
+        (PointerOffsetTerm::Add(ll, lr), PointerOffsetTerm::Add(rl, rr)) => {
+            offsets_equal_ignoring_memories(ll, rl) && offsets_equal_ignoring_memories(lr, rr)
+        }
+        (
+            PointerOffsetTerm::Int32Scaled {
+                value: left_value,
+                byte_width: left_width,
+            },
+            PointerOffsetTerm::Int32Scaled {
+                value: right_value,
+                byte_width: right_width,
+            },
+        ) => left_width == right_width && terms_equal_ignoring_memories(left_value, right_value),
+        _ => left == right,
+    }
+}
+
+fn terms_equal_ignoring_memories(left: &Bitvector32Term, right: &Bitvector32Term) -> bool {
+    match (left, right) {
+        (
+            Bitvector32Term::MemoryLoad(_, left_pointer),
+            Bitvector32Term::MemoryLoad(_, right_pointer),
+        ) => pointers_equal_ignoring_memories(left_pointer, right_pointer),
+        (Bitvector32Term::Add(ll, lr), Bitvector32Term::Add(rl, rr))
+        | (Bitvector32Term::Subtract(ll, lr), Bitvector32Term::Subtract(rl, rr))
+        | (Bitvector32Term::Multiply(ll, lr), Bitvector32Term::Multiply(rl, rr)) => {
+            terms_equal_ignoring_memories(ll, rl) && terms_equal_ignoring_memories(lr, rr)
+        }
+        _ => left == right,
+    }
+}
+
 fn equality_graph_terms_match(left: &Bitvector32Term, right: &Bitvector32Term) -> bool {
     if left == right {
         return true;
@@ -78,6 +119,9 @@ thread_local! {
     static NEXT_ASSUMPTIONS_MEMO_ID: Cell<u64> = const { Cell::new(0) };
     static EQUAL_FROM_FACTS_MEMO: RefCell<
         std::collections::HashMap<(u64, Bitvector32Term, Bitvector32Term), bool>,
+    > = RefCell::new(std::collections::HashMap::new());
+    static CONSTANT_NORMALIZATION_MEMO: RefCell<
+        std::collections::HashMap<(u64, Bitvector32Term), Option<i64>>,
     > = RefCell::new(std::collections::HashMap::new());
 }
 
@@ -1099,6 +1143,36 @@ impl Assumptions {
     }
 
     fn signed_constant_after_equality_normalization(&self, term: &Bitvector32Term) -> Option<i64> {
+        // The walk re-resolves the same subterms across goals and claims;
+        // memoize by fact-set content identity exactly like `decide`.
+        if decide_memo_disabled() {
+            return self.signed_constant_after_equality_normalization_unmemoized(term);
+        }
+        let _scope = AssumptionsIdScope::enter(self);
+        let key = (_scope.id, term.clone());
+        if let Some(hit) =
+            CONSTANT_NORMALIZATION_MEMO.with(|memo| memo.borrow().get(&key).copied())
+        {
+            return hit;
+        }
+        let truncations_before = SEARCH_TRUNCATIONS.with(Cell::get);
+        let result = self.signed_constant_after_equality_normalization_unmemoized(term);
+        if result.is_some() || SEARCH_TRUNCATIONS.with(Cell::get) == truncations_before {
+            CONSTANT_NORMALIZATION_MEMO.with(|memo| {
+                let mut memo = memo.borrow_mut();
+                if memo.len() >= DECIDE_MEMO_LIMIT {
+                    memo.clear();
+                }
+                memo.insert(key, result);
+            });
+        }
+        result
+    }
+
+    fn signed_constant_after_equality_normalization_unmemoized(
+        &self,
+        term: &Bitvector32Term,
+    ) -> Option<i64> {
         match self.signed_constant_after_equality_normalization_inner(term, &mut BTreeSet::new()) {
             SignedConstantResolution::Known(value) => Some(value),
             SignedConstantResolution::Unknown | SignedConstantResolution::Ambiguous => None,
@@ -1112,6 +1186,18 @@ impl Assumptions {
     ) -> SignedConstantResolution {
         if let Some(value) = signed_bitvector_constant(term) {
             return SignedConstantResolution::Known(value);
+        }
+        // Subterms recur across fact paths within one walk; a memoized Known
+        // is fact evidence and stays valid however the search was pruned, so
+        // it may be reused at any depth (Unknown under an active `resolving`
+        // cycle cut is path-dependent and is only cached by the outer entry
+        // point).
+        let memo_id = ambient_assumptions_memo_id(self);
+        if let Some(memo_id) = memo_id
+            && let Some(Some(known)) = CONSTANT_NORMALIZATION_MEMO
+                .with(|memo| memo.borrow().get(&(memo_id, term.clone())).copied())
+        {
+            return SignedConstantResolution::Known(known);
         }
         if !resolving.insert(term.clone()) {
             return SignedConstantResolution::Unknown;
@@ -1198,16 +1284,33 @@ impl Assumptions {
             _ => SignedConstantResolution::Unknown,
         };
 
+        // Deep equality (with snapshot bridging) is only worth attempting on
+        // candidates that could plausibly denote this term: two loads must
+        // read the same block through offsets built from the same number of
+        // atoms, and a load never equals a non-load term through this walk
+        // except via another fact that mentions the load itself. Without the
+        // gate the walk pays a bridging search against every fact at every
+        // recursion level.
+        let plausibly_equal = |candidate: &Bitvector32Term| match (term, candidate) {
+            (
+                Bitvector32Term::MemoryLoad(_, term_pointer),
+                Bitvector32Term::MemoryLoad(_, candidate_pointer),
+            ) => pointers_equal_ignoring_memories(term_pointer, candidate_pointer),
+            (Bitvector32Term::MemoryLoad(_, _), _) | (_, Bitvector32Term::MemoryLoad(_, _)) => {
+                false
+            }
+            _ => true,
+        };
         for (condition, value) in &self.condition_facts {
             let (ConditionTerm::Bitvector32Equal(left, right), true) = (condition, value) else {
                 continue;
             };
-            if self.bitvector_terms_proven_equal(term, left) {
+            if plausibly_equal(left) && self.bitvector_terms_proven_equal(term, left) {
                 result = result.merge(
                     self.signed_constant_after_equality_normalization_inner(right, resolving),
                 );
             }
-            if self.bitvector_terms_proven_equal(term, right) {
+            if plausibly_equal(right) && self.bitvector_terms_proven_equal(term, right) {
                 result = result.merge(
                     self.signed_constant_after_equality_normalization_inner(left, resolving),
                 );
@@ -1215,6 +1318,17 @@ impl Assumptions {
         }
 
         resolving.remove(term);
+        if let SignedConstantResolution::Known(known) = result
+            && let Some(memo_id) = memo_id
+        {
+            CONSTANT_NORMALIZATION_MEMO.with(|memo| {
+                let mut memo = memo.borrow_mut();
+                if memo.len() >= DECIDE_MEMO_LIMIT {
+                    memo.clear();
+                }
+                memo.insert((memo_id, term.clone()), Some(known));
+            });
+        }
         result
     }
 
