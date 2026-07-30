@@ -1,7 +1,7 @@
 # split-buffer perf: last two SLOW audit findings
 
 Status: open
-Claimed:
+Claimed: worktree-agent-aa455ca39fbbaf91c 2026-07-30
 
 Scope: get the full `click-audit --keep-going examples` run to zero
 SLOW findings by cutting owned_split_buffer_pipeline's ~7.7 s unit
