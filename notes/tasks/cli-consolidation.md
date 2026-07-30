@@ -1,7 +1,7 @@
 # CLI consolidation: shared helpers, whole-file verify, robust profile parsing
 
-Status: open
-Claimed:
+Status: in progress
+Claimed: worktree-agent-a861581d5f93ae923 2026-07-30
 
 Scope (design-review item 12 residue + honorable mention; one tooling
 agent can own all three):
