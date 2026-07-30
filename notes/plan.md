@@ -81,8 +81,10 @@ Quarantine entries are explicit and temporary; shrink the lists.
 - **mdtests** (`tests/mdtests.rs` QUARANTINED, 6): four item-7 entries
   (bubble_pass3, bubble_sort3, composite_owner_buffer_field_dependent,
   fill_tail_keeps_first) plus the two named-memory-states residue entries
-  (vector_fill, field_derived). Re-test the four item-7 entries against
-  current master — recent certifier gains may have moved them. The two
+  (vector_fill, field_derived). Re-tested 2026-07-30 after the
+  decide-memo and certification work: all four item-7 entries still
+  fail (bubble_pass3/bubble_sort3 in the invariant closer — same
+  missing-ForAll-path-goal shape as owned-vector's vector_fill). The two
   residue entries are blocked on the named-memory-states arc (below);
   don't burn time re-bridging them (see canonical-memory.md for the
   exhaustion evidence and branch `claude/forall-extension-wip`).
