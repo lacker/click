@@ -3114,6 +3114,138 @@ fn forall_loadable_covered_by_fact(assumptions: &Assumptions, goal: &Proposition
     loadable_covered_by_fact(&premise_assumptions, conclusion)
 }
 
+/// Certifies a quantified single-byte loadability obligation from an assumed
+/// quantified fact that constrains a load of the same address under premises
+/// the obligation also assumes. Facts enter assumptions only through
+/// safety-checked lowering, so a stated fact about `load(p)` witnesses that
+/// the first byte at `p` is loadable.
+fn quantified_load_fact_certifies_loadable(assumptions: &Assumptions, goal: &Proposition) -> bool {
+    fn implication_parts(body: &Proposition) -> (Vec<Proposition>, &Proposition) {
+        let mut premises = Vec::new();
+        let mut conclusion = body;
+        while let Proposition::Implies(premise, rest) = conclusion {
+            proposition_conjuncts(premise, &mut premises);
+            conclusion = rest.as_ref();
+        }
+        (premises, conclusion)
+    }
+    fn collect_load_pointers(term: &Bitvector32Term, pointers: &mut Vec<Pointer>) {
+        match term {
+            Bitvector32Term::MemoryLoad(_, pointer) => pointers.push(pointer.as_ref().clone()),
+            Bitvector32Term::Add(left, right)
+            | Bitvector32Term::Subtract(left, right)
+            | Bitvector32Term::Multiply(left, right)
+            | Bitvector32Term::Divide(left, right) => {
+                collect_load_pointers(left, pointers);
+                collect_load_pointers(right, pointers);
+            }
+            _ => {}
+        }
+    }
+
+    let Proposition::ForAll { var, sort, body } = goal else {
+        return false;
+    };
+    let (goal_premises, conclusion) = implication_parts(body);
+    let Proposition::CMemoryLoadable { base, bytes, .. } = conclusion else {
+        return false;
+    };
+    // A load of any width witnesses its first byte.
+    if bytes.as_const() != Some(1) {
+        return false;
+    }
+    assumptions.prop_facts.iter().any(|fact| {
+        let Proposition::ForAll {
+            var: fact_var,
+            sort: fact_sort,
+            body: fact_body,
+        } = fact
+        else {
+            return false;
+        };
+        if fact_sort != sort {
+            return false;
+        }
+        let renamed = substitute_bitvector_variable_in_proposition(
+            fact_body,
+            *fact_var,
+            &Bitvector32Term::Variable(*var),
+        );
+        let (fact_premises, fact_conclusion) = implication_parts(&renamed);
+        // The fact applies whenever its premises hold, so they must be among
+        // the obligation's assumed premises.
+        if !fact_premises.iter().all(|fact_premise| {
+            goal_premises.iter().any(|goal_premise| {
+                goal_premise == fact_premise
+                    || propositions_alpha_equivalent(fact_premise, goal_premise)
+            })
+        }) {
+            return false;
+        }
+        condition_fact_mentions_load_of(fact_conclusion, base)
+    })
+}
+
+/// True when a condition fact constrains a load of exactly this pointer, so
+/// the fact witnesses that the pointer's first byte is loadable.
+fn condition_fact_mentions_load_of(fact: &Proposition, base: &Pointer) -> bool {
+    fn collect_load_pointers(term: &Bitvector32Term, pointers: &mut Vec<Pointer>) {
+        match term {
+            Bitvector32Term::MemoryLoad(_, pointer) => pointers.push(pointer.as_ref().clone()),
+            Bitvector32Term::Add(left, right)
+            | Bitvector32Term::Subtract(left, right)
+            | Bitvector32Term::Multiply(left, right)
+            | Bitvector32Term::Divide(left, right) => {
+                collect_load_pointers(left, pointers);
+                collect_load_pointers(right, pointers);
+            }
+            _ => {}
+        }
+    }
+    let Proposition::ConditionIs(condition, _) = fact else {
+        return false;
+    };
+    let mut load_pointers = Vec::new();
+    match condition {
+        ConditionTerm::Bitvector32SignedLessThan(left, right)
+        | ConditionTerm::Bitvector32SignedLessEqual(left, right)
+        | ConditionTerm::Bitvector32SignedGreaterThan(left, right)
+        | ConditionTerm::Bitvector32SignedGreaterEqual(left, right)
+        | ConditionTerm::Bitvector32Equal(left, right)
+        | ConditionTerm::Bitvector32SignedAddOverflows(left, right)
+        | ConditionTerm::Bitvector32SignedSubtractOverflows(left, right)
+        | ConditionTerm::Bitvector32SignedMultiplyOverflows(left, right)
+        | ConditionTerm::Bitvector32SignedDivideOverflows(left, right)
+        | ConditionTerm::Bitvector32SignedShiftLeftOverflows(left, right) => {
+            collect_load_pointers(left, &mut load_pointers);
+            collect_load_pointers(right, &mut load_pointers);
+        }
+        ConditionTerm::PointerOffsetEqual(_, _)
+        | ConditionTerm::PointerEqual(_, _)
+        | ConditionTerm::Constant(_)
+        | ConditionTerm::Variable(_) => {}
+    }
+    load_pointers.iter().any(|pointer| {
+        canonicalize_pointer_loads(pointer, 0) == canonicalize_pointer_loads(base, 0)
+    })
+}
+
+/// The leaf form of the load-fact witness: a single-byte loadability goal is
+/// certified by any assumed condition fact constraining a load of the same
+/// pointer.
+fn load_fact_certifies_loadable(assumptions: &Assumptions, goal: &Proposition) -> bool {
+    let Proposition::CMemoryLoadable { base, bytes, .. } = goal else {
+        return false;
+    };
+    if bytes.as_const() != Some(1) {
+        return false;
+    }
+    assumptions
+        .pure_facts()
+        .iter()
+        .any(|fact| condition_fact_mentions_load_of(fact, base))
+}
+
 /// Certifies an existential requirement side-obligation (typically the
 /// loadability safety of an existential requirement body): the witness of an
 /// assumed existential over the same sort supplies the bound variable, its
@@ -3156,6 +3288,11 @@ fn certification_proves_exists_obligation_from_facts(
         goals.iter().all(|goal| {
             certification_proves_proposition(&witness_assumptions, goal)
                 || loadable_covered_by_fact(&witness_assumptions, goal)
+                || quantified_load_fact_certifies_loadable(&witness_assumptions, goal)
+                || load_fact_certifies_loadable(&witness_assumptions, goal)
+                // Nested existentials recurse: the inner obligation matches
+                // an inner assumed existential the same way.
+                || certification_proves_exists_obligation_from_facts(&witness_assumptions, goal)
         })
     })
 }
