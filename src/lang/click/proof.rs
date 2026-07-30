@@ -12652,8 +12652,28 @@ fn certify_outcome_simp_have(
             "`{claim_label}` path {path_index}, tactic {tactic_index}: smart `simp` could not structurally lower its surface goal: {error}"
         ))
     })?;
+    // The claim goal may have been lowered while `unfold(...)` was active,
+    // so compare against the re-lowered goal in the same unfolded spelling.
+    let lowered_proposition = if replay.unfolded_predicates.is_empty() {
+        lowered.proposition.clone()
+    } else {
+        unfold_predicates_in_proposition(
+            predicate_environment,
+            click_function_environment,
+            &replay.unfolded_predicates,
+            &lowered.proposition,
+            &assumptions_from_propositions(available),
+        )
+        .map_err(|message| {
+            ClickError::new(format!(
+                "`{claim_label}` path {path_index}, tactic {tactic_index}: smart `simp` could not unfold its re-lowered goal: {message}"
+            ))
+        })?
+    };
     if normalize_direct_atomic_memory_loads(&lowered.proposition)
         != normalize_direct_atomic_memory_loads(goal)
+        && normalize_direct_atomic_memory_loads(&lowered_proposition)
+            != normalize_direct_atomic_memory_loads(goal)
     {
         return Err(ClickError::new(format!(
             "`{claim_label}` path {path_index}, tactic {tactic_index}: smart `simp` surface goal lowered to a different kernel proposition"
@@ -13046,9 +13066,23 @@ fn certify_outcome_simp_have(
         ))
     })?;
     if replayed_goal != *goal {
-        return Err(ClickError::new(format!(
-            "`{claim_label}` path {path_index}, tactic {tactic_index}: smart `simp` certificate replayed a different goal"
-        )));
+        // The claim goal may be spelled with `unfold(...)` active while the
+        // replay produces the folded predicate; both name one proposition by
+        // the predicate's definition.
+        let replayed_unfolded = unfold_predicates_in_proposition(
+            predicate_environment,
+            click_function_environment,
+            &replay.unfolded_predicates,
+            &replayed_goal,
+            &assumptions_from_propositions(&replay_available),
+        );
+        if replay.unfolded_predicates.is_empty()
+            || replayed_unfolded.as_ref() != Ok(goal)
+        {
+            return Err(ClickError::new(format!(
+                "`{claim_label}` path {path_index}, tactic {tactic_index}: smart `simp` certificate replayed a different goal"
+            )));
+        }
     }
     surface_tactics.push(surface_tactic);
     Ok(surface_tactics)
