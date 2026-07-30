@@ -758,7 +758,20 @@ fn memory_havoc_markers(memory: &CMemory) -> impl Iterator<Item = (&PointerBlock
 /// are global snapshot identities, so they remain observable at every
 /// non-local pointer until an explicit effect fact frames that pointer.
 pub(super) fn canonical_memory_for_pointer_load(memory: &CMemory, pointer: &Pointer) -> CMemory {
-    canonical_memory_for_pointer_load_with_depth(memory, pointer, 0)
+    thread_local! {
+        static CACHE: std::cell::RefCell<
+            std::collections::HashMap<(super::SharedCMemory, Pointer), CMemory>,
+        > = std::cell::RefCell::new(std::collections::HashMap::new());
+    }
+    // Canonicalization is assumption-free and deterministic, so memoize by
+    // interned snapshot identity; the intern also dedups the key storage.
+    let key = (super::intern_c_memory(memory.clone()), pointer.clone());
+    if let Some(hit) = CACHE.with(|cache| cache.borrow().get(&key).cloned()) {
+        return hit;
+    }
+    let result = canonical_memory_for_pointer_load_with_depth(memory, pointer, 0);
+    CACHE.with(|cache| cache.borrow_mut().insert(key, result.clone()));
+    result
 }
 
 fn canonical_memory_for_pointer_load_with_depth(

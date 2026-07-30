@@ -581,7 +581,19 @@ pub(crate) fn rewrite_condition_through_certified_stores(
 /// cells resolve to their values and remaining loads use the canonical
 /// memory for their pointer.
 pub(super) fn canonicalize_atomic_loads(term: &Bitvector32Term) -> Bitvector32Term {
-    canonicalize_atomic_loads_with_depth(term, 0)
+    thread_local! {
+        static CACHE: std::cell::RefCell<
+            std::collections::HashMap<Bitvector32Term, Bitvector32Term>,
+        > = std::cell::RefCell::new(std::collections::HashMap::new());
+    }
+    // Assumption-free and deterministic; term hashing is cheap now that
+    // embedded snapshots hash by interned identity.
+    if let Some(hit) = CACHE.with(|cache| cache.borrow().get(term).cloned()) {
+        return hit;
+    }
+    let result = canonicalize_atomic_loads_with_depth(term, 0);
+    CACHE.with(|cache| cache.borrow_mut().insert(term.clone(), result.clone()));
+    result
 }
 
 const CANONICAL_LOAD_DEPTH_LIMIT: usize = 24;
