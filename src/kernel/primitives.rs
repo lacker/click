@@ -2810,9 +2810,21 @@ impl ResourceContext {
         if self.facts.contains(fact) {
             return true;
         }
-        self.facts
+        if self
+            .facts
             .iter()
             .any(|available| resource_fact_entails(available, fact, assumptions))
+        {
+            return true;
+        }
+        // A required fact may span several adjacent held resources; merge
+        // them and retry once.
+        let normalized = self.clone().normalized(assumptions);
+        normalized.facts.len() < self.facts.len()
+            && normalized
+                .facts
+                .iter()
+                .any(|available| resource_fact_entails(available, fact, assumptions))
     }
 
     pub fn is_empty(&self) -> bool {

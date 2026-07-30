@@ -2973,7 +2973,7 @@ fn split_additive_constant(term: &Bitvector32Term) -> (Bitvector32Term, u32) {
 /// Certifies a loadability goal from an assumed wider loadable fact over the
 /// same memory snapshot: the goal's base must sit at a provably in-bounds
 /// byte offset within the fact's span.
-fn loadable_covered_by_fact(assumptions: &Assumptions, goal: &Proposition) -> bool {
+pub(super) fn loadable_covered_by_fact(assumptions: &Assumptions, goal: &Proposition) -> bool {
     let Proposition::CMemoryLoadable {
         memory,
         base,
@@ -2991,7 +2991,17 @@ fn loadable_covered_by_fact(assumptions: &Assumptions, goal: &Proposition) -> bo
         else {
             return false;
         };
-        if fact_memory != memory || fact_base.block != base.block {
+        if fact_base.block != base.block {
+            return false;
+        }
+        // Loadability of a covering span transports across snapshot spelling
+        // differences and recorded write effects just like an exact-range
+        // fact does.
+        if fact_memory != memory
+            && !crate::kernel::reasoning::memory_range_still_available(fact_memory, memory, base)
+            && !c_memories_canonically_equal(fact_memory, memory)
+            && !c_memories_connected_by_effects(fact_memory, memory, assumptions)
+        {
             return false;
         }
         let Some(delta_bytes) = pointer_offset_byte_delta(&base.offset, &fact_base.offset) else {
@@ -3032,7 +3042,21 @@ fn loadable_covered_by_fact(assumptions: &Assumptions, goal: &Proposition) -> bo
                     true,
                 ))
         };
-        starts_in_bounds && ends_in_bounds
+        if starts_in_bounds && ends_in_bounds {
+            return true;
+        }
+        // Byte-scaled bounds can overflow the arithmetic the order prover
+        // handles; retry at element granularity when the goal width folds to
+        // a constant.
+        assumptions
+            .simplify_bitvector_under_assumptions(bytes)
+            .as_const()
+            .and_then(|byte_width| u32::try_from(byte_width).ok())
+            .is_some_and(|byte_width| {
+                assumptions.proves_loadable_cell_from_region(
+                    fact_base, fact_bytes, base, byte_width,
+                )
+            })
     })
 }
 
@@ -4608,6 +4632,8 @@ fn prepare_function_claim_path(
         .set_typed("result".to_string(), value.clone(), function.return_type());
     if let Some(obligation) = path.obligations().iter().find(|obligation| {
         let proved = certification_proves_proposition(&assumptions, obligation.proposition())
+            || loadable_covered_by_fact(&assumptions, obligation.proposition())
+            || forall_loadable_covered_by_fact(&assumptions, obligation.proposition())
             || contract_endpoints_certify_loadability(
                 &entry_state,
                 &entry_resources,

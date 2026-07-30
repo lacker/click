@@ -4834,11 +4834,13 @@ fn certified_transitions_from_execution(
                                 proposition,
                                 Proposition::CResourceContains { .. }
                                     | Proposition::CResourceSeparate { .. }
+                                    | Proposition::CMemoryLoadable { .. }
                             ) {
-                                // Resource containment and separation are
-                                // internal evaluator predicates like the
-                                // no-overflow conditions above; derive them
-                                // atomically over the same explicit set.
+                                // Resource containment, separation, and
+                                // loadability coverage are internal evaluator
+                                // predicates like the no-overflow conditions
+                                // above; derive them atomically over the same
+                                // explicit set.
                                 assumptions_from_propositions(pure_facts)
                                     .derive_atomic_proposition(proposition)
                             } else {

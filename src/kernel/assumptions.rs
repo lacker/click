@@ -3248,6 +3248,16 @@ impl Assumptions {
                                 )
                         }
                     })
+                    // A goal subrange of a wider assumed loadable span is
+                    // loadable when the bounds arithmetic certifies coverage.
+                    || super::api::loadable_covered_by_fact(self, proposition)
+                    // Symbolic byte counts often fold to a constant width,
+                    // unlocking the element-index coverage rules.
+                    || {
+                        let simplified = self.simplify_bitvector_under_assumptions(bytes);
+                        simplified != *bytes
+                            && self.proves_memory_loadable(memory, base, &simplified)
+                    }
             }
             Proposition::CMemoryCanStore {
                 memory,
