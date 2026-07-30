@@ -861,7 +861,7 @@ const MAX_SCALAR_LOAD_BYTES: i64 = 4;
 
 /// Splits a pointer offset into its non-constant atoms and total constant
 /// byte shift, folding constants nested inside scaled indices.
-fn offset_atoms_and_constant(offset: &PointerOffsetTerm) -> (Vec<PointerOffsetTerm>, i64) {
+pub(super) fn offset_atoms_and_constant(offset: &PointerOffsetTerm) -> (Vec<PointerOffsetTerm>, i64) {
     fn collect(offset: &PointerOffsetTerm, atoms: &mut Vec<PointerOffsetTerm>, shift: &mut i64) {
         match offset {
             PointerOffsetTerm::Constant(value) => *shift += *value,

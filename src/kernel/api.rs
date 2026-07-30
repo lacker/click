@@ -4164,6 +4164,190 @@ pub(crate) fn c_condition_fact_with_canonical_loads(fact: &Proposition) -> Propo
     }
 }
 
+/// Splits both offsets into non-constant atoms plus a constant shift,
+/// resolves atoms whose scaled values equality facts pin to a constant, and
+/// requires the remaining atoms to match pairwise. Runs the bounded constant
+/// resolver once per atom at top level, never inside the resolution
+/// recursion.
+fn pointer_offsets_equal_with_resolved_atoms(
+    left: &PointerOffsetTerm,
+    right: &PointerOffsetTerm,
+    assumptions: &Assumptions,
+) -> bool {
+    let resolve = |offset: &PointerOffsetTerm| {
+        let (atoms, mut constant) = super::reasoning::offset_atoms_and_constant(offset);
+        let mut unresolved = Vec::new();
+        for atom in atoms {
+            if let PointerOffsetTerm::Int32Scaled { value, byte_width } = &atom
+                && let Some(known) = assumptions.known_signed_constant_after_normalization(value)
+            {
+                constant += known * byte_width;
+                continue;
+            }
+            unresolved.push(atom);
+        }
+        (unresolved, constant)
+    };
+    let (left_atoms, left_constant) = resolve(left);
+    let (mut right_atoms, right_constant) = resolve(right);
+    if left_constant != right_constant {
+        return false;
+    }
+    // Scaled values compare through snapshot-bridged load equality: two
+    // spellings of one loaded field, or a recorded PointerOffsetEqual fact
+    // whose sides bridge to the compared values.
+    let scaled_values_bridged = |left: &Bitvector32Term, right: &Bitvector32Term| {
+        left == right
+            || bitvector_terms_proven_equal_for_memory_resolution(left, right, assumptions)
+            || assumptions.memory_loads_proven_equal(left, right)
+    };
+    let atoms_match = |left: &PointerOffsetTerm, right: &PointerOffsetTerm| {
+        if left == right
+            || assumptions.exact_condition_value(&ConditionTerm::pointer_offset_equal(
+                left.clone(),
+                right.clone(),
+            )) == Some(true)
+            || assumptions.exact_condition_value(&ConditionTerm::pointer_offset_equal(
+                right.clone(),
+                left.clone(),
+            )) == Some(true)
+        {
+            return true;
+        }
+        let (
+            PointerOffsetTerm::Int32Scaled {
+                value: left_value,
+                byte_width: left_width,
+            },
+            PointerOffsetTerm::Int32Scaled {
+                value: right_value,
+                byte_width: right_width,
+            },
+        ) = (left, right)
+        else {
+            return false;
+        };
+        if left_width != right_width {
+            return false;
+        }
+        if scaled_values_bridged(left_value, right_value) {
+            return true;
+        }
+        // Walk the PointerOffsetEqual fact graph transitively: each edge's
+        // endpoints connect to the frontier through snapshot-bridged load
+        // equality, so a chain like right->data == left->data == data closes.
+        let edges = assumptions
+            .condition_facts
+            .iter()
+            .filter(|(_, value)| **value)
+            .filter_map(|(condition, _)| {
+                let ConditionTerm::PointerOffsetEqual(fact_left, fact_right) = condition else {
+                    return None;
+                };
+                let (
+                    PointerOffsetTerm::Int32Scaled {
+                        value: a_value,
+                        byte_width: a_width,
+                    },
+                    PointerOffsetTerm::Int32Scaled {
+                        value: b_value,
+                        byte_width: b_width,
+                    },
+                ) = (fact_left.as_ref(), fact_right.as_ref())
+                else {
+                    return None;
+                };
+                (a_width == left_width && b_width == left_width)
+                    .then_some((a_value.as_ref().clone(), b_value.as_ref().clone()))
+            })
+            .collect::<Vec<_>>();
+        let mut frontier = vec![left_value.as_ref().clone()];
+        let mut visited = Vec::new();
+        while let Some(current) = frontier.pop() {
+            if visited.contains(&current) {
+                continue;
+            }
+            if scaled_values_bridged(&current, right_value) {
+                return true;
+            }
+            for (a_value, b_value) in &edges {
+                if scaled_values_bridged(&current, a_value) {
+                    frontier.push(b_value.clone());
+                }
+                if scaled_values_bridged(&current, b_value) {
+                    frontier.push(a_value.clone());
+                }
+            }
+            visited.push(current);
+        }
+        false
+    };
+    for atom in &left_atoms {
+        let Some(position) = right_atoms
+            .iter()
+            .position(|candidate| atoms_match(atom, candidate))
+        else {
+            return false;
+        };
+        right_atoms.remove(position);
+    }
+    right_atoms.is_empty()
+}
+
+/// Certifies `term == load` by walking one equality fact of `term` to a load
+/// spelling and comparing the two loads: same block, offsets equal with
+/// constant-resolved atoms, and the loaded cell provably unchanged between
+/// the two snapshots.
+fn certification_proves_equality_via_load_fact(
+    assumptions: &Assumptions,
+    left: &Bitvector32Term,
+    right: &Bitvector32Term,
+) -> bool {
+    for (goal_term, goal_load) in [(left, right), (right, left)] {
+        let Bitvector32Term::MemoryLoad(goal_memory, goal_pointer) = goal_load else {
+            continue;
+        };
+        for (condition, value) in &assumptions.condition_facts {
+            if !*value {
+                continue;
+            }
+            let ConditionTerm::Bitvector32Equal(fact_left, fact_right) = condition else {
+                continue;
+            };
+            for (fact_term, fact_load) in [(fact_left, fact_right), (fact_right, fact_left)] {
+                if fact_term.as_ref() != goal_term {
+                    continue;
+                }
+                let Bitvector32Term::MemoryLoad(fact_memory, fact_pointer) = fact_load.as_ref()
+                else {
+                    continue;
+                };
+                if fact_pointer.block != goal_pointer.block {
+                    continue;
+                }
+                if !pointer_offsets_equal_with_resolved_atoms(
+                    &fact_pointer.offset,
+                    &goal_pointer.offset,
+                    assumptions,
+                ) {
+                    continue;
+                }
+                if c_memory_load_is_unchanged(fact_memory, goal_memory, goal_pointer, assumptions)
+                    || c_memory_load_is_unchanged(
+                        fact_memory,
+                        goal_memory,
+                        fact_pointer,
+                        assumptions,
+                    )
+                {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
 fn certification_proves_proposition(assumptions: &Assumptions, proposition: &Proposition) -> bool {
     if assumptions.proves_exact(proposition) {
         return true;
@@ -4200,6 +4384,13 @@ fn certification_proves_proposition(assumptions: &Assumptions, proposition: &Pro
         // and per-load snapshot bridging (deterministic and fuel-free).
         Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), true)
             if assumptions.constants_known_equal_after_normalization(left, right) =>
+        {
+            true
+        }
+        // One side equals a recorded load spelling by an equality fact and
+        // the two loads denote the same framed cell.
+        Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), true)
+            if certification_proves_equality_via_load_fact(assumptions, left, right) =>
         {
             true
         }

@@ -2241,6 +2241,15 @@ impl Assumptions {
         left == right
     }
 
+    /// The unique constant this term resolves to through equality facts
+    /// (with per-load snapshot bridging), if any. Bounded and fuel-free.
+    pub(super) fn known_signed_constant_after_normalization(
+        &self,
+        term: &Bitvector32Term,
+    ) -> Option<i64> {
+        self.signed_constant_after_equality_normalization(term)
+    }
+
     fn order_path_connection_for_simp(
         &self,
         left: &Bitvector32Term,
