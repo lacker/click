@@ -1,10 +1,9 @@
 # notes/
 
-Untracked short-term working documents: design notes, handoffs, reviews,
-plans in flight. Nothing here is part of the repo's durable documentation —
-each file should eventually be deleted or absorbed into `docs/`, `todo.md`,
-or an issue. Kept untracked on purpose so `git status` keeps nagging about
-whatever is still open.
+Short-term working documents: design notes, handoffs, reviews, plans in
+flight. Nothing here is part of the repo's durable documentation — each
+file should eventually be deleted or absorbed into `docs/`, `todo.md`, or
+an issue.
 
 Current contents:
 
