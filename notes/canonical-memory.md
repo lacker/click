@@ -156,7 +156,8 @@ premise-expression search in the postcondition lowering would need to
 synthesize At spellings the way the loadability-obligation block does);
 (c) route these claims through the statement-transition layer (StepUsing
 carries certified prerequisites without spelling them). (b) is the most
-consistent with the existing design. A synthesized-TransportUsing fallback
+consistent with the existing design. **Owner picked (b) 2026-07-30:
+everything gets a surface spelling.** A synthesized-TransportUsing fallback
 for survives-writes goals was implemented and reverted: these ensures are
 post-store facts, not transported facts, so it never fired.
 

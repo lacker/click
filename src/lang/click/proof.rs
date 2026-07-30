@@ -240,16 +240,29 @@ fn check_atomic_derivation_goal(
         .map(normalize_direct_atomic_memory_loads)
         .collect::<Vec<_>>();
     let normalized_target = normalize_direct_atomic_memory_loads(&target);
+    // Try the premises as spelled before normalizing: snapshot-bridging
+    // derivations can depend on the recorded load spellings that
+    // normalization rewrites.
+    let raw_assumptions = assumptions_from_propositions(&premises);
+    let raw_derivation = match tactic {
+        ProofTactic::Derive(_) => raw_assumptions
+            .derive_atomic_proposition(&target)
+            .or_else(|| raw_assumptions.derive_proposition(&target)),
+        ProofTactic::Calculate(_) => raw_assumptions
+            .derive_simp_atomic_proposition(&target)
+            .or_else(|| raw_assumptions.derive_simp_proposition(&target)),
+        _ => return Err("not a derivation tactic".to_string()),
+    };
     let assumptions = assumptions_from_propositions(&normalized_premises);
-    let derivation = match tactic {
+    let derivation = raw_derivation.or_else(|| match tactic {
         ProofTactic::Derive(_) => assumptions
             .derive_atomic_proposition(&normalized_target)
             .or_else(|| assumptions.derive_proposition(&normalized_target)),
         ProofTactic::Calculate(_) => assumptions
             .derive_simp_atomic_proposition(&normalized_target)
             .or_else(|| assumptions.derive_simp_proposition(&normalized_target)),
-        _ => return Err("not a derivation tactic".to_string()),
-    };
+        _ => None,
+    });
     // Premises recorded at different program points can spell the same load
     // through different snapshots; retry with canonical loads so the chain
     // unifies.
@@ -12482,6 +12495,137 @@ fn lower_outcome_simp_tactic(
             premises: surface_premises,
         }))
     } else {
+        // Effect-backed postconditions derive from kernel-certified facts
+        // (statement effect facts and certified store equations). Everything
+        // gets a surface spelling: express each premise the minimized
+        // derivation needs, synthesizing an `at(point, ...)` spelling from a
+        // recorded program-point state when no ambient fact carries it.
+        let mut certified_context = available.to_vec();
+        for fact in &replay.effect_facts {
+            if !certified_context.contains(fact.proposition()) {
+                certified_context.push(fact.proposition().clone());
+            }
+        }
+        for equation in crate::kernel::certified_store_equations(&replay.effect_facts) {
+            if !certified_context.contains(&equation) {
+                certified_context.push(equation);
+            }
+        }
+        let minimized = minimal_proposition_derivation(goal, &certified_context)
+            .map(|derivation| (derivation, false))
+            .or_else(|| {
+                minimal_simp_proposition_derivation(goal, &certified_context)
+                    .map(|derivation| (derivation, true))
+            });
+        if let Some((derivation, for_simp)) = minimized {
+            let entry_point = ProgramPointRef {
+                region: CodeRegionRef::Function,
+                kind: ProgramPointKind::Entry,
+            };
+            let mut spelled_premises: Vec<ClickProposition> = Vec::new();
+            let mut kernel_premises: Vec<Proposition> = Vec::new();
+            let mut complete = true;
+            'premises: for required in derivation.context_premises() {
+                // A recorded lowering round-trips exactly: replay resolves
+                // the spelling through the same map before re-lowering.
+                if let Ok(surface) = replay.surface_propositions.surface(&required)
+                    && replay
+                        .surface_propositions
+                        .available_kernel(surface, &certified_context)
+                        == Some(&required)
+                {
+                    if !kernel_premises.contains(&required) {
+                        kernel_premises.push(required.clone());
+                        spelled_premises.push(surface.clone());
+                    }
+                    continue;
+                }
+                if let Some(surface) = available.iter().find_map(|fact| {
+                    if !exact_fact_contains_conjunct(fact, &required) {
+                        return None;
+                    }
+                    let surface = checked_surface_fact_at_outcome(
+                        replay,
+                        fact,
+                        SurfaceFactMatch::ReplayEquivalent,
+                        available,
+                        parameters,
+                        arguments,
+                        pre_state,
+                        post_state,
+                        result,
+                        predicate_environment,
+                        click_function_environment,
+                    )
+                    .ok()?;
+                    // The spelling must lower back to the exact fact the
+                    // derivation used, so generation and replay derive from
+                    // identical premises.
+                    (check(&surface).ok()? == required).then_some(surface)
+                }) {
+                    if !kernel_premises.contains(&required) {
+                        kernel_premises.push(required.clone());
+                        spelled_premises.push(surface);
+                    }
+                    continue;
+                }
+                let candidate_states = std::iter::once((&entry_point, pre_state)).chain(
+                    replay
+                        .program_point_states
+                        .iter()
+                        .rev()
+                        .map(|(point, state)| (point, state)),
+                );
+                for (point, point_state) in candidate_states {
+                    let Some(core) = synthesize_surface_proposition(
+                        &required,
+                        parameters,
+                        arguments,
+                        point_state,
+                    ) else {
+                        continue;
+                    };
+                    let surface = ClickProposition::At {
+                        selector: VisitSelector::ProgramPoint(point.clone()),
+                        proposition: Box::new(core),
+                    };
+                    if check(&surface).is_ok_and(|lowered| lowered == required) {
+                        if !kernel_premises.contains(&required) {
+                            kernel_premises.push(required.clone());
+                            spelled_premises.push(surface);
+                        }
+                        continue 'premises;
+                    }
+                }
+                complete = false;
+                break;
+            }
+            if complete && !spelled_premises.is_empty() {
+                let derive = ProofDerive {
+                    proposition: surface_goal.clone(),
+                    premises: spelled_premises,
+                };
+                let candidate = if for_simp {
+                    ProofTactic::Calculate(derive)
+                } else {
+                    ProofTactic::Derive(derive)
+                };
+                // Self-check with exactly the check the tactic replay runs,
+                // against the replay context (which carries the certified
+                // store equations).
+                if check_atomic_derivation_goal(
+                    &candidate,
+                    goal.clone(),
+                    kernel_premises,
+                    goal,
+                    &certified_context,
+                )
+                .is_ok()
+                {
+                    return Ok(candidate);
+                }
+            }
+        }
         Err(ClickError::new(format!(
             "expressible path facts do not replay the postcondition derivation: {goal:?}\n  surface premises: {}",
             surface_premises
