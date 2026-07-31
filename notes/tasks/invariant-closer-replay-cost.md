@@ -1,7 +1,7 @@
 # Invariant-closer replay: 65 s SIMPLE, 130x over budget
 
-Status: open
-Claimed:
+Status: in progress
+Claimed: worktree-agent-a9cc86becdb8e01de, 2026-07-31
 
 `c_loop_invariants_hold_at_back_edge_using` — the replay half of loop
 verification — takes 65 s of `bubble_sort3_two_pass_sorted`'s 137 s
