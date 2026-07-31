@@ -10,8 +10,6 @@ int32 compare_swap2(int32 p[2]) {
         tmp = p[0];
         p[0] = p[1];
         p[1] = tmp;
-    } else {
-        p[0] = p[0];
     }
     return 0;
 }
