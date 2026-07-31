@@ -3,8 +3,8 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use click::cli::{
-    IsolatedRun, default_worker_count, duration_from_env, isolated_test_command, run_isolated,
-    run_parallel,
+    IsolatedRun, MdTestExpectation, default_worker_count, duration_from_env, isolated_test_command,
+    read_mdtest, run_isolated, run_parallel,
 };
 use click::lang::click::verify_c0_sources;
 
@@ -39,19 +39,6 @@ const QUARANTINED: &[(&str, &str)] = &[
         "ensures derivations need named memory states; certified context does not derive them (notes/canonical-memory.md)",
     ),
 ];
-
-#[derive(Debug)]
-struct MdTest {
-    c_sources: Vec<(String, String)>,
-    click_source: Option<String>,
-    expectation: Option<Expectation>,
-}
-
-#[derive(Debug)]
-enum Expectation {
-    Pass,
-    FailContains(String),
-}
 
 #[test]
 fn mdtests() {
@@ -143,9 +130,7 @@ fn run_mdtest_with_timeout(path: &Path, time_limit: Duration) -> Result<(), Stri
 }
 
 fn run_mdtest(path: &Path) {
-    let source = fs::read_to_string(path)
-        .unwrap_or_else(|error| panic!("failed to read `{}`: {error}", path.display()));
-    let mdtest = parse_mdtest(path, &source);
+    let mdtest = read_mdtest(path).unwrap_or_else(|message| panic!("{message}"));
     let click_source = mdtest
         .click_source
         .as_deref()
@@ -162,21 +147,21 @@ fn run_mdtest(path: &Path) {
 
     let result = verify_c0_sources(click_source, &c_sources);
     match (expectation, result) {
-        (Expectation::Pass, Ok(_)) => {}
-        (Expectation::Pass, Err(error)) => {
+        (MdTestExpectation::Pass, Ok(_)) => {}
+        (MdTestExpectation::Pass, Err(error)) => {
             panic!(
                 "`{}` expected pass, but failed: {}",
                 path.display(),
                 error.message()
             );
         }
-        (Expectation::FailContains(expected), Ok(_)) => {
+        (MdTestExpectation::FailContains(expected), Ok(_)) => {
             panic!(
                 "`{}` expected failure containing `{expected}`, but passed",
                 path.display()
             );
         }
-        (Expectation::FailContains(expected), Err(error)) => {
+        (MdTestExpectation::FailContains(expected), Err(error)) => {
             assert!(
                 error.message().contains(expected),
                 "`{}` expected failure containing `{expected}`, got `{}`",
@@ -185,96 +170,4 @@ fn run_mdtest(path: &Path) {
             );
         }
     }
-}
-
-fn parse_mdtest(path: &Path, source: &str) -> MdTest {
-    let mut mdtest = MdTest {
-        c_sources: Vec::new(),
-        click_source: None,
-        expectation: None,
-    };
-    let lines = source.lines().collect::<Vec<_>>();
-    let mut index = 0;
-
-    while index < lines.len() {
-        let line = lines[index];
-        if !line.starts_with("```") {
-            index += 1;
-            continue;
-        }
-
-        let info = line.trim_start_matches("```").trim();
-        index += 1;
-        let start_line = index + 1;
-        let mut body = Vec::new();
-        while index < lines.len() && !lines[index].starts_with("```") {
-            body.push(lines[index]);
-            index += 1;
-        }
-        if index == lines.len() {
-            panic!(
-                "`{}` has unterminated fenced block starting at line {start_line}",
-                path.display()
-            );
-        }
-        index += 1;
-
-        let body = body.join("\n");
-        match block_kind(info) {
-            Some(BlockKind::C { filename }) => {
-                mdtest.c_sources.push((filename, body));
-            }
-            Some(BlockKind::Click) => {
-                if mdtest.click_source.replace(body).is_some() {
-                    panic!("`{}` has more than one ```click block", path.display());
-                }
-            }
-            Some(BlockKind::Expect) => {
-                let expectation = parse_expectation(path, start_line, &body);
-                if mdtest.expectation.replace(expectation).is_some() {
-                    panic!("`{}` has more than one ```expect block", path.display());
-                }
-            }
-            None => {}
-        }
-    }
-
-    mdtest
-}
-
-enum BlockKind {
-    C { filename: String },
-    Click,
-    Expect,
-}
-
-fn block_kind(info: &str) -> Option<BlockKind> {
-    let mut parts = info.split_whitespace();
-    match parts.next()? {
-        "c" => {
-            let filename = parts.find_map(|part| part.strip_prefix("filename="))?;
-            Some(BlockKind::C {
-                filename: filename.to_string(),
-            })
-        }
-        "click" => Some(BlockKind::Click),
-        "expect" => Some(BlockKind::Expect),
-        _ => None,
-    }
-}
-
-fn parse_expectation(path: &Path, line: usize, body: &str) -> Expectation {
-    let body = body.trim();
-    if body == "pass" {
-        return Expectation::Pass;
-    }
-
-    if let Some(message) = body.strip_prefix("fail:") {
-        return Expectation::FailContains(message.trim().to_string());
-    }
-
-    panic!(
-        "`{}` has invalid expectation at line {line}: expected `pass` or `fail: substring`, got `{body}`",
-        path.display()
-    );
 }
