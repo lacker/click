@@ -26,7 +26,7 @@ click-audit (full run 314 s, 98 sites passing).
 | lib-ignored-expansion-tests.md | done | All 7 still fail, each re-diagnosed; 4 trace to one contradictory premise-selection policy |
 | certificate-gateway-bypasses.md | open | Redesign accepted; all three bypasses now lower to certificates. Strict-gate worklist 24 -> 2, both remainders parked on store-provenance/named-memory-states. Next: flip the gate default |
 | store-provenance-family.md | parked | owned-string, owned-vector, 6 mdtests — blocked on the canonical-memory arc |
-| repo-hygiene.md | blocked | Stale branches/worktrees/stash — deletions need the owner |
+| repo-hygiene.md | done | Executed with owner approval; worktree-claude branch kept pending verification of 3 old soundness fixes |
 
 ## Reference docs
 
