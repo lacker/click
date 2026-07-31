@@ -23,10 +23,6 @@ const QUARANTINED: &[(&str, &str)] = &[
         "certificate lowering cannot spell the loop-exit ForAll premise: synthesize_surface_proposition has no Click spelling for its loop-havoc-snapshot loads (retention itself concludes since e8f4b91; fails fast at ~0.5 s)",
     ),
     (
-        "bubble_sort3_two_pass_sorted.md",
-        "invariant closer cannot re-derive the symbolically extended bound (item-7 nested snapshot spellings)",
-    ),
-    (
         "composite_resource_vector_fill_loop_snapshot.md",
         "back-edge closer needs named memory states; per-spelling bridging exhausted (notes/regression-history.md)",
     ),

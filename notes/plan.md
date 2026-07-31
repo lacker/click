@@ -43,7 +43,7 @@ Reference material lives in `notes/` root, never in `tasks/`.
 | certificate-spelling-gap.md | open (critical path) | Successor: the prover landed (owner_buffer FIXED, de-quarantined 0.06 s); all three remaining members provably fail in certificate lowering's surface spelling of snapshot-orphaned premises |
 | owned-string-loadable.md | in progress (agent) | The unfold cannot discharge `loadable(data[len])` — permission plumbing, independent of the critical path |
 | case-split-expansion-merge.md | open | Pure case-split certificates expand to an `if` tree that does not re-verify: the per-path merge loses the execution-path pairing. 2 tests quarantined on it |
-| invariant-closer-replay-cost.md | open | 65 s SIMPLE closer replay (130x over budget); fixing it de-quarantines bubble_sort3. Lead: reuse the planner's own derivation |
+| invariant-closer-replay-cost.md | done | Replay now reuses the planner's positive closer result on exact-input match; SIMPLE 772 ms -> 46 ms, bubble_sort3 de-quarantined (2.2 s) |
 | owned-vector-forward-fix.md | open (queued) | Propositional `Implies` gap at vector_replace_if tactic 8; retest after the critical path lands |
 | field-derived-fold-cost.md | open (small) | 29 s SIMPLE fold; re-profile after the critical path lands |
 | expansion-aggregate-object-spelling.md | open (small) | The last lib `#[ignore]`: expansion loses the aggregate `object(owner)` spelling |

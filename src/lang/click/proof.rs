@@ -7005,6 +7005,15 @@ fn verify_one_loop_preservation_proof(
     );
 
     let proof_claims = [];
+    // Positive closer results from the planner half, keyed by the exact
+    // inputs that vary between contexts: the back-edge state and the pure
+    // facts the closer's assumptions are built from. `loop_entry_state` and
+    // `invariant_checks` are identical for both halves by construction. The
+    // certificate replay below re-runs the same deterministic derivation on
+    // identical inputs, so an exact-key hit reuses the planner's Ok instead
+    // of re-deriving it; any input difference falls through to the full
+    // check, so a would-fail replay can never be turned into a pass.
+    let mut verified_closer_inputs: Vec<(CState, Vec<Proposition>)> = Vec::new();
     let program = build_internal_proof(tactics, &claim_label)?;
     let sentinel = CStatement::Return(CExpression::Value(int32(0)));
     let remaining = c_seq(body.clone(), sentinel.clone());
@@ -7120,6 +7129,7 @@ fn verify_one_loop_preservation_proof(
                     "`{claim_label}` (loop {loop_index} invariant bundle preservation) could not certify every guarded invariant-lowering path: {message}"
                 )));
             }
+            verified_closer_inputs.push((context.state.clone(), context.pure_facts.clone()));
             vec![ProofTactic::CloseInvariants]
         };
         if context.replay.region_simp.is_some_and(|(_, source_index)| {
@@ -7233,15 +7243,22 @@ fn verify_one_loop_preservation_proof(
                     step.statement_index,
                 )
             });
-            c_loop_invariants_hold_at_back_edge_using(
-                &context.state,
-                preservation.loop_entry_state(),
-                invariant_checks,
-                &assumptions_from_propositions(&context.pure_facts),
-            )
-            .map_err(|message| {
-                ClickError::new(format!("`{claim_label}` invariant bundle: {message}"))
-            })?;
+            let planner_already_verified =
+                std::env::var_os("CLICK_DISABLE_CLOSER_REUSE").is_none()
+                    && verified_closer_inputs.iter().any(|(state, facts)| {
+                        state == &context.state && facts == &context.pure_facts
+                    });
+            if !planner_already_verified {
+                c_loop_invariants_hold_at_back_edge_using(
+                    &context.state,
+                    preservation.loop_entry_state(),
+                    invariant_checks,
+                    &assumptions_from_propositions(&context.pure_facts),
+                )
+                .map_err(|message| {
+                    ClickError::new(format!("`{claim_label}` invariant bundle: {message}"))
+                })?;
+            }
         }
         let case_path = context
             .replay

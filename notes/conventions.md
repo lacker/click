@@ -103,6 +103,9 @@ obligations to burn down, never parking.
 - `CLICK_DISABLE_MEMORY_DAG` stops the named-memory-states arc from
   recording or reading memory derivations, restoring the pre-arc path
   exactly (`notes/memory-dag.md`).
+- `CLICK_DISABLE_CLOSER_REUSE` makes the loop-preservation certificate
+  replay re-derive the invariant closer instead of reusing the
+  planner's exact-input positive result, for A/B.
 - `MDTEST_FILTER=<name>` runs one mdtest; `CLICK_RUN_QUARANTINED=1`
   includes quarantined ones; `MDTEST_TIME_LIMIT=<secs>` bounds it.
 - click-audit defaults: stop at first failure, 10 s slow-site limit,
