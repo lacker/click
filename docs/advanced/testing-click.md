@@ -190,8 +190,8 @@ that file. Each site gets four timed checks:
    through the normal targeted entry point. This runs once per claim, not once
    per site: the retained session already established that the rewrite changed
    nothing outside the proof unit, so a whole-file pass here would redo every
-   other unit for every site. Later sites of a claim already covered report
-   `reverify 0ms`;
+   other unit for every site. Later sites of an already-covered claim report
+   `reverify 0s`;
 4. **reexpand** — check that the rewrite is an expansion fixed point. The check
    is claim-based, because the rewrite moves and replaces tactics so the site
    cannot be re-found by its original position: the audited smart tactic must be
