@@ -6935,3 +6935,165 @@ fn decision_memo_distinguishes_equal_shaped_fact_sets_by_content() {
         assert_eq!(assumes_true.decide(&below), Some(true));
     }
 }
+
+// --- named-memory-states arc: the derivation DAG -------------------------
+// See notes/tasks/named-memory-states-arc.md. These pin the two invariants
+// the arc's safety argument rests on (advisory-only, and parent id < child
+// id) plus the havoc-identity property that must hold by construction.
+
+fn arc_pointer(offset: i64) -> Pointer {
+    Pointer {
+        block: "arg-memory".into(),
+        offset: PointerOffsetTerm::Constant(offset),
+    }
+}
+
+#[test]
+fn a_store_records_the_edge_from_the_snapshot_it_wrote() {
+    let base = CMemory::new().with_block("arg-memory", 16);
+    let after = base
+        .clone()
+        .store(arc_pointer(4), CValue::Int32(Bitvector32Term::Constant(7)));
+
+    let derivation = crate::kernel::intern_c_memory_ref(&after)
+        .derivation()
+        .expect("a store records how the snapshot was produced");
+    match derivation.as_ref() {
+        CMemoryDerivation::Store {
+            base: recorded_base,
+            pointer,
+            value,
+        } => {
+            assert_eq!(recorded_base.as_ref(), &base);
+            assert_eq!(pointer, &arc_pointer(4));
+            assert_eq!(value, &CValue::Int32(Bitvector32Term::Constant(7)));
+        }
+        other => panic!("expected a store edge, got {other:?}"),
+    }
+}
+
+#[test]
+fn derivation_bases_are_strictly_older_so_the_dag_cannot_cycle() {
+    // Storing a value and then storing it back re-interns the original
+    // snapshot, which is the shortest cycle the DAG could otherwise grow.
+    // First-wins recording keeps the older edge, so following `base` still
+    // strictly decreases and terminates.
+    let base = CMemory::new().with_block("arg-memory", 16);
+    let written = base
+        .clone()
+        .store(arc_pointer(0), CValue::Int32(Bitvector32Term::Constant(1)));
+    let restored = written
+        .clone()
+        .store(arc_pointer(0), CValue::Int32(Bitvector32Term::Constant(0)))
+        .store(arc_pointer(0), CValue::Int32(Bitvector32Term::Constant(1)));
+    assert_eq!(restored, written, "the round trip returns the same value");
+
+    let mut node = crate::kernel::intern_c_memory_ref(&restored);
+    let mut hops = 0;
+    while let Some(derivation) = node.derivation() {
+        let next = derivation.base().clone();
+        assert!(
+            next.arena_id() < node.arena_id(),
+            "a derivation base must be strictly older than what it derives"
+        );
+        node = next;
+        hops += 1;
+        assert!(hops < 64, "walking derivation bases must terminate");
+    }
+}
+
+#[test]
+fn a_store_that_changes_nothing_records_no_edge_to_itself() {
+    let base = CMemory::new()
+        .with_block("arg-memory", 16)
+        .store(arc_pointer(0), CValue::Int32(Bitvector32Term::Constant(3)));
+    let again = base
+        .clone()
+        .store(arc_pointer(0), CValue::Int32(Bitvector32Term::Constant(3)));
+    assert_eq!(again, base);
+
+    let node = crate::kernel::intern_c_memory_ref(&again);
+    if let Some(derivation) = node.derivation() {
+        assert_ne!(
+            derivation.base().arena_id(),
+            node.arena_id(),
+            "a snapshot must never be recorded as derived from itself"
+        );
+    }
+}
+
+#[test]
+fn loop_havoc_is_its_own_edge_kind_and_keeps_its_marker_block() {
+    let base = CMemory::new()
+        .with_block("arg-memory", 16)
+        .store(arc_pointer(0), CValue::Int32(Bitvector32Term::Constant(5)));
+    let after = base
+        .clone()
+        .with_loop_memory_havoc(Variable(0), &BTreeSet::new());
+
+    assert!(
+        after.has_block(&"havoc:0".into()),
+        "the freshness marker block must survive the arc untouched"
+    );
+    let derivation = crate::kernel::intern_c_memory_ref(&after)
+        .derivation()
+        .expect("loop havoc records how the snapshot was produced");
+    match derivation.as_ref() {
+        CMemoryDerivation::LoopHavoc {
+            base: recorded_base,
+            variable,
+        } => {
+            assert_eq!(recorded_base.as_ref(), &base);
+            assert_eq!(*variable, Variable(0));
+        }
+        other => panic!("expected a loop-havoc edge, got {other:?}"),
+    }
+}
+
+#[test]
+fn derivations_carry_a_load_across_a_distinct_store_but_not_across_havoc() {
+    // The first consumer of the DAG: load preservation answered from the
+    // recorded history rather than from effect facts. A store to a provably
+    // distinct cell is crossable; a loop havoc between the same endpoints is
+    // not, because it has no write set to be disjoint from.
+    let base = CMemory::new().with_block("arg-memory", 16);
+    let read = arc_pointer(0);
+
+    let stored = base
+        .clone()
+        .store(arc_pointer(4), CValue::Int32(Bitvector32Term::Constant(9)));
+    assert!(
+        c_memory_load_is_unchanged(&base, &stored, &read, &Assumptions::new()),
+        "a store to a distinct cell preserves the load"
+    );
+
+    let havoced = base
+        .clone()
+        .with_loop_memory_havoc(Variable(7), &BTreeSet::new());
+    assert!(
+        !c_memory_load_is_unchanged(&base, &havoced, &read, &Assumptions::new()),
+        "loop havoc must never be crossed without explicit frame evidence"
+    );
+
+    let havoced_then_stored = havoced
+        .clone()
+        .store(arc_pointer(4), CValue::Int32(Bitvector32Term::Constant(9)));
+    assert!(
+        !c_memory_load_is_unchanged(&base, &havoced_then_stored, &read, &Assumptions::new()),
+        "a crossable store must not smuggle a walk past an intervening havoc"
+    );
+}
+
+#[test]
+fn a_store_to_the_loaded_cell_is_not_crossable() {
+    let base = CMemory::new().with_block("arg-memory", 16);
+    let read = arc_pointer(0);
+    let stored = base
+        .clone()
+        .store(read.clone(), CValue::Int32(Bitvector32Term::Constant(9)));
+
+    assert!(
+        !c_memory_load_is_unchanged(&base, &stored, &read, &Assumptions::new()),
+        "the walk must refuse the very cell that was written"
+    );
+}
