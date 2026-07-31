@@ -99,6 +99,68 @@ consistent with the lib test's pre-refactor 60 s quarantine.
 field_derived / owned-vector / two_pass not re-measured (no fix lands,
 and owned-vector has a concurrent bisect agent on it).
 
+## field_derived fix attempt (2026-07-31, worktree-agent-a0e5edf87e3e25ee7)
+
+Verdict: **no straightforward fix lands — field_derived is a member of
+the d78b49b structural collision above, plus a second deterministic
+frame gap.** Everything below was measured at HEAD (62d17ab) unless
+noted; all experiment code was env-gated and stripped.
+
+**Hunk isolation at 3a924ff** (isolated clone, both hunks tested
+independently): hunk 2 (trivial-return premise-free certificates) is
+the sole breaker; hunk 1 exonerated (also independently reverted next
+day by c002ea5). At 3a924ff the mechanism is: with a premise-free
+`step` recorded for the caller's `return ignored;`, the ambient smart
+`simp` for `buffer_push_preserves_first.ensures_1`
+(`data[0] == old(data[0])`) fails with "simplified proposition was not
+true" — the recorded-premise flow is authoritative for the claim
+context even during the original verification.
+
+**At HEAD the lever no longer works; two independent blockers:**
+
+1. **Callee blocker.** `buffer_push.contract` path 0 tactic 7 (grouped
+   `simp`) now fails first, on ensures_1..4:
+   `minimal_proposition_derivation == None` over the full certified
+   context (35 facts) — the deterministic derive cannot frame
+   `owner->len` / `owner->cap` / `owner->data` loads across the
+   value-dependent metadata store `owner->data[index+1] = 0` under the
+   provenance-era bounded retention. Restoring the pre-d78b49b
+   store-side retention (`pointers_proven_distinct` in
+   `CMemory::without_possible_aliasing_cells` — the same restoration
+   the section above proved cannot land) certifies the whole callee and
+   collapses runtime from >300 s (hits the 5 m limit today) to ~10 s.
+   The 200→300 s growth is the callee grinding the bounded prover.
+2. **Caller blocker (survives the retention restoration).** With the
+   callee fixed, `buffer_push_preserves_first.ensures_1` fails in the
+   *ambient smart simp itself* — same signature as 3a924ff. Measured
+   non-causes: restoring pre-3a924ff theorem-prefix `exact_premises` in
+   the `CertifiedStatementReplay` arm (descendant: 7e96bce
+   `consults_conditions`) changes nothing; 50x memory-resolution +
+   resource-prover fuel changes nothing. Context dump
+   (`CLICK_DERIVE_DUMP_DIR`) shows every frame *input* present
+   (`1 <= len`, `len+1 < cap`, `data == owner->data`,
+   `separate(memory(owner[0..4]), memory(data[0..cap]))`,
+   `CMemoryEffectSummary` for the call) and no data[0]-preservation
+   fact; the prover cannot place `data + 0` outside the call footprint
+   `(data+len)[0..2]` because the footprint offsets are spelled with
+   nested snapshot loads — the same "offset-equality across divergent
+   nested snapshot spellings" chicken-and-egg named in the d78b49b
+   section.
+
+So the fix for field_derived is the same design item as owned-string /
+the lib test: deterministic (exact-fact-only) containment for
+constant-offset cells vs value-dependent stores/footprints, able to
+resolve offsets across nested snapshot spellings. A premise-recording
+fix (the caution's preferred direction) does not reach either blocker:
+the missing facts are not recordable premises, they are conclusions the
+deterministic provers cannot yet reach.
+
+Family movement measured this session: vector_fill FAIL 42 s at HEAD
+baseline (was ~48 s), FAIL 42 s with the retention restoration, same
+grouped-simp message — no movement. field_derived stays quarantined
+with its current reason (correctness, not cost-only: it does not pass
+under any tested configuration).
+
 ## Bisect results (2026-07-31, three of six complete)
 
 - **owner_buffer_field_dependent AND bubble_pass3 -> `d78b49b`** ("WIP:
@@ -112,6 +174,7 @@ and owned-vector has a concurrent bisect agent on it).
   07-25..28 strict-certificate wave is EXONERATED for both members —
   every sampled commit through 07-28 passes them.
 - **field_derived -> `3a924ff`** ("Keep trivial return certificates
+<<<<<<< HEAD
   premise-free", 07-27). Two hunks; the likely one switches smart-simp
   certificate replay from `prove_have_at_point` to
   `prove_pure_proposition_at_point` against the pre-lowered kernel
@@ -137,6 +200,19 @@ and owned-vector has a concurrent bisect agent on it).
   field_derived fix answers it; owned-string's frontier diagnosis
   (missing `loadable(data[len])` permission plumbing) is already
   actionable without knowing which commit introduced it.
+=======
+  premise-free", 07-27). Hunk isolation done (2026-07-31, see the
+  field_derived section below): **hunk 2 is the breaker** — the
+  trivial-return `exact_premises = Vec::new()` in
+  `record_surface_replay_tactic` (the caller's `return ignored;`).
+  Reverting it alone at 3a924ff passes in ~12 s. Hunk 1 (the
+  `prove_pure_proposition_at_point(Some(goal))` replay switch) is
+  exonerated: reverting it alone still fails, and c002ea5 (same day)
+  already reverted it back to `prove_have_at_point` — HEAD still has
+  that shape. Fails in ~13 s at the breaking commit; the ~200 s fail
+  time accreted later.
+- vector_fill, owned-string, owned-vector: bisects still running.
+>>>>>>> 8225269 (field_derived: hunk 2 of 3a924ff was the breaker; no fix lands at HEAD)
 
 ## Remaining members, 2026-07-31 frontiers
 
@@ -150,12 +226,14 @@ and owned-vector has a concurrent bisect agent on it).
   is not: its two loads sit in the **same snapshot**, differing only in
   the index term. The two-pass version of the same program does not hit
   it.
-- **mdtest `composite_resource_vector_fill_loop_snapshot.md`** (~48 s)
+- **mdtest `composite_resource_vector_fill_loop_snapshot.md`** (~42 s)
   and **mdtest `field_derived_precise_effect_after_metadata_write.md`**
-  (~198 s, was 487 s before arc stage 4) — same failure class: grouped
-  `simp` cannot certify its complete claim transition (vector_fill at
-  `contract` path 0 tactic 2 for `ensures_2`; field_derived also carries
-  a 29 s simple `fold`, tracked in `slow-simple-engine-bugs.md`).
+  (>300 s as of 07-31; was ~198 s, 487 s before arc stage 4) — same
+  failure class: grouped `simp` cannot certify its complete claim
+  transition (vector_fill at `contract` path 0 tactic 2 for
+  `ensures_2`; field_derived diagnosed in full above — two blockers,
+  both in the d78b49b collision; it also carries a 29 s simple `fold`,
+  tracked in `slow-simple-engine-bugs.md`).
 - **mdtest `composite_resource_owner_buffer_field_dependent.md`**
   (~6 s) — "execution proof for `set_owned_first.ensures_0` changed
   more than the certified ghost-resource representation".
