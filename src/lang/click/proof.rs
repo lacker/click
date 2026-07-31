@@ -10923,17 +10923,107 @@ fn finish_ordered_proof_replay(
                                             }
                                         }
                                     } else {
-                                        if strict_exit_gate() {
-                                            return Err(ClickError::new(format!(
-                                                "`{claim_label}` path {path_index}: smart `simp` closed the claim with existential tactics, whose certificate lowering is not implemented"
-                                            )));
+                                        let surface_tactic = match (
+                                            &rewritten_claim_goals[claim_index],
+                                            ensure_clause.ensure(),
+                                            &outcome,
+                                        ) {
+                                            (
+                                                None,
+                                                Ensure::Proposition(surface_goal),
+                                                CFunctionOutcome::Return {
+                                                    value: result,
+                                                    state: post_state,
+                                                },
+                                            ) if !replay.grouped_contract => {
+                                                lower_ensure_proposition_goal(
+                                                    &path_requirements,
+                                                    surface_goal,
+                                                    parsed_function.parameters(),
+                                                    arguments,
+                                                    pre_state,
+                                                    &outcome,
+                                                    predicate_environment,
+                                                    click_function_environment,
+                                                    &replay.program_point_states,
+                                                    &unfolded_predicates,
+                                                )
+                                                .and_then(|goal| {
+                                                    let mut certificate_facts =
+                                                        surface_certificate_facts.clone();
+                                                    certificate_facts.extend(
+                                                        path.execution_facts()
+                                                            .iter()
+                                                            .filter(|fact| {
+                                                                matches!(
+                                                                    fact.proposition(),
+                                                                    Proposition::CMemoryMutatesOnly { .. }
+                                                                        | Proposition::CMemoryEffectSummary { .. }
+                                                                )
+                                                            })
+                                                            .map(|fact| {
+                                                                fact.proposition().clone()
+                                                            }),
+                                                    );
+                                                    let certificate_facts =
+                                                        unfold_available_predicate_facts(
+                                                            predicate_environment,
+                                                            click_function_environment,
+                                                            &unfolded_predicates,
+                                                            &certificate_facts,
+                                                        )?;
+                                                    let mut certificate_replay = replay.clone();
+                                                    certificate_replay.surface_propositions =
+                                                        outcome_surface_propositions.clone();
+                                                    certificate_replay.unfolded_predicates =
+                                                        unfolded_predicates.clone();
+                                                    certify_outcome_existential_simp(
+                                                        &certificate_replay,
+                                                        surface_goal,
+                                                        &goal,
+                                                        &certificate_facts,
+                                                        &existence_tactics,
+                                                        parsed_function.parameters(),
+                                                        arguments,
+                                                        pre_state,
+                                                        post_state,
+                                                        result,
+                                                        predicate_environment,
+                                                        click_function_environment,
+                                                        theorem_environment,
+                                                        function_block.requires(),
+                                                        &claim_label,
+                                                        *tactic_index,
+                                                        path_index,
+                                                    )
+                                                    .map_err(|error| error.message().to_string())
+                                                })
+                                            }
+                                            _ => Err(
+                                                "surface `simp` lowering with existential tactics requires an ungrouped proposition return goal"
+                                                    .to_string(),
+                                            ),
+                                        };
+                                        match surface_tactic {
+                                            Ok(certificate) => {
+                                                if capturing_this_tactic && !replay.grouped_contract
+                                                {
+                                                    captured_transitions[claim_index] =
+                                                        Some(certificate.clone());
+                                                }
+                                                path_surface_closers[claim_index]
+                                                    .extend_from_slice(certificate.tactics())
+                                            }
+                                            Err(message) => {
+                                                if strict_exit_gate() {
+                                                    return Err(ClickError::new(format!(
+                                                        "`{claim_label}` path {path_index}: smart `simp` closed the claim with existential tactics, but its certificate did not lower or replay: {message}"
+                                                    )));
+                                                }
+                                                surface_closer_blockers[claim_index]
+                                                    .get_or_insert(message);
+                                            }
                                         }
-                                        surface_closer_blockers[claim_index].get_or_insert_with(
-                                            || {
-                                                "surface `simp` lowering with existential tactics is not implemented"
-                                                    .to_string()
-                                            },
-                                        );
                                     }
                                 }
                                 Err(error) => {
@@ -13623,6 +13713,113 @@ fn certify_outcome_simp(
         ))
     })?;
     Ok(certificate)
+}
+
+/// Lower an exit-claim `simp` that closed under pending `witness`/`choose`
+/// tactics.
+///
+/// `witness` and `choose` are simple tactics, and a `have` proof admits
+/// them (`prove_pure_proposition_case_at_point` runs both). So the closer
+/// lowers to `have <claim goal> by { <existence tactics>, <simple closer> }`
+/// followed by `assumption`: the have re-derives the existential inside its
+/// own scope, and `assumption` discharges the claim from the fact the have
+/// established. The have's proposition is the claim's own surface goal, so
+/// no new surface spelling has to be synthesized for the instantiated body.
+///
+/// Every candidate is accepted only if `prove_have_at_point` — the replay
+/// judgment itself — proves it and yields the claim's kernel goal, so this
+/// emits exactly what replay accepts.
+#[allow(clippy::too_many_arguments)]
+fn certify_outcome_existential_simp(
+    replay: &TacticReplayState,
+    surface_goal: &ClickProposition,
+    goal: &Proposition,
+    available: &[Proposition],
+    existence_tactics: &[ProofTactic],
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    pre_state: &CState,
+    post_state: &CState,
+    result: &CValue,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    theorem_environment: &TheoremEnvironment,
+    function_requires: &[Requirement],
+    claim_label: &str,
+    tactic_index: usize,
+    path_index: usize,
+) -> Result<TacticCertificate, ClickError> {
+    // Replay may frame loads across recorded effects; a fresh replay
+    // recomputes the same effect facts from execution, so including them
+    // keeps in-place and standalone replays aligned.
+    let mut replay_available = available.to_vec();
+    for fact in &replay.effect_facts {
+        if !replay_available.contains(fact.proposition()) {
+            replay_available.push(fact.proposition().clone());
+        }
+    }
+    for equation in crate::kernel::certified_store_equations(&replay.effect_facts) {
+        if !replay_available.contains(&equation) {
+            replay_available.push(equation);
+        }
+    }
+    let mut unfolds = replay.unfolded_predicates.clone();
+    unfolds.retain(|name| predicate_environment.get(name).is_some());
+    let mut last_error = None;
+    for closer in [ProofTactic::Assumption, ProofTactic::Normalize] {
+        let mut tactics = unfolds
+            .iter()
+            .cloned()
+            .map(ProofTactic::UnfoldPredicate)
+            .collect::<Vec<_>>();
+        tactics.extend(existence_tactics.iter().cloned());
+        tactics.push(closer);
+        let surface_have = ProofHave {
+            proposition: surface_goal.clone(),
+            proof: Proof::Script(tactics),
+        };
+        let surface_tactics = vec![ProofTactic::Have(surface_have.clone()), ProofTactic::Assumption];
+        let certificate =
+            TacticCertificate::from_proof_tactics(&surface_tactics).map_err(|error| {
+                ClickError::new(format!(
+                    "`{claim_label}` path {path_index}, tactic {tactic_index}: existential `simp` produced an invalid certificate: {error:?}"
+                ))
+            })?;
+        match prove_have_at_point(
+            &surface_have,
+            theorem_environment,
+            claim_label,
+            tactic_index,
+            &replay_available,
+            parameters,
+            arguments,
+            pre_state,
+            post_state,
+            Some(result),
+            &replay.program_point_states,
+            Some(&replay.surface_propositions),
+            predicate_environment,
+            click_function_environment,
+            function_requires,
+            Some(path_index),
+        ) {
+            Ok(replayed_goal) => {
+                // `assumption` closes the claim by an exact match against
+                // the fact the have just recorded, so the two must agree.
+                if replayed_goal == *goal {
+                    return Ok(certificate);
+                }
+                last_error = Some(format!(
+                    "existential `simp` certificate proved a different proposition than the claim goal: {replayed_goal:?}"
+                ));
+            }
+            Err(error) => last_error = Some(error.message().to_string()),
+        }
+    }
+    Err(ClickError::new(format!(
+        "`{claim_label}` path {path_index}, tactic {tactic_index}: existential `simp` certificate failed replay: {}",
+        last_error.unwrap_or_else(|| "no closer candidate applied".to_string())
+    )))
 }
 
 struct GroupedOutcomeSimpGoal {
