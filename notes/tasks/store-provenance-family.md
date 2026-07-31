@@ -115,7 +115,19 @@ and owned-vector has a concurrent bisect agent on it).
   `prove_pure_proposition_at_point` against the pre-lowered kernel
   goal, skipping the ambient-assumptions lowering. Fails in 5 s at the
   breaking commit; the ~200 s fail time accreted later.
-- vector_fill, owned-string, owned-vector: bisects still running.
+- **owned-vector -> `9ea6739`** ("remove replay bookkeeping tactics",
+  07-19 — BEFORE the certificate wave; the 07-24 baseline already
+  fails). Engine-only: deleted RecordExecutionPoint /
+  ResetOpaqueCallCounter bookkeeping tactics and reworked replay;
+  first failure is `vector_pipeline.contract` tactic 2 `execute_rest`
+  missing prerequisite. Two later, separate events layered on top: a
+  fail->hang at `919e084` ("make fact transport premises explicit",
+  07-24), and today's distinct failure site (`vector_replace_if`
+  tactic 8) introduced by post-break edits to an already-failing
+  example. Also: PASS time exploded 1 s -> ~190 s between 07-15 and
+  07-19 before any breakage — an unattributed perf regression worth
+  its own look once the example verifies again.
+- vector_fill, owned-string: bisects still running.
 
 ## Remaining members, 2026-07-31 frontiers
 
