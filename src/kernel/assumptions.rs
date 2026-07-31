@@ -6987,6 +6987,37 @@ fn pointer_in_range_for_memory_resolution_with_depth(
         .any(|index| bitvector_index_in_range_shallow(index, start, end, assumptions))
 }
 
+/// Pins a term to a signed constant using EXACT facts only: either the term
+/// is itself constant, or one recorded exact equality names its value. Exact
+/// condition facts are pinned verbatim into certificates, so both smart
+/// execution and replay see the same set and the answer is deterministic.
+/// One hop, no recursion: a value-dependent range endpoint like
+/// `owner->len` is separated from its constant by exactly the recorded
+/// resource fact, never by a rewrite chain.
+fn exact_signed_constant(term: &Bitvector32Term, assumptions: &Assumptions) -> Option<i64> {
+    if let Some(value) = signed_bitvector_constant(term) {
+        return Some(value);
+    }
+    assumptions
+        .condition_facts
+        .iter()
+        .find_map(|(condition, value)| {
+            if !*value {
+                return None;
+            }
+            let ConditionTerm::Bitvector32Equal(left, right) = condition else {
+                return None;
+            };
+            if left.as_ref() == term {
+                signed_bitvector_constant(right)
+            } else if right.as_ref() == term {
+                signed_bitvector_constant(left)
+            } else {
+                None
+            }
+        })
+}
+
 fn bitvector_index_in_range_shallow(
     index: &Bitvector32Term,
     start: &Bitvector32Term,
@@ -6999,6 +7030,19 @@ fn bitvector_index_in_range_shallow(
         signed_bitvector_constant(end),
     ) {
         return start <= index && index < end;
+    }
+    // Value-dependent endpoints pinned by exact facts (e.g. a range end of
+    // `owner->len` with the recorded exact fact `owner->len == 1`) resolve
+    // to constants without any non-exact condition reasoning. Success only:
+    // an unresolved or unsatisfied triple falls through to the other arms.
+    if let (Some(index), Some(start), Some(end)) = (
+        exact_signed_constant(index, assumptions),
+        exact_signed_constant(start, assumptions),
+        exact_signed_constant(end, assumptions),
+    ) && start <= index
+        && index < end
+    {
+        return true;
     }
     let lower_bound_is_exact = assumptions.exact_condition_value(
         &ConditionTerm::signed_less_equal(start.clone(), index.clone()),
