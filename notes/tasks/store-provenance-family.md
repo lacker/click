@@ -36,6 +36,16 @@ Members (all diagnosed 2026-07-30):
   composite_owner_buffer_field_dependent, fill_tail_keeps_first —
   retested 2026-07-30, all still fail; bubble_* fail in the invariant
   closer with the same missing-ForAll shape.
+  **Update 2026-07-31 (arc stage 3).** fill_tail_keeps_first
+  de-quarantined at stage 2a. bubble_sort3 now *passes* but takes 137 s,
+  so it stays quarantined on cost; bubble_pass3, vector_fill and
+  composite_owner_buffer_field_dependent all cleared the invariant
+  closer and now fail downstream (certificate lowering, contract `simp`,
+  ghost-resource representation). Per-member messages and timings are in
+  `named-memory-states-arc.md`'s 2026-07-31 session log. The sampled cost
+  of bubble_sort3 is `bitvector_terms_equal_for_memory_resolution` plus
+  `canonicalize_atomic_loads`, i.e. the value bridging itself — *not*
+  the `atomic_derivation_premises` clone recorded below.
 
 - mdtests (1 rewritten, not quarantined, 2026-07-30):
   `proof_advance_pointer_local`. Its closer needs

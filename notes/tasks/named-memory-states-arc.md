@@ -5,8 +5,8 @@ Claimed: worktree-agent-a799da2cbca60970b (branch
 `claude/nervous-ptolemy-90e738` in `.claude/worktrees/`) — 2026-07-30
 Claimed (stage 2a): branch `worktree-agent-a9b0d0d8a52de5913` in
 `.claude/worktrees/` — 2026-07-30
-Claimed (stages 3–5): branch `worktree-agent-ae96555419eb6923f` in
-`.claude/worktrees/` — 2026-07-31
+Claimed (stage 3): branch `worktree-agent-ae96555419eb6923f` in
+`.claude/worktrees/` — 2026-07-31 (landed; stages 4–5 unclaimed)
 
 Design brief: `../canonical-memory.md`. Failure corpus and per-member
 diagnoses: `store-provenance-family.md` (that task stays parked; this
@@ -418,32 +418,89 @@ Reentrancy-guarded (containment re-enters condition reasoning, which reaches
 `is_inconsistent` again). Not flag-gated: it reads no derivations, so
 `CLICK_DISABLE_MEMORY_DAG=1` is bit-identical, exactly as for stage 2a.
 
-**Acceptance corpus movement.** No member passes yet; three moved off the
-invariant closer.
+#### The bubble members: the load bridging already worked
 
+The two bubble mdtests are the members whose missing goal really is a load
+comparison across two snapshots — `load(m, p+k*4) <= load(m', p+j*4)`, where
+`m'` is `m` plus cells for `local:j` and `local:tmp` and nothing else. The
+expectation was that this needed a DAG walk. Probed: it does not.
+`decide(load(m, p+j*4) == load(m', p+j*4))` is already `Some(true)`; the
+existing bridging handles differing cells in a provably different block. With
+the right-hand side rewritten by hand the goal was *still* underivable.
+
+What is actually missing is one case split. The goal's guard is `k < j + 1`
+while the invariant fact's is `k < j`, and probing both halves separately
+showed each is derivable as it stands: below `j` from the invariant, at `j`
+from the body's own effect (which, after the swap, makes the two sides of the
+comparison the same value). Only the split was absent.
+
+**Landed:** `PropositionDerivationRule::UpperBoundSplit` and
+`derive_by_upper_bound_split` — an assumed `k <= b` (spelled either
+`k < b + 1` or `k <= b`) splits a goal into `k < b` and `k == b`. Notes:
+
+- It is a **goal-side** split, which is why it works where
+  `claude/forall-extension-wip`'s `forall_fact_extends_bound_by_one` did not
+  (session 1 rejected that rule because proving the final index meant matching
+  a fact spelled at another snapshot). Here each half is derived in the
+  ordinary way against whatever is present, so no spelling has to be matched.
+- Sound at the wrapping edge: `k < b + 1` with `b = INT_MAX` wraps to
+  `k < INT_MIN`, which is unsatisfiable, so the split's disjunction follows
+  vacuously. The `k <= b` spelling has no edge case.
+- Confined to leaf goals with an undecided pivot, and depth-gated to one
+  level. Two levels were tried for the nested-loop member and bought nothing
+  (158 s vs 137 s).
+
+**Acceptance corpus movement.** One member now *passes* but is too slow to
+un-quarantine; three more moved off the invariant closer.
+
+- `bubble_sort3_two_pass_sorted.md` — **passes**, in **137 s**. Stays
+  quarantined on cost alone (mdtest limit is 30 s), per conventions.md's
+  slow-but-passing rule. Attribution below.
+- `bubble_pass3_max_suffix.md` — `loop(0).preserve` now certifies. Fails later,
+  in `max_at_end` path 0: "smart `simp` closed the claim but its certificate
+  did not lower or replay: planned `simp` context premise is not an available
+  source fact", the premise being the loop-exit invariant `ForAll`. ~8.9 s. A
+  certificate-lowering gap, not a prover gap — and note the two-pass version of
+  the same program does not hit it.
 - `composite_resource_vector_fill_loop_snapshot.md` — closer now closes. Fails
-  later, in `contract` path 0 tactic 2: grouped `simp` cannot replay
-  `ensures_2`'s postcondition derivation (the exit spelling of the same
-  `ForAll`). **~40 s**, up from ~5.6 s, because the proof now gets much further.
-  Still quarantined; both a correctness and a cost item.
+  later, in `contract` path 0 tactic 2: grouped `simp` cannot certify its
+  claim transition for `ensures_2` (the exit spelling of the same `ForAll`).
+  **~47 s**, up from ~5.6 s, because the proof now gets much further.
 - example `owned-vector` — `vector_fill.loop(0).preserve` closes. Fails later
   and elsewhere: `vector_replace_if.contract` tactic 8 `have` cannot find
   `Implies(replace == 0, new == old)`. ~9 s.
 - `composite_resource_owner_buffer_field_dependent.md` — message moved off the
   closer to "execution proof for `set_owned_first.ensures_0` path 0 changed
   more than the certified ghost resource representation" (~5.7 s).
-- `bubble_pass3_max_suffix.md` / `bubble_sort3_two_pass_sorted.md` — unchanged
-  (~10 s each), and *these* are the real load-equality members: the missing goal
-  compares `load(m, p+k*4)` with `load(m', p+j*4)` where `m'` is `m` plus
-  cells for `local:j` and `local:tmp` only. Same blocks, differing cells in a
-  different block from the load. Stage 3's original target, still open.
-- example `owned-string`, `field_derived_precise_effect_after_metadata_write.md`
-  — not retested this session; no reason to expect movement.
+- example `owned-string` — unchanged (~2.5 s), still the missing
+  `loadable(data[len])` pure fact. Untouched by this session's work.
+- `field_derived_precise_effect_after_metadata_write.md` — not retested
+  (~496 s to fail; not worth the wall clock until it has a reason to move).
 
-**Gates.** lib+bins 511 (510 + one new kernel test, ~3.2 s), mdtests 272
-visible (~9 s), examples (~7.1 s, up from ~5.3 s — `owned-vector` now runs
+**Where `bubble_sort3`'s 137 s goes** (`CLICK_TIMINGS=1` plus a 20 s `sample`
+of the debug binary). One tactic, `loop(1).preserve` step 2 `simp`, is 64.6 s;
+the rest is outside tactic timings, i.e. the invariant-closer replay inside
+loop-rule verification. The sampled profile is not
+`atomic_derivation_premises` (the cost recorded in
+`store-provenance-family.md`) — it is dominated by
+`reasoning::bitvector_terms_equal_for_memory_resolution` and
+`api::canonicalize_atomic_loads`, under a haze of `Bitvector32Term` clone and
+`BTreeMap` churn. That is the value-bridging machinery this arc exists to
+replace, so the cost item and stage 5 are the same item: the DAG has to
+*subsume* deep term-equality search, not sit beside it. Worth knowing before
+anyone tries to make this test fast by tuning the split — the split is not
+where the time is.
+
+**Gates.** lib+bins 512 (510 + two new kernel tests, ~3.1 s), mdtests 272
+visible (~9 s), examples (~7.0 s, up from ~5.3 s — `owned-vector` now runs
 further before failing). Green, and green again with
 `CLICK_DISABLE_MEMORY_DAG=1`.
+
+**Stages 4 and 5 not started.** Stage 4 was gated on stage 3 landing green,
+which it has, but no corpus member de-quarantines yet and the next failures are
+all downstream of the closer (certificate lowering, ghost-resource
+representation, contract `simp`). The profile above says stage 5's subsumption
+question is the one with leverage.
 
 ## For the owner
 
@@ -473,6 +530,25 @@ finding above is internal resolution, not surface semantics)*
   the certificate comparison already performs (see the session log). Worth
   knowing before anyone else reaches for an ancestry walk: **arena identity
   is connected, arena derivations are not.**
+- **Reading stage 2a's handover as "the closer needs better load equality".**
+  It says every remaining member fails in the closer on a `ForAll` path goal,
+  which is true, but three distinct causes hide behind that one message, and
+  none of the three was load equality (2026-07-31, all three measured):
+  vacuous alias paths the closer could not refute; a missing final-index case
+  split; and, downstream of both, certificate lowering. The load bridging the
+  arc built in stage 2 was already answering the questions put to it — probe
+  `decide(...)` on the two spellings before assuming otherwise.
+- **Using `pointers_proven_distinct_for_memory_resolution` for the alias-guard
+  refutation.** It cleared the mdtest and not example `owned-vector`; the
+  memory-resolution containment path is fuel-bounded and depth-limited and
+  refuses the longer order chain that the plain `pointer_in_range` accepts.
+  Measured side by side on `owned-vector`'s failing context: by-range true,
+  memory-resolution false, same facts.
+- **Raising the final-index split's depth limit to reach nested loops.**
+  `bubble_sort3_two_pass_sorted` has two nested loops and closes at depth 1;
+  depth 2 cost it 20 s and changed no outcome. Likewise, confining the split
+  to leaf goals with an undecided pivot is right on principle but measured
+  neutral — the 137 s is not in the split.
 
 ## Done when
 
