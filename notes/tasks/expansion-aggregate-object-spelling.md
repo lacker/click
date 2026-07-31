@@ -1,7 +1,7 @@
 # Expansion loses the aggregate `object(owner)` spelling
 
 Status: open (small)
-Claimed:
+Claimed: claude/nervous-ptolemy-90e738 (worktree agent-a5226ef393a7511d7), 2026-07-31
 
 The last remaining lib `#[ignore]`:
 `expansion_preserves_unfolded_resource_and_predicate_fact_spellings`
