@@ -3433,6 +3433,19 @@ fn c_function_contract_certification_assumptions(
         return None;
     }
     if !requirement_obligations.iter().all(|obligation| {
+        // Definedness travels with the assumption. A heap-dependent
+        // `requires` cannot be true in a state where its loads do not
+        // denote, so assuming the requirement already entails the
+        // loadability its evaluation needed: the caller had to establish
+        // the requirement, and the same obligations are proof obligations
+        // on the caller's side (see the path-obligation check in
+        // `prepare_function_claim_path`, which does not exempt them).
+        //
+        // Only assumable obligations — the definedness kind — ride along.
+        // A genuine verification condition still has to be discharged here.
+        if obligation.is_assumable() {
+            return true;
+        }
         let ok = certification_proves_proposition(&assumptions, obligation.proposition())
             || resources_certify_loadability(
                 &entry_state,

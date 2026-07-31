@@ -30,7 +30,7 @@ Reasons have been rewritten in place to match the real cause.
 | expands_grouped_immutable_read_with_multiple_claim_successors | still fails | premise under-inclusion |
 | execute_step_expands_call_assign_fact_from_internal_snapshot | still fails | premise under-inclusion |
 | expansion_preserves_unfolded_resource_and_predicate_fact_spellings | still fails | aggregate separation spelling |
-| verifies_opaque_predicate_from_requirement | still fails | predicate opacity vs. lowering |
+| verifies_opaque_predicate_from_requirement | **PASSES (un-ignored 2026-07-30)** | fixed by the definedness rule |
 | verifies_old_memory_loop_invariant | still fails | store-provenance (PARKED — moved) |
 
 ## Family 1: certificate-premise policy (4 tests, one root)
@@ -117,3 +117,28 @@ and conventions.md puts those on the owner.
   cause, each with a pointer back here.
 - `verifies_old_memory_loop_invariant` handed to
   `store-provenance-family.md` and is no longer tracked in this file.
+
+
+## Update 2026-07-30 (evening): one of the seven is fixed
+
+`verifies_opaque_predicate_from_requirement` now passes and is
+un-ignored. Owner ruling: a predicate that reads memory cannot be true
+unless that memory is readable, so an assumed `requires` carries its own
+definedness — `loadable` is a fact about memory safety and bounds
+(docs/intermediate/permissions.md), not an authority, so assuming it
+alongside an assumed requirement manufactures no permission.
+
+Implemented in `contract entry assumptions` (src/kernel/api.rs): an
+obligation arising from lowering a `requires` is assumed rather than
+proven **when it is `is_assumable()`** — the flag the kernel already used
+to separate definedness obligations from genuine verification
+conditions. Non-assumable obligations still have to be discharged.
+
+The dual direction is unchanged and now pinned by two tests:
+`heap_dependent_ensures_still_owes_its_loads` and
+`call_site_owes_the_definedness_of_a_heap_dependent_precondition`. If
+either starts passing, the assumption side has become a way to
+manufacture readability out of nothing.
+
+Remaining ignored: 6 (four premise-selection policy, one aggregate
+separation spelling, one store-provenance).

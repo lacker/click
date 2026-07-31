@@ -3514,13 +3514,10 @@ fn rejects_predicate_call_with_wrong_arity() {
 }
 
 #[test]
-// Quarantined: predicate opacity vs. lowering. `sorted_pair(p)` still lowers to
-// its body, so its `p[0]`/`p[1]` loads need a loadability precondition the
-// contract does not state; every path is infeasible and exact execution reports
-// "no valid paths". Adding `requires loadable(p, 8);` makes it pass, but whether
-// an opaque predicate should owe its body's loads is a Surface Click semantics
-// question (owner's call). See notes/tasks/lib-ignored-expansion-tests.md.
-#[ignore = "quarantined: opaque predicate still owes its body's loads; run with --ignored"]
+// An assumed `requires` carries its own definedness: `sorted_pair(p)` cannot be
+// true in a state where `p[0]`/`p[1]` do not denote, so assuming the
+// requirement also assumes their loadability. The dual direction stays a proof
+// obligation — see the two tests below.
 fn verifies_opaque_predicate_from_requirement() {
     let c_source = r#"
             int32 identity_pointer_fact(int32* p) {
@@ -3544,6 +3541,84 @@ fn verifies_opaque_predicate_from_requirement() {
         .expect("exact opaque predicate fact should verify");
 
     assert_eq!(verified.len(), 1);
+}
+
+/// The definedness of an *assumed* requirement rides along with it, but the
+/// dual direction must not: proving a heap-dependent `ensures` still owes the
+/// loadability its loads need, or a proof could help itself to the readability
+/// of the very memory it is making a claim about.
+#[test]
+fn heap_dependent_ensures_still_owes_its_loads() {
+    let c_source = r#"
+            int32 claim_sorted(int32* p) {
+                return 0;
+            }
+        "#;
+    let click_source = r#"
+            verifying "claim_sorted.c";
+
+            predicate sorted_pair(int32* p) {
+                p[0] <= p[1]
+            }
+
+            int32 claim_sorted(int32* p) {
+                ensures sorted_pair(p) by auto;
+            }
+        "#;
+
+    let error = verify_c0_sources(click_source, &[("claim_sorted.c", c_source)])
+        .expect_err("an ensures with no requires must not assume its own definedness");
+    assert!(
+        error.message().contains("unproved") || error.message().contains("claim_sorted.ensures_0"),
+        "{}",
+        error.message()
+    );
+}
+
+/// A caller must establish the callee's heap-dependent precondition, including
+/// the loadability its evaluation needs. This is the obligation side of the
+/// definedness rule; if it ever starts passing, the assumption side has become
+/// a way to manufacture readability out of nothing.
+#[test]
+fn call_site_owes_the_definedness_of_a_heap_dependent_precondition() {
+    let callee_source = r#"
+            int32 needs_sorted(int32* p) {
+                return 0;
+            }
+        "#;
+    let caller_source = r#"
+            int32 calls_it(int32* q) {
+                int32 r;
+                r = needs_sorted(q);
+                return r;
+            }
+        "#;
+    let click_source = r#"
+            verifying "needs_sorted.c";
+            verifying "calls_it.c";
+
+            predicate sorted_pair(int32* p) {
+                p[0] <= p[1]
+            }
+
+            int32 needs_sorted(int32* p) {
+                requires sorted_pair(p);
+                ensures result == 0;
+            } by auto;
+
+            int32 calls_it(int32* q) {
+                ensures result == 0;
+            } by auto;
+        "#;
+
+    verify_c0_sources(
+        click_source,
+        &[
+            ("needs_sorted.c", callee_source),
+            ("calls_it.c", caller_source),
+        ],
+    )
+    .expect_err("the call site must establish the precondition it relies on");
 }
 
 #[test]
