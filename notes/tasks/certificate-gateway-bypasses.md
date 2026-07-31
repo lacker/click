@@ -1,8 +1,7 @@
 # Certificate-gateway bypasses (from the one-gateway audit)
 
 Status: claimed — redesign accepted, migration in progress
-Claimed: claude/nervous-ptolemy-90e738, 2026-07-30
-Claimed:
+Claimed: worktree-agent-a18665869a3d1251b, 2026-07-30
 
 The 2026-07-30 audit (see one-gateway-check.md for the full evidence)
 found that the settled invariant
