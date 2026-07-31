@@ -83,6 +83,11 @@ branches with unreviewed history or deleting branches/worktrees.
 
 - `CLICK_TIMINGS=1` emits per-tactic and certification-phase timings
   (contract execution / contract claims / per-claim).
+- `click-profile <path.md>` profiles one mdtest (or a directory of
+  them); quarantine does not apply. Its TIME ACCOUNTING section gives
+  the exclusive SIMPLE/SMART/CONTROL/certification split plus the
+  unattributed remainder — a large remainder means uninstrumented
+  machinery, not a clean proof.
 - `CLICK_DISABLE_DECIDE_MEMO` / `CLICK_DISABLE_CERT_ARMS` bypass the
   decide memo and the 2026-07-30 certification arms for A/B.
 - `CLICK_DISABLE_MEMORY_DAG` stops the named-memory-states arc from

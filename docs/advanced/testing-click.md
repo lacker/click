@@ -140,10 +140,19 @@ indefinitely:
 
 ```sh
 cargo run --quiet --bin click-profile -- examples
+cargo run --quiet --bin click-profile -- mdtests/bubble_sort3_two_pass_sorted.md
+cargo run --quiet --bin click-profile -- mdtests
 ```
 
-Pass either one example-project directory or the complete `examples`
-directory. The defaults report smart tactics at 2 seconds, simple tactics at
+Pass one example-project directory, the complete `examples` directory, one
+markdown test, or a directory of them. An mdtest is profiled from its embedded
+` ```c ` and ` ```click ` blocks using the same extraction the mdtests gate
+uses, and reported locations point into the markdown file. Quarantine does not
+apply — a quarantined mdtest is exactly the one worth profiling. The two modes
+are told apart by shape: example projects win whenever a Click sidecar is found
+under the directory, so their `README.md` files are not mistaken for mdtests.
+
+The defaults report smart tactics at 2 seconds, simple tactics at
 500 milliseconds, control-flow containers at 2 seconds, and stop each project
 after 30 seconds. Override them with `--smart-threshold`,
 `--simple-threshold`, `--control-threshold`, and `--time-limit`;
@@ -163,6 +172,19 @@ If a project reaches its limit, the report classifies every active step and
 applies the same advice. This prevents a slow internal certificate replay from
 being mistaken for smart search merely because it is nested inside a smart
 tactic.
+
+The category sections list only steps that crossed a threshold, so they say
+what to act on but not how the run divided overall. The `TIME ACCOUNTING`
+section says that: exclusive time per class — a container's row excludes the
+steps nested inside it — plus the kernel certification phase and an
+`UNATTRIBUTED` remainder. A large remainder is itself the finding: it means
+machinery that emits no `click timing:` line is burning the time, and the
+report cannot yet tell you whether that time is expandable or a bug.
+
+A step whose timing names a tactic index the surface proof does not have keeps
+its timing and loses only its location; those are listed under `STEPS WITHOUT A
+SOURCE LOCATION`. Loop phases the verifier plans for itself index generated
+tactics, so this is expected there.
 
 The bounded report is intentionally a frontier rather than an exhaustive
 profile beyond timed-out work. Fix simple bottlenecks before expanding one

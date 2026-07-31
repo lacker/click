@@ -6532,11 +6532,17 @@ fn verify_loop_initialization_pure_proof(
         std::cell::RefCell::new(context.surface_propositions.clone());
     // The whole initialize phase is one source `by` clause, so every step it
     // plans or replays reports source tactic 0 — the clause itself — and the
-    // loop's body entry as its statement.
+    // loop's body entry as its statement. Computing the layout is only worth
+    // it when something will read the timings.
+    let timings_enabled = std::env::var_os("CLICK_TIMINGS").is_some();
     let initialize_source_index = 0;
-    let initialize_statement_index = SourceExecutionLayout::new(environment.parsed_function.body())
-        .loop_body_entry(loop_index)
-        .unwrap_or(0);
+    let initialize_statement_index = if timings_enabled {
+        SourceExecutionLayout::new(environment.parsed_function.body())
+            .loop_body_entry(loop_index)
+            .unwrap_or(0)
+    } else {
+        0
+    };
     let entry_obligations = c_loop_invariant_obligations_at_entry(
         &context.state,
         invariant_checks,
@@ -6573,18 +6579,22 @@ fn verify_loop_initialization_pure_proof(
                 // Planning an invariant's entry proof is proof search, not
                 // replay. Classify it by the `by` clause the search is
                 // discharging, exactly as if it were written as a `have`.
-                let planned_step = ProofTactic::Have(ProofHave {
-                    proposition: proposition.clone(),
-                    proof: proof.clone(),
+                let planned_step = timings_enabled.then(|| {
+                    ProofTactic::Have(ProofHave {
+                        proposition: proposition.clone(),
+                        proof: proof.clone(),
+                    })
                 });
-                let _timing = TacticTiming::named_for_tactic(
-                    &claim_label,
-                    "plan_invariant_entry",
-                    &planned_step,
-                    invariant_index,
-                    initialize_source_index,
-                    initialize_statement_index,
-                );
+                let _timing = planned_step.as_ref().and_then(|planned_step| {
+                    TacticTiming::named_for_tactic(
+                        &claim_label,
+                        "plan_invariant_entry",
+                        planned_step,
+                        invariant_index,
+                        initialize_source_index,
+                        initialize_statement_index,
+                    )
+                });
                 let direct_plan = plan_point_pure_goal_certificate(
                     &ProofSite::LoopPhase {
                         function_name: environment.function_block.signature().name().to_string(),

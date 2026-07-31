@@ -899,6 +899,13 @@ fn render_profiles(
     }
 
     let has_unknown_timing = !unknown_timing.is_empty();
+    // Threshold-free on purpose: a run where the invisible machinery outweighs
+    // everything the profiler can name is not a profile yet, whatever the
+    // thresholds are set to.
+    let mostly_unattributed = profiles.iter().any(|profile| {
+        !profile.accounting.total.is_zero()
+            && profile.accounting.unattributed() > profile.accounting.attributed()
+    });
     let has_verification_failure = profiles
         .iter()
         .any(|profile| profile.verification_failure.is_some());
@@ -930,6 +937,12 @@ fn render_profiles(
         writeln!(
             output,
             "\nNEXT: nothing crossed the configured thresholds, but unrecognized timing lines mean this green is not trustworthy. Teach the parser those kinds and rerun."
+        )
+        .expect("writing a String cannot fail");
+    } else if mostly_unattributed {
+        writeln!(
+            output,
+            "\nNEXT: nothing crossed the configured thresholds, but more time went unattributed than to every timed step combined. Instrument the machinery burning it before reading this profile as clean."
         )
         .expect("writing a String cannot fail");
     } else {
@@ -1232,6 +1245,32 @@ click timing: function example_function 12.000s
         assert!(report.contains("TIME ACCOUNTING"), "{report}");
         assert!(report.contains("UNATTRIBUTED"), "{report}");
         assert!(report.contains("12.000s total"), "{report}");
+    }
+
+    /// The hole this profiler had was a report that read clean while most of
+    /// the run was invisible to it. A run whose unattributed time outweighs
+    /// everything it can name must not read as clean.
+    #[test]
+    fn a_mostly_unattributed_run_does_not_read_as_clean() {
+        let output = r#"
+click timing: source examples/sample.click
+click timing: tactic example.contract 0 simp class smart statement 1 source 0 1.000000s
+click timing: function example_function 20.000s
+"#;
+        let profile = parse_profile("sample", output, Thresholds::default(), false)
+            .expect("the current timing format should parse");
+        assert!(
+            profile.slow_steps.is_empty(),
+            "nothing here crosses a threshold; that is the point"
+        );
+        assert_eq!(profile.accounting.unattributed(), Duration::from_secs(19));
+
+        let report = render_profiles(&[profile], Thresholds::default(), DEFAULT_TIME_LIMIT);
+
+        assert!(report.contains("more time went unattributed"), "{report}");
+        assert!(!report.contains(
+            "NEXT: no completed smart expansion candidates or simple engine bottlenecks"
+        ));
     }
 
     /// The kinds the accounting consumes are load-bearing now, so a drifted
