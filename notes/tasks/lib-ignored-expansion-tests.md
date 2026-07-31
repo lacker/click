@@ -1,7 +1,8 @@
 # lib: 7 #[ignore] expansion-era tests
 
-Status: diagnosed — 0 un-ignored, 6 stay here, 1 moved to the parked family
-Claimed:
+Status: 5 un-ignored (4 by the premise-policy fix), 1 stays here, 1 moved
+to the parked family
+Claimed: worktree-agent-a00f20ca6b0de59b8 + 2026-07-30
 
 Scope: 7 `#[ignore]` lib tests from the expansion era. Retest against
 current master (the 2026-07-30 certifier/expansion work moved a lot);
@@ -71,9 +72,8 @@ premises are now bare:
   the callee's *internal snapshot* fact gets carried — re-baselining to
   `step();` would delete the point of the test rather than fix it.
 
-Not attempted: the fix is a coherent premise-selection policy in `proof.rs`,
-outside this task's lane (test modules only). Worth doing as one change —
-patching either direction alone will flip the other pair red.
+**Fixed 2026-07-30 on `worktree-agent-a00f20ca6b0de59b8`. All four now pass
+and are un-ignored.** See "The premise policy" below.
 
 ## Family 2: aggregate separation spelling (1 test)
 
@@ -142,3 +142,109 @@ manufacture readability out of nothing.
 
 Remaining ignored: 6 (four premise-selection policy, one aggregate
 separation spelling, one store-provenance).
+
+
+## The premise policy (2026-07-30, branch worktree-agent-a00f20ca6b0de59b8)
+
+All four family-1 tests are fixed and un-ignored. Two commits:
+
+1. `Record which ambient conditions a statement certificate consumed`
+2. `Spell the permissions the resource projection cannot reconstruct`
+
+The policy a `CertifiedStatementStep` certificate now implements — a
+certificate carries exactly what the derivation consumed:
+
+- the prerequisite derivations' context premises and the transition's
+  exact premises (unchanged);
+- every ambient **permission** fact the resource projection cannot
+  reproduce — separations *and* loadability. One the projection
+  reproduces is reconstructed by the replay for itself and stays out;
+- the ambient **conditions**, but only when this transition's execution
+  can have consulted them.
+
+### Why the conditions need a flag rather than a filter
+
+The old `claim_transition_context` blanket kept every ambient
+`ConditionIs`. It cannot simply be deleted: 35 lib tests go red. The
+reason is that the information is *destroyed* before selection runs.
+Planning executes with the whole ambient context, so a condition it
+relied on leaves no trace in the transition — the undefined-behaviour
+path it excluded is simply absent, and the segment lookup it bounded
+simply succeeded. Neither the theorem, the path facts, nor the
+obligations distinguish `requires x < 100` (never touched by `return x;`)
+from the loop invariant that ruled out an overflow.
+
+So the decision is made in `certified_statement_transitions`, where the
+statement is still in hand, and recorded on the transition as
+`consults_conditions`. It is true unless the statement only moves a
+variable or a constant **and** the context cannot turn a condition into a
+memory conclusion (no resources, no non-condition facts). Both halves are
+needed — see the dead ends.
+
+Second half of the over-inclusion fix: the theorem-premises loop in
+`certified_transitions_from_execution` was manufacturing an identity
+derivation (`x < 100` from `x < 100`) for any ambient condition the
+theorem carried, which advertised an untouched precondition as a
+prerequisite. It now skips premises that are already exactly available.
+
+### Dead ends (all measured, none kept)
+
+- **Deleting the blanket alone**: 35 lib failures, split between
+  overflow-condition selection and segment/loadability lookups.
+- **`defer_non_exact_condition_reasoning` for Planning** (so generation
+  sees the same obligations replay will): breaks the smart tactics
+  themselves — `execute_rest` starts reporting signed overflow, because
+  planning can no longer prove the safe path.
+- **Path facts as exact premises**: the safe path's own facts are what
+  selected it, so this looks right, but planning records nothing for a
+  condition it discharged; measured to change no test either way, so it
+  was dropped for minimality.
+- **Re-executing the statement with the conditions withheld** (the direct
+  empirical test): correct answers, unaffordable. It made
+  `expanded_read_step_keeps_named_range_separation_premises` go from
+  0.22 s to over 60 s, because withholding facts makes the execution
+  split where it did not before. Bounding the probe budget did not
+  recover the time.
+- **Selecting conditions by resource-projection dependency**: does not
+  reach the failures, which are resource *containment* during execution
+  (`owns p[i..i+1]` from `owns p[0..n]`), not the
+  `observable_facts_assuming_valid` projection.
+- **`statement_consults_conditions` alone, without the memory-context
+  half**: `mdtests/forall_array_segment.md` regresses. Its body is
+  `return n;` — a pure scalar move — but the post-execution `simp` has to
+  spell `loadable(p + k, 4)`, which needs the `0 <= k < n <= 3` bounds.
+  A statement that cannot consult a condition itself can still sit in a
+  context that turns one into a memory conclusion.
+
+### Latent bug found and NOT fixed here
+
+`condition_polarity_equivalent` (proof.rs) compares
+`canonical_order_condition(..) == canonical_order_condition(..)`. Only
+comparisons have a canonical order form, so **two conditions that both
+lack one compare equal** — `None == None`. That makes
+`exact_fact_is_available` answer yes for any non-comparison condition
+(an overflow check, `PointerOffsetEqual`, a constant) whenever the
+available set holds any other non-comparison condition.
+
+Requiring `Some` on both sides was tried, is clearly the correct
+predicate, and is **load-bearing in its buggy form**: it takes three of
+the four example projects red (`input-cursor`, `owned-segmented-buffer`,
+`owned-split-buffer`), all with `transport using` premise failures on
+`ConditionIs(PointerOffsetEqual(..))` and
+`ConditionIs(Bitvector32Equal(..))` facts that differ only by snapshot.
+The accidental equivalence is standing in for snapshot-insensitive
+matching those examples need. Filed separately; not fixed here because
+the premise-policy work does not need it (the four tests and all three
+gates are green without it).
+
+### Gates at the end of this work
+
+- `cargo nextest run --lib --bins`: 501 passed, 2 skipped
+- `cargo test --test mdtests`: 271/271
+- `cargo test --test examples`: pass
+- `CLICK_STRICT_EXIT_GATE=1 cargo test --test mdtests`: 2 of 271 failed
+  (unchanged from the 2/271 baseline)
+
+Remaining `#[ignore]` in the lib: `expansion_preserves_unfolded_resource_
+and_predicate_fact_spellings` (family 2 above, retested and unchanged by
+this work) and `verifies_old_memory_loop_invariant` (parked elsewhere).

@@ -4699,9 +4699,17 @@ pub(super) fn certified_statement_transitions(
             execution_semantics,
             &mut budget,
         );
+    // Certificate generation has to know whether the ambient conditions are
+    // part of what this transition consumed. Planning reasons from the whole
+    // ambient context, so a condition it used leaves no trace in the
+    // transition: the undefined-behaviour path it ruled out is simply absent,
+    // and the segment lookup it bounded simply succeeded.
+    let consults_conditions = !matches!(prerequisite_policy, StatementPrerequisitePolicy::Planning)
+        || statement_consults_conditions(statement)
+        || context_reasons_about_memory(state, &transition_pure_facts);
     *next_opaque_call = budget.next_opaque_call();
     *next_verification_variable = budget.next_verification_variable();
-    certified_transitions_from_execution(
+    let (mut transitions, loop_rule) = certified_transitions_from_execution(
         execution,
         loop_rule,
         &transition_pure_facts,
@@ -4710,7 +4718,72 @@ pub(super) fn certified_statement_transitions(
         fact_transport_policy,
         certified_prerequisites,
         statement_contains_call_assign(statement),
-    )
+    )?;
+    for transition in &mut transitions {
+        transition.consults_conditions = consults_conditions;
+    }
+    Ok((transitions, loop_rule))
+}
+
+/// Whether anything in this proof context can turn a condition into a memory or
+/// resource conclusion.
+///
+/// Bounds justify segment lookups and sub-range loadability, so a context that
+/// holds memory permissions or resources can consume a condition even where the
+/// statement itself cannot. A context of nothing but conditions cannot.
+fn context_reasons_about_memory(state: &CState, pure_facts: &[Proposition]) -> bool {
+    if !state.resources().facts().is_empty() {
+        return true;
+    }
+    let mut conjuncts = Vec::new();
+    for fact in pure_facts {
+        atomic_conjuncts(fact, &mut conjuncts);
+    }
+    conjuncts
+        .iter()
+        .any(|fact| !matches!(fact, Proposition::ConditionIs(_, _)))
+}
+
+/// The ambient conditions available at a proof point, as atomic conjuncts.
+fn ambient_condition_facts(available: &[Proposition]) -> Vec<Proposition> {
+    let mut conjuncts = Vec::new();
+    for fact in available {
+        atomic_conjuncts(fact, &mut conjuncts);
+    }
+    conjuncts
+        .into_iter()
+        .filter(|fact| matches!(fact, Proposition::ConditionIs(_, _)))
+        .cloned()
+        .collect()
+}
+
+/// Whether executing this statement can consult the ambient condition context.
+///
+/// Planning reasons from the whole ambient context, so a condition it used
+/// leaves no trace in the transition: the undefined-behaviour path it excluded
+/// is simply missing, and the segment lookup it bounded simply succeeded. Only
+/// operations that can be undefined, or that address memory, ever ask; reading a
+/// variable or a constant never does, so a certificate for such a statement owes
+/// the ambient conditions nothing and replays as a bare `step`.
+fn statement_consults_conditions(statement: &CStatement) -> bool {
+    fn expression_consults(expression: &CExpression) -> bool {
+        !matches!(expression, CExpression::Value(_) | CExpression::Variable(_))
+    }
+    match statement {
+        CStatement::Skip | CStatement::Declare { .. } => false,
+        CStatement::Assign { expression, .. } | CStatement::Return(expression) => {
+            expression_consults(expression)
+        }
+        CStatement::Seq(first, second) => {
+            statement_consults_conditions(first) || statement_consults_conditions(second)
+        }
+        CStatement::CallAssign { .. }
+        | CStatement::Assert { .. }
+        | CStatement::Store { .. }
+        | CStatement::TypedStore { .. }
+        | CStatement::If { .. }
+        | CStatement::While { .. } => true,
+    }
 }
 
 fn certified_loop_exit_transitions_with_proven_phases(
@@ -4867,7 +4940,12 @@ fn certified_transitions_from_execution(
                 let mut seen_prerequisites = BTreeSet::new();
                 let mut theorem_context = pure_facts.to_vec();
                 for premise in theorem_implication_premises(path.theorem()) {
+                    // An ambient condition the theorem merely carried along is
+                    // already replayable as itself; recording an identity
+                    // derivation for it would advertise it as something the
+                    // execution consumed and force it into the certificate.
                     if matches!(premise, Proposition::ConditionIs(_, _))
+                        && !exact_fact_is_available(&premise, &theorem_context)
                         && let Some(derivation) =
                             bounded_condition_derivation(&premise, pure_facts)
                         && !derivation.context_premises().is_empty()
@@ -5274,6 +5352,7 @@ fn certified_transitions_from_execution(
                     obligations: path.obligations().to_vec(),
                     pure_facts: successor_facts,
                     prerequisite_derivations,
+                    consults_conditions: false,
                     fact_transports: transported_facts,
                 });
             }
@@ -5290,6 +5369,7 @@ fn certified_transitions_from_execution(
                 obligations: path.obligations().to_vec(),
                 pure_facts: successor_facts,
                 prerequisite_derivations,
+                consults_conditions: false,
                 fact_transports: Vec::new(),
             })
         })
@@ -14430,7 +14510,18 @@ fn record_surface_replay_tactic(
                 click_function_environment,
                 &ProofTactic::CertifiedStatementStep {
                     prerequisite_derivations: evidence.transition.prerequisite_derivations.clone(),
-                    exact_premises: Vec::new(),
+                    // Planning reasons from the whole ambient context, so a
+                    // condition it consulted leaves no trace in the transition
+                    // and cannot be recovered from it afterwards. A statement
+                    // whose execution can consult conditions therefore carries
+                    // them all; one that only moves a variable or a constant,
+                    // in a context that cannot turn a condition into a memory
+                    // conclusion, carries none.
+                    exact_premises: evidence
+                        .transition
+                        .consults_conditions
+                        .then(|| ambient_condition_facts(available))
+                        .unwrap_or_default(),
                 },
                 None,
             );
@@ -14550,17 +14641,17 @@ fn record_surface_replay_tactic(
                             || normalize_direct_atomic_memory_loads(required)
                                 == normalize_direct_atomic_memory_loads(fact)
                     });
-                    let non_reconstructible_separation =
-                        matches!(
-                            fact,
-                            Proposition::CMemoryDisjoint { .. }
-                                | Proposition::CResourceSeparate { .. }
-                        ) && !exact_fact_is_available(fact, &projected_resource_facts);
-                    let claim_transition_context = matches!(fact, Proposition::ConditionIs(_, _));
-                    if !selected_by_derivation
-                        && !claim_transition_context
-                        && !non_reconstructible_separation
-                    {
+                    // A permission the resource projection reproduces is
+                    // reconstructed by the replay for itself. One it does not
+                    // reproduce is only available because the ambient context
+                    // carried it, so the certificate has to spell it.
+                    let non_reconstructible_permission = matches!(
+                        fact,
+                        Proposition::CMemoryDisjoint { .. }
+                            | Proposition::CResourceSeparate { .. }
+                            | Proposition::CMemoryLoadable { .. }
+                    ) && !exact_fact_is_available(fact, &projected_resource_facts);
+                    if !selected_by_derivation && !non_reconstructible_permission {
                         continue;
                     }
                     // A certified statement prerequisite may be represented by

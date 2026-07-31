@@ -1803,10 +1803,6 @@ int32 identity(int32 x) {
     }
 
     #[test]
-    // Quarantined: certificate-premise policy. The expansion is now a bare
-    // `step();` that does re-verify every grouped claim; only the `step using {`
-    // shape assert below is stale. See notes/tasks/lib-ignored-expansion-tests.md.
-    #[ignore = "quarantined: certificate-premise policy (bare step; stale shape assert); run with --ignored"]
     fn expands_grouped_immutable_read_with_multiple_claim_successors() {
         let c_source = "int32 read_first(int32 p[1]) { return p[0]; }";
         let click_source = r#"
@@ -1839,11 +1835,6 @@ int32 read_first(int32 p[1]) {
     }
 
     #[test]
-    // Quarantined: certificate-premise over-inclusion. The expansion lands in the
-    // right branch and re-verifies, but carries the branch hypothesis as
-    // `fact x == x;` (proof.rs `claim_transition_context` keeps every ambient
-    // ConditionIs). See notes/tasks/lib-ignored-expansion-tests.md.
-    #[ignore = "quarantined: certificate-premise over-inclusion (branch hypothesis); run with --ignored"]
     fn expands_nested_branch_tactic_by_source_location() {
         let c_source = "int32 identity(int32 x) { return x; }";
         let click_source = r#"
