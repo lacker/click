@@ -119,11 +119,15 @@ mdtests` 6.7 s.
 ## Remaining (example still quarantined)
 
 With the loadable discharged, `owned_string_push` tactic 7 advances
-and fails at: "`have` failed: expressible path facts do not replay
-the postcondition derivation" — a different, un-diagnosed frontier
-(the have's postcondition derivation replay, not permission
-plumbing). ALSO a runtime finding: the full example run now takes
-minutes (was 2.6 s to first failure), because the extended-bridging
-walks run inside every loadable check of every function; the memo is
-generation-invalidated and execution's load-caching stores bump the
-generation constantly. Any successor should profile before extending.
+and fails at (final binary, measured 2026-07-31): "`have` failed:
+expressible path facts do not replay the postcondition derivation:
+ConditionIs(Bitvector32Equal(MemoryLoad(...)))" — a different,
+un-diagnosed frontier (the terminated_at have's postcondition
+derivation replay, not permission plumbing). ALSO a runtime finding:
+the run now takes 5 m 26 s to that first failure (was 2.6 s to the
+old one), because the extended-bridging walks run inside every
+loadable check on the way there; the memo is generation-invalidated
+and execution's load-caching stores bump the generation constantly.
+Any successor should profile (`CLICK_TIMINGS`/click-profile) before
+extending, and treat the 5 m 26 s as a slow-simple bug per the
+owner's time-budget ruling, not a resting state.
