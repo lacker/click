@@ -5021,7 +5021,82 @@ impl Assumptions {
             return true;
         }
 
+        if self.alias_guard_refuted_by_separation() {
+            return true;
+        }
+
         false
+    }
+
+    /// True when an assumed "these two offsets are the same address" guard is
+    /// refuted by recorded separation.
+    ///
+    /// Memory-load lowering splits on every cell it cannot resolve, emitting a
+    /// `PointerOffsetEqual(..) = true` guard for the aliasing branch. The
+    /// invariant closer lowers with `defer_non_exact_condition_reasoning`, so
+    /// the split is taken even where separation facts plus the surrounding
+    /// bounds do rule the alias out — the bound that puts the index inside the
+    /// separated range is only assumed *inside* the quantified body, which the
+    /// splitter never sees. The resulting path is vacuous, and its goal
+    /// ("the owner field this element aliases equals the stored value") is
+    /// unprovable by anything except that vacuity.
+    ///
+    /// A `PointerOffsetEqual` guard is only ever emitted between two pointers
+    /// in one block (`pointer_equality_condition` drops to offsets exactly
+    /// then), but the condition itself no longer names that block. Recovering
+    /// it from separation facts is sound rather than a guess: a separation
+    /// between two ranges constrains offsets only when the ranges share a base
+    /// block, so requiring that and re-attaching the shared block to both
+    /// offsets asks precisely "do these two offsets fall in disjoint intervals
+    /// of one block", which is a statement about the offset terms alone.
+    fn alias_guard_refuted_by_separation(&self) -> bool {
+        thread_local! {
+            static ALIAS_GUARD_REFUTATION_ACTIVE: Cell<bool> = const { Cell::new(false) };
+        }
+        if ALIAS_GUARD_REFUTATION_ACTIVE.with(Cell::get) {
+            return false;
+        }
+        let mut guards = self.condition_facts.iter().filter_map(|(condition, value)| {
+            match (condition, value) {
+                (ConditionTerm::PointerOffsetEqual(left, right), true) if left != right => {
+                    Some((left.as_ref(), right.as_ref()))
+                }
+                _ => None,
+            }
+        });
+        let Some(first_guard) = guards.next() else {
+            return false;
+        };
+        let guards = std::iter::once(first_guard).chain(guards).collect::<Vec<_>>();
+        let blocks = self
+            .prop_facts
+            .iter()
+            .filter_map(|fact| match fact {
+                Proposition::CResourceSeparate {
+                    left: CResource::Memory(left),
+                    right: CResource::Memory(right),
+                } if left.base().block == right.base().block => Some(left.base().block.clone()),
+                _ => None,
+            })
+            .collect::<BTreeSet<_>>();
+        if blocks.is_empty() {
+            return false;
+        }
+        ALIAS_GUARD_REFUTATION_ACTIVE.with(|active| active.set(true));
+        let refuted = guards.iter().any(|(left, right)| {
+            blocks.iter().any(|block| {
+                let as_pointer = |offset: &PointerOffsetTerm| Pointer {
+                    block: block.clone(),
+                    offset: offset.clone(),
+                };
+                self.pointers_proven_disjoint_by_explicit_range_for_memory_resolution(
+                    &as_pointer(left),
+                    &as_pointer(right),
+                )
+            })
+        });
+        ALIAS_GUARD_REFUTATION_ACTIVE.with(|active| active.set(false));
+        refuted
     }
 
     pub(super) fn proves_not(&self, proposition: &Proposition) -> bool {
