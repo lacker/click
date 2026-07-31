@@ -504,6 +504,61 @@ all downstream of the closer (certificate lowering, ghost-resource
 representation, contract `simp`). The profile above says stage 5's subsumption
 question is the one with leverage.
 
+### 2026-07-31 (session 4) — stages 4–5
+
+**Stage 3's cost attribution was one level off, and the correction reshapes
+stage 4.** Stage 3 read a 20 s `sample` as "the time is in
+`bitvector_terms_equal_for_memory_resolution` and `api::canonicalize_atomic_
+loads`, i.e. the value-bridging machinery that deep-compares embedded
+snapshots", and concluded the DAG had to subsume deep snapshot comparison.
+The first half is right and the second is not. Measured this session with
+counters at the call site (probe, stripped) plus a fresh `sample`:
+
+*Counted, on `bubble_pass3` (~9 s, small enough to iterate on):*
+
+- `bitvector_terms_proven_equal_for_memory_resolution` is entered **564 888
+  times** and accounts for **~7 of the 9 s**. So stage 3's naming of the hot
+  function is correct.
+- **539 100 of those calls return `false`.** The success rate is 4.6%. The
+  cost is a failing search, so no arm that answers *earlier* can move it —
+  only an arm that makes the failures cheaper, or fewer.
+- Of the 540 k top-level (`depth == 0`) calls, exactly **6** compare two
+  `MemoryLoad` terms. The overwhelming shapes are `const/load` (126 k),
+  `const/var` (95 k), `const/const` (76 k), `addsub/load` (42 k),
+  `var/load` (42 k). The function is being used as a general term-equality
+  oracle, not as a load-vs-load bridge.
+- The deep-canonicalization arm inside it (`bitvector_term_deeper_than` ×2
+  then `canonicalize_atomic_loads` ×2) answered **0 times out of 1 077 050**
+  and cost **under 1 s in total**. It is neither the cost nor, on this
+  corpus, a source of completeness.
+
+*Sampled, on `bubble_sort3` (25 s window, ~192 k frames):* under
+`bitvector_terms_equal_for_memory_resolution` the leaves are
+`bitvector_terms_equal_from_facts_uncached` (3017),
+`exact_condition_value` (2642 + 2449), `bitvector_terms_equal_from_facts`
+(2146), `has_order_path_for_memory_resolution` (1463),
+`decide_bitvector_equality_shallow` (1029),
+`proves_order_condition_for_memory_resolution` (886 + 809),
+`memory_loads_proven_equal` (713),
+`bitvector_constant_from_direct_equalities` (708),
+`resolve_memory_load_value` (623). `canonicalize_atomic_loads` is 2962 —
+present, as stage 3 said, but it is called from `proves` /
+`proves_atomic_without_search` and the transport paths, not from the hot
+recursion, and the counter above shows the hot-recursion copy is free.
+
+**So the cost is fact-set scanning, not snapshot comparison.** Each of the
+540 k calls walks the assumption fact set (`bitvector_terms_equal_from_facts`)
+and builds fresh `PointerOffsetTerm`s to look up in `condition_facts`
+(`exact_condition_value`, called twice per invocation by the `[1, 4]`
+byte-width arm). The recursive descent through `Add`/`Subtract` cancellation
+multiplies one top-level question into ~2 sub-questions on average
+(1 077 050 total invocations for 564 888 entries).
+
+This is worth knowing before anyone else reads a `sample` on this test: the
+frame that is hot is the *caller*, and attributing its cost to the
+canonicalizing arm it happens to contain is exactly the mistake made once
+already.
+
 ## For the owner
 
 *(nothing yet — no surface-semantics question has come up; the `old`
