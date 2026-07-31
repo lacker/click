@@ -12938,34 +12938,6 @@ fn lower_outcome_simp_tactic(
     }
 }
 
-fn collect_surface_predicate_calls(proposition: &ClickProposition, names: &mut Vec<String>) {
-    match proposition {
-        ClickProposition::PredicateCall { name, .. } => {
-            if !names.contains(name) {
-                names.push(name.clone());
-            }
-        }
-        ClickProposition::And(left, right)
-        | ClickProposition::Or(left, right)
-        | ClickProposition::Implies(left, right) => {
-            collect_surface_predicate_calls(left, names);
-            collect_surface_predicate_calls(right, names);
-        }
-        ClickProposition::Not(inner) | ClickProposition::At {
-            proposition: inner, ..
-        } => {
-            collect_surface_predicate_calls(inner, names);
-        }
-        ClickProposition::ForAll { body, .. }
-        | ClickProposition::Exists { body, .. }
-        | ClickProposition::RangeAll { body, .. }
-        | ClickProposition::RangeAny { body, .. } => {
-            collect_surface_predicate_calls(body, names);
-        }
-        _ => {}
-    }
-}
-
 fn collect_definable_predicate_names(
     proposition: &Proposition,
     predicate_environment: &PredicateEnvironment,

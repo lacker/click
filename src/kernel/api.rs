@@ -3132,20 +3132,6 @@ fn quantified_load_fact_certifies_loadable(assumptions: &Assumptions, goal: &Pro
         }
         (premises, conclusion)
     }
-    fn collect_load_pointers(term: &Bitvector32Term, pointers: &mut Vec<Pointer>) {
-        match term {
-            Bitvector32Term::MemoryLoad(_, pointer) => pointers.push(pointer.as_ref().clone()),
-            Bitvector32Term::Add(left, right)
-            | Bitvector32Term::Subtract(left, right)
-            | Bitvector32Term::Multiply(left, right)
-            | Bitvector32Term::Divide(left, right) => {
-                collect_load_pointers(left, pointers);
-                collect_load_pointers(right, pointers);
-            }
-            _ => {}
-        }
-    }
-
     let Proposition::ForAll { var, sort, body } = goal else {
         return false;
     };
