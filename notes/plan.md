@@ -23,7 +23,8 @@ click-audit (full run 314 s, 98 sites passing).
 | while-invariant-rule.md | done | Fenced: rule is `#[cfg(test)] pub(super)`, no callers; a sound fix needs `CLoopInvariantCheck`, not a flat `Vec<Proposition>` |
 | docs-vocabulary-pass.md | done | Inventory + synonyms documented; audit docs match the binary (worktree-agent-ae547bd447d583266) |
 | parser-ergonomics.md | done | Both stale: `a->b->c` verifies (new mdtest), else already optional; 22 no-op else paddings removed; doubly-indirect `owns` parked as C5 |
-| lib-ignored-expansion-tests.md | done | All 7 still fail, each re-diagnosed; 4 trace to one contradictory premise-selection policy |
+| lib-ignored-expansion-tests.md | done | Premise policy fixed: 5 of 7 un-ignored. Certificates now carry consumed conditions + non-reconstructible permissions. Found a latent `condition_polarity_equivalent` None==None bug, filed separately |
+| condition-polarity-none-equivalence.md | open | `condition_polarity_equivalent` matches any two non-comparison conditions (`None == None`); correct predicate takes 3 examples red, needs snapshot-insensitive matching first |
 | certificate-gateway-bypasses.md | open | Redesign accepted; all three bypasses now lower to certificates. Strict-gate worklist 24 -> 2, both remainders parked on store-provenance/named-memory-states. Next: flip the gate default |
 | store-provenance-family.md | parked | owned-string, owned-vector, 6 mdtests — blocked on the canonical-memory arc |
 | repo-hygiene.md | blocked | Stale branches/worktrees/stash — deletions need the owner |
