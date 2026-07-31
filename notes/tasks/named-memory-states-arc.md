@@ -5,6 +5,8 @@ Claimed: worktree-agent-a799da2cbca60970b (branch
 `claude/nervous-ptolemy-90e738` in `.claude/worktrees/`) — 2026-07-30
 Claimed (stage 2a): branch `worktree-agent-a9b0d0d8a52de5913` in
 `.claude/worktrees/` — 2026-07-30
+Claimed (stages 3–5): branch `worktree-agent-ae96555419eb6923f` in
+`.claude/worktrees/` — 2026-07-31
 
 Design brief: `../canonical-memory.md`. Failure corpus and per-member
 diagnoses: `store-provenance-family.md` (that task stays parked; this
