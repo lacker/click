@@ -298,28 +298,72 @@ pub fn isolated_test_command(
     Ok(command)
 }
 
+/// The tactic a timed-out child was inside when it was killed: the last
+/// `click timing: started tactic ...` line with no matching finish line.
+/// `None` means the child died outside instrumented tactic replay (or the
+/// timing stream was absent), which is itself worth reporting honestly.
+pub fn last_unfinished_tactic(stderr: &str) -> Option<String> {
+    let mut in_flight: Vec<&str> = Vec::new();
+    for line in stderr.lines() {
+        if let Some(rest) = line.strip_prefix("click timing: started tactic ") {
+            in_flight.push(rest.trim_end());
+        } else if let Some(rest) = line.strip_prefix("click timing: tactic ") {
+            // Finish lines repeat the started fields and append the elapsed
+            // seconds; match on the prefix.
+            let finished = rest.trim_end();
+            if let Some(index) = in_flight
+                .iter()
+                .rposition(|started| finished.starts_with(started))
+            {
+                in_flight.remove(index);
+            }
+        }
+    }
+    in_flight.last().map(|tactic| (*tactic).to_string())
+}
+
+fn without_timing_lines(output: &str) -> String {
+    output
+        .lines()
+        .filter(|line| !line.starts_with("click timing:"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 /// Runs a fixture child under a wall-clock limit and reduces the outcome to a
 /// pass/fail result, folding the child's captured output into the message.
+///
+/// The child runs with `CLICK_TIMINGS` enabled so a timeout can name the
+/// tactic it interrupted; the timing stream itself is filtered back out of
+/// every reported message.
 pub fn run_isolated(
-    command: Command,
+    mut command: Command,
     limit: Duration,
     messages: IsolatedRun<'_>,
 ) -> Result<(), String> {
+    command.env("CLICK_TIMINGS", "1");
     let (status, stdout, stderr) = match run_bounded(command, limit, messages.label)? {
         BoundedOutput::Completed(output) => (Some(output.status), output.stdout, output.stderr),
         BoundedOutput::TimedOut { stdout, stderr, .. } => (None, stdout, stderr),
     };
-    let output = format!(
-        "{}{}",
-        String::from_utf8_lossy(&stdout),
-        String::from_utf8_lossy(&stderr)
-    );
+    let stderr_text = String::from_utf8_lossy(&stderr).into_owned();
+    let output = without_timing_lines(&format!(
+        "{}{stderr_text}",
+        String::from_utf8_lossy(&stdout)
+    ));
     let Some(status) = status else {
+        let interrupted = match last_unfinished_tactic(&stderr_text) {
+            Some(tactic) => format!("\n  timed out inside tactic: {tactic}"),
+            None => "\n  timed out outside instrumented tactic replay \
+                     (no in-flight `click timing:` tactic)"
+                .to_string(),
+        };
         return Err(format!(
-            "exceeded {} of {}; set {} to override it{}",
+            "exceeded {} of {}; set {} to override it{}{}",
             messages.limit_description,
             format_duration(limit),
             messages.limit_variable,
+            interrupted,
             indented_output(&output)
         ));
     };
@@ -481,6 +525,28 @@ where
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn last_unfinished_tactic_reports_the_interrupted_one() {
+        let stderr = "\
+click timing: started tactic f.contract 0 step class simple statement 0 source 0
+click timing: tactic f.contract 0 step class simple statement 0 source 0 0.001s
+click timing: started tactic f.contract 1 simp class smart statement 1 source 1
+";
+        assert_eq!(
+            super::last_unfinished_tactic(stderr).as_deref(),
+            Some("f.contract 1 simp class smart statement 1 source 1")
+        );
+    }
+
+    #[test]
+    fn last_unfinished_tactic_is_none_when_everything_finished() {
+        let stderr = "\
+click timing: started tactic f.contract 0 step class simple statement 0 source 0
+click timing: tactic f.contract 0 step class simple statement 0 source 0 0.001s
+";
+        assert_eq!(super::last_unfinished_tactic(stderr), None);
+    }
+
     use super::*;
 
     #[test]

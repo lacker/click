@@ -44,6 +44,16 @@ branches with unreviewed history or deleting branches/worktrees.
   alarm on stalls, and treat slow-but-passing as a reportable finding
   (click-audit enforces `--slow-site-limit` / `--time-limit`).
 
+## Time budgets are contracts (owner ruling, 2026-07-31)
+
+An mdtest must pass within `MDTEST_TIME_LIMIT` (default 30 s). A test
+that times out fails with the tactic it was inside (the harness enables
+`CLICK_TIMINGS` in children and reports the last unfinished tactic).
+Slow-but-proving is a bug, not a resting state: if the time is in SMART
+tactics, the test-writer expands them; if it is in SIMPLE tactics or
+certification, it is an engine bug. Quarantine-for-cost entries are
+obligations to burn down, never parking.
+
 ## Working rules
 
 - Fix correctness bugs before continuing any sweep.
