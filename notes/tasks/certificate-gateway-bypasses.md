@@ -4,7 +4,7 @@ Status: claimed — redesign accepted, migration in progress.
 Strict-gate worklist is at 2 failing mdtests (was 24), both parked on the
 store-provenance / named-memory-states representation work; see the last
 migration-log section.
-Claimed: worktree-agent-a18665869a3d1251b, 2026-07-30
+Claimed: worktree-agent-ae831f37fb11684b5, 2026-07-30
 
 The 2026-07-30 audit (see one-gateway-check.md for the full evidence)
 found that the settled invariant
