@@ -671,7 +671,7 @@ impl Parser {
         let parameters = self.parse_parameters()?;
         self.expect(Token::RParen)?;
         let body = self.parse_block_statement()?;
-        self.expect_end()?;
+        self.expect_end(&name)?;
 
         Ok(C0Function {
             return_type,
@@ -1593,13 +1593,20 @@ impl Parser {
         }
     }
 
-    fn expect_end(&self) -> Result<(), C0SyntaxError> {
+    /// `function_name` is the function just parsed, used to point at where the
+    /// trailing tokens begin.
+    fn expect_end(&self, function_name: &str) -> Result<(), C0SyntaxError> {
         if self.position == self.tokens.len() {
             Ok(())
         } else {
+            // Trailing tokens after a complete function almost always mean a
+            // second function definition: name that restriction instead of
+            // reporting a bare "expected end of input".
             Err(self.error_here(format!(
-                "expected end of input, got {:?}",
-                self.tokens[self.position]
+                "each C source file holds exactly one function; \
+                 put the next definition in its own file and add another \
+                 `verifying` line (got {} after the end of `{function_name}`)",
+                self.tokens[self.position].describe(),
             )))
         }
     }

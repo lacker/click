@@ -22,7 +22,7 @@ click-audit (full run 314 s, 98 sites passing).
 | proof-panics.md | done | 78 sites classified; 7 converted, 71 invariant-true; the design review's cited example is a false positive |
 | while-invariant-rule.md | done | Fenced: rule is `#[cfg(test)] pub(super)`, no callers; a sound fix needs `CLoopInvariantCheck`, not a flat `Vec<Proposition>` |
 | docs-vocabulary-pass.md | done | Inventory + synonyms documented; audit docs match the binary (worktree-agent-ae547bd447d583266) |
-| parser-ergonomics.md | open | required-else and a->b->c chains: fix small or park with writeup |
+| parser-ergonomics.md | done | Both stale: `a->b->c` verifies (new mdtest), else already optional; 22 no-op else paddings removed; doubly-indirect `owns` parked as C5 |
 | lib-ignored-expansion-tests.md | done | All 7 still fail, each re-diagnosed; 4 trace to one contradictory premise-selection policy |
 | store-provenance-family.md | parked | owned-string, owned-vector, 6 mdtests — blocked on the canonical-memory arc |
 | repo-hygiene.md | blocked | Stale branches/worktrees/stash — deletions need the owner |

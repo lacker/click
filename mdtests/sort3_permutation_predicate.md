@@ -10,22 +10,16 @@ int32 sort3_permutation_predicate(int32 p[3]) {
         tmp = p[0];
         p[0] = p[1];
         p[1] = tmp;
-    } else {
-        p[0] = p[0];
     }
     if (p[2] < p[1]) {
         tmp = p[1];
         p[1] = p[2];
         p[2] = tmp;
-    } else {
-        p[1] = p[1];
     }
     if (p[1] < p[0]) {
         tmp = p[0];
         p[0] = p[1];
         p[1] = tmp;
-    } else {
-        p[0] = p[0];
     }
     return 0;
 }

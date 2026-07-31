@@ -14,8 +14,6 @@ int32 bubble_pass3(int32 p[3]) {
             tmp = p[j];
             p[j] = p[j + 1];
             p[j + 1] = tmp;
-        } else {
-            p[j] = p[j];
         }
         j = j + 1;
     }
