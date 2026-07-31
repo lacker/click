@@ -4020,6 +4020,55 @@ fn quantified_binder_equivalent(left: &Proposition, right: &Proposition) -> bool
     }
 }
 
+/// `quantified_binder_equivalent` sees through ONE binder renaming; a nested
+/// quantifier needs the rename applied at every level.
+///
+/// Certificate generation compares a spelling it lowers itself against a fact
+/// the drain lowered separately, and the two lowerings mint different binder
+/// variables, so a nested `forall` fact is only recognizable up to renaming.
+/// This is a generation-side recognizer: it decides which surface spelling to
+/// WRITE, never whether a proof is accepted. The written spelling still has to
+/// satisfy `derivation.replay` and then the replay judgment itself, both of
+/// which instantiate quantifiers rather than compare them structurally.
+fn nested_quantified_binder_equivalent(
+    left: &Proposition,
+    right: &Proposition,
+    depth: usize,
+) -> bool {
+    if depth == 0 {
+        return false;
+    }
+    if quantified_binder_equivalent(left, right) {
+        return true;
+    }
+    match (left, right) {
+        (
+            Proposition::ForAll {
+                var: left_var,
+                sort: left_sort,
+                body: left_body,
+            },
+            Proposition::ForAll {
+                var: right_var,
+                sort: right_sort,
+                body: right_body,
+            },
+        ) => {
+            left_sort == right_sort
+                && nested_quantified_binder_equivalent(
+                    &substitute_int32_variable_in_proposition(
+                        left_body,
+                        *left_var,
+                        Bitvector32Term::Variable(*right_var),
+                    ),
+                    right_body,
+                    depth - 1,
+                )
+        }
+        _ => false,
+    }
+}
+
 fn pure_fact_is_replay_available(required: &Proposition, available: &[Proposition]) -> bool {
     available.contains(required)
         || materialization_equivalent_available_fact(required, available).is_some()
@@ -7297,12 +7346,15 @@ fn checked_surface_fact_at_outcome(
         bases.push(surface.clone());
     }
     for recorded in replay.surface_propositions.kernel_facts() {
-        if (quantified_replay_equivalent_available_fact(kernel, std::slice::from_ref(recorded))
-            .is_some()
-            || matches!(
-                (kernel, recorded),
-                (Proposition::ForAll { .. }, Proposition::ForAll { .. })
-            ))
+        // The quantifier-shape test is checked first on purpose: it is the
+        // weaker of the two conditions, so whenever it holds the mutual
+        // `derive_simp_proposition` search below is redundant — and on nested
+        // quantified predicate bodies that search costs minutes.
+        if (matches!(
+            (kernel, recorded),
+            (Proposition::ForAll { .. }, Proposition::ForAll { .. })
+        ) || quantified_replay_equivalent_available_fact(kernel, std::slice::from_ref(recorded))
+            .is_some())
             && let Ok(surface) = replay.surface_propositions.surface(recorded)
             && !bases.contains(surface)
         {
@@ -7341,6 +7393,58 @@ fn checked_surface_fact_at_outcome(
         for candidate in variants {
             if check(&candidate).is_ok_and(|lowered| matches_kernel(&lowered)) {
                 return Ok(candidate);
+            }
+        }
+    }
+    // A drain that unfolds predicates unfolds its ambient facts too, and the
+    // unfolded body of an opaque predicate is not itself a recorded fact, so
+    // it has no spelling of its own. Unfold a spelling of the FOLDED fact at
+    // the surface instead — the same rewrite the script's `unfold(...)`
+    // performs — and let the round trip below decide whether the result is the
+    // fact we were asked for.
+    if matches!(kernel, Proposition::ForAll { .. } | Proposition::Exists { .. })
+        && !replay.unfolded_predicates.is_empty()
+    {
+        for fact in available {
+            if !matches!(fact, Proposition::Predicate { .. }) {
+                continue;
+            }
+            let mut folded_bases = Vec::new();
+            for surface in replay.surface_propositions.surfaces(fact) {
+                if !folded_bases.contains(surface) {
+                    folded_bases.push(surface.clone());
+                }
+            }
+            for state in std::iter::once(post_state).chain(replay.program_point_states.values()) {
+                if let Some(surface) =
+                    synthesize_surface_proposition(fact, parameters, arguments, state)
+                    && !folded_bases.contains(&surface)
+                {
+                    folded_bases.push(surface);
+                }
+            }
+            for base in &folded_bases {
+                let Some(variants) = comparison_program_point_variants(base, &points) else {
+                    continue;
+                };
+                for candidate in variants {
+                    let Ok(unfolded) = unfold_structural_invariant_proposition(
+                        predicate_environment,
+                        &candidate,
+                        &replay.unfolded_predicates,
+                    ) else {
+                        continue;
+                    };
+                    if unfolded == candidate {
+                        continue;
+                    }
+                    if check(&unfolded).is_ok_and(|lowered| {
+                        matches_kernel(&lowered)
+                            || nested_quantified_binder_equivalent(&lowered, kernel, 8)
+                    }) {
+                        return Ok(unfolded);
+                    }
+                }
             }
         }
     }
@@ -11788,6 +11892,54 @@ pub(super) fn synthesize_surface_proposition(
         }
         _ => {}
     }
+    // A predicate call lowers each array-ref argument to a (memory, pointer)
+    // term pair and each value argument to a single value term, so the kernel
+    // argument list reads back unambiguously: a `CMemory` term always opens an
+    // array-ref pair. The snapshot the pair names is not spelled here — the
+    // current memory needs no spelling, and every caller re-lowers the
+    // candidate and compares it to the kernel fact, so a candidate built
+    // against the wrong snapshot is rejected by that round trip rather than by
+    // a guess made here.
+    if let Proposition::Predicate {
+        name,
+        arguments: kernel_arguments,
+    } = proposition
+    {
+        let mut call_arguments = Vec::new();
+        let mut index = 0;
+        while index < kernel_arguments.len() {
+            match &kernel_arguments[index] {
+                Term::CMemory(_) => {
+                    let Some(Term::CValue(CValue::Pointer(pointer))) =
+                        kernel_arguments.get(index + 1)
+                    else {
+                        return None;
+                    };
+                    call_arguments.push(ContractExpression::CFragment(synthesize_surface_pointer(
+                        pointer, parameters, arguments, state,
+                    )?));
+                    index += 2;
+                }
+                Term::CValue(CValue::Pointer(pointer)) => {
+                    call_arguments.push(ContractExpression::CFragment(synthesize_surface_pointer(
+                        pointer, parameters, arguments, state,
+                    )?));
+                    index += 1;
+                }
+                Term::CValue(CValue::Int32(value) | CValue::UInt8(value)) => {
+                    call_arguments.push(synthesize_surface_bitvector(
+                        value, parameters, arguments, state,
+                    )?);
+                    index += 1;
+                }
+                _ => return None,
+            }
+        }
+        return Some(ClickProposition::PredicateCall {
+            name: name.clone(),
+            arguments: call_arguments,
+        });
+    }
     if let Proposition::CResourceSeparate { left, right } = proposition {
         return Some(ClickProposition::Separate {
             left: synthesize_surface_resource_subject(left, parameters, arguments, state)?,
@@ -12432,7 +12584,10 @@ fn lower_outcome_simp_tactic(
             )
             .ok()
             .filter(|surface| {
-                check(surface).is_ok_and(|lowered| condition_polarity_equivalent(&lowered, fact))
+                check(surface).is_ok_and(|lowered| {
+                    condition_polarity_equivalent(&lowered, fact)
+                        || nested_quantified_binder_equivalent(&lowered, fact, 8)
+                })
             })
             .map(|surface| (fact.clone(), surface))
         };
@@ -14107,6 +14262,40 @@ fn comparison_program_point_variants(
             );
         }
         return (!variants.is_empty()).then_some(variants);
+    }
+    // A predicate call names its memory snapshot only through its array-ref
+    // arguments, so the snapshot is selected by wrapping the arguments —
+    // uniformly, the way the recorded-spelling search in
+    // `checked_surface_fact_at_point` already does. Wrapping a value argument
+    // is harmless: it evaluates to the same value at every point it is
+    // spellable at, and a wrapping that does not lower is discarded by the
+    // caller's `check`.
+    if let ClickProposition::PredicateCall { name, arguments } = proposition {
+        let call = |wrap: &dyn Fn(&ContractExpression) -> ContractExpression| {
+            ClickProposition::PredicateCall {
+                name: name.clone(),
+                arguments: arguments.iter().map(wrap).collect(),
+            }
+        };
+        let mut variants = vec![proposition.clone()];
+        if !arguments
+            .iter()
+            .any(|argument| matches!(argument, ContractExpression::Old(_)))
+        {
+            variants.push(call(&|argument| {
+                ContractExpression::Old(Box::new(argument.clone()))
+            }));
+        }
+        for point in points.iter().rev() {
+            let candidate = call(&|argument| ContractExpression::At {
+                selector: VisitSelector::ProgramPoint(point.clone()),
+                expression: Box::new(argument.clone()),
+            });
+            if !variants.contains(&candidate) {
+                variants.push(candidate);
+            }
+        }
+        return Some(variants);
     }
     let ClickProposition::Comparison {
         left,

@@ -1,10 +1,10 @@
 # Certificate-gateway bypasses (from the one-gateway audit)
 
 Status: claimed — redesign accepted, migration in progress.
-Strict-gate worklist is at 2 failing mdtests (was 24), both parked on the
-store-provenance / named-memory-states representation work; see the last
+Strict-gate worklist is at **0 failing mdtests** (was 24). The gate
+default is still off: flipping it is the owner's step. See the last
 migration-log section.
-Claimed: worktree-agent-a18665869a3d1251b, 2026-07-30
+Claimed: worktree-agent-ae831f37fb11684b5, 2026-07-30
 
 The 2026-07-30 audit (see one-gateway-check.md for the full evidence)
 found that the settled invariant
@@ -234,7 +234,12 @@ Every candidate emitted by the new arms is accepted only when
 `prove_have_at_point` — the replay judgment itself — proves it AND yields
 the claim's kernel goal. No replay-side check was loosened.
 
-### Remaining 2 — PARKED on the representation work, do not retry blind
+### Remaining 2 — RESOLVED 2026-07-30, see the next log section
+
+(Kept for the diagnosis trail. The "parked on the representation work"
+verdict below was right about `proof_advance_pointer_local` and WRONG
+about `loop_sorted_range_invariant`: the predicate arm did not need the
+predicate definition, and the snapshot did not need naming.)
 
 Both are "planned `simp` context premise is not an available source
 fact" (proof.rs ~12496), i.e. the planner selected a premise that
@@ -266,12 +271,85 @@ spellings) did NOT fix either test AND made
 short-circuit is load-bearing for performance — do not remove it without
 bounding the fallback search.
 
+## Migration log, continued (2026-07-30, worktree-agent-ae831f37fb11684b5)
+
+Strict-gate corpus: **2 -> 0**. Three default gates green at every commit
+(497 lib/bins, mdtests, examples). The gate default is NOT flipped; that
+is the owner's step.
+
+- DONE, `loop_sorted_range_invariant`: exit-claim certificates can now
+  spell predicate facts and the quantified bodies the drain's `unfold`
+  produces. Four pieces, all in proof.rs:
+  (a) `synthesize_surface_proposition` gets a `Proposition::Predicate`
+  arm. It does NOT need the predicate definition after all: lowering
+  emits `Term::CMemory` + `Term::CValue` for an array-ref argument and a
+  bare `Term::CValue` for a value argument, so a `CMemory` term always
+  opens an array-ref pair and the kernel argument list reads back
+  unambiguously. It also does not name the snapshot — see (b).
+  (b) `comparison_program_point_variants` handles `PredicateCall` by
+  wrapping every argument in `old(...)` / `at(point, ...)`, which is how
+  a predicate call names its snapshot (the recorded-spelling search in
+  `checked_surface_fact_at_point` already did exactly this). The premise
+  here wanted the function-entry snapshot, so `old(sorted_range(p,0,3))`
+  is what lands. The round trip (`check` back to the required kernel
+  fact) is the whole correctness criterion; synthesis stays permissive
+  and never guesses a snapshot.
+  (c) The NEXT premise after that one is the unfolded *body* of
+  `sorted_range` — not a recorded fact, so it has no spelling of its own.
+  `checked_surface_fact_at_outcome` now has a last-resort arm that takes
+  a spelling of the FOLDED fact and applies
+  `unfold_structural_invariant_proposition` to it, i.e. the same rewrite
+  the script's `unfold(...)` performs, then round-trips that.
+  (d) That candidate lowered to the required fact except for binder
+  numbering (`Variable(2000000)` vs `Variable(2500000)`): generation
+  lowers the spelling itself while the drain lowered the fact separately,
+  and the two mint different variables. `nested_quantified_binder_
+  equivalent` recognizes it — `quantified_binder_equivalent` only sees
+  through ONE binder and this body is a nested `forall`. It is a
+  generation-side recognizer choosing what to WRITE; acceptance is still
+  `derivation.replay` plus the replay judgment, both of which instantiate
+  quantifiers.
+- DONE, performance: in the same function, the `bases` loop evaluated
+  `quantified_replay_equivalent_available_fact` (a mutual
+  `derive_simp_proposition` search) BEFORE the ForAll/ForAll shape test
+  that strictly subsumes it. On these nested predicate bodies that cost
+  minutes; the test ran >10 min instead of ~1 s. Reordered. This was
+  latent before — nothing reached it until (a) let generation get past
+  the first premise.
+- DONE, `proof_advance_pointer_local`: REWRITTEN PROOF (owner-sanctioned
+  option), not quarantined. The closer needs
+  `selected == left or selected == right`, and `selected` has no name at
+  function exit; generation cannot synthesize `at(statement(1).exit,
+  selected)`. The proof now writes that spelling itself as a `have`
+  immediately before the closer. The C source and the `ensures` claim are
+  byte-identical. Verified load-bearing: deleting
+  `fact selected == left or selected == right;` from the advance's
+  `ensuring` block makes the new `have` fail. Chosen over quarantine
+  because the system genuinely proves this claim — the gap is only that
+  the generator cannot invent the point-qualified spelling, and the
+  rewrite says so out loud instead of hiding the test.
+
+DEAD END, measured and dropped: teaching `synthesize_surface_pointer` to
+spell a pointer held by a local (mirroring the scalar-local lookup
+`synthesize_surface_bitvector` already has) does NOT fix
+`proof_advance_pointer_local`. The advance abstracts `selected` into a
+fresh symbolic block, and no recorded program-point state binds a local
+to that pointer, so the lookup never fires. Do not re-attempt without
+first checking which point state (if any) holds the abstracted value.
+
+Cost note: `loop_sorted_range_invariant` goes from 0.22 s (failing fast)
+to ~2.2 s. The new work is all in the last-resort arms, so it is paid
+only by claims that previously had no spelling at all; the full mdtest
+corpus is unchanged at ~10 s.
+
 ### Next steps
 
-1. The representation work above, then these two tests.
-2. Flip `CLICK_STRICT_EXIT_GATE` to the default and delete
+1. Flip `CLICK_STRICT_EXIT_GATE` to the default and delete
    `surface_closer_blockers`.
-3. The ClosedClaim restructure per the accepted design.
+2. The ClosedClaim restructure per the accepted design.
+3. Store-provenance: when that family lands, drop the explicit `have`
+   from `mdtests/proof_advance_pointer_local.md` and confirm generation
+   synthesizes the `at(statement(1).exit, selected)` spelling itself.
 
 Quality follow-up (not a gate): `collect_surface_predicate_calls`
 (proof.rs) and `collect_load_pointers` (kernel/api.rs) are dead and warn

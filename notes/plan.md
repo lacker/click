@@ -24,7 +24,7 @@ click-audit (full run 314 s, 98 sites passing).
 | docs-vocabulary-pass.md | done | Inventory + synonyms documented; audit docs match the binary (worktree-agent-ae547bd447d583266) |
 | parser-ergonomics.md | done | Both stale: `a->b->c` verifies (new mdtest), else already optional; 22 no-op else paddings removed; doubly-indirect `owns` parked as C5 |
 | lib-ignored-expansion-tests.md | done | All 7 still fail, each re-diagnosed; 4 trace to one contradictory premise-selection policy |
-| certificate-gateway-bypasses.md | open | Redesign accepted; all three bypasses now lower to certificates. Strict-gate worklist 24 -> 2, both remainders parked on store-provenance/named-memory-states. Next: flip the gate default |
+| certificate-gateway-bypasses.md | open | Redesign accepted; all three bypasses now lower to certificates. Strict-gate worklist 24 -> 0 (predicate/unfolded-body spellings; proof_advance_pointer_local's proof rewritten to name its local). Next: owner flips the gate default, then the ClosedClaim restructure |
 | store-provenance-family.md | parked | owned-string, owned-vector, 6 mdtests — blocked on the canonical-memory arc |
 | repo-hygiene.md | done | Executed with owner approval; worktree-claude branch kept pending verification of 3 old soundness fixes |
 
