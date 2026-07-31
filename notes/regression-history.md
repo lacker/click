@@ -164,6 +164,15 @@ grouped-simp message — no movement. field_derived stays quarantined
 with its current reason (correctness, not cost-only: it does not pass
 under any tested configuration).
 
+## Outcome update (2026-07-31, separation-containment prover landed)
+
+owner_buffer: **FIXED** - passes 0.06 s, de-quarantined. Two exact-only
+prover arms landed (equality-hop range endpoints; affine-difference
+inequality). bubble_pass3 retention fully concludes (fails 0.47 s
+downstream); vector_fill's derivation now provably succeeds. All three
+remaining members converge on certificate spelling
+(notes/tasks/certificate-spelling-gap.md).
+
 ## Bisect results (2026-07-31, three of six complete)
 
 - **owner_buffer_field_dependent AND bubble_pass3 -> `d78b49b`** ("WIP:
