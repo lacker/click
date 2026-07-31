@@ -14988,20 +14988,32 @@ fn record_surface_replay_tactic(
                 for fact in available {
                     atomic_conjuncts(fact, &mut available_conjuncts);
                 }
-                // Source-spelled separation facts (for example a resource
-                // body's canonical `separate(memory(object(owner)), ...)`
-                // aggregate) that can re-fold a decomposed per-field
-                // separation back to its declared spelling below.
-                let spelled_separations = available_conjuncts
+                // Source-spelled memory-range separation facts (for example
+                // a resource body's canonical
+                // `separate(memory(object(owner)), ...)` aggregate) that can
+                // re-fold a decomposed per-field separation back to its
+                // declared spelling below. Entailment assumptions are built
+                // lazily, at most once per candidate.
+                let memory_separation_bases = |fact: &Proposition| {
+                    let Proposition::CResourceSeparate { left, right } = fact else {
+                        return None;
+                    };
+                    let (CResource::Memory(left), CResource::Memory(right)) = (left, right) else {
+                        return None;
+                    };
+                    Some((left.base().clone(), right.base().clone()))
+                };
+                let mut spelled_separations = available_conjuncts
                     .iter()
                     .copied()
-                    .filter(|candidate| {
-                        matches!(candidate, Proposition::CResourceSeparate { .. })
-                            && replay
-                                .surface_propositions
-                                .surfaces(candidate)
-                                .next()
-                                .is_some()
+                    .filter_map(|candidate| {
+                        let bases = memory_separation_bases(candidate)?;
+                        replay
+                            .surface_propositions
+                            .surfaces(candidate)
+                            .next()
+                            .is_some()
+                            .then_some((candidate, bases, None::<Assumptions>))
                     })
                     .collect::<Vec<_>>();
                 for fact in &available_conjuncts {
@@ -15035,32 +15047,46 @@ fn record_surface_replay_tactic(
                     // stronger declared fact, whose canonical spelling the
                     // replay derives the per-field pieces from, instead of
                     // the decomposed piece.
-                    let fact = if !selected_by_derivation
-                        && matches!(fact, Proposition::CResourceSeparate { .. })
-                        // An arithmetically true separation (same base,
-                        // disjoint constant ranges) is derivable from any
-                        // premise set, so entailment cannot pick a fold
-                        // target for it; keep its own spelling.
-                        && assumptions_from_propositions(&[])
-                            .derive_atomic_proposition(fact)
-                            .is_none()
-                    {
-                        spelled_separations
-                            .iter()
-                            .copied()
-                            .find(|candidate| {
-                                *candidate != fact
-                                    && assumptions_from_propositions(std::slice::from_ref(
-                                        *candidate,
-                                    ))
+                    let fact = 'fold: {
+                        let fact_bases = if selected_by_derivation {
+                            None
+                        } else {
+                            memory_separation_bases(fact)
+                        };
+                        let Some((fact_left, fact_right)) = fact_bases else {
+                            break 'fold fact;
+                        };
+                        let mut fact_is_foldable = None;
+                        for (candidate, (left, right), cached) in &mut spelled_separations {
+                            if *candidate == fact
+                                || !(*left == fact_left && *right == fact_right
+                                    || *left == fact_right && *right == fact_left)
+                            {
+                                continue;
+                            }
+                            // An arithmetically true separation (same base,
+                            // disjoint constant ranges) is derivable from
+                            // any premise set, so entailment cannot pick a
+                            // fold target for it; keep its own spelling.
+                            let foldable = *fact_is_foldable.get_or_insert_with(|| {
+                                assumptions_from_propositions(&[])
                                     .derive_atomic_proposition(fact)
-                                    .is_some()
-                                    && assumptions_from_propositions(std::slice::from_ref(fact))
-                                        .derive_atomic_proposition(candidate)
-                                        .is_none()
-                            })
-                            .unwrap_or(fact)
-                    } else {
+                                    .is_none()
+                            });
+                            if !foldable {
+                                break;
+                            }
+                            let assumptions = cached.get_or_insert_with(|| {
+                                assumptions_from_propositions(std::slice::from_ref(*candidate))
+                            });
+                            if assumptions.derive_atomic_proposition(fact).is_some()
+                                && assumptions_from_propositions(std::slice::from_ref(fact))
+                                    .derive_atomic_proposition(candidate)
+                                    .is_none()
+                            {
+                                break 'fold *candidate;
+                            }
+                        }
                         fact
                     };
                     // A certified statement prerequisite may be represented by
