@@ -15695,14 +15695,15 @@ fn surface_smart_apply_have_certificate(
     Ok(Some(certificate))
 }
 
-/// Strict exit gate: when set, an at-function-exit smart success whose
-/// certificate cannot be built or replayed is a verification failure instead
-/// of an expansion blocker. This is the migration flag for routing the
-/// post-execution drain through the same acceptance judgment as
-/// mid-execution tactics; it becomes the default once the corpus passes.
+/// Strict exit gate: an at-function-exit smart success whose certificate
+/// cannot be built or replayed is a verification failure. Flipped to
+/// unconditional on 2026-07-30 once the whole corpus passed (owner
+/// decision; the settled invariant is that a smart success must replay
+/// through a surface-expressible certificate before acceptance). The
+/// function remains only until the ClosedClaim restructure deletes the
+/// accept-then-certify sites outright; there is deliberately no opt-out.
 fn strict_exit_gate() -> bool {
-    static STRICT: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *STRICT.get_or_init(|| std::env::var_os("CLICK_STRICT_EXIT_GATE").is_some())
+    true
 }
 
 /// Track, in the certificate-generation fact set, the facts a recorded

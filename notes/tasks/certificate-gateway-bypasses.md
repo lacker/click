@@ -354,3 +354,18 @@ corpus is unchanged at ~10 s.
 Quality follow-up (not a gate): `collect_surface_predicate_calls`
 (proof.rs) and `collect_load_pointers` (kernel/api.rs) are dead and warn
 on every build; they predate this work.
+
+
+## FLIPPED 2026-07-30 (owner decision)
+
+The strict exit gate is now unconditional: an at-exit smart success
+whose certificate cannot be built or replayed fails verification. No
+opt-out. CLICK_STRICT_EXIT_GATE no longer does anything; the
+strict_exit_gate() function returns true and survives only until the
+ClosedClaim restructure deletes the accept-then-certify sites.
+
+Remaining in this task: the ClosedClaim restructure (closure carries
+its certificate; bypasses become unrepresentable; the blocker arrays
+and the grouped/ungrouped trust asymmetry are deleted; expansion prints
+what verification holds). Blocked behind the premise-selection-policy
+work landing (same proof.rs region).
