@@ -12781,8 +12781,177 @@ fn lower_outcome_simp_tactic(
     }
 }
 
+fn collect_surface_predicate_calls(proposition: &ClickProposition, names: &mut Vec<String>) {
+    match proposition {
+        ClickProposition::PredicateCall { name, .. } => {
+            if !names.contains(name) {
+                names.push(name.clone());
+            }
+        }
+        ClickProposition::And(left, right)
+        | ClickProposition::Or(left, right)
+        | ClickProposition::Implies(left, right) => {
+            collect_surface_predicate_calls(left, names);
+            collect_surface_predicate_calls(right, names);
+        }
+        ClickProposition::Not(inner) | ClickProposition::At {
+            proposition: inner, ..
+        } => {
+            collect_surface_predicate_calls(inner, names);
+        }
+        ClickProposition::ForAll { body, .. }
+        | ClickProposition::Exists { body, .. }
+        | ClickProposition::RangeAll { body, .. }
+        | ClickProposition::RangeAny { body, .. } => {
+            collect_surface_predicate_calls(body, names);
+        }
+        _ => {}
+    }
+}
+
+fn collect_definable_predicate_names(
+    proposition: &Proposition,
+    predicate_environment: &PredicateEnvironment,
+    names: &mut Vec<String>,
+) {
+    match proposition {
+        Proposition::Predicate { name, .. } => {
+            if predicate_environment.get(name).is_some() && !names.contains(name) {
+                names.push(name.clone());
+            }
+        }
+        Proposition::And(left, right)
+        | Proposition::Or(left, right)
+        | Proposition::Implies(left, right) => {
+            collect_definable_predicate_names(left, predicate_environment, names);
+            collect_definable_predicate_names(right, predicate_environment, names);
+        }
+        Proposition::ForAll { body, .. } | Proposition::Exists { body, .. } => {
+            collect_definable_predicate_names(body, predicate_environment, names);
+        }
+        _ => {}
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn lower_outcome_simp_proof(
+    replay: &TacticReplayState,
+    surface_goal: &ClickProposition,
+    goal: &Proposition,
+    available: &[Proposition],
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    pre_state: &CState,
+    post_state: &CState,
+    result: &CValue,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+) -> Result<Proof, ClickError> {
+    // An opaque predicate in the goal is unfolded by the certificate: the
+    // replay-side derivation judgment has no predicate rules, so the
+    // emitted proof must carry `unfold(...)` and prove the body. The goal
+    // comparison in the caller keeps working because it accepts the goal
+    // in either spelling.
+    // The emitted have script must carry its own unfolds: replay lowers the
+    // surface proposition under exactly the unfolds written in the script,
+    // while the kernel goal here was lowered with the drain's unfold set
+    // active. Two cases produce a spelling gap. (a) The kernel goal still
+    // holds an opaque predicate: unfold it and prove the body — the
+    // replay-side derivation judgment has no predicate rules. (b) The
+    // kernel goal is already the unfolded body while the surface goal is a
+    // predicate call: without the prefix, replay would lower the surface
+    // goal opaquely and prove a different proposition than the tactics
+    // certify.
+    let mut opaque_names = Vec::new();
+    collect_definable_predicate_names(goal, predicate_environment, &mut opaque_names);
+    if !opaque_names.is_empty() {
+        // Best effort: a deliberately opaque predicate (whose body's loads
+        // the contract does not establish) fails to unfold here; such goals
+        // must close without unfolding, so fall through to the direct path.
+        let unfolded = unfold_predicates_in_proposition(
+            predicate_environment,
+            click_function_environment,
+            &opaque_names,
+            goal,
+            &assumptions_from_propositions(available),
+        );
+        if let Ok(unfolded_goal) = unfolded {
+            let mut unfolding_replay = replay.clone();
+            unfolding_replay
+                .unfolded_predicates
+                .extend(opaque_names.iter().cloned());
+            if let Ok(Proof::Script(inner_tactics)) = lower_outcome_simp_proof_direct(
+                &unfolding_replay,
+                surface_goal,
+                &unfolded_goal,
+                available,
+                parameters,
+                arguments,
+                pre_state,
+                post_state,
+                result,
+                predicate_environment,
+                click_function_environment,
+            ) {
+                let mut tactics = opaque_names
+                    .into_iter()
+                    .map(ProofTactic::UnfoldPredicate)
+                    .collect::<Vec<_>>();
+                tactics.extend(inner_tactics);
+                return Ok(Proof::Script(tactics));
+            }
+        }
+    } else {
+        let mut surface_names = Vec::new();
+        collect_surface_predicate_calls(surface_goal, &mut surface_names);
+        surface_names.retain(|name| {
+            replay.unfolded_predicates.contains(name)
+                && predicate_environment.get(name).is_some()
+        });
+        if !surface_names.is_empty() {
+            let inner = lower_outcome_simp_proof_direct(
+                replay,
+                surface_goal,
+                goal,
+                available,
+                parameters,
+                arguments,
+                pre_state,
+                post_state,
+                result,
+                predicate_environment,
+                click_function_environment,
+            )?;
+            let Proof::Script(inner_tactics) = inner else {
+                return Err(ClickError::new(
+                    "predicate-goal certificate lowering produced a non-script proof",
+                ));
+            };
+            let mut tactics = surface_names
+                .into_iter()
+                .map(ProofTactic::UnfoldPredicate)
+                .collect::<Vec<_>>();
+            tactics.extend(inner_tactics);
+            return Ok(Proof::Script(tactics));
+        }
+    }
+    lower_outcome_simp_proof_direct(
+        replay,
+        surface_goal,
+        goal,
+        available,
+        parameters,
+        arguments,
+        pre_state,
+        post_state,
+        result,
+        predicate_environment,
+        click_function_environment,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn lower_outcome_simp_proof_direct(
     replay: &TacticReplayState,
     surface_goal: &ClickProposition,
     goal: &Proposition,
