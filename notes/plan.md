@@ -46,7 +46,6 @@ Reference material lives in `notes/` root, never in `tasks/`.
 | invariant-closer-replay-cost.md | done | Replay now reuses the planner's positive closer result on exact-input match; SIMPLE 772 ms -> 46 ms, bubble_sort3 de-quarantined (2.2 s) |
 | owned-vector-forward-fix.md | open (queued) | Propositional `Implies` gap at vector_replace_if tactic 8; retest after the critical path lands |
 | field-derived-fold-cost.md | open (small) | 29 s SIMPLE fold; re-profile after the critical path lands |
-| expansion-aggregate-object-spelling.md | open (small) | The last lib `#[ignore]`: expansion loses the aggregate `object(owner)` spelling |
 
 ## Reference docs
 
