@@ -6935,3 +6935,79 @@ fn decision_memo_distinguishes_equal_shaped_fact_sets_by_content() {
         assert_eq!(assumes_true.decide(&below), Some(true));
     }
 }
+
+/// The premise-availability path matches two spellings of one fact whose load
+/// atoms carry different memory snapshots. The match is decided by proof, not
+/// by ignoring the snapshots: an unframed call havoc between the two snapshots
+/// blocks it, and an effect summary that frames the loaded pointer restores it.
+#[test]
+fn conditions_equal_modulo_proven_snapshots_needs_frame_evidence() {
+    let before = CMemory::new()
+        .with_block("arg-memory", 8)
+        .with_block("call-havoc:0", 0);
+    let after = before.clone().with_block("call-havoc:1", 0);
+    let loaded = Pointer {
+        block: "arg-memory".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let elsewhere = Pointer {
+        block: "other-memory".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let condition = |memory: &CMemory| {
+        ConditionTerm::equal(
+            Bitvector32Term::Variable(Variable(77)),
+            Bitvector32Term::add(
+                Bitvector32Term::MemoryLoad(
+                    crate::kernel::intern_c_memory(memory.clone()),
+                    Box::new(loaded.clone()),
+                ),
+                Bitvector32Term::Constant(1),
+            ),
+        )
+    };
+
+    // Same snapshot: the two spellings are literally one condition.
+    assert!(
+        Assumptions::new()
+            .conditions_equal_modulo_proven_snapshots(&condition(&before), &condition(&before))
+    );
+
+    // A call havoc stands between the snapshots and nothing frames the load,
+    // so the later spelling is a different fact, not another spelling.
+    assert!(
+        !Assumptions::new()
+            .conditions_equal_modulo_proven_snapshots(&condition(&before), &condition(&after)),
+        "an unframed call havoc must not be matched away"
+    );
+
+    // With an effect summary whose mutable range misses the loaded pointer,
+    // the two snapshots provably agree there and the spellings match.
+    let framed = Assumptions::new().assume_proposition(Proposition::CMemoryEffectSummary {
+        before: before.clone(),
+        after: after.clone(),
+        mutable_ranges: vec![CMemoryRange::new(
+            elsewhere,
+            Bitvector32Term::Constant(0),
+            Bitvector32Term::Constant(1),
+        )],
+    });
+    assert!(
+        framed.conditions_equal_modulo_proven_snapshots(&condition(&before), &condition(&after)),
+        "a framed load should match across the effect"
+    );
+
+    // Framing never relaxes the structure: a different condition stays
+    // different however well the snapshots are framed.
+    let other = ConditionTerm::equal(
+        Bitvector32Term::Variable(Variable(78)),
+        Bitvector32Term::add(
+            Bitvector32Term::MemoryLoad(
+                crate::kernel::intern_c_memory(after.clone()),
+                Box::new(loaded.clone()),
+            ),
+            Bitvector32Term::Constant(1),
+        ),
+    );
+    assert!(!framed.conditions_equal_modulo_proven_snapshots(&condition(&before), &other));
+}

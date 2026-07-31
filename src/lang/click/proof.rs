@@ -220,7 +220,7 @@ fn check_atomic_derivation_goal(
                             .derive_simp_proposition(&normalized)
                             .is_some())
             })
-        })
+        }) || snapshot_bridged_fact_is_available(&normalized, available, &[])
     };
     if let Some(missing) = premises.iter().find(|premise| {
         // A conjunction premise is available when each conjunct is; facts
@@ -3883,9 +3883,73 @@ enum BranchStepPolicy {
 }
 
 fn exact_fact_is_available(required: &Proposition, available: &[Proposition]) -> bool {
+    exact_fact_is_available_across_effects(required, available, &[])
+}
+
+/// Availability where the required spelling may have been lowered at a later
+/// program point than the available one: `framing` supplies the recorded
+/// memory-effect facts that let the kernel see the two snapshots agree at the
+/// loaded pointers.
+///
+/// `framing` never contributes a fact of its own — candidates come only from
+/// `available` — so this cannot make an unestablished premise available.
+fn exact_fact_is_available_across_effects(
+    required: &Proposition,
+    available: &[Proposition],
+    framing: &[ExecutionPureFact],
+) -> bool {
     available
         .iter()
         .any(|fact| exact_fact_contains_conjunct(fact, required))
+        || snapshot_bridged_fact_is_available(required, available, framing)
+}
+
+/// Second chance for a required condition that failed exact matching only
+/// because its load atoms carry different memory snapshots than the available
+/// spelling — the same fact reached through a different program point.
+///
+/// The cheap snapshot-blind structural filter picks candidates; the kernel's
+/// snapshot-bridging prover decides them under the available facts plus
+/// `framing`. Structure must match exactly, so a candidate that survives both
+/// is the same fact, not a weaker one. Kept off the hot path: exact matching
+/// runs first and assumptions are built only once a candidate exists.
+fn snapshot_bridged_fact_is_available(
+    required: &Proposition,
+    available: &[Proposition],
+    framing: &[ExecutionPureFact],
+) -> bool {
+    let normalized_required = normalize_direct_atomic_memory_loads(required);
+    let Proposition::ConditionIs(required_condition, required_value) = &normalized_required else {
+        return false;
+    };
+    let mut candidates = Vec::new();
+    for fact in available {
+        let mut conjuncts = Vec::new();
+        atomic_conjuncts(fact, &mut conjuncts);
+        for conjunct in conjuncts {
+            if !matches!(conjunct, Proposition::ConditionIs(_, value) if value == required_value) {
+                continue;
+            }
+            let Proposition::ConditionIs(condition, _) =
+                normalize_direct_atomic_memory_loads(conjunct)
+            else {
+                continue;
+            };
+            if conditions_equal_ignoring_memories(&condition, required_condition) {
+                candidates.push(condition);
+            }
+        }
+    }
+    if candidates.is_empty() {
+        return false;
+    }
+    let assumptions = framing.iter().fold(
+        assumptions_from_propositions(available),
+        |assumptions, fact| assumptions.assume_proposition(fact.proposition().clone()),
+    );
+    candidates.iter().any(|candidate| {
+        assumptions.conditions_equal_modulo_proven_snapshots(candidate, required_condition)
+    })
 }
 
 fn exact_fact_contains_conjunct(fact: &Proposition, required: &Proposition) -> bool {
@@ -3895,7 +3959,7 @@ fn exact_fact_contains_conjunct(fact: &Proposition, required: &Proposition) -> b
                 || exact_fact_contains_conjunct(right, required))
 }
 
-fn condition_polarity_equivalent(left: &Proposition, right: &Proposition) -> bool {
+pub(super) fn condition_polarity_equivalent(left: &Proposition, right: &Proposition) -> bool {
     if left == right {
         return true;
     }
@@ -3904,8 +3968,13 @@ fn condition_polarity_equivalent(left: &Proposition, right: &Proposition) -> boo
             Proposition::ConditionIs(left_condition, left_value),
             Proposition::ConditionIs(right_condition, right_value),
         ) => {
-            canonical_order_condition(left_condition, *left_value)
-                == canonical_order_condition(right_condition, *right_value)
+            matches!(
+                (
+                    canonical_order_condition(left_condition, *left_value),
+                    canonical_order_condition(right_condition, *right_value),
+                ),
+                (Some(left), Some(right)) if left == right
+            )
         }
         (Proposition::Not(negated), Proposition::ConditionIs(right_condition, right_value)) => {
             matches!(
@@ -16567,9 +16636,12 @@ fn replay_linear_tactics(
                     // snapshot spellings and recorded effects: the recorded
                     // fact and the premise print identically but embed
                     // different memory snapshots.
-                    let premise_is_available = exact_fact_is_available(&premise, &all_pure_facts)
-                        || materialization_equivalent_available_fact(&premise, &all_pure_facts)
-                            .is_some()
+                    let premise_is_available = exact_fact_is_available_across_effects(
+                        &premise,
+                        &all_pure_facts,
+                        &replay.effect_facts,
+                    ) || materialization_equivalent_available_fact(&premise, &all_pure_facts)
+                        .is_some()
                         || crate::kernel::loadable_covered_by_fact(&assumptions, &premise);
                     if !premise_is_available {
                         return Err(ClickError::new(format!(

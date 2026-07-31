@@ -32,17 +32,29 @@ impl Drop for MemoryLoadEqualityDepthGuard {
     }
 }
 
-/// Structural pointer equality that treats two loads of one location as
-/// equal regardless of which memory snapshot each spelling carries. Cheap:
-/// no proving, no canonicalization.
-fn pointers_equal_ignoring_memories(left: &Pointer, right: &Pointer) -> bool {
-    left.block == right.block && offsets_equal_ignoring_memories(&left.offset, &right.offset)
+/// How a structural walk compares two load atoms. The walk itself is exact —
+/// it only ever descends through matching constructors — so the whole
+/// relation is only as strong as the load-atom rule plugged in here.
+type LoadAtomsMatch<'a> = &'a dyn Fn(&Bitvector32Term, &Bitvector32Term) -> bool;
+
+fn pointers_equal_with_load_atoms(
+    left: &Pointer,
+    right: &Pointer,
+    loads_match: LoadAtomsMatch<'_>,
+) -> bool {
+    left.block == right.block
+        && offsets_equal_with_load_atoms(&left.offset, &right.offset, loads_match)
 }
 
-fn offsets_equal_ignoring_memories(left: &PointerOffsetTerm, right: &PointerOffsetTerm) -> bool {
+fn offsets_equal_with_load_atoms(
+    left: &PointerOffsetTerm,
+    right: &PointerOffsetTerm,
+    loads_match: LoadAtomsMatch<'_>,
+) -> bool {
     match (left, right) {
         (PointerOffsetTerm::Add(ll, lr), PointerOffsetTerm::Add(rl, rr)) => {
-            offsets_equal_ignoring_memories(ll, rl) && offsets_equal_ignoring_memories(lr, rr)
+            offsets_equal_with_load_atoms(ll, rl, loads_match)
+                && offsets_equal_with_load_atoms(lr, rr, loads_match)
         }
         (
             PointerOffsetTerm::Int32Scaled {
@@ -53,24 +65,133 @@ fn offsets_equal_ignoring_memories(left: &PointerOffsetTerm, right: &PointerOffs
                 value: right_value,
                 byte_width: right_width,
             },
-        ) => left_width == right_width && terms_equal_ignoring_memories(left_value, right_value),
+        ) => {
+            left_width == right_width
+                && terms_equal_with_load_atoms(left_value, right_value, loads_match)
+        }
         _ => left == right,
     }
 }
 
-fn terms_equal_ignoring_memories(left: &Bitvector32Term, right: &Bitvector32Term) -> bool {
+fn terms_equal_with_load_atoms(
+    left: &Bitvector32Term,
+    right: &Bitvector32Term,
+    loads_match: LoadAtomsMatch<'_>,
+) -> bool {
+    match (left, right) {
+        (Bitvector32Term::MemoryLoad(_, _), Bitvector32Term::MemoryLoad(_, _)) => {
+            loads_match(left, right)
+        }
+        (Bitvector32Term::Add(ll, lr), Bitvector32Term::Add(rl, rr))
+        | (Bitvector32Term::Subtract(ll, lr), Bitvector32Term::Subtract(rl, rr))
+        | (Bitvector32Term::Multiply(ll, lr), Bitvector32Term::Multiply(rl, rr)) => {
+            terms_equal_with_load_atoms(ll, rl, loads_match)
+                && terms_equal_with_load_atoms(lr, rr, loads_match)
+        }
+        _ => left == right,
+    }
+}
+
+/// Exact structural condition equality with load atoms compared by
+/// `loads_match`. Only matching constructors recurse and everything else
+/// falls back to `==`, so two structurally different conditions never match
+/// however permissive `loads_match` is.
+fn conditions_equal_with_load_atoms(
+    left: &ConditionTerm,
+    right: &ConditionTerm,
+    loads_match: LoadAtomsMatch<'_>,
+) -> bool {
+    if left == right {
+        return true;
+    }
+    let terms = |ll, rl, lr, rr| {
+        terms_equal_with_load_atoms(ll, rl, loads_match)
+            && terms_equal_with_load_atoms(lr, rr, loads_match)
+    };
+    match (left, right) {
+        (
+            ConditionTerm::Bitvector32SignedLessThan(ll, lr),
+            ConditionTerm::Bitvector32SignedLessThan(rl, rr),
+        )
+        | (
+            ConditionTerm::Bitvector32SignedLessEqual(ll, lr),
+            ConditionTerm::Bitvector32SignedLessEqual(rl, rr),
+        )
+        | (
+            ConditionTerm::Bitvector32SignedGreaterThan(ll, lr),
+            ConditionTerm::Bitvector32SignedGreaterThan(rl, rr),
+        )
+        | (
+            ConditionTerm::Bitvector32SignedGreaterEqual(ll, lr),
+            ConditionTerm::Bitvector32SignedGreaterEqual(rl, rr),
+        )
+        | (ConditionTerm::Bitvector32Equal(ll, lr), ConditionTerm::Bitvector32Equal(rl, rr))
+        | (
+            ConditionTerm::Bitvector32SignedAddOverflows(ll, lr),
+            ConditionTerm::Bitvector32SignedAddOverflows(rl, rr),
+        )
+        | (
+            ConditionTerm::Bitvector32SignedSubtractOverflows(ll, lr),
+            ConditionTerm::Bitvector32SignedSubtractOverflows(rl, rr),
+        )
+        | (
+            ConditionTerm::Bitvector32SignedMultiplyOverflows(ll, lr),
+            ConditionTerm::Bitvector32SignedMultiplyOverflows(rl, rr),
+        )
+        | (
+            ConditionTerm::Bitvector32SignedDivideOverflows(ll, lr),
+            ConditionTerm::Bitvector32SignedDivideOverflows(rl, rr),
+        )
+        | (
+            ConditionTerm::Bitvector32SignedShiftLeftOverflows(ll, lr),
+            ConditionTerm::Bitvector32SignedShiftLeftOverflows(rl, rr),
+        ) => terms(ll, rl, lr, rr),
+        (ConditionTerm::PointerOffsetEqual(ll, lr), ConditionTerm::PointerOffsetEqual(rl, rr)) => {
+            offsets_equal_with_load_atoms(ll, rl, loads_match)
+                && offsets_equal_with_load_atoms(lr, rr, loads_match)
+        }
+        (ConditionTerm::PointerEqual(ll, lr), ConditionTerm::PointerEqual(rl, rr)) => {
+            pointers_equal_with_load_atoms(ll, rl, loads_match)
+                && pointers_equal_with_load_atoms(lr, rr, loads_match)
+        }
+        _ => false,
+    }
+}
+
+/// Compares two load atoms by their pointers alone, ignoring which memory
+/// snapshot each carries.
+///
+/// NOT sound as an equality on its own: two loads of one pointer in
+/// different snapshots hold different values whenever a write between the
+/// snapshots reached that pointer. It exists only as a cheap prefilter that
+/// discards hopeless candidates before a proving comparison runs, and every
+/// caller must decide the surviving pairs with a real check.
+fn load_atoms_equal_ignoring_memories(left: &Bitvector32Term, right: &Bitvector32Term) -> bool {
     match (left, right) {
         (
             Bitvector32Term::MemoryLoad(_, left_pointer),
             Bitvector32Term::MemoryLoad(_, right_pointer),
         ) => pointers_equal_ignoring_memories(left_pointer, right_pointer),
-        (Bitvector32Term::Add(ll, lr), Bitvector32Term::Add(rl, rr))
-        | (Bitvector32Term::Subtract(ll, lr), Bitvector32Term::Subtract(rl, rr))
-        | (Bitvector32Term::Multiply(ll, lr), Bitvector32Term::Multiply(rl, rr)) => {
-            terms_equal_ignoring_memories(ll, rl) && terms_equal_ignoring_memories(lr, rr)
-        }
         _ => left == right,
     }
+}
+
+/// Structural pointer equality that treats two loads of one location as
+/// equal regardless of which memory snapshot each spelling carries. Cheap:
+/// no proving, no canonicalization.
+fn pointers_equal_ignoring_memories(left: &Pointer, right: &Pointer) -> bool {
+    pointers_equal_with_load_atoms(left, right, &load_atoms_equal_ignoring_memories)
+}
+
+/// Cheap, assumption-free necessary condition for
+/// [`Assumptions::conditions_equal_modulo_proven_snapshots`]: same structure,
+/// with load atoms compared by pointer only.
+///
+/// Snapshot-blind, so it is NOT an equivalence and must never decide fact
+/// availability on its own — it only narrows the candidate set before the
+/// proving comparison runs.
+pub fn conditions_equal_ignoring_memories(left: &ConditionTerm, right: &ConditionTerm) -> bool {
+    conditions_equal_with_load_atoms(left, right, &load_atoms_equal_ignoring_memories)
 }
 
 fn equality_graph_terms_match(left: &Bitvector32Term, right: &Bitvector32Term) -> bool {
@@ -2940,6 +3061,24 @@ impl Assumptions {
             base.clone(),
             Bitvector32Term::Constant(addend),
         )) == Some(false)
+    }
+
+    /// Decides whether two conditions are two spellings of one fact that
+    /// differ only in the memory snapshots their load atoms carry.
+    ///
+    /// Sound because it is exact everywhere except at load atoms, and a pair
+    /// of load atoms is accepted only when [`Self::memory_loads_proven_equal`]
+    /// proves the two loads denote the same value under these assumptions —
+    /// which for differing snapshots means proving the snapshots agree at the
+    /// loaded pointer. Structurally different conditions never match.
+    pub fn conditions_equal_modulo_proven_snapshots(
+        &self,
+        left: &ConditionTerm,
+        right: &ConditionTerm,
+    ) -> bool {
+        conditions_equal_with_load_atoms(left, right, &|left, right| {
+            left == right || self.memory_loads_proven_equal(left, right)
+        })
     }
 
     pub(super) fn memory_loads_proven_equal(

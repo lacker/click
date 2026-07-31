@@ -8232,3 +8232,60 @@ int32 caller(int32 x) {
         error.message()
     );
 }
+
+/// `condition_polarity_equivalent` used to answer through
+/// `canonical_order_condition(left) == canonical_order_condition(right)`.
+/// Only comparisons have a canonical order form, so every pair of
+/// non-comparison conditions compared equal through `None == None`, and any
+/// such premise counted as available once the context held any other
+/// non-comparison condition.
+#[test]
+fn unrelated_non_comparison_conditions_are_not_polarity_equivalent() {
+    let overflow = Proposition::ConditionIs(
+        ConditionTerm::Bitvector32SignedAddOverflows(
+            Box::new(Bitvector32Term::Variable(Variable(1))),
+            Box::new(Bitvector32Term::Constant(1)),
+        ),
+        false,
+    );
+    let constant = Proposition::ConditionIs(ConditionTerm::Constant(true), true);
+    let equality = Proposition::ConditionIs(
+        ConditionTerm::Bitvector32Equal(
+            Box::new(Bitvector32Term::Variable(Variable(2))),
+            Box::new(Bitvector32Term::Constant(7)),
+        ),
+        true,
+    );
+
+    for (left, right) in [
+        (&overflow, &constant),
+        (&constant, &equality),
+        (&overflow, &equality),
+    ] {
+        assert!(
+            !condition_polarity_equivalent(left, right),
+            "conditions without a canonical order form must not match each other:\n  {left:?}\n  {right:?}"
+        );
+    }
+
+    // Each is still equivalent to itself, and the canonical order form still
+    // relates the two spellings of one comparison.
+    for condition in [&overflow, &constant, &equality] {
+        assert!(condition_polarity_equivalent(condition, condition));
+    }
+    let less_than = Proposition::ConditionIs(
+        ConditionTerm::Bitvector32SignedLessThan(
+            Box::new(Bitvector32Term::Variable(Variable(1))),
+            Box::new(Bitvector32Term::Variable(Variable(2))),
+        ),
+        true,
+    );
+    let greater_equal = Proposition::ConditionIs(
+        ConditionTerm::Bitvector32SignedGreaterEqual(
+            Box::new(Bitvector32Term::Variable(Variable(2))),
+            Box::new(Bitvector32Term::Variable(Variable(1))),
+        ),
+        false,
+    );
+    assert!(condition_polarity_equivalent(&less_than, &greater_equal));
+}
