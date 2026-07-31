@@ -2784,6 +2784,16 @@ pub(super) fn prove_claim_by_simp(
     Ok(theorems)
 }
 
+/// Identifies the `close_invariants` step of a replayed certificate well
+/// enough to emit a `click timing:` line for the work its caller does on its
+/// behalf: the same claim-relative indices `replay_linear_tactics` would use.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct InvariantCloserStep {
+    tactic_index: usize,
+    source_index: usize,
+    statement_index: usize,
+}
+
 #[derive(Clone, Default)]
 struct TacticReplayState {
     proof_site: Option<ProofSite>,
@@ -2796,6 +2806,16 @@ struct TacticReplayState {
     post_execution_tactics: Vec<DeferredPostExecutionTactic>,
     region_simp: Option<(usize, usize)>,
     region_invariants_closed: bool,
+    /// Where the replayed `close_invariants` tactic sat, so the invariant
+    /// bundle check its caller performs after the replay finishes can be
+    /// timed against that tactic's own identity instead of going unattributed.
+    ///
+    /// `close_invariants` only records the intent during replay; the kernel
+    /// re-derivation that gives it meaning runs in
+    /// `verify_one_loop_preservation_proof` once the whole certificate has
+    /// replayed. Without this the dominant cost of the loop-invariant bundle
+    /// carries no class tag at all (`notes/tasks/profiler-coverage.md`).
+    invariant_closer_step: Option<InvariantCloserStep>,
     case_assumptions: Vec<ReplayCaseAssumption>,
     effect_facts: Vec<ExecutionPureFact>,
     region_proof: bool,
@@ -6510,6 +6530,13 @@ fn verify_loop_initialization_pure_proof(
         .collect::<Vec<_>>();
     let initialization_surface_propositions =
         std::cell::RefCell::new(context.surface_propositions.clone());
+    // The whole initialize phase is one source `by` clause, so every step it
+    // plans or replays reports source tactic 0 — the clause itself — and the
+    // loop's body entry as its statement.
+    let initialize_source_index = 0;
+    let initialize_statement_index = SourceExecutionLayout::new(environment.parsed_function.body())
+        .loop_body_entry(loop_index)
+        .unwrap_or(0);
     let entry_obligations = c_loop_invariant_obligations_at_entry(
         &context.state,
         invariant_checks,
@@ -6543,6 +6570,21 @@ fn verify_loop_initialization_pure_proof(
                     }
                     expected_goal
                 });
+                // Planning an invariant's entry proof is proof search, not
+                // replay. Classify it by the `by` clause the search is
+                // discharging, exactly as if it were written as a `have`.
+                let planned_step = ProofTactic::Have(ProofHave {
+                    proposition: proposition.clone(),
+                    proof: proof.clone(),
+                });
+                let _timing = TacticTiming::named_for_tactic(
+                    &claim_label,
+                    "plan_invariant_entry",
+                    &planned_step,
+                    invariant_index,
+                    initialize_source_index,
+                    initialize_statement_index,
+                );
                 let direct_plan = plan_point_pure_goal_certificate(
                     &ProofSite::LoopPhase {
                         function_name: environment.function_block.signature().name().to_string(),
@@ -6594,6 +6636,16 @@ fn verify_loop_initialization_pure_proof(
             let mut replay_available = context.pure_facts.clone();
             let invariant_start = certificate.tactics().len() - invariant_items.len();
             for (certificate_index, tactic) in certificate.tactics().iter().enumerate() {
+                // Certificate replay for the initialize phase never reaches
+                // `replay_linear_tactics`, so time each step here in the same
+                // format and let `source_tactic_class` classify it.
+                let _timing = TacticTiming::new(
+                    &claim_label,
+                    certificate_index,
+                    initialize_source_index,
+                    tactic,
+                    initialize_statement_index,
+                );
                 if certificate_index < invariant_start
                     && let ProofTactic::UnfoldPredicate(name) = tactic
                 {
@@ -7158,6 +7210,19 @@ fn verify_one_loop_preservation_proof(
             )));
         }
         if !invariant_checks.is_empty() {
+            // `close_invariants` only sets a flag while the certificate
+            // replays; this is where the bundle is actually re-derived, so
+            // this is where that tactic's time is spent. Time it against the
+            // tactic's own identity and let `source_tactic_class` classify it.
+            let _timing = context.replay.invariant_closer_step.and_then(|step| {
+                TacticTiming::new(
+                    &claim_label,
+                    step.tactic_index,
+                    step.source_index,
+                    &ProofTactic::CloseInvariants,
+                    step.statement_index,
+                )
+            });
             c_loop_invariants_hold_at_back_edge_using(
                 &context.state,
                 preservation.loop_entry_state(),
@@ -16165,24 +16230,41 @@ impl TacticTiming {
         tactic: &ProofTactic,
         statement_index: usize,
     ) -> Option<Self> {
+        Self::named_for_tactic(
+            claim_label,
+            tactic_name(tactic),
+            tactic,
+            tactic_index,
+            source_index,
+            statement_index,
+        )
+    }
+
+    /// Times work that is not itself a surface tactic replay — a planner
+    /// searching for a certificate, or a kernel re-derivation that a replayed
+    /// tactic defers to its caller — under an explicit `name`, taking the
+    /// class from the tactic the work belongs to rather than inventing one.
+    fn named_for_tactic(
+        claim_label: &str,
+        name: &str,
+        tactic: &ProofTactic,
+        tactic_index: usize,
+        source_index: usize,
+        statement_index: usize,
+    ) -> Option<Self> {
         std::env::var_os("CLICK_TIMINGS").is_some().then(|| {
             let tactic_class = source_tactic_class(tactic).label();
             if std::env::var_os("CLICK_TIMING_STARTS").is_some() {
                 eprintln!(
                     "click timing: started tactic {} {} {} class {} statement {} source {}",
-                    claim_label,
-                    tactic_index,
-                    tactic_name(tactic),
-                    tactic_class,
-                    statement_index,
-                    source_index
+                    claim_label, tactic_index, name, tactic_class, statement_index, source_index
                 );
             }
             Self {
                 claim_label: claim_label.to_string(),
                 tactic_index,
                 source_index,
-                tactic_name: tactic_name(tactic).to_string(),
+                tactic_name: name.to_string(),
                 tactic_class,
                 statement_index,
                 start: std::time::Instant::now(),
@@ -18235,6 +18317,11 @@ fn replay_linear_tactics(
                     )));
                 }
                 replay.region_invariants_closed = true;
+                replay.invariant_closer_step = Some(InvariantCloserStep {
+                    tactic_index,
+                    source_index,
+                    statement_index: replay.frontier.next_statement_index,
+                });
             }
             ProofTactic::Simp => {
                 if !replay.region_proof {
