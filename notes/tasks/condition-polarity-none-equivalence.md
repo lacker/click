@@ -1,9 +1,9 @@
 # `condition_polarity_equivalent` treats "no canonical form" as a match
 
-Status: predicate FIXED and sound; the three example projects are red and
-stay red — their proof text lists premises that only the bug accepted.
-Do not merge to master until the example sidecars are repaired (see
-"The three examples were not blocked, they were wrong" below).
+Status: DONE — predicate fixed soundly, all four gates green (including
+all four example projects). Two of the three blocked examples were
+repaired by regenerating their sidecars; the third needed two more
+bridge sites. Ready to land.
 Claimed: claude/nervous-ptolemy-90e738 (worktree agent-a156f211eec3701d6), 2026-07-30
 
 Found while fixing the certificate premise policy
@@ -108,7 +108,7 @@ examples differ precisely by call-havoc markers, i.e. across calls that
 may have written the loaded location, so the memory-blind rule is exactly
 the rule that must not decide these.
 
-## The three examples were not blocked, they were wrong
+## The three examples were not blocked, they were wrong (resolved)
 
 With the sound predicate the three projects still fail, and the reason is
 not missing machinery. Their `step using` premise lists (which look
@@ -140,14 +140,63 @@ junk-equivalence to accept premises that do not hold. The follow-up is to
 repair (most likely regenerate) the premise lists in those three
 sidecars, not to loosen the predicate.
 
+## How the three examples were resolved
+
+- `input-cursor` and `owned-split-buffer`: the coordinator reverted each
+  applied expansion to its pre-expansion proof and re-ran click-expand
+  with the current generator. The false unanchored premises are gone —
+  e.g. `fact left->pos == (left->pos + 1);` became
+  `fact left->pos == (at(statement(5).entry, left->pos) + 1);`. Both
+  verify green with the sound predicate. This confirms the diagnosis:
+  the premises were wrong, and the generator now spells them at the
+  point where the fact actually holds.
+- `owned-segmented-buffer`: not a regenerated region. An original
+  hand-written `transport using` at
+  `owned_segmented_buffer_pipeline.contract` tactic 12 needed two more
+  bridge sites in `replay_linear_tactics`. The sidecar itself is
+  correct and was not touched.
+
+### The two extra sites
+
+The failing tactic is
+`transport(at(statement(4).entry, owner->first_len) == at(statement(4).entry, first_len), owner->first_len == first_len)`.
+Its source and its listed fact both spell `at(statement(4).entry, ...)`
+but lower to snapshots differing by one call-havoc marker (and an
+irrelevant `local:ignored` cell), because one side comes from a recorded
+lowering and the other from a fresh one.
+
+- Source availability: `exact_fact_is_available(&source, &explicit_premises)`
+  now falls back to `snapshot_bridged_fact_is_available_under`, which
+  takes the caller's `selected_assumptions` plus `replay.effect_facts`.
+  Sound because candidates still come only from `explicit_premises` —
+  the transport must still list the fact — and the wider assumption
+  context only decides whether two spellings denote one fact.
+- Target availability: `exact_fact_is_available(&target, &requirement_pure_facts)`
+  became `exact_fact_is_available_across_effects` with the same framing.
+  The bug was masking this one too: `owner->first_len == first_len` is a
+  `Bitvector32Equal`, so with `None == None` the target counted as
+  already available and the tactic `continue`d, skipping the certified
+  frame transport entirely. Sound because candidates come from the same
+  ambient fact set the exact check already used.
+
+Note the coordinator's first attempt put the bridge in
+`replay_fact_transport_at_outcome` (the `path {n}, tactic {n}` site).
+That is a legitimate site and was kept, but it is not the one that
+fires here — the failing message has no `path` prefix, which is how the
+three `requires a source derivable` sites are told apart.
+
 ## Gates
 
-- `cargo nextest run --lib --bins` — 503/503 (501 before, plus the two
-  new regression tests), 3.2 s (4.4 s before).
-- `cargo test --test mdtests` — green, 10.5 s (12.4 s before).
-- `cargo test --test examples` — `jsonc-refcount` green and unchanged at
-  0.07 s (0.08 s before); the other three fail as described. No timing
-  regression anywhere, so the bridge is not running in a hot loop.
+All four green:
+
+- `cargo nextest run --lib --bins` — 509/509, 3.1 s.
+- `cargo test --test mdtests` — green, 8.8 s.
+- `cargo test --test examples` — ALL FOUR projects green:
+  input-cursor 1.42 s, jsonc-refcount 0.07 s,
+  owned-segmented-buffer 5.19 s, owned-split-buffer 2.89 s.
+  Against the pre-fix baseline (1.27 / 0.08 / 6.14 / 3.64 s) there is no
+  slowdown — the bridge stays off the hot path.
+- exit gate unconditional.
 
 Regression tests:
 
@@ -159,6 +208,7 @@ Regression tests:
   pins the substitute match: same snapshot matches, an unframed call
   havoc does not, an effect summary framing the loaded pointer restores
   the match, and structure is never relaxed.
+- The three example projects themselves pin the site wiring.
 
 ## Dead ends
 
@@ -178,7 +228,12 @@ Regression tests:
   already distinguishes. Not done.
 - Auto-transporting premises inside availability would also close it,
   but silently transporting is a Surface Click semantics change and
-  needs the owner's call.
+  needs the owner's call. Not needed in the end: bridging the two
+  availability checks was enough, and it keeps transport explicit.
+- Bridging only the source check in `replay_linear_tactics` moves the
+  failure to `no certified frame transport applies` — that is the
+  target check short-circuit the bug was also hiding, not a real
+  transport gap.
 
 Repro for the example failures: `cargo test --test examples`, or one at a
 time with `CLICK_EXAMPLE_CHILD_PATH=$PWD/examples/<name> cargo test

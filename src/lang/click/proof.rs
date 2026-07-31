@@ -3918,16 +3918,50 @@ fn snapshot_bridged_fact_is_available(
     available: &[Proposition],
     framing: &[ExecutionPureFact],
 ) -> bool {
-    let normalized_required = normalize_direct_atomic_memory_loads(required);
-    let Proposition::ConditionIs(required_condition, required_value) = &normalized_required else {
+    let Some((required_condition, candidates)) = snapshot_blind_candidates(required, available)
+    else {
         return false;
+    };
+    let assumptions = assumptions_from_propositions(available);
+    snapshot_bridge_proves(&required_condition, &candidates, assumptions, framing)
+}
+
+/// `snapshot_bridged_fact_is_available` where the caller already holds the
+/// assumption context the bridge should reason in.
+///
+/// Candidates still come only from `available`, so widening the assumptions
+/// cannot make an unlisted fact available — the wider context only decides
+/// whether two spellings denote one fact.
+fn snapshot_bridged_fact_is_available_under(
+    required: &Proposition,
+    available: &[Proposition],
+    assumptions: &Assumptions,
+    framing: &[ExecutionPureFact],
+) -> bool {
+    let Some((required_condition, candidates)) = snapshot_blind_candidates(required, available)
+    else {
+        return false;
+    };
+    snapshot_bridge_proves(&required_condition, &candidates, assumptions.clone(), framing)
+}
+
+/// Normalises `required` and collects the available conjuncts that could be
+/// the same condition under a different memory snapshot. `None` when there is
+/// nothing to bridge, which keeps the caller off the expensive path.
+fn snapshot_blind_candidates(
+    required: &Proposition,
+    available: &[Proposition],
+) -> Option<(ConditionTerm, Vec<ConditionTerm>)> {
+    let normalized_required = normalize_direct_atomic_memory_loads(required);
+    let Proposition::ConditionIs(required_condition, required_value) = normalized_required else {
+        return None;
     };
     let mut candidates = Vec::new();
     for fact in available {
         let mut conjuncts = Vec::new();
         atomic_conjuncts(fact, &mut conjuncts);
         for conjunct in conjuncts {
-            if !matches!(conjunct, Proposition::ConditionIs(_, value) if value == required_value) {
+            if !matches!(conjunct, Proposition::ConditionIs(_, value) if *value == required_value) {
                 continue;
             }
             let Proposition::ConditionIs(condition, _) =
@@ -3935,18 +3969,23 @@ fn snapshot_bridged_fact_is_available(
             else {
                 continue;
             };
-            if conditions_equal_ignoring_memories(&condition, required_condition) {
+            if conditions_equal_ignoring_memories(&condition, &required_condition) {
                 candidates.push(condition);
             }
         }
     }
-    if candidates.is_empty() {
-        return false;
-    }
-    let assumptions = framing.iter().fold(
-        assumptions_from_propositions(available),
-        |assumptions, fact| assumptions.assume_proposition(fact.proposition().clone()),
-    );
+    (!candidates.is_empty()).then_some((required_condition, candidates))
+}
+
+fn snapshot_bridge_proves(
+    required_condition: &ConditionTerm,
+    candidates: &[ConditionTerm],
+    assumptions: Assumptions,
+    framing: &[ExecutionPureFact],
+) -> bool {
+    let assumptions = framing.iter().fold(assumptions, |assumptions, fact| {
+        assumptions.assume_proposition(fact.proposition().clone())
+    });
     candidates.iter().any(|candidate| {
         assumptions.conditions_equal_modulo_proven_snapshots(candidate, required_condition)
     })
@@ -8042,7 +8081,12 @@ fn replay_fact_transport_at_outcome(
     } else {
         assumptions_from_propositions(available)
     };
+    // A transport source spelled at a different snapshot than its explicit
+    // fact is the same fact when the kernel proves the snapshots agree at
+    // the loaded pointers; this previously matched only through the
+    // None==None polarity bug, so make the legitimate case deliberate.
     if !exact_fact_is_available(&source, &explicit_premises)
+        && !snapshot_bridged_fact_is_available(&source, &explicit_premises, transition_facts)
         && selected_assumptions
             .derive_atomic_proposition(&source)
             .is_none()
@@ -16429,7 +16473,19 @@ fn replay_linear_tactics(
                 } else {
                     assumptions.clone()
                 };
+                // A transport source spelled at a later program point than
+                // its listed fact is the same fact when the kernel proves the
+                // snapshots agree at the loaded pointers. Candidates still
+                // come only from the explicit premises, so the transport must
+                // still list the fact; the recorded effects and the selected
+                // assumptions only supply the frame evidence.
                 if !exact_fact_is_available(&source, &explicit_premises)
+                    && !snapshot_bridged_fact_is_available_under(
+                        &source,
+                        &explicit_premises,
+                        &selected_assumptions,
+                        &replay.effect_facts,
+                    )
                     && selected_assumptions
                         .derive_atomic_proposition(&source)
                         .is_none()
@@ -16476,9 +16532,15 @@ fn replay_linear_tactics(
                 replay
                     .surface_propositions
                     .record_lowering(surface_target, &target)?;
-                if exact_fact_is_available(&target, &requirement_pure_facts)
-                    || materialization_equivalent_available_fact(&target, &requirement_pure_facts)
-                        .is_some()
+                // The target can already be present under a different snapshot
+                // spelling; candidates come from the ambient facts, so the
+                // bridge only re-spells a fact that is genuinely available.
+                if exact_fact_is_available_across_effects(
+                    &target,
+                    &requirement_pure_facts,
+                    &replay.effect_facts,
+                ) || materialization_equivalent_available_fact(&target, &requirement_pure_facts)
+                    .is_some()
                 {
                     if !requirement_pure_facts.contains(&target) {
                         requirement_pure_facts.push(target.clone());

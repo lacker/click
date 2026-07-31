@@ -469,29 +469,33 @@ int32 input_cursor_shared_pipeline(
         fact (right->data)[right->pos] == data[0];
     }
     step using {
+        fact at(statement(6).entry, loadable(old(object(right))));
         fact right_value == right->data[right->pos];
         fact right->data[right->pos] == data[0];
         fact right_value == *data;
         fact at(statement(6).entry, 1) <= at(statement(6).entry, length);
         fact at(statement(5).entry, left->pos) == 0;
+        fact at(statement(6).entry, loadable(old(object(left))));
         fact at(statement(6).entry, separate(memory(object(left)), memory(data[0..length])));
         fact at(statement(6).entry, separate(memory(object(right)), memory(data[0..length])));
         fact at(statement(6).entry, right_value) <= at(statement(6).entry, length);
         fact right->pos < right->len;
         fact right->len == left->len;
         fact left->pos == 1;
-        fact left->pos == (left->pos + 1);
+        fact left->pos == at(statement(5).entry, (left->pos + 1));
         fact right->pos == 0;
         fact left->len == left->len;
         fact at(statement(6).entry, left->pos) == at(statement(6).entry, (at(statement(5).entry, left->pos) + 1));
         fact at(statement(5).entry, separate(memory(left[left_value..4]), memory(right[left_value..4])));
         fact at(statement(5).entry, ignored) == at(statement(5).entry, left->pos);
         fact at(statement(4).entry, left->len) == at(statement(4).entry, length);
+        fact at(statement(5).entry, loadable(old(data[0..length])));
         fact at(statement(4).entry, left->pos) == at(statement(4).entry, 0);
         fact at(statement(4).entry, left->data) == at(statement(4).entry, data);
         fact at(statement(4).entry, left->pos) < at(statement(4).entry, left->len);
-        fact at(statement(5).entry, left_value) == at(statement(5).entry, left->data[left->pos]);
-        fact left->data == left->data;
+        fact left_value == at(statement(5).entry, left->data[left->pos]);
+        fact left->len == at(statement(5).entry, left->len);
+        fact left->data == at(statement(5).entry, left->data);
         fact right->data == left->data;
         fact left->data == data;
         fact right->data == data;
@@ -502,6 +506,7 @@ int32 input_cursor_shared_pipeline(
         fact at(statement(6).entry, right->pos) == at(statement(6).entry, right_value);
         fact at(statement(5).entry, right->data) == at(statement(5).entry, left->data);
         fact at(statement(5).entry, left->data) == data;
+        fact at(statement(5).entry, right->data) == data;
         fact at(statement(4).entry, separate(memory(object(right)), memory((left->data)[0..left->len])));
         fact at(statement(5).entry, right->pos) == at(statement(5).entry, left->pos);
         fact at(statement(5).entry, right->len) == at(statement(5).entry, left->len);
@@ -510,6 +515,7 @@ int32 input_cursor_shared_pipeline(
         fact at(statement(5).entry, right->pos) < at(statement(5).entry, right->len);
         fact at(statement(5).entry, right->pos) == 0;
         fact at(statement(6).entry, left->len) == at(statement(6).entry, left->len);
+        fact left->data == left->data;
         fact left->len == length;
     }
     frame();

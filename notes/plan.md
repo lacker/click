@@ -29,7 +29,7 @@ click-audit (full run 314 s, 98 sites passing).
 <<<<<<< HEAD
 | named-memory-states-arc.md | open | The canonical-memory representation change: memory states named in a derivation DAG instead of embedded as values. Staged behind `CLICK_DISABLE_MEMORY_DAG`; unparks store-provenance-family |
 =======
-| condition-polarity-none-equivalence.md | open | Predicate fixed and sound (branch claude/nervous-ptolemy-90e738, NOT on master): both sides need a canonical order form, plus a proof-backed snapshot bridge. The 3 blocked examples turn out to list false premises (`x == x + 1`) that only the bug accepted — their sidecars need repair before this merges |
+| condition-polarity-none-equivalence.md | done | Predicate sound (both sides need a canonical order form) + proof-backed snapshot bridge at four sites. input-cursor/owned-split-buffer sidecars regenerated (their premises were false); owned-segmented-buffer needed the transport source+target bridges. All four gates green |
 >>>>>>> 9c2fedd45ed26749595bf231eb0204c221c2378a
 | repo-hygiene.md | done | Executed with owner approval; worktree-claude branch kept pending verification of 3 old soundness fixes |
 

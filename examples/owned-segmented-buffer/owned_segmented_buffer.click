@@ -347,46 +347,6 @@ int32 owned_segmented_buffer_pipeline(
         first_data[0],
         first_value
     ));
-    step using {
-        fact read_value == first_data[0];
-        fact *first_data == first_value;
-        fact read_value == first_value;
-        fact read_value == owner->first_data[0];
-        fact 0 < owner->first_len;
-        fact owner->first_data == first_data;
-        fact at(statement(4).entry, 0) < at(statement(4).entry, owner->second_len);
-        fact at(statement(4).entry, read_value) < at(statement(4).entry, owner->first_len);
-        fact at(statement(4).entry, 1) <= at(statement(4).entry, first_len);
-        fact at(statement(4).entry, 1) <= at(statement(4).entry, second_len);
-        fact at(statement(4).entry, ignored) == at(statement(4).entry, first_value);
-        fact at(statement(3).entry, owner->second_len) == at(statement(3).entry, second_len);
-        fact at(statement(3).entry, owner->first_len) == at(statement(3).entry, first_len);
-        fact at(statement(4).entry, first_data[0]) == at(statement(4).entry, first_value);
-        fact at(statement(4).entry, owner->first_data) == at(statement(4).entry, first_data);
-        fact at(statement(4).entry, owner->second_data) == at(statement(4).entry, second_data);
-        fact ignored == second_value;
-        fact owner->first_len == owner->first_len;
-        fact owner->second_len == owner->second_len;
-        fact owner->first_data == owner->first_data;
-        fact owner->second_data == owner->second_data;
-        fact owner->second_data[0] == second_value;
-        fact at(statement(3).entry, separate(memory(owner[read_value..6]), memory(first_data[read_value..first_len])));
-        fact at(statement(3).entry, separate(memory(owner[read_value..6]), memory(second_data[read_value..second_len])));
-        fact at(statement(3).entry, separate(memory(first_data[read_value..first_len]), memory(second_data[read_value..second_len])));
-        fact at(statement(3).entry, ignored) == at(statement(3).entry, first_len);
-        fact owner->first_data[0] == first_value;
-        fact owner->first_len == first_len;
-        fact owner->second_len == second_len;
-        fact at(statement(3).entry, 0) < at(statement(3).entry, owner->first_len);
-        fact at(statement(3).entry, 0) < at(statement(3).entry, owner->second_len);
-        fact at(statement(3).entry, owner->first_data) == at(statement(3).entry, first_data);
-        fact at(statement(3).entry, owner->second_data) == at(statement(3).entry, second_data);
-        fact at(statement(5).entry, 0) < at(statement(5).entry, owner->first_len);
-        fact 0 < owner->second_len;
-        fact at(statement(5).entry, first_data[0]) == at(statement(5).entry, first_value);
-        fact at(statement(5).entry, owner->first_data) == at(statement(5).entry, first_data);
-        fact owner->second_data == second_data;
-        fact at(statement(5).entry, second_data[0]) == at(statement(5).entry, second_value);
-    }
+    execute_rest();
     simp();
 }

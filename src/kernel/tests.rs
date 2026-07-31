@@ -7139,6 +7139,8 @@ fn a_store_to_the_loaded_cell_is_not_crossable() {
         !c_memory_load_is_unchanged(&base, &stored, &read, &Assumptions::new()),
         "the walk must refuse the very cell that was written"
     );
+}
+
 /// The premise-availability path matches two spellings of one fact whose load
 /// atoms carry different memory snapshots. The match is decided by proof, not
 /// by ignoring the snapshots: an unframed call havoc between the two snapshots
