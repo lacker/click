@@ -1,6 +1,9 @@
 # Certificate-gateway bypasses (from the one-gateway audit)
 
-Status: claimed — redesign accepted, migration in progress
+Status: claimed — redesign accepted, migration in progress.
+Strict-gate worklist is at 2 failing mdtests (was 24), both parked on the
+store-provenance / named-memory-states representation work; see the last
+migration-log section.
 Claimed: worktree-agent-a18665869a3d1251b, 2026-07-30
 
 The 2026-07-30 audit (see one-gateway-check.md for the full evidence)
@@ -160,3 +163,116 @@ simp certificate — the pieces are all simple tactics), the 5
 smart-have shapes (route through the same have-certificate path the
 mid-execution arm uses), then flip the default and do the ClosedClaim
 restructure per the accepted design.
+
+
+## Migration log, continued (2026-07-30, worktree-agent-a18665869a3d1251b)
+
+Strict-gate corpus: **14 -> 2**, none broken, three default gates green
+at every commit (`cargo nextest run --lib --bins` 497,
+`cargo test --test mdtests`, `cargo test --test examples`).
+
+The corrected root cause for the whole "expressible path facts" and
+"premise not available" family: **`surface_certificate_facts` is
+snapshotted from `path_requirements` at the top of the post-execution
+drain, before any deferred tactic runs.** But a claim's certificate is
+`[recorded post tactics ..., closer tactics ...]`, so when the closer
+replays, the recorded tactics have already run. Generation was planning
+against strictly less than the replay judgment holds.
+
+The previous iteration's guess ("fails at the SELF-CHECK stage") was
+WRONG and cost time — the probe showed `minimal_proposition_derivation`
+found no derivation at all, because the enabling fact was simply absent
+from the context. Measure the context before theorizing about the check.
+
+- DONE: exit-claim certificate generation gets the drain's post-tactic
+  facts. (a) The drain's `unfold(p)` is applied to the certificate facts
+  at the ungrouped `certify_outcome_simp` call site — deliberately NOT
+  globally, because the grouped path does not emit the `unfold(...)`
+  prefix and would then plan against facts replay lacks. (b)
+  post-execution `apply` now records the theorem conclusions it derived
+  by replaying its own `ApplyTheoremUsing` certificate (helper
+  `record_certificate_facts_from_replay`; `FrameRegion` was the
+  precedent). 14 -> 11: click_array_refs, sorted_pair_unfold_requirement,
+  theorem_apply_in_function_proof.
+- DONE: BYPASS-A' (existential closers) has a certificate. `witness` and
+  `choose` are simple tactics and a `have` proof runs both
+  (`prove_pure_proposition_case_at_point`), so the closer lowers to
+  `have <claim goal> by { unfold*; <existence tactics>; <closer> }` +
+  `assumption`. Using the claim's OWN surface goal as the have's
+  proposition avoids synthesizing a surface spelling for the
+  witness-instantiated body. 11 -> 9 (contract_let_where, cstr_stdlib),
+  then 4 -> 2 after two follow-ups below.
+- DONE: BYPASS-B is gated on certificate expressibility, not shape. The
+  old strict test was a flat scan requiring every tactic to be
+  `TacticClass::Simple`, which misclassified any *structured* script (a
+  nested `have`, an `if`) as smart even when every leaf was simple.
+  Replaced by `TacticCertificate::from_proof_tactics`, the settled
+  judgment, which descends into nested bodies. Replay now runs BEFORE the
+  gate so a script rejected on its own terms still reports that — this is
+  what `pure_have_rejects_advance` asserts; it was never text drift, the
+  gate was firing ahead of the pure-proof check. Added
+  `lower_smart_simp_suffix_have` for `[<expressible prefix>, simp]`, the
+  shape an existential `have` takes. 9 -> 4: click_proposition_logic,
+  permission_call_split_rejoin, resource_summary_splits_write_range,
+  pure_have_rejects_advance, grouped_function_post_execution_have.
+- DONE: two follow-ups closed the existential category. (a) The replayed
+  goal was compared to the claim goal by strict equality, so a goal
+  spelled with `unfold(...)` active never matched the folded predicate
+  the have proves; reconcile the spellings the way
+  `certify_outcome_simp_have` already does. (b) A witness-instantiated
+  goal needs premises, and has no surface spelling to write a `calculate`
+  against — but it does not need one:
+  `prove_pure_proposition_case_at_point` takes the CURRENT goal as the
+  target when a derivation's surface proposition is identical to the
+  enclosing have's (proof.rs, `if derive.proposition == *proposition`).
+  So a `calculate` spelled with the have's own goal discharges the
+  instantiated body; premises are the spellable ambient facts, greedily
+  reduced to what replay still accepts. 4 -> 2
+  (byte_slice_range_predicates, witness_and_choose).
+
+Every candidate emitted by the new arms is accepted only when
+`prove_have_at_point` — the replay judgment itself — proves it AND yields
+the claim's kernel goal. No replay-side check was loosened.
+
+### Remaining 2 — PARKED on the representation work, do not retry blind
+
+Both are "planned `simp` context premise is not an available source
+fact" (proof.rs ~12496), i.e. the planner selected a premise that
+`checked_surface_fact_at_outcome` cannot spell.
+
+- `loop_sorted_range_invariant.still_sorted`: the premise is an opaque
+  `Proposition::Predicate { name: "sorted_range", arguments: [CMemory,
+  CValue(Pointer), CValue(0), CValue(3)] }`. There is no recorded
+  lowering (the source says `sorted(p, 3)`; `sorted_range(p, 0, 3)` only
+  ever appears inside the definition body), and
+  `synthesize_surface_proposition` (proof.rs ~11752) has NO
+  `Proposition::Predicate` arm at all. Adding one needs the predicate
+  definition to know which parameters are array refs (an array-ref
+  parameter contributes a (memory, pointer) pair to `Vec<Term>`) and a
+  way to NAME the memory-snapshot argument. Here the snapshot happens to
+  be the empty/current one, but loop-carry and `old(...)` premises are
+  not — that is the named-memory-states work.
+- `advance_selected_pointer.ensures_0`: the premise is
+  `selected == left or selected == right` over a local pointer with a
+  symbolic block, established by an `advance` region join. No surface
+  name for `selected` exists at function exit; it is only spellable as
+  `at(statement(1).exit, ...)`, which is the store-provenance work.
+
+DEAD END, measured and reverted: making the plan branch's
+"premise is not an available source fact" non-fatal (fall through to the
+expressible-path-facts strategy, which CAN synthesize `at(point, ...)`
+spellings) did NOT fix either test AND made
+`loop_sorted_range_invariant` run >300 s instead of 0.2 s. That `?`
+short-circuit is load-bearing for performance — do not remove it without
+bounding the fallback search.
+
+### Next steps
+
+1. The representation work above, then these two tests.
+2. Flip `CLICK_STRICT_EXIT_GATE` to the default and delete
+   `surface_closer_blockers`.
+3. The ClosedClaim restructure per the accepted design.
+
+Quality follow-up (not a gate): `collect_surface_predicate_calls`
+(proof.rs) and `collect_load_pointers` (kernel/api.rs) are dead and warn
+on every build; they predate this work.
