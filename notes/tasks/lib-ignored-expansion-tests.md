@@ -1,7 +1,7 @@
 # lib: 7 #[ignore] expansion-era tests
 
 Status: open
-Claimed:
+Claimed: worktree-agent-a876e0cedfd5fc405 2026-07-30
 
 Scope: 7 `#[ignore]` lib tests from the expansion era. Retest against
 current master (the 2026-07-30 certifier/expansion work moved a lot);
