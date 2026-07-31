@@ -174,12 +174,16 @@ under any tested configuration).
   07-25..28 strict-certificate wave is EXONERATED for both members —
   every sampled commit through 07-28 passes them.
 - **field_derived -> `3a924ff`** ("Keep trivial return certificates
-<<<<<<< HEAD
-  premise-free", 07-27). Two hunks; the likely one switches smart-simp
-  certificate replay from `prove_have_at_point` to
-  `prove_pure_proposition_at_point` against the pre-lowered kernel
-  goal, skipping the ambient-assumptions lowering. Fails in 5 s at the
-  breaking commit; the ~200 s fail time accreted later.
+  premise-free", 07-27). Hunk isolation done (2026-07-31, see the
+  field_derived section below): **hunk 2 is the breaker** — the
+  trivial-return `exact_premises = Vec::new()` in
+  `record_surface_replay_tactic` (the caller's `return ignored;`).
+  Reverting it alone at 3a924ff passes in ~12 s. Hunk 1 (the
+  `prove_pure_proposition_at_point(Some(goal))` replay switch) is
+  exonerated: reverting it alone still fails, and c002ea5 (same day)
+  already reverted it back to `prove_have_at_point` — HEAD still has
+  that shape. Fails in ~13 s at the breaking commit; the ~200 s fail
+  time accreted later.
 - **owned-vector -> `9ea6739`** ("remove replay bookkeeping tactics",
   07-19 — BEFORE the certificate wave; the 07-24 baseline already
   fails). Engine-only: deleted RecordExecutionPoint /
@@ -200,19 +204,6 @@ under any tested configuration).
   field_derived fix answers it; owned-string's frontier diagnosis
   (missing `loadable(data[len])` permission plumbing) is already
   actionable without knowing which commit introduced it.
-=======
-  premise-free", 07-27). Hunk isolation done (2026-07-31, see the
-  field_derived section below): **hunk 2 is the breaker** — the
-  trivial-return `exact_premises = Vec::new()` in
-  `record_surface_replay_tactic` (the caller's `return ignored;`).
-  Reverting it alone at 3a924ff passes in ~12 s. Hunk 1 (the
-  `prove_pure_proposition_at_point(Some(goal))` replay switch) is
-  exonerated: reverting it alone still fails, and c002ea5 (same day)
-  already reverted it back to `prove_have_at_point` — HEAD still has
-  that shape. Fails in ~13 s at the breaking commit; the ~200 s fail
-  time accreted later.
-- vector_fill, owned-string, owned-vector: bisects still running.
->>>>>>> 8225269 (field_derived: hunk 2 of 3a924ff was the breaker; no fix lands at HEAD)
 
 ## Remaining members, 2026-07-31 frontiers
 
