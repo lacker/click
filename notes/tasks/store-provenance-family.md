@@ -37,6 +37,20 @@ Members (all diagnosed 2026-07-30):
   retested 2026-07-30, all still fail; bubble_* fail in the invariant
   closer with the same missing-ForAll shape.
 
+- mdtests (1 rewritten, not quarantined, 2026-07-30):
+  `proof_advance_pointer_local`. Its closer needs
+  `selected == left or selected == right` about a local pointer that the
+  `advance` at `statement(1).exit` abstracts into a fresh symbolic block.
+  At function exit the only spelling is
+  `at(statement(1).exit, selected)`, and certificate generation cannot
+  synthesize a point-qualified spelling for a local pointer. The mdtest's
+  proof now writes that `have` explicitly so the strict exit gate passes;
+  the C source and the `ensures` claim are unchanged. When this family
+  lands, delete that `have` and confirm generation finds the spelling.
+  Measured dead end: teaching `synthesize_surface_pointer` to look up
+  pointer-valued locals (as the scalar path already does) does not help —
+  no recorded program-point state binds a local to the abstracted value.
+
 Also related: grouped-simp candidate-loop perf
 (atomic_derivation_premises clones whole Assumptions per candidate;
 field_derived spent ~500 s there even to fail — recheck cost after the
