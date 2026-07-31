@@ -32,6 +32,71 @@ into the arc; each diagnosis below was measured.
   stage 2a: `old(...)` now names function entry).
 - mdtest `fill_tail_keeps_first.md` — de-quarantined (same fix).
 
+## d78b49b restoration attempt (2026-07-31, worktree-agent-a5b7c1d4b897bfcad)
+
+Worked the two d78b49b members. Verdict: **the diagnosed one-line
+restoration is real but cannot land** — it collides with the landed
+provenance machinery. Everything below was measured, not inferred.
+
+**The mechanism is one hunk, not two.** Of d78b49b's two cell-retention
+changes in `src/kernel/primitives.rs`, only the store-side one matters:
+`CMemory::without_possible_aliasing_cells` switched from the general
+`pointers_proven_distinct` to the bounded
+`pointers_proven_distinct_for_memory_resolution` when deciding which
+cells survive a store. The load-side `without_proven_distinct_cells`
+disjunct deletion is irrelevant (restoring it alone fixes nothing,
+breaks nothing). Restoring the store-side prover:
+
+- at d78b49b: bubble_pass3 passes (13.5 s), owner_buffer still fails
+  (its failure at that commit had a second ingredient that later
+  commits resolved);
+- at HEAD: owner_buffer **passes in 0.16 s** (from 9.8 s fail);
+  bubble_pass3 still fails — bisected (with restoration applied at
+  every step) to `03a7f63` "Bound memory-resolution and resource-prover
+  recursion", whose depth/fuel bounds cut the reasoning the restored
+  prover needs on bubble_pass3's nested spellings;
+- at HEAD it **breaks lib test
+  `expanded_read_step_keeps_named_range_separation_premises`**
+  (10 s pass -> 9 s fail), and at d78b49b it sends the same test into
+  its historical >60 s timeout (it was quarantined-for-cost before the
+  refactor; the trimmed retention is what made it fast and green).
+
+**Why the collision is structural, not incidental.** The expanded
+(all-simple) replay of that lib test fails whenever the struct-field
+cells survive the value-dependent store `owner->data[index] = 0` —
+even when the certificate itself was generated under the same
+retention semantics, and even with 10x fuel budgets. The general
+prover's verdicts depend on ambient non-exact condition facts, which
+differ between smart-proof execution and pinned certificate replay, so
+post-store snapshot shapes diverge exactly where the certified-store
+provenance matching (61f824c, 3125d16) needs them stable. The refactor
+did not delete the disjunct by accident; determinism of store-time
+retention is what its certificate matching stands on.
+
+**The real fix (design work, not this task):** make the
+memory-resolution prover complete enough for the family's class —
+constant-offset field cell vs value-dependent store covered by an
+explicit `separate(...)` fact. The machinery exists
+(`pointers_proven_disjoint_by_explicit_range_for_memory_resolution`
+already consults CResourceSeparate facts; `bitvector_index_in_range_shallow`
+has exact-order-path transitivity) but fails on these because
+containment needs offset-equality across divergent nested snapshot
+spellings — a chicken-and-egg with retention itself — and because
+03a7f63's bounds cap the recursion. Deterministic (exact-fact-only)
+extension of that containment is the direction; general-prover
+restoration is a dead end.
+
+Family movement at HEAD + store-side restoration (for the record):
+owner_buffer PASS 0.16 s; bubble_pass3 FAIL (unchanged ForAll simp
+premise); vector_fill FAIL (unchanged grouped-simp message, 48 s ->
+77 s); owned-string example FAIL 348 s (from 2.6 s) with **exactly the
+lib test's failure signature** (`owned_string_pop` ensures 0/3/4/5) —
+owned-string, and that lib test, are the same collision. The general
+prover's cost on provenance-era spellings is also prohibitive,
+consistent with the lib test's pre-refactor 60 s quarantine.
+field_derived / owned-vector / two_pass not re-measured (no fix lands,
+and owned-vector has a concurrent bisect agent on it).
+
 ## Bisect results (2026-07-31, three of six complete)
 
 - **owner_buffer_field_dependent AND bubble_pass3 -> `d78b49b`** ("WIP:
