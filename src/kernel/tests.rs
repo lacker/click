@@ -5117,6 +5117,116 @@ fn while_invariant_rule_proves_symbolic_loop_exit_fact() {
     assert!(matches!(theorem.proposition(), Proposition::Implies(_, _)));
 }
 
+/// Pins the unsoundness that `prove_c_while_invariant_rule` is fenced for.
+///
+/// The rule's acceptance does not depend on the body at all: it matches the
+/// body's post-state as `CStatementOutcome::Normal(_)`, throws it away, and
+/// discharges `preserved` against the *pre-body* assumption context. So one
+/// and the same `preserved` list -- which describes the step `i := i + 1` --
+/// is accepted both for a body that increments `i` and for a body that zeroes
+/// it.
+///
+/// If someone teaches the rule to check the invariant at the body's
+/// post-state, the second case below must start failing; replace this test
+/// with a positive preservation test at that point.
+#[test]
+fn while_invariant_rule_ignores_what_the_body_does_to_the_invariant() {
+    let i = Variable(171);
+    let n = Variable(172);
+    let i_bits = Bitvector32Term::Variable(i);
+    let n_bits = Bitvector32Term::Variable(n);
+    let incremented = Bitvector32Term::Add(
+        Box::new(i_bits.clone()),
+        Box::new(Bitvector32Term::Constant(1)),
+    );
+    let state = CState::new()
+        .with_local("i", int32(i_bits.clone()))
+        .with_local("n", int32(n_bits.clone()));
+    let condition = c_less_than(c_variable("i"), c_variable("n"));
+    let invariant = vec![
+        Proposition::ConditionIs(
+            ConditionTerm::signed_greater_equal(i_bits.clone(), Bitvector32Term::Constant(0)),
+            true,
+        ),
+        Proposition::ConditionIs(
+            ConditionTerm::signed_less_equal(i_bits.clone(), n_bits.clone()),
+            true,
+        ),
+    ];
+    let assumptions = invariant
+        .iter()
+        .cloned()
+        .fold(Assumptions::new(), Assumptions::assume_proposition)
+        .assume_condition(
+            ConditionTerm::signed_less_equal(
+                n_bits.clone(),
+                Bitvector32Term::Constant(i32::MAX as u32),
+            ),
+            true,
+        );
+    // `preserved` describes the state after the step `i := i + 1`.
+    let preserved = vec![
+        Proposition::ConditionIs(
+            ConditionTerm::signed_greater_equal(incremented.clone(), Bitvector32Term::Constant(0)),
+            true,
+        ),
+        Proposition::ConditionIs(
+            ConditionTerm::signed_less_equal(incremented, n_bits.clone()),
+            true,
+        ),
+    ];
+    let postcondition = Proposition::ConditionIs(ConditionTerm::equal(i_bits, n_bits), true);
+
+    let prove_with_body = |body: CStatement| {
+        prove_c_while_invariant_rule(
+            state.clone(),
+            condition.clone(),
+            invariant.clone(),
+            body,
+            assumptions.clone(),
+            preserved.clone(),
+            postcondition.clone(),
+        )
+    };
+
+    // The body that `preserved` actually describes.
+    assert!(
+        prove_with_body(c_assign("i", c_add(c_variable("i"), c_int32_literal(1)))).is_some(),
+        "the incrementing body should be accepted"
+    );
+    // A body that sets `i` to 0, so after the step `i` is 0 rather than
+    // `i + 1`. The rule accepts the unchanged `preserved` anyway, which is
+    // exactly the gap the fence exists to contain.
+    assert!(
+        prove_with_body(c_assign("i", c_int32_literal(0))).is_some(),
+        "the fenced rule is expected to accept a `preserved` list the body does \
+         not establish; if it now rejects it, the rule learned to look at the \
+         body's post-state and the fence should be revisited"
+    );
+}
+
+/// The while-invariant rule must stay unreachable from outside the kernel.
+///
+/// The real guarantee is the `#[cfg(test)]` + `pub(super)` declaration in
+/// `api.rs`, which `kernel/mod.rs`'s `pub use api::*` cannot widen. This test
+/// pins that declaration so re-exporting the rule fails the gate rather than
+/// silently adding an unsound axiom to the trusted base.
+#[test]
+fn while_invariant_rule_is_not_exported_from_the_kernel() {
+    let api_source = include_str!("api.rs");
+
+    assert!(
+        !api_source.contains("pub fn prove_c_while_invariant_rule"),
+        "prove_c_while_invariant_rule must not be publicly exported: it is an \
+         unsound partial while rule (see its doc comment in api.rs)"
+    );
+    assert!(
+        api_source.contains("#[cfg(test)]\npub(super) fn prove_c_while_invariant_rule("),
+        "prove_c_while_invariant_rule must stay declared as \
+         `#[cfg(test)] pub(super) fn` so it does not exist in a release build"
+    );
+}
+
 #[test]
 fn same_block_frame_uses_symbolic_offset_inequality() {
     let i = Variable(73);

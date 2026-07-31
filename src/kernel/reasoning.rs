@@ -92,6 +92,11 @@ pub(super) fn consume_resource_prover_fuel() -> bool {
     })
 }
 
+/// Test-only: the sole caller is the fenced `prove_c_while_invariant_rule`.
+/// The production loop path forks the condition through
+/// `assume_condition_truthiness`, which threads facts and obligations rather
+/// than collapsing them into bare `Assumptions`.
+#[cfg(test)]
 pub(super) fn condition_contexts_for_truthiness(
     state: &CState,
     condition: &CExpression,

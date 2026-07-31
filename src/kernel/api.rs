@@ -5785,7 +5785,51 @@ pub fn prove_memory_load_after_store_distinct_under_assumptions(
     )))
 }
 
-pub fn prove_c_while_invariant_rule(
+/// Unsound partial while-rule, fenced to kernel tests. NOT an axiom.
+///
+/// This is deliberately not exported: it is `#[cfg(test)]`-only and
+/// `pub(super)`, so it does not exist in a release build and no caller
+/// outside `crate::kernel` can reach it. `Theorem::new` is `pub(super)`, so
+/// `Proposition::CWhileInvariantRule` is unconstructible as a theorem from
+/// outside the kernel too.
+///
+/// What it checks:
+/// - every proposition in `invariant` is provable from `assumptions`, i.e.
+///   the invariant holds on entry in the caller's `state`;
+/// - there is *at least one* condition-fork context in which the condition is
+///   true where the body runs to a single `Normal` path with no leftover
+///   facts or obligations, and every proposition in `preserved` is provable;
+/// - there is *at least one* condition-fork context in which the condition is
+///   false where `postcondition` is provable.
+///
+/// What it does NOT check, and why that makes it unsound as a while rule:
+/// - preservation in *every* condition-true fork, and the exit postcondition
+///   in *every* condition-false fork. Both quantifiers are `any`, not `all`,
+///   so a fork that breaks the invariant is simply skipped.
+/// - any relation between `preserved` and what `body` actually does. The
+///   body's post-state is matched as `CStatementOutcome::Normal(_)` and
+///   discarded, and `preserved` is discharged against the *pre-body*
+///   assumption context. A `preserved` list that holds before the body and
+///   fails after it is accepted; see the kernel test
+///   `while_invariant_rule_ignores_what_the_body_does_to_the_invariant`.
+/// - genericity of `state` / `assumptions`. There is no havoc of the
+///   locations the loop modifies, so preservation is shown for one step out
+///   of the caller's specific state and does not generalize to an arbitrary
+///   iteration.
+/// - termination, and framing of memory across iterations.
+///
+/// Why it is fenced rather than fixed: the sound loop path already exists as
+/// `c_loop_preservation_contexts` / `c_loop_invariants_hold_at_back_edge`
+/// over state-parametric `CLoopInvariantCheck` (`SpecProposition`), with
+/// `prepare_loop_top_state` supplying the havoc. Making this rule sound means
+/// evaluating the invariant at the body's post-state, which a flat
+/// `Vec<Proposition>` invariant plus a caller-supplied `preserved` cannot
+/// express — the fix is to carry `CLoopInvariantCheck` instead, which changes
+/// the shape of `Proposition::CWhileInvariantRule` and duplicates machinery
+/// that already exists. That redesign is not worth it for a rule with no
+/// callers, so the rule is fenced instead.
+#[cfg(test)]
+pub(super) fn prove_c_while_invariant_rule(
     state: CState,
     condition: CExpression,
     invariant: Vec<Proposition>,
