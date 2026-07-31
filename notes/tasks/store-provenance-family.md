@@ -15,7 +15,9 @@ this project, as long as the fix stays straightforward; if one turns
 out to need new surface semantics, bring it back to the owner instead
 of brute-forcing.
 
-**Attack per member: bisect first.** Each has a bounded window (its add
+**Attack per member: fix forward from the current diagnosis** (owner
+call 2026-07-31; the bisect-first phase is over — completed verdicts
+below). Each has a bounded window (its add
 commit → 2026-07-29). Bisect to the exact breaking commit before
 working the diagnosis; "certificate machinery gap" becomes "this commit
 removed/required X". Add commits: bubble_pass3 78218b6, vector_fill
@@ -127,7 +129,14 @@ and owned-vector has a concurrent bisect agent on it).
   example. Also: PASS time exploded 1 s -> ~190 s between 07-15 and
   07-19 before any breakage — an unattributed perf regression worth
   its own look once the example verifies again.
-- vector_fill, owned-string: bisects still running.
+- **vector_fill, owned-string: bisects CANCELLED (owner call,
+  2026-07-31) — fix forward instead.** The first four bisects paid for
+  themselves by refuting the certificate-wave theory and naming exact
+  mechanisms, but these two add little: vector_fill shares
+  field_derived's failure class (grouped-simp certification), so the
+  field_derived fix answers it; owned-string's frontier diagnosis
+  (missing `loadable(data[len])` permission plumbing) is already
+  actionable without knowing which commit introduced it.
 
 ## Remaining members, 2026-07-31 frontiers
 
