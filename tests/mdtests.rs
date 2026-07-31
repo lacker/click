@@ -24,11 +24,11 @@ const QUARANTINED: &[(&str, &str)] = &[
     ),
     (
         "composite_resource_vector_fill_loop_snapshot.md",
-        "back-edge closer needs named memory states; per-spelling bridging exhausted (notes/regression-history.md)",
+        "back-edge closer needs named memory states; per-spelling bridging exhausted (issues/certificate-spelling-gap.md)",
     ),
     (
         "field_derived_precise_effect_after_metadata_write.md",
-        "ensures derivations need named memory states; certified context does not derive them (notes/regression-history.md)",
+        "ensures derivations need named memory states; certified context does not derive them (issues/certificate-spelling-gap.md)",
     ),
 ];
 

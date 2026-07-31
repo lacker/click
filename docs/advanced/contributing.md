@@ -47,3 +47,20 @@ as features grow.
 The advanced and reference chapters should stay close to the implementation.
 They should be updated whenever tests, lowering, kernel behavior, or roadmap
 assumptions change.
+
+## Working conventions (from the 2026-07 performance-tools project)
+
+- Gates: `cargo nextest run --lib --bins` (the `--bins` matters — CLI
+  `#[cfg(test)]` modules are not covered by `--lib` alone),
+  `cargo test --test mdtests`, `cargo test --test examples`. Keep
+  master green; commit in small validated steps.
+- Probe pattern: env-gated eprintln/file dumps at the failing check,
+  run under a filter, strip probes before committing.
+- Guard and depth-gate any new recursive prover arm; structural
+  recursion on deep terms has overflowed the stack before.
+- SOUNDNESS TRAP: never drop havoc/call-havoc blocks from canonical
+  load memories; kernel test
+  `memory_load_equality_does_not_ignore_loop_havoc_identity` guards it.
+- Reproduce stale timing claims before acting on them; slow-but-passing
+  is a reportable finding, not a resting state.
+- Known bugs and pending decisions live in `issues/`, one file each.

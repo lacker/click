@@ -4498,7 +4498,7 @@ fn selected_pure_case_split_simp_expands_by_removal() {
     // NOT graft the enclosing branch skeleton as an `if` tree with empty
     // leaves: that tree would re-split every already-merged execution path at
     // path end and lose the execution-path/branch-trace pairing certificate
-    // replay keeps (notes/tasks/case-split-expansion-merge.md).
+    // replay keeps (git history (case-split expansion merge, 2026-07-31)).
     let c_source = r#"
             int32 sort3(int32 p[3]) {
                 int32 tmp;
@@ -6174,7 +6174,7 @@ fn verifies_loop_invariants_and_statement_assert() {
 // resolve `old` positionally, to the loop-top havoc snapshot, while the kernel
 // certified the invariant with `old` at the function-entry snapshot, so no
 // placement of the operands could reproduce the certified fact. `old` now names
-// the function-entry state. See notes/memory-dag.md.
+// the function-entry state. See docs/advanced/memory-dag.md.
 fn verifies_old_memory_loop_invariant() {
     let c_source = r#"
             int32 fill_tail(int32 p[], int32 n) {

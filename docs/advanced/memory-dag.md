@@ -1,4 +1,4 @@
-# Memory DAG record (reference, not a task)
+# The memory derivation DAG
 
 Stages 1–5 of the named-memory-states arc, landed 2026-07-30/31: what
 the derivation DAG is, its invariants, what it bought (field_derived
@@ -119,7 +119,7 @@ permission question (owned-string).
 
 ## Landed 2026-07-31: fourth and fifth edge kinds, scoped consumers
 
-The owned-string loadable work (notes/tasks/owned-string-loadable.md)
+The owned-string loadable work (issues/owned-string-loadable-bridging-slow.md)
 landed the punted block-allocation edge plus one nobody had recorded:
 
 - `BlockDeclared` — recorded by `CMemory::with_block`, NEVER for havoc
@@ -217,3 +217,16 @@ CLICK_DISABLE_MEMORY_DAG=1 <any of the above>   # A/B against the pre-arc path
 
 field_derived takes ~200 s to fail; bubble_sort3 ~137 s to pass.
 Bound with `MDTEST_TIME_LIMIT`; neither belongs in a foreground loop.
+
+
+## Edge kinds added 2026-07-31
+
+`BlockDeclared` (a block came into existence; never recorded for havoc
+marker blocks — that would launder freshness) and `CellsForgotten`
+(the write path's possibly-aliasing cell prune; the branch-conditional
+`without_cell` prune must never record one). These connected the
+previously disjoint DAG components. The extended bridging power that
+uses them is scoped via `with_extended_dag_bridging` to
+`Assumptions::proves_memory_loadable` only — enabling it globally
+measurably changes certified spellings and simp case-split structure
+elsewhere.

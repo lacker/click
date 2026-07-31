@@ -773,7 +773,7 @@ impl From<&CMemory> for SharedCMemory {
 }
 
 /// How a memory snapshot was produced from an earlier one: the edges of the
-/// named-memory-state DAG (`notes/memory-dag.md`). Each
+/// named-memory-state DAG (`docs/advanced/memory-dag.md`). Each
 /// variant names its base snapshot, so following `base` walks backwards
 /// through the write history that execution already knew when it built the
 /// snapshot — instead of reconstructing that history at proof time from
@@ -801,7 +801,7 @@ pub enum CMemoryDerivation {
     },
     /// `base` with one block declared; no cell changes, so every load reads
     /// exactly what it read in `base`. The fourth edge kind
-    /// (`notes/memory-dag.md` "Next"): without it, block declaration split
+    /// (`docs/advanced/memory-dag.md` "Next"): without it, block declaration split
     /// the DAG into disjoint components ("arena identity is connected,
     /// arena derivations are not"). The havoc producers insert their marker
     /// blocks directly rather than through [`CMemory::with_block`], so this

@@ -7024,7 +7024,7 @@ fn decision_memo_distinguishes_equal_shaped_fact_sets_by_content() {
 }
 
 // --- named-memory-states arc: the derivation DAG -------------------------
-// See notes/memory-dag.md. These pin the two invariants
+// See docs/advanced/memory-dag.md. These pin the two invariants
 // the arc's safety argument rests on (advisory-only, and parent id < child
 // id) plus the havoc-identity property that must hold by construction.
 
@@ -7268,7 +7268,7 @@ fn sibling_snapshots_resolve_one_cell_to_a_common_ancestor() {
     );
 }
 
-/// The owned-string loadable shape (notes/tasks/owned-string-loadable.md):
+/// The owned-string loadable shape (issues/owned-string-loadable-bridging-slow.md):
 /// the permission fact and its bound facts spell `len` as a load at contract
 /// entry, while the index the goal extracts spells it at a later snapshot
 /// separated by a block declaration, stores, and a cell-forgetting prune —

@@ -2814,7 +2814,7 @@ struct TacticReplayState {
     /// re-derivation that gives it meaning runs in
     /// `verify_one_loop_preservation_proof` once the whole certificate has
     /// replayed. Without this the dominant cost of the loop-invariant bundle
-    /// carries no class tag at all (`notes/tasks/profiler-coverage.md`).
+    /// carries no class tag at all (`git history (profiler coverage, 2026-07-31)`).
     invariant_closer_step: Option<InvariantCloserStep>,
     case_assumptions: Vec<ReplayCaseAssumption>,
     effect_facts: Vec<ExecutionPureFact>,
@@ -2836,7 +2836,7 @@ struct TacticReplayState {
     /// loop-entry memory here and function-entry memory in the Click -> Spec
     /// lowering the kernel certified against. Naming the state explicitly is
     /// what makes the two agree; see
-    /// `notes/memory-dag.md` (stage 2a).
+    /// `docs/advanced/memory-dag.md` (stage 2a).
     ///
     /// `None` keeps the previous positional resolution, so every region that
     /// does not record a function-entry snapshot behaves exactly as before.
