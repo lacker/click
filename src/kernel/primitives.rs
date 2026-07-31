@@ -799,6 +799,28 @@ pub enum CMemoryDerivation {
         pointer: Pointer,
         value: CValue,
     },
+    /// `base` with one block declared; no cell changes, so every load reads
+    /// exactly what it read in `base`. The fourth edge kind
+    /// (`notes/memory-dag.md` "Next"): without it, block declaration split
+    /// the DAG into disjoint components ("arena identity is connected,
+    /// arena derivations are not"). The havoc producers insert their marker
+    /// blocks directly rather than through [`CMemory::with_block`], so this
+    /// edge can never alias a havoc hop.
+    BlockDeclared {
+        base: SharedCMemory,
+        block: PointerBlock,
+    },
+    /// `base` with some cached cell values forgotten at one program point:
+    /// the write path narrows the cell map before storing
+    /// (`without_possible_aliasing_cells`), which changes the spelling but
+    /// not the state, so every load still reads exactly what it read in
+    /// `base`. Recorded ONLY where forgetting is unconditional; the
+    /// case-split prune in the load path (`without_cell` under an assumed
+    /// distinctness branch) must never record one, because its two spellings
+    /// agree only under that branch's assumption. Havoc forgetting keeps its
+    /// own never-crossed / guarded edge kinds, so this edge cannot launder a
+    /// havoc (conventions.md's soundness trap).
+    CellsForgotten { base: SharedCMemory },
     /// `base` after a loop body that may write anything it can reach.
     LoopHavoc {
         base: SharedCMemory,
@@ -817,6 +839,8 @@ impl CMemoryDerivation {
     pub fn base(&self) -> &SharedCMemory {
         match self {
             Self::Store { base, .. }
+            | Self::BlockDeclared { base, .. }
+            | Self::CellsForgotten { base }
             | Self::LoopHavoc { base, .. }
             | Self::CallHavoc { base, .. } => base,
         }
@@ -847,6 +871,14 @@ thread_local! {
         NEXT_MEMORY_ARENA_TOKEN.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         std::cell::RefCell::new(CMemoryArena::default()),
     );
+    static C_MEMORY_DERIVATION_GENERATION: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// Bumped every time a derivation slot is filled. Memo tables over DAG walks
+/// key on this so an edge recorded later invalidates earlier "no path"
+/// answers instead of leaving them stale.
+pub(super) fn c_memory_derivation_generation() -> u64 {
+    C_MEMORY_DERIVATION_GENERATION.with(std::cell::Cell::get)
 }
 
 /// Records that `result` is `derivation` applied to its base, unless
@@ -881,6 +913,7 @@ pub(crate) fn record_c_memory_derivation(result: &CMemory, derivation: CMemoryDe
             return;
         }
         *slot = Some(std::sync::Arc::new(derivation));
+        C_MEMORY_DERIVATION_GENERATION.with(|generation| generation.set(generation.get() + 1));
     });
 }
 
@@ -919,6 +952,7 @@ pub fn intern_c_memory(memory: CMemory) -> SharedCMemory {
         }
     })
 }
+
 
 /// Interns by reference: an already-interned snapshot is found without
 /// cloning it, so hot memoization lookups keyed by interned identity pay a
@@ -2706,7 +2740,24 @@ impl CMemory {
     }
 
     pub fn with_block(mut self, block: impl Into<PointerBlock>, size: u32) -> Self {
-        self.blocks.insert(block.into(), CBlock::new(size));
+        let block = block.into();
+        // Havoc marker blocks mean "the state may have changed", never "a
+        // fresh block appeared"; recording a benign block-declaration edge
+        // for one would launder the havoc (conventions.md's soundness trap,
+        // pinned by `conditions_equal_modulo_proven_snapshots_needs_frame_
+        // evidence`). The havoc producers insert their markers directly,
+        // but tests and any future caller may spell them through this
+        // constructor, so the refusal lives here.
+        if memory_dag_disabled()
+            || block.starts_with("havoc:")
+            || block.starts_with("call-havoc:")
+        {
+            self.blocks.insert(block, CBlock::new(size));
+            return self;
+        }
+        let base = intern_c_memory_ref(&self);
+        self.blocks.insert(block.clone(), CBlock::new(size));
+        record_c_memory_derivation(&self, CMemoryDerivation::BlockDeclared { base, block });
         self
     }
 
@@ -2824,6 +2875,7 @@ impl CMemory {
             block: pointer.block.clone(),
             offset: normalize_exact_memory_loads_in_pointer_offset(&pointer.offset, assumptions, 0),
         };
+        let base = (!memory_dag_disabled()).then(|| intern_c_memory_ref(self));
         let mut memory = self.clone();
         memory.cells.retain(|cell_pointer, _| {
             let normalized_cell_pointer = Pointer {
@@ -2840,6 +2892,9 @@ impl CMemory {
                 assumptions,
             )
         });
+        if let Some(base) = base {
+            record_c_memory_derivation(&memory, CMemoryDerivation::CellsForgotten { base });
+        }
         memory
     }
 

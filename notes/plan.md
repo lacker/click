@@ -41,7 +41,7 @@ Reference material lives in `notes/` root, never in `tasks/`.
 | Task file (tasks/) | Status | One-line scope |
 |---|---|---|
 | certificate-spelling-gap.md | open (critical path) | Successor: the prover landed (owner_buffer FIXED, de-quarantined 0.06 s); all three remaining members provably fail in certificate lowering's surface spelling of snapshot-orphaned premises |
-| owned-string-loadable.md | in progress (agent) | The unfold cannot discharge `loadable(data[len])` — permission plumbing, independent of the critical path |
+| loadable-bridging-cost.md | open (small) | The scoped DAG bridging that closed the loadable gap is hot: owned-string now takes 5m26s to reach its next frontier. Profile before extending; memo is generation-invalidated by load-caching stores |
 | owned-vector-forward-fix.md | open (queued) | Propositional `Implies` gap at vector_replace_if tactic 8; retest after the critical path lands |
 | field-derived-fold-cost.md | open (small) | 29 s SIMPLE fold; re-profile after the critical path lands |
 

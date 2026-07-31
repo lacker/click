@@ -277,6 +277,20 @@ fn assumptions_memo_id(assumptions: &Assumptions) -> u64 {
     })
 }
 
+/// Memo identity for the DAG-walk memo tables in api.rs: the ambient scope's
+/// id when one is live (no hashing), the content-derived id otherwise.
+/// `None` when memoization is disabled, so `CLICK_DISABLE_DECIDE_MEMO`
+/// bypasses those tables too.
+pub(super) fn dag_memo_assumptions_id(assumptions: &Assumptions) -> Option<u64> {
+    if decide_memo_disabled() {
+        return None;
+    }
+    Some(
+        ambient_assumptions_memo_id(assumptions)
+            .unwrap_or_else(|| assumptions_memo_id(assumptions)),
+    )
+}
+
 thread_local! {
     static ASSUMPTIONS_ID_SCOPES: RefCell<Vec<(usize, u64)>> = const { RefCell::new(Vec::new()) };
 }
@@ -1890,6 +1904,16 @@ impl Assumptions {
         }
     }
 
+    /// True when some exact order fact strictly bounds `term` above
+    /// (`term < y` for any `y`). A strict signed bound pins
+    /// `term < INT_MAX`, which is what discharges `term + 1` overflow
+    /// checks from exact facts alone.
+    pub(super) fn has_exact_strict_upper_bound(&self, term: &Bitvector32Term) -> bool {
+        self.condition_order_facts()
+            .iter()
+            .any(|(edge_left, _, strict)| *strict && edge_left == term)
+    }
+
     pub(super) fn has_order_path(
         &self,
         left: &Bitvector32Term,
@@ -1907,6 +1931,16 @@ impl Assumptions {
         require_strict: bool,
     ) -> bool {
         let order_facts = self.condition_order_facts();
+        // Two spellings of one load at different snapshots connect along
+        // recorded memory-derivation edges; the walk is deterministic (exact
+        // facts plus DAG edges, no ambient condition reasoning), so an exact
+        // order path may link through it — inside the loadable prover's
+        // extended-bridging scope only. Non-loads still match verbatim.
+        let terms_match = |current: &Bitvector32Term, other: &Bitvector32Term| {
+            current == other
+                || super::api::extended_dag_bridging_active()
+                    && super::api::atomic_loads_equal_along_memory_derivations(current, other, self)
+        };
         let mut stack = vec![(left.clone(), false)];
         let mut seen = BTreeSet::new();
         while let Some((current, strict_so_far)) = stack.pop() {
@@ -1916,7 +1950,7 @@ impl Assumptions {
             let constant_connection = signed_bitvector_constant(&current)
                 .zip(signed_bitvector_constant(right))
                 .and_then(|(current, right)| (current <= right).then_some(current < right));
-            if (&current == right || constant_connection.is_some())
+            if (terms_match(&current, right) || constant_connection.is_some())
                 && (!require_strict || strict_so_far || constant_connection == Some(true))
             {
                 return true;
@@ -1927,7 +1961,7 @@ impl Assumptions {
                     .and_then(|(current, edge_left)| {
                         (current <= edge_left).then_some(current < edge_left)
                     });
-                if &current == edge_left || constant_connection.is_some() {
+                if terms_match(&current, edge_left) || constant_connection.is_some() {
                     stack.push((
                         edge_right.clone(),
                         strict_so_far || *edge_strict || constant_connection == Some(true),
@@ -5196,6 +5230,22 @@ impl Assumptions {
         base: &Pointer,
         bytes: &Bitvector32Term,
     ) -> bool {
+        // The loadable prover is the one consumer of the extended DAG
+        // bridging: a permission fact recorded at one snapshot spelling must
+        // discharge a load extracted at another. Scoping the power here
+        // keeps execution pruning and simp planning byte-identical to the
+        // pre-arc path (see api.rs).
+        super::api::with_extended_dag_bridging(|| {
+            self.proves_memory_loadable_inner(memory, base, bytes)
+        })
+    }
+
+    fn proves_memory_loadable_inner(
+        &self,
+        memory: &CMemory,
+        base: &Pointer,
+        bytes: &Bitvector32Term,
+    ) -> bool {
         let _id_scope = AssumptionsIdScope::enter(self);
         if bytes
             .as_const()
@@ -7073,8 +7123,16 @@ fn bitvector_index_in_range_shallow(
                     )) == Some(false)
                         || assumptions.exact_condition_value(&ConditionTerm::signed_add_overflows(
                             Bitvector32Term::Constant(increment),
-                            base,
-                        )) == Some(false))
+                            base.clone(),
+                        )) == Some(false)
+                        // A recorded strict signed upper bound (`base < y`)
+                        // pins `base < INT_MAX`, so `base + 1` cannot
+                        // overflow. Exact facts only; extended-bridging
+                        // scope only, to keep every other phase's range
+                        // answers byte-identical to the pre-arc path.
+                        || increment == 1
+                            && super::api::extended_dag_bridging_active()
+                            && assumptions.has_exact_strict_upper_bound(&base))
             });
     let upper_bound_is_exact = assumptions
         .exact_condition_value(&ConditionTerm::signed_less_than(index.clone(), end.clone()))

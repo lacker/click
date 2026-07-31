@@ -43,5 +43,7 @@ CLICK_RUN_QUARANTINED=1 MDTEST_FILTER=vector_fill cargo test --test mdtests
 (field_derived: 238 s to fail; bound it, confirmation only.)
 
 Done when: bubble_pass3 and vector_fill de-quarantine; field_derived
-moves or passes (its residual cost items live in
+moves or passes; ALSO retest example owned-string (bounded — it takes
+5m26s to fail): its current frontier is this same class ("expressible
+path facts do not replay the postcondition derivation") (its residual cost items live in
 field-derived-fold-cost.md).

@@ -7268,6 +7268,76 @@ fn sibling_snapshots_resolve_one_cell_to_a_common_ancestor() {
     );
 }
 
+/// The owned-string loadable shape (notes/tasks/owned-string-loadable.md):
+/// the permission fact and its bound facts spell `len` as a load at contract
+/// entry, while the index the goal extracts spells it at a later snapshot
+/// separated by a block declaration, stores, and a cell-forgetting prune —
+/// exactly the edges (`BlockDeclared`, `CellsForgotten`) that used to leave
+/// the two spellings in disjoint DAG components. The loadable prover's
+/// extended bridging connects them; everywhere outside that prover the new
+/// edges must stay invisible (pinned by the frame-evidence test above and
+/// the byte-identical replay of the certified corpus).
+#[test]
+fn loadable_bound_check_bridges_len_spellings_across_block_and_prune_edges() {
+    if skip_without_memory_dag() {
+        return;
+    }
+    let entry = CMemory::new().with_block("arg-memory", 64);
+    let len_pointer = arc_pointer(0);
+    let len_at_entry = Bitvector32Term::MemoryLoad(
+        crate::kernel::intern_c_memory_ref(&entry),
+        Box::new(len_pointer.clone()),
+    );
+
+    // The recorded facts: the buffer permission and both `len` bounds, all
+    // spelled at entry.
+    let assumptions = Assumptions::new()
+        .assume_proposition(Proposition::CMemoryLoadable {
+            memory: entry.clone(),
+            base: arc_pointer(16),
+            bytes: Bitvector32Term::Constant(32),
+        })
+        .assume_condition(
+            ConditionTerm::signed_less_equal(Bitvector32Term::Constant(0), len_at_entry.clone()),
+            true,
+        )
+        .assume_condition(
+            ConditionTerm::signed_less_than(len_at_entry, Bitvector32Term::Constant(8)),
+            true,
+        );
+
+    // The later snapshot: a local declared, a distinct cell written, and the
+    // write-path prune that forgets it again. Its `len` load is a different
+    // spelling of the same cell.
+    let later = entry
+        .clone()
+        .with_block("local:i", 4)
+        .store(arc_pointer(4), CValue::Int32(Bitvector32Term::Constant(9)))
+        .store(arc_pointer(8), CValue::Int32(Bitvector32Term::Constant(2)))
+        .without_possible_aliasing_cells(&arc_pointer(4), &assumptions);
+    let len_at_later = Bitvector32Term::MemoryLoad(
+        crate::kernel::intern_c_memory_ref(&later),
+        Box::new(len_pointer),
+    );
+
+    // loadable(buffer[len]) with `len` spelled at the later snapshot.
+    let goal_base = Pointer {
+        block: "arg-memory".into(),
+        offset: PointerOffsetTerm::Add(
+            Box::new(PointerOffsetTerm::Constant(16)),
+            Box::new(PointerOffsetTerm::Int32Scaled {
+                value: Box::new(len_at_later),
+                byte_width: 4,
+            }),
+        ),
+    };
+    assert!(
+        assumptions.proves_memory_loadable(&later, &goal_base, &Bitvector32Term::Constant(4)),
+        "the loadable bound check must connect the two len spellings along \
+         the recorded block-declaration and cell-forgetting edges"
+    );
+}
+
 #[test]
 fn a_store_to_the_loaded_cell_is_not_crossable() {
     // A soundness property, so it must hold with the arc switched off too.

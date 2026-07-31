@@ -272,6 +272,13 @@ fn memory_derivations_reach(
                     || pointer_offsets_with_common_base_proven_distinct(write, pointer, assumptions)
                     || pointers_proven_distinct_for_memory_resolution(write, pointer, assumptions)
             }
+            // Declaring a block or forgetting cached cells writes nothing,
+            // so every load is untouched — but only the extended-bridging
+            // scope may exploit that: elsewhere these edges must look like
+            // the pre-arc absence of an edge.
+            CMemoryDerivation::BlockDeclared { .. } | CMemoryDerivation::CellsForgotten { .. } => {
+                extended_dag_bridging_active()
+            }
             CMemoryDerivation::CallHavoc { mutable_ranges, .. } => {
                 assumptions.ranges_proven_disjoint_from_pointer(mutable_ranges, pointer)
             }
@@ -322,6 +329,18 @@ impl MemoryDagCell {
     }
 }
 
+// The hop predicates reach `decide` and the range-disjointness provers,
+// which reach the cell-source provers again. One nested level is allowed —
+// a hop's range certificate may itself need a single DAG hop to match the
+// spelling of its base — and the cap makes the recursion depth-gated per
+// conventions.md. Answers computed at depth 1 see the cutoff and are never
+// memoized.
+const CELL_LOOKUP_DEPTH_LIMIT: u8 = 2;
+
+thread_local! {
+    static CELL_LOOKUP_DEPTH: std::cell::Cell<u8> = const { std::cell::Cell::new(0) };
+}
+
 /// Walks a snapshot's derivation edges backwards resolving one cell.
 ///
 /// Every hop is decided by the *cheap* predicates only — block distinctness
@@ -334,6 +353,35 @@ impl MemoryDagCell {
 /// `LoopHavoc` is never crossed (conventions.md's soundness trap; loop havoc
 /// has no write set to be disjoint from), and the hop cap plus the strictly
 /// decreasing arena ids along `base` bound the walk.
+/// Budget for one `Store`-hop distinctness check inside the cell-source
+/// walk, isolated from the enclosing query's fuel. Small on purpose: the
+/// certificates these hops need name their ranges close to the surface.
+const MEMORY_DAG_HOP_DISTINCTNESS_FUEL: usize = 8_000;
+
+// The extended DAG bridging (crossing block-declaration and cell-forgetting
+// edges, range-certificate store hops, stored-value pinning, and the
+// order-path load matching in assumptions.rs) runs ONLY inside the loadable
+// prover. Everywhere else — execution pruning, load canonicalization, simp
+// planning — behavior must stay byte-identical to the pre-arc path, because
+// certified spellings and case-split structure replay against it. The flag
+// is scoped, not global, so generation and replay of the same query always
+// agree.
+thread_local! {
+    static EXTENDED_DAG_BRIDGING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+pub(super) fn extended_dag_bridging_active() -> bool {
+    EXTENDED_DAG_BRIDGING.with(std::cell::Cell::get)
+}
+
+/// Runs `body` with the extended DAG bridging enabled (see above).
+pub(super) fn with_extended_dag_bridging<T>(body: impl FnOnce() -> T) -> T {
+    let previous = EXTENDED_DAG_BRIDGING.with(|flag| flag.replace(true));
+    let result = body();
+    EXTENDED_DAG_BRIDGING.with(|flag| flag.set(previous));
+    result
+}
+
 fn memory_dag_cell_source(
     memory: &SharedCMemory,
     pointer: &Pointer,
@@ -363,9 +411,35 @@ fn memory_dag_cell_source(
                         value: value.clone(),
                     };
                 }
+                // The recorded-range fallback covers writes into a
+                // proven-separate region (a buffer store crossed while
+                // resolving a struct field); the same predicate
+                // `memory_derivations_reach` crosses `Store` hops with.
+                // Extended-bridging scope only, and under its own capped
+                // budget so this advisory walk can never drain the
+                // enclosing query's fuel — fuel-coupled spellings elsewhere
+                // must replay byte-for-byte.
                 if !write.blocks_proven_distinct(pointer)
                     && !pointer_offsets_with_common_base_proven_distinct(write, pointer, assumptions)
+                    && !(extended_dag_bridging_active()
+                        && super::reasoning::with_isolated_memory_resolution_fuel(
+                            MEMORY_DAG_HOP_DISTINCTNESS_FUEL,
+                            || pointers_proven_distinct_for_memory_resolution(
+                                write,
+                                pointer,
+                                assumptions,
+                            ),
+                        ))
                 {
+                    return MemoryDagCell::Unwritten { node: current };
+                }
+            }
+            // Declaring a block or forgetting cached cells writes nothing,
+            // so every load is untouched — but only the extended-bridging
+            // scope may exploit that: elsewhere these edges must look like
+            // the pre-arc absence of an edge.
+            CMemoryDerivation::BlockDeclared { .. } | CMemoryDerivation::CellsForgotten { .. } => {
+                if !extended_dag_bridging_active() {
                     return MemoryDagCell::Unwritten { node: current };
                 }
             }
@@ -402,26 +476,6 @@ fn memory_dag_cell_source(
 /// connected (a block-declaring snapshot carries no edge, recorded as a dead
 /// end in the task file), so falling through is the normal case, not an
 /// error.
-pub(super) fn loads_equal_along_memory_derivations(
-    left_memory: &SharedCMemory,
-    left_pointer: &Pointer,
-    right_memory: &SharedCMemory,
-    right_pointer: &Pointer,
-    assumptions: &Assumptions,
-) -> bool {
-    left_pointer == right_pointer
-        && loads_equal_along_memory_derivations_at(
-            left_memory,
-            right_memory,
-            left_pointer,
-            assumptions,
-        )
-}
-
-/// [`loads_equal_along_memory_derivations`] for a caller that has already
-/// proven the two loads share an address. Resolving both snapshots at one
-/// spelling of that address is sound precisely because the addresses are
-/// equal: every hop test asks about the address, not the spelling.
 pub(super) fn loads_equal_along_memory_derivations_at(
     left_memory: &SharedCMemory,
     right_memory: &SharedCMemory,
@@ -434,17 +488,14 @@ pub(super) fn loads_equal_along_memory_derivations_at(
     if left_memory == right_memory {
         return true;
     }
-    // The hop predicates reach `decide`, which reaches this prover again.
-    thread_local! {
-        static CELL_LOOKUP_ACTIVE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-    }
-    if CELL_LOOKUP_ACTIVE.with(std::cell::Cell::get) {
+    let Some((left, right)) = with_cell_lookup_depth(|| {
+        (
+            memory_dag_cell_source(left_memory, pointer, assumptions),
+            memory_dag_cell_source(right_memory, pointer, assumptions),
+        )
+    }) else {
         return false;
-    }
-    CELL_LOOKUP_ACTIVE.with(|active| active.set(true));
-    let left = memory_dag_cell_source(left_memory, pointer, assumptions);
-    let right = memory_dag_cell_source(right_memory, pointer, assumptions);
-    CELL_LOOKUP_ACTIVE.with(|active| active.set(false));
+    };
     if left.node() == right.node() {
         return true;
     }
@@ -454,28 +505,121 @@ pub(super) fn loads_equal_along_memory_derivations_at(
     }
 }
 
+/// Runs `body` one cell-lookup level deeper, or returns `None` at the cap.
+fn with_cell_lookup_depth<T>(body: impl FnOnce() -> T) -> Option<T> {
+    let depth = CELL_LOOKUP_DEPTH.with(std::cell::Cell::get);
+    if depth >= CELL_LOOKUP_DEPTH_LIMIT {
+        return None;
+    }
+    CELL_LOOKUP_DEPTH.with(|cell| cell.set(depth + 1));
+    let result = body();
+    CELL_LOOKUP_DEPTH.with(|cell| cell.set(depth));
+    Some(result)
+}
 
-/// The [`loads_equal_along_memory_derivations`] arm as a term-level test:
+
+/// The [`loads_equal_along_memory_derivations_at`] arm as a term-level test:
 /// true only when both sides are atomic loads the DAG resolves alike.
+///
+/// Beyond the node-identity comparison, one side's walk may land on a
+/// `Store` whose recorded value IS the other side verbatim — the common case
+/// for a load-caching store (`cells[p] := load(older, p)`): the newer
+/// snapshot's cell literally pins the older spelling. That is still a pure
+/// DAG answer (the value comes off a derivation edge, compared structurally),
+/// so it stays inside the exact-facts-plus-edges determinism boundary.
 pub(super) fn atomic_loads_equal_along_memory_derivations(
     left: &Bitvector32Term,
     right: &Bitvector32Term,
     assumptions: &Assumptions,
 ) -> bool {
-    matches!(
-        (left, right),
-        (
-            Bitvector32Term::MemoryLoad(left_memory, left_pointer),
-            Bitvector32Term::MemoryLoad(right_memory, right_pointer),
-        ) if loads_equal_along_memory_derivations(
+    let (
+        Bitvector32Term::MemoryLoad(left_memory, left_pointer),
+        Bitvector32Term::MemoryLoad(right_memory, right_pointer),
+    ) = (left, right)
+    else {
+        return false;
+    };
+    if left_pointer != right_pointer {
+        return false;
+    }
+    if memory_dag_disabled() {
+        return false;
+    }
+    if left_memory == right_memory {
+        return true;
+    }
+    if !extended_dag_bridging_active() {
+        // Pre-arc behavior outside the loadable prover: node-identity
+        // comparison only, no memo, no value pinning.
+        return loads_equal_along_memory_derivations_at(
             left_memory,
-            left_pointer,
             right_memory,
-            right_pointer,
+            left_pointer,
             assumptions,
+        );
+    }
+    // The same (snapshot, snapshot, pointer) triple is asked thousands of
+    // times per proof; the walks are deterministic given the fact set and
+    // the recorded edges, so the answer is cached under exactly those
+    // inputs. The derivation generation invalidates "false" answers when a
+    // later-recorded edge could connect what was disconnected. Only
+    // depth-zero answers participate: a nested lookup sees the depth cutoff
+    // and its weaker answer must not shadow the full one.
+    let memo_key = (CELL_LOOKUP_DEPTH.with(std::cell::Cell::get) == 0)
+        .then(|| super::assumptions::dag_memo_assumptions_id(assumptions))
+        .flatten()
+        .map(|memo_id| {
+            (
+                memo_id,
+                c_memory_derivation_generation(),
+                left_memory.arena_id(),
+                right_memory.arena_id(),
+                left_pointer.as_ref().clone(),
+            )
+        });
+    if let Some(key) = &memo_key
+        && let Some(hit) = DAG_LOAD_EQUALITY_MEMO.with(|memo| memo.borrow().get(key).copied())
+    {
+        return hit;
+    }
+    let result = loads_equal_along_memory_derivations_at(
+        left_memory,
+        right_memory,
+        left_pointer,
+        assumptions,
+    ) || with_cell_lookup_depth(|| {
+        let left_cell = memory_dag_cell_source(left_memory, left_pointer, assumptions);
+        let right_cell = memory_dag_cell_source(right_memory, right_pointer, assumptions);
+        matches!(
+            left_cell.resolved_value(left_pointer),
+            Some(CValue::Int32(value)) if &value == right
+        ) || matches!(
+            right_cell.resolved_value(right_pointer),
+            Some(CValue::Int32(value)) if &value == left
         )
-    )
+    })
+    .unwrap_or(false);
+    if let Some(key) = memo_key {
+        DAG_LOAD_EQUALITY_MEMO.with(|memo| {
+            let mut memo = memo.borrow_mut();
+            if memo.len() >= DAG_LOAD_EQUALITY_MEMO_LIMIT {
+                memo.clear();
+            }
+            memo.insert(key, result);
+        });
+    }
+    result
 }
+
+thread_local! {
+    #[allow(clippy::type_complexity)]
+    static DAG_LOAD_EQUALITY_MEMO: std::cell::RefCell<
+        std::collections::HashMap<(u64, u64, (u32, u32), (u32, u32), Pointer), bool>,
+    > = std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+const DAG_LOAD_EQUALITY_MEMO_LIMIT: usize = 200_000;
+
 
 /// Bounded search for a chain of recorded effects carrying a load from one
 /// snapshot to another with the pointer untouched at every hop. Endpoints
