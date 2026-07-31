@@ -10162,6 +10162,23 @@ fn finish_ordered_proof_replay(
                             }
                             (surface_tactic, replayed_fact)
                         } else {
+                            // A fully simple script is its own certificate:
+                            // deterministic replay of surface tactics is
+                            // exactly what the gate requires. A script with a
+                            // smart tactic in any other shape has no lowering
+                            // yet, so under the strict gate it cannot close
+                            // the claim.
+                            let script_is_simple = match &have.proof {
+                                Proof::Script(tactics) => tactics
+                                    .iter()
+                                    .all(|tactic| matches!(tactic.class(), TacticClass::Simple(_))),
+                                Proof::Default | Proof::Tactic(_) => false,
+                            };
+                            if strict_exit_gate() && !script_is_simple {
+                                return Err(ClickError::new(format!(
+                                    "`{proof_label}` path {path_index}, tactic {tactic_index}: post-execution `have` script contains a smart tactic in a shape certificate lowering does not handle"
+                                )));
+                            }
                             let fact = prove_have_at_point(
                                 have,
                                 theorem_environment,
@@ -10828,11 +10845,21 @@ fn finish_ordered_proof_replay(
                                                     .extend_from_slice(certificate.tactics())
                                             }
                                             Err(message) => {
+                                                if strict_exit_gate() {
+                                                    return Err(ClickError::new(format!(
+                                                        "`{claim_label}` path {path_index}: smart `simp` closed the claim but its certificate did not lower or replay: {message}"
+                                                    )));
+                                                }
                                                 surface_closer_blockers[claim_index]
                                                     .get_or_insert(message);
                                             }
                                         }
                                     } else {
+                                        if strict_exit_gate() {
+                                            return Err(ClickError::new(format!(
+                                                "`{claim_label}` path {path_index}: smart `simp` closed the claim with existential tactics, whose certificate lowering is not implemented"
+                                            )));
+                                        }
                                         surface_closer_blockers[claim_index].get_or_insert_with(
                                             || {
                                                 "surface `simp` lowering with existential tactics is not implemented"
@@ -14900,6 +14927,16 @@ fn surface_smart_apply_have_certificate(
         ))
     })?;
     Ok(Some(certificate))
+}
+
+/// Strict exit gate: when set, an at-function-exit smart success whose
+/// certificate cannot be built or replayed is a verification failure instead
+/// of an expansion blocker. This is the migration flag for routing the
+/// post-execution drain through the same acceptance judgment as
+/// mid-execution tactics; it becomes the default once the corpus passes.
+fn strict_exit_gate() -> bool {
+    static STRICT: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *STRICT.get_or_init(|| std::env::var_os("CLICK_STRICT_EXIT_GATE").is_some())
 }
 
 fn tactic_is_deferred_post_execution(tactic: &ProofTactic) -> bool {

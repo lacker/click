@@ -1,6 +1,7 @@
 # Certificate-gateway bypasses (from the one-gateway audit)
 
-Status: open — needs an owner decision on sequencing
+Status: claimed — redesign accepted, migration in progress
+Claimed: claude/nervous-ptolemy-90e738, 2026-07-30
 Claimed:
 
 The 2026-07-30 audit (see one-gateway-check.md for the full evidence)
@@ -32,7 +33,26 @@ lib/bins 278 gateway events / 5 bypass hits in 4 tests; mdtests 599
 events / 345 certified / 39 bypass hits across 21 claims; examples 105
 events / 0 bypasses (that corpus is entirely grouped/auto paths).
 
-## The open question (owner)
+## ANSWERED 2026-07-30 (evening): invariant hole, on the current corpus
+
+Measured: under `CLICK_STRICT_EXIT_GATE=1`, 24 mdtests fail (16
+certificate-lower/replay, 3 existential-lowering, 5 smart-shaped
+post-execution `have`). Joining those against `opaque_contract_supported`:
+**all 37 involved functions are opaque-supported**, so every bypassed
+claim is independently certified by kernel contract certification. No
+currently-accepted proof rests on the ambient closer alone. Caveat: that
+is a corpus fact, not a theorem — a non-opaque function with a bypassing
+exit claim would be surface-only, which is why the gate still gets
+flipped.
+
+Owner accepted the redesign (2026-07-30): one acceptance judgment
+(closure = replay of simple tactics, closure carries its certificate),
+exit drain becomes plan -> lower -> replay -> accept, grouped/ungrouped
+lose the trust asymmetry, expansion prints what verification holds.
+Migration: strict flag (DONE, `CLICK_STRICT_EXIT_GATE`) -> fix lowering
+gaps against the 24-test worklist -> flip default -> delete blockers.
+
+The original open question, for the record:
 
 Is this an INVARIANT hole or a SOUNDNESS hole? The bypassed claims are
 not unchecked — the ambient closer runs kernel checks — but nobody has
