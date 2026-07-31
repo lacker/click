@@ -30,6 +30,7 @@ use crate::kernel::{
     c_resources_directly_match, c_seq, c_unverified_function_contract_claims,
     c_verified_function_contract_claims, c_verified_function_rule,
     c_while_with_invariant_and_effect_checks, canonical_c_memory_for_pointer_load,
+    conditions_equal_ignoring_memories,
     certify_c_function_execution_path_resource_representation, int32,
     prove_c_condition_fact_direct_transport, prove_c_condition_fact_transport,
     prove_c_function_contract_execution_paths_with_environment,
