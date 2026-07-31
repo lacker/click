@@ -1,16 +1,36 @@
 # Plan — status board
 
-Last updated: 2026-07-30 (evening). Read `conventions.md` before
-working; each task lives in its own self-contained file under `tasks/`
-so different agents can work different rows without colliding. Claim a
-task by setting the `Claimed:` line in its file.
+Last updated: 2026-07-31. Read `conventions.md` before working; each
+task lives in its own file under `tasks/`. Claim a task by setting the
+`Claimed:` line in its file.
 
-Baseline: **master is green** on all three gates (lib 465, mdtests,
-examples — see conventions.md for the commands). The 2026-07-30
-sessions landed the decide memo (~200x on hot proofs), six
-certifier/kernel fixes, three example de-quarantines (input-cursor,
-owned-segmented-buffer, owned-split-buffer), and a usable bounded
-click-audit (full run 314 s, 98 sites passing).
+## The project: fixing the performance tools (owner, 2026-07-31)
+
+Three tools work together so Click users can speed up code, diagnose
+slowness, and detect performance bugs in Click itself: `click-profile`,
+`click-expand`, `click-audit`. Desired state:
+
+1. The tests work and are fast.
+2. Every tactic is classed smart or simple (the verifier decides).
+3. Simple tactics are fast — always.
+4. `click-profile` reports any slow tactic (projects AND mdtests).
+5. A slow SIMPLE tactic is an error in Click, and the profiler says so.
+6. A slow SMART tactic is expanded by `click-expand` into simple ones.
+7. Profile-then-expand accounts for ALL slowness; there is no other
+   source. Corollaries, from measured cases:
+   - Expansion REDUCES slowness to simple-tactic slowness (a certificate
+     whose replay is slow = an engine bug per rule 5, not a resting
+     state — bubble_sort3 is the type case).
+   - Smart search must be bounded: a FAILING tactic must fail fast, and
+     slow failure is a profiler finding (field_derived's 162 s simp).
+   - Non-tactic machinery (certification, environment building) is held
+     to the simple standard, and the profiler's UNATTRIBUTED bucket must
+     stay ~0; nonzero unattributed time is a tooling bug.
+8. `click-audit` checks expansion works across whole projects; its
+   purpose is detecting bugs in Click itself.
+
+Language-design decisions are explicitly punted to a later group
+(`language-proposals.md`).
 
 ## Board
 
