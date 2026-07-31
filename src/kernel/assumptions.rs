@@ -3761,6 +3761,9 @@ impl Assumptions {
         if let Some(rule) = self.derive_by_finite_context_split(proposition, for_simp) {
             return Some(proposition_derivation(proposition, rule));
         }
+        if let Some(rule) = self.derive_by_upper_bound_split(proposition, for_simp) {
+            return Some(proposition_derivation(proposition, rule));
+        }
         self.derive_by_disjunction_cases(proposition, for_simp)
             .map(|rule| proposition_derivation(proposition, rule))
     }
@@ -4159,6 +4162,94 @@ impl Assumptions {
             premises: self.clone(),
             instances,
         })
+    }
+
+    /// Case analysis on an assumed upper bound over a goal variable.
+    ///
+    /// A loop back edge asks the closer to re-prove `forall k < b + 1, P(k)`
+    /// from an invariant that says `forall k < b, P(k)`. The gap is one index:
+    /// `k` is either below `b` — where the invariant applies directly — or
+    /// equal to `b`, where the body's own effect discharges it. Neither half
+    /// needs a new theory; the split does.
+    ///
+    /// It is stated as a *goal-side* split rather than as a rule that extends
+    /// a quantified fact's bound, which is what makes it cheap here: the
+    /// earlier attempt on `claude/forall-extension-wip` had to re-prove the
+    /// final index against a fact spelled at another snapshot and drowned in
+    /// spelling drift, while each half of this split is derived in the
+    /// ordinary way against whatever facts are actually present.
+    ///
+    /// Sound at both bound shapes, including the wrapping edge: `k <= b`
+    /// obviously splits, and `k < b + 1` either splits the same way or — when
+    /// `b` is `INT_MAX` and `b + 1` wraps — is unsatisfiable, so the split's
+    /// disjunction follows vacuously.
+    fn derive_by_upper_bound_split(
+        &self,
+        proposition: &Proposition,
+        for_simp: bool,
+    ) -> Option<PropositionDerivationRule> {
+        // Each half re-enters the whole search with one more fact, and the
+        // bound that licensed the split survives into both halves; depth-gate
+        // per conventions.md rather than rely on the halves being decided.
+        const UPPER_BOUND_SPLIT_DEPTH_LIMIT: usize = 2;
+        thread_local! {
+            static UPPER_BOUND_SPLIT_DEPTH: Cell<usize> = const { Cell::new(0) };
+        }
+        if UPPER_BOUND_SPLIT_DEPTH.with(Cell::get) >= UPPER_BOUND_SPLIT_DEPTH_LIMIT {
+            return None;
+        }
+        let mut goal_variables = BTreeSet::new();
+        collect_proposition_bitvector_variables(proposition, &mut goal_variables);
+        if goal_variables.is_empty() {
+            return None;
+        }
+        let candidates = self
+            .condition_facts
+            .iter()
+            .filter(|(_, value)| **value)
+            .filter_map(|(condition, _)| {
+                let (variable, pivot) = upper_bound_split_candidate(condition)?;
+                if !goal_variables.contains(&variable) {
+                    return None;
+                }
+                let mut pivot_variables = BTreeSet::new();
+                collect_bitvector_variables(pivot, &mut pivot_variables);
+                if pivot_variables.contains(&variable) {
+                    return None;
+                }
+                Some((condition.clone(), variable, pivot.clone()))
+            })
+            .collect::<Vec<_>>();
+        for (bound, variable, pivot) in candidates {
+            let term = Bitvector32Term::Variable(variable);
+            UPPER_BOUND_SPLIT_DEPTH.with(|depth| depth.set(depth.get() + 1));
+            let halves = [
+                ConditionTerm::signed_less_than(term.clone(), pivot.clone()),
+                ConditionTerm::equal(term.clone(), pivot.clone()),
+            ]
+            .into_iter()
+            .map(|case| {
+                self.clone()
+                    .assume_condition(case, true)
+                    .derive_proposition_using(proposition, for_simp)
+            })
+            .collect::<Option<Vec<_>>>();
+            UPPER_BOUND_SPLIT_DEPTH.with(|depth| depth.set(depth.get() - 1));
+            let Some(halves) = halves else {
+                continue;
+            };
+            let [below, at]: [PropositionDerivation; 2] = halves
+                .try_into()
+                .expect("the split derives exactly two halves");
+            return Some(PropositionDerivationRule::UpperBoundSplit {
+                bound,
+                variable,
+                pivot,
+                below: Box::new(below),
+                at: Box::new(at),
+            });
+        }
+        None
     }
 
     fn derive_by_disjunction_cases(
@@ -6556,6 +6647,31 @@ impl PropositionDerivation {
                 derivations_match_propositions(instances, &expected)
                     && instances.iter().all(|proof| proof.replay(available))
             }
+            PropositionDerivationRule::UpperBoundSplit {
+                bound,
+                variable,
+                pivot,
+                below,
+                at,
+            } => {
+                if available.condition_facts.get(bound) != Some(&true)
+                    || upper_bound_split_candidate(bound) != Some((*variable, pivot))
+                {
+                    return false;
+                }
+                let term = Bitvector32Term::Variable(*variable);
+                below.conclusion == self.conclusion
+                    && at.conclusion == self.conclusion
+                    && below.replay(&available.clone().assume_condition(
+                        ConditionTerm::signed_less_than(term.clone(), pivot.clone()),
+                        true,
+                    ))
+                    && at.replay(
+                        &available
+                            .clone()
+                            .assume_condition(ConditionTerm::equal(term, pivot.clone()), true),
+                    )
+            }
             PropositionDerivationRule::DisjunctionCases { disjunction, cases } => {
                 if !matches!(self.conclusion, Proposition::Or(_, _))
                     || !available.prop_facts.contains(disjunction)
@@ -6579,6 +6695,29 @@ impl PropositionDerivation {
             }
         }
     }
+}
+
+/// The `(variable, pivot)` an assumed condition licenses splitting on, when it
+/// says `variable <= pivot` in either spelling. Shared by the search and the
+/// replay so the two cannot drift.
+fn upper_bound_split_candidate(
+    condition: &ConditionTerm,
+) -> Option<(Variable, &Bitvector32Term)> {
+    let (left, right, plus_one) = match condition {
+        ConditionTerm::Bitvector32SignedLessThan(left, right) => (left, right, true),
+        ConditionTerm::Bitvector32SignedLessEqual(left, right) => (left, right, false),
+        _ => return None,
+    };
+    let Bitvector32Term::Variable(variable) = left.as_ref() else {
+        return None;
+    };
+    if !plus_one {
+        return Some((*variable, right.as_ref()));
+    }
+    let Bitvector32Term::Add(pivot, one) = right.as_ref() else {
+        return None;
+    };
+    (**one == Bitvector32Term::Constant(1)).then_some((*variable, pivot.as_ref()))
 }
 
 fn derivations_match_propositions(

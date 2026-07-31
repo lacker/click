@@ -1257,6 +1257,16 @@ pub(super) enum PropositionDerivationRule {
         disjunction: Proposition,
         cases: Vec<PropositionDerivation>,
     },
+    /// Case analysis on an assumed upper bound: `variable <= pivot` splits
+    /// into `variable < pivot` and `variable == pivot`. `bound` is the exact
+    /// assumed condition that licenses the split.
+    UpperBoundSplit {
+        bound: ConditionTerm,
+        variable: Variable,
+        pivot: Bitvector32Term,
+        below: Box<PropositionDerivation>,
+        at: Box<PropositionDerivation>,
+    },
 }
 
 #[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
@@ -4116,6 +4126,28 @@ impl PropositionDerivation {
                 premises.extend(range_premises.pure_facts());
                 for instance in instances {
                     instance.collect_context_premises(premises);
+                }
+            }
+            PropositionDerivationRule::UpperBoundSplit {
+                bound,
+                variable,
+                pivot,
+                below,
+                at,
+            } => {
+                premises.insert(Proposition::ConditionIs(bound.clone(), true));
+                let variable = Bitvector32Term::Variable(*variable);
+                for (proof, local) in [
+                    (
+                        below,
+                        ConditionTerm::signed_less_than(variable.clone(), pivot.clone()),
+                    ),
+                    (at, ConditionTerm::equal(variable, pivot.clone())),
+                ] {
+                    let mut case_premises = BTreeSet::new();
+                    proof.collect_context_premises(&mut case_premises);
+                    case_premises.remove(&Proposition::ConditionIs(local, true));
+                    premises.extend(case_premises);
                 }
             }
             PropositionDerivationRule::DisjunctionCases { disjunction, cases } => {
