@@ -4200,6 +4200,19 @@ impl Assumptions {
         if UPPER_BOUND_SPLIT_DEPTH.with(Cell::get) >= UPPER_BOUND_SPLIT_DEPTH_LIMIT {
             return None;
         }
+        // Splitting a connective duplicates the work its own rule already
+        // does on the way down; by the time the split can help, the guards
+        // have been assumed and only the leaf is left.
+        if matches!(
+            proposition,
+            Proposition::And(_, _)
+                | Proposition::Or(_, _)
+                | Proposition::Implies(_, _)
+                | Proposition::ForAll { .. }
+                | Proposition::Exists { .. }
+        ) {
+            return None;
+        }
         let mut goal_variables = BTreeSet::new();
         collect_proposition_bitvector_variables(proposition, &mut goal_variables);
         if goal_variables.is_empty() {
@@ -4217,6 +4230,18 @@ impl Assumptions {
                 let mut pivot_variables = BTreeSet::new();
                 collect_bitvector_variables(pivot, &mut pivot_variables);
                 if pivot_variables.contains(&variable) {
+                    return None;
+                }
+                // Nothing to split once the context already knows which side
+                // of the pivot the variable is on — and this is what stops the
+                // halves, which each learn exactly that, from re-splitting.
+                if self
+                    .decide(&ConditionTerm::signed_less_than(
+                        Bitvector32Term::Variable(variable),
+                        pivot.clone(),
+                    ))
+                    .is_some()
+                {
                     return None;
                 }
                 Some((condition.clone(), variable, pivot.clone()))
