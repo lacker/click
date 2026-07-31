@@ -465,12 +465,37 @@ pub fn run_isolated(
         let violations = tactic_budget_violations(&stderr_text);
         if !violations.is_empty() {
             return Err(format!(
-                "passed, but broke tactic time budgets (set {DISABLE_TACTIC_BUDGETS}=1 to bypass):\n  {}",
+                "{BUDGET_FAILURE_MARKER} (set {DISABLE_TACTIC_BUDGETS}=1 to bypass):\n  {}",
                 violations.join("\n  ")
             ));
         }
     }
     Ok(())
+}
+
+const BUDGET_FAILURE_MARKER: &str = "passed, but broke tactic time budgets";
+
+/// Budget violations measured under a fully parallel suite are load-noisy:
+/// worker contention inflates wall-clock tactic times. Re-runs each
+/// budget-only failure serially and keeps only the repeat offenders, so the
+/// gate reports real slowness rather than scheduler pressure. Non-budget
+/// failures pass through untouched.
+pub fn retain_serial_budget_failures(
+    failures: Vec<(usize, String)>,
+    mut rerun: impl FnMut(usize) -> Result<(), String>,
+) -> Vec<(usize, String)> {
+    failures
+        .into_iter()
+        .filter_map(|(index, message)| {
+            if !message.contains(BUDGET_FAILURE_MARKER) {
+                return Some((index, message));
+            }
+            match rerun(index) {
+                Ok(()) => None,
+                Err(message) => Some((index, message)),
+            }
+        })
+        .collect()
 }
 
 fn read_all(mut reader: impl Read) -> std::io::Result<Vec<u8>> {

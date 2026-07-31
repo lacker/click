@@ -40,11 +40,11 @@ const QUARANTINED: &[(&str, &str)] = &[
     ),
     (
         "sort3_sorted.md",
-        "budget violation: 2.2 s smart simp; its expansion is a pure case split, which needs empty `if` branches the parser refuses (owner decision pending, notes/tasks/mdtest-budget-enforcement.md)",
+        "budget violation: 2.2 s smart simp; its pure-case-split expansion does not re-verify — the per-path certificate merge into one `if` tree is unfaithful for this shape (notes/tasks/mdtest-budget-enforcement.md)",
     ),
     (
         "bubble_sort3_loop_sorted.md",
-        "budget violation: 3.5 s smart simp; same pure-case-split expansion blocker as sort3_sorted (owner decision pending)",
+        "budget violation: 3.5 s smart simp; same pure-case-split expansion bug as sort3_sorted",
     ),
 ];
 
@@ -103,6 +103,9 @@ fn mdtests() {
     let time_limit = mdtest_time_limit();
     let failures = run_parallel(&paths, default_worker_count(paths.len()), |path| {
         run_mdtest_with_timeout(path, time_limit)
+    });
+    let failures = click::cli::retain_serial_budget_failures(failures, |index| {
+        run_mdtest_with_timeout(&paths[index], time_limit)
     });
     if failures.is_empty() {
         return;

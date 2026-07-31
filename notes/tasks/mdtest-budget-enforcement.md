@@ -55,15 +55,28 @@ bubble_sort3_loop_permutation's bounded_execute also removed a 3-4 s
 exclusive CONTROL violation (certified_alternatives) — container cost
 that vanished when its child was expanded.
 
-**Owner decision pending — pure case splits.** sort3_sorted and
-bubble_sort3_loop_sorted (both quarantined) have smart simps whose
-entire content is a case split: the accepted certificate is an `if`
-tree with EMPTY branches (each leaf goal closes via the ordinary
-path-end check — kernel replay accepts this). The surface parser
-refuses an `if` branch with no tactics, so the expansion is
-unspellable. `assumption();` as a leaf filler was tried and fails
-replay ("did not match any current proposition goal" — leaves have no
-open goal). Options: allow empty `if` branches in proof scripts
-(grammar relaxation; checker semantics already exist), or add an
-explicit no-op/case-split marker tactic. Both are Surface Click
-changes = owner's call.
+**Owner decision RESOLVED (2026-07-31): empty `if` branches are legal
+in proof scripts.** Landed: `parse_possibly_empty_tactic_block` for the
+two `if` branch sites only (`by` blocks and `advance` proofs stay
+strict); pinned by lib test
+`empty_proof_if_branches_contribute_only_their_case_split`. An empty
+branch contributes its case split; every path goal stays owed at path
+end.
+
+**What the relaxation exposed — the real blocker for sort3_sorted and
+bubble_sort3_loop_sorted (both still quarantined).** With the grammar
+fixed, the expanded sort3 STILL fails re-verification: path 5's
+innermost leaf cannot close the `sorted(p, 3)` ForAll from its branch
+conditions, even though the certificate replayed at acceptance time.
+So the expansion's merge of per-path certificates into a single
+surface `if` tree (`synthesize_surface_paths` /
+`append_surface_tactics_by_leaf` in proof.rs) is UNFAITHFUL for the
+pure-case-split shape: certificate replay pairs each execution path
+with its own branch trace, while the printed tree re-splits every
+execution path and the goal no longer closes. Same family as the
+certificate-lowering regressions in store-provenance-family.md. Fix
+the merge (or emit per-path scripts), then expand both tests and
+de-quarantine.
+
+Also recorded: `assumption();` as a leaf filler fails replay because
+leaves hold no open goal — do not re-attempt.

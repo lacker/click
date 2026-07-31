@@ -42,7 +42,7 @@ fix needs it.
 
 | Task file (tasks/) | Status | One-line scope |
 |---|---|---|
-| mdtest-budget-enforcement.md | landed | Budgets enforced in the regular passes; 5 corpus sites expanded green. OWNER DECISION PENDING: pure case splits need empty `if` branches (or a no-op tactic) — 2 tests quarantined on it |
+| mdtest-budget-enforcement.md | landed | Budgets enforced in the regular passes; 5 corpus sites expanded green; empty `if` branches now legal (owner 2026-07-31). Residue: pure-case-split expansions are unfaithful (per-path merge bug) — 2 tests quarantined, same family as the certificate-lowering regressions |
 | store-provenance-family.md | open | REGRESSIONS, in scope (owner ruling): all six members were green until the 07-25..28 strict-certificate wave broke them. Bisect each to its breaking commit, then fix; escalate any member whose fix needs new surface semantics |
 | slow-simple-engine-bugs.md | open | Rule 5's two known violations: the 65 s invariant-closer replay (fixing it de-quarantines bubble_sort3) and field_derived's 29 s `fold`. Lead: the replay repeats the planner's own derivation — cache it |
 | expansion-aggregate-object-spelling.md | open (small) | The last lib `#[ignore]`: unfold decomposes `object(owner)` separation and expansion loses the aggregate spelling. Printing/re-folding, not soundness |

@@ -2354,6 +2354,40 @@ fn parses_explicit_branch_execution_tactics() {
 }
 
 #[test]
+fn empty_proof_if_branches_contribute_only_their_case_split() {
+    // Owner decision 2026-07-31: an empty `if` branch is legal in a proof
+    // script — it contributes its case split and every path goal stays owed
+    // at path end. Pure case-split certificates expand to exactly this shape.
+    let c_source = r#"
+            int32 sign_bit(int32 x) {
+                if (x < 0) {
+                    return 1;
+                }
+                return 0;
+            }
+        "#;
+    let click_source = r#"
+            verifying "sign.c";
+
+            int32 sign_bit(int32 x) {
+                ensures result == 0 or result == 1;
+            } by {
+                execute_rest();
+                if x < 0 {
+                } else {
+                }
+                simp();
+            }
+        "#;
+    verify_c0_sources(click_source, &[("sign.c", c_source)]).unwrap_or_else(|error| {
+        panic!(
+            "empty proof-if branches should parse and verify: {}",
+            error.message()
+        )
+    });
+}
+
+#[test]
 fn parses_advance_with_fact_and_resource_assertions() {
     let source = FILL3_CLICK.replace(
         "by auto;",

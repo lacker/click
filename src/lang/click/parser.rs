@@ -1730,9 +1730,13 @@ impl Parser {
         }
         if name == "if" {
             let condition = self.parse_proposition()?;
-            let then_tactics = self.parse_tactic_block("`if` branch")?;
+            // A proof `if` branch may be empty: it contributes only its case
+            // split, and every path goal is still owed at path end. Pure
+            // case-split certificates expand to exactly this shape (owner
+            // decision 2026-07-31).
+            let then_tactics = self.parse_possibly_empty_tactic_block()?;
             self.expect_ident_spelling("else")?;
-            let else_tactics = self.parse_tactic_block("`else` branch")?;
+            let else_tactics = self.parse_possibly_empty_tactic_block()?;
             if self.peek() == Some(&Token::Semicolon) {
                 self.position += 1;
             }
@@ -2073,6 +2077,16 @@ impl Parser {
         if self.peek() == Some(&Token::RBrace) {
             return Err(self.error(format!("{context} must contain at least one tactic")));
         }
+        let mut tactics = Vec::new();
+        while self.peek() != Some(&Token::RBrace) {
+            tactics.push(self.parse_proof_tactic()?);
+        }
+        self.expect(Token::RBrace)?;
+        Ok(tactics)
+    }
+
+    fn parse_possibly_empty_tactic_block(&mut self) -> Result<Vec<ProofTactic>, ClickError> {
+        self.expect(Token::LBrace)?;
         let mut tactics = Vec::new();
         while self.peek() != Some(&Token::RBrace) {
             tactics.push(self.parse_proof_tactic()?);

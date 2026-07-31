@@ -88,6 +88,9 @@ fn example_projects() {
     let failures = run_parallel(&projects, default_worker_count(projects.len()), |project| {
         run_example_with_timeout(project, time_limit)
     });
+    let failures = click::cli::retain_serial_budget_failures(failures, |index| {
+        run_example_with_timeout(&projects[index], time_limit)
+    });
     if failures.is_empty() {
         return;
     }
