@@ -103,6 +103,18 @@ child directory.
 Use example projects for larger library-shaped fixtures. Keep them small enough
 that a reader can understand the proof boundary.
 
+### Verifying one sidecar directly
+
+`click-verify` runs the same verification outside the test harnesses:
+
+```sh
+cargo run --quiet --bin click-verify -- examples/input-cursor/input_cursor.click
+```
+
+Appending a one-based `:LINE:COLUMN` suffix verifies only the proof unit
+containing that source location and the C functions it calls, which is the
+targeted entry point the audit's cold reverification uses.
+
 ### Profiling slow proof steps
 
 Use `click-profile` to find slow proof steps without letting one project run
@@ -151,32 +163,80 @@ cargo run --quiet --bin click-audit -- examples
 ```
 
 The audit first parses every sidecar and builds a deterministic inventory of
-smart source sites without executing any proof. It then walks those unique
-`file:line:column` locations in path and source order. A bounded verifier
-worker is started lazily when the cursor reaches a sidecar, so resuming in a
-later file does not initialize earlier files. The resulting certified function
-environment stays alive while the audit handles that file:
+smart source sites without executing any proof, printing its size:
 
-1. run expansion in a bounded child process;
-2. require a changed sidecar that round-trips through the ordinary Surface
-   Click parser (there is no separate generated or Kernel Click grammar);
-3. require the rewritten AST to differ only in the selected theorem or
-   function proof;
-4. remove the selected function's rule from the certified baseline
-   environment; and
-5. reverify that proof unit while reusing its already-certified dependencies.
+```text
+INVENTORY
+  26 unique smart source sites
+```
 
-Session initialization, expansion, and rewritten verification default to
-limits of five minutes, two minutes, and five minutes respectively. Override
-them with `--session-time-limit`, `--expansion-time-limit`, and
-`--verification-time-limit`. The former `--discovery-time-limit` spelling
-remains as a compatibility alias for `--session-time-limit`.
+It then walks those unique `file:line:column` locations in path and source
+order. A bounded verifier worker is started lazily when the cursor reaches a
+sidecar, so resuming in a later file does not initialize earlier files. The
+resulting certified function environment stays alive while the audit handles
+that file. Each site gets four timed checks:
 
-By default the audit stops at the first session, expansion, or verification
-failure and prints a copy-pasteable continuation command:
+1. **expand** — run expansion for that location in a bounded child process,
+   require the emitted sidecar to differ from the on-disk original, and require
+   it to round-trip through the ordinary Surface Click parser (there is no
+   separate generated or Kernel Click grammar);
+2. **verify** — verify the rewritten sidecar in the retained session. That
+   entry point additionally requires the location to resolve to the same proof
+   unit as the baseline and the rewritten file to be identical to the baseline
+   outside that proof unit; it then drops the selected function's rule from the
+   certified baseline environment and reverifies just that proof unit, reusing
+   its already-certified dependencies;
+3. **reverify** — reverify the same audited *proof unit* in a fresh process
+   through the normal targeted entry point. This runs once per claim, not once
+   per site: the retained session already established that the rewrite changed
+   nothing outside the proof unit, so a whole-file pass here would redo every
+   other unit for every site. Later sites of a claim already covered report
+   `reverify 0ms`;
+4. **reexpand** — check that the rewrite is an expansion fixed point. The check
+   is claim-based, because the rewrite moves and replaces tactics so the site
+   cannot be re-found by its original position: the audited smart tactic must be
+   gone from its claim's smart inventory and the emitted expansion must not
+   have introduced a new smart tactic, so the claim's smart-site count drops by
+   exactly one.
+
+A passing site prints its four timings:
+
+```text
+[1/26] examples/input-cursor/input_cursor.click:8:9  incremented_zero_is_one.ensures_0 (simp) ... ok (expand 22ms, verify 29ms, reverify 37ms, reexpand 23ms)
+```
+
+### Slowness is a finding
+
+A site whose four checks together exceed `--slow-site-limit` (default 10
+seconds) is reported `SLOW` and **counts as a failure**, even though every
+check passed. Profile such a site with `click-profile` rather than raising the
+limit.
+
+The whole run is also bounded by `--time-limit` (default 10 minutes). Reaching
+it stops the audit, prints the resume cursor, and exits unsuccessfully, so an
+audit can never quietly run for an hour.
+
+### Time limits and resuming
+
+| Option | Default | Bounds |
+| --- | --- | --- |
+| `--session-time-limit` | 5m | original-sidecar session initialization |
+| `--expansion-time-limit` | 2m | one expansion, and the re-expansion check |
+| `--verification-time-limit` | 5m | retained-session verification, and the cold reverification |
+| `--slow-site-limit` | 10s | one site's four checks together |
+| `--time-limit` | 10m | the whole run's wall clock |
+
+`--discovery-time-limit` remains as a compatibility alias for
+`--session-time-limit`.
+
+By default the audit stops at the first session, expansion, verification, or
+slow-site failure and prints a copy-pasteable continuation command carrying
+every current limit:
 
 ```sh
-click-audit --start-at path/to/file.click:LINE:COLUMN examples
+click-audit --session-time-limit 5m --expansion-time-limit 2m \
+  --verification-time-limit 5m --slow-site-limit 10s --time-limit 10m \
+  --start-at path/to/file.click:LINE:COLUMN examples
 ```
 
 `--start-at` is inclusive, so fixing a failure and running the suggested
@@ -190,8 +250,9 @@ Every timeout child or worker is killed and reaped. Every site starts from the
 unchanged baseline source, so an earlier rewrite cannot hide or cause a later
 failure. With `--keep-going`, a timed-out worker is rebuilt from a fresh
 complete verification before the audit continues. The command exits
-unsuccessfully if original verification, expansion, parsing, source-isolation,
-or selected-proof verification fails.
+unsuccessfully if session initialization, expansion, parsing, source isolation,
+proof-unit verification, the fixed-point check, or the slow-site limit fails,
+or if the run limit is reached.
 
 ## Unit Tests
 

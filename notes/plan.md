@@ -21,7 +21,7 @@ click-audit (full run 314 s, 98 sites passing).
 | cli-consolidation.md | open | Dedupe binary helpers; whole-file verify workflow; robust click-profile parsing |
 | proof-panics.md | open | Convert user-reachable panic!/unreachable! in proof.rs to diagnostics |
 | while-invariant-rule.md | open | Fix or fence the single-fork preservation check |
-| docs-vocabulary-pass.md | open | Tactic inventory/synonym cleanup; audit docs match the binary |
+| docs-vocabulary-pass.md | done | Inventory + synonyms documented; audit docs match the binary (worktree-agent-ae547bd447d583266) |
 | parser-ergonomics.md | open | required-else and a->b->c chains: fix small or park with writeup |
 | lib-ignored-expansion-tests.md | open | Retest 7 #[ignore] lib tests; un-ignore or diagnose |
 | store-provenance-family.md | parked | owned-string, owned-vector, 6 mdtests — blocked on the canonical-memory arc |

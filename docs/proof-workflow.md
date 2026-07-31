@@ -67,7 +67,11 @@ by simp;
 by frame;
 ```
 
-Omitting a proof clause uses `auto`.
+Omitting a proof clause uses `auto`. Each of these may also be written with
+braces — `by { auto; }`, `by { simp; }`, `by { frame; }` — which parses to the
+identical whole-claim smart proof. That is not the same as the one-tactic
+script `by { simp(); }`, which is an explicit proof script; see the
+[proof tactics reference](proof-tactics.md#synonyms-and-legacy-spellings).
 
 For an individual claim, `auto` is the broad orchestration tactic. It first
 tries verification execution, then may try the smart `bounded_execute()` proof
@@ -100,7 +104,9 @@ by {
 }
 ```
 
-Current tactics:
+Current tactics. The [proof tactics reference](proof-tactics.md) is the
+authoritative inventory and classifies each spelling as simple, smart, or
+control flow.
 
 - `step();`: advance one small C transition using only exact or context-free execution
   prerequisites. It does not automatically transport memory-dependent facts to
@@ -118,8 +124,10 @@ Current tactics:
 - `execute_rest();`: build symbolic verification paths from the current
   execution point to function exit. From function entry, this executes the
   whole C0 function. It applies verified abstract loop rules where available.
-- `symbolic_execute();`: deprecated source alias for `execute_rest();`; both
-  spellings parse to the same tactic.
+- `step using { fact P; ... };`: the same transition, restricted to exactly the
+  listed pure facts as execution premises.
+- `symbolic_execute();`: legacy source spelling of `execute_rest();`; both
+  spellings parse to the same tactic. Prefer `execute_rest()`.
 - `execute_until(statement(N));`: execute the current deterministic prefix up
   to the entry of statement region `N`. It can cross verified loops, but an
   unresolved `if` still requires explicit branch entry. It composes with prior
@@ -128,6 +136,12 @@ Current tactics:
   must produce exactly one normal successor.
 - `bounded_execute();`: repeatedly apply contextual one-step execution for
   concrete-loop proofs, stopping at function exit or a fixed step budget.
+- `apply_loop_summary(loop(N));`: apply an already verified loop's abstract rule
+  at its entry and advance to its exit in one transition, without entering the
+  body. Its `using { fact P; ... }` form names the contextual premises.
+- `close_invariants();`: discharge a loop's whole invariant bundle at the back
+  edge. It is accepted only inside `preserve by { ... }`, and at most once per
+  path. Omitting it makes Click append the closer implicitly.
 - `frame();`: check the current function-level certified write summary against
   its declared effect using exact available range bounds.
 - `frame(loop(N));`: perform the same exact check for loop code region `N` and
@@ -144,7 +158,11 @@ Current tactics:
   the standard library or current file. Every requirement must be an exact
   current fact or normalize to true without context; the step does not search
   for a derivation. It adds the theorem's conclusions and never changes the
-  resource context.
+  resource context. This bare spelling is smart because its premises come from
+  the ambient context.
+- `apply(theorem_name(args...)) using { fact P; ... }`: the simple spelling,
+  drawing premises only from the listed facts. Expansion rewrites bare `apply`
+  into this form.
 - `have proposition by { ... }`: run a scoped pure proof and add its proposition
   to the current pure facts. The nested proof accepts
   `unfold`, `apply`, `choose`, `witness`, `simp`, nested `have`, and proof-level
@@ -180,7 +198,18 @@ Current tactics:
 - `transport(source, target);`: require an exact source fact and apply one
   certified atomic transport rule to establish the stated target fact at the
   current statement frontier. Conditions use framing; structural memory facts
-  such as `loadable(...)` use the certified execution effects.
+  such as `loadable(...)` use the certified execution effects. Like `apply`,
+  this bare spelling is smart.
+- `transport(source, target) using { fact P; ... }`: the simple, exact-premise
+  spelling of the same rule.
+- `derive(P) using { fact Q; ... }`: check one atomic consequence using the
+  ordinary kernel theory rules and exactly the listed premises.
+- `calculate(P) using { fact Q; ... }`: the same shape, using the simplifier's
+  deterministic equality and arithmetic rules.
+- `intro();`, `conjunction();`, `left();`, `right();`, `double_negation();`,
+  `vacuous();`, `contradiction(P);`: one structural logical rule each. They are
+  accepted only while a pure goal is active, typically inside `have ... by` or
+  a theorem proof.
 - `simp();`: request smart contextual simplification when the proof block is
   checked.
 

@@ -13,6 +13,12 @@ A proof script is a sequence of tactics. A **proof step** is the one atomic
 operation performed by a simple tactic; a smart tactic may perform many proof
 steps. A **control-flow tactic** creates subgoals or scopes in which further
 tactics run.
+
+This page is the complete inventory of surface tactic spellings. The
+[synonyms and legacy spellings](#synonyms-and-legacy-spellings) section lists
+every case where two spellings mean the same thing, and every case where two
+similar-looking spellings do *not*.
+
 ## Simple Tactics
 
 | Tactic | One operation |
@@ -32,8 +38,9 @@ tactics run.
 | `derive(P) using { fact Q; ... }` | Check one atomic consequence `P` using exactly the listed premises and the ordinary kernel theory rules. |
 | `calculate(P) using { fact Q; ... }` | Check one atomic consequence using the simplifier's deterministic equality and arithmetic theory rules. |
 | `rewrite(equality)` | Rewrite the current pure goal once using an exact available equality. |
-| `transport(source, target)` | Transport an exact atomic source to the explicitly stated target using its certified fact-family rule and execution effects. |
-| `apply(theorem(args))` | Instantiate one theorem, require each premise exactly or by context-free normalization, and add its conclusions. |
+| `transport(source, target) using { fact P; ... }` | Transport an exact atomic source to the explicitly stated target using its certified fact-family rule and execution effects, from only the listed premises. |
+| `apply(theorem(args)) using { fact P; ... }` | Instantiate one theorem from exactly the listed premises and add its conclusions. |
+| `close_invariants()` | Discharge a loop's whole invariant bundle at the back edge of a `preserve` proof. |
 | `unfold(predicate)` | Unfold one explicitly named predicate in matching facts and goals. |
 | `unfold(resource)` | Replace one owned composite resource element with one body layer. |
 | `fold(resource)` | Require the declared pure body facts exactly, consume one immediate body layer, and produce the owned composite resource element. |
@@ -46,11 +53,19 @@ tactics run.
 The equality must already be an exact pure fact; `rewrite` does not search for
 equalities or derive one by congruence.
 
-`apply` does not ask the general proposition solver to derive theorem premises.
-For example, a context containing `x > 0` does not let `apply` silently satisfy
-a premise `x >= 0`. Establish `x >= 0` first, then apply the theorem. A premise
-such as `0 >= 0` may be accepted directly because it normalizes to true without
-using the context.
+Neither spelling of `apply` asks the general proposition solver to derive
+theorem premises. For example, a context containing `x > 0` does not let
+`apply` silently satisfy a premise `x >= 0`. Establish `x >= 0` first, then
+apply the theorem. A premise such as `0 >= 0` may be accepted directly because
+it normalizes to true without using the context. The difference between the two
+spellings is only where the premises come from: bare `apply(theorem(args))`
+draws them from the ambient pure facts and is therefore smart, while
+`apply(theorem(args)) using { fact P; ... }` names them and is simple.
+Expansion rewrites the first into the second.
+
+`transport` splits the same way: bare `transport(source, target)` is smart and
+`transport(source, target) using { fact P; ... }` is the simple, exact-premise
+form it expands to.
 
 The logical introduction tactics operate only while a pure goal is active,
 including inside `have ... by`. They do not search for their premises. Expanded
@@ -70,9 +85,11 @@ rules. `normalize()` remains the tactic for a context-free atomic goal.
 | omitted `by` / `by auto;` | Orchestrate execution and proposition proving. |
 | `by simp;` / `simp()` | Use the current simplifier, equalities, bounds, and supported solver rules. |
 | `by frame;` | Prove an effect claim using frame reasoning. |
+| `apply(theorem(args))` | Instantiate one theorem, drawing each premise from the ambient pure facts or context-free normalization. |
+| `transport(source, target)` | Transport an exact atomic source to the stated target, selecting the premises from the ambient context. |
 | `execute_step()` | Advance one small C transition while contextually proving prerequisites and automatically transporting supported framed facts. |
 | `execute_then_step()` / `execute_else_step()` | Select a requested C branch using contextual condition reasoning. |
-| `execute_rest()` | Orchestrate contextual execution from the current point to function exit. |
+| `execute_rest()` / `symbolic_execute()` | Orchestrate contextual execution from the current point to function exit. |
 | `execute_until(...)` | Repeatedly perform contextual execution until a selected forward program point. |
 | `bounded_execute()` | Repeatedly apply contextual one-step execution until function exit or a fixed step budget. |
 
@@ -88,6 +105,112 @@ plan: `simp`, the one-step execution tactics,
 exact simple tactic. `auto` searches only among these certificate-backed tactic
 sequences and no longer proves a claim through a separate whole-function
 fallback.
+
+## Control-Flow Tactics
+
+These tactics structure a proof rather than directly applying a proof rule.
+Their nested scripts may contain simple, smart, or further control-flow
+tactics.
+
+| Tactic | Structure created |
+| --- | --- |
+| `have proposition by ...` | A scoped pure proof whose conclusion is added to the current pure facts. |
+| `if proposition { ... } else { ... }` | Two proofs of the current claim, one under the proposition and one under its negation. |
+| `advance(point) ensuring { ... } by { ... }` | A scoped execution proof that must reach `point` and establish the declared interface. |
+
+## Synonyms And Legacy Spellings
+
+Click accumulated several spellings for the same operation. The parser
+(`src/lang/click/parser.rs`) and the classifier (`ProofTactic::class()` in
+`src/lang/click.rs`) are the ground truth; this table restates them.
+
+### Spellings that mean exactly the same thing
+
+| Canonical | Accepted synonyms | Note |
+| --- | --- | --- |
+| `by auto;` | omitted proof clause, `by { auto; }` | `auto` is the default prover. |
+| `by simp;` | `by { simp; }` | Whole-claim smart proof. |
+| `by frame;` | `by { frame; }` | Whole-claim smart effect proof. |
+| `execute_rest()` | `symbolic_execute()` | Legacy spelling; both parse to the same tactic. Prefer `execute_rest()`. |
+
+`auto` has no call spelling. Writing `auto()` inside a script is rejected with
+``` `auto` is only available as a standalone smart tactic; use `by auto;` ```.
+`simp` and `frame` do have call spellings, but they are *not* synonyms of the
+`by` forms — see below.
+
+### Spellings that look alike but differ
+
+| Pair | Difference |
+| --- | --- |
+| `by simp;` vs `by { simp(); }` | `by simp;` is the smart whole-claim proof, exactly the sequence `execute_rest(); simp()`. `by { simp(); }` is a one-tactic script, and `simp()` requires execution to already be at function exit. |
+| `by frame;` vs `frame()` | `by frame` derives the range bounds contextually (smart). `frame()` requires the bounds to be exact available facts (simple). |
+| `step()` vs `execute_step()` | Both advance one C transition. `step()` needs exact or context-free prerequisites and transports nothing (simple); `execute_step()` reasons contextually and transports supported facts (smart). |
+| `step()` vs `step using { fact P; ... }` | Both simple. The `using` form restricts the evaluator to exactly the listed premises. |
+| `apply(t(a))` vs `apply(t(a)) using { ... }` | Bare is smart (ambient premises); `using` is simple (named premises). |
+| `transport(s, t)` vs `transport(s, t) using { ... }` | Same split as `apply`. |
+| `apply_loop_summary(loop(N))` vs its `using` form | Both simple; the `using` form names the contextual premises. |
+| `unfold(name)` vs `unfold(resource(args))` | Predicate unfolding vs. one composite-resource body layer. The parser picks by whether the argument is a call. |
+| `execute_until(...)` vs `advance(...)` | `execute_until` moves the frontier along a deterministic prefix. `advance` proves a scoped region and replaces the frontier with a declared interface. |
+| `execute_rest()` vs `bounded_execute()` | `execute_rest` runs a straight-line prefix and finishes unresolved control flow with certificate alternatives. `bounded_execute` explores branch alternatives under a fixed step budget. |
+
+### Names that are not surface spellings
+
+`CLICK_TIMINGS=1` and certificate dumps print internal tactic names that cannot
+be written in a `.click` file: `certified_statement_step`,
+`certified_loop_summary_step`, `certified_fact_transport`,
+`finish_certified_fact_transports`, `certified_path_assumption`,
+`certified_frame`, `certified_alternatives`, and
+`exact_proposition_derivation`. They are replay evidence produced by expansion,
+not tactics an author writes.
+
+## Where Each Tactic Is Available
+
+Not every tactic is accepted in every proof position.
+
+- **Function proofs** (per-claim `by { ... }` and the grouped trailing block)
+  accept the whole inventory, except that `close_invariants()` is rejected with
+  ``` `close_invariants` is only available in a loop-region proof ```, and the
+  purely logical tactics (`intro`, `conjunction`, `left`, `right`,
+  `double_negation`, `vacuous`, `contradiction`, `derive`, `calculate`) are
+  rejected unless a pure goal is active, typically inside `have ... by`.
+- **Pure theorem proofs** accept `by auto;`, `by simp;`, and scripts built from
+  `unfold(predicate)`, `apply(...)` in both spellings, `assumption()`,
+  `normalize()`, `intro()`, `conjunction()`, `left()`, `right()`,
+  `double_negation()`, `vacuous()`, `contradiction(P)`, `derive(...)`,
+  `calculate(...)`, `rewrite(...)`, `simp()`, and proof-level `if`. Everything
+  else — including `by frame;`, `have`, `witness`, `choose`, `advance`, all
+  execution tactics, and all resource tactics — is rejected.
+- **Loop `initialize by { ... }`** is a pure proof at the actual loop entry. It
+  accepts only `unfold(predicate)`, bare `apply(...)`, `have`, `assumption()`,
+  `normalize()`, `rewrite(...)`, `simp()`, and proof-level `if`.
+- **Loop `preserve by { ... }`** is an execution proof over one iteration. It is
+  the only place `close_invariants()` is accepted.
+
+## Closing A Loop Invariant Bundle
+
+`close_invariants()` discharges a loop's whole invariant bundle at the back edge
+of a `preserve` proof. It takes no arguments and may run at most once on a path;
+a second occurrence fails with `the invariant bundle was closed more than once
+on one path`.
+
+Writing it is optional. When a `preserve` script does not close the bundle
+itself, Click appends the closer implicitly after the last written tactic, and
+the certificate still contains an explicit `close_invariants` leaf. Write it
+explicitly when the script needs the invariant check to happen at a specific
+point, or when reading an expanded proof, where it always appears.
+
+```click
+for loop(0) {
+    invariant i >= 0;
+    invariant i <= n;
+
+    initialize by auto;
+    preserve by {
+        execute_step();
+        close_invariants();
+    }
+}
+```
 
 ## Tactic Certificates
 
@@ -123,7 +246,9 @@ enclosing function and proof from the one-based source location, replaces
 exactly the tactic beginning there with its checked expansion, and writes the
 complete expanded sidecar to standard output. Nested branch and `advance`
 tactics use the same location scheme. Source files from `verifying`
-declarations are resolved relative to the sidecar.
+declarations are resolved relative to the sidecar. An optional
+`--time-limit <DURATION>` reruns the expansion in a bounded child process;
+there is no default limit.
 One-step execution uses only the context premises named by its recorded
 proposition derivations. Atomic comparison and structural-memory transport are
 emitted as explicit `transport` steps whose sources name the relevant
@@ -231,7 +356,9 @@ transition. Their proof behavior differs:
 - `transport(source, target)` explicitly moves one atomic fact to the current
   snapshot. Conditions require certified framing of referenced memory;
   structural facts such as `loadable(...)` are re-derived from the source and
-  certified effect facts.
+  certified effect facts. This bare spelling is smart because it selects its
+  premises from the ambient context; `transport(source, target) using
+  { fact P; ... }` is the simple form it expands to.
 - `execute_step()` is smart automation. It invokes contextual
   prerequisite reasoning and attempts bounded automatic transport for eligible
   atomic facts. At an `if`, it uses the same contextual reasoning to select a
@@ -262,16 +389,10 @@ for that longer proof.
 `execute_rest()` and `execute_until(...)` are deterministic smart tactics: they
 do not search for a tactic sequence, but they orchestrate multiple contextual
 execution operations. They may be described internally as proof macros, but
-“macro” is not a separate user-facing tactic class.
+“macro” is not a separate user-facing tactic class. `symbolic_execute()` is a
+legacy spelling of `execute_rest()` and parses to the same tactic.
 
-## Control-Flow Tactics
-
-The following tactics structure a proof rather than directly applying a proof
-rule:
-
-- `have`, proof-level `if`, and `advance ... ensuring ... by` structure proof
-  goals and scopes. Their nested scripts may contain simple, smart, or further
-  control-flow tactics.
+## Classification Source Of Truth
 
 The Rust AST enforces this inventory through `SimpleTactic`, `SmartTactic`,
 `SmartTacticKind`, `ControlFlowTactic`, and `ProofTactic::class()`. Any new

@@ -59,11 +59,13 @@ for loop(0) {
 }
 ```
 
-`initialize` is a pure proof of all invariants at the actual loop entry. It can
-use `apply`, nested `have`, proof-level `if`, `unfold`, and `simp`, but cannot
-execute C or transform resources. `preserve` assumes all invariants and the loop
-condition, executes one complete body iteration, and proves all invariants
-again. Either proof may be omitted; an omitted phase uses `auto`.
+`initialize` is a pure proof of all invariants at the actual loop entry. Its
+script may use exactly `unfold(predicate)`, `apply(theorem(args))`, `have`,
+`assumption()`, `normalize()`, `rewrite(...)`, `simp()`, and proof-level `if`;
+anything else is rejected with `` `initialize` is a pure proof and cannot use
+`<tactic>` ``. `preserve` assumes all invariants and the loop condition,
+executes one complete body iteration, and proves all invariants again. Either
+proof may be omitted; an omitted phase uses `auto`.
 
 ## What Invariants Do
 
@@ -102,6 +104,24 @@ or `execute_step()` per statement. In a proof-level `if`, `step()` enters a C
 branch from an exact condition fact; `execute_step()`, `execute_then_step()`,
 and `execute_else_step()` provide contextual branch reasoning. Initialization
 is non-executing because its execution point is already the first loop entry.
+
+A `preserve` script ends by discharging the whole invariant bundle at the loop's
+back edge. `close_invariants()` is the surface tactic for that step. It is
+accepted only inside `preserve by { ... }` — elsewhere it fails with
+`` `close_invariants` is only available in a loop-region proof `` — and at most
+once on a path.
+
+```click
+preserve by {
+    execute_step();
+    close_invariants();
+}
+```
+
+Writing it is optional. If a `preserve` script does not close the bundle,
+Click appends the closer implicitly after the last written tactic. The
+certificate contains an explicit `close_invariants` leaf either way, so it
+always appears in an expanded proof.
 
 Successful initialization, preservation, and effect proofs certify a verified
 loop rule. Execution applies that rule directly; there is no separate tactic
