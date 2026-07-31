@@ -1,7 +1,7 @@
 # Parser ergonomics residue
 
 Status: open
-Claimed:
+Claimed: worktree-agent-ae75bc92435409231 2026-07-30
 
 Scope (design-review item 4 residue): comments, unary minus, and
 declaration initializers were fixed earlier. Verify current status of
