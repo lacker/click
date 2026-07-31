@@ -1,7 +1,7 @@
 # Deterministic separation containment for the memory-resolution prover
 
 Status: open — THE critical path for the regression burn-down
-Claimed:
+Claimed: worktree-agent-a76baad67a09d1b37, 2026-07-31
 
 ## Why this one item gates four members
 
