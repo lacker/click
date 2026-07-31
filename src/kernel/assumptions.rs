@@ -120,6 +120,9 @@ thread_local! {
     static EQUAL_FROM_FACTS_MEMO: RefCell<
         std::collections::HashMap<(u64, Bitvector32Term, Bitvector32Term), bool>,
     > = RefCell::new(std::collections::HashMap::new());
+    static TRANSPORT_EQUAL_MEMO: RefCell<
+        std::collections::HashMap<(u64, Bitvector32Term, Bitvector32Term), bool>,
+    > = RefCell::new(std::collections::HashMap::new());
     static CONSTANT_NORMALIZATION_MEMO: RefCell<
         std::collections::HashMap<(u64, Bitvector32Term), Option<i64>>,
     > = RefCell::new(std::collections::HashMap::new());
@@ -4475,7 +4478,52 @@ impl Assumptions {
             || self.memory_loads_proven_equal(left, right)
     }
 
+    /// Fact-transport equality, memoized by fact-set content identity.
+    ///
+    /// Order-fact matching asks this for every candidate fact of every
+    /// decision, and the same term pairs recur across those scans, so the
+    /// search is worth caching. The discipline is [`Self::decide`]'s: a
+    /// `true` is evidence found in the facts and is always cacheable, while a
+    /// `false` computed under an ambient truncation (memory-resolution fuel,
+    /// the memory-load depth guard) is path-dependent and is not. Memoized
+    /// only under an enclosing id scope, so no call pays a fact-set hash.
     pub(super) fn bitvector_terms_equal_for_transport(
+        &self,
+        left: &Bitvector32Term,
+        right: &Bitvector32Term,
+    ) -> bool {
+        if left == right {
+            return true;
+        }
+        let memo_id = if decide_memo_disabled() {
+            None
+        } else {
+            ambient_assumptions_memo_id(self)
+        };
+        let memo_key = memo_id.map(|memo_id| (memo_id, left.clone(), right.clone()));
+        if let Some(memo_key) = &memo_key
+            && let Some(hit) =
+                TRANSPORT_EQUAL_MEMO.with(|memo| memo.borrow().get(memo_key).copied())
+        {
+            return hit;
+        }
+        let truncations_before = SEARCH_TRUNCATIONS.with(Cell::get);
+        let result = self.bitvector_terms_equal_for_transport_uncached(left, right);
+        if let Some(memo_key) = memo_key
+            && (result || SEARCH_TRUNCATIONS.with(Cell::get) == truncations_before)
+        {
+            TRANSPORT_EQUAL_MEMO.with(|memo| {
+                let mut memo = memo.borrow_mut();
+                if memo.len() >= DECIDE_MEMO_LIMIT {
+                    memo.clear();
+                }
+                memo.insert(memo_key, result);
+            });
+        }
+        result
+    }
+
+    fn bitvector_terms_equal_for_transport_uncached(
         &self,
         left: &Bitvector32Term,
         right: &Bitvector32Term,
