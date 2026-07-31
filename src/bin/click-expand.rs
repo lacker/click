@@ -6,12 +6,13 @@ use std::process::Command;
 use std::time::Duration;
 
 use click::cli::{
-    BoundedOutput, format_duration, parse_duration, parse_source_location, read_verifying_sources,
-    run_bounded, source_refs,
+    BoundedOutput, MdTest, format_duration, looks_like_mdtest, parse_duration,
+    parse_source_location, read_mdtest, read_verifying_sources, run_bounded, source_refs,
 };
 use click::lang::click::expand_c0_tactic_source_at;
 
-const USAGE: &str = "usage: click-expand [--time-limit <DURATION>] <sidecar.click>:<line>:<column>";
+const USAGE: &str =
+    "usage: click-expand [--time-limit <DURATION>] <sidecar.click|mdtest.md>:<line>:<column>";
 
 fn main() {
     if let Err(message) = entry() {
@@ -121,6 +122,9 @@ fn run_with_time_limit(arguments: &Arguments, time_limit: Duration) -> Result<()
 }
 
 fn run(arguments: &Arguments) -> Result<(), String> {
+    if looks_like_mdtest(&arguments.click_path) {
+        return run_mdtest(arguments);
+    }
     let click_source = fs::read_to_string(&arguments.click_path).map_err(|error| {
         format!(
             "failed to read `{}`: {error}",
@@ -134,6 +138,65 @@ fn run(arguments: &Arguments) -> Result<(), String> {
             .map_err(|error| error.message().to_string())?;
     print!("{expanded}");
     Ok(())
+}
+
+/// Expands a tactic inside an mdtest's ```click block. The location is given
+/// in `.md` file coordinates — the same coordinates click-profile reports —
+/// and the output is the whole markdown file with the block's body replaced,
+/// so the same redirect workflow as sidecar expansion applies.
+fn run_mdtest(arguments: &Arguments) -> Result<(), String> {
+    let markdown = fs::read_to_string(&arguments.click_path).map_err(|error| {
+        format!(
+            "failed to read `{}`: {error}",
+            arguments.click_path.display()
+        )
+    })?;
+    let mdtest = read_mdtest(&arguments.click_path)?;
+    let click_source = mdtest.click_source.as_deref().ok_or_else(|| {
+        format!(
+            "mdtest `{}` has no ```click block",
+            arguments.click_path.display()
+        )
+    })?;
+    let click_line = mdtest_click_line(&mdtest, click_source, arguments.line)?;
+    let sources = source_refs(&mdtest.c_sources);
+    let expanded =
+        expand_c0_tactic_source_at(click_source, &sources, click_line, arguments.column)
+            .map_err(|error| error.message().to_string())?;
+    print!(
+        "{}",
+        spliced_markdown(&markdown, &mdtest, click_source, &expanded)
+    );
+    Ok(())
+}
+
+/// Translates a one-based `.md` line into a one-based line of the ```click
+/// block's body, rejecting positions outside the block.
+fn mdtest_click_line(mdtest: &MdTest, click_source: &str, md_line: usize) -> Result<usize, String> {
+    let first = mdtest.click_start_line;
+    let last = first + click_source.lines().count().saturating_sub(1);
+    if md_line < first || md_line > last {
+        return Err(format!(
+            "line {md_line} is not inside the ```click block (lines {first}..{last})"
+        ));
+    }
+    Ok(md_line - first + 1)
+}
+
+/// The markdown file with the ```click block's body replaced by `expanded`.
+fn spliced_markdown(markdown: &str, mdtest: &MdTest, click_source: &str, expanded: &str) -> String {
+    let lines = markdown.lines().collect::<Vec<_>>();
+    let body_start = mdtest.click_start_line - 1;
+    let body_len = click_source.lines().count();
+    let mut spliced = Vec::with_capacity(lines.len());
+    spliced.extend_from_slice(&lines[..body_start]);
+    spliced.extend(expanded.lines());
+    spliced.extend_from_slice(&lines[body_start + body_len..]);
+    let mut result = spliced.join("\n");
+    if markdown.ends_with('\n') {
+        result.push('\n');
+    }
+    result
 }
 
 #[cfg(test)]
@@ -151,6 +214,33 @@ mod tests {
 
         assert_eq!(before, after);
         assert_eq!(before.time_limit, Some(Duration::from_secs(30)));
+    }
+
+    #[test]
+    fn translates_md_lines_into_the_click_block_and_rejects_outsiders() {
+        let markdown = "# title\n\n```click\nproof p {\n  step;\n}\n```\n\ndone\n";
+        let mdtest = click::cli::parse_mdtest(std::path::Path::new("t.md"), markdown)
+            .expect("mdtest should parse");
+        let click_source = mdtest.click_source.as_deref().expect("has click block");
+        // Block body is md lines 4..6.
+        assert_eq!(mdtest_click_line(&mdtest, click_source, 4), Ok(1));
+        assert_eq!(mdtest_click_line(&mdtest, click_source, 5), Ok(2));
+        assert_eq!(mdtest_click_line(&mdtest, click_source, 6), Ok(3));
+        assert!(mdtest_click_line(&mdtest, click_source, 3).is_err());
+        assert!(mdtest_click_line(&mdtest, click_source, 7).is_err());
+    }
+
+    #[test]
+    fn splices_the_expanded_block_back_into_the_markdown() {
+        let markdown = "# title\n\n```click\nproof p {\n  step;\n}\n```\n\ndone\n";
+        let mdtest = click::cli::parse_mdtest(std::path::Path::new("t.md"), markdown)
+            .expect("mdtest should parse");
+        let click_source = mdtest.click_source.as_deref().expect("has click block");
+        let expanded = "proof p {\n  step one;\n  step two;\n}\n";
+        assert_eq!(
+            spliced_markdown(markdown, &mdtest, click_source, expanded),
+            "# title\n\n```click\nproof p {\n  step one;\n  step two;\n}\n```\n\ndone\n"
+        );
     }
 
     #[test]

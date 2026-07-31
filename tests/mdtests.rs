@@ -38,6 +38,14 @@ const QUARANTINED: &[(&str, &str)] = &[
         "field_derived_precise_effect_after_metadata_write.md",
         "ensures derivations need named memory states; certified context does not derive them (notes/canonical-memory.md)",
     ),
+    (
+        "sort3_sorted.md",
+        "budget violation: 2.2 s smart simp; its expansion is a pure case split, which needs empty `if` branches the parser refuses (owner decision pending, notes/tasks/mdtest-budget-enforcement.md)",
+    ),
+    (
+        "bubble_sort3_loop_sorted.md",
+        "budget violation: 3.5 s smart simp; same pure-case-split expansion blocker as sort3_sorted (owner decision pending)",
+    ),
 ];
 
 #[test]

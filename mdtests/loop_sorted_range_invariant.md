@@ -58,7 +58,16 @@ int32 loop_sorted_range_invariant(int32 p[3]) {
         frame(carry_sorted);
         unfold(sorted);
         unfold(sorted_range);
-        simp();
+        have sorted(p, 3) by {
+            unfold(sorted);
+            unfold(sorted_range);
+            calculate(sorted(p, 3)) using {
+                fact forall (int32 i) { forall (int32 j) { 0 <= i and 0 <= j and 0 <= i and i < j and j < 3 implies p[i] <= p[j] } };
+                fact at(statement(4).entry, loadable(old(p[0..3])));
+                fact at(statement(2).entry, loadable(p[0..3]));
+            }
+        }
+        assumption();
     }
 }
 ```

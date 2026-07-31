@@ -330,6 +330,93 @@ fn without_timing_lines(output: &str) -> String {
         .join("\n")
 }
 
+/// Per-class tactic time budgets (owner ruling 2026-07-31): a slow SIMPLE
+/// tactic is an engine bug, a slow SMART tactic is an expansion obligation.
+/// These match click-profile's default thresholds.
+const SIMPLE_TACTIC_BUDGET: Duration = Duration::from_millis(500);
+const SMART_TACTIC_BUDGET: Duration = Duration::from_secs(2);
+const CONTROL_TACTIC_BUDGET: Duration = Duration::from_secs(2);
+
+/// Disables tactic budget enforcement in the fixture harnesses, for A/B runs
+/// and archaeology on old trees.
+pub const DISABLE_TACTIC_BUDGETS: &str = "CLICK_DISABLE_TACTIC_BUDGETS";
+
+fn tactic_budget(class: &str) -> Option<(Duration, &'static str)> {
+    match class {
+        "simple" => Some((SIMPLE_TACTIC_BUDGET, "a slow simple tactic is a Click engine bug")),
+        "smart" => Some((SMART_TACTIC_BUDGET, "expand it with click-expand")),
+        "control" => Some((CONTROL_TACTIC_BUDGET, "a slow control tactic is a Click engine bug")),
+        _ => None,
+    }
+}
+
+/// Splits the trailing `<seconds>s` field off a finish line's fields.
+fn split_trailing_seconds(rest: &str) -> Option<(&str, Duration)> {
+    let (fields, elapsed) = rest.trim_end().rsplit_once(char::is_whitespace)?;
+    let elapsed = elapsed.strip_suffix('s')?.parse::<f64>().ok()?;
+    Some((fields, Duration::from_secs_f64(elapsed)))
+}
+
+/// Every finished tactic whose *exclusive* time — its reported elapsed minus
+/// the elapsed of the tactics nested inside it — broke its class budget.
+/// Exclusive time keeps a container from inheriting its children's cost; the
+/// same accounting click-profile uses.
+///
+/// A finish line whose `class` field is unrecognized is reported as drift:
+/// silently skipping it would exempt that tactic from every budget.
+pub fn tactic_budget_violations(stderr: &str) -> Vec<String> {
+    // Open tactics, innermost last, each carrying the elapsed time already
+    // reported by tactics that finished nested inside it.
+    let mut open: Vec<(&str, Duration)> = Vec::new();
+    let mut violations = Vec::new();
+    for line in stderr.lines() {
+        if let Some(rest) = line.strip_prefix("click timing: started tactic ") {
+            open.push((rest.trim_end(), Duration::ZERO));
+        } else if let Some(rest) = line.strip_prefix("click timing: tactic ") {
+            let Some((fields, elapsed)) = split_trailing_seconds(rest) else {
+                violations.push(format!("unparseable tactic finish line: `{line}`"));
+                continue;
+            };
+            let nested = match open.iter().rposition(|(started, _)| *started == fields) {
+                Some(index) => {
+                    let (_, nested) = open.remove(index);
+                    // Anything opened inside it that never finished cannot
+                    // nest in a later tactic either.
+                    open.truncate(index);
+                    nested
+                }
+                None => Duration::ZERO,
+            };
+            if let Some((_, parent_nested)) = open.last_mut() {
+                *parent_nested += elapsed;
+            }
+            let exclusive = elapsed.saturating_sub(nested);
+            let Some(class) = fields
+                .split(" class ")
+                .nth(1)
+                .and_then(|rest| rest.split_whitespace().next())
+            else {
+                violations.push(format!("tactic finish line without a class field: `{line}`"));
+                continue;
+            };
+            let Some((budget, consequence)) = tactic_budget(class) else {
+                violations.push(format!(
+                    "unrecognized tactic class `{class}` (timing format drift): `{line}`"
+                ));
+                continue;
+            };
+            if exclusive > budget {
+                violations.push(format!(
+                    "{fields}: {:.3} s exclusive, over the {} {class} budget — {consequence}",
+                    exclusive.as_secs_f64(),
+                    format_duration(budget),
+                ));
+            }
+        }
+    }
+    violations
+}
+
 /// Runs a fixture child under a wall-clock limit and reduces the outcome to a
 /// pass/fail result, folding the child's captured output into the message.
 ///
@@ -373,6 +460,15 @@ pub fn run_isolated(
             messages.process_description,
             indented_output(&output)
         ));
+    }
+    if std::env::var_os(DISABLE_TACTIC_BUDGETS).is_none() {
+        let violations = tactic_budget_violations(&stderr_text);
+        if !violations.is_empty() {
+            return Err(format!(
+                "passed, but broke tactic time budgets (set {DISABLE_TACTIC_BUDGETS}=1 to bypass):\n  {}",
+                violations.join("\n  ")
+            ));
+        }
     }
     Ok(())
 }
@@ -704,6 +800,58 @@ click timing: started tactic f.contract 0 step class simple statement 0 source 0
 click timing: tactic f.contract 0 step class simple statement 0 source 0 0.001s
 ";
         assert_eq!(super::last_unfinished_tactic(stderr), None);
+    }
+
+    #[test]
+    fn budget_violations_flag_each_class_over_its_own_budget() {
+        let stderr = "\
+click timing: started tactic f.contract 0 step class simple statement 0 source 0
+click timing: tactic f.contract 0 step class simple statement 0 source 0 0.700s
+click timing: started tactic f.contract 1 simp class smart statement 1 source 1
+click timing: tactic f.contract 1 simp class smart statement 1 source 1 1.900s
+";
+        let violations = super::tactic_budget_violations(stderr);
+        assert_eq!(violations.len(), 1, "{violations:?}");
+        assert!(violations[0].contains("f.contract 0 step"), "{violations:?}");
+        assert!(violations[0].contains("simple budget"), "{violations:?}");
+    }
+
+    #[test]
+    fn budget_violations_use_exclusive_time_for_containers() {
+        // The smart container reports 2.5 s but 2.4 s of it is the nested
+        // simple step; only the simple step is over its own budget.
+        let stderr = "\
+click timing: started tactic f.contract 0 cases class smart statement 0 source 0
+click timing: started tactic f.contract 1 step class simple statement 1 source 1
+click timing: tactic f.contract 1 step class simple statement 1 source 1 2.400s
+click timing: tactic f.contract 0 cases class smart statement 0 source 0 2.500s
+";
+        let violations = super::tactic_budget_violations(stderr);
+        assert_eq!(violations.len(), 1, "{violations:?}");
+        assert!(violations[0].contains("f.contract 1 step"), "{violations:?}");
+    }
+
+    #[test]
+    fn budget_violations_are_empty_for_a_fast_run() {
+        let stderr = "\
+click timing: started tactic f.contract 0 step class simple statement 0 source 0
+click timing: tactic f.contract 0 step class simple statement 0 source 0 0.010s
+click timing: started tactic f.contract 1 simp class smart statement 1 source 1
+click timing: tactic f.contract 1 simp class smart statement 1 source 1 0.500s
+click timing: contract execution f 0.100000s
+";
+        assert_eq!(super::tactic_budget_violations(stderr), Vec::<String>::new());
+    }
+
+    #[test]
+    fn budget_violations_report_class_drift_instead_of_exempting_it() {
+        let stderr = "\
+click timing: started tactic f.contract 0 step class brandnew statement 0 source 0
+click timing: tactic f.contract 0 step class brandnew statement 0 source 0 9.000s
+";
+        let violations = super::tactic_budget_violations(stderr);
+        assert_eq!(violations.len(), 1, "{violations:?}");
+        assert!(violations[0].contains("unrecognized tactic class"), "{violations:?}");
     }
 
     use super::*;
