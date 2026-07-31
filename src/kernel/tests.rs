@@ -5363,9 +5363,11 @@ fn separation_refutes_an_alias_guard_exactly_when_the_index_is_in_range() {
         );
 
     assert!(!unbounded.is_inconsistent());
-    assert!(unbounded
-        .assume_condition(ConditionTerm::signed_less_than(index, capacity), true)
-        .is_inconsistent());
+    assert!(
+        unbounded
+            .assume_condition(ConditionTerm::signed_less_than(index, capacity), true)
+            .is_inconsistent()
+    );
 }
 
 #[test]

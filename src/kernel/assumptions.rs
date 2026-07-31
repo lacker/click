@@ -5056,18 +5056,21 @@ impl Assumptions {
         if ALIAS_GUARD_REFUTATION_ACTIVE.with(Cell::get) {
             return false;
         }
-        let mut guards = self.condition_facts.iter().filter_map(|(condition, value)| {
-            match (condition, value) {
+        let mut guards = self
+            .condition_facts
+            .iter()
+            .filter_map(|(condition, value)| match (condition, value) {
                 (ConditionTerm::PointerOffsetEqual(left, right), true) if left != right => {
                     Some((left.as_ref(), right.as_ref()))
                 }
                 _ => None,
-            }
-        });
+            });
         let Some(first_guard) = guards.next() else {
             return false;
         };
-        let guards = std::iter::once(first_guard).chain(guards).collect::<Vec<_>>();
+        let guards = std::iter::once(first_guard)
+            .chain(guards)
+            .collect::<Vec<_>>();
         let blocks = self
             .prop_facts
             .iter()
