@@ -7213,6 +7213,61 @@ fn derivations_carry_a_load_across_a_distinct_store_but_not_across_havoc() {
     );
 }
 
+/// Stage 4: the DAG-guided cell lookup answers load equality for snapshots
+/// that are *siblings*, which the stage-2 walk cannot do because it only ever
+/// asks whether one snapshot is reachable from the other.
+///
+/// Two calls, each havocking a range disjoint from the loaded cell, produce
+/// two snapshots neither of which derives from the other. Value bridging
+/// refuses them outright — each carries its own `call-havoc:N` marker block,
+/// so the block sets differ and the snapshot matcher stops before looking at
+/// any cell. Resolving both against the write history lands them on one
+/// common ancestor, and the loads are equal with no snapshot comparison.
+#[test]
+fn sibling_snapshots_resolve_one_cell_to_a_common_ancestor() {
+    let base = CMemory::new().with_block("arg-memory", 16);
+    let read = arc_pointer(0);
+    let load_in = |memory: &CMemory| {
+        Bitvector32Term::MemoryLoad(
+            crate::kernel::intern_c_memory_ref(memory),
+            Box::new(read.clone()),
+        )
+    };
+    let call_havoc = |variable| {
+        base.clone().with_call_memory_havoc(
+            Variable(variable),
+            &[memory_range(arc_pointer(8), 0, 8)],
+            &Assumptions::new(),
+        )
+    };
+    let (left, right) = (call_havoc(3), call_havoc(4));
+
+    assert!(
+        !memories_match_for_pointer_load_under_assumptions(
+            &left,
+            &right,
+            &read,
+            &Assumptions::new()
+        ),
+        "the two marker blocks are expected to stop the snapshot matcher"
+    );
+    assert_eq!(
+        Assumptions::new().memory_loads_proven_equal(&load_in(&left), &load_in(&right)),
+        !skip_without_memory_dag(),
+        "the common-ancestor lookup is exactly what the DAG adds here"
+    );
+
+    // Soundness, and so asserted in both modes: an intervening loop havoc has
+    // no write set, so no walk may resolve through one.
+    let havoced = left
+        .clone()
+        .with_loop_memory_havoc(Variable(9), &BTreeSet::new());
+    assert!(
+        !Assumptions::new().memory_loads_proven_equal(&load_in(&left), &load_in(&havoced)),
+        "loop havoc must stop the cell lookup"
+    );
+}
+
 #[test]
 fn a_store_to_the_loaded_cell_is_not_crossable() {
     // A soundness property, so it must hold with the arc switched off too.

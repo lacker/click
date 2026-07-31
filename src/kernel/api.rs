@@ -124,10 +124,14 @@ pub(crate) fn c_memory_load_is_unchanged(
     if memories_match_for_pointer_load(before, after, pointer) {
         return true;
     }
-    if memories_match_for_pointer_load_under_assumptions(before, after, pointer, assumptions) {
+    // The DAG walk runs before the snapshot comparison: it answers from
+    // recorded edges in a bounded number of hops, where
+    // `memories_match_for_pointer_load_under_assumptions` first compares
+    // whole non-local block sets and then every differing cell.
+    if load_unchanged_along_memory_derivations(before, after, pointer, assumptions) {
         return true;
     }
-    if load_unchanged_along_memory_derivations(before, after, pointer, assumptions) {
+    if memories_match_for_pointer_load_under_assumptions(before, after, pointer, assumptions) {
         return true;
     }
     // Predicate framing is deliberately bounded: use exact certified writes
@@ -280,6 +284,197 @@ fn memory_derivations_reach(
         current = derivation.base().clone();
     }
     false
+}
+
+/// Where the memory DAG says the cell at a pointer came from: the
+/// select-over-store answer to "what does this cell hold after these
+/// stores", read off the write history execution recorded rather than
+/// reconstructed by canonicalizing and deep-comparing snapshot values.
+///
+/// Both variants name the node the walk stopped at, and both denote the same
+/// thing — the value of loading the pointer *in that node*. That is what
+/// makes two lookups comparable by node identity alone.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) enum MemoryDagCell {
+    /// `node`'s derivation is a `Store` whose pointer is provably the loaded
+    /// one, so the load reads `value`.
+    Stored { node: SharedCMemory, value: CValue },
+    /// The walk reached `node` without crossing any edge that could have
+    /// written the cell, and stopped: `node` carries no derivation, its
+    /// derivation is undecidable against this pointer, or the hop cap ran
+    /// out. The load therefore reads whatever `node` holds at the pointer.
+    Unwritten { node: SharedCMemory },
+}
+
+impl MemoryDagCell {
+    fn node(&self) -> &SharedCMemory {
+        match self {
+            Self::Stored { node, .. } | Self::Unwritten { node } => node,
+        }
+    }
+
+    /// The concrete value the lookup pins down, when it pins one down.
+    fn resolved_value(&self, pointer: &Pointer) -> Option<CValue> {
+        match self {
+            Self::Stored { value, .. } => Some(value.clone()),
+            Self::Unwritten { node } => node.known_value(pointer),
+        }
+    }
+}
+
+/// Walks a snapshot's derivation edges backwards resolving one cell.
+///
+/// Every hop is decided by the *cheap* predicates only — block distinctness
+/// and additive-base cancellation for stores, recorded range disjointness for
+/// call havoc — because this is the arm that runs before canonicalization and
+/// has to stay cheaper than what it short-circuits. A hop it cannot decide is
+/// not a failure: the walk stops and reports the node it stopped at, which is
+/// still a true statement about the load.
+///
+/// `LoopHavoc` is never crossed (conventions.md's soundness trap; loop havoc
+/// has no write set to be disjoint from), and the hop cap plus the strictly
+/// decreasing arena ids along `base` bound the walk.
+fn memory_dag_cell_source(
+    memory: &SharedCMemory,
+    pointer: &Pointer,
+    assumptions: &Assumptions,
+) -> MemoryDagCell {
+    const MEMORY_DAG_CELL_HOP_LIMIT: usize = 64;
+    let mut current = memory.clone();
+    for _ in 0..MEMORY_DAG_CELL_HOP_LIMIT {
+        let Some(derivation) = current.derivation() else {
+            return MemoryDagCell::Unwritten { node: current };
+        };
+        match derivation.as_ref() {
+            CMemoryDerivation::Store {
+                pointer: write,
+                value,
+                ..
+            } => {
+                if write == pointer
+                    || write.block == pointer.block
+                        && assumptions.exact_condition_value(&ConditionTerm::pointer_offset_equal(
+                            write.offset.clone(),
+                            pointer.offset.clone(),
+                        )) == Some(true)
+                {
+                    return MemoryDagCell::Stored {
+                        node: current,
+                        value: value.clone(),
+                    };
+                }
+                if !write.blocks_proven_distinct(pointer)
+                    && !pointer_offsets_with_common_base_proven_distinct(write, pointer, assumptions)
+                {
+                    return MemoryDagCell::Unwritten { node: current };
+                }
+            }
+            CMemoryDerivation::CallHavoc { mutable_ranges, .. } => {
+                if !assumptions.ranges_proven_disjoint_from_pointer(mutable_ranges, pointer) {
+                    return MemoryDagCell::Unwritten { node: current };
+                }
+            }
+            // Loop havoc may write anything the body can reach.
+            CMemoryDerivation::LoopHavoc { .. } => {
+                return MemoryDagCell::Unwritten { node: current };
+            }
+        }
+        current = derivation.base().clone();
+    }
+    MemoryDagCell::Unwritten { node: current }
+}
+
+/// Answers "are these two loads equal" from the memory DAG: both sides are
+/// resolved to their source cell by [`memory_dag_cell_source`], and the loads
+/// are equal when the two lookups land on the same node or pin down the same
+/// value.
+///
+/// This is stage 4 of `notes/tasks/named-memory-states-arc.md`, and it is
+/// wired in *ahead* of the canonicalizing comparisons rather than beside
+/// them. Where those take two embedded snapshots, deep-canonicalize both and
+/// compare the results structurally, this follows named edges and compares
+/// arena ids, so the common case — two spellings of one cell separated only
+/// by stores that provably missed it — costs a short walk instead of a deep
+/// term rewrite.
+///
+/// Advisory as ever: a `false` here means "the DAG did not answer", and every
+/// caller falls through to its previous path. Derivations are not fully
+/// connected (a block-declaring snapshot carries no edge, recorded as a dead
+/// end in the task file), so falling through is the normal case, not an
+/// error.
+pub(super) fn loads_equal_along_memory_derivations(
+    left_memory: &SharedCMemory,
+    left_pointer: &Pointer,
+    right_memory: &SharedCMemory,
+    right_pointer: &Pointer,
+    assumptions: &Assumptions,
+) -> bool {
+    left_pointer == right_pointer
+        && loads_equal_along_memory_derivations_at(
+            left_memory,
+            right_memory,
+            left_pointer,
+            assumptions,
+        )
+}
+
+/// [`loads_equal_along_memory_derivations`] for a caller that has already
+/// proven the two loads share an address. Resolving both snapshots at one
+/// spelling of that address is sound precisely because the addresses are
+/// equal: every hop test asks about the address, not the spelling.
+pub(super) fn loads_equal_along_memory_derivations_at(
+    left_memory: &SharedCMemory,
+    right_memory: &SharedCMemory,
+    pointer: &Pointer,
+    assumptions: &Assumptions,
+) -> bool {
+    if memory_dag_disabled() {
+        return false;
+    }
+    if left_memory == right_memory {
+        return true;
+    }
+    // The hop predicates reach `decide`, which reaches this prover again.
+    thread_local! {
+        static CELL_LOOKUP_ACTIVE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    }
+    if CELL_LOOKUP_ACTIVE.with(std::cell::Cell::get) {
+        return false;
+    }
+    CELL_LOOKUP_ACTIVE.with(|active| active.set(true));
+    let left = memory_dag_cell_source(left_memory, pointer, assumptions);
+    let right = memory_dag_cell_source(right_memory, pointer, assumptions);
+    CELL_LOOKUP_ACTIVE.with(|active| active.set(false));
+    if left.node() == right.node() {
+        return true;
+    }
+    match (left.resolved_value(pointer), right.resolved_value(pointer)) {
+        (Some(left), Some(right)) => left == right,
+        _ => false,
+    }
+}
+
+
+/// The [`loads_equal_along_memory_derivations`] arm as a term-level test:
+/// true only when both sides are atomic loads the DAG resolves alike.
+pub(super) fn atomic_loads_equal_along_memory_derivations(
+    left: &Bitvector32Term,
+    right: &Bitvector32Term,
+    assumptions: &Assumptions,
+) -> bool {
+    matches!(
+        (left, right),
+        (
+            Bitvector32Term::MemoryLoad(left_memory, left_pointer),
+            Bitvector32Term::MemoryLoad(right_memory, right_pointer),
+        ) if loads_equal_along_memory_derivations(
+            left_memory,
+            left_pointer,
+            right_memory,
+            right_pointer,
+            assumptions,
+        )
+    )
 }
 
 /// Bounded search for a chain of recorded effects carrying a load from one

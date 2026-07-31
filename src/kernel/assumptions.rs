@@ -3112,6 +3112,17 @@ impl Assumptions {
         if memories_match_for_pointer_load(left_memory, right_memory, left_pointer) {
             return true;
         }
+        // The DAG answers from recorded edges before either snapshot
+        // comparison below, and long before the two `prop_facts` scans that
+        // reconstruct the same write history from effect summaries.
+        if super::api::loads_equal_along_memory_derivations_at(
+            left_memory,
+            right_memory,
+            left_pointer,
+            self,
+        ) {
+            return true;
+        }
         if memories_match_for_pointer_load_under_assumptions(
             left_memory,
             right_memory,
@@ -3452,6 +3463,17 @@ impl Assumptions {
         let direct = match proposition {
             Proposition::ConditionIs(condition, value) => {
                 self.decide(condition) == Some(*value)
+                    // The memory DAG answers first where it can: a bounded
+                    // walk over named derivation edges, ahead of the deep
+                    // canonicalization below.
+                    || *value
+                        && matches!(
+                            condition,
+                            ConditionTerm::Bitvector32Equal(left, right)
+                                if super::api::atomic_loads_equal_along_memory_derivations(
+                                    left, right, self,
+                                )
+                        )
                     // Two spellings of one value that differ only
                     // representationally (snapshot spellings inside loads,
                     // including under folds and conditionals) are equal by
@@ -3772,6 +3794,16 @@ impl Assumptions {
         match proposition {
             Proposition::ConditionIs(condition, value) => {
                 self.decide(condition) == Some(*value)
+                    // The memory DAG answers first where it can; see the
+                    // matching arm in `proves`.
+                    || *value
+                        && matches!(
+                            condition,
+                            ConditionTerm::Bitvector32Equal(left, right)
+                                if super::api::atomic_loads_equal_along_memory_derivations(
+                                    left, right, self,
+                                )
+                        )
                     // Two spellings of one value that differ only
                     // representationally (snapshot spellings inside loads,
                     // including under folds and conditionals) are equal by

@@ -371,6 +371,14 @@ fn bitvector_terms_equal_for_memory_resolution(
     if !consume_memory_resolution_fuel() {
         return false;
     }
+    // Ask the memory DAG before canonicalizing anything. Two loads of one
+    // cell whose derivations resolve to the same source are equal after a
+    // bounded walk over named edges, with no snapshot comparison at all;
+    // canonicalization below is the fallback for everything the walk cannot
+    // reach (see `loads_equal_along_memory_derivations`).
+    if super::api::atomic_loads_equal_along_memory_derivations(left, right, assumptions) {
+        return true;
+    }
     // Deep canonicalization covers every term variant, including folds and
     // conditionals the structural arms below do not descend into; two
     // spellings of one value differing only representationally compare
