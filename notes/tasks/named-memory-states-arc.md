@@ -6,7 +6,9 @@ Claimed: worktree-agent-a799da2cbca60970b (branch
 Claimed (stage 2a): branch `worktree-agent-a9b0d0d8a52de5913` in
 `.claude/worktrees/` — 2026-07-30
 Claimed (stage 3): branch `worktree-agent-ae96555419eb6923f` in
-`.claude/worktrees/` — 2026-07-31 (landed; stages 4–5 unclaimed)
+`.claude/worktrees/` — 2026-07-31 (landed)
+Claimed (stages 4–5): branch `worktree-agent-a8c27eff1d8ad247f` in
+`.claude/worktrees/` — 2026-07-31
 
 Design brief: `../canonical-memory.md`. Failure corpus and per-member
 diagnoses: `store-provenance-family.md` (that task stays parked; this
