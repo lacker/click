@@ -347,6 +347,25 @@ pub fn expand_c0_tactic_source_at(
             (span, replacement)
         }
     };
+    // An empty replacement removes the selected tactic: take its whole line
+    // when nothing else shares it, so the rewrite leaves no blank residue.
+    let span = if replacement.is_empty() {
+        let line_start = click_source[..span.start]
+            .rfind('\n')
+            .map_or(0, |index| index + 1);
+        let line_end = click_source[span.end..]
+            .find('\n')
+            .map_or(click_source.len(), |index| span.end + index + 1);
+        if click_source[line_start..span.start].trim().is_empty()
+            && click_source[span.end..line_end].trim().is_empty()
+        {
+            line_start..line_end
+        } else {
+            span
+        }
+    } else {
+        span
+    };
     let replacement = indent_replacement(click_source, span.start, &replacement);
     let mut expanded =
         String::with_capacity(click_source.len() - (span.end - span.start) + replacement.len());

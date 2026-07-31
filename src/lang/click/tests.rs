@@ -4492,6 +4492,79 @@ fn selected_branched_post_execution_have_merges_path_certificates() {
 }
 
 #[test]
+fn selected_pure_case_split_simp_expands_by_removal() {
+    // A smart exit `simp` whose claims all close by exact checks contributes
+    // no surface tactics of its own. Its expansion must remove the tactic —
+    // NOT graft the enclosing branch skeleton as an `if` tree with empty
+    // leaves: that tree would re-split every already-merged execution path at
+    // path end and lose the execution-path/branch-trace pairing certificate
+    // replay keeps (notes/tasks/case-split-expansion-merge.md).
+    let c_source = r#"
+            int32 sort3(int32 p[3]) {
+                int32 tmp;
+                if (p[1] < p[0]) {
+                    tmp = p[0];
+                    p[0] = p[1];
+                    p[1] = tmp;
+                }
+                if (p[2] < p[1]) {
+                    tmp = p[1];
+                    p[1] = p[2];
+                    p[2] = tmp;
+                }
+                if (p[1] < p[0]) {
+                    tmp = p[0];
+                    p[0] = p[1];
+                    p[1] = tmp;
+                }
+                return 0;
+            }
+        "#;
+    let click_source = r#"
+            verifying "sort3.c";
+
+            predicate sorted_range(int32 p[], int32 lo, int32 hi) {
+                forall (int32 i) {
+                    forall (int32 j) {
+                        0 <= i and 0 <= j and lo <= i and i < j and j < hi implies p[i] <= p[j]
+                    }
+                }
+            }
+
+            int32 sort3(int32 p[3]) {
+                requires loadable(p[0..3]);
+                consumes p[0..3];
+                ensures sorted: sorted_range(p, 0, 3) by {
+                    execute_rest();
+                    unfold(sorted_range);
+                    simp();
+                }
+            }
+        "#;
+    let simp_offset = click_source
+        .find("simp();")
+        .expect("proof should contain the selected simp");
+    let line = click_source[..simp_offset]
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count()
+        + 1;
+    let column = simp_offset
+        - click_source[..simp_offset]
+            .rfind('\n')
+            .map(|offset| offset + 1)
+            .unwrap_or(0)
+        + 1;
+
+    let expanded = expand_c0_tactic_source_at(click_source, &[("sort3.c", c_source)], line, column)
+        .expect("a pure case-split simp should expand");
+    assert!(!expanded.contains("simp()"), "{expanded}");
+    assert!(!expanded.contains("if p[1] < p[0] {"), "{expanded}");
+    verify_c0_sources(&expanded, &[("sort3.c", c_source)])
+        .expect("the removed closer's paths should close via the ordinary path-end check");
+}
+
+#[test]
 fn source_expander_lowers_smart_simp_inside_have() {
     let c_source = r#"
             int32 identity(int32 x) {

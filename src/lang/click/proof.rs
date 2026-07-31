@@ -3101,7 +3101,14 @@ fn begin_tactic_expansion_capture(
     })
 }
 
-fn finish_tactic_expansion_capture(surface_replay: &SurfaceReplay) -> ClickError {
+/// `allow_empty` accepts an empty expansion as the exact answer: the selected
+/// tactic contributed no surface tactics to the accepted certificate, so the
+/// rewrite removes it. Every other caller keeps the empty guard — for them an
+/// empty capture means the lowering lost the tactics, not that none exist.
+fn finish_tactic_expansion_capture(
+    surface_replay: &SurfaceReplay,
+    allow_empty: bool,
+) -> ClickError {
     let captured = TACTIC_EXPANSION_PROBE.with(|probe| {
         let mut slot = probe.borrow_mut();
         let Some(probe) = slot.as_mut() else {
@@ -3109,7 +3116,7 @@ fn finish_tactic_expansion_capture(surface_replay: &SurfaceReplay) -> ClickError
         };
         probe.result = Some(match &surface_replay.blocker {
             Some(blocker) => Err(format!("could not expand selected tactic: {blocker}")),
-            None if surface_replay.tactics.is_empty() => {
+            None if surface_replay.tactics.is_empty() && !allow_empty => {
                 Err("selected tactic produced no standalone surface expansion".to_string())
             }
             None => Ok(surface_replay.tactics.clone()),
@@ -7139,7 +7146,7 @@ fn verify_one_loop_preservation_proof(
                 tactics: closer_tactics.clone(),
                 ..SurfaceReplay::default()
             };
-            return Err(finish_tactic_expansion_capture(&capture));
+            return Err(finish_tactic_expansion_capture(&capture, false));
         }
         let case_path = context
             .replay
@@ -11952,17 +11959,33 @@ fn finish_ordered_proof_replay(
                     "`{proof_label}` selected post-execution tactic lost its deferred capture"
                 ))
             })?;
-            let mut capture = SurfaceReplay {
-                tactics: deferred.branch_skeleton.clone(),
-                ..SurfaceReplay::default()
-            };
-            if let Err(message) = append_surface_tactics_by_leaf(
-                &mut capture.tactics,
-                &deferred_capture_tactics_by_path,
-            ) {
-                capture.block(message);
+            // A tactic whose claims all closed by exact checks or grouped
+            // transitions contributes no surface tactics of its own (see
+            // `ClosedClaim::claim_tactics`): its exact expansion is empty and
+            // the tactic is simply removed. Grafting the enclosing branch
+            // skeleton around empty leaves would instead re-split every
+            // already-merged execution path at path end, losing the
+            // execution-path/branch-trace pairing certificate replay keeps —
+            // proof-level `if` conditions lower at each path's own outcome, so
+            // an alien path meets another path's branch conditions as
+            // contradictory facts it cannot use.
+            let contributes_no_tactics = deferred_capture_tactics_by_path
+                .iter()
+                .all(|tactics| tactics.is_empty());
+            let mut capture = SurfaceReplay::default();
+            if !contributes_no_tactics {
+                capture.tactics = deferred.branch_skeleton.clone();
+                if let Err(message) = append_surface_tactics_by_leaf(
+                    &mut capture.tactics,
+                    &deferred_capture_tactics_by_path,
+                ) {
+                    capture.block(message);
+                }
             }
-            return Err(finish_tactic_expansion_capture(&capture));
+            return Err(finish_tactic_expansion_capture(
+                &capture,
+                contributes_no_tactics,
+            ));
         }
         Ok(verified)
     })();
@@ -16575,7 +16598,7 @@ fn replay_linear_tactics(
             branch_path = result.branch_path;
             assumptions = assumptions_from_propositions(&requirement_pure_facts);
             if capture_this_tactic {
-                return Err(finish_tactic_expansion_capture(&replay.surface_replay));
+                return Err(finish_tactic_expansion_capture(&replay.surface_replay, false));
             }
             continue;
         }
@@ -16634,7 +16657,7 @@ fn replay_linear_tactics(
             branch_path = result.branch_path;
             assumptions = assumptions_from_propositions(&requirement_pure_facts);
             if capture_this_tactic {
-                return Err(finish_tactic_expansion_capture(&replay.surface_replay));
+                return Err(finish_tactic_expansion_capture(&replay.surface_replay, false));
             }
             continue;
         }
@@ -18445,7 +18468,7 @@ fn replay_linear_tactics(
             }
         }
         if capture_this_tactic && !deferred_post_execution && !deferred_region_simp {
-            return Err(finish_tactic_expansion_capture(&replay.surface_replay));
+            return Err(finish_tactic_expansion_capture(&replay.surface_replay, false));
         }
     }
 

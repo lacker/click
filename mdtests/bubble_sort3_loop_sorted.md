@@ -47,7 +47,6 @@ int32 bubble_sort3_loop(int32 p[3]) {
         bounded_execute();
         unfold(sorted);
         unfold(sorted_range);
-        simp();
     }
 }
 ```
