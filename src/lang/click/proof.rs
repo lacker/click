@@ -5479,7 +5479,12 @@ fn verify_execution_proofs_forward(
                         .find(|clause| clause.region() == &CodeRegion::Loop(loop_index))
                         .and_then(|clause| clause.items().get(item_index))
                         .map(StructuralItem::kind)
-                        .expect("effect certificate site should name a structural item"),
+                        .ok_or_else(|| {
+                            ClickError::new(format!(
+                                "`{}.loop({loop_index})`: certified an effect for item {item_index}, which the loop region does not declare",
+                                environment.function_block.signature().name()
+                            ))
+                        })?,
                 };
                 let certificate = merge_path_aligned_certificates(&site.description(), paths)?;
                 finish_proof_site_expansion_capture(&site, &certificate)?;
@@ -8868,8 +8873,11 @@ fn prove_pure_proposition_case_at_point(
                                 predicate_environment,
                                 click_function_environment,
                             )
-                            .map(|_| unreachable!("stalled premise should still fail"))
-                            .unwrap_err();
+                            .err()
+                            .unwrap_or_else(|| {
+                                "no further premise lowered against the facts already available"
+                                    .to_string()
+                            });
                             return Err(ClickError::new(format!(
                                 "`{claim_label}` {proof_name} proof {outer_tactic_index}: could not lower `{}` premise `{}`: {message}",
                                 tactic_name(tactic),
@@ -18483,7 +18491,11 @@ fn execute_concrete_loop_head_step(
         replay.frontier.next_statement_index = replay
             .source_layout
             .loop_body_entry(loop_index)
-            .expect("source loop should have a body entry");
+            .ok_or_else(|| {
+                ClickError::new(format!(
+                    "`{claim_label}` tactic {tactic_index}: `{tactic_name}` could not resolve the source body of loop({loop_index})"
+                ))
+            })?;
         replay.frontier.point = ProofExecutionPoint::StatementEntry { remaining: *body };
         record_statement_program_point_state(
             replay,
@@ -19811,7 +19823,7 @@ fn split_next_source_operation(
 ) -> Result<(Option<CStatement>, CStatement, Option<CStatement>), String> {
     let mut statements = Vec::new();
     flatten_top_level_sequence(statement, &mut statements)
-        .expect("flattening a C statement sequence should succeed");
+        .map_err(|message| format!("could not flatten the lowered statement sequence: {message}"))?;
     let source_statement_offset = assertion_prefix_count;
     let Some(source_statement) = statements.get(source_statement_offset) else {
         return Err("lowered statement is missing its source operation".to_string());
@@ -21182,7 +21194,12 @@ fn fold_composite_resources_on_outcome(
                 };
                 diagnostic_resources = resources;
             }
-            unreachable!("batch and sequential resource consumption disagreed")
+            // The batch consumption above refused a body the one-at-a-time
+            // walk accepted; report that rather than crashing.
+            return Err(ClickError::new(format!(
+                "`{claim_label}` path {path_index}: `fold({})` could not consume the body layer as a whole, though each contained resource is held individually",
+                describe_resource_clause(resource)
+            )));
         };
         post_state = post_state.with_resource_context(resources);
 
