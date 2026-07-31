@@ -1,8 +1,11 @@
 # Certificate-gateway bypasses (from the one-gateway audit)
 
-Status: claimed — gate flipped and unconditional; executing the final
-phase, the ClosedClaim restructure.
-Claimed: worktree-agent-a0edef682633b9260, 2026-07-30
+Status: **done** (2026-07-30). The gate is unconditional and now
+structural: closing an exit claim requires a `ClosedClaim`, and the
+certificate-carrying constructor is private to the one function that
+runs the replay. The certificate-gateway story is closed. See the final
+migration-log section for the shape and what was deleted.
+Claimed: worktree-agent-a0edef682633b9260, 2026-07-30 (complete)
 
 The 2026-07-30 audit (see one-gateway-check.md for the full evidence)
 found that the settled invariant
@@ -367,3 +370,109 @@ its certificate; bypasses become unrepresentable; the blocker arrays
 and the grouped/ungrouped trust asymmetry are deleted; expansion prints
 what verification holds). Blocked behind the premise-selection-policy
 work landing (same proof.rs region).
+
+
+## DONE 2026-07-30 (worktree-agent-a0edef682633b9260): ClosedClaim
+
+The restructure landed in four gate-green commits. All three gates green
+at every one (`cargo nextest run --lib --bins` 509, `cargo test --test
+mdtests` 271 visible / 6 quarantined, `cargo test --test examples` all
+four projects), plus `click-audit --max-sites 8 examples` = 8 passed and
+a `click-expand` spot check on `input_cursor.click:8:9`. No test text
+changed, so no acceptance behavior changed.
+
+### The type
+
+In `proof.rs`, module `exit_claim` (the module boundary is the whole
+point — field privacy in Rust is per-module, and proof.rs is one
+module):
+
+```
+enum ClaimClosure { Open(Option<String>), Closed(ClosedClaim) }
+struct ClosedClaim { certificate: ClaimCertificate }   // private field
+enum ClaimCertificate {
+    Claim(Vec<ProofTactic>),   // this claim's own replayed certificate
+    GroupedTransition,         // the path's one transition certificate
+    ExactCheck,                // no proof search to certify
+}
+```
+
+Constructors, all inside the module:
+- `by_replayed_certificate` — **private**, reachable only from
+  `discharge_exit_simp_claim`, which builds the certificate and replays
+  it (`certify_outcome_simp` / `certify_outcome_existential_simp`, both
+  of which accept only what `prove_have_at_point` re-proves).
+- `by_grouped_transition(&TacticCertificate)` — takes the transition
+  certificate, so it cannot be called before
+  `certify_grouped_outcome_simp_transition` succeeds.
+- `by_exact_check()` — `assumption`, `normalize`, `frame`,
+  `certified_frame`, and the implicit closer of a single-claim proof.
+  These are exact kernel checks, not proof searches; `certified_frame`
+  is itself a simple surface tactic. This is the one variant with no
+  certificate, and it is deliberate: there is no smart success to gate.
+
+### What got deleted
+
+- `strict_exit_gate()` and its three call sites. Because it returned
+  `true` unconditionally, every blocker-recording arm was unreachable,
+  which made `surface_closer_blockers` permanently all-`None` and its three
+  consumers constant: the grouped certifiability guard and both
+  "could not lower post-execution `simp`" expansion blocks. Under the
+  unconditional gate a blocker IS a verification failure, so the concept
+  is gone, not merely unused.
+- Four parallel arrays folded into one `Vec<ClaimClosure>`:
+  `closed_claims: Vec<bool>`, `closer_errors`, `path_surface_closers`,
+  `captured_transitions`. The `ok_or_else` for "closed claim without
+  capturing its certificate" went with them — it is now unrepresentable
+  rather than checked.
+- The ~270-line inline certificate block in the `Simp` arm collapsed to
+  a 17-line dispatch on `discharge_exit_simp_claim`.
+
+Net on proof.rs: 4 arrays -> 1, 3 procedural gate assertions -> 0,
++483/-371 over three commits (11/-42, then 437/-320, then 302/-274).
+The drain's `Simp` arm went from ~470 lines to ~230; the certificate
+generation it used to inline is ~230 lines of named module code.
+
+### Grouped/ungrouped
+
+`replay.grouped_contract` now selects only the iteration strategy: one
+transition certificate for the whole claim set, or one certificate per
+claim. Both go through `discharge_exit_simp_claim`. Grouped claims used
+to be marked closed *before* `certify_grouped_outcome_simp_transition`
+ran (behaviour-identical, since failure returned `Err`, but the ordering
+was the bypass shape); they are now collected as pending and close only
+from the returned certificate.
+
+The one thing that stays asymmetric on purpose: the ungrouped per-claim
+generator plans against `ExitClaimContext::certificate_facts()` (ambient
+effect facts + the drain's `unfold(...)` applied) and
+`certificate_replay()` (unfolds set), while the grouped transition plans
+against the raw `surface_certificate_facts` snapshot. That is not a
+trust difference — it is that the grouped path emits no `unfold(...)`
+prefix, so planning against unfolded facts would let generation assume
+more than replay holds. Recorded here because it looks like an asymmetry
+and reads as one at the call site.
+
+### Resisted the restructure
+
+- **Expansion still records the grouped certificate at path level.**
+  `ClosedClaim` for a grouped claim carries `GroupedTransition`, not a
+  copy of the tactics: the transition is one certificate covering N
+  claims, and appending it per claim would emit it N times. So
+  `surface_grouped_closers_by_path` survives. `ClaimCertificate` names
+  the situation instead of hiding it behind an empty `Vec`.
+- **`append_surface_tactics_by_leaf` can still block expansion.** That
+  is branch-skeleton grafting, not certificate reconstruction, so
+  "verifies but cannot be expanded" is not fully impossible — it is
+  impossible *for certificate reasons*, which is what this task was
+  about.
+- **`ExactCheck` closures carry no tactics.** For `assumption`,
+  `normalize` and `frame` the closing tactic is already in the path's
+  recorded surface tactics, so expansion is fine. `CertifiedFrame`
+  records no post-execution surface tactic in the drain (pre-existing);
+  it is class `simple` and is recorded through the plan-level replay
+  instead. Not touched — it is not a smart success.
+- **Repo is not rustfmt-clean.** `cargo fmt` rewrites ~19 files and ~18
+  unrelated regions of proof.rs. Do not run it repo-wide; format the
+  region you touched by hand (`cargo fmt -- --check` and read only the
+  hunks in your own code).
