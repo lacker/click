@@ -121,6 +121,39 @@ pub fn format_fractional_duration(duration: Duration) -> String {
     }
 }
 
+/// Reads a duration from an environment variable, falling back to `default`
+/// when the variable is unset.
+///
+/// The variable is parsed by [`parse_duration`], so every caller accepts the
+/// same spellings the binaries accept on the command line.
+pub fn duration_from_env(variable: &str, default: Duration) -> Result<Duration, String> {
+    let Some(source) = std::env::var_os(variable) else {
+        return Ok(default);
+    };
+    let source = source
+        .to_str()
+        .ok_or_else(|| format!("{variable} must be valid UTF-8"))?;
+    parse_duration(source).map_err(|message| format!("{variable}: {message}"))
+}
+
+/// Indents captured child output for inclusion in a failure message, or
+/// returns the empty string when the child said nothing.
+pub fn indented_output(output: &str) -> String {
+    let output = output.trim();
+    if output.is_empty() {
+        return String::new();
+    }
+    let mut indented = String::from("\n");
+    for (index, line) in output.lines().enumerate() {
+        if index > 0 {
+            indented.push('\n');
+        }
+        indented.push_str("  ");
+        indented.push_str(line);
+    }
+    indented
+}
+
 /// A child process that ran to completion under [`run_bounded`].
 #[derive(Debug)]
 pub struct ChildOutput {
@@ -225,6 +258,79 @@ pub fn run_bounded_with_input(
             elapsed,
         },
     })
+}
+
+/// Names the messages [`run_isolated`] reports when a bounded fixture child
+/// times out or fails.
+#[derive(Clone, Copy, Debug)]
+pub struct IsolatedRun<'a> {
+    /// Identifies the child in `run_bounded`'s own I/O errors.
+    pub label: &'a str,
+    /// Names the limit, for example `the per-file mdtest time limit`.
+    pub limit_description: &'a str,
+    /// The environment variable that overrides the limit.
+    pub limit_variable: &'a str,
+    /// Names the child, for example `its isolated mdtest process`.
+    pub process_description: &'a str,
+}
+
+/// Builds the command that re-executes the running integration-test binary
+/// against a single fixture in an isolated child process.
+///
+/// Click proofs have overflowed the stack before, so each fixture runs in its
+/// own process with a large stack: one crash cannot hide the other results.
+pub fn isolated_test_command(
+    test_name: &str,
+    fixture_variable: &str,
+    fixture: &Path,
+) -> Result<Command, String> {
+    let executable = std::env::current_exe()
+        .map_err(|error| format!("failed to locate the {test_name} test executable: {error}"))?;
+    let mut command = Command::new(executable);
+    command
+        .arg("--exact")
+        .arg(test_name)
+        .arg("--nocapture")
+        .env(fixture_variable, fixture)
+        // Prover recursion follows term structure, which nests far deeper
+        // than the default test-thread stack on snapshot-heavy fixtures.
+        .env("RUST_MIN_STACK", "67108864");
+    Ok(command)
+}
+
+/// Runs a fixture child under a wall-clock limit and reduces the outcome to a
+/// pass/fail result, folding the child's captured output into the message.
+pub fn run_isolated(
+    command: Command,
+    limit: Duration,
+    messages: IsolatedRun<'_>,
+) -> Result<(), String> {
+    let (status, stdout, stderr) = match run_bounded(command, limit, messages.label)? {
+        BoundedOutput::Completed(output) => (Some(output.status), output.stdout, output.stderr),
+        BoundedOutput::TimedOut { stdout, stderr, .. } => (None, stdout, stderr),
+    };
+    let output = format!(
+        "{}{}",
+        String::from_utf8_lossy(&stdout),
+        String::from_utf8_lossy(&stderr)
+    );
+    let Some(status) = status else {
+        return Err(format!(
+            "exceeded {} of {}; set {} to override it{}",
+            messages.limit_description,
+            format_duration(limit),
+            messages.limit_variable,
+            indented_output(&output)
+        ));
+    };
+    if !status.success() {
+        return Err(format!(
+            "failed in {}{}",
+            messages.process_description,
+            indented_output(&output)
+        ));
+    }
+    Ok(())
 }
 
 fn read_all(mut reader: impl Read) -> std::io::Result<Vec<u8>> {
@@ -435,6 +541,82 @@ mod tests {
             "1.250s"
         );
         assert_eq!(format_fractional_duration(Duration::from_millis(750)), "750ms");
+    }
+
+    #[test]
+    fn environment_durations_fall_back_and_report_their_variable() {
+        // A name no test sets, so the fallback branch is deterministic.
+        assert_eq!(
+            duration_from_env("CLICK_TEST_UNSET_TIME_LIMIT", Duration::from_secs(3)),
+            Ok(Duration::from_secs(3))
+        );
+        unsafe { std::env::set_var("CLICK_TEST_ENV_DURATION", "250ms") };
+        assert_eq!(
+            duration_from_env("CLICK_TEST_ENV_DURATION", Duration::from_secs(3)),
+            Ok(Duration::from_millis(250))
+        );
+        unsafe { std::env::set_var("CLICK_TEST_ENV_DURATION", "later") };
+        let message = duration_from_env("CLICK_TEST_ENV_DURATION", Duration::from_secs(3))
+            .expect_err("an unparseable duration should be rejected");
+        assert!(message.starts_with("CLICK_TEST_ENV_DURATION: "), "{message}");
+        unsafe { std::env::remove_var("CLICK_TEST_ENV_DURATION") };
+    }
+
+    #[test]
+    fn indented_output_is_empty_for_silent_children() {
+        assert_eq!(indented_output("   \n  \n"), "");
+        assert_eq!(indented_output("one\ntwo"), "\n  one\n  two");
+        assert_eq!(indented_output("\n  padded  \n"), "\n  padded");
+    }
+
+    #[test]
+    fn isolated_runs_report_timeouts_and_failures_with_child_output() {
+        let mut sleeper = Command::new("sleep");
+        sleeper.arg("5");
+        let message = run_isolated(
+            sleeper,
+            Duration::from_millis(10),
+            IsolatedRun {
+                label: "test sleeper",
+                limit_description: "the test time limit",
+                limit_variable: "CLICK_TEST_LIMIT",
+                process_description: "its isolated test process",
+            },
+        )
+        .expect_err("the sleeper should exceed its limit");
+        assert!(message.contains("exceeded the test time limit of 10ms"), "{message}");
+        assert!(message.contains("set CLICK_TEST_LIMIT to override it"), "{message}");
+
+        let mut failing = Command::new("sh");
+        failing.arg("-c").arg("echo detail; exit 1");
+        let message = run_isolated(
+            failing,
+            Duration::from_secs(10),
+            IsolatedRun {
+                label: "test failure",
+                limit_description: "the test time limit",
+                limit_variable: "CLICK_TEST_LIMIT",
+                process_description: "its isolated test process",
+            },
+        )
+        .expect_err("a failing child should be reported");
+        assert_eq!(message, "failed in its isolated test process\n  detail");
+
+        let mut passing = Command::new("sh");
+        passing.arg("-c").arg("exit 0");
+        assert_eq!(
+            run_isolated(
+                passing,
+                Duration::from_secs(10),
+                IsolatedRun {
+                    label: "test success",
+                    limit_description: "the test time limit",
+                    limit_variable: "CLICK_TEST_LIMIT",
+                    process_description: "its isolated test process",
+                },
+            ),
+            Ok(())
+        );
     }
 
     #[test]

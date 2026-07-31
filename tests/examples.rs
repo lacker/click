@@ -1,11 +1,10 @@
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::time::Duration;
 
 use click::cli::{
-    BoundedOutput, default_worker_count, files_with_extension, format_duration, parse_duration,
-    run_bounded, run_parallel, source_refs,
+    IsolatedRun, default_worker_count, duration_from_env, files_with_extension,
+    isolated_test_command, run_isolated, run_parallel, source_refs,
 };
 use click::lang::click::verify_c0_sources;
 
@@ -105,70 +104,25 @@ fn example_projects() {
 }
 
 fn example_time_limit() -> Duration {
-    let Some(source) = std::env::var_os(EXAMPLE_TIME_LIMIT) else {
-        return DEFAULT_EXAMPLE_TIME_LIMIT;
-    };
-    let source = source
-        .to_str()
-        .unwrap_or_else(|| panic!("{EXAMPLE_TIME_LIMIT} must be valid UTF-8"));
-    parse_duration(source).unwrap_or_else(|message| panic!("{EXAMPLE_TIME_LIMIT}: {message}"))
+    duration_from_env(EXAMPLE_TIME_LIMIT, DEFAULT_EXAMPLE_TIME_LIMIT)
+        .unwrap_or_else(|message| panic!("{message}"))
 }
 
 /// Runs one example project in an isolated child process (Click proofs have
 /// overflowed the stack before; isolation keeps one crash from hiding the
 /// other results) under a wall-clock limit.
 fn run_example_with_timeout(project: &Path, time_limit: Duration) -> Result<(), String> {
-    let executable = std::env::current_exe()
-        .map_err(|error| format!("failed to locate the examples integration-test executable: {error}"))?;
-    let mut command = Command::new(executable);
-    command
-        .arg("--exact")
-        .arg("example_projects")
-        .arg("--nocapture")
-        .env(EXAMPLE_CHILD_PATH, project)
-        // Prover recursion follows term structure, which nests far deeper
-        // than the default test-thread stack on snapshot-heavy fixtures.
-        .env("RUST_MIN_STACK", "67108864");
-    let label = format!("isolated example project `{}`", project.display());
-    let (status, stdout, stderr) = match run_bounded(command, time_limit, &label)? {
-        BoundedOutput::Completed(output) => (Some(output.status), output.stdout, output.stderr),
-        BoundedOutput::TimedOut { stdout, stderr, .. } => (None, stdout, stderr),
-    };
-    let output = format!(
-        "{}{}",
-        String::from_utf8_lossy(&stdout),
-        String::from_utf8_lossy(&stderr)
-    );
-    let Some(status) = status else {
-        return Err(format!(
-            "exceeded the per-project example time limit of {}; set {EXAMPLE_TIME_LIMIT} to override it{}",
-            format_duration(time_limit),
-            indented_output(&output)
-        ));
-    };
-    if !status.success() {
-        return Err(format!(
-            "failed in its isolated example process{}",
-            indented_output(&output)
-        ));
-    }
-    Ok(())
-}
-
-fn indented_output(output: &str) -> String {
-    let output = output.trim();
-    if output.is_empty() {
-        String::new()
-    } else {
-        format!(
-            "\n{}",
-            output
-                .lines()
-                .map(|line| format!("  {line}"))
-                .collect::<Vec<_>>()
-                .join("\n")
-        )
-    }
+    let command = isolated_test_command("example_projects", EXAMPLE_CHILD_PATH, project)?;
+    run_isolated(
+        command,
+        time_limit,
+        IsolatedRun {
+            label: &format!("isolated example project `{}`", project.display()),
+            limit_description: "the per-project example time limit",
+            limit_variable: EXAMPLE_TIME_LIMIT,
+            process_description: "its isolated example process",
+        },
+    )
 }
 
 fn run_example_project(project: &Path) {

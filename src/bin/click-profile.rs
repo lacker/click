@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::env;
 use std::fmt::Write as _;
 use std::fs;
@@ -126,6 +127,17 @@ struct ProjectProfile {
     active: Vec<StepKey>,
     timed_out: bool,
     verification_failure: Option<String>,
+    /// `click timing:` lines this profiler did not recognize, keyed by the
+    /// word after the prefix, with a count and one verbatim example. A
+    /// profile that silently drops timing lines is a false green, so these
+    /// are reported instead of ignored.
+    unknown_timing: BTreeMap<String, UnknownTiming>,
+}
+
+#[derive(Clone, Debug)]
+struct UnknownTiming {
+    count: usize,
+    example: String,
 }
 
 fn entry() -> Result<(), String> {
@@ -258,7 +270,8 @@ fn profile_project(
         .unwrap_or_else(|| project.as_os_str().to_str().unwrap_or("example"))
         .to_string();
     let stderr = String::from_utf8_lossy(&stderr);
-    let mut profile = parse_profile(&project_name, &stderr, thresholds, status.is_none());
+    let mut profile = parse_profile(&project_name, &stderr, thresholds, status.is_none())
+        .map_err(|message| format!("while profiling `{}`: {message}", project.display()))?;
     if status.is_some_and(|status| !status.success()) {
         profile.verification_failure = Some(extract_verification_failure(
             &String::from_utf8_lossy(&stdout),
@@ -293,59 +306,166 @@ fn extract_verification_failure(
     }
 }
 
+/// The prefix every verifier timing line carries.
+const TIMING_PREFIX: &str = "click timing: ";
+
+/// Timing-line kinds the verifier emits that this profiler deliberately does
+/// not consume. They are recognized so that a genuinely new or drifted kind
+/// stands out instead of blending in with them.
+///
+/// Keep this list in sync with the `click timing:` emitters (grep for
+/// `click timing:` under `src/`). Longer prefixes come first so `claim paths`
+/// is not swallowed by `claim`.
+const IGNORED_TIMING_KINDS: &[&str] = &[
+    "function",
+    "contract execution",
+    "contract claims",
+    "contract entry resources",
+    "claim paths",
+    "claim",
+];
+
+/// One classified `click timing:` line.
+#[derive(Clone, Debug)]
+enum TimingEvent {
+    /// The sidecar whose steps follow.
+    Source(PathBuf),
+    /// A tactic began; it stays active until its finish line arrives.
+    Started(StepKey),
+    /// A tactic finished, with its elapsed time.
+    Finished(StepKey, Duration),
+    /// A recognized kind the profiler does not consume.
+    Ignored,
+    /// A `click timing:` line matching no known kind. Counted and reported.
+    Unknown,
+}
+
 fn parse_profile(
     project: &str,
     output: &str,
     thresholds: Thresholds,
     timed_out: bool,
-) -> ProjectProfile {
+) -> Result<ProjectProfile, String> {
     let mut slow_steps = Vec::new();
     let mut active = Vec::new();
+    let mut unknown_timing: BTreeMap<String, UnknownTiming> = BTreeMap::new();
     let mut source_path = PathBuf::new();
     for line in output.lines() {
-        if let Some(path) = line.strip_prefix("click timing: source ") {
-            source_path = PathBuf::from(path);
-        } else if let Some(key) = parse_started_step(line, &source_path) {
-            active.push(key);
-        } else if let Some((key, elapsed)) = parse_finished_step(line, &source_path) {
-            if let Some(index) = active.iter().rposition(|candidate| candidate == &key) {
-                active.remove(index);
+        let line = line.trim_end();
+        if !line.starts_with(TIMING_PREFIX) {
+            continue;
+        }
+        match classify_timing_line(line, &source_path)? {
+            TimingEvent::Source(path) => source_path = path,
+            TimingEvent::Started(key) => active.push(key),
+            TimingEvent::Finished(key, elapsed) => {
+                if let Some(index) = active.iter().rposition(|candidate| candidate == &key) {
+                    active.remove(index);
+                }
+                if elapsed >= thresholds.for_category(key.category) {
+                    slow_steps.push(SlowStep { key, elapsed });
+                }
             }
-            if elapsed >= thresholds.for_category(key.category) {
-                slow_steps.push(SlowStep { key, elapsed });
+            TimingEvent::Ignored => {}
+            TimingEvent::Unknown => {
+                let kind = unknown_timing_kind(line);
+                unknown_timing
+                    .entry(kind)
+                    .and_modify(|seen| seen.count += 1)
+                    .or_insert_with(|| UnknownTiming {
+                        count: 1,
+                        example: line.to_string(),
+                    });
             }
         }
     }
-    ProjectProfile {
+    Ok(ProjectProfile {
         project: project.to_string(),
         slow_steps,
         active,
         timed_out,
         verification_failure: None,
+        unknown_timing,
+    })
+}
+
+/// Classifies one line that already begins with [`TIMING_PREFIX`].
+///
+/// A line whose kind this profiler depends on but whose structure does not
+/// parse is a hard error: the whole report would otherwise be a false green,
+/// showing no slow steps because it silently understood none of them.
+fn classify_timing_line(line: &str, source_path: &Path) -> Result<TimingEvent, String> {
+    let body = line
+        .strip_prefix(TIMING_PREFIX)
+        .expect("callers only classify lines carrying the timing prefix")
+        .trim_start();
+    if let Some(path) = strip_kind(body, "source") {
+        if path.is_empty() {
+            return Err(drift_message(line));
+        }
+        return Ok(TimingEvent::Source(PathBuf::from(path.trim_end())));
+    }
+    if let Some(rest) = strip_kind(body, "started tactic") {
+        return parse_step_key(rest, source_path)
+            .map(TimingEvent::Started)
+            .ok_or_else(|| drift_message(line));
+    }
+    if let Some(rest) = strip_kind(body, "tactic") {
+        let (rest, elapsed) = rest
+            .rsplit_once(char::is_whitespace)
+            .ok_or_else(|| drift_message(line))?;
+        let elapsed = elapsed
+            .strip_suffix('s')
+            .and_then(|seconds| seconds.parse::<f64>().ok())
+            .filter(|seconds| seconds.is_finite() && *seconds >= 0.0)
+            .ok_or_else(|| drift_message(line))?;
+        let key = parse_step_key(rest, source_path).ok_or_else(|| drift_message(line))?;
+        return Ok(TimingEvent::Finished(key, Duration::from_secs_f64(elapsed)));
+    }
+    if IGNORED_TIMING_KINDS
+        .iter()
+        .any(|kind| strip_kind(body, kind).is_some())
+    {
+        return Ok(TimingEvent::Ignored);
+    }
+    Ok(TimingEvent::Unknown)
+}
+
+/// Strips a kind keyword, requiring it to end at a word boundary so `tactic`
+/// never matches a future `tactical` kind, and returns the rest of the line.
+fn strip_kind<'a>(body: &'a str, kind: &str) -> Option<&'a str> {
+    let rest = body.strip_prefix(kind)?;
+    if rest.is_empty() || rest.starts_with(char::is_whitespace) {
+        Some(rest.trim_start())
+    } else {
+        None
     }
 }
 
-fn parse_started_step(line: &str, source_path: &Path) -> Option<StepKey> {
-    let fields = line.split_whitespace().collect::<Vec<_>>();
-    if fields.len() != 13 || fields[..4] != ["click", "timing:", "started", "tactic"] {
-        return None;
-    }
-    parse_step_key(&fields[4..], source_path)
+fn drift_message(line: &str) -> String {
+    format!(
+        "the verifier timing format this profile depends on has drifted; \
+         click-profile could not parse:\n  {line}\n\
+         Update the `click timing:` parser in src/bin/click-profile.rs to match \
+         the emitter; leaving it stale silently reports no slow steps."
+    )
 }
 
-fn parse_finished_step(line: &str, source_path: &Path) -> Option<(StepKey, Duration)> {
-    let fields = line.split_whitespace().collect::<Vec<_>>();
-    if fields.len() != 13 || fields[..3] != ["click", "timing:", "tactic"] {
-        return None;
-    }
-    let elapsed = fields[12].strip_suffix('s')?.parse::<f64>().ok()?;
-    Some((
-        parse_step_key(&fields[3..12], source_path)?,
-        Duration::from_secs_f64(elapsed),
-    ))
+/// Groups unrecognized timing lines by the first word after the prefix, so a
+/// thousand copies of one new kind collapse to a single counted row.
+fn unknown_timing_kind(line: &str) -> String {
+    line.strip_prefix(TIMING_PREFIX)
+        .unwrap_or(line)
+        .split_whitespace()
+        .next()
+        .unwrap_or("(empty)")
+        .to_string()
 }
 
-fn parse_step_key(fields: &[&str], source_path: &Path) -> Option<StepKey> {
+/// Parses the nine fields shared by started and finished tactic lines:
+/// `CLAIM INDEX NAME class CLASS statement INDEX source INDEX`.
+fn parse_step_key(rest: &str, source_path: &Path) -> Option<StepKey> {
+    let fields = rest.split_whitespace().collect::<Vec<_>>();
     if fields.len() != 9
         || fields[3] != "class"
         || fields[5] != "statement"
@@ -542,6 +662,33 @@ fn render_profiles(
                     .iter()
                     .any(|key| key.category == TacticCategory::Control)
         });
+    let unknown_timing = profiles
+        .iter()
+        .filter(|profile| !profile.unknown_timing.is_empty())
+        .collect::<Vec<_>>();
+    if !unknown_timing.is_empty() {
+        writeln!(output, "\nUNRECOGNIZED TIMING LINES").expect("writing a String cannot fail");
+        writeln!(
+            output,
+            "  This profile skipped verifier timing output it does not understand, so the report below may be incomplete. Teach src/bin/click-profile.rs about these kinds."
+        )
+        .expect("writing a String cannot fail");
+    }
+    for profile in &unknown_timing {
+        for (kind, seen) in &profile.unknown_timing {
+            writeln!(
+                output,
+                "  {}: {} line{} of kind `{kind}`",
+                profile.project,
+                seen.count,
+                if seen.count == 1 { "" } else { "s" }
+            )
+            .expect("writing a String cannot fail");
+            writeln!(output, "    {}", seen.example).expect("writing a String cannot fail");
+        }
+    }
+
+    let has_unknown_timing = !unknown_timing.is_empty();
     let has_verification_failure = profiles
         .iter()
         .any(|profile| profile.verification_failure.is_some());
@@ -567,6 +714,12 @@ fn render_profiles(
         writeln!(
             output,
             "\nNEXT: inspect the nested timings inside the CONTROL container; act on a nested SIMPLE or SMART step, not on the container row."
+        )
+        .expect("writing a String cannot fail");
+    } else if has_unknown_timing {
+        writeln!(
+            output,
+            "\nNEXT: nothing crossed the configured thresholds, but unrecognized timing lines mean this green is not trustworthy. Teach the parser those kinds and rerun."
         )
         .expect("writing a String cannot fail");
     } else {
@@ -697,7 +850,8 @@ click timing: started tactic example.contract 2 execute_step class smart stateme
 click timing: started tactic example.contract 2 certified_statement_step class simple statement 4 source 5
 click timing: tactic example.contract 2 certified_statement_step class simple statement 4 source 5 1.250000s
 "#;
-        let profile = parse_profile("sample", output, Thresholds::default(), true);
+        let profile = parse_profile("sample", output, Thresholds::default(), true)
+            .expect("the current timing format should parse");
         assert_eq!(profile.slow_steps.len(), 1);
         assert_eq!(
             profile.slow_steps[0].key.tactic_name,
@@ -707,6 +861,107 @@ click timing: tactic example.contract 2 certified_statement_step class simple st
         assert_eq!(profile.active.len(), 1);
         assert_eq!(profile.active[0].tactic_name, "execute_step");
         assert_eq!(profile.active[0].category, TacticCategory::Smart);
+        assert!(profile.unknown_timing.is_empty());
+    }
+
+    /// The certification timing kinds added on 2026-07-30 share the stderr
+    /// stream with the tactic events. The profiler must skip them silently
+    /// and, crucially, must not count them as drift.
+    #[test]
+    fn recognizes_and_skips_the_certification_timing_kinds() {
+        let output = r#"
+click timing: source examples/sample.click
+click timing: function example_function 0.512s
+click timing: contract execution example_function 0.400000s
+click timing: contract claims example_function 0.090000s
+click timing: contract entry resources do not satisfy requirements
+click timing: contract entry resources do not certify requirement safety
+click timing: claim paths example_function prepared 12 in 0.030000s
+click timing: claim example_function Ensure(4) 0.012000s
+click timing: tactic example.contract 0 execute_step class smart statement 1 source 2 3.000000s
+"#;
+        let profile = parse_profile("sample", output, Thresholds::default(), false)
+            .expect("the current timing format should parse");
+
+        assert_eq!(profile.slow_steps.len(), 1);
+        assert_eq!(profile.slow_steps[0].key.tactic_name, "execute_step");
+        assert!(
+            profile.unknown_timing.is_empty(),
+            "certification kinds must be recognized, not counted as drift: {:?}",
+            profile.unknown_timing
+        );
+    }
+
+    #[test]
+    fn unrecognized_timing_kinds_are_counted_and_reported() {
+        let output = r#"
+click timing: source examples/sample.click
+click timing: gadget alpha 1.000000s
+click timing: gadget beta 2.000000s
+click timing: widget 0.5s
+"#;
+        let profile = parse_profile("sample", output, Thresholds::default(), false)
+            .expect("unknown kinds are a warning, not a parse failure");
+
+        assert_eq!(profile.unknown_timing.len(), 2);
+        assert_eq!(profile.unknown_timing["gadget"].count, 2);
+        assert_eq!(
+            profile.unknown_timing["gadget"].example,
+            "click timing: gadget alpha 1.000000s"
+        );
+        assert_eq!(profile.unknown_timing["widget"].count, 1);
+
+        let report = render_profiles(&[profile], Thresholds::default(), DEFAULT_TIME_LIMIT);
+
+        assert!(report.contains("UNRECOGNIZED TIMING LINES"));
+        assert!(report.contains("2 lines of kind `gadget`"));
+        assert!(report.contains("1 line of kind `widget`"));
+        assert!(report.contains("click timing: gadget alpha 1.000000s"));
+        assert!(
+            report.contains("this green is not trustworthy"),
+            "a report that skipped timing lines must not read as clean:\n{report}"
+        );
+        assert!(!report.contains(
+            "NEXT: no completed smart expansion candidates or simple engine bottlenecks"
+        ));
+    }
+
+    /// Drift in the kinds the profile is built from is a false green, not a
+    /// warning: the report would show no slow steps because it understood
+    /// none. These must fail loudly.
+    #[test]
+    fn drifted_tactic_timing_lines_are_a_loud_error() {
+        for drifted in [
+            // An extra trailing field.
+            "click timing: tactic example.contract 0 step class simple statement 1 source 2 nested 3 1.000000s",
+            // A renamed structural keyword.
+            "click timing: tactic example.contract 0 step kind simple statement 1 source 2 1.000000s",
+            // An unknown class.
+            "click timing: tactic example.contract 0 step class hybrid statement 1 source 2 1.000000s",
+            // A non-numeric elapsed time.
+            "click timing: tactic example.contract 0 step class simple statement 1 source 2 slows",
+            // The started variant, with a dropped field.
+            "click timing: started tactic example.contract 0 step class simple statement 1 source",
+            // An empty source path.
+            "click timing: source ",
+        ] {
+            let output = format!("click timing: source examples/sample.click\n{drifted}\n");
+            let message = parse_profile("sample", &output, Thresholds::default(), false)
+                .expect_err(&format!("drifted line should be loud: {drifted}"));
+            assert!(message.contains("has drifted"), "{message}");
+            assert!(message.contains(drifted.trim_end()), "{message}");
+        }
+    }
+
+    #[test]
+    fn finished_tactic_lines_tolerate_extra_whitespace_and_precision() {
+        let output = "click timing: source examples/sample.click\n\
+                      click timing:  tactic  example.contract 0 step class simple statement 1 source 2   0.75s  \n";
+        let profile = parse_profile("sample", output, Thresholds::default(), false)
+            .expect("whitespace variation is not format drift");
+
+        assert_eq!(profile.slow_steps.len(), 1);
+        assert_eq!(profile.slow_steps[0].elapsed, Duration::from_millis(750));
     }
 
     #[test]
@@ -762,7 +1017,8 @@ click timing: tactic example.contract 0 certified_statement_step class simple st
 click timing: tactic example.contract 1 execute_step class smart statement 2 source 20 2.500000s
 click timing: tactic example.contract 2 have class control statement 3 source 30 2.100000s
 "#;
-        let mut profile = parse_profile("sample", output, Thresholds::default(), false);
+        let mut profile = parse_profile("sample", output, Thresholds::default(), false)
+            .expect("the current timing format should parse");
         for (index, step) in profile.slow_steps.iter_mut().enumerate() {
             step.key.position = Some(SourcePosition {
                 line: index + 10,
@@ -787,7 +1043,8 @@ click timing: tactic example.contract 2 have class control statement 3 source 30
 click timing: source examples/sample.click
 click timing: tactic example.contract 0 have class control statement 1 source 10 2.500000s
 "#;
-        let mut profile = parse_profile("sample", output, Thresholds::default(), false);
+        let mut profile = parse_profile("sample", output, Thresholds::default(), false)
+            .expect("the current timing format should parse");
         profile.slow_steps[0].key.position = Some(SourcePosition {
             line: 10,
             column: 5,
@@ -809,7 +1066,8 @@ click timing: tactic example.contract 0 execute_step class smart statement 1 sou
 "#,
             Thresholds::default(),
             false,
-        );
+        )
+        .expect("the current timing format should parse");
         successful.slow_steps[0].key.position = Some(SourcePosition {
             line: 12,
             column: 5,
@@ -819,7 +1077,8 @@ click timing: tactic example.contract 0 execute_step class smart statement 1 sou
             "click timing: source examples/failed.click",
             Thresholds::default(),
             false,
-        );
+        )
+        .expect("the current timing format should parse");
         failed.verification_failure =
             Some("example sidecar failed: certificate did not replay".to_string());
 

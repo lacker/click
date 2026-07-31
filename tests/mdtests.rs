@@ -1,10 +1,9 @@
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::time::Duration;
 
 use click::cli::{
-    BoundedOutput, default_worker_count, format_duration, parse_duration, run_bounded,
+    IsolatedRun, default_worker_count, duration_from_env, isolated_test_command, run_isolated,
     run_parallel,
 };
 use click::lang::click::verify_c0_sources;
@@ -126,71 +125,25 @@ fn mdtests() {
 }
 
 fn mdtest_time_limit() -> Duration {
-    let Some(source) = std::env::var_os(MDTEST_TIME_LIMIT) else {
-        return DEFAULT_MDTEST_TIME_LIMIT;
-    };
-    let source = source
-        .to_str()
-        .unwrap_or_else(|| panic!("{MDTEST_TIME_LIMIT} must be valid UTF-8"));
-    parse_duration(source).unwrap_or_else(|message| panic!("{MDTEST_TIME_LIMIT}: {message}"))
+    duration_from_env(MDTEST_TIME_LIMIT, DEFAULT_MDTEST_TIME_LIMIT)
+        .unwrap_or_else(|message| panic!("{message}"))
 }
 
 /// Runs one mdtest in an isolated child process (Click proofs have
 /// overflowed the stack before; isolation keeps one crash from hiding the
 /// other results) under a wall-clock limit.
 fn run_mdtest_with_timeout(path: &Path, time_limit: Duration) -> Result<(), String> {
-    let executable = std::env::current_exe().map_err(|error| {
-        format!("failed to locate the mdtest integration-test executable: {error}")
-    })?;
-    let mut command = Command::new(executable);
-    command
-        .arg("--exact")
-        .arg("mdtests")
-        .arg("--nocapture")
-        .env(MDTEST_CHILD_PATH, path)
-        // Prover recursion follows term structure, which nests far deeper
-        // than the default test-thread stack on snapshot-heavy fixtures.
-        .env("RUST_MIN_STACK", "67108864");
-    let label = format!("isolated mdtest `{}`", path.display());
-    let (status, stdout, stderr) = match run_bounded(command, time_limit, &label)? {
-        BoundedOutput::Completed(output) => (Some(output.status), output.stdout, output.stderr),
-        BoundedOutput::TimedOut { stdout, stderr, .. } => (None, stdout, stderr),
-    };
-    let output = format!(
-        "{}{}",
-        String::from_utf8_lossy(&stdout),
-        String::from_utf8_lossy(&stderr)
-    );
-    let Some(status) = status else {
-        return Err(format!(
-            "exceeded the per-file mdtest time limit of {}; set {MDTEST_TIME_LIMIT} to override it{}",
-            format_duration(time_limit),
-            indented_output(&output)
-        ));
-    };
-    if !status.success() {
-        return Err(format!(
-            "failed in its isolated mdtest process{}",
-            indented_output(&output)
-        ));
-    }
-    Ok(())
-}
-
-fn indented_output(output: &str) -> String {
-    let output = output.trim();
-    if output.is_empty() {
-        String::new()
-    } else {
-        format!(
-            "\n{}",
-            output
-                .lines()
-                .map(|line| format!("  {line}"))
-                .collect::<Vec<_>>()
-                .join("\n")
-        )
-    }
+    let command = isolated_test_command("mdtests", MDTEST_CHILD_PATH, path)?;
+    run_isolated(
+        command,
+        time_limit,
+        IsolatedRun {
+            label: &format!("isolated mdtest `{}`", path.display()),
+            limit_description: "the per-file mdtest time limit",
+            limit_variable: MDTEST_TIME_LIMIT,
+            process_description: "its isolated mdtest process",
+        },
+    )
 }
 
 fn run_mdtest(path: &Path) {
