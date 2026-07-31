@@ -27,10 +27,6 @@ const QUARANTINED: &[(&str, &str)] = &[
         "invariant closer cannot re-derive the symbolically extended bound (item-7 nested snapshot spellings)",
     ),
     (
-        "composite_resource_owner_buffer_field_dependent.md",
-        "fold consumption cannot match deeply nested snapshot spellings (item-7)",
-    ),
-    (
         "composite_resource_vector_fill_loop_snapshot.md",
         "back-edge closer needs named memory states; per-spelling bridging exhausted (notes/canonical-memory.md, branch claude/forall-extension-wip)",
     ),
