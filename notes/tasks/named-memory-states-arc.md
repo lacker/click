@@ -360,6 +360,91 @@ snapshot-spelling drift the DAG arm was built for, and now that operands can
 be placed, stage 2's landed `c_memory_load_is_unchanged` arm should finally be
 on the path.
 
+### 2026-07-31 (session 3) — stage 3
+
+**The stage-3 target was not what the corpus said it was.** Stage 2a handed over
+"every remaining member fails in the invariant closer on a `ForAll` path goal",
+with the expectation that the goal needed load-equality across snapshot drift.
+Diagnosing `composite_resource_vector_fill_loop_snapshot` end to end says
+otherwise for the vector-shaped members: **the closer was being handed goals
+that are true only vacuously, and could not see the vacuity.**
+
+*The mechanism, measured.* `evaluate_c_memory_load_paths` resolves a load by
+walking the snapshot's cells and, for each cell it cannot prove distinct from
+the loaded pointer, splitting into an aliasing path and a distinct path
+(`CMemory::first_unresolved_same_block_cell` +
+`add_pointer_offset_equality_execution_pure_facts`). For
+`(owner->data)[k]` at the back edge that produced five paths — one per owner
+field, one for the store cell, one for "distinct from everything". The three
+owner-field paths carry the guard "this element's address *is* `owner->cap`"
+(resp. `->data`, and the trailing padding slot) and a goal of the form
+`owner->cap == value`, which nothing can prove. They are vacuous: the resource
+declares `separate(memory(owner[0..4]), memory((owner->data)[0..owner->cap]))`,
+so an element with `0 <= k < cap` cannot be an owner field.
+
+Why the splitter did not prune them, and why the closer could not close them,
+are the same fact seen twice. `verify_invariant_checks_at_back_edge_using`
+lowers with `defer_non_exact_condition_reasoning()`, and under that flag the
+range-containment prover refuses the order chain that puts `k` inside
+`data[0..cap]`. Probed directly at the split site: with the flag, distinctness
+is unprovable; without it, provable from the *same* facts, and provable from
+the bound guard alone. So the paths get emitted, and then the closer — which no
+longer defers — has every fact it needs to refute the guard but no rule that
+looks.
+
+*What landed.* `Assumptions::is_inconsistent` gained
+`alias_guard_refuted_by_separation`: an assumed
+`PointerOffsetEqual(a, b) = true` is a contradiction when recorded separation
+puts `a` and `b` in disjoint ranges of one block. The vacuous paths then close
+by `Explosion`, which is what they always were. Two details worth keeping:
+
+- **Recovering the block.** `pointer_equality_condition` drops to a bare
+  `PointerOffsetEqual` exactly when the two pointers share a block, so the
+  guard no longer names it. The rule re-attaches the base block of a *separated
+  pair whose two ranges share a block*, which is not a guess: separation
+  constrains offsets only in that case, so the question asked is "do these two
+  offset terms fall in disjoint intervals of one block", a statement about the
+  offset terms alone.
+- **`pointer_in_range`, not the memory-resolution variant.** The first version
+  used `pointers_proven_distinct_for_memory_resolution` and cleared the mdtest
+  but not example `owned-vector`, whose `preserve` script does not `unfold` the
+  resource and so reaches the containment by a longer order chain. Measured on
+  that context: `pointers_proven_disjoint_by_range` = true while the
+  memory-resolution variant = false, with containment holding on exactly the
+  right pair. Scanning the separation facts directly with `pointer_in_range` is
+  both the semantically right predicate and the one that works.
+
+Reentrancy-guarded (containment re-enters condition reasoning, which reaches
+`is_inconsistent` again). Not flag-gated: it reads no derivations, so
+`CLICK_DISABLE_MEMORY_DAG=1` is bit-identical, exactly as for stage 2a.
+
+**Acceptance corpus movement.** No member passes yet; three moved off the
+invariant closer.
+
+- `composite_resource_vector_fill_loop_snapshot.md` — closer now closes. Fails
+  later, in `contract` path 0 tactic 2: grouped `simp` cannot replay
+  `ensures_2`'s postcondition derivation (the exit spelling of the same
+  `ForAll`). **~40 s**, up from ~5.6 s, because the proof now gets much further.
+  Still quarantined; both a correctness and a cost item.
+- example `owned-vector` — `vector_fill.loop(0).preserve` closes. Fails later
+  and elsewhere: `vector_replace_if.contract` tactic 8 `have` cannot find
+  `Implies(replace == 0, new == old)`. ~9 s.
+- `composite_resource_owner_buffer_field_dependent.md` — message moved off the
+  closer to "execution proof for `set_owned_first.ensures_0` path 0 changed
+  more than the certified ghost resource representation" (~5.7 s).
+- `bubble_pass3_max_suffix.md` / `bubble_sort3_two_pass_sorted.md` — unchanged
+  (~10 s each), and *these* are the real load-equality members: the missing goal
+  compares `load(m, p+k*4)` with `load(m', p+j*4)` where `m'` is `m` plus
+  cells for `local:j` and `local:tmp` only. Same blocks, differing cells in a
+  different block from the load. Stage 3's original target, still open.
+- example `owned-string`, `field_derived_precise_effect_after_metadata_write.md`
+  — not retested this session; no reason to expect movement.
+
+**Gates.** lib+bins 511 (510 + one new kernel test, ~3.2 s), mdtests 272
+visible (~9 s), examples (~7.1 s, up from ~5.3 s — `owned-vector` now runs
+further before failing). Green, and green again with
+`CLICK_DISABLE_MEMORY_DAG=1`.
+
 ## For the owner
 
 *(nothing yet — no surface-semantics question has come up; the `old`
