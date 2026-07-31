@@ -41,7 +41,7 @@ Reference material lives in `notes/` root, never in `tasks/`.
 | Task file (tasks/) | Status | One-line scope |
 |---|---|---|
 | certificate-spelling-gap.md | open (critical path) | Successor: the prover landed (owner_buffer FIXED, de-quarantined 0.06 s); all three remaining members provably fail in certificate lowering's surface spelling of snapshot-orphaned premises |
-| owned-string-loadable.md | in progress (agent) | The unfold cannot discharge `loadable(data[len])` — permission plumbing, independent of the critical path |
+| owned-string-loadable.md | loadable gap closed (2026-07-31) | DAG bridging landed (BlockDeclared/CellsForgotten edges, scoped to the loadable prover); example still quarantined — next frontier is the have postcondition derivation replay + a minutes-long runtime finding |
 | case-split-expansion-merge.md | open | Pure case-split certificates expand to an `if` tree that does not re-verify: the per-path merge loses the execution-path pairing. 2 tests quarantined on it |
 | invariant-closer-replay-cost.md | open | 65 s SIMPLE closer replay (130x over budget); fixing it de-quarantines bubble_sort3. Lead: reuse the planner's own derivation |
 | owned-vector-forward-fix.md | open (queued) | Propositional `Implies` gap at vector_replace_if tactic 8; retest after the critical path lands |

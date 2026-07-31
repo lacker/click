@@ -117,21 +117,49 @@ remaining failures is a load-equality question — certificate lowering
 (owner_buffer), a memoryless propositional gap (owned-vector), a
 permission question (owned-string).
 
-## Next, if the arc continues: a fourth edge kind (block allocation)
+## Landed 2026-07-31: fourth and fifth edge kinds, scoped consumers
 
-Declaring a local creates a block but records no edge, so entry states
-and executing states sit in **disjoint DAG components** ("arena
-identity is connected, arena derivations are not"). Session 1 rejected
-block-allocation edges as not worth it; the evidence now is stronger: a
-load-bearing deep-canonicalisation arm in
-`bitvector_terms_equal_for_memory_resolution` cannot be retired because
-removing it reddens `loop_stdlib_permutation_invariant.md` — its two
-snapshots differ exactly by one `local:i` block, unreachable by any
-walk today. (Also load-bearing: `load_unchanged_via_effect_chain`,
-needed by example owned-split-buffer `Ensure(4)`.) A fourth edge kind
-is a new increment: it must be recorded at every block producer and it
-risks displacing `Store` edges via first-wins on content-equal
-snapshots.
+The owned-string loadable work (notes/tasks/owned-string-loadable.md)
+landed the punted block-allocation edge plus one nobody had recorded:
+
+- `BlockDeclared` — recorded by `CMemory::with_block`, NEVER for havoc
+  marker blocks (`havoc:` / `call-havoc:` prefixes): a with_block-spelled
+  marker must keep behaving like havoc
+  (`conditions_equal_modulo_proven_snapshots_needs_frame_evidence`
+  caught exactly this during development).
+- `CellsForgotten` — recorded by `without_possible_aliasing_cells`, the
+  write-path prune: same state, cache-forgetting only. The case-split
+  prune (`without_cell` under an assumed-distinct branch) must never
+  record one; its spellings agree only under the branch assumption.
+
+**The critical scoping lesson:** the new edges plus the stronger
+walks (separation-strength `Store`-hop crossing, stored-value pinning,
+order-path DAG matching) CANNOT be enabled globally. Distinctness and
+equality answers feed execution pruning, canonical load spellings, and
+simp case-split structure, all of which certified sidecars replay
+byte-for-byte; unscoped enabling broke owned-string's later functions
+(pop_preserves_first: "planned simp context premise is not an
+available source fact") and drifted Return-value spellings through
+shared-fuel exhaustion. The power is therefore gated behind
+`with_extended_dag_bridging`, entered ONLY by
+`Assumptions::proves_memory_loadable`; everywhere else the new edges
+look exactly like the pre-arc absence of an edge. Fuel discipline
+matters for the same reason: the hop distinctness runs under
+`with_isolated_memory_resolution_fuel` so it cannot drain the
+enclosing query's budget (fuel-coupled spellings must replay).
+
+Session 1's displacement worry (first-wins letting a BlockDeclared /
+CellsForgotten edge shadow a Store edge on content-equal snapshots) has
+not bitten: both gate passes green in both DAG modes.
+
+The old rationale, for reference: entry states and executing states sat
+in **disjoint DAG components** ("arena identity is connected, arena
+derivations are not"); the load-bearing deep-canonicalisation arm in
+`bitvector_terms_equal_for_memory_resolution` still cannot be retired
+(`loop_stdlib_permutation_invariant.md`), and
+`load_unchanged_via_effect_chain` is still needed by owned-split-buffer
+`Ensure(4)` — the new edges are consumed only inside the loadable
+prover, so neither situation changed.
 
 ## For the owner
 

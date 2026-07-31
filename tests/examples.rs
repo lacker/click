@@ -20,7 +20,7 @@ const DEFAULT_EXAMPLE_TIME_LIMIT: Duration = Duration::from_secs(10 * 60);
 const QUARANTINED: &[(&str, &str)] = &[
     (
         "owned-string",
-        "owned_string_push tactic 7: terminated_at unfold cannot discharge loadable(data[len]) (store-provenance family)",
+        "owned_string_push tactic 7: loadable(data[len]) now discharges (DAG bridging, 2026-07-31); next frontier is the terminated_at have's postcondition derivation replay, and the whole example runs minutes (slow-simple finding)",
     ),
     (
         "owned-vector",
