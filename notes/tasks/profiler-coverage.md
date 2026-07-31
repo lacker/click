@@ -1,6 +1,7 @@
 # Profiler coverage — the two holes in the profiling story
 
-Claimed: worktree-agent-afe95e523b42125d8 (2026-07-31)
+Claimed: (released 2026-07-31; worked on branch
+worktree-agent-afe95e523b42125d8, not merged to master)
 
 ## Why
 
@@ -53,58 +54,64 @@ tactic format, so `IGNORED_TIMING_KINDS` needed no new entries for it.
 
 ## The numbers (serial runs, dev profile, 2026-07-31)
 
-### bubble_sort3_two_pass_sorted — 153.1 s
+### bubble_sort3_two_pass_sorted — 139.4 s, passes
 
 | bucket | time | share |
 |---|---|---|
-| SIMPLE | 77.7 s | 50.7 % |
-| SMART | 75.1 s | 49.0 % |
+| SIMPLE | 68.9 s | 49.4 % |
+| SMART | 70.1 s | 50.3 % |
 | CONTROL | 0 | 0.0 % |
-| CERTIFICATION | 0.29 s | 0.2 % |
+| CERTIFICATION | 0.28 s | 0.2 % |
 | UNATTRIBUTED | 0.06 s | 0.0 % |
 
 Two steps are the whole run, and they are the same work done twice:
 
-- `loop(1).preserve` `simp` — **73.7 s SMART** (the planner searching
+- `loop(1).preserve` `simp` — **65.7 s SMART** (the planner searching
   for the back-edge certificate)
-- `loop(1).preserve` `close_invariants` — **70.6 s SIMPLE** (replaying
+- `loop(1).preserve` `close_invariants` — **65.1 s SIMPLE** (replaying
   the certificate that search produced)
 
-`loop(0)` is the same shape at ~3.4 s each.
+`loop(0)` is the same shape at ~3.3 s each.
 
 **Verdict: half smart, half a slow-simple engine bug.** The SIMPLE half
-is 147x over the 500 ms simple budget. Per the settled invariant this
+is 130x over the 500 ms simple budget. Per the settled invariant this
 is *not* expandable: expanding the enclosing `simp` only emits the
-certificate whose `close_invariants` replay is the 70 s. The engine
-path to fix is `c_loop_invariants_hold_at_back_edge_using`, which
-matches the earlier finding that bubble_sort3's cost is fact scanning
-(540k comparisons) rather than snapshot comparison.
+certificate whose `close_invariants` replay is the other 65 s. The
+engine path to fix is `c_loop_invariants_hold_at_back_edge_using`,
+which matches the earlier finding that bubble_sort3's cost is fact
+scanning (540k comparisons) rather than snapshot comparison.
 
-### field_derived_precise_effect_after_metadata_write — 231.5 s measured
+### field_derived_precise_effect_after_metadata_write — 210.3 s measured, fails
 
 This mdtest **fails** verification (it is quarantined as broken, not
-merely slow), so no `function` total is emitted and the split is over
-measured tactic time.
+merely slow), so no `function` total line is emitted and the split is
+over measured tactic time. Wall clock was 214 s, so the measured time
+is essentially the whole run.
 
 | bucket | time | share |
 |---|---|---|
-| SMART | ~202 s | ~87 % |
-| SIMPLE | ~29 s | ~13 % |
+| SMART | 181.4 s | 86.3 % |
+| SIMPLE | 28.9 s | 13.7 % |
 | CONTROL | 0 | 0.0 % |
+| CERTIFICATION | 0 | 0.0 % |
+| UNATTRIBUTED | 0 | 0.0 % |
 
 The steps, all in the grouped `buffer_push.contract` proof:
 
-- `simp` at `:84:5` — **182.0 s SMART** (the trailing grouped simp)
-- `fold` at `:82:5` — **29.4 s SIMPLE**
-- `have` at `:76:5` / `:75:5` / `:74:5` — 14.7 s / 2.8 s / 1.9 s SMART
+- `simp` at `:84:5` — **162.6 s SMART** (the trailing grouped simp)
+- `fold` at `:82:5` — **28.9 s SIMPLE**
+- `have` at `:76:5` / `:75:5` / `:74:5` — 14.2 s / 2.7 s / 1.8 s SMART
 
 **Verdict: overwhelmingly smart — expand-it territory, with one real
-simple offender.** The 182 s `simp` is proof search that never
+simple offender.** The 162.6 s `simp` is proof search that never
 succeeds; the run ends with "grouped `simp` could not certify its
 complete claim transition". Its cost is a *failure* cost, so expanding
 it is not available until the underlying derivation works
-(named-memory-states arc). The 29.4 s `fold` is a genuine slow-simple
-engine bug, 59x over budget, and is actionable independently.
+(named-memory-states arc). The 28.9 s `fold` is a genuine slow-simple
+engine bug, 58x over budget, and is actionable independently.
+
+Certification is not the story in either test: 0.2 % of bubble_sort3
+and zero of field_derived, which never reaches the kernel phase.
 
 ## Dead ends and things worth knowing
 
@@ -122,9 +129,13 @@ engine bug, 59x over budget, and is actionable independently.
   profiling. The profiler now degrades to "no source location" and
   lists them. Making those indices honest is a separate task.
 - **Measure serially.** Running both profiles concurrently inflated
-  bubble_sort3 from 141 s to 153 s. Ratios were stable; absolutes were
-  not.
-- Both slow runs are ~2.5 min and ~4 min. Run them backgrounded.
+  bubble_sort3 from 139 s to 153 s and field_derived from 210 s to
+  231 s. The class *ratios* were stable to within a percentage point;
+  the absolutes were not. Every number above is from a serial run.
+- Both slow runs are ~2.5 min and ~3.5 min. Run them backgrounded.
+- `field_derived`'s 210 s matches the 198.3 s recorded in
+  `named-memory-states-arc.md` stage 4 (dev profile, different
+  machine load), so the instrumentation did not change the cost.
 
 ## Repro
 
@@ -137,9 +148,13 @@ cargo run --quiet --bin click-profile -- --time-limit 10m --threshold 500ms \
 
 ## Follow-ups this opens
 
-1. `c_loop_invariants_hold_at_back_edge_using` is a 70 s simple replay
+1. `c_loop_invariants_hold_at_back_edge_using` is a 65 s simple replay
    in bubble_sort3. That is the engine bug the invariant says to fix
-   before expanding anything around it.
+   before expanding anything around it. It is also *exactly* the work
+   the smart planner already did one call earlier — the two halves of
+   the run are the same derivation twice — so caching the planner's
+   result for the replay is worth investigating before optimizing the
+   derivation itself.
 2. `fold` is a 29 s simple step in field_derived — a second, smaller
    engine bug on an independent path.
 3. Auto-planned loop-phase certificates should report source indices
