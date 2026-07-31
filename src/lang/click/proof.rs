@@ -9987,6 +9987,7 @@ fn finish_ordered_proof_replay(
                             std::slice::from_ref(&surface_tactic),
                         )
                         .expect("post-execution smart apply must lower to a simple tactic");
+                        let requirements_before = path_requirements.clone();
                         path_requirements = replay_outcome_apply_certificate(
                             &certificate,
                             theorem_environment,
@@ -10004,6 +10005,17 @@ fn finish_ordered_proof_replay(
                             click_function_environment,
                             &unfolded_predicates,
                         )?;
+                        // The recorded `apply` tactic is prefixed to every
+                        // claim certificate, so replay holds the theorem's
+                        // conclusions when the closer runs. These facts were
+                        // produced by replaying that very certificate, so
+                        // planning the closer against them is planning
+                        // against exactly the replay context.
+                        record_certificate_facts_from_replay(
+                            &requirements_before,
+                            &path_requirements,
+                            &mut surface_certificate_facts,
+                        );
                         for tactic in certificate.tactics() {
                             record_post_execution_surface_tactic(
                                 &mut path_surface_post_tactics,
@@ -10805,6 +10817,29 @@ fn finish_ordered_proof_replay(
                                                                     fact.proposition().clone()
                                                                 }),
                                                         );
+                                                        // The emitted have
+                                                        // script carries the
+                                                        // drain's
+                                                        // `unfold(...)`
+                                                        // prefix, so replay
+                                                        // proves from the
+                                                        // unfolded facts.
+                                                        // `surface_certificate_facts`
+                                                        // was snapshotted
+                                                        // before the drain's
+                                                        // unfolds ran;
+                                                        // apply them here so
+                                                        // generation plans
+                                                        // against exactly
+                                                        // the context replay
+                                                        // will hold.
+                                                        let certificate_facts =
+                                                            unfold_available_predicate_facts(
+                                                                predicate_environment,
+                                                                click_function_environment,
+                                                                &unfolded_predicates,
+                                                                &certificate_facts,
+                                                            )?;
                                                         let mut certificate_replay =
                                                             replay.clone();
                                                         certificate_replay
@@ -15138,6 +15173,27 @@ fn surface_smart_apply_have_certificate(
 fn strict_exit_gate() -> bool {
     static STRICT: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *STRICT.get_or_init(|| std::env::var_os("CLICK_STRICT_EXIT_GATE").is_some())
+}
+
+/// Track, in the certificate-generation fact set, the facts a recorded
+/// post-execution surface tactic just added to the drain's requirements.
+///
+/// `surface_certificate_facts` is snapshotted before the drain runs, but
+/// the certificate a claim ends up with is `[recorded post tactics ...,
+/// closer tactics ...]`. Facts produced by replaying a recorded tactic are
+/// therefore in scope when the closer replays; withholding them from
+/// generation only makes generation plan against strictly less than the
+/// replay judgment accepts.
+fn record_certificate_facts_from_replay(
+    before: &[Proposition],
+    after: &[Proposition],
+    surface_certificate_facts: &mut Vec<Proposition>,
+) {
+    for fact in after {
+        if !before.contains(fact) && !surface_certificate_facts.contains(fact) {
+            surface_certificate_facts.push(fact.clone());
+        }
+    }
 }
 
 fn tactic_is_deferred_post_execution(tactic: &ProofTactic) -> bool {
