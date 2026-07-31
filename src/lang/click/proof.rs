@@ -14988,7 +14988,24 @@ fn record_surface_replay_tactic(
                 for fact in available {
                     atomic_conjuncts(fact, &mut available_conjuncts);
                 }
-                for fact in available_conjuncts {
+                // Source-spelled separation facts (for example a resource
+                // body's canonical `separate(memory(object(owner)), ...)`
+                // aggregate) that can re-fold a decomposed per-field
+                // separation back to its declared spelling below.
+                let spelled_separations = available_conjuncts
+                    .iter()
+                    .copied()
+                    .filter(|candidate| {
+                        matches!(candidate, Proposition::CResourceSeparate { .. })
+                            && replay
+                                .surface_propositions
+                                .surfaces(candidate)
+                                .next()
+                                .is_some()
+                    })
+                    .collect::<Vec<_>>();
+                for fact in &available_conjuncts {
+                    let fact = *fact;
                     let selected_by_derivation = derivation_context.iter().any(|required| {
                         (*required).eq(fact)
                             || normalize_direct_atomic_memory_loads(required)
@@ -15011,6 +15028,41 @@ fn record_surface_replay_tactic(
                     if !selected_by_derivation && !non_reconstructible_permission {
                         continue;
                     }
+                    // A separation carried only as an ambient permission may
+                    // be one piece of a source-spelled aggregate (`unfold`
+                    // decomposes `separate(memory(object(owner)), ...)` into
+                    // per-field separations). Re-fold it: emit the strictly
+                    // stronger declared fact, whose canonical spelling the
+                    // replay derives the per-field pieces from, instead of
+                    // the decomposed piece.
+                    let fact = if !selected_by_derivation
+                        && matches!(fact, Proposition::CResourceSeparate { .. })
+                        // An arithmetically true separation (same base,
+                        // disjoint constant ranges) is derivable from any
+                        // premise set, so entailment cannot pick a fold
+                        // target for it; keep its own spelling.
+                        && assumptions_from_propositions(&[])
+                            .derive_atomic_proposition(fact)
+                            .is_none()
+                    {
+                        spelled_separations
+                            .iter()
+                            .copied()
+                            .find(|candidate| {
+                                *candidate != fact
+                                    && assumptions_from_propositions(std::slice::from_ref(
+                                        *candidate,
+                                    ))
+                                    .derive_atomic_proposition(fact)
+                                    .is_some()
+                                    && assumptions_from_propositions(std::slice::from_ref(fact))
+                                        .derive_atomic_proposition(candidate)
+                                        .is_none()
+                            })
+                            .unwrap_or(fact)
+                    } else {
+                        fact
+                    };
                     // A certified statement prerequisite may be represented by
                     // a source fact whose lowering differs only by canonical
                     // load materialization. Keep that checked equivalence here:

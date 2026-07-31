@@ -2138,12 +2138,6 @@ int32 increment_and_return_old(int32 p[1]) {
     }
 
     #[test]
-    // Quarantined: aggregate separation spelling. `unfold` decomposes
-    // `separate(memory(object(owner)), memory((owner->data)[0..owner->cap]))`
-    // into six pairwise field separations, so the aggregate `object(owner)`
-    // spelling never reaches the emitted premises. See
-    // notes/tasks/lib-ignored-expansion-tests.md.
-    #[ignore = "quarantined: unfold decomposes the aggregate object() separation; run with --ignored"]
     fn expansion_preserves_unfolded_resource_and_predicate_fact_spellings() {
         let c_source = r#"
 struct box {
@@ -2199,20 +2193,48 @@ int32 inspect(struct box* owner) {
         )
         .expect("the declaration should expand with unfolded surface facts");
 
+        // The assertions below are about the emitted `step using` premises,
+        // not the resource declaration echoed above them; scope to the block
+        // so a spelling surviving only in the declaration cannot pass.
+        let step_using = expanded
+            .split("step using {")
+            .nth(1)
+            .and_then(|rest| rest.split_once('}'))
+            .map(|(block, _)| block)
+            .expect("the expansion should emit a step using block");
         assert!(
-            expanded.contains("fact terminated_at(owner->data, owner->len);"),
-            "{expanded}"
-        );
-        assert!(
-            expanded.contains(
+            step_using.contains(
                 "fact separate(memory(object(owner)), memory((owner->data)[0..owner->cap]));"
             ),
             "{expanded}"
         );
+        // The aggregate premise replaces its per-field decomposition.
         assert!(
-            expanded.contains("fact owner->data[owner->len] == 0;"),
+            !step_using.contains("memory(owner->len), memory((owner->data)"),
             "{expanded}"
         );
+        assert!(
+            !step_using.contains("memory(owner->cap), memory((owner->data)"),
+            "{expanded}"
+        );
+        assert!(
+            !step_using.contains("memory(owner->data), memory((owner->data)"),
+            "{expanded}"
+        );
+        // The proof unfolds `terminated_at`, so the premise carries the
+        // unfolded predicate body's canonical spelling, and only the resource
+        // declaration keeps the folded call spelling.
+        assert!(
+            step_using.contains("fact owner->data[owner->len] == 0;"),
+            "{expanded}"
+        );
+        assert!(!step_using.contains("terminated_at"), "{expanded}");
+        assert!(
+            expanded.contains("fact terminated_at(owner->data, owner->len);"),
+            "{expanded}"
+        );
+        verify_c0_sources(&expanded, &[("inspect.c", c_source)])
+            .expect("the re-folded aggregate premise should re-verify");
     }
 
     #[test]
