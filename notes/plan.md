@@ -24,6 +24,7 @@ click-audit (full run 314 s, 98 sites passing).
 | docs-vocabulary-pass.md | done | Inventory + synonyms documented; audit docs match the binary (worktree-agent-ae547bd447d583266) |
 | parser-ergonomics.md | done | Both stale: `a->b->c` verifies (new mdtest), else already optional; 22 no-op else paddings removed; doubly-indirect `owns` parked as C5 |
 | lib-ignored-expansion-tests.md | done | All 7 still fail, each re-diagnosed; 4 trace to one contradictory premise-selection policy |
+| certificate-gateway-bypasses.md | open | Smart acceptance bypasses certificate replay at function exit (3 sites); invariant-vs-soundness call needed |
 | store-provenance-family.md | parked | owned-string, owned-vector, 6 mdtests — blocked on the canonical-memory arc |
 | repo-hygiene.md | blocked | Stale branches/worktrees/stash — deletions need the owner |
 
