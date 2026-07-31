@@ -34,14 +34,6 @@ const QUARANTINED: &[(&str, &str)] = &[
         "field_derived_precise_effect_after_metadata_write.md",
         "ensures derivations need named memory states; certified context does not derive them (notes/regression-history.md)",
     ),
-    (
-        "sort3_sorted.md",
-        "budget violation: 2.2 s smart simp; its pure-case-split expansion does not re-verify — the per-path certificate merge into one `if` tree is unfaithful for this shape (notes/tasks/case-split-expansion-merge.md)",
-    ),
-    (
-        "bubble_sort3_loop_sorted.md",
-        "budget violation: 3.5 s smart simp; same pure-case-split expansion bug as sort3_sorted",
-    ),
 ];
 
 #[test]
