@@ -32,18 +32,12 @@ int32 count_three_matches(int32 p[3], int32 x) {
     count = 0;
     if (p[0] == x) {
         count = count + 1;
-    } else {
-        count = count;
     }
     if (p[1] == x) {
         count = count + 1;
-    } else {
-        count = count;
     }
     if (p[2] == x) {
         count = count + 1;
-    } else {
-        count = count;
     }
     return count;
 }

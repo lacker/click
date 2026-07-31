@@ -10,18 +10,12 @@ int32 count_byte3(uint8 p[], uint8 x) {
     count = 0;
     if (p[0] == x) {
         count = count + 1;
-    } else {
-        count = count;
     }
     if (p[1] == x) {
         count = count + 1;
-    } else {
-        count = count;
     }
     if (p[2] == x) {
         count = count + 1;
-    } else {
-        count = count;
     }
     return count;
 }
