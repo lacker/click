@@ -1127,13 +1127,21 @@ impl Assumptions {
             let (ConditionTerm::Bitvector32Equal(left, right), true) = (condition, value) else {
                 continue;
             };
-            if self.bitvector_terms_proven_equal(term, left)
-                && let Some(value) = signed_bitvector_constant(right)
+            // Only a fact with a constant on one side can name a constant for
+            // `term`, and `signed_bitvector_constant` is a syntactic fold.
+            // Test it before the equality search, which is the expensive
+            // memory-load-bridging one: the conjunction is unchanged, so this
+            // decides exactly the same facts, just without proving equalities
+            // whose fact could not answer the question anyway.
+            let left_constant = signed_bitvector_constant(left);
+            let right_constant = signed_bitvector_constant(right);
+            if let Some(value) = right_constant
+                && self.bitvector_terms_proven_equal(term, left)
             {
                 return Some(value);
             }
-            if self.bitvector_terms_proven_equal(term, right)
-                && let Some(value) = signed_bitvector_constant(left)
+            if let Some(value) = left_constant
+                && self.bitvector_terms_proven_equal(term, right)
             {
                 return Some(value);
             }
