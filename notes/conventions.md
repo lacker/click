@@ -9,10 +9,14 @@ work happens.
 Every change validates all three before landing:
 
 ```
-cargo nextest run --lib          # 465 tests, ~5 s
+cargo nextest run --lib --bins   # ~490 tests, ~5 s
 cargo test --test mdtests        # ~10 s
-cargo test --test examples       # ~19 s
+cargo test --test examples       # ~11 s
 ```
+
+`--lib` alone does NOT run the binaries' `#[cfg(test)]` modules — the CLI
+tests went unexercised by the gate set until 2026-07-30. Always pass
+`--bins` too.
 
 Commit direct to master in small validated steps. Gate-validated work
 merges to master without asking; ask before merging pre-existing

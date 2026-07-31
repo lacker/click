@@ -20,11 +20,11 @@ const DEFAULT_EXAMPLE_TIME_LIMIT: Duration = Duration::from_secs(10 * 60);
 const QUARANTINED: &[(&str, &str)] = &[
     (
         "owned-string",
-        "owned_string_len fails: exact symbolic execution produced no valid paths",
+        "owned_string_push tactic 7: terminated_at unfold cannot discharge loadable(data[len]) (store-provenance family)",
     ),
     (
         "owned-vector",
-        "whole-file verification exceeds 10 minutes",
+        "vector_fill.loop(0).preserve: invariant closer misses a ForAll path goal (fails in ~12 s; named-memory-states family)",
     ),
 ];
 
