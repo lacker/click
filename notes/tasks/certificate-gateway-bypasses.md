@@ -126,3 +126,38 @@ pure_click_functions, pure_have_rejects_advance (expected-error text
 drift only), resource_summary_splits_write_range, sort3_permutation,
 sort3_permutation_predicate, witness_and_choose, theorem_apply_in_
 function_proof.
+
+
+## Migration log, continued (late evening)
+
+- DONE: unfold-emission in exit-claim certificates
+  (`lower_outcome_simp_proof` is now a dispatcher over
+  `lower_outcome_simp_proof_direct`): (a) an opaque predicate in the
+  kernel goal is unfolded best-effort and the certificate proves the
+  body; (b) when the drain's unfold set is active, its unfolds are
+  prefixed to the emitted have script so replay lowers the surface
+  goal and premises to the same spellings the tactics certify.
+  Strict-gate corpus: 22 -> 14 (eight fixed, none broken).
+
+Remaining 14 by category: 4 expressible-path-facts, 2
+premise-not-available, 3 existential lowering, 5 smart-shaped
+post-execution `have` (list in notes; `pure_have_rejects_advance` is
+expected-error text drift only).
+
+Diagnosed but not fixed — the next iteration starts here:
+`click_array_refs` (`identity_two_arrays.unfolded_requirement`) fails
+in the expressible-path-facts generator (proof.rs ~12774) at the
+SELF-CHECK stage: premises spell as
+[loadable(p[0..1]), loadable(q[0..1]), same_first(p, q)] but
+check_atomic_derivation_goal rejects. Open question: which arm pushed
+the opaque predicate premise and what kernel fact the derivation
+actually consumed — instrument kernel_premises at the self-check
+before theorizing. A speculative arm accepting unfold-spelled premises
+was implemented and REVERTED (no measured effect; recorded here so it
+is not re-attempted blind).
+
+Then: the 3 existential cases (concatenate witness/choose with the
+simp certificate — the pieces are all simple tactics), the 5
+smart-have shapes (route through the same have-certificate path the
+mid-execution arm uses), then flip the default and do the ClosedClaim
+restructure per the accepted design.

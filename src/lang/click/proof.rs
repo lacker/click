@@ -12902,12 +12902,11 @@ fn lower_outcome_simp_proof(
             }
         }
     } else {
-        let mut surface_names = Vec::new();
-        collect_surface_predicate_calls(surface_goal, &mut surface_names);
-        surface_names.retain(|name| {
-            replay.unfolded_predicates.contains(name)
-                && predicate_environment.get(name).is_some()
-        });
+        // Carry the drain's whole unfold set: replay lowers the goal AND
+        // every listed premise under the script's unfolds, and a premise
+        // can be an unfold-active predicate call even when the goal is not.
+        let mut surface_names = replay.unfolded_predicates.clone();
+        surface_names.retain(|name| predicate_environment.get(name).is_some());
         if !surface_names.is_empty() {
             let inner = lower_outcome_simp_proof_direct(
                 replay,
