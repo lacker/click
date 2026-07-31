@@ -361,11 +361,7 @@ const TIMING_PREFIX: &str = "click timing: ";
 /// `claim paths` and `claim` are sub-phases of `contract claims`, which the
 /// accounting already consumes whole; counting them again would double-count
 /// certification time.
-const IGNORED_TIMING_KINDS: &[&str] = &[
-    "contract entry resources",
-    "claim paths",
-    "claim",
-];
+const IGNORED_TIMING_KINDS: &[&str] = &["contract entry resources", "claim paths", "claim"];
 
 /// The two `click timing:` kinds that together make up the kernel
 /// certification phase of one function.
