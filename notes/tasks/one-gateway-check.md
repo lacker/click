@@ -1,7 +1,7 @@
 # One-gateway check: no bypass around TacticCertificate replay
 
-Status: open
-Claimed:
+Status: in progress
+Claimed: worktree-agent-a40eeb7b281c1fee1 2026-07-30
 
 Scope: one bounded code audit (reading task, not a refactor) verifying
 that every smart-tactic success commits through TacticCertificate
