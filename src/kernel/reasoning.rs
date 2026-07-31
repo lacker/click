@@ -37,6 +37,26 @@ pub(super) fn with_memory_resolution_fuel<T>(body: impl FnOnce() -> T) -> T {
     })
 }
 
+/// Runs `body` under its own capped budget, shielding whatever budget the
+/// caller had armed: the outer query sees its fuel untouched no matter what
+/// `body` spends. For advisory arms (memory-DAG hop checks) that run inside
+/// arbitrary resolution queries — without the shield their spending would
+/// perturb fuel-coupled answers elsewhere, and certified spellings must
+/// replay byte-for-byte. Deterministic: the cap is a constant, so the answer
+/// depends only on the inputs.
+pub(super) fn with_isolated_memory_resolution_fuel<T>(
+    budget: usize,
+    body: impl FnOnce() -> T,
+) -> T {
+    MEMORY_RESOLUTION_FUEL.with(|fuel| {
+        let saved = fuel.get();
+        fuel.set(Some(budget));
+        let result = body();
+        fuel.set(saved);
+        result
+    })
+}
+
 /// Consumes one unit of the armed budget. Returns false when the budget is
 /// exhausted; callers must fail their check (never claim a proof) then.
 /// Outside any armed query this is a no-op that returns true.
