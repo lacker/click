@@ -3132,56 +3132,7 @@ impl Assumptions {
             return true;
         }
 
-        if self.memory_snapshots_directly_proven_equal_for_load(
-            left_memory,
-            right_memory,
-            left_pointer,
-        ) || self.memory_snapshots_proven_equal_for_load(left_memory, right_memory, left_pointer)
-        {
-            return true;
-        }
-
         false
-    }
-
-    fn memory_snapshots_directly_proven_equal_for_load(
-        &self,
-        left: &CMemory,
-        right: &CMemory,
-        pointer: &Pointer,
-    ) -> bool {
-        self.prop_facts.iter().any(|proposition| match proposition {
-            Proposition::CMemoryMutatesOnly {
-                before,
-                after,
-                pointers,
-            } => {
-                let matches = memories_match_for_pointer_load(before, left, pointer)
-                    && memories_match_for_pointer_load(after, right, pointer)
-                    || memories_match_for_pointer_load(before, right, pointer)
-                        && memories_match_for_pointer_load(after, left, pointer);
-                matches
-                    && pointers
-                        .iter()
-                        .all(|write| pointers_proven_distinct(write, pointer, self))
-            }
-            Proposition::CMemoryEffectSummary {
-                before,
-                after,
-                mutable_ranges,
-            } => {
-                let endpoint_matches = |expected: &CMemory, actual: &CMemory| {
-                    memory_matches_effect_summary_endpoint(expected, actual, pointer)
-                        || memories_match_for_pointer_load_under_assumptions(
-                            expected, actual, pointer, self,
-                        )
-                };
-                let matches = endpoint_matches(before, left) && endpoint_matches(after, right)
-                    || endpoint_matches(before, right) && endpoint_matches(after, left);
-                matches && self.ranges_proven_disjoint_from_pointer(mutable_ranges, pointer)
-            }
-            _ => false,
-        })
     }
 
     pub(super) fn memory_snapshots_directly_proven_equal_for_memory_resolution(
@@ -3222,50 +3173,6 @@ impl Assumptions {
             }
             _ => false,
         })
-    }
-
-    fn memory_snapshots_proven_equal_for_load(
-        &self,
-        left: &CMemory,
-        right: &CMemory,
-        pointer: &Pointer,
-    ) -> bool {
-        let mut pending = vec![left.clone()];
-        let mut visited = BTreeSet::new();
-
-        while let Some(current) = pending.pop() {
-            if !visited.insert(current.clone()) {
-                continue;
-            }
-            if memories_match_for_pointer_load(&current, right, pointer)
-                || memories_match_for_pointer_load_under_assumptions(&current, right, pointer, self)
-            {
-                return true;
-            }
-
-            for proposition in &self.prop_facts {
-                match proposition {
-                    Proposition::CMemoryMutatesOnly {
-                        before,
-                        after,
-                        pointers,
-                    } if pointers
-                        .iter()
-                        .all(|write| pointers_proven_distinct(write, pointer, self)) =>
-                    {
-                        if memories_match_for_pointer_load(before, &current, pointer) {
-                            pending.push(after.clone());
-                        }
-                        if memories_match_for_pointer_load(after, &current, pointer) {
-                            pending.push(before.clone());
-                        }
-                    }
-                    _ => {}
-                }
-            }
-        }
-
-        false
     }
 
     pub(super) fn resolve_memory_load_term(

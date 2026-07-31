@@ -559,6 +559,86 @@ frame that is hot is the *caller*, and attributing its cost to the
 canonicalizing arm it happens to contain is exactly the mistake made once
 already.
 
+#### Stage 4 — landed: the cell lookup, and what it is worth
+
+`memory_dag_cell_source` resolves one pointer against a snapshot by walking
+its derivation edges backwards. A `Store` edge whose pointer is provably the
+loaded one answers with the stored value; a provably distinct one is crossed;
+`CallHavoc` is crossed only under proven range-disjointness; `LoopHavoc` is
+never crossed; anything undecidable stops the walk and reports the node it
+stopped at. Both outcomes denote the same thing — *the value of loading this
+pointer in that node* — which is what makes two lookups comparable by arena
+identity alone. Hop-capped at 64 and reentrancy-guarded, since the hop
+predicates reach `decide`.
+
+**What it adds over stage 2.** Stage 2's `memory_derivations_reach` only asks
+whether one snapshot is reachable from the other, so it cannot relate
+*siblings*. Two calls each havocking a range disjoint from the loaded cell
+produce exactly that shape, and value bridging refuses them outright because
+each carries its own `call-havoc:N` marker so the block sets differ.
+Resolving both lands on one common ancestor.
+`sibling_snapshots_resolve_one_cell_to_a_common_ancestor` pins this and
+asserts the answer *equals* whether the DAG is on, so it is meaningful in
+both flag modes.
+
+Wired as an early arm in `memory_loads_proven_equal` (ahead of both snapshot
+comparisons and both `prop_facts` scans), in
+`bitvector_terms_equal_for_memory_resolution` and in both `proves` paths; and
+stage 2's arm moved ahead of the snapshot matcher inside
+`c_memory_load_is_unchanged`.
+
+#### Stage 5 — measured: the DAG does not subsume this cost
+
+`bubble_sort3_two_pass_sorted`: **139.6 s before, 137.4 s after.** Not the
+order of magnitude the recast projected, and the profile above says why: the
+subsumption target was mis-identified. Three separate measurements agree that
+the DAG cannot reach this cost.
+
+- **Only 6 of 540 000 top-level comparisons are load-vs-load.** A load
+  equality arm, however good, is being offered 0.001% of the traffic.
+- **95% of the calls fail.** Answering earlier cannot help a search whose
+  cost is in not finding anything.
+- **A one-sided select-over-store arm was built, measured, and removed.**
+  Resolving `load(m, p)` to a value and comparing it against the other side
+  is the natural reading of "what does this cell hold after these stores",
+  and it covers the 39% of calls with a load on exactly one side. It fired
+  **0 times in 295 290 lookups** on `bubble_pass3`: every single lookup
+  returned `None`. The reason is structural, not a bug — these loads read a
+  caller-provided symbolic buffer at symbolic indices, so neither the
+  snapshot's own cells nor any ancestor's hold a cell for them. There is no
+  store history to look up. The arm was deleted rather than kept as dead
+  weight; this paragraph is the record.
+
+**Retirement attempts.** Three value-bridging arms were removed one at a time
+and everything re-run.
+
+- **The deep-canonicalization arm in
+  `bitvector_terms_equal_for_memory_resolution` — STAYS.** It is the arm the
+  counters showed answering 0 of 1 077 050 times on `bubble_pass3`, so it
+  looked like the safest retirement in the file. Removing it reddens
+  `loop_stdlib_permutation_invariant.md` immediately. The diagnosis is worth
+  keeping: the two sides are loads nested inside `If` conditions inside an
+  `Add` tree inside a `ForAll`, and their snapshots differ by exactly one
+  thing — one has a `local:i` block and the other is empty. So the DAG cannot
+  substitute for it *twice over*: the loads are not top-level terms, and the
+  two snapshots sit in disjoint DAG components because declaring a local is
+  not a recorded edge kind. This is the session-1 dead end
+  ("arena identity is connected, arena derivations are not") arriving with a
+  concrete price tag, and it is the strongest argument yet for a fourth edge
+  kind.
+- **`load_unchanged_via_effect_chain` — STAYS.** Removing it reddens example
+  `owned-split-buffer` (`owned_split_buffer_pipeline`, `Ensure(4)`).
+- **`memory_snapshots_directly_proven_equal_for_load` and
+  `memory_snapshots_proven_equal_for_load` — RETIRED** (92 lines, including a
+  BFS over `prop_facts` that cloned whole `CMemory` values into a visited
+  set). Nothing reddens and nothing slows: `bubble_sort3` is 137.4 s with and
+  without them.
+
+  Recorded honestly: **this retirement is not attributable to the DAG.** With
+  the flag off — where the new arm above them does nothing at all — every
+  gate and the corpus stay green just the same. They were unreachable, not
+  superseded. Anyone crediting the arc for this should not.
+
 ## For the owner
 
 *(nothing yet — no surface-semantics question has come up; the `old`
