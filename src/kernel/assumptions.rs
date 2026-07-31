@@ -4189,9 +4189,11 @@ impl Assumptions {
         for_simp: bool,
     ) -> Option<PropositionDerivationRule> {
         // Each half re-enters the whole search with one more fact, and the
-        // bound that licensed the split survives into both halves; depth-gate
-        // per conventions.md rather than rely on the halves being decided.
-        const UPPER_BOUND_SPLIT_DEPTH_LIMIT: usize = 2;
+        // bound that licensed the split survives into both halves, so this
+        // recurses without a guard. One split is all the corpus needs — two
+        // nested loops still close at this limit — and raising it to 2 cost
+        // `bubble_sort3_two_pass_sorted` 20 s for nothing.
+        const UPPER_BOUND_SPLIT_DEPTH_LIMIT: usize = 1;
         thread_local! {
             static UPPER_BOUND_SPLIT_DEPTH: Cell<usize> = const { Cell::new(0) };
         }
