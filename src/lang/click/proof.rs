@@ -9916,10 +9916,13 @@ pub(super) fn prove_claims_by_grouped_auto(
 /// at every closing site.
 ///
 /// `ClosedClaim` restores the mid-execution shape. Its field is private to
-/// this module, so no site outside can build one, and every constructor takes
-/// the evidence that discharged the claim.
+/// this module, so no site outside can build one, and the variant that carries
+/// a generated certificate has exactly one constructor:
+/// `discharge_exit_simp_claim`, which builds the certificate and replays it
+/// before it can hand back a closure. The other constructors each take the
+/// evidence that discharged the claim.
 mod exit_claim {
-    use super::{ProofTactic, TacticCertificate};
+    use super::*;
 
     /// The certificate a closed exit claim carries.
     #[derive(Clone, Debug)]
@@ -9999,10 +10002,12 @@ mod exit_claim {
         }
 
         /// Close a claim with the certificate a smart exit `simp` generated
-        /// for it. The `TacticCertificate` is the evidence: it exists only
-        /// once the generator replayed the tactics through the replay
-        /// judgment and got the claim's kernel goal back.
-        pub(super) fn by_replayed_certificate(certificate: &TacticCertificate) -> Self {
+        /// for it. Private to this module, and inside it reachable only from
+        /// `discharge_exit_simp_claim`: the `TacticCertificate` is the
+        /// evidence, and it exists only once the generator replayed the
+        /// tactics through the replay judgment and got the claim's kernel
+        /// goal back.
+        fn by_replayed_certificate(certificate: &TacticCertificate) -> Self {
             Self::Closed(ClosedClaim {
                 certificate: ClaimCertificate::Claim(certificate.tactics().to_vec()),
             })
@@ -10025,9 +10030,265 @@ mod exit_claim {
             })
         }
     }
+
+    /// What running the exit `simp` closer on one claim produced.
+    pub(super) enum ExitSimpClosure {
+        /// The claim closed, carrying the certificate that discharged it.
+        Closed(ClaimClosure),
+        /// The claim joins the path's grouped transition, which is certified
+        /// and replayed as one unit once every claim has been offered. The
+        /// goal is `None` for a resource ensure: it has no proposition to
+        /// certify and is discharged by one of the transition's trailing
+        /// `assumption`s.
+        JoinsGroupedTransition(Option<GroupedOutcomeSimpGoal>),
+    }
+
+    /// What the exit drain holds when it reaches its `simp` closer.
+    ///
+    /// Gathered into one value so the closer can be a function instead of an
+    /// inline block, which is what lets `ClosedClaim`'s certificate
+    /// constructor be private to it.
+    pub(super) struct ExitClaimContext<'a> {
+        pub(super) replay: &'a TacticReplayState,
+        pub(super) outcome_surface_propositions: &'a SurfacePropositionMap,
+        pub(super) path_requirements: &'a [Proposition],
+        pub(super) surface_certificate_facts: &'a [Proposition],
+        pub(super) execution_facts: &'a [ExecutionPureFact],
+        pub(super) unfolded_predicates: &'a [String],
+        pub(super) existence_tactics: &'a [ProofTactic],
+        pub(super) parameters: &'a [syntax::C0Parameter],
+        pub(super) arguments: &'a [CExpression],
+        pub(super) pre_state: &'a CState,
+        pub(super) outcome: &'a CFunctionOutcome,
+        pub(super) predicate_environment: &'a PredicateEnvironment,
+        pub(super) click_function_environment: &'a ClickFunctionEnvironment,
+        pub(super) theorem_environment: &'a TheoremEnvironment,
+        pub(super) function_requires: &'a [Requirement],
+        pub(super) path_index: usize,
+        pub(super) tactic_index: usize,
+    }
+
+    impl ExitClaimContext<'_> {
+        /// Lower a claim's surface goal under the drain's unfold set.
+        fn lower_claim_goal(&self, surface_goal: &ClickProposition) -> Result<Proposition, String> {
+            lower_ensure_proposition_goal(
+                self.path_requirements,
+                surface_goal,
+                self.parameters,
+                self.arguments,
+                self.pre_state,
+                self.outcome,
+                self.predicate_environment,
+                self.click_function_environment,
+                &self.replay.program_point_states,
+                self.unfolded_predicates,
+            )
+        }
+
+        /// The fact set a per-claim exit certificate is generated against.
+        ///
+        /// `surface_certificate_facts` is the drain's running certificate
+        /// context. The ambient effect facts (`CMemoryMutatesOnly` /
+        /// `CMemoryEffectSummary`) join it because the closer replays with
+        /// them in scope, and the drain's `unfold(...)` set is applied because
+        /// the emitted `have` script carries that prefix: generation must plan
+        /// against exactly the context replay will hold. The grouped
+        /// transition emits no `unfold(...)` prefix and so plans against the
+        /// raw snapshot instead.
+        fn certificate_facts(&self) -> Result<Vec<Proposition>, String> {
+            let mut certificate_facts = self.surface_certificate_facts.to_vec();
+            certificate_facts.extend(
+                self.execution_facts
+                    .iter()
+                    .filter(|fact| {
+                        matches!(
+                            fact.proposition(),
+                            Proposition::CMemoryMutatesOnly { .. }
+                                | Proposition::CMemoryEffectSummary { .. }
+                        )
+                    })
+                    .map(|fact| fact.proposition().clone()),
+            );
+            unfold_available_predicate_facts(
+                self.predicate_environment,
+                self.click_function_environment,
+                self.unfolded_predicates,
+                &certificate_facts,
+            )
+        }
+
+        /// The replay state a per-claim exit certificate is generated in.
+        fn certificate_replay(&self) -> TacticReplayState {
+            let mut certificate_replay = self.replay.clone();
+            certificate_replay.surface_propositions = self.outcome_surface_propositions.clone();
+            // The goal was proved with the drain's unfold set active; the
+            // certificate must re-lower the surface goal under the same
+            // unfolds or the two spellings cannot match.
+            certificate_replay.unfolded_predicates = self.unfolded_predicates.to_vec();
+            certificate_replay
+        }
+
+        fn certificate_failure(&self, claim_label: &str, message: &str) -> ClickError {
+            ClickError::new(format!(
+                "`{claim_label}` path {}: smart `simp` closed the claim but its certificate did not lower or replay: {message}",
+                self.path_index
+            ))
+        }
+    }
+
+    /// Discharge one exit claim whose ambient `simp` check just succeeded.
+    ///
+    /// This is the only place a claim can acquire a generated certificate.
+    /// Every arm either returns a closure built from a certificate the
+    /// generator already replayed, hands the claim to the path's grouped
+    /// transition — which certifies and replays before anything closes — or
+    /// fails verification. There is no arm that accepts without one, which is
+    /// what makes the exit gate structural instead of a check to remember.
+    pub(super) fn discharge_exit_simp_claim(
+        context: &ExitClaimContext<'_>,
+        claim_index: usize,
+        claim_label: &str,
+        ensure: &Ensure,
+        rewritten_goal: Option<&Proposition>,
+        frame_certified_goal: Option<&Proposition>,
+    ) -> Result<ExitSimpClosure, ClickError> {
+        let outcome = context.outcome;
+        if !context.existence_tactics.is_empty() {
+            let certificate = match (rewritten_goal, ensure, outcome) {
+                (
+                    None,
+                    Ensure::Proposition(surface_goal),
+                    CFunctionOutcome::Return {
+                        value: result,
+                        state: post_state,
+                    },
+                ) if !context.replay.grouped_contract => {
+                    context.lower_claim_goal(surface_goal).and_then(|goal| {
+                        let certificate_facts = context.certificate_facts()?;
+                        certify_outcome_existential_simp(
+                            &context.certificate_replay(),
+                            surface_goal,
+                            &goal,
+                            &certificate_facts,
+                            context.existence_tactics,
+                            context.parameters,
+                            context.arguments,
+                            context.pre_state,
+                            post_state,
+                            result,
+                            context.predicate_environment,
+                            context.click_function_environment,
+                            context.theorem_environment,
+                            context.function_requires,
+                            claim_label,
+                            context.tactic_index,
+                            context.path_index,
+                        )
+                        .map_err(|error| error.message().to_string())
+                    })
+                }
+                _ => Err(
+                    "surface `simp` lowering with existential tactics requires an ungrouped proposition return goal"
+                        .to_string(),
+                ),
+            }
+            .map_err(|message| {
+                ClickError::new(format!(
+                    "`{claim_label}` path {}: smart `simp` closed the claim with existential tactics, but its certificate did not lower or replay: {message}",
+                    context.path_index
+                ))
+            })?;
+            return Ok(ExitSimpClosure::Closed(
+                ClaimClosure::by_replayed_certificate(&certificate),
+            ));
+        }
+
+        if context.replay.grouped_contract {
+            // The grouped transition certificate is the proof-producing
+            // authority for the whole claim set. The ambient check only
+            // decides that this claim joins the transition; it closes once
+            // that certificate has been built and replayed.
+            return match (rewritten_goal, ensure, outcome) {
+                (None, Ensure::Proposition(surface_goal), CFunctionOutcome::Return { .. }) => {
+                    let goal = match frame_certified_goal {
+                        Some(goal) => goal.clone(),
+                        None => context.lower_claim_goal(surface_goal).map_err(|message| {
+                            context.certificate_failure(claim_label, &message)
+                        })?,
+                    };
+                    Ok(ExitSimpClosure::JoinsGroupedTransition(Some(
+                        GroupedOutcomeSimpGoal {
+                            claim_index,
+                            claim_label: claim_label.to_string(),
+                            surface_goal: surface_goal.clone(),
+                            goal,
+                        },
+                    )))
+                }
+                (None, Ensure::Resource(_), _) => Ok(ExitSimpClosure::JoinsGroupedTransition(None)),
+                (Some(_), _, _) => Err(context.certificate_failure(
+                    claim_label,
+                    "surface lowering after `rewrite` is not implemented",
+                )),
+                _ => Err(context.certificate_failure(
+                    claim_label,
+                    "surface `simp` lowering requires a proposition return goal",
+                )),
+            };
+        }
+
+        let certificate = match (rewritten_goal, ensure, outcome) {
+            (
+                None,
+                Ensure::Proposition(surface_goal),
+                CFunctionOutcome::Return {
+                    value: result,
+                    state: post_state,
+                },
+            ) => frame_certified_goal
+                .cloned()
+                .map(Ok)
+                .unwrap_or_else(|| context.lower_claim_goal(surface_goal))
+                .and_then(|goal| {
+                    let certificate_facts = context.certificate_facts()?;
+                    certify_outcome_simp(
+                        &context.certificate_replay(),
+                        surface_goal,
+                        &goal,
+                        &certificate_facts,
+                        context.parameters,
+                        context.arguments,
+                        context.pre_state,
+                        post_state,
+                        result,
+                        context.predicate_environment,
+                        context.click_function_environment,
+                        context.theorem_environment,
+                        context.function_requires,
+                        claim_label,
+                        context.tactic_index,
+                        context.path_index,
+                    )
+                    .map_err(|error| error.message().to_string())
+                }),
+            (None, Ensure::Resource(_), _) => {
+                TacticCertificate::from_proof_tactics(&[ProofTactic::Assumption]).map_err(|error| {
+                    format!("resource `simp` produced an invalid surface certificate: {error:?}")
+                })
+            }
+            (Some(_), _, _) => {
+                Err("surface lowering after `rewrite` is not implemented".to_string())
+            }
+            _ => Err("surface `simp` lowering requires a proposition return goal".to_string()),
+        }
+        .map_err(|message| context.certificate_failure(claim_label, &message))?;
+        Ok(ExitSimpClosure::Closed(
+            ClaimClosure::by_replayed_certificate(&certificate),
+        ))
+    }
 }
 
-use exit_claim::{ClaimClosure, ClosedClaim};
+use exit_claim::{ClaimClosure, ClosedClaim, ExitClaimContext, ExitSimpClosure};
 
 #[allow(clippy::too_many_arguments)]
 fn finish_ordered_proof_replay(
@@ -11132,6 +11393,26 @@ fn finish_ordered_proof_replay(
                         let mut newly_closed: Vec<usize> = Vec::new();
                         let mut grouped_pending: Vec<usize> = Vec::new();
                         let mut grouped_transition_goals = Vec::new();
+                        let path_execution_facts = path.execution_facts();
+                        let closer_context = ExitClaimContext {
+                            replay: &replay,
+                            outcome_surface_propositions: &outcome_surface_propositions,
+                            path_requirements: &path_requirements,
+                            surface_certificate_facts: &surface_certificate_facts,
+                            execution_facts: &path_execution_facts,
+                            unfolded_predicates: &unfolded_predicates,
+                            existence_tactics: &existence_tactics,
+                            parameters: parsed_function.parameters(),
+                            arguments,
+                            pre_state,
+                            outcome: &outcome,
+                            predicate_environment,
+                            click_function_environment,
+                            theorem_environment,
+                            function_requires: function_block.requires(),
+                            path_index,
+                            tactic_index: *tactic_index,
+                        };
                         for (claim_index, claim) in claims.iter().enumerate() {
                             if closures[claim_index].is_closed() {
                                 continue;
@@ -11207,242 +11488,24 @@ fn finish_ordered_proof_replay(
                                 )
                             };
                             match result {
-                                Ok(()) if !existence_tactics.is_empty() => {
-                                    let certificate = match (
-                                        &rewritten_claim_goals[claim_index],
-                                        ensure_clause.ensure(),
-                                        &outcome,
-                                    ) {
-                                        (
-                                            None,
-                                            Ensure::Proposition(surface_goal),
-                                            CFunctionOutcome::Return {
-                                                value: result,
-                                                state: post_state,
-                                            },
-                                        ) if !replay.grouped_contract => {
-                                            lower_ensure_proposition_goal(
-                                                &path_requirements,
-                                                surface_goal,
-                                                parsed_function.parameters(),
-                                                arguments,
-                                                pre_state,
-                                                &outcome,
-                                                predicate_environment,
-                                                click_function_environment,
-                                                &replay.program_point_states,
-                                                &unfolded_predicates,
-                                            )
-                                            .and_then(|goal| {
-                                                let certificate_facts = exit_certificate_facts(
-                                                    &surface_certificate_facts,
-                                                    &path.execution_facts(),
-                                                    predicate_environment,
-                                                    click_function_environment,
-                                                    &unfolded_predicates,
-                                                )?;
-                                                let mut certificate_replay = replay.clone();
-                                                certificate_replay.surface_propositions =
-                                                    outcome_surface_propositions.clone();
-                                                certificate_replay.unfolded_predicates =
-                                                    unfolded_predicates.clone();
-                                                certify_outcome_existential_simp(
-                                                    &certificate_replay,
-                                                    surface_goal,
-                                                    &goal,
-                                                    &certificate_facts,
-                                                    &existence_tactics,
-                                                    parsed_function.parameters(),
-                                                    arguments,
-                                                    pre_state,
-                                                    post_state,
-                                                    result,
-                                                    predicate_environment,
-                                                    click_function_environment,
-                                                    theorem_environment,
-                                                    function_block.requires(),
-                                                    &claim_label,
-                                                    *tactic_index,
-                                                    path_index,
-                                                )
-                                                .map_err(|error| error.message().to_string())
-                                            })
-                                        }
-                                        _ => Err(
-                                            "surface `simp` lowering with existential tactics requires an ungrouped proposition return goal"
-                                                .to_string(),
-                                        ),
-                                    }
-                                    .map_err(|message| {
-                                        ClickError::new(format!(
-                                            "`{claim_label}` path {path_index}: smart `simp` closed the claim with existential tactics, but its certificate did not lower or replay: {message}"
-                                        ))
-                                    })?;
-                                    closures[claim_index] =
-                                        ClaimClosure::by_replayed_certificate(&certificate);
-                                    newly_closed.push(claim_index);
-                                }
-                                Ok(()) if replay.grouped_contract => {
-                                    // The grouped transition certificate is the
-                                    // proof-producing authority. The ambient
-                                    // check only decides that this claim joins
-                                    // the transition; it closes below, once the
-                                    // transition has been built and replayed.
-                                    match (
-                                        &rewritten_claim_goals[claim_index],
-                                        ensure_clause.ensure(),
-                                        &outcome,
-                                    ) {
-                                        (
-                                            None,
-                                            Ensure::Proposition(surface_goal),
-                                            CFunctionOutcome::Return { .. },
-                                        ) => {
-                                            let goal = match &frame_certified_claim_goals
-                                                [claim_index]
-                                            {
-                                                Some(goal) => goal.clone(),
-                                                None => lower_ensure_proposition_goal(
-                                                    &path_requirements,
-                                                    surface_goal,
-                                                    parsed_function.parameters(),
-                                                    arguments,
-                                                    pre_state,
-                                                    &outcome,
-                                                    predicate_environment,
-                                                    click_function_environment,
-                                                    &replay.program_point_states,
-                                                    &unfolded_predicates,
-                                                )
-                                                .map_err(|message| {
-                                                    ClickError::new(format!(
-                                                        "`{claim_label}` path {path_index}: smart `simp` closed the claim but its certificate did not lower or replay: {message}"
-                                                    ))
-                                                })?,
-                                            };
-                                            grouped_transition_goals.push(GroupedOutcomeSimpGoal {
-                                                claim_index,
-                                                claim_label: claim_label.clone(),
-                                                surface_goal: surface_goal.clone(),
-                                                goal,
-                                            });
-                                            grouped_pending.push(claim_index);
-                                        }
-                                        // A resource ensure has no proposition
-                                        // to certify; the transition's trailing
-                                        // `assumption`s discharge it, and it is
-                                        // counted among them.
-                                        (None, Ensure::Resource(_), _) => {
-                                            grouped_pending.push(claim_index);
-                                        }
-                                        (Some(_), _, _) => {
-                                            return Err(ClickError::new(format!(
-                                                "`{claim_label}` path {path_index}: smart `simp` closed the claim but its certificate did not lower or replay: surface lowering after `rewrite` is not implemented"
-                                            )));
-                                        }
-                                        _ => {
-                                            return Err(ClickError::new(format!(
-                                                "`{claim_label}` path {path_index}: smart `simp` closed the claim but its certificate did not lower or replay: surface `simp` lowering requires a proposition return goal"
-                                            )));
-                                        }
-                                    }
-                                }
                                 Ok(()) => {
-                                    let certificate = match (
-                                        &rewritten_claim_goals[claim_index],
+                                    match exit_claim::discharge_exit_simp_claim(
+                                        &closer_context,
+                                        claim_index,
+                                        &claim_label,
                                         ensure_clause.ensure(),
-                                        &outcome,
-                                    ) {
-                                        (
-                                            None,
-                                            Ensure::Proposition(surface_goal),
-                                            CFunctionOutcome::Return {
-                                                value: result,
-                                                state: post_state,
-                                            },
-                                        ) => frame_certified_claim_goals[claim_index]
-                                            .clone()
-                                            .map(Ok)
-                                            .unwrap_or_else(|| {
-                                                lower_ensure_proposition_goal(
-                                                    &path_requirements,
-                                                    surface_goal,
-                                                    parsed_function.parameters(),
-                                                    arguments,
-                                                    pre_state,
-                                                    &outcome,
-                                                    predicate_environment,
-                                                    click_function_environment,
-                                                    &replay.program_point_states,
-                                                    &unfolded_predicates,
-                                                )
-                                            })
-                                            .and_then(|goal| {
-                                                let certificate_facts = exit_certificate_facts(
-                                                    &surface_certificate_facts,
-                                                    &path.execution_facts(),
-                                                    predicate_environment,
-                                                    click_function_environment,
-                                                    &unfolded_predicates,
-                                                )?;
-                                                let mut certificate_replay = replay.clone();
-                                                certificate_replay.surface_propositions =
-                                                    outcome_surface_propositions.clone();
-                                                // The goal was proved with the
-                                                // drain's unfold set active; the
-                                                // certificate must re-lower the
-                                                // surface goal under the same
-                                                // unfolds or the two spellings
-                                                // cannot match.
-                                                certificate_replay.unfolded_predicates =
-                                                    unfolded_predicates.clone();
-                                                certify_outcome_simp(
-                                                    &certificate_replay,
-                                                    surface_goal,
-                                                    &goal,
-                                                    &certificate_facts,
-                                                    parsed_function.parameters(),
-                                                    arguments,
-                                                    pre_state,
-                                                    post_state,
-                                                    result,
-                                                    predicate_environment,
-                                                    click_function_environment,
-                                                    theorem_environment,
-                                                    function_block.requires(),
-                                                    &claim_label,
-                                                    *tactic_index,
-                                                    path_index,
-                                                )
-                                                .map_err(|error| error.message().to_string())
-                                            }),
-                                        (None, Ensure::Resource(_), _) => {
-                                            TacticCertificate::from_proof_tactics(&[
-                                                ProofTactic::Assumption,
-                                            ])
-                                            .map_err(|error| {
-                                                format!(
-                                                    "resource `simp` produced an invalid surface certificate: {error:?}"
-                                                )
-                                            })
+                                        rewritten_claim_goals[claim_index].as_ref(),
+                                        frame_certified_claim_goals[claim_index].as_ref(),
+                                    )? {
+                                        ExitSimpClosure::Closed(closure) => {
+                                            closures[claim_index] = closure;
+                                            newly_closed.push(claim_index);
                                         }
-                                        (Some(_), _, _) => Err(
-                                            "surface lowering after `rewrite` is not implemented"
-                                                .to_string(),
-                                        ),
-                                        _ => Err(
-                                            "surface `simp` lowering requires a proposition return goal"
-                                                .to_string(),
-                                        ),
+                                        ExitSimpClosure::JoinsGroupedTransition(goal) => {
+                                            grouped_transition_goals.extend(goal);
+                                            grouped_pending.push(claim_index);
+                                        }
                                     }
-                                    .map_err(|message| {
-                                        ClickError::new(format!(
-                                            "`{claim_label}` path {path_index}: smart `simp` closed the claim but its certificate did not lower or replay: {message}"
-                                        ))
-                                    })?;
-                                    closures[claim_index] =
-                                        ClaimClosure::by_replayed_certificate(&certificate);
-                                    newly_closed.push(claim_index);
                                 }
                                 Err(error) => {
                                     closures[claim_index]
@@ -14081,41 +14144,6 @@ fn certify_outcome_simp_have(
     }
     surface_tactics.push(surface_tactic);
     Ok(surface_tactics)
-}
-
-/// The fact set an exit-claim certificate is generated against.
-///
-/// `surface_certificate_facts` is the drain's running certificate context.
-/// The ambient effect facts (`CMemoryMutatesOnly` / `CMemoryEffectSummary`)
-/// join it because the closer replays with them in scope, and the drain's
-/// `unfold(...)` set is applied because the emitted `have` script carries that
-/// prefix: generation must plan against exactly the context replay will hold.
-fn exit_certificate_facts(
-    surface_certificate_facts: &[Proposition],
-    execution_facts: &[ExecutionPureFact],
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
-    unfolded_predicates: &[String],
-) -> Result<Vec<Proposition>, String> {
-    let mut certificate_facts = surface_certificate_facts.to_vec();
-    certificate_facts.extend(
-        execution_facts
-            .iter()
-            .filter(|fact| {
-                matches!(
-                    fact.proposition(),
-                    Proposition::CMemoryMutatesOnly { .. }
-                        | Proposition::CMemoryEffectSummary { .. }
-                )
-            })
-            .map(|fact| fact.proposition().clone()),
-    );
-    unfold_available_predicate_facts(
-        predicate_environment,
-        click_function_environment,
-        unfolded_predicates,
-        &certificate_facts,
-    )
 }
 
 #[allow(clippy::too_many_arguments)]
