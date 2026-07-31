@@ -10059,7 +10059,6 @@ fn finish_ordered_proof_replay(
         };
         let mut verified = Vec::new();
         let mut surface_closers_by_claim = vec![Vec::new(); claims.len()];
-        let mut surface_closer_blockers = vec![None; claims.len()];
         let mut surface_grouped_closers_by_path = Vec::with_capacity(execution.paths().len());
         let mut surface_post_tactics_by_path = Vec::with_capacity(execution.paths().len());
         let mut deferred_capture_tactics_by_path = Vec::with_capacity(execution.paths().len());
@@ -10552,12 +10551,11 @@ fn finish_ordered_proof_replay(
                                     Some(lowered) => {
                                         surface_tactic = ProofTactic::Have(lowered);
                                     }
-                                    None if strict_exit_gate() => {
+                                    None => {
                                         return Err(ClickError::new(format!(
                                             "`{proof_label}` path {path_index}, tactic {tactic_index}: post-execution `have` script is not expressible as a certificate: {error:?}"
                                         )));
                                     }
-                                    None => {}
                                 }
                             }
                             (surface_tactic, fact)
@@ -11242,13 +11240,9 @@ fn finish_ordered_proof_replay(
                                                     .extend_from_slice(certificate.tactics())
                                             }
                                             Err(message) => {
-                                                if strict_exit_gate() {
-                                                    return Err(ClickError::new(format!(
-                                                        "`{claim_label}` path {path_index}: smart `simp` closed the claim but its certificate did not lower or replay: {message}"
-                                                    )));
-                                                }
-                                                surface_closer_blockers[claim_index]
-                                                    .get_or_insert(message);
+                                                return Err(ClickError::new(format!(
+                                                    "`{claim_label}` path {path_index}: smart `simp` closed the claim but its certificate did not lower or replay: {message}"
+                                                )));
                                             }
                                         }
                                     } else {
@@ -11344,13 +11338,9 @@ fn finish_ordered_proof_replay(
                                                     .extend_from_slice(certificate.tactics())
                                             }
                                             Err(message) => {
-                                                if strict_exit_gate() {
-                                                    return Err(ClickError::new(format!(
-                                                        "`{claim_label}` path {path_index}: smart `simp` closed the claim with existential tactics, but its certificate did not lower or replay: {message}"
-                                                    )));
-                                                }
-                                                surface_closer_blockers[claim_index]
-                                                    .get_or_insert(message);
+                                                return Err(ClickError::new(format!(
+                                                    "`{claim_label}` path {path_index}: smart `simp` closed the claim with existential tactics, but its certificate did not lower or replay: {message}"
+                                                )));
                                             }
                                         }
                                     }
@@ -11416,9 +11406,7 @@ fn finish_ordered_proof_replay(
                                 CFunctionOutcome::Return {
                                     value: result,
                                     state: post_state,
-                                } if existence_tactics.is_empty()
-                                    && surface_closer_blockers.iter().all(Option::is_none) =>
-                                {
+                                } if existence_tactics.is_empty() => {
                                     let mut certificate_replay = replay.clone();
                                     certificate_replay.surface_propositions =
                                         outcome_surface_propositions.clone();
@@ -11468,12 +11456,8 @@ fn finish_ordered_proof_replay(
                                 let certificate = captured_transitions[claim_index]
                                     .as_ref()
                                     .ok_or_else(|| {
-                                        let blocker = surface_closer_blockers[claim_index]
-                                            .as_deref()
-                                            .map(|message| format!(": {message}"))
-                                            .unwrap_or_default();
                                         ClickError::new(format!(
-                                            "`{proof_label}` path {path_index}, tactic {tactic_index}: grouped `simp` closed claim {claim_index} without capturing its certificate{blocker}"
+                                            "`{proof_label}` path {path_index}, tactic {tactic_index}: `simp` closed claim {claim_index} without capturing its certificate"
                                         ))
                                     })?;
                                 path_deferred_capture_tactics
@@ -11633,9 +11617,7 @@ fn finish_ordered_proof_replay(
             {
                 expanded.block(message);
             }
-            if let Some(blocker) = surface_closer_blockers.iter().flatten().next() {
-                expanded.block(format!("could not lower post-execution `simp`: {blocker}"));
-            } else if surface_grouped_closers_by_path
+            if surface_grouped_closers_by_path
                 .iter()
                 .any(|tactics| !tactics.is_empty())
                 && let Err(message) = append_surface_tactics_by_leaf(
@@ -11663,9 +11645,7 @@ fn finish_ordered_proof_replay(
                 {
                     expanded.block(message);
                 }
-                if let Some(blocker) = &surface_closer_blockers[claim_index] {
-                    expanded.block(format!("could not lower post-execution `simp`: {blocker}"));
-                } else if surface_closers_by_claim[claim_index]
+                if surface_closers_by_claim[claim_index]
                     .iter()
                     .any(|tactics| !tactics.is_empty())
                     && let Err(message) = append_surface_tactics_by_leaf(
@@ -15897,17 +15877,6 @@ fn surface_smart_apply_have_certificate(
         ))
     })?;
     Ok(Some(certificate))
-}
-
-/// Strict exit gate: an at-function-exit smart success whose certificate
-/// cannot be built or replayed is a verification failure. Flipped to
-/// unconditional on 2026-07-30 once the whole corpus passed (owner
-/// decision; the settled invariant is that a smart success must replay
-/// through a surface-expressible certificate before acceptance). The
-/// function remains only until the ClosedClaim restructure deletes the
-/// accept-then-certify sites outright; there is deliberately no opt-out.
-fn strict_exit_gate() -> bool {
-    true
 }
 
 /// Track, in the certificate-generation fact set, the facts a recorded
