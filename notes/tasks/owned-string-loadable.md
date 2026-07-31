@@ -1,7 +1,7 @@
 # owned-string: unfold cannot discharge loadable(data[len])
 
 Status: open — precisely localized (coordinator probe session, 2026-07-31)
-Claimed:
+Claimed: worktree-agent-aa971f675db3276c3, 2026-07-31
 
 Example `owned-string` (quarantined in tests/examples.rs) fails in
 ~2.6 s: in `owned_string_push`, the `terminated_at` smart-have's
