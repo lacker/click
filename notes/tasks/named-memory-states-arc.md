@@ -587,12 +587,32 @@ comparisons and both `prop_facts` scans), in
 stage 2's arm moved ahead of the snapshot matcher inside
 `c_memory_load_is_unchanged`.
 
-#### Stage 5 — measured: the DAG does not subsume this cost
+#### Stage 5 — measured: the win is real, on the other test
 
-`bubble_sort3_two_pass_sorted`: **139.6 s before, 137.4 s after.** Not the
-order of magnitude the recast projected, and the profile above says why: the
-subsumption target was mis-identified. Three separate measurements agree that
-the DAG cannot reach this cost.
+The recast asked for an order-of-magnitude cut on `bubble_sort3`. That did
+not happen and cannot: **139.6 s before, 137.4 s after**, and the profile
+above says why. But the same change cuts `field_derived` by **2.46x**, and
+that is the member canonical-memory.md actually named as the arc's cost
+target ("the giant-term perf class (field_derived's ~500 s grouped-simp
+grind)"). All four numbers isolated, one member per process:
+
+| `field_derived_precise_effect_after_metadata_write` | seconds |
+|---|---|
+| master (stage 3), DAG on | 486.99 |
+| this branch (stage 4), DAG on | **198.31** |
+| this branch, DAG off (sweep) | 591.80 |
+| master, DAG on, as recorded in stage 2a | ~496 |
+
+The middle two are the flag A/B on one binary, so the cut is the DAG arm and
+nothing else; the first two are the same flag setting across the stage-4
+commit, so the cut is *this stage* and not stage 3. Both readings agree, and
+the verdict is unchanged in every case (it still fails, in the same place).
+So the arc's cost thesis holds — it just holds on the member whose loads are
+related by a real store history, which is exactly what a derivation walk can
+use.
+
+**Why `bubble_sort3` is immune.** Three measurements agree the DAG cannot
+reach its cost.
 
 - **Only 6 of 540 000 top-level comparisons are load-vs-load.** A load
   equality arm, however good, is being offered 0.001% of the traffic.
@@ -638,6 +658,58 @@ and everything re-run.
   the flag off — where the new arm above them does nothing at all — every
   gate and the corpus stay green just the same. They were unreachable, not
   superseded. Anyone crediting the arc for this should not.
+
+#### Acceptance corpus, every member retested this session
+
+Timings are one member per process except where noted; the two sweep columns
+ran members in parallel, so compare sweep with sweep.
+
+| member | verdict | this session | before |
+|---|---|---|---|
+| `bubble_sort3_two_pass_sorted` | **passes** | 137.4 s | 139.6 s |
+| `field_derived_precise_effect_after_metadata_write` | fails | **198.3 s** | 487.0 s |
+| `composite_resource_vector_fill_loop_snapshot` | fails | 47.8 s (sweep) | ~47 s |
+| `bubble_pass3_max_suffix` | fails | 11.9 s (sweep) | ~8.9 s |
+| example `owned-vector` | fails | 12.7 s | ~9 s |
+| `composite_resource_owner_buffer_field_dependent` | fails | 6.2 s (sweep) | ~5.7 s |
+| example `owned-string` | fails | 2.6 s | ~2.5 s |
+
+`bubble_sort3` **stays quarantined**: it passes, but at 137 s against a 30 s
+mdtest limit, so conventions.md's slow-but-passing rule keeps it out.
+Nothing else de-quarantines. The full quarantined sweep is 4 of 277 failing,
+**identical in both flag modes**, so no verdict anywhere depends on the DAG.
+
+**Where the frontier now is, and it is not here.** Every remaining member
+fails on something that is not a load-equality question. Recording the
+diagnoses so nobody chases them into this arc:
+
+- `bubble_pass3_max_suffix` — certificate lowering: the planned `simp`
+  context premise (the loop-exit invariant `ForAll`) is not an available
+  *source* fact. Worth noting because it looks like arc work and is not: its
+  two loads sit in **the same snapshot** (`{havoc:1000002, local:j,
+  local:tmp}`), differing only in the index term, so there is no snapshot to
+  bridge.
+- `composite_resource_vector_fill_loop_snapshot` and `field_derived` —
+  grouped `simp` cannot certify its complete claim transition. Same failure
+  class for both, downstream of the closer, in the grouped certification
+  path.
+- `composite_resource_owner_buffer_field_dependent` — the execution proof for
+  `set_owned_first.ensures_0` changed more than the certified ghost-resource
+  representation.
+- example `owned-vector` — `vector_replace_if.contract` tactic 8 `have`
+  cannot find `Implies(replace == 0, new == old)`. A propositional gap over
+  plain variables; the goal contains no memory at all.
+- example `owned-string` — a missing `loadable(...)` pure fact. A permission
+  question, not an equality one.
+
+**Next, if the arc continues.** The one measured lead is the fourth edge
+kind. `loop_stdlib_permutation_invariant`'s diagnosis above is the first
+concrete case where a *specific named test* needs two snapshots to be
+connected and they are not, because declaring a local block records no edge.
+Session 1 rejected block-allocation edges as "not worth it" on the evidence
+then available; the evidence now is a load-bearing arm that cannot be retired
+because of exactly that gap. That is a better-founded reason to reconsider
+than any so far — but it is a new increment, not a tweak.
 
 ## For the owner
 
@@ -702,14 +774,17 @@ certificate generation finding the spelling itself.
 ## Repro commands
 
 ```
-cargo nextest run --lib --bins                    # 510
+cargo nextest run --lib --bins                    # 513
 cargo test --test mdtests                         # 272 visible
 cargo test --test examples
 CLICK_RUN_QUARANTINED=1 MDTEST_FILTER=vector_fill cargo test --test mdtests
 CLICK_RUN_QUARANTINED=1 MDTEST_FILTER=bubble_pass3 cargo test --test mdtests
 CLICK_EXAMPLE=owned-vector cargo test --test examples
 CLICK_DISABLE_MEMORY_DAG=1 <any of the above>     # A/B against the pre-arc path
+CLICK_RUN_QUARANTINED=1 MDTEST_TIME_LIMIT=900 cargo test --test mdtests
 ```
 
-`field_derived_precise_effect_after_metadata_write.md` takes **~500 s** to
-fail; bound it with `MDTEST_TIME_LIMIT` and do not put it in a loop.
+`field_derived_precise_effect_after_metadata_write.md` takes **~200 s** to
+fail (was ~500 s before stage 4); bound it with `MDTEST_TIME_LIMIT` and do
+not put it in a loop. `bubble_sort3_two_pass_sorted.md` takes ~137 s to
+pass. Neither belongs in a foreground command.
