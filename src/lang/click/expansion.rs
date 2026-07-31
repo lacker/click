@@ -1839,11 +1839,6 @@ int32 read_first(int32 p[1]) {
     }
 
     #[test]
-    // Quarantined: certificate-premise over-inclusion. The expansion lands in the
-    // right branch and re-verifies, but carries the branch hypothesis as
-    // `fact x == x;` (proof.rs `claim_transition_context` keeps every ambient
-    // ConditionIs). See notes/tasks/lib-ignored-expansion-tests.md.
-    #[ignore = "quarantined: certificate-premise over-inclusion (branch hypothesis); run with --ignored"]
     fn expands_nested_branch_tactic_by_source_location() {
         let c_source = "int32 identity(int32 x) { return x; }";
         let click_source = r#"

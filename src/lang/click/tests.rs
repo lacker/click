@@ -1938,12 +1938,6 @@ fn execute_step_records_a_point_checked_surface_expansion() {
 }
 
 #[test]
-// Quarantined: certificate-premise over-inclusion. The unused `requires x < 100`
-// is emitted as a premise, so the certificate is `StepUsing([x < 100])` rather
-// than `Step` (proof.rs `claim_transition_context` keeps every ambient
-// ConditionIs). This test is the guard for that bug — do not re-baseline it.
-// See notes/tasks/lib-ignored-expansion-tests.md.
-#[ignore = "quarantined: certificate-premise over-inclusion (unused requires); run with --ignored"]
 fn execute_rest_return_certificate_omits_unused_ambient_facts() {
     let c_source = r#"
             int32 return_x(int32 x) {
