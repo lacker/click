@@ -26,10 +26,17 @@ History: these are regressions from the 2026-07 certificate-strictness
 work; bisect verdicts and the full experiment record are in git history
 (`git log --all -- notes/regression-history.md`).
 
-WORK IN FLIGHT at wind-up (2026-07-31 ~3:30 pm): an agent branch
-`worktree-agent-a50a9739f4232cd94` holds active work on exactly this
-(probing vector_fill cover spellings; last state: extending cover
-candidates to effect facts). Check that branch before starting fresh.
+WORK IN FLIGHT, stopped at wind-up (2026-07-31 ~3:50 pm): branch
+`worktree-agent-a50a9739f4232cd94` (worktree of the same name) holds
+one committed increment — 72aab38 "Spell snapshot-orphaned ForAll
+premises through the kernel's folded spelling" — NOT validated by
+gates, plus an UNCOMMITTED mid-experiment tree (4 files: probes and a
+cover-candidate extension pulling loadable facts from
+replay.effect_facts). The agent's last finding before the stop: its
+retry probe never fired, so the failing error is emitted by one of the
+other `{proof_name} proof`-format sites (proof.rs ~9306 / 9451 / 9705),
+not the site it had instrumented. Resume there; treat the committed
+increment as a hypothesis until gates pass.
 
 Done when: the three mdtests de-quarantine and owned-string's frontier
 moves.
