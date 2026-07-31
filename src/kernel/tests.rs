@@ -6941,6 +6941,14 @@ fn decision_memo_distinguishes_equal_shaped_fact_sets_by_content() {
 // the arc's safety argument rests on (advisory-only, and parent id < child
 // id) plus the havoc-identity property that must hold by construction.
 
+/// These tests assert what the DAG *adds*, so under
+/// `CLICK_DISABLE_MEMORY_DAG` there is nothing for them to say. Skipping
+/// them there is what makes the flag a real A/B handle: the whole suite
+/// stays green with the arc switched off.
+fn skip_without_memory_dag() -> bool {
+    memory_dag_disabled()
+}
+
 fn arc_pointer(offset: i64) -> Pointer {
     Pointer {
         block: "arg-memory".into(),
@@ -6950,6 +6958,9 @@ fn arc_pointer(offset: i64) -> Pointer {
 
 #[test]
 fn a_store_records_the_edge_from_the_snapshot_it_wrote() {
+    if skip_without_memory_dag() {
+        return;
+    }
     let base = CMemory::new().with_block("arg-memory", 16);
     let after = base
         .clone()
@@ -6974,6 +6985,9 @@ fn a_store_records_the_edge_from_the_snapshot_it_wrote() {
 
 #[test]
 fn derivation_bases_are_strictly_older_so_the_dag_cannot_cycle() {
+    if skip_without_memory_dag() {
+        return;
+    }
     // Storing a value and then storing it back re-interns the original
     // snapshot, which is the shortest cycle the DAG could otherwise grow.
     // First-wins recording keeps the older edge, so following `base` still
@@ -7004,6 +7018,9 @@ fn derivation_bases_are_strictly_older_so_the_dag_cannot_cycle() {
 
 #[test]
 fn a_store_that_changes_nothing_records_no_edge_to_itself() {
+    if skip_without_memory_dag() {
+        return;
+    }
     let base = CMemory::new()
         .with_block("arg-memory", 16)
         .store(arc_pointer(0), CValue::Int32(Bitvector32Term::Constant(3)));
@@ -7024,6 +7041,9 @@ fn a_store_that_changes_nothing_records_no_edge_to_itself() {
 
 #[test]
 fn loop_havoc_is_its_own_edge_kind_and_keeps_its_marker_block() {
+    if skip_without_memory_dag() {
+        return;
+    }
     let base = CMemory::new()
         .with_block("arg-memory", 16)
         .store(arc_pointer(0), CValue::Int32(Bitvector32Term::Constant(5)));
@@ -7056,16 +7076,38 @@ fn derivations_carry_a_load_across_a_distinct_store_but_not_across_havoc() {
     // recorded history rather than from effect facts. A store to a provably
     // distinct cell is crossable; a loop havoc between the same endpoints is
     // not, because it has no write set to be disjoint from.
+    //
+    // Only the positive direction is the DAG's to add. The havoc refusals
+    // are soundness properties that must hold with the arc switched off too,
+    // so they run under both settings.
     let base = CMemory::new().with_block("arg-memory", 16);
     let read = arc_pointer(0);
 
-    let stored = base
-        .clone()
-        .store(arc_pointer(4), CValue::Int32(Bitvector32Term::Constant(9)));
-    assert!(
-        c_memory_load_is_unchanged(&base, &stored, &read, &Assumptions::new()),
-        "a store to a distinct cell preserves the load"
-    );
+    if !skip_without_memory_dag() {
+        // A call havoc changes the block set (it adds its marker block), so
+        // the snapshot-diff matcher refuses to look at the cells at all. The
+        // recorded edge carries the call's mutable ranges, so the walk can
+        // still cross it for a pointer provably outside them. This is the
+        // case the DAG answers and value bridging cannot.
+        let called = base.clone().with_call_memory_havoc(
+            Variable(3),
+            &[memory_range(arc_pointer(8), 0, 8)],
+            &Assumptions::new(),
+        );
+        assert!(
+            !memories_match_for_pointer_load_under_assumptions(
+                &base,
+                &called,
+                &read,
+                &Assumptions::new()
+            ),
+            "the snapshot-diff matcher is expected not to cross the marker block"
+        );
+        assert!(
+            c_memory_load_is_unchanged(&base, &called, &read, &Assumptions::new()),
+            "a call that may only write a disjoint range preserves the load"
+        );
+    }
 
     let havoced = base
         .clone()
@@ -7086,6 +7128,7 @@ fn derivations_carry_a_load_across_a_distinct_store_but_not_across_havoc() {
 
 #[test]
 fn a_store_to_the_loaded_cell_is_not_crossable() {
+    // A soundness property, so it must hold with the arc switched off too.
     let base = CMemory::new().with_block("arg-memory", 16);
     let read = arc_pointer(0);
     let stored = base

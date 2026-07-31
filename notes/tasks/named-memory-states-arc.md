@@ -170,13 +170,87 @@ top of a master that has since moved a long way.
 
 Nothing from the branch is carried forward into stage 1.
 
+**Landed:** stage 1 — `CMemoryDerivation`, the arena side-table, recording
+at the three edge producers, `c_memory_load_is_unchanged`'s DAG arm, six
+kernel tests. Gates: lib+bins 503 (497 + 6 new, ~8 s), mdtests 271
+visible (~10–16 s), examples (~4 s), and the same three green under
+`CLICK_DISABLE_MEMORY_DAG=1`. No measurable cost from the extra interning
+at store time.
+
+**What the DAG arm actually adds today.** Measured, because the first
+draft of the test was vacuous. `memories_match_for_pointer_load_under_
+assumptions` already takes the two snapshots' differing cells and
+requires each provably distinct from the loaded pointer, so a plain store
+to a distinct cell needs no DAG. Its real limit is the line above that:
+it first requires the two snapshots' **non-local block sets to be
+identical**, so it refuses outright once anything changed the block set —
+which is exactly what a call havoc does when it inserts its
+`call-havoc:N` marker. The recorded edge still carries the call's mutable
+ranges, so the walk crosses it for a pointer provably outside them. That
+case is pinned by
+`derivations_carry_a_load_across_a_distinct_store_but_not_across_havoc`
+and verified to fail with `CLICK_DISABLE_MEMORY_DAG=1` and pass without
+it. Worth knowing when judging later stages: the DAG's leverage is
+histories the *net snapshot diff* cannot express, not single distinct
+stores.
+
+**`old` has no name — the next increment.** Probed
+`verifies_old_memory_loop_invariant` (the smallest corpus member) against
+stage 1 to see whether the DAG arm moves it. It does not, and *why* is
+the finding:
+
+The DAG arm is never even reached on that path. Candidate lowering fails
+first. All 36 surface candidates lower fine, including the one with the
+right shape — `p[0] == old(p[0])`. But its `old` operand lowers to the
+**loop-entry** memory `{blocks: havoc:1000001, local:i}`, while the
+kernel certified the invariant with its `old` operand at the
+**function-entry** memory `{blocks: {}, cells: {}}` (genuinely empty: the
+symbolic `arg-memory` block is never registered in `blocks`). Two
+different memory states, both spelled `old`, so no placement of the
+operands can reproduce the certified fact — and the reported failure
+("no placement of the comparison operands at the 4 recorded program
+points lowered to the certified fact transport") is that mismatch, not a
+weak load-equality prover.
+
+This is precisely canonical-memory.md's `old(...)` references a named
+earlier state. Today `old` references nothing: it is resolved
+positionally at lowering time to whichever earlier state the lowering
+context happens to hold, and the kernel and the certificate lowering
+disagree about which one that is. Stage 1 supplies the missing names, so
+the next increment is to make `old` resolve to a *node* rather than to a
+context, on both sides.
+
+Note this stays inside the scope boundary: the surface text `old(p[0])`
+does not change. Only which memory state the lowering resolves it to.
+
+Consequence for the staging above: the stage order needs one insertion.
+`old`-resolution becomes stage 2a, ahead of the atomic prover work,
+because it is what actually gates the two smallest corpus members
+(`verifies_old_memory_loop_invariant` and `fill_tail_keeps_first`, same
+program shape). Stage 2's DAG arm stays landed and is exercised by the
+kernel tests; it will start paying once the operands can be placed.
+
+Sequence for whoever picks this up: find where loop-preservation
+certificate lowering resolves `ClickProposition::Old`, compare it with
+the state the kernel's certified fact was built against, and make both
+name the same DAG node. The 36-candidate enumeration is in
+`verify_certified_fact_transport`'s `find_candidate` closure
+(`src/lang/click/proof.rs`, near the "no placement of the comparison
+operands" message); `comparison_program_point_variants` builds the
+placements.
+
 ## For the owner
 
-*(nothing yet — no surface-semantics question has come up)*
+*(nothing yet — no surface-semantics question has come up; the `old`
+finding above is internal resolution, not surface semantics)*
 
 ## Dead ends
 
-*(none yet this arc)*
+- Expecting stage 1's `c_memory_load_is_unchanged` arm to move
+  `verifies_old_memory_loop_invariant` on its own. It cannot: probes
+  confirmed the function is never called on that path, because
+  certificate-candidate placement fails upstream of any load-equality
+  question. Recorded above.
 
 ## Done when
 
