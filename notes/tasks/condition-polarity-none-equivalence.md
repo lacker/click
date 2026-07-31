@@ -2,7 +2,7 @@
 
 Status: open — diagnosed, fix known, blocked on three examples that depend
 on the buggy behaviour
-Claimed:
+Claimed: claude/nervous-ptolemy-90e738 (worktree agent-a156f211eec3701d6), 2026-07-30
 
 Found while fixing the certificate premise policy
 (`lib-ignored-expansion-tests.md`, 2026-07-30). Not fixed there: the
