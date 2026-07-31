@@ -103,6 +103,35 @@ child directory.
 Use example projects for larger library-shaped fixtures. Keep them small enough
 that a reader can understand the proof boundary.
 
+### Verifying one file or project directly
+
+`click-verify` is the plain verification command the expansion workflow ends
+with. It takes either a sidecar or a directory:
+
+```sh
+cargo run --quiet --bin click-verify -- examples/input-cursor/input_cursor.click
+cargo run --quiet --bin click-verify -- examples/input-cursor
+cargo run --quiet --bin click-verify -- examples
+```
+
+A bare sidecar path verifies the whole file. A `:LINE:COLUMN` suffix verifies
+only the proof unit containing that one-based source location and the C
+functions it calls — the same location scheme `click-profile`, `click-expand`,
+and `click-audit` use. A directory verifies every sidecar in it: the directory
+itself when it holds sidecars, otherwise each immediate subdirectory that does.
+
+That makes the expansion loop runnable end to end:
+
+```sh
+cargo run --quiet --bin click-expand -- path/to/file.click:LINE:COLUMN > expanded.click
+mv expanded.click path/to/file.click
+cargo run --quiet --bin click-verify -- path/to/file.click
+```
+
+`click-expand` deliberately does not reverify what it emits; verification and
+expansion stay separate composable operations, so the third command is the one
+that checks the rewrite.
+
 ### Profiling slow proof steps
 
 Use `click-profile` to find slow proof steps without letting one project run
