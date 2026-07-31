@@ -10788,6 +10788,17 @@ fn finish_ordered_proof_replay(
                                                         certificate_replay
                                                             .surface_propositions =
                                                             outcome_surface_propositions.clone();
+                                                        // The goal was proved
+                                                        // with the drain's
+                                                        // unfold set active;
+                                                        // the certificate
+                                                        // must re-lower the
+                                                        // surface goal under
+                                                        // the same unfolds or
+                                                        // the two spellings
+                                                        // cannot match.
+                                                        certificate_replay.unfolded_predicates =
+                                                            unfolded_predicates.clone();
                                                         certify_outcome_simp(
                                                             &certificate_replay,
                                                             surface_goal,
