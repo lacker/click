@@ -5050,13 +5050,15 @@ impl Assumptions {
     /// offsets asks precisely "do these two offsets fall in disjoint intervals
     /// of one block", which is a statement about the offset terms alone.
     fn alias_guard_refuted_by_separation(&self) -> bool {
+        // `pointer_in_range` re-enters condition reasoning, which can reach
+        // `is_inconsistent` again; one level is all this rule ever needs.
         thread_local! {
             static ALIAS_GUARD_REFUTATION_ACTIVE: Cell<bool> = const { Cell::new(false) };
         }
         if ALIAS_GUARD_REFUTATION_ACTIVE.with(Cell::get) {
             return false;
         }
-        let mut guards = self
+        let guards = self
             .condition_facts
             .iter()
             .filter_map(|(condition, value)| match (condition, value) {
@@ -5064,38 +5066,38 @@ impl Assumptions {
                     Some((left.as_ref(), right.as_ref()))
                 }
                 _ => None,
-            });
-        let Some(first_guard) = guards.next() else {
-            return false;
-        };
-        let guards = std::iter::once(first_guard)
-            .chain(guards)
+            })
             .collect::<Vec<_>>();
-        let blocks = self
+        if guards.is_empty() {
+            return false;
+        }
+        let separated = self
             .prop_facts
             .iter()
             .filter_map(|fact| match fact {
                 Proposition::CResourceSeparate {
                     left: CResource::Memory(left),
                     right: CResource::Memory(right),
-                } if left.base().block == right.base().block => Some(left.base().block.clone()),
+                } => Some((left, right)),
                 _ => None,
             })
-            .collect::<BTreeSet<_>>();
-        if blocks.is_empty() {
+            .filter(|(left, right)| left.base().block == right.base().block)
+            .collect::<Vec<_>>();
+        if separated.is_empty() {
             return false;
         }
         ALIAS_GUARD_REFUTATION_ACTIVE.with(|active| active.set(true));
         let refuted = guards.iter().any(|(left, right)| {
-            blocks.iter().any(|block| {
-                let as_pointer = |offset: &PointerOffsetTerm| Pointer {
-                    block: block.clone(),
-                    offset: offset.clone(),
+            separated.iter().any(|(first, second)| {
+                let holds = |range: &CMemoryRange, offset: &PointerOffsetTerm| {
+                    let pointer = Pointer {
+                        block: range.base().block.clone(),
+                        offset: offset.clone(),
+                    };
+                    self.pointer_in_range(&pointer, range.base(), range.start(), range.end())
                 };
-                self.pointers_proven_disjoint_by_explicit_range_for_memory_resolution(
-                    &as_pointer(left),
-                    &as_pointer(right),
-                )
+                holds(first, left) && holds(second, right)
+                    || holds(first, right) && holds(second, left)
             })
         });
         ALIAS_GUARD_REFUTATION_ACTIVE.with(|active| active.set(false));
