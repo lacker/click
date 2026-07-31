@@ -20,15 +20,11 @@ const DEFAULT_MDTEST_TIME_LIMIT: Duration = Duration::from_secs(30);
 const QUARANTINED: &[(&str, &str)] = &[
     (
         "bubble_pass3_max_suffix.md",
-        "invariant closer cannot re-derive the symbolically extended bound (item-7 nested snapshot spellings)",
+        "certificate lowering cannot spell the loop-exit ForAll premise: synthesize_surface_proposition has no Click spelling for its loop-havoc-snapshot loads (retention itself concludes since e8f4b91; fails fast at ~0.5 s)",
     ),
     (
         "bubble_sort3_two_pass_sorted.md",
         "invariant closer cannot re-derive the symbolically extended bound (item-7 nested snapshot spellings)",
-    ),
-    (
-        "composite_resource_owner_buffer_field_dependent.md",
-        "fold consumption cannot match deeply nested snapshot spellings (item-7)",
     ),
     (
         "composite_resource_vector_fill_loop_snapshot.md",
