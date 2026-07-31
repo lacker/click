@@ -6101,7 +6101,7 @@ fn verifies_loop_invariants_and_statement_assert() {
 // resolve `old` positionally, to the loop-top havoc snapshot, while the kernel
 // certified the invariant with `old` at the function-entry snapshot, so no
 // placement of the operands could reproduce the certified fact. `old` now names
-// the function-entry state. See notes/tasks/named-memory-states-arc.md.
+// the function-entry state. See notes/memory-dag.md.
 fn verifies_old_memory_loop_invariant() {
     let c_source = r#"
             int32 fill_tail(int32 p[], int32 n) {

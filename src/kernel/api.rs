@@ -194,7 +194,7 @@ pub(crate) fn c_memory_load_is_unchanged(
 /// the pointer.
 ///
 /// This is the first consumer of the named-memory-states representation
-/// (`notes/tasks/named-memory-states-arc.md`). Where
+/// (`notes/memory-dag.md`). Where
 /// [`load_unchanged_via_effect_chain`] reconstructs a write history at proof
 /// time from `CMemoryMutatesOnly` / `CMemoryEffectSummary` facts and links
 /// hops by deep-canonical snapshot equality, this walks the history itself
@@ -389,7 +389,7 @@ fn memory_dag_cell_source(
 /// are equal when the two lookups land on the same node or pin down the same
 /// value.
 ///
-/// This is stage 4 of `notes/tasks/named-memory-states-arc.md`, and it is
+/// This is stage 4 of `notes/memory-dag.md`, and it is
 /// wired in *ahead* of the canonicalizing comparisons rather than beside
 /// them. Where those take two embedded snapshots, deep-canonicalize both and
 /// compare the results structurally, this follows named edges and compares

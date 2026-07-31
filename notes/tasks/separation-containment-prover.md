@@ -5,7 +5,7 @@ Claimed:
 
 ## Why this one item gates four members
 
-Two independent fix attempts (see store-provenance-family.md: "the
+Two independent fix attempts (see ../regression-history.md: "the
 d78b49b restoration is real but cannot land", and the field_derived
 experiment matrix) both terminated at the same wall. The store-time
 cell-retention prover and the certificate framing prover are the

@@ -35,25 +35,28 @@ Language-design decisions are explicitly punted to a later group
 
 ## Board — open work
 
-Finish order (owner, 2026-07-31): budget enforcement first, then the
-regression burn-down, then the two engine bugs. Punted: language
-proposals, and the arc's fourth-edge-kind increment unless a regression
-fix needs it.
+One file in `tasks/` = one work item, exactly (owner rule, 2026-07-31).
+Reference material lives in `notes/` root, never in `tasks/`.
 
 | Task file (tasks/) | Status | One-line scope |
 |---|---|---|
-| mdtest-budget-enforcement.md | landed | Budgets enforced in the regular passes; 5 corpus sites expanded green; empty `if` branches now legal (owner 2026-07-31). Residue: pure-case-split expansions are unfaithful (per-path merge bug) — 2 tests quarantined, same family as the certificate-lowering regressions |
-| separation-containment-prover.md | open (critical path) | The one design item gating owner_buffer, bubble_pass3, field_derived and likely vector_fill: deterministic exact-fact containment for constant-offset cells vs value-dependent ranges. Both fix agents terminated at this wall; direction and dead ends recorded |
-| store-provenance-family.md | open | Corpus record: bisect verdicts for four members, forward-fix for the rest. owned-string is independently actionable (loadable permission plumbing) |
-| slow-simple-engine-bugs.md | open | Rule 5's two known violations: the 65 s invariant-closer replay (fixing it de-quarantines bubble_sort3) and field_derived's 29 s `fold`. Lead: the replay repeats the planner's own derivation — cache it |
-| expansion-aggregate-object-spelling.md | open (small) | The last lib `#[ignore]`: unfold decomposes `object(owner)` separation and expansion loses the aggregate spelling. Printing/re-folding, not soundness |
-| named-memory-states-arc.md | paused | Stages 1–5 landed (field_derived 487→198 s; two members cleared). The fourth-edge-kind increment is punted unless a regression fix needs it |
+| separation-containment-prover.md | in progress (agent) | THE critical path: deterministic exact-fact containment of constant-offset cells vs value-dependent ranges. Gates owner_buffer, bubble_pass3, field_derived, likely vector_fill |
+| owned-string-loadable.md | in progress (agent) | The unfold cannot discharge `loadable(data[len])` — permission plumbing, independent of the critical path |
+| case-split-expansion-merge.md | open | Pure case-split certificates expand to an `if` tree that does not re-verify: the per-path merge loses the execution-path pairing. 2 tests quarantined on it |
+| invariant-closer-replay-cost.md | open | 65 s SIMPLE closer replay (130x over budget); fixing it de-quarantines bubble_sort3. Lead: reuse the planner's own derivation |
+| owned-vector-forward-fix.md | open (queued) | Propositional `Implies` gap at vector_replace_if tactic 8; retest after the critical path lands |
+| field-derived-fold-cost.md | open (small) | 29 s SIMPLE fold; re-profile after the critical path lands |
+| expansion-aggregate-object-spelling.md | open (small) | The last lib `#[ignore]`: expansion loses the aggregate `object(owner)` spelling |
 
 ## Reference docs
 
 - `conventions.md` — gates, multi-agent workflow, decision boundaries,
   working rules, settled invariants, tooling flags. Read first.
-- `canonical-memory.md` — design brief for the named-memory-states arc.
+- `regression-history.md` — bisect verdicts, diagnoses, and experiment
+  matrices behind the open regression tasks.
+- `memory-dag.md` — the landed named-memory-states arc: invariants,
+  wins, dead ends, and the punted fourth-edge-kind increment.
+- `canonical-memory.md` — original design brief for that arc.
 - `language-proposals.md` — surface-language proposals (parked; any of
   these is a Surface Click semantics change and needs the owner).
 

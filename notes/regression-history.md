@@ -1,7 +1,10 @@
-# store-provenance family — REGRESSIONS to fix (owner ruling 2026-07-31)
+# Regression record (reference, not a task)
 
-Status: open — in scope for the current project, not punted
-Claimed:
+The bisect verdicts, diagnoses, and experiment matrices for the
+quarantined-member regressions. The WORK ITEMS live in notes/tasks/:
+separation-containment-prover.md (gates owner_buffer, bubble_pass3,
+field_derived, likely vector_fill), owned-string-loadable.md,
+owned-vector-forward-fix.md. This file is the shared evidence base.
 
 **These used to work.** Every member was added green (2026-06-18 to
 07-16) and broke during the 2026-07-25..28 strict-certificate wave
@@ -210,7 +213,7 @@ under any tested configuration).
 - **mdtest `bubble_sort3_two_pass_sorted.md`** — **passes** at 137 s vs
   the 30 s limit; quarantined on cost. 65 s of it is a slow SIMPLE
   invariant-closer replay: an engine bug, tracked in
-  `slow-simple-engine-bugs.md`, not here.
+  `invariant-closer-replay-cost.md`, not here.
 - **mdtest `bubble_pass3_max_suffix.md`** (~12 s) — certificate
   lowering: the planned `simp` context premise (the loop-exit invariant
   `ForAll`) is not an available *source* fact. Looks like arc work and
@@ -224,7 +227,7 @@ under any tested configuration).
   transition (vector_fill at `contract` path 0 tactic 2 for
   `ensures_2`; field_derived diagnosed in full above — two blockers,
   both in the d78b49b collision; it also carries a 29 s simple `fold`,
-  tracked in `slow-simple-engine-bugs.md`).
+  tracked in `invariant-closer-replay-cost.md`).
 - **mdtest `composite_resource_owner_buffer_field_dependent.md`**
   (~6 s) — "execution proof for `set_owned_first.ensures_0` changed
   more than the certified ghost-resource representation".

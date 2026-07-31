@@ -102,7 +102,7 @@ obligations to burn down, never parking.
   decide memo and the 2026-07-30 certification arms for A/B.
 - `CLICK_DISABLE_MEMORY_DAG` stops the named-memory-states arc from
   recording or reading memory derivations, restoring the pre-arc path
-  exactly (`notes/tasks/named-memory-states-arc.md`).
+  exactly (`notes/memory-dag.md`).
 - `MDTEST_FILTER=<name>` runs one mdtest; `CLICK_RUN_QUARANTINED=1`
   includes quarantined ones; `MDTEST_TIME_LIMIT=<secs>` bounds it.
 - click-audit defaults: stop at first failure, 10 s slow-site limit,

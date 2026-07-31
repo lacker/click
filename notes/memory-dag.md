@@ -1,11 +1,13 @@
-# named-memory-states arc (canonical memory, option C)
+# Memory DAG record (reference, not a task)
 
-Status: in progress — stages 1–5 landed; next increment is the fourth
-edge kind (see "Next")
-Claimed:
+Stages 1–5 of the named-memory-states arc, landed 2026-07-30/31: what
+the derivation DAG is, its invariants, what it bought (field_derived
+487->198 s), and the measured dead ends. The punted next increment
+(fourth edge kind, block allocation) is recorded under "Next" — it
+becomes a task only if an open work item needs it.
 
 Design brief: `../canonical-memory.md`. Failure corpus and per-member
-frontiers: `store-provenance-family.md`.
+frontiers: `../regression-history.md`.
 
 Scope boundary (owner, 2026-07-30): kernel/internal representation
 only. No Surface Click syntax or semantics change. If the design seems
@@ -102,13 +104,13 @@ cannot help a search whose cost is in not finding anything; and a
 select-over-store arm fired **0 times in 295 290 lookups** — its loads
 read a caller-provided symbolic buffer at symbolic indices, so there is
 no store history to look up. Its 65 s is a slow-simple engine bug
-(`slow-simple-engine-bugs.md`), not arc work. Sampling trap recorded
+(`invariant-closer-replay-cost.md`), not arc work. Sampling trap recorded
 there too: the hot frame is the fact-set-scanning *caller*; attributing
 its cost to the canonicalizing arm it contains was already made once.
 
 ## Where the frontier is
 
-Per-member diagnoses live in `store-provenance-family.md`. None of the
+Per-member diagnoses live in `../regression-history.md`. None of the
 remaining failures is a load-equality question — certificate lowering
 (bubble_pass3), grouped-simp claim-transition certification
 (vector_fill, field_derived), ghost-resource representation
@@ -169,7 +171,7 @@ snapshots.
 
 ## Done when
 
-The acceptance corpus in `store-provenance-family.md` passes: both
+The acceptance corpus in `../regression-history.md` passes: both
 examples and all quarantined member mdtests de-quarantine, and the
 explicit `have` in `mdtests/proof_advance_pointer_local.md` deletes
 cleanly with generation finding the spelling itself.
