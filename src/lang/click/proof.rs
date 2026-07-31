@@ -10196,23 +10196,21 @@ fn finish_ordered_proof_replay(
                             }
                             (surface_tactic, replayed_fact)
                         } else {
-                            // A fully simple script is its own certificate:
-                            // deterministic replay of surface tactics is
-                            // exactly what the gate requires. A script with a
-                            // smart tactic in any other shape has no lowering
-                            // yet, so under the strict gate it cannot close
-                            // the claim.
-                            let script_is_simple = match &have.proof {
-                                Proof::Script(tactics) => tactics
-                                    .iter()
-                                    .all(|tactic| matches!(tactic.class(), TacticClass::Simple(_))),
-                                Proof::Default | Proof::Tactic(_) => false,
-                            };
-                            if strict_exit_gate() && !script_is_simple {
-                                return Err(ClickError::new(format!(
-                                    "`{proof_label}` path {path_index}, tactic {tactic_index}: post-execution `have` script contains a smart tactic in a shape certificate lowering does not handle"
-                                )));
-                            }
+                            // A script that validates as a certificate is its
+                            // own certificate: `prove_have_at_point` is
+                            // deterministic replay of surface tactics, which
+                            // is exactly what the gate requires.
+                            // `validate_certificate_tactics` is the settled
+                            // judgment for "surface-expressible" and already
+                            // descends through nested `have`/`if`/`advance`
+                            // bodies, so use it rather than a flat scan that
+                            // mistakes any structured script for a smart one.
+                            //
+                            // Replay runs first so a script rejected on its
+                            // own terms (`advance` in a pure proof, say) still
+                            // reports that, and the expressibility gate only
+                            // decides whether a *successful* smart closure may
+                            // stand.
                             let fact = prove_have_at_point(
                                 have,
                                 theorem_environment,
@@ -10231,7 +10229,41 @@ fn finish_ordered_proof_replay(
                                 function_block.requires(),
                                 Some(path_index),
                             )?;
-                            (ProofTactic::Have(have.clone()), fact)
+                            let mut surface_tactic = ProofTactic::Have(have.clone());
+                            if let Err(error) = TacticCertificate::from_proof_tactics(
+                                std::slice::from_ref(&surface_tactic),
+                            ) {
+                                match lower_smart_simp_suffix_have(
+                                    have,
+                                    &fact,
+                                    theorem_environment,
+                                    &proof_label,
+                                    *tactic_index,
+                                    &path_requirements,
+                                    parsed_function.parameters(),
+                                    arguments,
+                                    pre_state,
+                                    post_state,
+                                    result,
+                                    &replay.program_point_states,
+                                    Some(&outcome_surface_propositions),
+                                    predicate_environment,
+                                    click_function_environment,
+                                    function_block.requires(),
+                                    path_index,
+                                ) {
+                                    Some(lowered) => {
+                                        surface_tactic = ProofTactic::Have(lowered);
+                                    }
+                                    None if strict_exit_gate() => {
+                                        return Err(ClickError::new(format!(
+                                            "`{proof_label}` path {path_index}, tactic {tactic_index}: post-execution `have` script is not expressible as a certificate: {error:?}"
+                                        )));
+                                    }
+                                    None => {}
+                                }
+                            }
+                            (surface_tactic, fact)
                         };
                         outcome_surface_propositions.record_lowering(&have.proposition, &fact)?;
                         if !path_requirements.contains(&fact) {
@@ -15125,6 +15157,80 @@ fn smart_simp_unfold_prefix(proof: &Proof) -> Option<Vec<String>> {
             _ => None,
         })
         .collect()
+}
+
+/// Replace the trailing smart `simp` of a post-execution `have` script whose
+/// prefix is already certificate-expressible with a simple closer.
+///
+/// This covers the shapes the `[unfold*, simp]` lowering misses — notably a
+/// `witness`/`choose` prefix, which is how an existential `have` is written.
+/// The candidate script is accepted only when `prove_have_at_point` (the
+/// replay judgment) proves it AND yields exactly the fact the smart script
+/// established, so this emits only what replay accepts.
+#[allow(clippy::too_many_arguments)]
+fn lower_smart_simp_suffix_have(
+    have: &ProofHave,
+    fact: &Proposition,
+    theorem_environment: &TheoremEnvironment,
+    claim_label: &str,
+    tactic_index: usize,
+    available: &[Proposition],
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    pre_state: &CState,
+    post_state: &CState,
+    result: &CValue,
+    program_point_states: &ProgramPointStates,
+    surface_propositions: Option<&SurfacePropositionMap>,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    function_requires: &[Requirement],
+    path_index: usize,
+) -> Option<ProofHave> {
+    let Proof::Script(tactics) = &have.proof else {
+        return None;
+    };
+    let (last, prefix) = tactics.split_last()?;
+    if !matches!(last, ProofTactic::Simp) {
+        return None;
+    }
+    for closer in [ProofTactic::Assumption, ProofTactic::Normalize] {
+        let mut candidate_tactics = prefix.to_vec();
+        candidate_tactics.push(closer);
+        let candidate = ProofHave {
+            proposition: have.proposition.clone(),
+            proof: Proof::Script(candidate_tactics),
+        };
+        if TacticCertificate::from_proof_tactics(std::slice::from_ref(&ProofTactic::Have(
+            candidate.clone(),
+        )))
+        .is_err()
+        {
+            continue;
+        }
+        let replayed = prove_have_at_point(
+            &candidate,
+            theorem_environment,
+            claim_label,
+            tactic_index,
+            available,
+            parameters,
+            arguments,
+            pre_state,
+            post_state,
+            Some(result),
+            program_point_states,
+            surface_propositions,
+            predicate_environment,
+            click_function_environment,
+            function_requires,
+            Some(path_index),
+        );
+        if replayed.is_ok_and(|replayed| replayed == *fact) {
+            return Some(candidate);
+        }
+    }
+    None
 }
 
 fn have_proof_contains_smart_apply(proof: &Proof) -> bool {
