@@ -14452,13 +14452,17 @@ fn record_surface_replay_tactic(
                             || normalize_direct_atomic_memory_loads(required)
                                 == normalize_direct_atomic_memory_loads(fact)
                     });
-                    let non_reconstructible_separation =
-                        matches!(
-                            fact,
-                            Proposition::CMemoryDisjoint { .. }
-                                | Proposition::CResourceSeparate { .. }
-                        ) && !exact_fact_is_available(fact, &projected_resource_facts);
-                    if !selected_by_derivation && !non_reconstructible_separation {
+                    // A permission the resource projection reproduces is
+                    // reconstructed by the replay for itself. One it does not
+                    // reproduce is only available because the ambient context
+                    // carried it, so the certificate has to spell it.
+                    let non_reconstructible_permission = matches!(
+                        fact,
+                        Proposition::CMemoryDisjoint { .. }
+                            | Proposition::CResourceSeparate { .. }
+                            | Proposition::CMemoryLoadable { .. }
+                    ) && !exact_fact_is_available(fact, &projected_resource_facts);
+                    if !selected_by_derivation && !non_reconstructible_permission {
                         continue;
                     }
                     // A certified statement prerequisite may be represented by

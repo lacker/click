@@ -2192,11 +2192,6 @@ fn execute_step_omits_materialization_transport_across_statements() {
 }
 
 #[test]
-// Quarantined: certificate-premise policy. The caller's `execute_step()` now
-// expands to a bare `step();` with no premise, so nothing carries the callee's
-// internal snapshot fact. Re-baselining the assert to `step();` would delete the
-// point of the test. See notes/tasks/lib-ignored-expansion-tests.md.
-#[ignore = "quarantined: certificate-premise policy (bare step, no snapshot premise); run with --ignored"]
 fn execute_step_expands_call_assign_fact_from_internal_snapshot() {
     let increment_c_source = r#"
             int32 set_seven(int32 p[1]) {
