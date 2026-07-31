@@ -1,10 +1,8 @@
 # Certificate-gateway bypasses (from the one-gateway audit)
 
-Status: claimed — redesign accepted, migration in progress.
-Strict-gate worklist is at **0 failing mdtests** (was 24). The gate
-default is still off: flipping it is the owner's step. See the last
-migration-log section.
-Claimed: worktree-agent-ae831f37fb11684b5, 2026-07-30
+Status: claimed — gate flipped and unconditional; executing the final
+phase, the ClosedClaim restructure.
+Claimed: worktree-agent-a0edef682633b9260, 2026-07-30
 
 The 2026-07-30 audit (see one-gateway-check.md for the full evidence)
 found that the settled invariant
