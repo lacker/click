@@ -436,6 +436,165 @@ pub fn files_with_extension(directory: &Path, extension: &str) -> Result<Vec<Pat
         .collect())
 }
 
+/// One markdown test: the C translation units, the Click sidecar, and the
+/// expected outcome, all extracted from fenced blocks in a single `.md` file.
+///
+/// This is single-sourced here so the `mdtests` harness and `click-profile`
+/// agree on what an mdtest *is*; a profiler that extracted the sources
+/// slightly differently would profile a different program than the gate runs.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MdTest {
+    /// `(filename, source)` for every ```c block, in file order.
+    pub c_sources: Vec<(String, String)>,
+    /// The single ```click block, if the file has one.
+    pub click_source: Option<String>,
+    /// The one-based line in the `.md` file where the ```click block's first
+    /// body line sits, so positions inside the sidecar can be reported as
+    /// positions in the markdown file.
+    pub click_start_line: usize,
+    /// The ```expect block, if the file has one.
+    pub expectation: Option<MdTestExpectation>,
+}
+
+/// What an mdtest expects verification to do.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum MdTestExpectation {
+    Pass,
+    FailContains(String),
+}
+
+/// Extracts the fenced blocks of an mdtest.
+///
+/// `path` only names the file in diagnostics; the content comes from `source`.
+pub fn parse_mdtest(path: &Path, source: &str) -> Result<MdTest, String> {
+    let mut mdtest = MdTest {
+        c_sources: Vec::new(),
+        click_source: None,
+        click_start_line: 1,
+        expectation: None,
+    };
+    let lines = source.lines().collect::<Vec<_>>();
+    let mut index = 0;
+
+    while index < lines.len() {
+        let line = lines[index];
+        if !line.starts_with("```") {
+            index += 1;
+            continue;
+        }
+
+        let info = line.trim_start_matches("```").trim();
+        index += 1;
+        let start_line = index + 1;
+        let mut body = Vec::new();
+        while index < lines.len() && !lines[index].starts_with("```") {
+            body.push(lines[index]);
+            index += 1;
+        }
+        if index == lines.len() {
+            return Err(format!(
+                "`{}` has unterminated fenced block starting at line {start_line}",
+                path.display()
+            ));
+        }
+        index += 1;
+
+        let body = body.join("\n");
+        match block_kind(info) {
+            Some(BlockKind::C { filename }) => mdtest.c_sources.push((filename, body)),
+            Some(BlockKind::Click) => {
+                if mdtest.click_source.replace(body).is_some() {
+                    return Err(format!(
+                        "`{}` has more than one ```click block",
+                        path.display()
+                    ));
+                }
+                mdtest.click_start_line = start_line;
+            }
+            Some(BlockKind::Expect) => {
+                let expectation = parse_expectation(path, start_line, &body)?;
+                if mdtest.expectation.replace(expectation).is_some() {
+                    return Err(format!(
+                        "`{}` has more than one ```expect block",
+                        path.display()
+                    ));
+                }
+            }
+            None => {}
+        }
+    }
+
+    Ok(mdtest)
+}
+
+/// Reads and extracts an mdtest from disk.
+pub fn read_mdtest(path: &Path) -> Result<MdTest, String> {
+    let source = fs::read_to_string(path)
+        .map_err(|error| format!("failed to read `{}`: {error}", path.display()))?;
+    parse_mdtest(path, &source)
+}
+
+enum BlockKind {
+    C { filename: String },
+    Click,
+    Expect,
+}
+
+fn block_kind(info: &str) -> Option<BlockKind> {
+    let mut parts = info.split_whitespace();
+    match parts.next()? {
+        "c" => {
+            let filename = parts.find_map(|part| part.strip_prefix("filename="))?;
+            Some(BlockKind::C {
+                filename: filename.to_string(),
+            })
+        }
+        "click" => Some(BlockKind::Click),
+        "expect" => Some(BlockKind::Expect),
+        _ => None,
+    }
+}
+
+fn parse_expectation(path: &Path, line: usize, body: &str) -> Result<MdTestExpectation, String> {
+    let body = body.trim();
+    if body == "pass" {
+        return Ok(MdTestExpectation::Pass);
+    }
+    if let Some(message) = body.strip_prefix("fail:") {
+        return Ok(MdTestExpectation::FailContains(message.trim().to_string()));
+    }
+    Err(format!(
+        "`{}` has invalid expectation at line {line}: expected `pass` or `fail: substring`, got `{body}`",
+        path.display()
+    ))
+}
+
+/// Lists the `.md` files under `path`: `path` itself when it is one, or the
+/// markdown files directly inside it. Returned paths are sorted.
+pub fn find_mdtests(path: &Path) -> Result<Vec<PathBuf>, String> {
+    if path.is_file() {
+        return Ok(vec![path.to_path_buf()]);
+    }
+    if !path.is_dir() {
+        return Err(format!("`{}` is not a file or directory", path.display()));
+    }
+    let mut paths = files_with_extension(path, "md")?;
+    paths.sort();
+    if paths.is_empty() {
+        return Err(format!(
+            "`{}` contains no markdown tests",
+            path.display()
+        ));
+    }
+    Ok(paths)
+}
+
+/// Returns true when the path names a markdown file, so a driver can pick
+/// mdtest mode over example-project mode from the argument alone.
+pub fn looks_like_mdtest(path: &Path) -> bool {
+    path.extension().is_some_and(|extension| extension == "md")
+}
+
 /// A reasonable worker count for a pool processing `jobs` independent jobs:
 /// the available parallelism, capped at eight and at the job count.
 pub fn default_worker_count(jobs: usize) -> usize {
