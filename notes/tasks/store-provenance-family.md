@@ -1,12 +1,29 @@
-# store-provenance family — acceptance corpus & per-member frontiers
+# store-provenance family — REGRESSIONS to fix (owner ruling 2026-07-31)
 
-Status: open (corpus record; members move as fixes land)
+Status: open — in scope for the current project, not punted
 Claimed:
 
-This file is the failure corpus for the named-memory-states arc
-(`named-memory-states-arc.md`) **and** the current per-member frontier.
-As of 2026-07-31 (arc stages 1–5 landed), every remaining member fails
-on something that is *not* a load-equality question — do not chase these
+**These used to work.** Every member was added green (2026-06-18 to
+07-16) and broke during the 2026-07-25..28 strict-certificate wave
+("enforce strict smart tactic certificates", "remove smart have
+transport fallback", "Make expanded proofs canonical Surface Click"),
+then was quarantined 07-29/30 already failing on master. They are
+regressions from this project raising its own acceptance bar — for four
+of them the prover still closes the claims and only the certificate
+machinery cannot express the result. Owner ruling: fix them as part of
+this project, as long as the fix stays straightforward; if one turns
+out to need new surface semantics, bring it back to the owner instead
+of brute-forcing.
+
+**Attack per member: bisect first.** Each has a bounded window (its add
+commit → 2026-07-29). Bisect to the exact breaking commit before
+working the diagnosis; "certificate machinery gap" becomes "this commit
+removed/required X". Add commits: bubble_pass3 78218b6, vector_fill
+a28eb1c, field_derived d0f54fe, owner_buffer a3d00d3, owned-string
+d2be685, owned-vector 45e7aea.
+
+As of 2026-07-31 (arc stages 1–5 landed), every member fails on
+something that is *not* a load-equality question — do not chase these
 into the arc; each diagnosis below was measured.
 
 ## Cleared (for the record)

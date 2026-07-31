@@ -35,12 +35,18 @@ Language-design decisions are explicitly punted to a later group
 
 ## Board — open work
 
+Finish order (owner, 2026-07-31): budget enforcement first, then the
+regression burn-down, then the two engine bugs. Punted: language
+proposals, and the arc's fourth-edge-kind increment unless a regression
+fix needs it.
+
 | Task file (tasks/) | Status | One-line scope |
 |---|---|---|
+| mdtest-budget-enforcement.md | open (next) | Enforce the 500 ms/2 s tactic budgets inside the regular mdtest/examples passes, using the timing stream the harness already captures. No separate sweep, no fourth gate |
+| store-provenance-family.md | open | REGRESSIONS, in scope (owner ruling): all six members were green until the 07-25..28 strict-certificate wave broke them. Bisect each to its breaking commit, then fix; escalate any member whose fix needs new surface semantics |
 | slow-simple-engine-bugs.md | open | Rule 5's two known violations: the 65 s invariant-closer replay (fixing it de-quarantines bubble_sort3) and field_derived's 29 s `fold`. Lead: the replay repeats the planner's own derivation — cache it |
-| named-memory-states-arc.md | open | Memory states named in a derivation DAG. Stages 1–5 landed (field_derived 487→198 s; `old` names function entry; two corpus members cleared). Next increment: a fourth edge kind (block allocation) — measured lead |
-| store-provenance-family.md | open | The acceptance corpus, with current per-member frontiers. All remaining members now fail *downstream* of load equality: certificate lowering, grouped-simp certification, ghost-resource representation, one propositional gap, one permission gap |
 | expansion-aggregate-object-spelling.md | open (small) | The last lib `#[ignore]`: unfold decomposes `object(owner)` separation and expansion loses the aggregate spelling. Printing/re-folding, not soundness |
+| named-memory-states-arc.md | paused | Stages 1–5 landed (field_derived 487→198 s; two members cleared). The fourth-edge-kind increment is punted unless a regression fix needs it |
 
 ## Reference docs
 
