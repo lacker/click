@@ -18,7 +18,7 @@ click-audit (full run 314 s, 98 sites passing).
 |---|---|---|
 | split-buffer-perf.md | open | Kill the last 2 SLOW audit findings (~7.7 s unit; 3.6 s contract execution) |
 | one-gateway-check.md | open | Bounded code audit: every smart success routes through TacticCertificate replay |
-| cli-consolidation.md | open | Dedupe binary helpers; whole-file verify workflow; robust click-profile parsing |
+| cli-consolidation.md | done | Helpers single-sourced in src/cli.rs; click-verify DIR mode + docs; click timing: drift is now a loud error or a counted warning |
 | proof-panics.md | open | Convert user-reachable panic!/unreachable! in proof.rs to diagnostics |
 | while-invariant-rule.md | open | Fix or fence the single-fork preservation check |
 | docs-vocabulary-pass.md | open | Tactic inventory/synonym cleanup; audit docs match the binary |
