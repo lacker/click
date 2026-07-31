@@ -1938,7 +1938,12 @@ fn execute_step_records_a_point_checked_surface_expansion() {
 }
 
 #[test]
-#[ignore = "quarantined: item-7 nested snapshot spellings (store-provenance debt); run with --ignored"]
+// Quarantined: certificate-premise over-inclusion. The unused `requires x < 100`
+// is emitted as a premise, so the certificate is `StepUsing([x < 100])` rather
+// than `Step` (proof.rs `claim_transition_context` keeps every ambient
+// ConditionIs). This test is the guard for that bug — do not re-baseline it.
+// See notes/tasks/lib-ignored-expansion-tests.md.
+#[ignore = "quarantined: certificate-premise over-inclusion (unused requires); run with --ignored"]
 fn execute_rest_return_certificate_omits_unused_ambient_facts() {
     let c_source = r#"
             int32 return_x(int32 x) {
@@ -2193,7 +2198,11 @@ fn execute_step_omits_materialization_transport_across_statements() {
 }
 
 #[test]
-#[ignore = "quarantined: item-7 nested snapshot spellings (store-provenance debt); run with --ignored"]
+// Quarantined: certificate-premise policy. The caller's `execute_step()` now
+// expands to a bare `step();` with no premise, so nothing carries the callee's
+// internal snapshot fact. Re-baselining the assert to `step();` would delete the
+// point of the test. See notes/tasks/lib-ignored-expansion-tests.md.
+#[ignore = "quarantined: certificate-premise policy (bare step, no snapshot premise); run with --ignored"]
 fn execute_step_expands_call_assign_fact_from_internal_snapshot() {
     let increment_c_source = r#"
             int32 set_seven(int32 p[1]) {
@@ -3505,7 +3514,13 @@ fn rejects_predicate_call_with_wrong_arity() {
 }
 
 #[test]
-#[ignore = "quarantined: item-7 nested snapshot spellings (store-provenance debt); run with --ignored"]
+// Quarantined: predicate opacity vs. lowering. `sorted_pair(p)` still lowers to
+// its body, so its `p[0]`/`p[1]` loads need a loadability precondition the
+// contract does not state; every path is infeasible and exact execution reports
+// "no valid paths". Adding `requires loadable(p, 8);` makes it pass, but whether
+// an opaque predicate should owe its body's loads is a Surface Click semantics
+// question (owner's call). See notes/tasks/lib-ignored-expansion-tests.md.
+#[ignore = "quarantined: opaque predicate still owes its body's loads; run with --ignored"]
 fn verifies_opaque_predicate_from_requirement() {
     let c_source = r#"
             int32 identity_pointer_fact(int32* p) {
@@ -5983,7 +5998,12 @@ fn verifies_loop_invariants_and_statement_assert() {
 }
 
 #[test]
-#[ignore = "quarantined: item-7 nested snapshot spellings (store-provenance debt); run with --ignored"]
+// Quarantined: store-provenance / named-memory-states family (PARKED — blocked
+// on the canonical-memory arc). Preserving `p[0] == old(p[0])` across the body's
+// `p[i] = i` needs the goal's load-through-a-store-cell memory to equal the
+// fact's store-free memory. Same shape as the quarantined `fill_tail_keeps_first`
+// mdtest. See notes/tasks/store-provenance-family.md.
+#[ignore = "quarantined: store-provenance family (parked); run with --ignored"]
 fn verifies_old_memory_loop_invariant() {
     let c_source = r#"
             int32 fill_tail(int32 p[], int32 n) {

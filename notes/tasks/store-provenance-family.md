@@ -16,6 +16,21 @@ Members (all diagnosed 2026-07-30):
   facts, not effect summaries; attempt reverted). Fails in ~9.6 s.
 - examples: owned-vector (vector_fill.loop(0).preserve invariant closer
   missing a ForAll path goal). Fails in ~12 s (was a 600 s timeout).
+- lib (1 `#[ignore]`, added 2026-07-30 from lib-ignored-expansion-tests):
+  `lang::click::tests::verifies_old_memory_loop_invariant`. `fill_tail`
+  carries `invariant p[0] == old(p[0])` across a body that does
+  `p[i] = i` (i >= 1). The `loop(0).preserve` smart tactic certifies but
+  cannot lower to a surface certificate: "no placement of the comparison
+  operands at the 4 recorded program points lowered to the certified fact
+  transport". Certified source loads `arg-memory + i*4` from a memory with
+  *no* cells; certified target loads the same pointer from a memory
+  carrying the store cells for `p[i] = i` and `local:i` — the load
+  spellings differ by direct-store provenance exactly as in the
+  owned-string case, and the 2026-07-30 framed-load-equality arm does not
+  bridge it (`CLICK_DISABLE_CERT_ARMS=1` reproduces identically). Same
+  program shape as the quarantined `fill_tail_keeps_first` mdtest below.
+  Fails in 0.04 s. Repro:
+  `cargo nextest run --lib --run-ignored ignored-only -E 'test(verifies_old_memory_loop_invariant)'`
 - mdtests (6 quarantined): vector_fill, field_derived (named-memory-
   states residue) plus bubble_pass3, bubble_sort3,
   composite_owner_buffer_field_dependent, fill_tail_keeps_first —

@@ -1803,7 +1803,10 @@ int32 identity(int32 x) {
     }
 
     #[test]
-    #[ignore = "quarantined: item-7 nested snapshot spellings (store-provenance debt); run with --ignored"]
+    // Quarantined: certificate-premise policy. The expansion is now a bare
+    // `step();` that does re-verify every grouped claim; only the `step using {`
+    // shape assert below is stale. See notes/tasks/lib-ignored-expansion-tests.md.
+    #[ignore = "quarantined: certificate-premise policy (bare step; stale shape assert); run with --ignored"]
     fn expands_grouped_immutable_read_with_multiple_claim_successors() {
         let c_source = "int32 read_first(int32 p[1]) { return p[0]; }";
         let click_source = r#"
@@ -1830,13 +1833,17 @@ int32 read_first(int32 p[1]) {
         .expect("the grouped immutable read should have one common expansion");
 
         assert!(!expanded.contains("execute_rest();"));
-        assert!(expanded.contains("step using {"));
+        assert!(expanded.contains("step using {"), "{expanded}");
         verify_c0_sources(&expanded, &[("read.c", c_source)])
             .expect("the expanded immutable read should re-verify every grouped claim");
     }
 
     #[test]
-    #[ignore = "quarantined: item-7 nested snapshot spellings (store-provenance debt); run with --ignored"]
+    // Quarantined: certificate-premise over-inclusion. The expansion lands in the
+    // right branch and re-verifies, but carries the branch hypothesis as
+    // `fact x == x;` (proof.rs `claim_transition_context` keeps every ambient
+    // ConditionIs). See notes/tasks/lib-ignored-expansion-tests.md.
+    #[ignore = "quarantined: certificate-premise over-inclusion (branch hypothesis); run with --ignored"]
     fn expands_nested_branch_tactic_by_source_location() {
         let c_source = "int32 identity(int32 x) { return x; }";
         let click_source = r#"
@@ -1868,7 +1875,7 @@ int32 identity(int32 x) {
         .expect("the nested then tactic should expand");
 
         assert_eq!(expanded.matches("execute_rest();").count(), 1);
-        assert!(expanded.contains("    if x == x {\n        step();"));
+        assert!(expanded.contains("    if x == x {\n        step();"), "{expanded}");
         verify_c0_sources(&expanded, &[("identity.c", c_source)])
             .expect("the source with one nested expansion should re-verify");
     }
@@ -2140,7 +2147,12 @@ int32 increment_and_return_old(int32 p[1]) {
     }
 
     #[test]
-    #[ignore = "quarantined: item-7 nested snapshot spellings (store-provenance debt); run with --ignored"]
+    // Quarantined: aggregate separation spelling. `unfold` decomposes
+    // `separate(memory(object(owner)), memory((owner->data)[0..owner->cap]))`
+    // into six pairwise field separations, so the aggregate `object(owner)`
+    // spelling never reaches the emitted premises. See
+    // notes/tasks/lib-ignored-expansion-tests.md.
+    #[ignore = "quarantined: unfold decomposes the aggregate object() separation; run with --ignored"]
     fn expansion_preserves_unfolded_resource_and_predicate_fact_spellings() {
         let c_source = r#"
 struct box {
