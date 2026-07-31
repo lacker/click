@@ -187,8 +187,8 @@ implementation has these frontier points:
 - function entry, before C execution has started,
 - statement entry after `execute_step()`, explicit entry into a selected `if`
   arm, or a straight-line `execute_until(statement(N))` pause,
-- function exit, after `execute_rest()` / `execute_rest()` has executed the
-rest of the function.
+- function exit, after `execute_rest()` (equivalently its legacy spelling
+  `symbolic_execute()`) has executed the rest of the function.
 
 Condition edges and statement execution produce shared certified transitions.
 The ordinary execution tactics and region execution-proof traversal consume
@@ -262,8 +262,9 @@ therefore read dependent metadata needed to describe the owned backing range.
 This projection is one step and duplicable; it does not unfold or consume the
 owned composite.
 
-`execute_rest()` is now best understood as legacy spelling for
-`execute_rest()`: advance the current execution point to function exit.
+`symbolic_execute()` is a legacy spelling of `execute_rest()`. The parser maps
+both spellings to the same tactic, which advances the current execution point
+to function exit. New proofs should write `execute_rest()`.
 
 ## Observable Facts
 

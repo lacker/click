@@ -38,12 +38,16 @@ several reasoning rules even though its implementation is deterministic.
 
 Use `frame` for `immutable` and `mutable` effect clauses.
 
-Pure proofs for theorem declarations currently support `auto`, `simp`, and
-explicit proof scripts made from `unfold(name);`, `apply(theorem(args));`,
-`assumption();`, `normalize();`, `rewrite(equality);`, and `simp();`.
-They do not run C execution steps because there is no C function body attached
-to the theorem, and they do not run resource tactics because theorem application
-does not change the resource context.
+Pure proofs for theorem declarations currently support `by auto;`, `by simp;`,
+and explicit proof scripts made from `unfold(name);`, `apply(theorem(args));`
+in either spelling, `assumption();`, `normalize();`, `rewrite(equality);`,
+`simp();`, the structural logical rules `intro();`, `conjunction();`, `left();`,
+`right();`, `double_negation();`, `vacuous();`, `contradiction(P);`, the atomic
+theory rules `derive(P) using { ... }` and `calculate(P) using { ... }`, and
+proof-level `if`. They do not run C execution steps because there is no C
+function body attached to the theorem, and they do not run resource tactics
+because theorem application does not change the resource context. `by frame;`,
+`have`, `witness`, and `choose` are also rejected in a theorem proof.
 
 ## Explicit Proof Scripts
 
@@ -57,12 +61,15 @@ ensures result == x by {
 ```
 
 An explicit script records a specific proof path, but not every current tactic
-is simple. `assumption`, `normalize`, `rewrite`, and exact-premise `apply` are
-simple tactics. `auto`, `simp`, `execute_step`, `execute_then_step`,
-`execute_else_step`, `execute_rest`, `execute_until`, and `bounded_execute` are
-smart tactics. `have`, proof-level `if`, and `advance` are proof control-flow
-tactics. The
-[proof tactics reference](../proof-tactics.md) classifies every tactic.
+is simple. `assumption`, `normalize`, `rewrite`, `close_invariants`, and the
+exact-premise `using` spellings of `apply`, `transport`, `step`, and
+`apply_loop_summary` are simple tactics. `auto`, `simp`, `execute_step`,
+`execute_then_step`, `execute_else_step`, `execute_rest`, `execute_until`,
+`bounded_execute`, contextual `by frame`, and the bare spellings of `apply` and
+`transport` are smart tactics. `have`, proof-level `if`, and `advance` are proof
+control-flow tactics. The
+[proof tactics reference](../proof-tactics.md) classifies every tactic and
+lists every synonym.
 
 Common tactics include:
 
@@ -74,8 +81,8 @@ Common tactics include:
   automation over the explicit statement and fact-transport rules.
 - `execute_rest();`: execute symbolically from the current execution point to
   function exit. From function entry, this executes the whole C function.
-- `symbolic_execute();`: deprecated source alias for `execute_rest();`; both
-  spellings invoke the same tactic.
+- `symbolic_execute();`: legacy source spelling of `execute_rest();`; both
+  spellings invoke the same tactic. Prefer `execute_rest()`.
 - `execute_until(statement(N));`: advance from the current execution point to
   a forward, reachable statement entry point. An unresolved branch still
   requires explicit arm selection.
@@ -98,6 +105,8 @@ Common tactics include:
   and structural memory facts such as `loadable(...)`.
 - `frame();`: check a certified write summary against an effect claim using
   exact available range bounds. `by frame` is the smart contextual form.
+- `close_invariants();`: discharge a loop's invariant bundle inside a
+  `preserve by { ... }` proof.
 
 Use `defined(expression)` to state expression safety explicitly. For example,
 a theorem can derive `defined(x + 1)` from `x < 2147483647`; after applying that
@@ -129,4 +138,5 @@ Then read the proof clause:
 - `by { ... }` means the author wrote an explicit proof script; consult its
   tactics to see whether each is simple, smart, or control flow.
 
-The full tactic reference is in the proof workflow page.
+The full tactic inventory, including which spellings are synonyms, is the
+[proof tactics reference](../proof-tactics.md).

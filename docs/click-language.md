@@ -117,10 +117,14 @@ declaration.
 Theorems are intentionally pure. They do not support resource `requires`,
 resource `ensures`, effects, region proof blocks, `old(...)`, `at(...)`, or
 `result`. Pure theorem proof scripts currently support `unfold(name);`,
-`apply(theorem(args));`, `assumption();`, `normalize();`,
-`rewrite(equality);`, and `simp();`; C execution and resource tactics are
-rejected. Applying a theorem never consumes, creates, returns, opens, or closes
-resources.
+`apply(theorem(args));` and `apply(theorem(args)) using { ... }`,
+`assumption();`, `normalize();`, `rewrite(equality);`, `simp();`, the
+structural logical rules `intro();`, `conjunction();`, `left();`, `right();`,
+`double_negation();`, `vacuous();`, and `contradiction(P);`, the atomic theory
+rules `derive(P) using { ... }` and `calculate(P) using { ... }`, and
+proof-level `if`. C execution tactics, resource tactics, `by frame;`, `have`,
+`witness`, `choose`, and `advance` are rejected. Applying a theorem never
+consumes, creates, returns, opens, or closes resources.
 
 Theorems can be reused by explicit application:
 
