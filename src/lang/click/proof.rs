@@ -2806,6 +2806,21 @@ struct TacticReplayState {
     next_verification_variable: u64,
     next_path_choice: usize,
     execution_start_facts: Vec<Proposition>,
+    /// The snapshot that `old(...)` — and `at(function.entry, ...)`, which is
+    /// the same reference under another spelling — names in this region.
+    ///
+    /// `old` denotes function entry, but certificate replay used to resolve it
+    /// *positionally*, to whichever state the enclosing proof region started
+    /// from. Inside a function-body proof those coincide; inside a
+    /// loop-preservation region they do not, so the same surface text meant
+    /// loop-entry memory here and function-entry memory in the Click -> Spec
+    /// lowering the kernel certified against. Naming the state explicitly is
+    /// what makes the two agree; see
+    /// `notes/tasks/named-memory-states-arc.md` (stage 2a).
+    ///
+    /// `None` keeps the previous positional resolution, so every region that
+    /// does not record a function-entry snapshot behaves exactly as before.
+    function_entry_state: Option<CState>,
     concrete_loop_execution: bool,
     /// The execution frontier was intentionally replaced by an `advance`
     /// interface. Its state is a specification abstraction, not an exact
@@ -3411,6 +3426,33 @@ impl TacticReplayState {
             .execution_start_state
             .as_ref()
             .unwrap_or(current_state)
+    }
+
+    /// The state that `old(...)` and `at(function.entry, ...)` resolve to when
+    /// a contract clause is lowered here.
+    ///
+    /// This is the one place that answers "which memory does `old` mean", so
+    /// the answer is a *named* snapshot rather than whichever state happens to
+    /// sit at the enclosing frame's `pre_state` position. When the region
+    /// recorded its function-entry snapshot, that snapshot is the answer —
+    /// it is the same `CState` the Click -> Spec lowering used as
+    /// `SpecMemory::Fixed(entry_memory)` for every `old` operand in this
+    /// function's contracts, so both sides name the same interned node.
+    ///
+    /// Nothing here is trusted on the strength of the naming alone. A lowered
+    /// candidate is accepted only by exact equality against the certified
+    /// proposition, and a `MemoryLoad` carries its snapshot inside the term,
+    /// so a candidate resolved to the wrong state cannot match: selecting the
+    /// state by name adds a spelling to search, and the certificate check
+    /// remains the thing that validates it.
+    ///
+    /// Falling back to [`Self::execution_start_state`] keeps every region that
+    /// records no function-entry snapshot on its previous behaviour.
+    fn old_reference_state<'a>(&'a self, current_state: &'a CState) -> &'a CState {
+        match &self.function_entry_state {
+            Some(entry_state) => entry_state,
+            None => self.execution_start_state(current_state),
+        }
     }
 }
 
@@ -6659,6 +6701,7 @@ fn plan_automatic_loop_preservation_body(
         source_layout,
         region_proof: true,
         loop_invariant_region: true,
+        function_entry_state: Some(environment.initial_state.clone()),
         surface_propositions: environment.surface_propositions.clone(),
         ..TacticReplayState::default()
     };
@@ -6922,6 +6965,7 @@ fn verify_one_loop_preservation_proof(
         source_layout,
         region_proof: true,
         loop_invariant_region: true,
+        function_entry_state: Some(environment.initial_state.clone()),
         surface_propositions: environment.surface_propositions.clone(),
         ..TacticReplayState::default()
     };
@@ -7289,7 +7333,7 @@ fn plan_explicit_theorem_application(
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<Vec<ClickProposition>, ClickError> {
-    let pre_state = replay.execution_start_state(state);
+    let pre_state = replay.old_reference_state(state);
     let values = parameter_values(parameters, arguments).map_err(|error| {
         ClickError::new(format!(
             "`{claim_label}` tactic {tactic_index}: {}",
@@ -11725,7 +11769,7 @@ fn checked_surface_fact_at_point(
             available,
             parameters,
             arguments,
-            replay.execution_start_state(state),
+            replay.old_reference_state(state),
             state,
             None,
             &replay.program_point_states,
@@ -11882,7 +11926,7 @@ fn checked_surface_comparison_fact_at_point(
                 available,
                 parameters,
                 arguments,
-                replay.execution_start_state(state),
+                replay.old_reference_state(state),
                 state,
                 None,
                 &replay.program_point_states,
@@ -14580,7 +14624,7 @@ fn lower_surface_candidate_at_point(
     lower_outcome_proposition_with_environment(
         &mut values,
         &array_refs,
-        replay.execution_start_state(state),
+        replay.old_reference_state(state),
         state,
         None,
         &assumptions,
@@ -14946,7 +14990,7 @@ fn record_surface_replay_tactic(
                         &surface_available,
                         parameters,
                         arguments,
-                        replay.execution_start_state(state),
+                        replay.old_reference_state(state),
                         state,
                         &replay.program_point_states,
                         predicate_environment,
@@ -15024,7 +15068,7 @@ fn record_surface_replay_tactic(
                         &surface_available,
                         parameters,
                         arguments,
-                        replay.execution_start_state(state),
+                        replay.old_reference_state(state),
                         state,
                         &replay.program_point_states,
                         predicate_environment,
@@ -15847,7 +15891,7 @@ fn surface_smart_apply_have_certificate(
                     planning_available,
                     parameters,
                     arguments,
-                    planning_replay.execution_start_state(state),
+                    planning_replay.old_reference_state(state),
                     state,
                     &planning_replay.program_point_states,
                     predicate_environment,
@@ -16128,7 +16172,7 @@ fn replay_linear_tactics(
                     "`{claim_label}` tactic {tactic_index}: `transport` requires a current statement frontier after at least one execution step"
                 )));
             }
-            let pre_state = replay.execution_start_state(&state);
+            let pre_state = replay.old_reference_state(&state);
             let source = lower_point_proposition(
                 surface_source,
                 &requirement_pure_facts,
@@ -16367,7 +16411,7 @@ fn replay_linear_tactics(
                         "`{claim_label}` tactic {tactic_index}: `transport` requires at least one completed execution step"
                     )));
                 }
-                let pre_state = replay.execution_start_state(&state).clone();
+                let pre_state = replay.old_reference_state(&state).clone();
                 let surface_premises = match tactic {
                     ProofTactic::TransportUsing { premises, .. } => Some(premises),
                     ProofTactic::Transport { .. } => None,
@@ -16643,7 +16687,7 @@ fn replay_linear_tactics(
                     }
                     _ => unreachable!(),
                 };
-                let pre_state = replay.execution_start_state(&state).clone();
+                let pre_state = replay.old_reference_state(&state).clone();
                 let mut explicit_premises = Vec::new();
                 for surface_premise in premises {
                     let premise = if let Some(recorded) = replay
@@ -17354,7 +17398,7 @@ fn replay_linear_tactics(
                 let execution = replay
                     .execution()
                     .expect("function-exit replay should contain an execution");
-                let pre_state = replay.execution_start_state(&state);
+                let pre_state = replay.old_reference_state(&state);
                 let mut path_derivations = Vec::with_capacity(execution.paths().len());
                 for (path_index, path) in execution.paths().iter().enumerate() {
                     if !path.obligations().is_empty() {
@@ -17667,7 +17711,7 @@ fn replay_linear_tactics(
                         requirement_pure_facts,
                         parsed_function.parameters(),
                         arguments,
-                        replay.execution_start_state(&state),
+                        replay.old_reference_state(&state),
                         &state,
                         &replay.program_point_states,
                         predicate_environment,
@@ -17707,7 +17751,7 @@ fn replay_linear_tactics(
                 let all_pure_facts = requirement_pure_facts.clone();
                 let mut lowering_facts = all_pure_facts.clone();
                 append_resource_context_observable_facts(state.resources(), &mut lowering_facts);
-                let pre_state = replay.execution_start_state(&state).clone();
+                let pre_state = replay.old_reference_state(&state).clone();
                 let mut explicit_premises = Vec::new();
                 for surface_premise in premises {
                     let premise = if let Some(recorded) = replay
@@ -17792,7 +17836,7 @@ fn replay_linear_tactics(
                         )));
                     }
                 } else {
-                    let pre_state = replay.execution_start_state(&state).clone();
+                    let pre_state = replay.old_reference_state(&state).clone();
                     state = fold_composite_resource_at_current_point(
                         resource_environment,
                         resource,
@@ -17845,7 +17889,7 @@ fn replay_linear_tactics(
                         &have_facts,
                         parsed_function.parameters(),
                         arguments,
-                        replay.execution_start_state(&state),
+                        replay.old_reference_state(&state),
                         &state,
                         &replay.program_point_states,
                         predicate_environment,
@@ -17867,7 +17911,7 @@ fn replay_linear_tactics(
                         &have_facts,
                         parsed_function.parameters(),
                         arguments,
-                        replay.execution_start_state(&state),
+                        replay.old_reference_state(&state),
                         &state,
                         &replay.program_point_states,
                         &replay.surface_propositions,
@@ -18700,7 +18744,7 @@ fn introduce_proof_case_assumption(
         &context.pure_facts,
         parameters,
         arguments,
-        context.replay.execution_start_state(&context.state),
+        context.replay.old_reference_state(&context.state),
         &context.state,
         None,
         &context.replay.program_point_states,
@@ -18859,7 +18903,7 @@ fn apply_advance_interface(
                         &concrete_facts,
                         parameters,
                         arguments,
-                        replay.execution_start_state(state),
+                        replay.old_reference_state(state),
                         state,
                         None,
                         &replay.program_point_states,
