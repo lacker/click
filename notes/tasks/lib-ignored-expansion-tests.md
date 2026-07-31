@@ -1,7 +1,7 @@
 # lib: 7 #[ignore] expansion-era tests
 
 Status: diagnosed — 0 un-ignored, 6 stay here, 1 moved to the parked family
-Claimed:
+Claimed: worktree-agent-a00f20ca6b0de59b8 + 2026-07-30
 
 Scope: 7 `#[ignore]` lib tests from the expansion era. Retest against
 current master (the 2026-07-30 certifier/expansion work moved a lot);
