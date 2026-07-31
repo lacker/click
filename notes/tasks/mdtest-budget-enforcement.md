@@ -1,6 +1,6 @@
 # Enforce tactic time budgets in the regular test pass
 
-Status: open (build next)
+Status: landed 2026-07-31 (master 7eb5860); one owner decision pending
 Claimed:
 
 No separate profile sweep: the mdtest and examples harnesses already
@@ -38,3 +38,32 @@ seconds on the finish line.
 Done when: a test with an over-budget tactic fails with a message
 naming it, the full green corpus still passes, and a deliberate
 slow-tactic fixture proves the check fires.
+
+## Landed, and what the gate immediately found (2026-07-31)
+
+Enforcement lives in `run_isolated` (src/cli.rs, `tactic_budget_violations`),
+exclusive-time accounting, `CLICK_DISABLE_TACTIC_BUDGETS=1` bypass.
+click-expand gained mdtest mode (`file.md:line:col`, md coordinates,
+whole-markdown output) because rule 6 was otherwise unsatisfiable for
+mdtests.
+
+First sweep found 7 violating tests in the green corpus; 5 fixed by
+expansion (loop_sorted_range_invariant 14.9 s smart simp,
+fill_n_segment_invariant, bubble_sort3_loop_permutation,
+owned-segmented-buffer, owned_buffer_len_cap_data). Expanding
+bubble_sort3_loop_permutation's bounded_execute also removed a 3-4 s
+exclusive CONTROL violation (certified_alternatives) — container cost
+that vanished when its child was expanded.
+
+**Owner decision pending — pure case splits.** sort3_sorted and
+bubble_sort3_loop_sorted (both quarantined) have smart simps whose
+entire content is a case split: the accepted certificate is an `if`
+tree with EMPTY branches (each leaf goal closes via the ordinary
+path-end check — kernel replay accepts this). The surface parser
+refuses an `if` branch with no tactics, so the expansion is
+unspellable. `assumption();` as a leaf filler was tried and fails
+replay ("did not match any current proposition goal" — leaves have no
+open goal). Options: allow empty `if` branches in proof scripts
+(grammar relaxation; checker semantics already exist), or add an
+explicit no-op/case-split marker tactic. Both are Surface Click
+changes = owner's call.

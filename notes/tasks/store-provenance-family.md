@@ -32,6 +32,26 @@ into the arc; each diagnosis below was measured.
   stage 2a: `old(...)` now names function entry).
 - mdtest `fill_tail_keeps_first.md` — de-quarantined (same fix).
 
+## Bisect results (2026-07-31, three of six complete)
+
+- **owner_buffer_field_dependent AND bubble_pass3 -> `d78b49b`** ("WIP:
+  snapshot of in-progress store-provenance refactor from main
+  checkout", 07-29, 911+/398-). Two mechanisms named: the
+  replay-context premise filter drops `separate(...)` facts it deems
+  reconstructible from projected resources (owner_buffer's missing
+  exact body fact), and the `CMemory` store cell-retention filter lost
+  its `pointers_proven_distinct` disjunct so post-store snapshots keep
+  divergent cell spellings (bubble_pass3's unplaceable operands). The
+  07-25..28 strict-certificate wave is EXONERATED for both members —
+  every sampled commit through 07-28 passes them.
+- **field_derived -> `3a924ff`** ("Keep trivial return certificates
+  premise-free", 07-27). Two hunks; the likely one switches smart-simp
+  certificate replay from `prove_have_at_point` to
+  `prove_pure_proposition_at_point` against the pre-lowered kernel
+  goal, skipping the ambient-assumptions lowering. Fails in 5 s at the
+  breaking commit; the ~200 s fail time accreted later.
+- vector_fill, owned-string, owned-vector: bisects still running.
+
 ## Remaining members, 2026-07-31 frontiers
 
 - **mdtest `bubble_sort3_two_pass_sorted.md`** — **passes** at 137 s vs
