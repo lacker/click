@@ -127,6 +127,9 @@ pub(crate) fn c_memory_load_is_unchanged(
     if memories_match_for_pointer_load_under_assumptions(before, after, pointer, assumptions) {
         return true;
     }
+    if load_unchanged_along_memory_derivations(before, after, pointer, assumptions) {
+        return true;
+    }
     // Predicate framing is deliberately bounded: use exact certified writes
     // and direct address cancellation, without invoking general alias search.
     if assumptions
@@ -179,6 +182,104 @@ pub(crate) fn c_memory_load_is_unchanged(
         return true;
     }
     load_unchanged_via_effect_chain(before, after, pointer, assumptions)
+}
+
+/// Answers load preservation from the memory DAG rather than by searching
+/// recorded effect facts: follows the derivations that execution recorded
+/// when it built the snapshots, refusing any edge that could have written
+/// the pointer.
+///
+/// This is the first consumer of the named-memory-states representation
+/// (`notes/tasks/named-memory-states-arc.md`). Where
+/// [`load_unchanged_via_effect_chain`] reconstructs a write history at proof
+/// time from `CMemoryMutatesOnly` / `CMemoryEffectSummary` facts and links
+/// hops by deep-canonical snapshot equality, this walks the history itself
+/// and links hops by arena identity, so two spellings of one location cannot
+/// drift apart between program points.
+///
+/// Soundness rests on three things. Each `Store` hop is crossed only when
+/// the written pointer is *provably distinct* from the loaded one, using the
+/// same distinctness predicates as the fact-based paths. Each `CallHavoc`
+/// hop is crossed only when the call's mutable ranges are provably disjoint
+/// from the pointer, matching the `CMemoryEffectSummary` arm above. And a
+/// `LoopHavoc` hop is never crossed at all: loop havoc has no write set, so
+/// its freshness marker is honoured here at the edge, which is where
+/// conventions.md's havoc-identity trap is disarmed for this arc.
+///
+/// The walk terminates because a derivation's base always holds a strictly
+/// smaller arena id (see `record_c_memory_derivation`); the hop cap and the
+/// reentrancy guard are the belt-and-braces conventions.md asks of any new
+/// recursive prover arm, since the per-hop distinctness checks can re-enter
+/// memory reasoning.
+fn load_unchanged_along_memory_derivations(
+    before: &CMemory,
+    after: &CMemory,
+    pointer: &Pointer,
+    assumptions: &Assumptions,
+) -> bool {
+    if memory_dag_disabled() {
+        return false;
+    }
+    thread_local! {
+        static DERIVATION_WALK_ACTIVE: std::cell::Cell<bool> =
+            const { std::cell::Cell::new(false) };
+    }
+    if DERIVATION_WALK_ACTIVE.with(std::cell::Cell::get) {
+        return false;
+    }
+    DERIVATION_WALK_ACTIVE.with(|active| active.set(true));
+    let before = intern_c_memory_ref(before);
+    let after = intern_c_memory_ref(after);
+    // "Unchanged" is symmetric, and callers pass the pair in either order.
+    let reached = memory_derivations_reach(&after, &before, pointer, assumptions)
+        || memory_derivations_reach(&before, &after, pointer, assumptions);
+    DERIVATION_WALK_ACTIVE.with(|active| active.set(false));
+    reached
+}
+
+/// Walks `from` back along its derivations looking for `target`, crossing
+/// only edges that provably leave `pointer`'s cell alone. See
+/// [`load_unchanged_along_memory_derivations`] for the soundness argument.
+fn memory_derivations_reach(
+    from: &SharedCMemory,
+    target: &SharedCMemory,
+    pointer: &Pointer,
+    assumptions: &Assumptions,
+) -> bool {
+    const MEMORY_DERIVATION_HOP_LIMIT: usize = 64;
+    let mut current = from.clone();
+    for _ in 0..MEMORY_DERIVATION_HOP_LIMIT {
+        if current == *target {
+            return true;
+        }
+        // Ids strictly decrease along `base`, so within one arena an id at
+        // or below the target's cannot reach it and the walk can stop early.
+        let (current_arena, current_id) = current.arena_id();
+        let (target_arena, target_id) = target.arena_id();
+        if current_arena == target_arena && current_id <= target_id {
+            return false;
+        }
+        let Some(derivation) = current.derivation() else {
+            return false;
+        };
+        let crossable = match derivation.as_ref() {
+            CMemoryDerivation::Store { pointer: write, .. } => {
+                write.blocks_proven_distinct(pointer)
+                    || pointer_offsets_with_common_base_proven_distinct(write, pointer, assumptions)
+                    || pointers_proven_distinct_for_memory_resolution(write, pointer, assumptions)
+            }
+            CMemoryDerivation::CallHavoc { mutable_ranges, .. } => {
+                assumptions.ranges_proven_disjoint_from_pointer(mutable_ranges, pointer)
+            }
+            // Loop havoc may write anything the body can reach.
+            CMemoryDerivation::LoopHavoc { .. } => false,
+        };
+        if !crossable {
+            return false;
+        }
+        current = derivation.base().clone();
+    }
+    false
 }
 
 /// Bounded search for a chain of recorded effects carrying a load from one

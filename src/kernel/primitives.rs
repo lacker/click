@@ -674,6 +674,40 @@ pub struct SharedCMemory {
     memory: std::sync::Arc<CMemory>,
 }
 
+impl SharedCMemory {
+    /// How this snapshot was produced, when the arena that named it is this
+    /// thread's and an edge producer recorded one.
+    ///
+    /// `None` is always a legitimate answer — for entry states, for
+    /// snapshots built by paths that record no edge, for handles that
+    /// crossed a thread, and for every snapshot when
+    /// `CLICK_DISABLE_MEMORY_DAG` is set. Consumers fall back rather than
+    /// conclude anything from the absence.
+    pub(crate) fn derivation(&self) -> Option<std::sync::Arc<CMemoryDerivation>> {
+        if memory_dag_disabled() {
+            return None;
+        }
+        C_MEMORY_ARENA.with(|(token, arena)| {
+            if *token != self.arena {
+                return None;
+            }
+            arena
+                .borrow()
+                .derivations
+                .get(self.id as usize)
+                .cloned()
+                .flatten()
+        })
+    }
+
+    /// The arena id naming this snapshot, valid only against ids from the
+    /// same arena. Strictly decreasing along `derivation().base()`, which is
+    /// what makes DAG walks terminate.
+    pub(crate) fn arena_id(&self) -> (u32, u32) {
+        (self.arena, self.id)
+    }
+}
+
 impl PartialEq for SharedCMemory {
     fn eq(&self, other: &Self) -> bool {
         if self.arena == other.arena {
@@ -738,17 +772,116 @@ impl From<&CMemory> for SharedCMemory {
     }
 }
 
+/// How a memory snapshot was produced from an earlier one: the edges of the
+/// named-memory-state DAG (`notes/tasks/named-memory-states-arc.md`). Each
+/// variant names its base snapshot, so following `base` walks backwards
+/// through the write history that execution already knew when it built the
+/// snapshot — instead of reconstructing that history at proof time from
+/// recorded effect facts.
+///
+/// A derivation is **advisory**. It only ever states a true fact about how a
+/// snapshot arose, so every consumer must fall back to its previous
+/// reasoning when none is present; nothing may depend on one existing. That
+/// is what lets `CLICK_DISABLE_MEMORY_DAG` restore the pre-arc path exactly,
+/// and why a snapshot interned on another thread (the arena is thread-local)
+/// is merely slower to reason about rather than wrong.
+///
+/// `LoopHavoc` is deliberately its own edge kind rather than a bulk store:
+/// loop havoc has no write set for a pointer to be disjoint from, so no
+/// load-preservation walk may cross one. Enforcing that at the edge is how
+/// havoc identity survives this arc by construction, upstream of any
+/// snapshot comparison (see conventions.md's soundness trap).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum CMemoryDerivation {
+    /// `base` with one cell written.
+    Store {
+        base: SharedCMemory,
+        pointer: Pointer,
+        value: CValue,
+    },
+    /// `base` after a loop body that may write anything it can reach.
+    LoopHavoc {
+        base: SharedCMemory,
+        variable: Variable,
+    },
+    /// `base` after a call that may write only within `mutable_ranges`.
+    CallHavoc {
+        base: SharedCMemory,
+        variable: Variable,
+        mutable_ranges: Vec<CMemoryRange>,
+    },
+}
+
+impl CMemoryDerivation {
+    /// The snapshot this one was derived from.
+    pub fn base(&self) -> &SharedCMemory {
+        match self {
+            Self::Store { base, .. }
+            | Self::LoopHavoc { base, .. }
+            | Self::CallHavoc { base, .. } => base,
+        }
+    }
+}
+
+/// True when `CLICK_DISABLE_MEMORY_DAG` is set: derivations are neither
+/// recorded nor reported, so every consumer takes its pre-arc path. The A/B
+/// handle for the named-memory-states arc.
+pub(crate) fn memory_dag_disabled() -> bool {
+    static DISABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *DISABLED.get_or_init(|| std::env::var_os("CLICK_DISABLE_MEMORY_DAG").is_some())
+}
+
 static NEXT_MEMORY_ARENA_TOKEN: std::sync::atomic::AtomicU32 =
     std::sync::atomic::AtomicU32::new(0);
 
+#[derive(Default)]
+struct CMemoryArena {
+    identities: std::collections::HashMap<std::sync::Arc<CMemory>, (u32, u64)>,
+    /// Indexed by arena id; `None` for entry states and for any snapshot
+    /// whose first interning did not come from a recorded edge.
+    derivations: Vec<Option<std::sync::Arc<CMemoryDerivation>>>,
+}
+
 thread_local! {
-    static C_MEMORY_ARENA: (
-        u32,
-        std::cell::RefCell<std::collections::HashMap<std::sync::Arc<CMemory>, (u32, u64)>>,
-    ) = (
+    static C_MEMORY_ARENA: (u32, std::cell::RefCell<CMemoryArena>) = (
         NEXT_MEMORY_ARENA_TOKEN.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
-        std::cell::RefCell::new(std::collections::HashMap::new()),
+        std::cell::RefCell::new(CMemoryArena::default()),
     );
+}
+
+/// Records that `result` is `derivation` applied to its base, unless
+/// `result` already carries a derivation.
+///
+/// **First-wins is load-bearing, not a cache policy.** A derivation's base
+/// must already be interned in order to be named, so it always holds a
+/// strictly smaller arena id than a *newly* assigned one. Keeping the first
+/// derivation therefore makes `base.id < derived.id` an arena-wide
+/// invariant, and cycles unrepresentable rather than merely unlikely. Two
+/// otherwise easy cycles are closed by exactly this: a store whose value
+/// equals the cell already there (the result re-interns to its own base, so
+/// `base.id == result.id` and the edge is dropped), and a store-then-store-
+/// back pair (the second result re-interns to the earlier node and keeps
+/// that node's older derivation). Callers may rely on any walk over `base`
+/// terminating; a hop cap still depth-gates them, per conventions.md.
+pub(crate) fn record_c_memory_derivation(result: &CMemory, derivation: CMemoryDerivation) {
+    if memory_dag_disabled() {
+        return;
+    }
+    // Interning borrows the arena, so it has to finish before the write.
+    let derived = intern_c_memory_ref(result);
+    C_MEMORY_ARENA.with(|(token, arena)| {
+        if *token != derived.arena || *token != derivation.base().arena {
+            return;
+        }
+        let mut arena = arena.borrow_mut();
+        let Some(slot) = arena.derivations.get_mut(derived.id as usize) else {
+            return;
+        };
+        if slot.is_some() || derivation.base().id >= derived.id {
+            return;
+        }
+        *slot = Some(std::sync::Arc::new(derivation));
+    });
 }
 
 fn c_memory_content_hash(memory: &CMemory) -> u64 {
@@ -763,22 +896,23 @@ fn c_memory_content_hash(memory: &CMemory) -> u64 {
 /// snapshots that cross threads still compare correctly through the content
 /// hash and structural fallback.
 pub fn intern_c_memory(memory: CMemory) -> SharedCMemory {
-    C_MEMORY_ARENA.with(|(arena, table)| {
-        let mut table = table.borrow_mut();
-        if let Some((stored, (id, content_hash))) = table.get_key_value(&memory) {
+    C_MEMORY_ARENA.with(|(token, arena)| {
+        let mut arena = arena.borrow_mut();
+        if let Some((stored, (id, content_hash))) = arena.identities.get_key_value(&memory) {
             return SharedCMemory {
-                arena: *arena,
+                arena: *token,
                 id: *id,
                 content_hash: *content_hash,
                 memory: stored.clone(),
             };
         }
-        let id = u32::try_from(table.len()).expect("memory arena exhausted");
+        let id = u32::try_from(arena.identities.len()).expect("memory arena exhausted");
         let content_hash = c_memory_content_hash(&memory);
         let stored = std::sync::Arc::new(memory);
-        table.insert(stored.clone(), (id, content_hash));
+        arena.identities.insert(stored.clone(), (id, content_hash));
+        arena.derivations.push(None);
         SharedCMemory {
-            arena: *arena,
+            arena: *token,
             id,
             content_hash,
             memory: stored,
@@ -790,22 +924,23 @@ pub fn intern_c_memory(memory: CMemory) -> SharedCMemory {
 /// cloning it, so hot memoization lookups keyed by interned identity pay a
 /// hash and comparison but no allocation.
 pub fn intern_c_memory_ref(memory: &CMemory) -> SharedCMemory {
-    C_MEMORY_ARENA.with(|(arena, table)| {
-        let mut table = table.borrow_mut();
-        if let Some((stored, (id, content_hash))) = table.get_key_value(memory) {
+    C_MEMORY_ARENA.with(|(token, arena)| {
+        let mut arena = arena.borrow_mut();
+        if let Some((stored, (id, content_hash))) = arena.identities.get_key_value(memory) {
             return SharedCMemory {
-                arena: *arena,
+                arena: *token,
                 id: *id,
                 content_hash: *content_hash,
                 memory: stored.clone(),
             };
         }
-        let id = u32::try_from(table.len()).expect("memory arena exhausted");
+        let id = u32::try_from(arena.identities.len()).expect("memory arena exhausted");
         let content_hash = c_memory_content_hash(memory);
         let stored = std::sync::Arc::new(memory.clone());
-        table.insert(stored.clone(), (id, content_hash));
+        arena.identities.insert(stored.clone(), (id, content_hash));
+        arena.derivations.push(None);
         SharedCMemory {
-            arena: *arena,
+            arena: *token,
             id,
             content_hash,
             memory: stored,
@@ -2577,10 +2712,14 @@ impl CMemory {
         // survive the loop has to be restated as a loop invariant. The
         // marker block additionally defeats symbolic cross-loop load
         // equality for the remaining symbolic memory.
+        let base = (!memory_dag_disabled()).then(|| intern_c_memory_ref(&self));
         self.cells
             .retain(|pointer, _| preserved_blocks.contains(&pointer.block));
         self.blocks
             .insert(format!("havoc:{}", variable.0).into(), CBlock::new(0));
+        if let Some(base) = base {
+            record_c_memory_derivation(&self, CMemoryDerivation::LoopHavoc { base, variable });
+        }
         self
     }
 
@@ -2590,17 +2729,41 @@ impl CMemory {
         mutable_ranges: &[CMemoryRange],
         assumptions: &Assumptions,
     ) -> Self {
+        let base = (!memory_dag_disabled()).then(|| intern_c_memory_ref(&self));
         self.cells.retain(|pointer, _| {
             pointer.block.starts_with("local:")
                 || assumptions.ranges_proven_disjoint_from_pointer(mutable_ranges, pointer)
         });
         self.blocks
             .insert(format!("call-havoc:{}", variable.0).into(), CBlock::new(0));
+        if let Some(base) = base {
+            record_c_memory_derivation(
+                &self,
+                CMemoryDerivation::CallHavoc {
+                    base,
+                    variable,
+                    mutable_ranges: mutable_ranges.to_vec(),
+                },
+            );
+        }
         self
     }
 
     pub fn store(mut self, pointer: Pointer, value: CValue) -> Self {
-        self.cells.insert(pointer, value);
+        if memory_dag_disabled() {
+            self.cells.insert(pointer, value);
+            return self;
+        }
+        let base = intern_c_memory_ref(&self);
+        self.cells.insert(pointer.clone(), value.clone());
+        record_c_memory_derivation(
+            &self,
+            CMemoryDerivation::Store {
+                base,
+                pointer,
+                value,
+            },
+        );
         self
     }
 
