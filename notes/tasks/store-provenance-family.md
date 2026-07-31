@@ -1,74 +1,72 @@
-# store-provenance / named-memory-states family
+# store-provenance family — acceptance corpus & per-member frontiers
 
-Status: parked (blocked on the canonical-memory arc — owner's call)
+Status: open (corpus record; members move as fixes land)
 Claimed:
 
-Scope: the one remaining failure family. Do NOT burn time re-bridging
-individual spellings; the representation rewrite in
-`../canonical-memory.md` is the intended fix.
+This file is the failure corpus for the named-memory-states arc
+(`named-memory-states-arc.md`) **and** the current per-member frontier.
+As of 2026-07-31 (arc stages 1–5 landed), every remaining member fails
+on something that is *not* a load-equality question — do not chase these
+into the arc; each diagnosis below was measured.
 
-Members (all diagnosed 2026-07-30):
-- examples: owned-string (owned_string_push tactic 7: the terminated_at
-  smart-have unfold cannot discharge loadable(data[len]); the bounds
-  facts' load spellings differ from the goal's by direct-store
-  provenance, and the planning assumptions carry no effect facts —
-  adding replay.effect_facts did not help since stores are execution
-  facts, not effect summaries; attempt reverted). Fails in ~9.6 s.
-- examples: owned-vector (vector_fill.loop(0).preserve invariant closer
-  missing a ForAll path goal). Fails in ~12 s (was a 600 s timeout).
-- lib (1 `#[ignore]`, added 2026-07-30 from lib-ignored-expansion-tests):
-  `lang::click::tests::verifies_old_memory_loop_invariant`. `fill_tail`
-  carries `invariant p[0] == old(p[0])` across a body that does
-  `p[i] = i` (i >= 1). The `loop(0).preserve` smart tactic certifies but
-  cannot lower to a surface certificate: "no placement of the comparison
-  operands at the 4 recorded program points lowered to the certified fact
-  transport". Certified source loads `arg-memory + i*4` from a memory with
-  *no* cells; certified target loads the same pointer from a memory
-  carrying the store cells for `p[i] = i` and `local:i` — the load
-  spellings differ by direct-store provenance exactly as in the
-  owned-string case, and the 2026-07-30 framed-load-equality arm does not
-  bridge it (`CLICK_DISABLE_CERT_ARMS=1` reproduces identically). Same
-  program shape as the quarantined `fill_tail_keeps_first` mdtest below.
-  Fails in 0.04 s. Repro:
-  `cargo nextest run --lib --run-ignored ignored-only -E 'test(verifies_old_memory_loop_invariant)'`
-- mdtests (6 quarantined): vector_fill, field_derived (named-memory-
-  states residue) plus bubble_pass3, bubble_sort3,
-  composite_owner_buffer_field_dependent, fill_tail_keeps_first —
-  retested 2026-07-30, all still fail; bubble_* fail in the invariant
-  closer with the same missing-ForAll shape.
-  **Update 2026-07-31 (arc stage 3).** fill_tail_keeps_first
-  de-quarantined at stage 2a. bubble_sort3 now *passes* but takes 137 s,
-  so it stays quarantined on cost; bubble_pass3, vector_fill and
-  composite_owner_buffer_field_dependent all cleared the invariant
-  closer and now fail downstream (certificate lowering, contract `simp`,
-  ghost-resource representation). Per-member messages and timings are in
-  `named-memory-states-arc.md`'s 2026-07-31 session log. The sampled cost
-  of bubble_sort3 is `bitvector_terms_equal_for_memory_resolution` plus
-  `canonicalize_atomic_loads`, i.e. the value bridging itself — *not*
-  the `atomic_derivation_premises` clone recorded below.
+## Cleared (for the record)
 
-- mdtests (1 rewritten, not quarantined, 2026-07-30):
-  `proof_advance_pointer_local`. Its closer needs
-  `selected == left or selected == right` about a local pointer that the
-  `advance` at `statement(1).exit` abstracts into a fresh symbolic block.
-  At function exit the only spelling is
-  `at(statement(1).exit, selected)`, and certificate generation cannot
-  synthesize a point-qualified spelling for a local pointer. The mdtest's
-  proof now writes that `have` explicitly so the strict exit gate passes;
-  the C source and the `ensures` claim are unchanged. When this family
-  lands, delete that `have` and confirm generation finds the spelling.
-  Measured dead end: teaching `synthesize_surface_pointer` to look up
-  pointer-valued locals (as the scalar path already does) does not help —
-  no recorded program-point state binds a local to the abstracted value.
+- lib `verifies_old_memory_loop_invariant` — passes, un-ignored (arc
+  stage 2a: `old(...)` now names function entry).
+- mdtest `fill_tail_keeps_first.md` — de-quarantined (same fix).
 
-Also related: grouped-simp candidate-loop perf
-(atomic_derivation_premises clones whole Assumptions per candidate;
-field_derived spent ~500 s there even to fail — recheck cost after the
-decide memo before working on it).
+## Remaining members, 2026-07-31 frontiers
 
-Repro:
-  ./target/debug/click-verify examples/owned-string/owned_string.click
-  CLICK_RUN_QUARANTINED=1 MDTEST_FILTER=vector_fill cargo test --test mdtests
+- **mdtest `bubble_sort3_two_pass_sorted.md`** — **passes** at 137 s vs
+  the 30 s limit; quarantined on cost. 65 s of it is a slow SIMPLE
+  invariant-closer replay: an engine bug, tracked in
+  `slow-simple-engine-bugs.md`, not here.
+- **mdtest `bubble_pass3_max_suffix.md`** (~12 s) — certificate
+  lowering: the planned `simp` context premise (the loop-exit invariant
+  `ForAll`) is not an available *source* fact. Looks like arc work and
+  is not: its two loads sit in the **same snapshot**, differing only in
+  the index term. The two-pass version of the same program does not hit
+  it.
+- **mdtest `composite_resource_vector_fill_loop_snapshot.md`** (~48 s)
+  and **mdtest `field_derived_precise_effect_after_metadata_write.md`**
+  (~198 s, was 487 s before arc stage 4) — same failure class: grouped
+  `simp` cannot certify its complete claim transition (vector_fill at
+  `contract` path 0 tactic 2 for `ensures_2`; field_derived also carries
+  a 29 s simple `fold`, tracked in `slow-simple-engine-bugs.md`).
+- **mdtest `composite_resource_owner_buffer_field_dependent.md`**
+  (~6 s) — "execution proof for `set_owned_first.ensures_0` changed
+  more than the certified ghost-resource representation".
+- **example `owned-vector`** (~13 s) — `vector_replace_if.contract`
+  tactic 8 `have` cannot find `Implies(replace == 0, new == old)`. A
+  propositional gap over plain variables; the goal contains no memory
+  at all.
+- **example `owned-string`** (~2.6 s) — the `terminated_at` smart-have
+  unfold cannot discharge `loadable(data[len])`: a permission-plumbing
+  question, not an equality one. (Earlier attempt recorded: feeding
+  `replay.effect_facts` into planning did not help — stores are
+  execution facts, not effect summaries; reverted.)
 
-Done when: the canonical-memory arc lands and these de-quarantine, or
-the owner green-lights targeted bridging work despite the arc.
+## Related, not quarantined
+
+`mdtests/proof_advance_pointer_local.md` carries an explicit
+`have at(statement(1).exit, selected) == ...` because certificate
+generation cannot synthesize a point-qualified spelling for a local
+pointer (the `advance` abstracts it into a fresh symbolic block; no
+recorded program-point state binds the local to the abstracted value —
+teaching `synthesize_surface_pointer` to look up pointer-valued locals
+was measured not to help). When generation can find that spelling,
+delete the `have` and confirm.
+
+## Repro
+
+```
+CLICK_RUN_QUARANTINED=1 MDTEST_FILTER=<name> cargo test --test mdtests
+CLICK_EXAMPLE=owned-vector cargo test --test examples
+./target/debug/click-verify examples/owned-string/owned_string.click
+```
+
+Bound field_derived with `MDTEST_TIME_LIMIT` and keep it out of loops
+(~200 s to fail); bubble_sort3 takes ~137 s to pass.
+
+Done when: all members above de-quarantine / pass, and
+`proof_advance_pointer_local`'s explicit `have` deletes cleanly.

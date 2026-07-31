@@ -9,7 +9,7 @@ work happens.
 Every change validates all three before landing:
 
 ```
-cargo nextest run --lib --bins   # ~490 tests, ~5 s
+cargo nextest run --lib --bins   # ~520 tests, ~5 s
 cargo test --test mdtests        # ~10 s
 cargo test --test examples       # ~11 s
 ```

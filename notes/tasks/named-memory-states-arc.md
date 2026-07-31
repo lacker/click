@@ -1,791 +1,189 @@
 # named-memory-states arc (canonical memory, option C)
 
-Status: in progress
-Claimed: worktree-agent-a799da2cbca60970b (branch
-`claude/nervous-ptolemy-90e738` in `.claude/worktrees/`) — 2026-07-30
-Claimed (stage 2a): branch `worktree-agent-a9b0d0d8a52de5913` in
-`.claude/worktrees/` — 2026-07-30
-Claimed (stage 3): branch `worktree-agent-ae96555419eb6923f` in
-`.claude/worktrees/` — 2026-07-31 (landed)
-Claimed (stages 4–5): branch `worktree-agent-a8c27eff1d8ad247f` in
-`.claude/worktrees/` — 2026-07-31 (landed on the branch, not merged; the
-next increment would be the fourth edge kind — see the session-4 log)
+Status: in progress — stages 1–5 landed; next increment is the fourth
+edge kind (see "Next")
+Claimed:
 
 Design brief: `../canonical-memory.md`. Failure corpus and per-member
-diagnoses: `store-provenance-family.md` (that task stays parked; this
-file is the arc that unparks it).
+frontiers: `store-provenance-family.md`.
 
 Scope boundary (owner, 2026-07-30): kernel/internal representation
 only. No Surface Click syntax or semantics change. If the design seems
 to demand one, stop that thread and record it under "For the owner".
 
-## The problem, stated concretely
+## The problem
 
 `Bitvector32Term::MemoryLoad(SharedCMemory, Pointer)` embeds a whole
-memory *value* — `CMemory { blocks, cells }` — in the term. Two
-spellings of the same location at two program points are therefore
-structurally different terms whenever anything unrelated was stored in
-between. Every prover that must relate them does so by bridging
-*values*: `canonical_c_memory_deep`, `memories_match_for_pointer_load`,
-`c_memory_load_is_unchanged`'s effect-summary scan, and
-`load_unchanged_via_effect_chain`'s BFS over `CMemoryMutatesOnly` /
-`CMemoryEffectSummary` facts. That BFS is *reconstructing*, from
-recorded facts and at proof time, the write history that execution
-already knew when it built the snapshot.
+memory *value* in the term, so two spellings of one location at two
+program points are structurally different terms whenever anything
+unrelated was stored in between. Every prover relating them bridges
+values — deep canonicalisation, effect-summary scans, a BFS over
+recorded effect facts — reconstructing at proof time the write history
+execution already knew.
 
-The whole store-provenance family is where the reconstruction runs out.
+## The chosen shape: derivation-annotated interning
 
-## The chosen shape (decided here; canonical-memory.md is silent on it)
-
-canonical-memory.md specifies the destination ("a memory state is a
-name, not a value; states form a DAG `m0` / `store` / `havoc` / `call`;
-equality is select-over-store plus write-disjointness") but not the
-migration. The migration decided here is **derivation-annotated
-interning**:
-
-- The `SharedCMemory` arena — which already exists, already assigns
-  every distinct snapshot a dense `u32` id, and is already the identity
-  used for `Eq`/`Hash` — *is* the name supply. Nothing new to thread
-  through terms.
-- Alongside each arena id we record **how that snapshot was produced**:
+- The `SharedCMemory` arena (dense `u32` ids, already the `Eq`/`Hash`
+  identity) *is* the name supply.
+- Alongside each id we record how the snapshot was produced:
   `CMemoryDerivation::{Store, LoopHavoc, CallHavoc}`, each naming its
   base by `SharedCMemory`. Entry states have no derivation. That is the
-  DAG, materialised.
-- The `CMemory` value stays for now. Every existing reader of `.cells`
-  / `.blocks` keeps working unchanged, so each increment is small.
-  Readers are retired one at a time as provers move onto the DAG; the
-  value view is the *last* thing to go, not the first.
-
-Why not put the derivation in `CMemory` itself: it would land in
-`Eq`/`Hash`/`Ord` (all derived today) and split identities that must
-stay merged, or force five hand-written impls whose whole job is to
-lie about a field. Keeping provenance outside the value keeps "the
-derivation is metadata, never identity" true by construction.
-
-### The two invariants that make this safe
-
-**1. Advisory, never load-bearing.** A recorded derivation only ever
-*adds* true facts (this snapshot is that snapshot with one cell
-written). A missing derivation costs completeness and nothing else:
-every consumer must fall back to today's path. This is what makes the
-A/B flag meaningful and every increment revertible — and it is why
-cross-thread handles (the arena is thread-local, so a snapshot interned
-on another thread resolves to no derivation) are merely slower, not
-wrong.
-
-**2. Parent id < child id, so the DAG is acyclic by construction.**
-Derivations are recorded **first-wins**: a snapshot that is already
-interned keeps whatever derivation it already had. A derivation's base
-must already be interned to be named, so its id is strictly smaller
-than the id being recorded. Cycles are therefore unrepresentable —
-including the two that would otherwise be easy to build: a store whose
-value equals the cell already there (result content-equal to its own
-base), and a store-then-store-back pair (the second result re-interns
-to the first node and keeps the *older* derivation). A debug assertion
-enforces the id ordering and a hop cap depth-gates every walk, per
-conventions.md's rule about new recursive arms.
-
-### Havoc identity, by construction (the soundness trap)
-
-conventions.md: *never drop havoc/call-havoc blocks from canonical load
-memories*; `memory_load_equality_does_not_ignore_loop_havoc_identity`
-guards it. Two independent reasons this arc preserves it:
-
-- The materialised `CMemory` is untouched — `with_loop_memory_havoc`
-  still inserts the `havoc:N` block and still drops non-preserved
-  cells. Every existing check sees exactly what it sees today.
-- Havoc is a *distinct edge kind* in the DAG, not a store. The DAG
-  walkers are written to relate loads only across `Store` edges whose
-  written pointer is provably distinct, and across `CallHavoc` edges
-  whose mutable ranges are provably disjoint from the pointer. A
-  `LoopHavoc` edge is a hard stop: no walk crosses one, because loop
-  havoc has no write set to be disjoint from. The freshness marker is
-  therefore enforced at the edge, upstream of any snapshot comparison,
-  instead of being re-derived from block names downstream.
-
-## Staging
-
-Every increment lands green on all four gates and is independently
-reviewable. Flag: **`CLICK_DISABLE_MEMORY_DAG`** (conventions.md
-naming) — set it and every DAG arm is skipped, restoring the previous
-path exactly. Default is DAG-on; the flag is the A/B handle for
-attributing behaviour and cost changes.
-
-1. **Representation + recording** (no consumer). `CMemoryDerivation`,
-   the arena side-table, `SharedCMemory::derivation()`, recording at
-   the three edge producers (`CMemory::store`,
-   `with_loop_memory_havoc`, `with_call_memory_havoc`). Behaviour
-   identical by construction because nothing reads it yet; kernel tests
-   assert the DAG shape after real execution.
-2. **First consumer: `c_memory_load_is_unchanged`.** A DAG arm that
-   walks `after` down to `before` across Store/CallHavoc edges,
-   checking pointer-disjointness per hop and refusing LoopHavoc. This
-   is `load_unchanged_via_effect_chain`'s job answered from ground
-   truth instead of a fact-set BFS.
-2a. **`old(...)` gets a name** (inserted 2026-07-30 after stage 1 diagnosed
-   it; landed session 2). Certificate replay resolved `old` positionally, to
-   the enclosing region's execution-start state, while the Click → Spec
-   lowering the kernel certifies against names function entry. Replay now
-   carries the function-entry snapshot explicitly and resolves `old` — and
-   `at(function.entry, ...)` — to it. Reads no derivation edges, only arena
-   names, so it is not flag-gated.
-3. **Load equality in the atomic prover** (`atomic_load_equality_
-   resolves`, the `proves` canonical/resolution arms): two loads are
-   equal when their pointers are equal and their memories share an
-   ancestor reachable without a conflicting write.
-4. **Select-over-store evaluation**: `load(store(m, p, v), q)` reduces
-   to `v` when `p == q` provable, else to `load(m, q)` — replacing
-   parts of `canonical_memory_for_pointer_load`.
-5. **Retire value-bridging**: delete `load_unchanged_via_effect_chain`
-   / `c_memories_connected_by_effects` / deep-canonicalisation callers
-   as the DAG subsumes them. Only then consider shrinking what
-   `MemoryLoad` embeds.
-
-Corpus order once consumers exist: `verifies_old_memory_loop_invariant`
-and `fill_tail_keeps_first` first (same program shape, smallest repro,
-0.04 s to fail), then owned-string, then the bubble/vector/field
-mdtests.
-
-## Session log
-
-### 2026-07-30 (session 1)
-
-Read the brief, the corpus, and `claude/forall-extension-wip`.
-
-**Verdict on `claude/forall-extension-wip`: reject the rule, reuse one
-diagnostic.** The branch is 293 lines over 3 files, two WIP commits on
-top of a master that has since moved a long way.
-
-- `forall_fact_extends_bound_by_one` (assumptions.rs) — reject. It is
-  a bespoke arithmetic rule (`∀v<b` + final index ⇒ `∀v<b+1`) whose
-  final-index obligation fails for exactly the reason this arc exists:
-  the conclusion's load spelling drifts by snapshot. canonical-memory.md
-  already recorded that making that match resolution-aware blew a 300 s
-  budget. Landing it would be one more bridge begetting another.
-- `equality_graph_terms_match_with_facts` (assumptions.rs) — reject as
-  written, but it is the right *shape*: equality-graph node matching
-  that consults framing instead of structure. It reaches for
-  `c_memory_load_is_unchanged` under a reentrancy guard, i.e. it pays
-  the value-bridging cost inside the hot equality graph. Revisit at
-  stage 3, where the same predicate is a cheap DAG walk.
-- `atomic_pointer_offset_equality_resolves` (assumptions.rs) — small,
-  self-contained, and independent of this arc: resolution-aware
-  `PointerOffsetEqual` mirroring the existing
-  `atomic_load_equality_resolves`. Not adopted here (it is not on this
-  arc's path and would need its own gate run and justification), but
-  it is the one piece worth someone's separate commit.
-- `invariant_closer_facts` (proof.rs) — reject on the branch's own
-  evidence: store-provenance-family.md records that feeding
-  `replay.effect_facts` into the closer "did not help since stores are
-  execution facts, not effect summaries". That sentence is precisely
-  the arc's thesis; the DAG supplies the execution facts directly.
-- `proposition_conjuncts` visibility bump (api.rs) — only needed by the
-  rejected rule.
-
-Nothing from the branch is carried forward into stage 1.
-
-**Landed:** stage 1 — `CMemoryDerivation`, the arena side-table, recording
-at the three edge producers, `c_memory_load_is_unchanged`'s DAG arm, six
-kernel tests. Gates: lib+bins 503 (497 + 6 new, ~8 s), mdtests 271
-visible (~10–16 s), examples (~4 s), and the same three green under
-`CLICK_DISABLE_MEMORY_DAG=1`. No measurable cost from the extra interning
-at store time.
-
-**What the DAG arm actually adds today.** Measured, because the first
-draft of the test was vacuous. `memories_match_for_pointer_load_under_
-assumptions` already takes the two snapshots' differing cells and
-requires each provably distinct from the loaded pointer, so a plain store
-to a distinct cell needs no DAG. Its real limit is the line above that:
-it first requires the two snapshots' **non-local block sets to be
-identical**, so it refuses outright once anything changed the block set —
-which is exactly what a call havoc does when it inserts its
-`call-havoc:N` marker. The recorded edge still carries the call's mutable
-ranges, so the walk crosses it for a pointer provably outside them. That
-case is pinned by
-`derivations_carry_a_load_across_a_distinct_store_but_not_across_havoc`
-and verified to fail with `CLICK_DISABLE_MEMORY_DAG=1` and pass without
-it. Worth knowing when judging later stages: the DAG's leverage is
-histories the *net snapshot diff* cannot express, not single distinct
-stores.
-
-**`old` has no name — the next increment.** Probed
-`verifies_old_memory_loop_invariant` (the smallest corpus member) against
-stage 1 to see whether the DAG arm moves it. It does not, and *why* is
-the finding:
-
-The DAG arm is never even reached on that path. Candidate lowering fails
-first. All 36 surface candidates lower fine, including the one with the
-right shape — `p[0] == old(p[0])`. But its `old` operand lowers to the
-**loop-entry** memory `{blocks: havoc:1000001, local:i}`, while the
-kernel certified the invariant with its `old` operand at the
-**function-entry** memory `{blocks: {}, cells: {}}` (genuinely empty: the
-symbolic `arg-memory` block is never registered in `blocks`). Two
-different memory states, both spelled `old`, so no placement of the
-operands can reproduce the certified fact — and the reported failure
-("no placement of the comparison operands at the 4 recorded program
-points lowered to the certified fact transport") is that mismatch, not a
-weak load-equality prover.
-
-This is precisely canonical-memory.md's `old(...)` references a named
-earlier state. Today `old` references nothing: it is resolved
-positionally at lowering time to whichever earlier state the lowering
-context happens to hold, and the kernel and the certificate lowering
-disagree about which one that is. Stage 1 supplies the missing names, so
-the next increment is to make `old` resolve to a *node* rather than to a
-context, on both sides.
-
-Note this stays inside the scope boundary: the surface text `old(p[0])`
-does not change. Only which memory state the lowering resolves it to.
-
-Consequence for the staging above: the stage order needs one insertion.
-`old`-resolution becomes stage 2a, ahead of the atomic prover work,
-because it is what actually gates the two smallest corpus members
-(`verifies_old_memory_loop_invariant` and `fill_tail_keeps_first`, same
-program shape). Stage 2's DAG arm stays landed and is exercised by the
-kernel tests; it will start paying once the operands can be placed.
-
-Sequence for whoever picks this up: find where loop-preservation
-certificate lowering resolves `ClickProposition::Old`, compare it with
-the state the kernel's certified fact was built against, and make both
-name the same DAG node. The 36-candidate enumeration is in
-`verify_certified_fact_transport`'s `find_candidate` closure
-(`src/lang/click/proof.rs`, near the "no placement of the comparison
-operands" message); `comparison_program_point_variants` builds the
-placements.
-
-### 2026-07-30 (session 2) — stage 2a: `old` gets a name
-
-**Landed.** `old(...)` no longer resolves positionally.
-
-*The two pipelines and where they disagreed.* A Click contract clause reaches
-the kernel down two different paths, and each answers "which memory does
-`old` mean" separately.
-
-- Click → Spec (`lowering.rs`, `AnnotationLowerer`). `ContractExpression::Old`
-  switches the elaboration context to `old_state(...)`, whose memory is
-  `SpecMemory::Fixed(self.entry_state.memory())`. `entry_state` is the
-  function's entry `CState` (`environment.initial_state`), so the *kernel*
-  side already names function entry — unambiguously, and for loop invariants
-  as much as for `ensures`.
-- Click → Proposition (`checking.rs`,
-  `lower_outcome_proposition_with_environment` and friends). Here `old` is
-  simply `pre_state`, a positional parameter. Certificate replay filled that
-  parameter from `TacticReplayState::execution_start_state`, i.e. *the state
-  this proof region started executing from*. In a whole-function replay that
-  is function entry and everything agrees. In a loop-preservation region it is
-  the loop-top havoc snapshot, and the same surface text meant two different
-  states on the two sides.
-
-That is the whole of `verifies_old_memory_loop_invariant`'s failure. Probed
-and confirmed: the certified source was
-`load(m{havoc:1000001, local:i}, p+k) == load(m{}, p+k)` — the `old` operand
-at the empty function-entry memory — while the best candidate lowered both
-operands at `m{havoc:1000001, local:i}`. No placement of the operands could
-reproduce it, because no surface spelling available to the replay named the
-function-entry snapshot at all.
-
-*The fix.* `TacticReplayState` gains `function_entry_state: Option<CState>`,
-the snapshot this region's `old(...)` names, and a `old_reference_state()`
-accessor that answers the "which memory is `old`" question in one place. The
-two loop-preservation planners (`plan_automatic_loop_preservation_body`,
-`verify_one_loop_preservation_proof`) set it from
-`environment.initial_state` — literally the same `CState` that
-`annotated_function` handed the `AnnotationLowerer` as `entry_state`, so both
-sides now name the same interned node. The 18 call sites that fed
-`execution_start_state` into contract lowering switched to
-`old_reference_state`; the two that genuinely mean "where execution started"
-(re-running the function for kernel certification, and the join entry state)
-did not. `None` keeps the previous positional answer, so every region that
-records no function-entry snapshot behaves exactly as before.
-
-`at(function.entry, ...)` moves with `old`: it is the same reference under
-another spelling and `concrete_program_point_state` reads the same parameter.
-On the Spec side those two already shared `old_state(...)`, so this makes the
-agreement total rather than partial.
-
-*How it is validated, and why that is not "trust the name".* Selecting a
-state by name only adds a spelling to the candidate search. Acceptance is
-unchanged and is the real check: `find_candidate` keeps a candidate only when
-its lowering is *equal* to the certified proposition, and a `MemoryLoad`
-carries its `SharedCMemory` inside the term, compared by arena identity. A
-candidate resolved to the wrong state therefore cannot match — a
-misresolution costs completeness, never soundness. This is why no separate
-"is this really the entry state" predicate was added: the certificate check
-already is one, and a second, weaker check would only be able to disagree
-with it.
-
-*Why this increment does not read derivation edges.* It uses the arena
-*names* (interned identity), which predate this arc and are not flag-gated;
-it reads no `CMemoryDerivation`. So `CLICK_DISABLE_MEMORY_DAG=1` gives
-identical results rather than the pre-fix ones. That is deliberate: the flag's
-contract is "derivations are neither recorded nor read", i.e. an A/B handle
-over *completeness*. Resolving `old` is a question of what a spelling
-**means**; gating that on the flag would make the flag change meaning instead
-of completeness, and would leave the wrong resolution reachable. Both modes
-were run and are green on all four gates.
-
-**Acceptance corpus movement** (each retested individually):
-
-- `verifies_old_memory_loop_invariant` (lib) — **passes; un-ignored.**
-- `fill_tail_keeps_first.md` (mdtest) — **passes; de-quarantined.** Same
-  program as the lib test, as store-provenance-family.md predicted.
-- `composite_resource_vector_fill_loop_snapshot.md` — still fails (~5.6 s),
-  and the message moved off `old`: "could not replay invariant closer:
-  invariant 1 is missing path goal". Stays quarantined; this is the
-  back-edge closer, stage 3/4 work.
-- `bubble_pass3_max_suffix.md` — still fails (~10 s), invariant closer missing
-  a `ForAll` path goal about the symbolically extended bound. No `old` in the
-  failure. Stays quarantined.
-- `bubble_sort3_two_pass_sorted.md` — still fails (~10 s). Stays quarantined.
-- `composite_resource_owner_buffer_field_dependent.md` — still fails (~5.8 s).
-  Stays quarantined.
-- `field_derived_precise_effect_after_metadata_write.md` — still fails, and
-  still grinds: **496 s**. Unchanged from the recorded ~500 s. Stays
-  quarantined.
-- example `owned-vector` — still fails (~8.5 s), same invariant-closer
-  `ForAll` path goal as vector_fill. Stays quarantined.
-- example `owned-string` — still fails (~2.5 s), same missing
-  `loadable(...)` pure fact. Stays quarantined.
-
-So stage 2a clears exactly the two members whose diagnosis was `old`
-resolution, and the remaining corpus is now cleanly attributable to the
-invariant closer rather than to spelling drift.
-
-**Gates.** lib+bins 510 (509 + the un-ignored test, ~3 s), mdtests 272 visible
-(~9 s), examples (~5 s) — green, and green again with
-`CLICK_DISABLE_MEMORY_DAG=1`. Bit-identical outcomes in both modes, as
-expected from an increment that reads no derivations.
-
-**Next.** Every remaining corpus member fails in the invariant closer, on a
-`ForAll` path goal it cannot re-derive. That is stage 3 (`load equality in the
-atomic prover`) with a concrete target: the closer's goals are exactly the
-snapshot-spelling drift the DAG arm was built for, and now that operands can
-be placed, stage 2's landed `c_memory_load_is_unchanged` arm should finally be
-on the path.
-
-### 2026-07-31 (session 3) — stage 3
-
-**The stage-3 target was not what the corpus said it was.** Stage 2a handed over
-"every remaining member fails in the invariant closer on a `ForAll` path goal",
-with the expectation that the goal needed load-equality across snapshot drift.
-Diagnosing `composite_resource_vector_fill_loop_snapshot` end to end says
-otherwise for the vector-shaped members: **the closer was being handed goals
-that are true only vacuously, and could not see the vacuity.**
-
-*The mechanism, measured.* `evaluate_c_memory_load_paths` resolves a load by
-walking the snapshot's cells and, for each cell it cannot prove distinct from
-the loaded pointer, splitting into an aliasing path and a distinct path
-(`CMemory::first_unresolved_same_block_cell` +
-`add_pointer_offset_equality_execution_pure_facts`). For
-`(owner->data)[k]` at the back edge that produced five paths — one per owner
-field, one for the store cell, one for "distinct from everything". The three
-owner-field paths carry the guard "this element's address *is* `owner->cap`"
-(resp. `->data`, and the trailing padding slot) and a goal of the form
-`owner->cap == value`, which nothing can prove. They are vacuous: the resource
-declares `separate(memory(owner[0..4]), memory((owner->data)[0..owner->cap]))`,
-so an element with `0 <= k < cap` cannot be an owner field.
-
-Why the splitter did not prune them, and why the closer could not close them,
-are the same fact seen twice. `verify_invariant_checks_at_back_edge_using`
-lowers with `defer_non_exact_condition_reasoning()`, and under that flag the
-range-containment prover refuses the order chain that puts `k` inside
-`data[0..cap]`. Probed directly at the split site: with the flag, distinctness
-is unprovable; without it, provable from the *same* facts, and provable from
-the bound guard alone. So the paths get emitted, and then the closer — which no
-longer defers — has every fact it needs to refute the guard but no rule that
-looks.
-
-*What landed.* `Assumptions::is_inconsistent` gained
-`alias_guard_refuted_by_separation`: an assumed
-`PointerOffsetEqual(a, b) = true` is a contradiction when recorded separation
-puts `a` and `b` in disjoint ranges of one block. The vacuous paths then close
-by `Explosion`, which is what they always were. Two details worth keeping:
-
-- **Recovering the block.** `pointer_equality_condition` drops to a bare
-  `PointerOffsetEqual` exactly when the two pointers share a block, so the
-  guard no longer names it. The rule re-attaches the base block of a *separated
-  pair whose two ranges share a block*, which is not a guess: separation
-  constrains offsets only in that case, so the question asked is "do these two
-  offset terms fall in disjoint intervals of one block", a statement about the
-  offset terms alone.
-- **`pointer_in_range`, not the memory-resolution variant.** The first version
-  used `pointers_proven_distinct_for_memory_resolution` and cleared the mdtest
-  but not example `owned-vector`, whose `preserve` script does not `unfold` the
-  resource and so reaches the containment by a longer order chain. Measured on
-  that context: `pointers_proven_disjoint_by_range` = true while the
-  memory-resolution variant = false, with containment holding on exactly the
-  right pair. Scanning the separation facts directly with `pointer_in_range` is
-  both the semantically right predicate and the one that works.
-
-Reentrancy-guarded (containment re-enters condition reasoning, which reaches
-`is_inconsistent` again). Not flag-gated: it reads no derivations, so
-`CLICK_DISABLE_MEMORY_DAG=1` is bit-identical, exactly as for stage 2a.
-
-#### The bubble members: the load bridging already worked
-
-The two bubble mdtests are the members whose missing goal really is a load
-comparison across two snapshots — `load(m, p+k*4) <= load(m', p+j*4)`, where
-`m'` is `m` plus cells for `local:j` and `local:tmp` and nothing else. The
-expectation was that this needed a DAG walk. Probed: it does not.
-`decide(load(m, p+j*4) == load(m', p+j*4))` is already `Some(true)`; the
-existing bridging handles differing cells in a provably different block. With
-the right-hand side rewritten by hand the goal was *still* underivable.
-
-What is actually missing is one case split. The goal's guard is `k < j + 1`
-while the invariant fact's is `k < j`, and probing both halves separately
-showed each is derivable as it stands: below `j` from the invariant, at `j`
-from the body's own effect (which, after the swap, makes the two sides of the
-comparison the same value). Only the split was absent.
-
-**Landed:** `PropositionDerivationRule::UpperBoundSplit` and
-`derive_by_upper_bound_split` — an assumed `k <= b` (spelled either
-`k < b + 1` or `k <= b`) splits a goal into `k < b` and `k == b`. Notes:
-
-- It is a **goal-side** split, which is why it works where
-  `claude/forall-extension-wip`'s `forall_fact_extends_bound_by_one` did not
-  (session 1 rejected that rule because proving the final index meant matching
-  a fact spelled at another snapshot). Here each half is derived in the
-  ordinary way against whatever is present, so no spelling has to be matched.
-- Sound at the wrapping edge: `k < b + 1` with `b = INT_MAX` wraps to
-  `k < INT_MIN`, which is unsatisfiable, so the split's disjunction follows
-  vacuously. The `k <= b` spelling has no edge case.
-- Confined to leaf goals with an undecided pivot, and depth-gated to one
-  level. Two levels were tried for the nested-loop member and bought nothing
-  (158 s vs 137 s).
-
-**Acceptance corpus movement.** One member now *passes* but is too slow to
-un-quarantine; three more moved off the invariant closer.
-
-- `bubble_sort3_two_pass_sorted.md` — **passes**, in **137 s**. Stays
-  quarantined on cost alone (mdtest limit is 30 s), per conventions.md's
-  slow-but-passing rule. Attribution below.
-- `bubble_pass3_max_suffix.md` — `loop(0).preserve` now certifies. Fails later,
-  in `max_at_end` path 0: "smart `simp` closed the claim but its certificate
-  did not lower or replay: planned `simp` context premise is not an available
-  source fact", the premise being the loop-exit invariant `ForAll`. ~8.9 s. A
-  certificate-lowering gap, not a prover gap — and note the two-pass version of
-  the same program does not hit it.
-- `composite_resource_vector_fill_loop_snapshot.md` — closer now closes. Fails
-  later, in `contract` path 0 tactic 2: grouped `simp` cannot certify its
-  claim transition for `ensures_2` (the exit spelling of the same `ForAll`).
-  **~47 s**, up from ~5.6 s, because the proof now gets much further.
-- example `owned-vector` — `vector_fill.loop(0).preserve` closes. Fails later
-  and elsewhere: `vector_replace_if.contract` tactic 8 `have` cannot find
-  `Implies(replace == 0, new == old)`. ~9 s.
-- `composite_resource_owner_buffer_field_dependent.md` — message moved off the
-  closer to "execution proof for `set_owned_first.ensures_0` path 0 changed
-  more than the certified ghost resource representation" (~5.7 s).
-- example `owned-string` — unchanged (~2.5 s), still the missing
-  `loadable(data[len])` pure fact. Untouched by this session's work.
-- `field_derived_precise_effect_after_metadata_write.md` — not retested
-  (~496 s to fail; not worth the wall clock until it has a reason to move).
-
-**Where `bubble_sort3`'s 137 s goes** (`CLICK_TIMINGS=1` plus a 20 s `sample`
-of the debug binary). One tactic, `loop(1).preserve` step 2 `simp`, is 64.6 s;
-the rest is outside tactic timings, i.e. the invariant-closer replay inside
-loop-rule verification. The sampled profile is not
-`atomic_derivation_premises` (the cost recorded in
-`store-provenance-family.md`) — it is dominated by
-`reasoning::bitvector_terms_equal_for_memory_resolution` and
-`api::canonicalize_atomic_loads`, under a haze of `Bitvector32Term` clone and
-`BTreeMap` churn. That is the value-bridging machinery this arc exists to
-replace, so the cost item and stage 5 are the same item: the DAG has to
-*subsume* deep term-equality search, not sit beside it. Worth knowing before
-anyone tries to make this test fast by tuning the split — the split is not
-where the time is.
-
-**Gates.** lib+bins 512 (510 + two new kernel tests, ~3.1 s), mdtests 272
-visible (~9 s), examples (~7.0 s, up from ~5.3 s — `owned-vector` now runs
-further before failing). Green, and green again with
-`CLICK_DISABLE_MEMORY_DAG=1`.
-
-**Stages 4 and 5 not started.** Stage 4 was gated on stage 3 landing green,
-which it has, but no corpus member de-quarantines yet and the next failures are
-all downstream of the closer (certificate lowering, ghost-resource
-representation, contract `simp`). The profile above says stage 5's subsumption
-question is the one with leverage.
-
-### 2026-07-31 (session 4) — stages 4–5
-
-**Stage 3's cost attribution was one level off, and the correction reshapes
-stage 4.** Stage 3 read a 20 s `sample` as "the time is in
-`bitvector_terms_equal_for_memory_resolution` and `api::canonicalize_atomic_
-loads`, i.e. the value-bridging machinery that deep-compares embedded
-snapshots", and concluded the DAG had to subsume deep snapshot comparison.
-The first half is right and the second is not. Measured this session with
-counters at the call site (probe, stripped) plus a fresh `sample`:
-
-*Counted, on `bubble_pass3` (~9 s, small enough to iterate on):*
-
-- `bitvector_terms_proven_equal_for_memory_resolution` is entered **564 888
-  times** and accounts for **~7 of the 9 s**. So stage 3's naming of the hot
-  function is correct.
-- **539 100 of those calls return `false`.** The success rate is 4.6%. The
-  cost is a failing search, so no arm that answers *earlier* can move it —
-  only an arm that makes the failures cheaper, or fewer.
-- Of the 540 k top-level (`depth == 0`) calls, exactly **6** compare two
-  `MemoryLoad` terms. The overwhelming shapes are `const/load` (126 k),
-  `const/var` (95 k), `const/const` (76 k), `addsub/load` (42 k),
-  `var/load` (42 k). The function is being used as a general term-equality
-  oracle, not as a load-vs-load bridge.
-- The deep-canonicalization arm inside it (`bitvector_term_deeper_than` ×2
-  then `canonicalize_atomic_loads` ×2) answered **0 times out of 1 077 050**
-  and cost **under 1 s in total**. It is neither the cost nor, on this
-  corpus, a source of completeness.
-
-*Sampled, on `bubble_sort3` (25 s window, ~192 k frames):* under
-`bitvector_terms_equal_for_memory_resolution` the leaves are
-`bitvector_terms_equal_from_facts_uncached` (3017),
-`exact_condition_value` (2642 + 2449), `bitvector_terms_equal_from_facts`
-(2146), `has_order_path_for_memory_resolution` (1463),
-`decide_bitvector_equality_shallow` (1029),
-`proves_order_condition_for_memory_resolution` (886 + 809),
-`memory_loads_proven_equal` (713),
-`bitvector_constant_from_direct_equalities` (708),
-`resolve_memory_load_value` (623). `canonicalize_atomic_loads` is 2962 —
-present, as stage 3 said, but it is called from `proves` /
-`proves_atomic_without_search` and the transport paths, not from the hot
-recursion, and the counter above shows the hot-recursion copy is free.
-
-**So the cost is fact-set scanning, not snapshot comparison.** Each of the
-540 k calls walks the assumption fact set (`bitvector_terms_equal_from_facts`)
-and builds fresh `PointerOffsetTerm`s to look up in `condition_facts`
-(`exact_condition_value`, called twice per invocation by the `[1, 4]`
-byte-width arm). The recursive descent through `Add`/`Subtract` cancellation
-multiplies one top-level question into ~2 sub-questions on average
-(1 077 050 total invocations for 564 888 entries).
-
-This is worth knowing before anyone else reads a `sample` on this test: the
-frame that is hot is the *caller*, and attributing its cost to the
-canonicalizing arm it happens to contain is exactly the mistake made once
-already.
-
-#### Stage 4 — landed: the cell lookup, and what it is worth
-
-`memory_dag_cell_source` resolves one pointer against a snapshot by walking
-its derivation edges backwards. A `Store` edge whose pointer is provably the
-loaded one answers with the stored value; a provably distinct one is crossed;
-`CallHavoc` is crossed only under proven range-disjointness; `LoopHavoc` is
-never crossed; anything undecidable stops the walk and reports the node it
-stopped at. Both outcomes denote the same thing — *the value of loading this
-pointer in that node* — which is what makes two lookups comparable by arena
-identity alone. Hop-capped at 64 and reentrancy-guarded, since the hop
-predicates reach `decide`.
-
-**What it adds over stage 2.** Stage 2's `memory_derivations_reach` only asks
-whether one snapshot is reachable from the other, so it cannot relate
-*siblings*. Two calls each havocking a range disjoint from the loaded cell
-produce exactly that shape, and value bridging refuses them outright because
-each carries its own `call-havoc:N` marker so the block sets differ.
-Resolving both lands on one common ancestor.
-`sibling_snapshots_resolve_one_cell_to_a_common_ancestor` pins this and
-asserts the answer *equals* whether the DAG is on, so it is meaningful in
-both flag modes.
-
-Wired as an early arm in `memory_loads_proven_equal` (ahead of both snapshot
-comparisons and both `prop_facts` scans), in
-`bitvector_terms_equal_for_memory_resolution` and in both `proves` paths; and
-stage 2's arm moved ahead of the snapshot matcher inside
-`c_memory_load_is_unchanged`.
-
-#### Stage 5 — measured: the win is real, on the other test
-
-The recast asked for an order-of-magnitude cut on `bubble_sort3`. That did
-not happen and cannot: **139.6 s before, 137.4 s after**, and the profile
-above says why. But the same change cuts `field_derived` by **2.46x**, and
-that is the member canonical-memory.md actually named as the arc's cost
-target ("the giant-term perf class (field_derived's ~500 s grouped-simp
-grind)"). All four numbers isolated, one member per process:
-
-| `field_derived_precise_effect_after_metadata_write` | seconds |
-|---|---|
-| master (stage 3), DAG on | 486.99 |
-| this branch (stage 4), DAG on | **198.31** |
-| this branch, DAG off (sweep) | 591.80 |
-| master, DAG on, as recorded in stage 2a | ~496 |
-
-The middle two are the flag A/B on one binary, so the cut is the DAG arm and
-nothing else; the first two are the same flag setting across the stage-4
-commit, so the cut is *this stage* and not stage 3. Both readings agree, and
-the verdict is unchanged in every case (it still fails, in the same place).
-So the arc's cost thesis holds — it just holds on the member whose loads are
-related by a real store history, which is exactly what a derivation walk can
-use.
-
-**Why `bubble_sort3` is immune.** Three measurements agree the DAG cannot
-reach its cost.
-
-- **Only 6 of 540 000 top-level comparisons are load-vs-load.** A load
-  equality arm, however good, is being offered 0.001% of the traffic.
-- **95% of the calls fail.** Answering earlier cannot help a search whose
-  cost is in not finding anything.
-- **A one-sided select-over-store arm was built, measured, and removed.**
-  Resolving `load(m, p)` to a value and comparing it against the other side
-  is the natural reading of "what does this cell hold after these stores",
-  and it covers the 39% of calls with a load on exactly one side. It fired
-  **0 times in 295 290 lookups** on `bubble_pass3`: every single lookup
-  returned `None`. The reason is structural, not a bug — these loads read a
-  caller-provided symbolic buffer at symbolic indices, so neither the
-  snapshot's own cells nor any ancestor's hold a cell for them. There is no
-  store history to look up. The arm was deleted rather than kept as dead
-  weight; this paragraph is the record.
-
-**Retirement attempts.** Three value-bridging arms were removed one at a time
-and everything re-run.
-
-- **The deep-canonicalization arm in
-  `bitvector_terms_equal_for_memory_resolution` — STAYS.** It is the arm the
-  counters showed answering 0 of 1 077 050 times on `bubble_pass3`, so it
-  looked like the safest retirement in the file. Removing it reddens
-  `loop_stdlib_permutation_invariant.md` immediately. The diagnosis is worth
-  keeping: the two sides are loads nested inside `If` conditions inside an
-  `Add` tree inside a `ForAll`, and their snapshots differ by exactly one
-  thing — one has a `local:i` block and the other is empty. So the DAG cannot
-  substitute for it *twice over*: the loads are not top-level terms, and the
-  two snapshots sit in disjoint DAG components because declaring a local is
-  not a recorded edge kind. This is the session-1 dead end
-  ("arena identity is connected, arena derivations are not") arriving with a
-  concrete price tag, and it is the strongest argument yet for a fourth edge
-  kind.
-- **`load_unchanged_via_effect_chain` — STAYS.** Removing it reddens example
-  `owned-split-buffer` (`owned_split_buffer_pipeline`, `Ensure(4)`).
-- **`memory_snapshots_directly_proven_equal_for_load` and
-  `memory_snapshots_proven_equal_for_load` — RETIRED** (92 lines, including a
-  BFS over `prop_facts` that cloned whole `CMemory` values into a visited
-  set). Nothing reddens and nothing slows: `bubble_sort3` is 137.4 s with and
-  without them.
-
-  Recorded honestly: **this retirement is not attributable to the DAG.** With
-  the flag off — where the new arm above them does nothing at all — every
-  gate and the corpus stay green just the same. They were unreachable, not
-  superseded. Anyone crediting the arc for this should not.
-
-#### Acceptance corpus, every member retested this session
-
-Timings are one member per process except where noted; the two sweep columns
-ran members in parallel, so compare sweep with sweep.
-
-| member | verdict | this session | before |
-|---|---|---|---|
-| `bubble_sort3_two_pass_sorted` | **passes** | 137.4 s | 139.6 s |
-| `field_derived_precise_effect_after_metadata_write` | fails | **198.3 s** | 487.0 s |
-| `composite_resource_vector_fill_loop_snapshot` | fails | 47.8 s (sweep) | ~47 s |
-| `bubble_pass3_max_suffix` | fails | 11.9 s (sweep) | ~8.9 s |
-| example `owned-vector` | fails | 12.7 s | ~9 s |
-| `composite_resource_owner_buffer_field_dependent` | fails | 6.2 s (sweep) | ~5.7 s |
-| example `owned-string` | fails | 2.6 s | ~2.5 s |
-
-`bubble_sort3` **stays quarantined**: it passes, but at 137 s against a 30 s
-mdtest limit, so conventions.md's slow-but-passing rule keeps it out.
-Nothing else de-quarantines. The full quarantined sweep is 4 of 277 failing,
-**identical in both flag modes**, so no verdict anywhere depends on the DAG.
-
-**Where the frontier now is, and it is not here.** Every remaining member
-fails on something that is not a load-equality question. Recording the
-diagnoses so nobody chases them into this arc:
-
-- `bubble_pass3_max_suffix` — certificate lowering: the planned `simp`
-  context premise (the loop-exit invariant `ForAll`) is not an available
-  *source* fact. Worth noting because it looks like arc work and is not: its
-  two loads sit in **the same snapshot** (`{havoc:1000002, local:j,
-  local:tmp}`), differing only in the index term, so there is no snapshot to
-  bridge.
-- `composite_resource_vector_fill_loop_snapshot` and `field_derived` —
-  grouped `simp` cannot certify its complete claim transition. Same failure
-  class for both, downstream of the closer, in the grouped certification
-  path.
-- `composite_resource_owner_buffer_field_dependent` — the execution proof for
-  `set_owned_first.ensures_0` changed more than the certified ghost-resource
-  representation.
-- example `owned-vector` — `vector_replace_if.contract` tactic 8 `have`
-  cannot find `Implies(replace == 0, new == old)`. A propositional gap over
-  plain variables; the goal contains no memory at all.
-- example `owned-string` — a missing `loadable(...)` pure fact. A permission
-  question, not an equality one.
-
-**Next, if the arc continues.** The one measured lead is the fourth edge
-kind. `loop_stdlib_permutation_invariant`'s diagnosis above is the first
-concrete case where a *specific named test* needs two snapshots to be
-connected and they are not, because declaring a local block records no edge.
-Session 1 rejected block-allocation edges as "not worth it" on the evidence
-then available; the evidence now is a load-bearing arm that cannot be retired
-because of exactly that gap. That is a better-founded reason to reconsider
-than any so far — but it is a new increment, not a tweak.
+  DAG, materialised. The `CMemory` value stays; readers retire one at a
+  time.
+- Provenance lives *outside* the value so it can never split identities
+  (`Eq`/`Hash`/`Ord` stay derived and honest).
+
+Two invariants make it safe:
+
+1. **Advisory, never load-bearing.** A missing derivation costs
+   completeness, never correctness; every consumer falls back to
+   today's path. (Cross-thread handles resolve to no derivation —
+   slower, not wrong.)
+2. **Parent id < child id; first-wins recording.** A base must already
+   be interned to be named, so cycles are unrepresentable (including
+   store-of-same-value and store-then-store-back, which re-intern to
+   existing nodes and keep the older derivation). Debug-asserted; every
+   walk is hop-capped.
+
+Havoc identity (the conventions.md soundness trap) is preserved at the
+edge: walks cross `Store` only under proven pointer-distinctness,
+`CallHavoc` only under proven range-disjointness, and **never** cross
+`LoopHavoc` — loop havoc has no write set to be disjoint from.
+
+Flag: `CLICK_DISABLE_MEMORY_DAG` skips every recording and every DAG
+arm, restoring the pre-arc path exactly. Default on; the A/B handle.
+
+## Landed (stages 1–5, 2026-07-30/31)
+
+1. **Representation + recording** at the three edge producers
+   (`CMemory::store`, `with_loop_memory_havoc`,
+   `with_call_memory_havoc`); kernel tests pin the DAG shape.
+2. **`c_memory_load_is_unchanged` DAG arm** — walks `after` down to
+   `before` per the edge rules. Its leverage is histories the *net
+   snapshot diff* cannot express (e.g. crossing a call-havoc marker
+   that changes the block set); a single distinct store never needed it.
+3. **(2a) `old(...)` gets a name.** Certificate replay resolved `old`
+   positionally (region execution-start); the kernel lowering names
+   function entry. `TacticReplayState::function_entry_state` +
+   `old_reference_state()` make both sides name the same interned node;
+   `at(function.entry, ...)` moves with it. Not flag-gated — it reads
+   arena names, not derivations; a misresolution costs completeness
+   only, because `find_candidate` still requires lowering-equality
+   against the certified fact. Cleared `verifies_old_memory_loop_
+   invariant` (un-ignored) and `fill_tail_keeps_first` (de-quarantined).
+4. **(3) Two closer fixes**, neither a DAG consumer:
+   `alias_guard_refuted_by_separation` in `Assumptions::is_inconsistent`
+   (an assumed `PointerOffsetEqual(a, b)` contradicts recorded
+   separation putting a and b in disjoint ranges of one block — uses
+   plain `pointer_in_range`, NOT the memory-resolution variant, which
+   refuses longer order chains), and
+   `PropositionDerivationRule::UpperBoundSplit` (assumed `k <= b`
+   splits a goal into `k < b` / `k == b`; goal-side, so no cross-
+   snapshot fact matching; INT_MAX wrap is vacuously sound; depth 1).
+   Moved every remaining corpus member off the invariant closer.
+5. **(4) `memory_dag_cell_source`** — resolves one pointer against a
+   snapshot by walking derivation edges backwards; undecidable hops
+   stop and report the node, so two lookups compare by arena identity.
+   Relates *sibling* snapshots through a common ancestor (two disjoint
+   call havocs), which value bridging refuses outright. Wired ahead of
+   snapshot comparison in `memory_loads_proven_equal`,
+   `bitvector_terms_equal_for_memory_resolution`, both `proves` paths.
+6. **(5) The measured verdict.** field_derived **487 s → 198 s**
+   (2.46x), confirmed twice over: flag A/B on one binary (198 vs 592)
+   and same-flag across the commit (487 vs 198). That is the member
+   canonical-memory.md named as the cost target. Two value-bridging
+   snapshot-equality scans retired (92 lines) — honestly recorded as
+   unreachable, not DAG-superseded (green with the flag off too).
+
+**Why bubble_sort3 is immune to this arc** (three measurements, keep
+before anyone re-attempts): only 6 of 540 k top-level comparisons are
+load-vs-load; 95% of the calls return false, so answering earlier
+cannot help a search whose cost is in not finding anything; and a
+select-over-store arm fired **0 times in 295 290 lookups** — its loads
+read a caller-provided symbolic buffer at symbolic indices, so there is
+no store history to look up. Its 65 s is a slow-simple engine bug
+(`slow-simple-engine-bugs.md`), not arc work. Sampling trap recorded
+there too: the hot frame is the fact-set-scanning *caller*; attributing
+its cost to the canonicalizing arm it contains was already made once.
+
+## Where the frontier is
+
+Per-member diagnoses live in `store-provenance-family.md`. None of the
+remaining failures is a load-equality question — certificate lowering
+(bubble_pass3), grouped-simp claim-transition certification
+(vector_fill, field_derived), ghost-resource representation
+(owner_buffer), a memoryless propositional gap (owned-vector), a
+permission question (owned-string).
+
+## Next, if the arc continues: a fourth edge kind (block allocation)
+
+Declaring a local creates a block but records no edge, so entry states
+and executing states sit in **disjoint DAG components** ("arena
+identity is connected, arena derivations are not"). Session 1 rejected
+block-allocation edges as not worth it; the evidence now is stronger: a
+load-bearing deep-canonicalisation arm in
+`bitvector_terms_equal_for_memory_resolution` cannot be retired because
+removing it reddens `loop_stdlib_permutation_invariant.md` — its two
+snapshots differ exactly by one `local:i` block, unreachable by any
+walk today. (Also load-bearing: `load_unchanged_via_effect_chain`,
+needed by example owned-split-buffer `Ensure(4)`.) A fourth edge kind
+is a new increment: it must be recorded at every block producer and it
+risks displacing `Store` edges via first-wins on content-equal
+snapshots.
 
 ## For the owner
 
-*(nothing yet — no surface-semantics question has come up; the `old`
-finding above is internal resolution, not surface semantics)*
+*(nothing — no surface-semantics question has come up)*
 
-## Dead ends
+## Dead ends (do not re-attempt without new evidence)
 
-- Expecting stage 1's `c_memory_load_is_unchanged` arm to move
-  `verifies_old_memory_loop_invariant` on its own. It cannot: probes
-  confirmed the function is never called on that path, because
-  certificate-candidate placement fails upstream of any load-equality
-  question. Recorded above.
-- **Validating `old`-resolution by a derivation-DAG ancestry walk** ("the
-  named entry snapshot must be reachable from the current snapshot by
-  following `base` edges"). Probed and rejected: the chain does not connect.
-  For `fill_tail` the loop-top snapshot walks back
-  `LoopHavoc -> Store -> Store -> Store` and stops at arena id 0,
-  `{blocks: [local:i], cells: {}}`, which carries **no derivation** — the
-  block that declaring a local creates is not a recorded edge kind. The
-  function-entry snapshot is a *separate* root (id 3, `{}`). So entry states
-  and executing states sit in disjoint components of the DAG today.
-  Reachability could be restored with a fourth edge kind for block
-  allocation, but it was not worth it here: it would have to be recorded at
-  every block producer, it risks displacing `Store` edges through first-wins
-  on content-equal snapshots, and it would buy a *weaker* check than the one
-  the certificate comparison already performs (see the session log). Worth
-  knowing before anyone else reaches for an ancestry walk: **arena identity
-  is connected, arena derivations are not.**
-- **Reading stage 2a's handover as "the closer needs better load equality".**
-  It says every remaining member fails in the closer on a `ForAll` path goal,
-  which is true, but three distinct causes hide behind that one message, and
-  none of the three was load equality (2026-07-31, all three measured):
-  vacuous alias paths the closer could not refute; a missing final-index case
-  split; and, downstream of both, certificate lowering. The load bridging the
-  arc built in stage 2 was already answering the questions put to it — probe
+- Stage 1's load-unchanged arm moving `verifies_old_memory_loop_
+  invariant`: never reached — candidate *placement* fails upstream.
+- Validating `old`-resolution by a DAG ancestry walk: the chain does
+  not connect (entry states are separate roots, see "fourth edge
+  kind"), and it would be a weaker check than the certificate
+  comparison already is.
+- "The closer needs better load equality": three distinct causes hid
+  behind that message (vacuous alias paths, a missing final-index
+  split, certificate lowering) and none was load equality. Probe
   `decide(...)` on the two spellings before assuming otherwise.
-- **Using `pointers_proven_distinct_for_memory_resolution` for the alias-guard
-  refutation.** It cleared the mdtest and not example `owned-vector`; the
-  memory-resolution containment path is fuel-bounded and depth-limited and
-  refuses the longer order chain that the plain `pointer_in_range` accepts.
-  Measured side by side on `owned-vector`'s failing context: by-range true,
-  memory-resolution false, same facts.
-- **Raising the final-index split's depth limit to reach nested loops.**
-  `bubble_sort3_two_pass_sorted` has two nested loops and closes at depth 1;
-  depth 2 cost it 20 s and changed no outcome. Likewise, confining the split
-  to leaf goals with an undecided pivot is right on principle but measured
-  neutral — the 137 s is not in the split.
+- `pointers_proven_distinct_for_memory_resolution` for the alias-guard
+  refutation: clears the mdtest, not example owned-vector; by-range
+  true / memory-resolution false on the same facts.
+- Raising the UpperBoundSplit depth to 2: +20 s, no outcome change.
+  The 137 s is not in the split.
+- A one-sided select-over-store equality arm: 0 firings in 295 290
+  lookups (no store history for symbolic buffers); deleted.
+- Feeding `replay.effect_facts` into closer planning: stores are
+  execution facts, not effect summaries; no effect.
+- From `claude/forall-extension-wip` (all rejected, session 1):
+  `forall_fact_extends_bound_by_one` (fact-side final-index matching
+  fails on exactly the snapshot drift this arc addresses — the
+  goal-side UpperBoundSplit is the working replacement);
+  `equality_graph_terms_match_with_facts` (right shape, pays
+  value-bridging cost inside the hot equality graph);
+  `invariant_closer_facts` (the effect-facts dead end above). The one
+  piece worth a separate commit: `atomic_pointer_offset_equality_
+  resolves`, resolution-aware `PointerOffsetEqual` — independent of
+  this arc.
 
 ## Done when
 
-The acceptance corpus passes: examples owned-string and owned-vector
-de-quarantine; mdtests vector_fill, field_derived, bubble_pass3,
-bubble_sort3, composite_owner_buffer_field_dependent,
-fill_tail_keeps_first de-quarantine; lib
-`verifies_old_memory_loop_invariant` and the store-provenance-diagnosed
-ignored tests un-ignore; and the explicit
-`have at(statement(1).exit, selected) == ...` workaround in
-`mdtests/proof_advance_pointer_local.md` deletes cleanly with
-certificate generation finding the spelling itself.
+The acceptance corpus in `store-provenance-family.md` passes: both
+examples and all quarantined member mdtests de-quarantine, and the
+explicit `have` in `mdtests/proof_advance_pointer_local.md` deletes
+cleanly with generation finding the spelling itself.
 
-## Repro commands
+## Repro
 
 ```
-cargo nextest run --lib --bins                    # 513
-cargo test --test mdtests                         # 272 visible
+cargo nextest run --lib --bins
+cargo test --test mdtests
 cargo test --test examples
-CLICK_RUN_QUARANTINED=1 MDTEST_FILTER=vector_fill cargo test --test mdtests
-CLICK_RUN_QUARANTINED=1 MDTEST_FILTER=bubble_pass3 cargo test --test mdtests
+CLICK_RUN_QUARANTINED=1 MDTEST_FILTER=<member> cargo test --test mdtests
 CLICK_EXAMPLE=owned-vector cargo test --test examples
-CLICK_DISABLE_MEMORY_DAG=1 <any of the above>     # A/B against the pre-arc path
-CLICK_RUN_QUARANTINED=1 MDTEST_TIME_LIMIT=900 cargo test --test mdtests
+CLICK_DISABLE_MEMORY_DAG=1 <any of the above>   # A/B against the pre-arc path
 ```
 
-`field_derived_precise_effect_after_metadata_write.md` takes **~200 s** to
-fail (was ~500 s before stage 4); bound it with `MDTEST_TIME_LIMIT` and do
-not put it in a loop. `bubble_sort3_two_pass_sorted.md` takes ~137 s to
-pass. Neither belongs in a foreground command.
+field_derived takes ~200 s to fail; bubble_sort3 ~137 s to pass.
+Bound with `MDTEST_TIME_LIMIT`; neither belongs in a foreground loop.
