@@ -251,6 +251,46 @@ covers.** Implement whatever small unification that requires, then document
 it as a single table (verb → implies loadable? → implies separate? →
 implies write?). That table replaces roughly three scattered doc sections.
 
+### C5. Doubly-indirect places in `owns`
+
+C source handles arrow chains fine — `r->mid->leaf->value` parses and
+verifies (mdtests/c_chained_field_access.md), so the design-review claim
+that field struct-types are discarded is stale. The residual limit is on the
+*contract* side: a single `owns` whose place base is a doubly-indirect load,
+e.g.
+
+```click
+resource nested(r: struct root*) {
+    owns r->mid;
+    owns ((r->mid)->leaf)->value;   // rejected
+}
+```
+
+fails lowering with ``could not lower `nested` resource: segment base did
+not evaluate to a pointer`` (src/lang/click/lowering.rs:3960; the underlying
+checks are src/lang/click/checking.rs:1471 and friends). Segment bases
+resolve one load deep, so the second indirection has no pointer value to
+anchor the range.
+
+There is a clean workaround that is arguably the better idiom anyway —
+compose a nested resource, so each resource only indirects once:
+
+```click
+resource leaf_cell(m: struct middle*) {
+    owns m->leaf;
+    owns (m->leaf)->value;
+}
+resource nested(r: struct root*) {
+    owns r->mid;
+    owns leaf_cell(r->mid);
+}
+```
+
+So this is a small parked ergonomics item, not a blocker: either teach
+segment-base resolution to chase a chain of loads (given the intermediate
+loadability is itself owned), or leave it and document nesting as the
+required spelling for depth > 1.
+
 ---
 
 ## Cross-cutting sequencing
