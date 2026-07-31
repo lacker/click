@@ -1,7 +1,7 @@
 # Faithful expansion of pure case-split certificates
 
-Status: open
-Claimed:
+Status: in progress
+Claimed: claude/nervous-ptolemy-90e738 (worktree agent-a5e4815eaf1c6351a), 2026-07-31
 
 Two quarantined mdtests (`sort3_sorted.md`, `bubble_sort3_loop_sorted.md`)
 have smart simps over budget (2.2 s / 3.5 s) whose entire content is a
