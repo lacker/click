@@ -76,3 +76,53 @@ semantics decision.
 Not verified by the audit: adversarial reachability (no crafted .click
 repro yet), whether kernel-side paths bypass proof.rs entirely, and
 whether click-expand's refusal is user-visible on the 21 claims.
+
+
+## Migration log
+
+- DONE 2026-07-30: `CLICK_STRICT_EXIT_GATE` added (three bypass sites
+  become verification failures; fully simple `have` scripts stay
+  accepted as their own certificates). Baseline: 24 failing mdtests.
+- DONE: exit-claim goals re-lower under the drain's local unfold set
+  (the certificate replay clone never received it). 24 -> 22; the
+  entire "surface goal lowered to a different kernel proposition"
+  category (10) is gone.
+- DONE: replay's derive/calculate check now supplies ambient effect
+  facts (CMemoryMutatesOnly / CMemoryEffectSummary) alongside the
+  listed premises, closing the asymmetry with generation, which
+  deliberately filters those unspellable facts out of premise lists.
+  No corpus test flips on this alone, but the prior state made the
+  generation-side filter unsound against the replay judgment.
+
+## Next cluster (start here): predicate-valued goals, 9 tests
+
+The dominant remaining failure: claim certificates of the shape
+`have same_first(p, old(p)) by { ... }` whose target is an opaque
+`Proposition::Predicate` over two memory snapshots. Generation proves
+it via `plan_simp_certificate` -> `ExactPropositionDerivation` and
+validates with `derivation.replay(premises)`; replay validates with
+`derive_simp_*` from the listed premises (check_atomic_derivation_goal,
+proof.rs ~230), which cannot prove an opaque Predicate. The two
+judgments disagree; per the accepted design, generation must emit what
+the REPLAY judgment accepts.
+
+The fix shape: when the goal is/contains an opaque Predicate, emit
+`unfold(<name>)` prefix tactics and lower the UNFOLDED goal (the
+comparison plumbing for unfolded goals already exists and works — see
+the fix above). Insertion point: `lower_outcome_simp_tactic`
+(proof.rs ~12190) or its caller `certify_outcome_simp_have`. Then
+re-measure; the remaining categories after this cluster are
+3 expressible-path-facts, 2 premise-not-available, 3 existential
+lowering, 5 smart-shaped post-execution `have`.
+
+Worklist (failing under CLICK_STRICT_EXIT_GATE=1): bubble_sort3_loop_
+permutation, byte_slice_range_predicates, byte_slice_stdlib,
+click_array_refs, click_proposition_logic, compare_swap2_permutation,
+compare_swap2_sorted_predicate, contract_let_where, cstr_stdlib,
+grouped_function_post_execution_have, loop_explicit_initialize_and_
+preserve, loop_sorted_range_invariant, loop_stdlib_permutation_
+invariant, permission_call_split_rejoin, proof_advance_pointer_local,
+pure_click_functions, pure_have_rejects_advance (expected-error text
+drift only), resource_summary_splits_write_range, sort3_permutation,
+sort3_permutation_predicate, witness_and_choose, theorem_apply_in_
+function_proof.

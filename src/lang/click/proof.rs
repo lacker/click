@@ -240,10 +240,31 @@ fn check_atomic_derivation_goal(
         .map(normalize_direct_atomic_memory_loads)
         .collect::<Vec<_>>();
     let normalized_target = normalize_direct_atomic_memory_loads(&target);
+    // Effect summaries and certified-write records are deterministic
+    // execution artifacts with no surface spelling; certificate generation
+    // deliberately omits them from the premise list (mirroring its
+    // loadability carve-out), so the replay environment supplies them.
+    // Only these two shapes ride along: everything else the derivation
+    // consumes must be a listed premise.
+    let effect_context = available
+        .iter()
+        .filter(|fact| {
+            matches!(
+                fact,
+                Proposition::CMemoryMutatesOnly { .. } | Proposition::CMemoryEffectSummary { .. }
+            )
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    let with_effect_context = |facts: &[Proposition]| {
+        let mut combined = facts.to_vec();
+        combined.extend(effect_context.iter().cloned());
+        combined
+    };
     // Try the premises as spelled before normalizing: snapshot-bridging
     // derivations can depend on the recorded load spellings that
     // normalization rewrites.
-    let raw_assumptions = assumptions_from_propositions(&premises);
+    let raw_assumptions = assumptions_from_propositions(&with_effect_context(&premises));
     let raw_derivation = match tactic {
         ProofTactic::Derive(_) => raw_assumptions
             .derive_atomic_proposition(&target)
@@ -253,7 +274,7 @@ fn check_atomic_derivation_goal(
             .or_else(|| raw_assumptions.derive_simp_proposition(&target)),
         _ => return Err("not a derivation tactic".to_string()),
     };
-    let assumptions = assumptions_from_propositions(&normalized_premises);
+    let assumptions = assumptions_from_propositions(&with_effect_context(&normalized_premises));
     let derivation = raw_derivation.or_else(|| match tactic {
         ProofTactic::Derive(_) => assumptions
             .derive_atomic_proposition(&normalized_target)
@@ -276,7 +297,8 @@ fn check_atomic_derivation_goal(
         if canonical_premises == normalized_premises && canonical_target == normalized_target {
             return None;
         }
-        let canonical_assumptions = assumptions_from_propositions(&canonical_premises);
+        let canonical_assumptions =
+            assumptions_from_propositions(&with_effect_context(&canonical_premises));
         match tactic {
             ProofTactic::Derive(_) => canonical_assumptions
                 .derive_atomic_proposition(&canonical_target)
