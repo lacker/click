@@ -408,11 +408,24 @@ impl TimeAccounting {
         self.total.saturating_sub(self.attributed())
     }
 
-    fn share(self, part: Duration) -> f64 {
+    /// The denominator for shares: the reported function total, or — when a
+    /// run failed before reporting one — everything the profile did measure.
+    /// A failing proof is exactly the kind worth profiling, so its split must
+    /// still be readable.
+    fn denominator(self) -> Duration {
         if self.total.is_zero() {
+            self.attributed()
+        } else {
+            self.total
+        }
+    }
+
+    fn share(self, part: Duration) -> f64 {
+        let denominator = self.denominator();
+        if denominator.is_zero() {
             return 0.0;
         }
-        part.as_secs_f64() / self.total.as_secs_f64() * 100.0
+        part.as_secs_f64() / denominator.as_secs_f64() * 100.0
     }
 }
 
@@ -964,7 +977,7 @@ fn render_profiles(
 fn render_accounting(output: &mut String, profiles: &[ProjectProfile]) {
     let measured = profiles
         .iter()
-        .filter(|profile| !profile.accounting.total.is_zero())
+        .filter(|profile| !profile.accounting.denominator().is_zero())
         .collect::<Vec<_>>();
     if measured.is_empty() {
         return;
@@ -979,9 +992,14 @@ fn render_accounting(output: &mut String, profiles: &[ProjectProfile]) {
         let accounting = profile.accounting;
         writeln!(
             output,
-            "  {}: {} total",
+            "  {}: {} total{}",
             profile.project,
-            format_fractional_duration(accounting.total)
+            format_fractional_duration(accounting.denominator()),
+            if accounting.total.is_zero() {
+                " measured (the run reported no function total, so this is the measured time only)"
+            } else {
+                ""
+            }
         )
         .expect("writing a String cannot fail");
         for (label, part) in [
@@ -1271,6 +1289,33 @@ click timing: function example_function 20.000s
         assert!(!report.contains(
             "NEXT: no completed smart expansion candidates or simple engine bottlenecks"
         ));
+    }
+
+    /// A proof that fails never reports a function total, and a failing proof
+    /// is exactly the kind worth profiling. Its split must still be readable.
+    #[test]
+    fn a_failed_run_still_reports_its_class_split() {
+        let output = r#"
+click timing: source examples/sample.click
+click timing: tactic example.contract 0 simp class smart statement 1 source 0 6.000000s
+click timing: tactic example.contract 1 fold class simple statement 1 source 1 2.000000s
+"#;
+        let mut profile = parse_profile("sample", output, Thresholds::default(), false)
+            .expect("the current timing format should parse");
+        profile.verification_failure = Some("could not certify the claim".to_string());
+        for step in &mut profile.slow_steps {
+            step.key.position = Some(SourcePosition { line: 1, column: 1 });
+        }
+
+        assert_eq!(profile.accounting.total, Duration::ZERO);
+        assert_eq!(profile.accounting.denominator(), Duration::from_secs(8));
+
+        let report = render_profiles(&[profile], Thresholds::default(), DEFAULT_TIME_LIMIT);
+
+        assert!(report.contains("TIME ACCOUNTING"), "{report}");
+        assert!(report.contains("8.000s total measured"), "{report}");
+        assert!(report.contains("SMART      6.000s   75.0%"), "{report}");
+        assert!(report.contains("SIMPLE      2.000s   25.0%"), "{report}");
     }
 
     /// The kinds the accounting consumes are load-bearing now, so a drifted
