@@ -120,6 +120,9 @@ thread_local! {
     static EQUAL_FROM_FACTS_MEMO: RefCell<
         std::collections::HashMap<(u64, Bitvector32Term, Bitvector32Term), bool>,
     > = RefCell::new(std::collections::HashMap::new());
+    static TRANSPORT_EQUAL_MEMO: RefCell<
+        std::collections::HashMap<(u64, Bitvector32Term, Bitvector32Term), bool>,
+    > = RefCell::new(std::collections::HashMap::new());
     static CONSTANT_NORMALIZATION_MEMO: RefCell<
         std::collections::HashMap<(u64, Bitvector32Term), Option<i64>>,
     > = RefCell::new(std::collections::HashMap::new());
@@ -1127,13 +1130,21 @@ impl Assumptions {
             let (ConditionTerm::Bitvector32Equal(left, right), true) = (condition, value) else {
                 continue;
             };
-            if self.bitvector_terms_proven_equal(term, left)
-                && let Some(value) = signed_bitvector_constant(right)
+            // Only a fact with a constant on one side can name a constant for
+            // `term`, and `signed_bitvector_constant` is a syntactic fold.
+            // Test it before the equality search, which is the expensive
+            // memory-load-bridging one: the conjunction is unchanged, so this
+            // decides exactly the same facts, just without proving equalities
+            // whose fact could not answer the question anyway.
+            let left_constant = signed_bitvector_constant(left);
+            let right_constant = signed_bitvector_constant(right);
+            if let Some(value) = right_constant
+                && self.bitvector_terms_proven_equal(term, left)
             {
                 return Some(value);
             }
-            if self.bitvector_terms_proven_equal(term, right)
-                && let Some(value) = signed_bitvector_constant(left)
+            if let Some(value) = left_constant
+                && self.bitvector_terms_proven_equal(term, right)
             {
                 return Some(value);
             }
@@ -4467,7 +4478,52 @@ impl Assumptions {
             || self.memory_loads_proven_equal(left, right)
     }
 
+    /// Fact-transport equality, memoized by fact-set content identity.
+    ///
+    /// Order-fact matching asks this for every candidate fact of every
+    /// decision, and the same term pairs recur across those scans, so the
+    /// search is worth caching. The discipline is [`Self::decide`]'s: a
+    /// `true` is evidence found in the facts and is always cacheable, while a
+    /// `false` computed under an ambient truncation (memory-resolution fuel,
+    /// the memory-load depth guard) is path-dependent and is not. Memoized
+    /// only under an enclosing id scope, so no call pays a fact-set hash.
     pub(super) fn bitvector_terms_equal_for_transport(
+        &self,
+        left: &Bitvector32Term,
+        right: &Bitvector32Term,
+    ) -> bool {
+        if left == right {
+            return true;
+        }
+        let memo_id = if decide_memo_disabled() {
+            None
+        } else {
+            ambient_assumptions_memo_id(self)
+        };
+        let memo_key = memo_id.map(|memo_id| (memo_id, left.clone(), right.clone()));
+        if let Some(memo_key) = &memo_key
+            && let Some(hit) =
+                TRANSPORT_EQUAL_MEMO.with(|memo| memo.borrow().get(memo_key).copied())
+        {
+            return hit;
+        }
+        let truncations_before = SEARCH_TRUNCATIONS.with(Cell::get);
+        let result = self.bitvector_terms_equal_for_transport_uncached(left, right);
+        if let Some(memo_key) = memo_key
+            && (result || SEARCH_TRUNCATIONS.with(Cell::get) == truncations_before)
+        {
+            TRANSPORT_EQUAL_MEMO.with(|memo| {
+                let mut memo = memo.borrow_mut();
+                if memo.len() >= DECIDE_MEMO_LIMIT {
+                    memo.clear();
+                }
+                memo.insert(memo_key, result);
+            });
+        }
+        result
+    }
+
+    fn bitvector_terms_equal_for_transport_uncached(
         &self,
         left: &Bitvector32Term,
         right: &Bitvector32Term,
