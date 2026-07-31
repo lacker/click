@@ -2617,7 +2617,11 @@ pub(super) fn prove_claim_by_auto(
     Err(bounded_certificate_error
         .or(loop_verification_error)
         .or(bounded_error)
-        .expect("auto should attempt at least one certificate candidate"))
+        .unwrap_or_else(|| {
+            ClickError::new(format!(
+                "`{claim_label}`: `auto` had no certificate candidate to try"
+            ))
+        }))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -3041,11 +3045,11 @@ fn begin_tactic_expansion_capture(
 }
 
 fn finish_tactic_expansion_capture(surface_replay: &SurfaceReplay) -> ClickError {
-    TACTIC_EXPANSION_PROBE.with(|probe| {
+    let captured = TACTIC_EXPANSION_PROBE.with(|probe| {
         let mut slot = probe.borrow_mut();
-        let probe = slot
-            .as_mut()
-            .expect("finishing a selected tactic requires an active probe");
+        let Some(probe) = slot.as_mut() else {
+            return false;
+        };
         probe.result = Some(match &surface_replay.blocker {
             Some(blocker) => Err(format!("could not expand selected tactic: {blocker}")),
             None if surface_replay.tactics.is_empty() => {
@@ -3053,7 +3057,13 @@ fn finish_tactic_expansion_capture(surface_replay: &SurfaceReplay) -> ClickError
             }
             None => Ok(surface_replay.tactics.clone()),
         });
+        true
     });
+    if !captured {
+        return ClickError::new(
+            "could not expand the selected tactic: the expansion probe was no longer active",
+        );
+    }
     ClickError::expansion_complete()
 }
 
