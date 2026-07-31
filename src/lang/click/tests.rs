@@ -6062,12 +6062,12 @@ fn verifies_loop_invariants_and_statement_assert() {
 }
 
 #[test]
-// Quarantined: store-provenance / named-memory-states family (PARKED — blocked
-// on the canonical-memory arc). Preserving `p[0] == old(p[0])` across the body's
-// `p[i] = i` needs the goal's load-through-a-store-cell memory to equal the
-// fact's store-free memory. Same shape as the quarantined `fill_tail_keeps_first`
-// mdtest. See notes/tasks/store-provenance-family.md.
-#[ignore = "quarantined: store-provenance family (parked); run with --ignored"]
+// De-quarantined by the named-memory-states arc, stage 2a: the blocker was not
+// load-equality strength but `old(...)` resolution. Certificate replay used to
+// resolve `old` positionally, to the loop-top havoc snapshot, while the kernel
+// certified the invariant with `old` at the function-entry snapshot, so no
+// placement of the operands could reproduce the certified fact. `old` now names
+// the function-entry state. See notes/tasks/named-memory-states-arc.md.
 fn verifies_old_memory_loop_invariant() {
     let c_source = r#"
             int32 fill_tail(int32 p[], int32 n) {

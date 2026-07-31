@@ -3,6 +3,8 @@
 Status: in progress
 Claimed: worktree-agent-a799da2cbca60970b (branch
 `claude/nervous-ptolemy-90e738` in `.claude/worktrees/`) — 2026-07-30
+Claimed (stage 2a): branch `worktree-agent-a9b0d0d8a52de5913` in
+`.claude/worktrees/` — 2026-07-30
 
 Design brief: `../canonical-memory.md`. Failure corpus and per-member
 diagnoses: `store-provenance-family.md` (that task stays parked; this
@@ -115,6 +117,13 @@ attributing behaviour and cost changes.
    checking pointer-disjointness per hop and refusing LoopHavoc. This
    is `load_unchanged_via_effect_chain`'s job answered from ground
    truth instead of a fact-set BFS.
+2a. **`old(...)` gets a name** (inserted 2026-07-30 after stage 1 diagnosed
+   it; landed session 2). Certificate replay resolved `old` positionally, to
+   the enclosing region's execution-start state, while the Click → Spec
+   lowering the kernel certifies against names function entry. Replay now
+   carries the function-entry snapshot explicitly and resolves `old` — and
+   `at(function.entry, ...)` — to it. Reads no derivation edges, only arena
+   names, so it is not flag-gated.
 3. **Load equality in the atomic prover** (`atomic_load_equality_
    resolves`, the `proves` canonical/resolution arms): two loads are
    equal when their pointers are equal and their memories share an
@@ -239,6 +248,116 @@ name the same DAG node. The 36-candidate enumeration is in
 operands" message); `comparison_program_point_variants` builds the
 placements.
 
+### 2026-07-30 (session 2) — stage 2a: `old` gets a name
+
+**Landed.** `old(...)` no longer resolves positionally.
+
+*The two pipelines and where they disagreed.* A Click contract clause reaches
+the kernel down two different paths, and each answers "which memory does
+`old` mean" separately.
+
+- Click → Spec (`lowering.rs`, `AnnotationLowerer`). `ContractExpression::Old`
+  switches the elaboration context to `old_state(...)`, whose memory is
+  `SpecMemory::Fixed(self.entry_state.memory())`. `entry_state` is the
+  function's entry `CState` (`environment.initial_state`), so the *kernel*
+  side already names function entry — unambiguously, and for loop invariants
+  as much as for `ensures`.
+- Click → Proposition (`checking.rs`,
+  `lower_outcome_proposition_with_environment` and friends). Here `old` is
+  simply `pre_state`, a positional parameter. Certificate replay filled that
+  parameter from `TacticReplayState::execution_start_state`, i.e. *the state
+  this proof region started executing from*. In a whole-function replay that
+  is function entry and everything agrees. In a loop-preservation region it is
+  the loop-top havoc snapshot, and the same surface text meant two different
+  states on the two sides.
+
+That is the whole of `verifies_old_memory_loop_invariant`'s failure. Probed
+and confirmed: the certified source was
+`load(m{havoc:1000001, local:i}, p+k) == load(m{}, p+k)` — the `old` operand
+at the empty function-entry memory — while the best candidate lowered both
+operands at `m{havoc:1000001, local:i}`. No placement of the operands could
+reproduce it, because no surface spelling available to the replay named the
+function-entry snapshot at all.
+
+*The fix.* `TacticReplayState` gains `function_entry_state: Option<CState>`,
+the snapshot this region's `old(...)` names, and a `old_reference_state()`
+accessor that answers the "which memory is `old`" question in one place. The
+two loop-preservation planners (`plan_automatic_loop_preservation_body`,
+`verify_one_loop_preservation_proof`) set it from
+`environment.initial_state` — literally the same `CState` that
+`annotated_function` handed the `AnnotationLowerer` as `entry_state`, so both
+sides now name the same interned node. The 18 call sites that fed
+`execution_start_state` into contract lowering switched to
+`old_reference_state`; the two that genuinely mean "where execution started"
+(re-running the function for kernel certification, and the join entry state)
+did not. `None` keeps the previous positional answer, so every region that
+records no function-entry snapshot behaves exactly as before.
+
+`at(function.entry, ...)` moves with `old`: it is the same reference under
+another spelling and `concrete_program_point_state` reads the same parameter.
+On the Spec side those two already shared `old_state(...)`, so this makes the
+agreement total rather than partial.
+
+*How it is validated, and why that is not "trust the name".* Selecting a
+state by name only adds a spelling to the candidate search. Acceptance is
+unchanged and is the real check: `find_candidate` keeps a candidate only when
+its lowering is *equal* to the certified proposition, and a `MemoryLoad`
+carries its `SharedCMemory` inside the term, compared by arena identity. A
+candidate resolved to the wrong state therefore cannot match — a
+misresolution costs completeness, never soundness. This is why no separate
+"is this really the entry state" predicate was added: the certificate check
+already is one, and a second, weaker check would only be able to disagree
+with it.
+
+*Why this increment does not read derivation edges.* It uses the arena
+*names* (interned identity), which predate this arc and are not flag-gated;
+it reads no `CMemoryDerivation`. So `CLICK_DISABLE_MEMORY_DAG=1` gives
+identical results rather than the pre-fix ones. That is deliberate: the flag's
+contract is "derivations are neither recorded nor read", i.e. an A/B handle
+over *completeness*. Resolving `old` is a question of what a spelling
+**means**; gating that on the flag would make the flag change meaning instead
+of completeness, and would leave the wrong resolution reachable. Both modes
+were run and are green on all four gates.
+
+**Acceptance corpus movement** (each retested individually):
+
+- `verifies_old_memory_loop_invariant` (lib) — **passes; un-ignored.**
+- `fill_tail_keeps_first.md` (mdtest) — **passes; de-quarantined.** Same
+  program as the lib test, as store-provenance-family.md predicted.
+- `composite_resource_vector_fill_loop_snapshot.md` — still fails (~5.6 s),
+  and the message moved off `old`: "could not replay invariant closer:
+  invariant 1 is missing path goal". Stays quarantined; this is the
+  back-edge closer, stage 3/4 work.
+- `bubble_pass3_max_suffix.md` — still fails (~10 s), invariant closer missing
+  a `ForAll` path goal about the symbolically extended bound. No `old` in the
+  failure. Stays quarantined.
+- `bubble_sort3_two_pass_sorted.md` — still fails (~10 s). Stays quarantined.
+- `composite_resource_owner_buffer_field_dependent.md` — still fails (~5.8 s).
+  Stays quarantined.
+- `field_derived_precise_effect_after_metadata_write.md` — still fails, and
+  still grinds: **496 s**. Unchanged from the recorded ~500 s. Stays
+  quarantined.
+- example `owned-vector` — still fails (~8.5 s), same invariant-closer
+  `ForAll` path goal as vector_fill. Stays quarantined.
+- example `owned-string` — still fails (~2.5 s), same missing
+  `loadable(...)` pure fact. Stays quarantined.
+
+So stage 2a clears exactly the two members whose diagnosis was `old`
+resolution, and the remaining corpus is now cleanly attributable to the
+invariant closer rather than to spelling drift.
+
+**Gates.** lib+bins 510 (509 + the un-ignored test, ~3 s), mdtests 272 visible
+(~9 s), examples (~5 s) — green, and green again with
+`CLICK_DISABLE_MEMORY_DAG=1`. Bit-identical outcomes in both modes, as
+expected from an increment that reads no derivations.
+
+**Next.** Every remaining corpus member fails in the invariant closer, on a
+`ForAll` path goal it cannot re-derive. That is stage 3 (`load equality in the
+atomic prover`) with a concrete target: the closer's goals are exactly the
+snapshot-spelling drift the DAG arm was built for, and now that operands can
+be placed, stage 2's landed `c_memory_load_is_unchanged` arm should finally be
+on the path.
+
 ## For the owner
 
 *(nothing yet — no surface-semantics question has come up; the `old`
@@ -251,6 +370,22 @@ finding above is internal resolution, not surface semantics)*
   confirmed the function is never called on that path, because
   certificate-candidate placement fails upstream of any load-equality
   question. Recorded above.
+- **Validating `old`-resolution by a derivation-DAG ancestry walk** ("the
+  named entry snapshot must be reachable from the current snapshot by
+  following `base` edges"). Probed and rejected: the chain does not connect.
+  For `fill_tail` the loop-top snapshot walks back
+  `LoopHavoc -> Store -> Store -> Store` and stops at arena id 0,
+  `{blocks: [local:i], cells: {}}`, which carries **no derivation** — the
+  block that declaring a local creates is not a recorded edge kind. The
+  function-entry snapshot is a *separate* root (id 3, `{}`). So entry states
+  and executing states sit in disjoint components of the DAG today.
+  Reachability could be restored with a fourth edge kind for block
+  allocation, but it was not worth it here: it would have to be recorded at
+  every block producer, it risks displacing `Store` edges through first-wins
+  on content-equal snapshots, and it would buy a *weaker* check than the one
+  the certificate comparison already performs (see the session log). Worth
+  knowing before anyone else reaches for an ancestry walk: **arena identity
+  is connected, arena derivations are not.**
 
 ## Done when
 
@@ -267,10 +402,14 @@ certificate generation finding the spelling itself.
 ## Repro commands
 
 ```
-cargo nextest run --lib --bins                    # 497
-cargo test --test mdtests                         # 271 visible
+cargo nextest run --lib --bins                    # 510
+cargo test --test mdtests                         # 272 visible
 cargo test --test examples
-cargo nextest run --lib --run-ignored ignored-only -E 'test(verifies_old_memory_loop_invariant)'
-CLICK_RUN_QUARANTINED=1 MDTEST_FILTER=fill_tail_keeps_first cargo test --test mdtests
+CLICK_RUN_QUARANTINED=1 MDTEST_FILTER=vector_fill cargo test --test mdtests
+CLICK_RUN_QUARANTINED=1 MDTEST_FILTER=bubble_pass3 cargo test --test mdtests
+CLICK_EXAMPLE=owned-vector cargo test --test examples
 CLICK_DISABLE_MEMORY_DAG=1 <any of the above>     # A/B against the pre-arc path
 ```
+
+`field_derived_precise_effect_after_metadata_write.md` takes **~500 s** to
+fail; bound it with `MDTEST_TIME_LIMIT` and do not put it in a loop.

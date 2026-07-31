@@ -31,10 +31,6 @@ const QUARANTINED: &[(&str, &str)] = &[
         "fold consumption cannot match deeply nested snapshot spellings (item-7)",
     ),
     (
-        "fill_tail_keeps_first.md",
-        "loop-havoc transport needs invariant-based load equality (item-7)",
-    ),
-    (
         "composite_resource_vector_fill_loop_snapshot.md",
         "back-edge closer needs named memory states; per-spelling bridging exhausted (notes/canonical-memory.md, branch claude/forall-extension-wip)",
     ),
