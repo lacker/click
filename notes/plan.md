@@ -26,12 +26,9 @@ click-audit (full run 314 s, 98 sites passing).
 | lib-ignored-expansion-tests.md | done | Premise policy fixed: 5 of 7 un-ignored. Certificates now carry consumed conditions + non-reconstructible permissions. Found a latent `condition_polarity_equivalent` None==None bug, filed separately |
 | certificate-gateway-bypasses.md | open | Redesign accepted; all three bypasses now lower to certificates. Strict-gate worklist 24 -> 0 (predicate/unfolded-body spellings; proof_advance_pointer_local's proof rewritten to name its local). Next: owner flips the gate default, then the ClosedClaim restructure |
 | store-provenance-family.md | parked | owned-string, owned-vector, 6 mdtests — blocked on the canonical-memory arc |
-<<<<<<< HEAD
 | named-memory-states-arc.md | open | The canonical-memory representation change: memory states named in a derivation DAG instead of embedded as values. Staged behind `CLICK_DISABLE_MEMORY_DAG`; unparks store-provenance-family |
-=======
 | condition-polarity-none-equivalence.md | done | Predicate sound (both sides need a canonical order form) + proof-backed snapshot bridge at four sites. input-cursor/owned-split-buffer sidecars regenerated (their premises were false); owned-segmented-buffer needed the transport source+target bridges. All four gates green |
->>>>>>> 9c2fedd45ed26749595bf231eb0204c221c2378a
-| repo-hygiene.md | done | Executed with owner approval; worktree-claude branch kept pending verification of 3 old soundness fixes |
+| repo-hygiene.md | done | Executed with owner approval; worktree-claude verified (all 3 fixes on master via rebase-copy cd90c80) and deleted |
 
 ## Reference docs
 
