@@ -17,7 +17,7 @@ click-audit (full run 314 s, 98 sites passing).
 | Task file (tasks/) | Status | One-line scope |
 |---|---|---|
 | split-buffer-perf.md | open | Kill the last 2 SLOW audit findings (~7.7 s unit; 3.6 s contract execution) |
-| one-gateway-check.md | open | Bounded code audit: every smart success routes through TacticCertificate replay |
+| one-gateway-check.md | done | Audit done: mid-execution gated by replay_smart_plan; 3 bypasses in the ungrouped post-execution drain (39 corpus hits) — see file for follow-up tasks |
 | cli-consolidation.md | done | Helpers single-sourced in src/cli.rs; click-verify DIR mode + docs; click timing: drift is now a loud error or a counted warning |
 | proof-panics.md | done | 78 sites classified; 7 converted, 71 invariant-true; the design review's cited example is a false positive |
 | while-invariant-rule.md | open | Fix or fence the single-fork preservation check |
