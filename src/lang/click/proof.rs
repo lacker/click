@@ -13797,8 +13797,31 @@ fn certify_outcome_existential_simp(
     }
     let mut unfolds = replay.unfolded_predicates.clone();
     unfolds.retain(|name| predicate_environment.get(name).is_some());
-    let mut last_error = None;
-    for closer in [ProofTactic::Assumption, ProofTactic::Normalize] {
+    // A `calculate` whose surface proposition is the have's own goal takes
+    // the *current* goal as its target (`prove_pure_proposition_case_at_point`
+    // short-circuits the re-lowering when the spellings are identical), so it
+    // discharges the witness-instantiated goal without needing a surface
+    // spelling for it. Its premises are the ambient facts that have one.
+    let mut derivation_premises = Vec::new();
+    for fact in available {
+        if let Ok(surface) = checked_surface_fact_at_outcome(
+            replay,
+            fact,
+            SurfaceFactMatch::CanonicalExact,
+            available,
+            parameters,
+            arguments,
+            pre_state,
+            post_state,
+            result,
+            predicate_environment,
+            click_function_environment,
+        ) && !derivation_premises.contains(&surface)
+        {
+            derivation_premises.push(surface);
+        }
+    }
+    let try_closer = |closer: ProofTactic| -> Result<TacticCertificate, String> {
         let mut tactics = unfolds
             .iter()
             .cloned()
@@ -13810,14 +13833,11 @@ fn certify_outcome_existential_simp(
             proposition: surface_goal.clone(),
             proof: Proof::Script(tactics),
         };
-        let surface_tactics = vec![ProofTactic::Have(surface_have.clone()), ProofTactic::Assumption];
-        let certificate =
-            TacticCertificate::from_proof_tactics(&surface_tactics).map_err(|error| {
-                ClickError::new(format!(
-                    "`{claim_label}` path {path_index}, tactic {tactic_index}: existential `simp` produced an invalid certificate: {error:?}"
-                ))
-            })?;
-        match prove_have_at_point(
+        let surface_tactics =
+            vec![ProofTactic::Have(surface_have.clone()), ProofTactic::Assumption];
+        let certificate = TacticCertificate::from_proof_tactics(&surface_tactics)
+            .map_err(|error| format!("produced an invalid certificate: {error:?}"))?;
+        let replayed_goal = prove_have_at_point(
             &surface_have,
             theorem_environment,
             claim_label,
@@ -13834,18 +13854,64 @@ fn certify_outcome_existential_simp(
             click_function_environment,
             function_requires,
             Some(path_index),
-        ) {
-            Ok(replayed_goal) => {
-                // `assumption` closes the claim by an exact match against
-                // the fact the have just recorded, so the two must agree.
-                if replayed_goal == *goal {
-                    return Ok(certificate);
+        )
+        .map_err(|error| error.message().to_string())?;
+        // `assumption` closes the claim by an exact match against the fact
+        // the have just recorded, so the two must agree. The claim goal may
+        // be spelled with `unfold(...)` active while the replay produces the
+        // folded predicate; both name one proposition by the predicate's
+        // definition.
+        let replayed_matches = replayed_goal == *goal
+            || (!unfolds.is_empty()
+                && unfold_predicates_in_proposition(
+                    predicate_environment,
+                    click_function_environment,
+                    &unfolds,
+                    &replayed_goal,
+                    &assumptions_from_propositions(&replay_available),
+                )
+                .as_ref()
+                    == Ok(goal));
+        if replayed_matches {
+            Ok(certificate)
+        } else {
+            Err(format!(
+                "proved a different proposition than the claim goal: {replayed_goal:?}"
+            ))
+        }
+    };
+    let mut last_error = None;
+    for closer in [ProofTactic::Assumption, ProofTactic::Normalize] {
+        match try_closer(closer) {
+            Ok(certificate) => return Ok(certificate),
+            Err(message) => last_error = Some(message),
+        }
+    }
+    if !derivation_premises.is_empty() {
+        let calculate = |premises: &[ClickProposition]| {
+            ProofTactic::Calculate(ProofDerive {
+                proposition: surface_goal.clone(),
+                premises: premises.to_vec(),
+            })
+        };
+        match try_closer(calculate(&derivation_premises)) {
+            Ok(certificate) => {
+                // Emit the premises the derivation actually needs rather
+                // than every ambient fact: drop one at a time and keep the
+                // reduction whenever replay still accepts it.
+                let mut index = 0;
+                while index < derivation_premises.len() {
+                    let mut reduced = derivation_premises.clone();
+                    reduced.remove(index);
+                    if !reduced.is_empty() && try_closer(calculate(&reduced)).is_ok() {
+                        derivation_premises = reduced;
+                    } else {
+                        index += 1;
+                    }
                 }
-                last_error = Some(format!(
-                    "existential `simp` certificate proved a different proposition than the claim goal: {replayed_goal:?}"
-                ));
+                return try_closer(calculate(&derivation_premises)).or(Ok(certificate));
             }
-            Err(error) => last_error = Some(error.message().to_string()),
+            Err(message) => last_error = Some(message),
         }
     }
     Err(ClickError::new(format!(
