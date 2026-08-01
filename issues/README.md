@@ -6,7 +6,6 @@ pathologically slow cases are skipped by the explicit quarantine lists in
 
 | Issue | Status | Covers |
 |---|---|---|
-| [Field-derived slow fold](field-derived-slow-fold.md) | Still independently reproducible | A slow simple `fold` in one quarantined mdtest |
 | [Local pointer spelling workaround](local-pointer-spelling-workaround.md) | Passing workaround | One explicit `have` that certificate generation should eventually remove |
 | [Language cleanup shortlist](language-cleanup-shortlist.md) | Parked | Small owner-approved surface cleanup for a later language arc |
 
