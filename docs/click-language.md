@@ -253,10 +253,8 @@ Supported structural requirements:
 
 ```click
 requires input_nonnegative: n >= 0;
-requires loadable(p, 12);
 requires loadable(p[0..n]);
 requires loadable((p + 1)[0..1]);
-requires loadable(p[0..n]);
 requires separate(memory(dst[0..n]), memory(src[0..n]));
 requires defined(x + 1);
 views p[0..1];

@@ -192,37 +192,6 @@ pub(super) fn function_contract_summary(
             Requirement::LoadableSegment { segment } => ClickProposition::Loadable {
                 segment: segment.clone(),
             },
-            Requirement::LoadableBytes {
-                name,
-                bytes: RangeBytes::Constant(bytes),
-            } => {
-                let element_width = parsed_function
-                    .parameters()
-                    .iter()
-                    .find(|parameter| parameter.name() == name)
-                    .and_then(|parameter| click_array_element_type(parameter.c_type()))
-                    .map(CType::byte_width);
-                let Some(element_width) = element_width else {
-                    opaque_contract_supported = false;
-                    continue;
-                };
-                if bytes % element_width != 0 {
-                    opaque_contract_supported = false;
-                    continue;
-                }
-                requires.push(SpecProposition::MemoryLoadable {
-                    memory: SpecMemory::Current,
-                    base: SpecExpression::CExpression(CExpression::Variable(name.clone())),
-                    start: SpecExpression::Value(int32(0)),
-                    end: SpecExpression::Value(int32(bytes / element_width)),
-                    element_width,
-                });
-                continue;
-            }
-            Requirement::LoadableBytes { .. } => {
-                opaque_contract_supported = false;
-                continue;
-            }
             Requirement::Resource(_) | Requirement::Labeled { .. } => continue,
         };
         let Ok(proposition) = unfold_contract_predicates(&proposition) else {
@@ -2066,10 +2035,6 @@ pub(super) fn apply_contract_lets_to_requirement(
             label,
             requirement: Box::new(apply_contract_lets_to_requirement(*requirement, bindings)?),
         }),
-        Requirement::LoadableBytes { name, bytes } => Ok(Requirement::LoadableBytes {
-            name,
-            bytes: apply_contract_lets_to_range_bytes(bytes, bindings)?,
-        }),
         Requirement::LoadableSegment { segment } => Ok(Requirement::LoadableSegment {
             segment: apply_contract_lets_to_segment(segment, bindings)?,
         }),
@@ -2255,52 +2220,6 @@ pub(super) fn apply_contract_lets_to_segment(
     Ok(segment)
 }
 
-pub(super) fn apply_contract_lets_to_range_bytes(
-    bytes: RangeBytes,
-    bindings: &[ContractLetBinding],
-) -> Result<RangeBytes, String> {
-    reject_contract_where_let_references(
-        &range_bytes_referenced_names(&bytes),
-        bindings,
-        "loadable byte expressions",
-    )?;
-    let bytes = match bytes {
-        RangeBytes::Constant(_) => Ok(bytes),
-        RangeBytes::Parameter(name) => {
-            let substitutions = contract_let_substitutions(bindings);
-            let Some(value) = substitutions.get(&name) else {
-                return Ok(RangeBytes::Parameter(name));
-            };
-            let c_fragment = contract_expression_as_c_fragment(value).ok_or_else(|| {
-                format!(
-                    "contract `let` `{name}` cannot be used in a loadable byte expression because it is not a C fragment"
-                )
-            })?;
-            range_bytes_from_c_expression(&c_fragment).ok_or_else(|| {
-                format!("contract `let` `{name}` cannot be used in a loadable byte expression")
-            })
-        }
-        RangeBytes::Add(left, right) => Ok(RangeBytes::Add(
-            Box::new(apply_contract_lets_to_range_bytes(*left, bindings)?),
-            Box::new(apply_contract_lets_to_range_bytes(*right, bindings)?),
-        )),
-        RangeBytes::Subtract(left, right) => Ok(RangeBytes::Subtract(
-            Box::new(apply_contract_lets_to_range_bytes(*left, bindings)?),
-            Box::new(apply_contract_lets_to_range_bytes(*right, bindings)?),
-        )),
-        RangeBytes::Multiply(left, right) => Ok(RangeBytes::Multiply(
-            Box::new(apply_contract_lets_to_range_bytes(*left, bindings)?),
-            Box::new(apply_contract_lets_to_range_bytes(*right, bindings)?),
-        )),
-    }?;
-    reject_contract_where_let_references(
-        &range_bytes_referenced_names(&bytes),
-        bindings,
-        "loadable byte expressions",
-    )?;
-    Ok(bytes)
-}
-
 pub(super) fn reject_contract_where_let_references(
     referenced_names: &BTreeSet<String>,
     bindings: &[ContractLetBinding],
@@ -2315,52 +2234,6 @@ pub(super) fn reject_contract_where_let_references(
         ));
     }
     Ok(())
-}
-
-pub(super) fn range_bytes_referenced_names(bytes: &RangeBytes) -> BTreeSet<String> {
-    let mut names = BTreeSet::new();
-    collect_range_bytes_referenced_names(bytes, &mut names);
-    names
-}
-
-pub(super) fn collect_range_bytes_referenced_names(
-    bytes: &RangeBytes,
-    names: &mut BTreeSet<String>,
-) {
-    match bytes {
-        RangeBytes::Constant(_) => {}
-        RangeBytes::Parameter(name) => {
-            names.insert(name.clone());
-        }
-        RangeBytes::Add(left, right)
-        | RangeBytes::Subtract(left, right)
-        | RangeBytes::Multiply(left, right) => {
-            collect_range_bytes_referenced_names(left, names);
-            collect_range_bytes_referenced_names(right, names);
-        }
-    }
-}
-
-pub(super) fn range_bytes_from_c_expression(expression: &CExpression) -> Option<RangeBytes> {
-    match expression {
-        CExpression::Value(CValue::Int32(Bitvector32Term::Constant(value))) => {
-            Some(RangeBytes::Constant(*value))
-        }
-        CExpression::Variable(name) => Some(RangeBytes::Parameter(name.clone())),
-        CExpression::Add(left, right) => Some(RangeBytes::Add(
-            Box::new(range_bytes_from_c_expression(left)?),
-            Box::new(range_bytes_from_c_expression(right)?),
-        )),
-        CExpression::Subtract(left, right) => Some(RangeBytes::Subtract(
-            Box::new(range_bytes_from_c_expression(left)?),
-            Box::new(range_bytes_from_c_expression(right)?),
-        )),
-        CExpression::Multiply(left, right) => Some(RangeBytes::Multiply(
-            Box::new(range_bytes_from_c_expression(left)?),
-            Box::new(range_bytes_from_c_expression(right)?),
-        )),
-        _ => None,
-    }
 }
 
 pub(super) fn apply_contract_lets_to_proposition(
@@ -3531,7 +3404,6 @@ pub(super) struct ConcreteMemoryRangeSeed {
 }
 
 pub(super) fn initial_call_state(
-    function_name: &str,
     requires: &[Requirement],
     parameters: &[syntax::C0Parameter],
 ) -> Result<(CState, Vec<CExpression>), ClickError> {
@@ -3590,15 +3462,6 @@ pub(super) fn initial_call_state(
                 concrete_access_resource_block(resource, parameters, &arguments)?
         {
             loadable_ranges.insert(name, bytes);
-        }
-    }
-
-    for name in requires.iter().filter_map(requirement_loadable_name) {
-        if !parameters.iter().any(|parameter| parameter.name() == name) {
-            return Err(ClickError::new(format!(
-                "`loadable` names `{name}`, but `{}` has no such parameter",
-                function_name
-            )));
         }
     }
 
@@ -3727,7 +3590,7 @@ pub(super) fn requirement_propositions(
     let mut propositions = Vec::new();
     for requirement in requires {
         let proposition = match requirement.inner() {
-            Requirement::LoadableBytes { .. } | Requirement::LoadableSegment { .. } => {
+            Requirement::LoadableSegment { .. } => {
                 loadable_requirement_prop(requirement, parameters, arguments, memory)?
             }
             Requirement::Proposition(proposition) => requirement_proposition_prop(
@@ -4055,45 +3918,12 @@ pub(super) fn memory_range_loadable_prop(
     }
 }
 
-pub(super) fn requirement_loadable_name(requirement: &Requirement) -> Option<&str> {
-    match requirement.inner() {
-        Requirement::LoadableBytes { name, .. } => Some(name),
-        Requirement::Labeled { .. }
-        | Requirement::LoadableSegment { .. }
-        | Requirement::Resource(_)
-        | Requirement::Proposition(_) => None,
-    }
-}
-
 pub(super) fn concrete_loadable_block(
     requirement: &Requirement,
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
 ) -> Result<Option<(String, ConcreteMemoryRangeSeed)>, ClickError> {
     match requirement.inner() {
-        Requirement::LoadableBytes { name, bytes } => {
-            let Some(bytes) = range_bytes_constant(bytes) else {
-                return Ok(None);
-            };
-            let Some((parameter, argument)) = parameters
-                .iter()
-                .zip(arguments)
-                .find(|(parameter, _)| parameter.name() == name)
-            else {
-                return Ok(None);
-            };
-            let CExpression::Value(CValue::Pointer(base)) = argument else {
-                return Ok(None);
-            };
-            Ok(Some((
-                name.clone(),
-                ConcreteMemoryRangeSeed {
-                    base: base.clone(),
-                    bytes,
-                    element_width: parameter_element_width(parameter).unwrap_or(4),
-                },
-            )))
-        }
         Requirement::LoadableSegment { segment } => {
             let state = CState::new();
             let Ok(segment) = evaluate_requirement_segment(parameters, arguments, &state, segment)
@@ -4170,26 +4000,7 @@ pub(super) fn loadable_base_and_bytes(
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
 ) -> Result<(Pointer, Bitvector32Term), ClickError> {
-    let parameter_values = parameter_values(parameters, arguments)?;
-
     match requirement.inner() {
-        Requirement::LoadableBytes { name, bytes } => {
-            let Some((_, argument)) = parameters
-                .iter()
-                .zip(arguments)
-                .find(|(parameter, _)| parameter.name() == name)
-            else {
-                return Err(ClickError::new(format!(
-                    "`loadable` names `{name}`, but no such parameter exists"
-                )));
-            };
-            let CExpression::Value(CValue::Pointer(base)) = argument else {
-                return Err(ClickError::new(format!(
-                    "`loadable` names `{name}`, but it is not a pointer parameter"
-                )));
-            };
-            Ok((base.clone(), lower_range_bytes(bytes, &parameter_values)?))
-        }
         Requirement::LoadableSegment { segment } => {
             let state = CState::new();
             let segment = evaluate_requirement_segment(parameters, arguments, &state, segment)
@@ -4301,60 +4112,6 @@ pub(super) fn contract_expression_element_width_from_array_refs(
             _ => None,
         },
         _ => None,
-    }
-}
-
-fn parameter_element_width(parameter: &syntax::C0Parameter) -> Option<u32> {
-    match parameter.c_type() {
-        C0Type::Int32Pointer => Some(4),
-        C0Type::UInt8Pointer => Some(1),
-        _ => None,
-    }
-}
-
-pub(super) fn range_bytes_constant(bytes: &RangeBytes) -> Option<u32> {
-    match bytes {
-        RangeBytes::Constant(value) => Some(*value),
-        RangeBytes::Parameter(_) => None,
-        RangeBytes::Add(left, right) => {
-            Some(range_bytes_constant(left)?.wrapping_add(range_bytes_constant(right)?))
-        }
-        RangeBytes::Subtract(left, right) => {
-            Some(range_bytes_constant(left)?.wrapping_sub(range_bytes_constant(right)?))
-        }
-        RangeBytes::Multiply(left, right) => {
-            Some(range_bytes_constant(left)?.wrapping_mul(range_bytes_constant(right)?))
-        }
-    }
-}
-
-pub(super) fn lower_range_bytes(
-    bytes: &RangeBytes,
-    parameter_values: &BTreeMap<String, CValue>,
-) -> Result<Bitvector32Term, ClickError> {
-    match bytes {
-        RangeBytes::Constant(value) => Ok(Bitvector32Term::Constant(*value)),
-        RangeBytes::Parameter(name) => match parameter_values.get(name) {
-            Some(CValue::Int32(bits)) => Ok(bits.clone()),
-            Some(_) => Err(ClickError::new(format!(
-                "`loadable` byte expression references pointer parameter `{name}`"
-            ))),
-            None => Err(ClickError::new(format!(
-                "`loadable` byte expression references unknown parameter `{name}`"
-            ))),
-        },
-        RangeBytes::Add(left, right) => Ok(bitvector32_add(
-            lower_range_bytes(left, parameter_values)?,
-            lower_range_bytes(right, parameter_values)?,
-        )),
-        RangeBytes::Subtract(left, right) => Ok(bitvector32_subtract(
-            lower_range_bytes(left, parameter_values)?,
-            lower_range_bytes(right, parameter_values)?,
-        )),
-        RangeBytes::Multiply(left, right) => Ok(bitvector32_multiply(
-            lower_range_bytes(left, parameter_values)?,
-            lower_range_bytes(right, parameter_values)?,
-        )),
     }
 }
 

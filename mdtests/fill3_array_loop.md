@@ -19,7 +19,7 @@ int32 fill3_array_loop(int32 p[3]) {
 verifying "fill3_array_loop.c";
 
 int32 fill3_array_loop(int32 p[3]) {
-    requires loadable(p, 12);
+    requires loadable(p[0..3]);
     consumes p[0..3];
 
     for loop(0) {

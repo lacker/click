@@ -1,6 +1,6 @@
 # pointer range verification
 
-This checks a one-cell write permission plus `loadable(p, 8)` for one
+This checks a one-cell write permission plus `loadable(p[0..2])` for one
 indexed `int32` store and a matching indexed load.
 
 ```c filename=pointer_range.c
@@ -14,7 +14,7 @@ int32 write_second(int32* p) {
 verifying "pointer_range.c";
 
 int32 write_second(int32* p) {
-    requires loadable(p, 8);
+    requires loadable(p[0..2]);
     consumes p[1..2];
     ensures writes_and_reads_second_cell: result == 9 by auto;
 }

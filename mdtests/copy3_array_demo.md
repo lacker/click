@@ -21,8 +21,8 @@ int32 copy3(int32 dst[3], int32 src[3]) {
 verifying "copy3.c";
 
 int32 copy3(int32 dst[3], int32 src[3]) {
-    requires loadable(dst, 12);
-    requires loadable(src, 12);
+    requires loadable(dst[0..3]);
+    requires loadable(src[0..3]);
     consumes dst[0..3];
     views src[0..3];
     requires separate(memory(dst[0..3]), memory(src[0..3]));

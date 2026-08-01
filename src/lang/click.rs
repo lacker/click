@@ -162,24 +162,11 @@ pub enum Requirement {
         label: String,
         requirement: Box<Requirement>,
     },
-    LoadableBytes {
-        name: String,
-        bytes: RangeBytes,
-    },
     LoadableSegment {
         segment: ContractSegment,
     },
     Resource(ResourceClause),
     Proposition(ClickProposition),
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum RangeBytes {
-    Constant(u32),
-    Parameter(String),
-    Add(Box<RangeBytes>, Box<RangeBytes>),
-    Subtract(Box<RangeBytes>, Box<RangeBytes>),
-    Multiply(Box<RangeBytes>, Box<RangeBytes>),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

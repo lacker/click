@@ -2635,7 +2635,6 @@ pub(super) fn initial_claim_context(
     ClickError,
 > {
     let (mut state, arguments) = initial_call_state(
-        function_block.signature.name(),
         function_block.requires(),
         parsed_function.parameters(),
     )?;
@@ -2661,9 +2660,7 @@ pub(super) fn initial_claim_context(
             Requirement::LoadableSegment { segment } => Some(ClickProposition::Loadable {
                 segment: segment.clone(),
             }),
-            Requirement::LoadableBytes { .. }
-            | Requirement::Resource(_)
-            | Requirement::Labeled { .. } => None,
+            Requirement::Resource(_) | Requirement::Labeled { .. } => None,
         };
         let Some(surface) = surface else {
             continue;

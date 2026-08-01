@@ -19,7 +19,7 @@ int32 fill3_bad_memory(int32* p) {
 verifying "fill3_bad_memory.c";
 
 int32 fill3_bad_memory(int32* p) {
-    requires loadable(p, 12);
+    requires loadable(p[0..3]);
     consumes p[0..3];
     ensures third: p[2] == 3 by auto;
 }

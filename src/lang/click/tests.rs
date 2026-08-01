@@ -38,7 +38,7 @@ const FILL3_CLICK: &str = r#"
         verifying "fill3.c";
 
         int32 fill3(int32* p) {
-            requires loadable(p, 12);
+            requires loadable(p[0..3]);
             consumes p[0..3];
             ensures returns_second: result == 2 by auto;
         }
@@ -190,9 +190,18 @@ fn parses_checked_signature_and_contract_clauses() {
     assert_eq!(
         function.requires(),
         &[
-            Requirement::LoadableBytes {
-                name: "p".to_string(),
-                bytes: RangeBytes::Constant(12)
+            Requirement::LoadableSegment {
+                segment: ContractSegment {
+                    state: ContractSegmentState::Current,
+                    base: CExpression::Variable("p".to_string()),
+                    start: CExpression::Value(int32(0)),
+                    end: CExpression::Value(int32(3)),
+                    surface: ContractSegmentSurface::Range {
+                        base: current_var("p"),
+                        start: current_int(0),
+                        end: current_int(3),
+                    },
+                },
             },
             Requirement::Resource(ResourceClause::Write(ContractSegment {
                 state: ContractSegmentState::Current,
@@ -682,7 +691,7 @@ fn recorded_surface_fact_resolves_only_one_available_kernel_fact() {
 }
 
 #[test]
-fn parses_symbolic_loadable_bytes() {
+fn rejects_byte_counting_loadable_syntax() {
     let source = r#"
             verifying "fill.c";
 
@@ -691,19 +700,8 @@ fn parses_symbolic_loadable_bytes() {
                 ensures result == n by auto;
             }
         "#;
-    let file = parse(source).expect("symbolic loadable should parse");
-    let function = &file.function_blocks()[0];
-
-    assert_eq!(
-        function.requires(),
-        &[Requirement::LoadableBytes {
-            name: "p".to_string(),
-            bytes: RangeBytes::Multiply(
-                Box::new(RangeBytes::Parameter("n".to_string())),
-                Box::new(RangeBytes::Constant(4)),
-            )
-        }]
-    );
+    let error = parse(source).expect_err("byte-counting loadable syntax should be retired");
+    assert!(error.message().contains("expected"), "{error:?}");
 }
 
 #[test]
@@ -3221,7 +3219,7 @@ fn parses_frame_tactic() {
             verifying "write_second.c";
 
             int32 write_second(int32* p) {
-                requires loadable(p, 8);
+                requires loadable(p[0..2]);
                 mutable p[1..2] by frame;
                 ensures returns_written: result == 9 by auto;
             }
@@ -3722,7 +3720,7 @@ fn unfolds_predicate_requirement_to_prove_consequence() {
             }
 
             int32 keep_pair(int32* p) {
-                requires loadable(p, 8);
+                requires loadable(p[0..2]);
                 requires sorted_pair(p);
                 ensures consequence: p[0] <= p[1] by {
                     execute_rest();
@@ -3772,7 +3770,7 @@ fn unfolds_predicate_goal_to_prove_compare_swap_sorted() {
             }
 
             int32 compare_swap2(int32* p) {
-                requires loadable(p, 8);
+                requires loadable(p[0..2]);
                 consumes p[0..2];
                 ensures sorted: sorted_pair(p) by {
                     execute_rest();
@@ -5528,7 +5526,7 @@ fn verifies_mutable_effect_with_bounded_frame_tactics() {
             verifying "write_second.c";
 
             int32 write_second(int32* p) {
-                requires loadable(p, 8);
+                requires loadable(p[0..2]);
                 consumes p[1..2];
                 mutable p[1..2] by {
                     bounded_execute();
@@ -5596,7 +5594,7 @@ fn auto_certificate_replays_for_bounded_execution() {
             verifying "fill3_array_loop.c";
 
             int32 fill3_array_loop(int32 p[3]) {
-                requires loadable(p, 12);
+                requires loadable(p[0..3]);
                 consumes p[0..3];
                 for loop(0) {
                     invariant i >= 0;
@@ -5621,7 +5619,7 @@ fn auto_certificate_replays_for_bounded_execution() {
             verifying "fill3_array_loop.c";
 
             int32 fill3_array_loop(int32 p[3]) {
-                requires loadable(p, 12);
+                requires loadable(p[0..3]);
                 consumes p[0..3];
                 for loop(0) {
                     invariant i >= 0;
@@ -5767,7 +5765,7 @@ fn verifies_old_memory_postcondition_for_unmodified_cell() {
             verifying "write_second.c";
 
             int32 write_second(int32* p) {
-                requires loadable(p, 8);
+                requires loadable(p[0..2]);
                 consumes p[1..2];
                 ensures writes_second: p[1] == 9 by auto;
                 ensures keeps_first: p[0] == old(p[0]) by auto;
@@ -5800,7 +5798,7 @@ fn verifies_quantified_old_memory_postcondition() {
             verifying "write_second.c";
 
             int32 write_second(int32* p) {
-                requires loadable(p, 8);
+                requires loadable(p[0..2]);
                 consumes p[1..2];
                 ensures keeps_first_cell: forall (int32 k) {
                     0 <= k and k < 1 implies p[k] == old(p[k])
@@ -5955,7 +5953,7 @@ fn quantified_old_memory_rejects_overwritten_cell() {
             verifying "write_second.c";
 
             int32 write_second(int32* p) {
-                requires loadable(p, 8);
+                requires loadable(p[0..2]);
                 consumes p[1..2];
                 ensures keeps_second_cell: forall (int32 k) {
                     1 <= k and k < 2 implies p[k] == old(p[k])
@@ -5987,7 +5985,7 @@ fn verifies_mutable_segment_effect() {
             verifying "write_second.c";
 
             int32 write_second(int32* p) {
-                requires loadable(p, 8);
+                requires loadable(p[0..2]);
                 consumes p[1..2];
                 mutable p[1..2] by frame;
                 mutable p[0..2] by frame;
@@ -6073,7 +6071,7 @@ fn mutable_segment_rejects_write_outside_segment() {
             verifying "write_second.c";
 
             int32 write_second(int32* p) {
-                requires loadable(p, 8);
+                requires loadable(p[0..2]);
                 consumes p[1..2];
                 mutable p[0..1] by auto;
                 ensures returns_written: result == 9 by auto;
@@ -6117,7 +6115,7 @@ fn immutable_rejects_external_memory_write() {
             verifying "write_second.c";
 
             int32 write_second(int32* p) {
-                requires loadable(p, 8);
+                requires loadable(p[0..2]);
                 consumes p[1..2];
                 immutable by auto;
                 ensures returns_written: result == 9 by auto;
@@ -6177,7 +6175,7 @@ fn old_memory_postcondition_fails_for_overwritten_cell() {
             verifying "write_second.c";
 
             int32 write_second(int32* p) {
-                requires loadable(p, 8);
+                requires loadable(p[0..2]);
                 consumes p[1..2];
                 ensures keeps_second: p[1] == old(p[1]) by auto;
             }
@@ -6255,7 +6253,7 @@ fn verifies_old_memory_loop_invariant() {
 
             int32 fill_tail(int32 p[], int32 n) {
                 requires n >= 1 and n <= 2147483647;
-                requires loadable(p, n * 4);
+                requires loadable(p[0..n]);
                 consumes p[0..n];
                 for loop(0) {
                     invariant i >= 1 and i <= n;

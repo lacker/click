@@ -983,19 +983,9 @@ impl Parser {
             _ => return Err(self.error("expected `loadable` requirement")),
         }
         self.expect(Token::LParen)?;
-        let requirement = if matches!(self.peek(), Some(Token::Ident(_)))
-            && self.peek_next() == Some(&Token::Comma)
-        {
-            let name = self.expect_ident("range base name")?;
-            self.expect(Token::Comma)?;
-            let bytes = self.parse_range_bytes()?;
-            Requirement::LoadableBytes { name, bytes }
-        } else {
-            let segment = self.parse_current_contract_segment()?;
-            Requirement::LoadableSegment { segment }
-        };
+        let segment = self.parse_current_contract_segment()?;
         self.expect(Token::RParen)?;
-        Ok(requirement)
+        Ok(Requirement::LoadableSegment { segment })
     }
 
     fn parse_resource_clause(&mut self) -> Result<ResourceClause, ClickError> {
@@ -1061,55 +1051,6 @@ impl Parser {
             ResourceAccessMode::Own => ResourceClause::Write(segment),
             ResourceAccessMode::View => ResourceClause::Read(segment),
         })
-    }
-
-    fn parse_range_bytes(&mut self) -> Result<RangeBytes, ClickError> {
-        self.parse_range_bytes_add()
-    }
-
-    fn parse_range_bytes_add(&mut self) -> Result<RangeBytes, ClickError> {
-        let mut expression = self.parse_range_bytes_multiply()?;
-        loop {
-            expression = match self.peek() {
-                Some(Token::Plus) => {
-                    self.position += 1;
-                    let right = self.parse_range_bytes_multiply()?;
-                    RangeBytes::Add(Box::new(expression), Box::new(right))
-                }
-                Some(Token::Minus) => {
-                    self.position += 1;
-                    let right = self.parse_range_bytes_multiply()?;
-                    RangeBytes::Subtract(Box::new(expression), Box::new(right))
-                }
-                _ => return Ok(expression),
-            };
-        }
-    }
-
-    fn parse_range_bytes_multiply(&mut self) -> Result<RangeBytes, ClickError> {
-        let mut expression = self.parse_range_bytes_primary()?;
-        while self.peek() == Some(&Token::Star) {
-            self.position += 1;
-            let right = self.parse_range_bytes_primary()?;
-            expression = RangeBytes::Multiply(Box::new(expression), Box::new(right));
-        }
-        Ok(expression)
-    }
-
-    fn parse_range_bytes_primary(&mut self) -> Result<RangeBytes, ClickError> {
-        match self.next() {
-            Some(Token::Ident(name)) => Ok(RangeBytes::Parameter(name)),
-            Some(Token::Number(value)) => Ok(RangeBytes::Constant(value)),
-            Some(Token::LParen) => {
-                let expression = self.parse_range_bytes()?;
-                self.expect(Token::RParen)?;
-                Ok(expression)
-            }
-            Some(token) => {
-                Err(self.error(format!("expected loadable byte expression, got {token:?}")))
-            }
-            None => Err(self.error("expected loadable byte expression, got end of input")),
-        }
     }
 
     fn parse_region_proof_clause(&mut self) -> Result<StructuralClause, ClickError> {

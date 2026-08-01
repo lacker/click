@@ -36,7 +36,6 @@ unless their contract rules that out.
 Use `loadable` to prove memory safety:
 
 ```click
-requires loadable(p, 12);
 requires loadable(p[0..3]);
 requires loadable(p[0..n]);
 requires loadable((p + 1)[0..n - 1]);
