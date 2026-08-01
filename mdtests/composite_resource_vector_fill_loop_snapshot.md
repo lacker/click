@@ -59,7 +59,7 @@ int32 composite_resource_vector_fill_loop_snapshot(
             have i < owner->cap by simp;
             execute_step();
             execute_step();
-            simp();
+            close_invariants();
         }
     }
 
@@ -69,8 +69,33 @@ int32 composite_resource_vector_fill_loop_snapshot(
     };
 } by {
     execute_rest();
+    fold(vector(owner));
     frame();
-    simp();
+    have result == owner->len by {
+        normalize();
+    }
+    have forall (int32 k) { 0 <= k and k < owner->len implies owner->data[k] == value } by {
+        derive(forall (int32 k) { 0 <= k and k < owner->len implies owner->data[k] == value }) using {
+            fact not at(fill_cells.exit, i) < owner->len;
+            fact forall (int32 k) { at(loop(0).exit, 0) <= at(loop(0).exit, k) and at(loop(0).exit, k) < at(loop(0).exit, i) implies at(loop(0).exit, owner->data[k]) == at(loop(0).exit, value) };
+            fact at(statement(5).entry, loadable(old(owner->len)));
+            fact at(statement(5).entry, loadable(old(owner->cap)));
+            fact at(statement(5).entry, loadable(old(owner->data)));
+            fact at(statement(5).entry, loadable(old((owner->data)[0..owner->cap])));
+            fact at(statement(5).entry, 0) <= at(statement(5).entry, owner->len);
+            fact at(statement(5).entry, owner->len) <= at(statement(5).entry, owner->cap);
+            fact at(statement(5).entry, i) <= at(statement(5).entry, owner->len);
+            fact not at(statement(5).entry, i) < at(statement(5).entry, owner->len);
+            fact at(statement(2).entry, loadable(owner->len));
+            fact at(statement(2).entry, loadable(owner->cap));
+            fact at(statement(2).entry, loadable(owner->data));
+            fact at(statement(2).entry, loadable((owner->data)[0..owner->cap]));
+            fact result == owner->len;
+        }
+    }
+    assumption();
+    assumption();
+    assumption();
 }
 ```
 

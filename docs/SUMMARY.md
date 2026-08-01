@@ -28,6 +28,8 @@
 # Advanced Click
 
 - [Testing Click](advanced/testing-click.md)
+- [Performance Tools](advanced/performance-tools.md)
+- [Memory Derivation DAG](advanced/memory-dag.md)
 - [Contributing To Click](advanced/contributing.md)
 - [Maintainer Quickstart](quickstart.md)
 - [Feature Playbook](feature-playbook.md)

@@ -4207,7 +4207,71 @@ fn quantified_binder_equivalent(left: &Proposition, right: &Proposition) -> bool
 /// WRITE, never whether a proof is accepted. The written spelling still has to
 /// satisfy `derivation.replay` and then the replay judgment itself, both of
 /// which instantiate quantifiers rather than compare them structurally.
+/// Applies `normalize_direct_atomic_memory_loads` below the propositional
+/// connectives and quantifier binders it does not itself descend through, so
+/// two lowerings of one fact whose load memories differ only by
+/// load-irrelevant blocks or cells (the canonical-load-memory relation)
+/// compare equal. Deterministic and assumption-free, like the leaf
+/// normalization it delegates to.
+fn normalize_quantified_memory_loads(proposition: &Proposition, depth: usize) -> Proposition {
+    if depth == 0 {
+        return proposition.clone();
+    }
+    let recurse = |body: &Proposition| Box::new(normalize_quantified_memory_loads(body, depth - 1));
+    match proposition {
+        Proposition::And(left, right) => Proposition::And(recurse(left), recurse(right)),
+        Proposition::Or(left, right) => Proposition::Or(recurse(left), recurse(right)),
+        Proposition::Implies(left, right) => Proposition::Implies(recurse(left), recurse(right)),
+        Proposition::Not(body) => Proposition::Not(recurse(body)),
+        Proposition::ForAll { var, sort, body } => Proposition::ForAll {
+            var: *var,
+            sort: sort.clone(),
+            body: recurse(body),
+        },
+        Proposition::Exists {
+            name,
+            var,
+            sort,
+            body,
+        } => Proposition::Exists {
+            name: name.clone(),
+            var: *var,
+            sort: sort.clone(),
+            body: recurse(body),
+        },
+        other => normalize_direct_atomic_memory_loads(other),
+    }
+}
+
+/// Generation-side equality up to assumption-free canonical load spelling.
+/// A selected spelling still has to replay from its own lowered proposition,
+/// so this can broaden candidate recognition without broadening acceptance.
+fn propositions_match_up_to_canonical_loads(left: &Proposition, right: &Proposition) -> bool {
+    left == right
+        || normalize_quantified_memory_loads(left, 64)
+            == normalize_quantified_memory_loads(right, 64)
+}
+
+/// See the doc comment below: a generation-side recognizer only. Besides the
+/// per-level binder renaming, bodies are also compared after canonical-load
+/// normalization, because the drain records facts with canonicalized load
+/// snapshots while a fresh lowering of the same spelling reads through the
+/// retained program-point state, whose memory still carries load-irrelevant
+/// local cells.
 fn nested_quantified_binder_equivalent(
+    left: &Proposition,
+    right: &Proposition,
+    depth: usize,
+) -> bool {
+    nested_quantified_binder_equivalent_exact(left, right, depth)
+        || nested_quantified_binder_equivalent_exact(
+            &normalize_quantified_memory_loads(left, 64),
+            &normalize_quantified_memory_loads(right, 64),
+            depth,
+        )
+}
+
+fn nested_quantified_binder_equivalent_exact(
     left: &Proposition,
     right: &Proposition,
     depth: usize,
@@ -4232,7 +4296,7 @@ fn nested_quantified_binder_equivalent(
             },
         ) => {
             left_sort == right_sort
-                && nested_quantified_binder_equivalent(
+                && nested_quantified_binder_equivalent_exact(
                     &substitute_int32_variable_in_proposition(
                         left_body,
                         *left_var,
@@ -7736,6 +7800,42 @@ fn checked_surface_fact_at_outcome(
     if matches!(kernel, Proposition::ForAll { .. } | Proposition::Exists { .. })
         && !replay.unfolded_predicates.is_empty()
     {
+        // A drain that unfolds an ambient predicate replaces the folded fact
+        // with its quantified body, so the body can carry a recorded folded
+        // spelling while no Predicate fact survives in `available` for the
+        // loop below to start from. Unfold that recorded spelling at the
+        // surface and let the round trip decide.
+        let mut kernel_folded_bases = Vec::new();
+        for surface in replay.surface_propositions.surfaces(kernel) {
+            if matches!(surface, ClickProposition::PredicateCall { .. })
+                && !kernel_folded_bases.contains(surface)
+            {
+                kernel_folded_bases.push(surface.clone());
+            }
+        }
+        for base in &kernel_folded_bases {
+            let Some(variants) = comparison_program_point_variants(base, &points) else {
+                continue;
+            };
+            for candidate in variants {
+                let Ok(unfolded) = unfold_structural_invariant_proposition(
+                    predicate_environment,
+                    &candidate,
+                    &replay.unfolded_predicates,
+                ) else {
+                    continue;
+                };
+                if unfolded == candidate {
+                    continue;
+                }
+                if check(&unfolded).is_ok_and(|lowered| {
+                    matches_kernel(&lowered)
+                        || nested_quantified_binder_equivalent(&lowered, kernel, 8)
+                }) {
+                    return Ok(unfolded);
+                }
+            }
+        }
         for fact in available {
             if !matches!(fact, Proposition::Predicate { .. }) {
                 continue;
@@ -8758,11 +8858,25 @@ fn plan_smart_have_at_current_point(
     ) {
         Ok(fact) => fact,
         Err(_) if prelowered_goal.is_some() => prelowered_goal.expect("checked above").clone(),
-        Err(message) => {
-            return Err(ClickError::new(format!(
-                "`{claim_label}` have proof {outer_tactic_index}: could not lower pure goal: {message}"
-            )));
-        }
+        Err(message) => match lower_point_proposition(
+            &have.proposition,
+            &facts_for_simple_goal_lowering(available),
+            parameters,
+            arguments,
+            pre_state,
+            state,
+            None,
+            program_point_states,
+            predicate_environment,
+            click_function_environment,
+        ) {
+            Ok(fact) => fact,
+            Err(_) => {
+                return Err(ClickError::new(format!(
+                    "`{claim_label}` have proof {outer_tactic_index}: could not lower pure goal: {message}"
+                )));
+            }
+        },
     };
     let available = if unfolded_predicates.is_empty() {
         available.to_vec()
@@ -13473,7 +13587,7 @@ fn lower_outcome_simp_tactic(
                     }
                     continue;
                 }
-                if let Some(surface) = available.iter().find_map(|fact| {
+                if let Some((surface, lowered)) = available.iter().find_map(|fact| {
                     if !exact_fact_contains_conjunct(fact, &required) {
                         return None;
                     }
@@ -13491,13 +13605,15 @@ fn lower_outcome_simp_tactic(
                         click_function_environment,
                     )
                     .ok()?;
-                    // The spelling must lower back to the exact fact the
-                    // derivation used, so generation and replay derive from
-                    // identical premises.
-                    (check(&surface).ok()? == required).then_some(surface)
+                    // Record what the spelling actually lowers to. Canonical
+                    // load spelling only recognizes candidates; the replay
+                    // below must derive from this exact lowered proposition.
+                    let lowered = check(&surface).ok()?;
+                    propositions_match_up_to_canonical_loads(&lowered, &required)
+                        .then_some((surface, lowered))
                 }) {
-                    if !kernel_premises.contains(&required) {
-                        kernel_premises.push(required.clone());
+                    if !kernel_premises.contains(&lowered) {
+                        kernel_premises.push(lowered);
                         spelled_premises.push(surface);
                     }
                     continue;
@@ -13522,9 +13638,11 @@ fn lower_outcome_simp_tactic(
                         selector: VisitSelector::ProgramPoint(point.clone()),
                         proposition: Box::new(core),
                     };
-                    if check(&surface).is_ok_and(|lowered| lowered == required) {
-                        if !kernel_premises.contains(&required) {
-                            kernel_premises.push(required.clone());
+                    if let Ok(lowered) = check(&surface)
+                        && propositions_match_up_to_canonical_loads(&lowered, &required)
+                    {
+                        if !kernel_premises.contains(&lowered) {
+                            kernel_premises.push(lowered);
                             spelled_premises.push(surface);
                         }
                         continue 'premises;
@@ -13899,6 +14017,7 @@ fn certify_outcome_simp_have(
 
     let mut certified_available = available.to_vec();
     let mut surface_tactics = Vec::new();
+    let mut quantified_memory_premises: Vec<(ClickProposition, Proposition)> = Vec::new();
     for obligation in lowered.loadability_obligations {
         let SurfaceLoadabilityObligation {
             proposition: obligation,
@@ -13938,7 +14057,7 @@ fn certify_outcome_simp_have(
         }
         let surface_obligation = match surface_obligation.filter(|surface| check_surface(surface)) {
             Some(surface) => surface,
-            None => checked_surface_fact_at_outcome(
+            None => match checked_surface_fact_at_outcome(
                 replay,
                 &obligation,
                 SurfaceFactMatch::CanonicalExact,
@@ -13950,13 +14069,79 @@ fn certify_outcome_simp_have(
                 result,
                 predicate_environment,
                 click_function_environment,
-            )
-            .map_err(|error| {
-                ClickError::new(format!(
-                    "`{claim_label}` path {path_index}, tactic {tactic_index}: smart `simp` loadability obligation has no exact surface spelling: {}\n  recorded segment: {recorded_segment:?}\n  obligation: {obligation:?}",
-                    error.message(),
-                ))
-            })?,
+            ) {
+                Ok(surface) => surface,
+                Err(error) => {
+                    // A loadability obligation inside a quantified body can
+                    // mention the binder and therefore has no standalone
+                    // Surface Click spelling. It is safe to leave implicit
+                    // only when ordinary (non-deferred) lowering of the whole
+                    // goal proves it from the explicit generated premises.
+                    if quantified_memory_premises.is_empty()
+                        && matches!(goal, Proposition::ForAll { .. } | Proposition::Exists { .. })
+                    {
+                        let mut atomic_available = Vec::new();
+                        for fact in available {
+                            atomic_conjuncts(fact, &mut atomic_available);
+                        }
+                        for fact in atomic_available {
+                            let needed_for_lowering =
+                                matches!(fact, Proposition::CMemoryLoadable { .. })
+                                    || matches!(fact, Proposition::ConditionIs(_, _))
+                                        && c_condition_fact_has_memory(fact);
+                            if !needed_for_lowering {
+                                continue;
+                            }
+                            if let Ok(surface) = checked_surface_fact_at_outcome(
+                                replay,
+                                fact,
+                                SurfaceFactMatch::CanonicalExact,
+                                available,
+                                parameters,
+                                arguments,
+                                pre_state,
+                                post_state,
+                                result,
+                                predicate_environment,
+                                click_function_environment,
+                            ) && !quantified_memory_premises
+                                .iter()
+                                .any(|(recorded, _)| recorded == &surface)
+                            {
+                                quantified_memory_premises.push((surface, fact.clone()));
+                            }
+                        }
+                    }
+                    for (_, fact) in &quantified_memory_premises {
+                        if !goal_lowering_facts.contains(fact) {
+                            goal_lowering_facts.push(fact.clone());
+                        }
+                    }
+                    let implicit_lowering = lower_outcome_proposition_with_program_points(
+                        parameters,
+                        arguments,
+                        pre_state,
+                        post_state,
+                        result,
+                        &goal_lowering_facts,
+                        surface_goal,
+                        predicate_environment,
+                        click_function_environment,
+                        &replay.program_point_states,
+                    );
+                    let implicit_in_goal = implicit_lowering.is_ok_and(|lowered_goal| {
+                        normalize_direct_atomic_memory_loads(&lowered_goal)
+                            == normalize_direct_atomic_memory_loads(goal)
+                    });
+                    if implicit_in_goal {
+                        continue;
+                    }
+                    return Err(ClickError::new(format!(
+                        "`{claim_label}` path {path_index}, tactic {tactic_index}: smart `simp` loadability obligation has no exact surface spelling: {}\n  recorded segment: {recorded_segment:?}\n  obligation: {obligation:?}",
+                        error.message(),
+                    )));
+                }
+            },
         };
         let obligation_memory = match &obligation {
             Proposition::CMemoryLoadable { memory, .. } => memory,
@@ -14219,7 +14404,7 @@ fn certify_outcome_simp_have(
         certified_available.push(obligation);
     }
 
-    let proof = lower_outcome_simp_proof(
+    let mut proof = lower_outcome_simp_proof(
         replay,
         surface_goal,
         goal,
@@ -14232,6 +14417,17 @@ fn certify_outcome_simp_have(
         predicate_environment,
         click_function_environment,
     )?;
+    if !quantified_memory_premises.is_empty()
+        && let Proof::Script(tactics) = &mut proof
+        && let Some(ProofTactic::Derive(derive) | ProofTactic::Calculate(derive)) =
+            tactics.first_mut()
+    {
+        for (surface, _) in quantified_memory_premises {
+            if !derive.premises.contains(&surface) {
+                derive.premises.push(surface);
+            }
+        }
+    }
     let surface_have = ProofHave {
         proposition: surface_goal.clone(),
         proof,

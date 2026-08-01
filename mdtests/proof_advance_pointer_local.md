@@ -8,7 +8,8 @@ The exported `selected == left or selected == right` fact is about a local
 pointer, which has no name once the function has returned. The closer therefore
 names it explicitly at the point where it does have one, with
 `at(statement(1).exit, selected)`; certificate generation cannot yet synthesize
-that spelling on its own (see notes/tasks/store-provenance-family.md).
+that spelling on its own (see
+[`issues/local-pointer-spelling-workaround.md`](../issues/local-pointer-spelling-workaround.md)).
 
 ```c filename=advance_selected_pointer.c
 int32 advance_selected_pointer(int32* left, int32* right, int32 choose_left) {

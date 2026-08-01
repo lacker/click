@@ -1,13 +1,13 @@
 # The memory derivation DAG
 
-Stages 1–5 of the named-memory-states arc, landed 2026-07-30/31: what
+The named-memory-states arc landed 2026-07-30/31. This page records what
 the derivation DAG is, its invariants, what it bought (field_derived
-487->198 s), and the measured dead ends. The punted next increment
-(fourth edge kind, block allocation) is recorded under "Next" — it
-becomes a task only if an open work item needs it.
+487->198 s), the later block-allocation and cell-forgetting edges, and
+the measured dead ends.
 
-Design brief: `../canonical-memory.md`. Failure corpus and per-member
-frontiers: `../regression-history.md`.
+The original design brief and full regression experiment record were retired
+from the working tree when this project wound up. They remain available in git
+history as `notes/canonical-memory.md` and `notes/regression-history.md`.
 
 Scope boundary (owner, 2026-07-30): kernel/internal representation
 only. No Surface Click syntax or semantics change. If the design seems
@@ -93,29 +93,27 @@ arm, restoring the pre-arc path exactly. Default on; the A/B handle.
 6. **(5) The measured verdict.** field_derived **487 s → 198 s**
    (2.46x), confirmed twice over: flag A/B on one binary (198 vs 592)
    and same-flag across the commit (487 vs 198). That is the member
-   canonical-memory.md named as the cost target. Two value-bridging
+   the original design brief named as the cost target. Two value-bridging
    snapshot-equality scans retired (92 lines) — honestly recorded as
    unreachable, not DAG-superseded (green with the flag off too).
 
-**Why bubble_sort3 is immune to this arc** (three measurements, keep
+**Why bubble_sort3 was immune to this arc** (three measurements, keep
 before anyone re-attempts): only 6 of 540 k top-level comparisons are
 load-vs-load; 95% of the calls return false, so answering earlier
 cannot help a search whose cost is in not finding anything; and a
 select-over-store arm fired **0 times in 295 290 lookups** — its loads
 read a caller-provided symbolic buffer at symbolic indices, so there is
-no store history to look up. Its 65 s is a slow-simple engine bug
-(`invariant-closer-replay-cost.md`), not arc work. Sampling trap recorded
-there too: the hot frame is the fact-set-scanning *caller*; attributing
-its cost to the canonicalizing arm it contains was already made once.
+no store history to look up. Its historical 65 s cost was a separate
+slow-simple engine bug, not arc work. The sampling trap is still worth
+remembering: the hot frame was the fact-set-scanning *caller*, not the
+canonicalizing arm it contained.
 
 ## Where the frontier is
 
-Per-member diagnoses live in `../regression-history.md`. None of the
-remaining failures is a load-equality question — certificate lowering
-(bubble_pass3), grouped-simp claim-transition certification
-(vector_fill, field_derived), ghost-resource representation
-(owner_buffer), a memoryless propositional gap (owned-vector), a
-permission question (owned-string).
+Current per-member diagnoses live in the repository's `issues/` directory;
+see `issues/README.md`. The remaining failures are certificate spelling,
+proof replay, or performance problems rather than reasons to extend the DAG
+globally.
 
 ## Landed 2026-07-31: fourth and fifth edge kinds, scoped consumers
 
@@ -197,12 +195,11 @@ prover, so neither situation changed.
   resolves`, resolution-aware `PointerOffsetEqual` — independent of
   this arc.
 
-## Done when
+## Further work
 
-The acceptance corpus in `../regression-history.md` passes: both
-examples and all quarantined member mdtests de-quarantine, and the
-explicit `have` in `mdtests/proof_advance_pointer_local.md` deletes
-cleanly with generation finding the spelling itself.
+The DAG arc itself is landed. Any remaining acceptance failures or performance
+work are tracked in `issues/`; do not treat this design record as a live status
+board.
 
 ## Repro
 

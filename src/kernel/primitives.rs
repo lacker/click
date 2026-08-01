@@ -800,10 +800,10 @@ pub enum CMemoryDerivation {
         value: CValue,
     },
     /// `base` with one block declared; no cell changes, so every load reads
-    /// exactly what it read in `base`. The fourth edge kind
-    /// (`docs/advanced/memory-dag.md` "Next"): without it, block declaration split
-    /// the DAG into disjoint components ("arena identity is connected,
-    /// arena derivations are not"). The havoc producers insert their marker
+    /// exactly what it read in `base`. This fourth edge kind was added after
+    /// the initial DAG arc; without it, block declaration split the DAG into
+    /// disjoint components ("arena identity is connected, arena derivations
+    /// are not"). The havoc producers insert their marker
     /// blocks directly rather than through [`CMemory::with_block`], so this
     /// edge can never alias a havoc hop.
     BlockDeclared {

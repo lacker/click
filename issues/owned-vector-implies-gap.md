@@ -1,9 +1,14 @@
 # owned-vector: have cannot find Implies(replace == 0, new == old)
 
-Example `owned-vector` (quarantined in tests/examples.rs) fails in
-~13 s at `vector_replace_if.contract` tactic 8: a `have` cannot find
+The last completed diagnosis found example `owned-vector` failing at
+`vector_replace_if.contract` tactic 8: a `have` could not find
 `Implies(replace == 0, new == old)` — a propositional gap over plain
-variables; the goal contains no memory at all.
+variables with no memory in the goal.
+
+That frontier is stale. A 2026-07-31 check on current `master` ran for
+more than two minutes without reaching a failure and was stopped. Do not
+trust the old ~13 s timing or start from the old failure site without first
+profiling a bounded current run.
 
 History (bisected 2026-07-31): originally broke 07-19 at `9ea6739`
 "remove replay bookkeeping tactics" (deleted RecordExecutionPoint /

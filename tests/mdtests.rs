@@ -19,16 +19,12 @@ const DEFAULT_MDTEST_TIME_LIMIT: Duration = Duration::from_secs(30);
 /// they are fixed (see docs/advanced/testing-click.md).
 const QUARANTINED: &[(&str, &str)] = &[
     (
-        "bubble_pass3_max_suffix.md",
-        "certificate lowering cannot spell the loop-exit ForAll premise: synthesize_surface_proposition has no Click spelling for its loop-havoc-snapshot loads (retention itself concludes since e8f4b91; fails fast at ~0.5 s)",
-    ),
-    (
         "composite_resource_vector_fill_loop_snapshot.md",
-        "back-edge closer needs named memory states; per-spelling bridging exhausted (issues/certificate-spelling-gap.md)",
+        "proof passes, but deterministic close_invariants replay takes ~2.8 s (issues/vector-close-invariants-slow.md)",
     ),
     (
         "field_derived_precise_effect_after_metadata_write.md",
-        "ensures derivations need named memory states; certified context does not derive them (issues/certificate-spelling-gap.md)",
+        "effect-chain postconditions produce no replayable minimized derivation; it also has a slow simple fold (issues/certificate-spelling-gap.md, issues/field-derived-slow-fold.md)",
     ),
 ];
 

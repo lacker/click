@@ -1,42 +1,33 @@
-# Certificate lowering cannot spell snapshot-orphaned premises
+# Certificate lowering gaps across memory snapshots
 
-The one remaining subsystem gap behind most quarantined tests.
-`synthesize_surface_proposition` / `checked_surface_fact_at_outcome`
-(src/lang/click/proof.rs) cannot spell certificate premises whose loads
-reference snapshots that no retained program point carries — the fix
-likely needs either retaining an additional program point or spelling
-through `old(...)`/arena-named states, and output must stay canonical
-Surface Click.
+Certificate generation must name kernel facts in canonical Surface Click and
+then replay exactly from those spellings. The 2026-07-31 repair now recognizes
+folded predicate spellings under nested quantifiers, compares candidate loads
+through the kernel's canonical load representation, and keeps the explicit
+range and ordering premises needed to lower binder-local memory accesses.
 
-Gated on this, with measured evidence (2026-07-31):
-- mdtest `bubble_pass3_max_suffix` (0.47 s fail): the required ForAll
-  is found kernel-identical among available facts — candidate selection
-  works; only spelling synthesis is missing.
-- mdtest `composite_resource_vector_fill_loop_snapshot` (~42 s fail):
-  `minimal_proposition_derivation` provably succeeds; premise spelling
-  is the blocker. The needed loadable facts live in
-  `replay.effect_facts`, not the certified-available set.
-- mdtest `field_derived_precise_effect_after_metadata_write` (~238 s
-  fail): same class ("expressible path facts do not replay").
-- example `owned-string` (5m26s fail — see
-  owned-string-loadable-bridging-slow.md): same message class, reached
-  after the loadable-gap fix.
+Verified status (2026-07-31):
 
-History: these are regressions from the 2026-07 certificate-strictness
-work; bisect verdicts and the full experiment record are in git history
-(`git log --all -- notes/regression-history.md`).
+- `bubble_pass3_max_suffix` passes in 0.58 s and is no longer quarantined.
+- `composite_resource_vector_fill_loop_snapshot` proves successfully after
+  adding the explicit resource fold and expanding its final smart certificate.
+  Its only remaining failure is the independent 2.8 s deterministic
+  `close_invariants` replay in `vector-close-invariants-slow.md`.
+- `field_derived_precise_effect_after_metadata_write` still fails after about
+  215 s on four effect-chain postconditions. No minimized derivation candidate
+  is produced, so this is no longer accurately described as only a missing
+  spelling for an otherwise-complete candidate. It also retains the independent
+  slow fold in `field-derived-slow-fold.md`.
+- `owned-string` (historically 5m26s; see
+  `owned-string-loadable-bridging-slow.md`) has not been rerun in this pass.
 
-WORK IN FLIGHT, stopped at wind-up (2026-07-31 ~3:50 pm): branch
-`worktree-agent-a50a9739f4232cd94` (worktree of the same name) holds
-one committed increment — 72aab38 "Spell snapshot-orphaned ForAll
-premises through the kernel's folded spelling" — NOT validated by
-gates, plus an UNCOMMITTED mid-experiment tree (4 files: probes and a
-cover-candidate extension pulling loadable facts from
-replay.effect_facts). The agent's last finding before the stop: its
-retry probe never fired, so the failing error is emitted by one of the
-other `{proof_name} proof`-format sites (proof.rs ~9306 / 9451 / 9705),
-not the site it had instrumented. Resume there; treat the committed
-increment as a hypothesis until gates pass.
+History: these are regressions from the 2026-07 certificate-strictness work;
+bisect verdicts and the full experiment record are in git history
+(`git log --all -- notes/regression-history.md`). The stopped worktree
+`worktree-agent-a50a9739f4232cd94` remains historical evidence only. Its broad
+uncommitted covering-loadability experiment was not copied; the applied repair
+is narrower and replay-checked.
 
-Done when: the three mdtests de-quarantine and owned-string's frontier
-moves.
+Done when: field-derived's effect-chain claims certify, owned-string's frontier
+moves, and this issue can be deleted. The two deterministic performance bugs
+are tracked separately.

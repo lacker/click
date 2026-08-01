@@ -20,11 +20,11 @@ const DEFAULT_EXAMPLE_TIME_LIMIT: Duration = Duration::from_secs(10 * 60);
 const QUARANTINED: &[(&str, &str)] = &[
     (
         "owned-string",
-        "owned_string_push tactic 7: loadable(data[len]) now discharges (DAG bridging, 2026-07-31); next frontier is the terminated_at have's postcondition derivation replay, and the whole example runs minutes (slow-simple finding)",
+        "certificate spelling fails after expensive loadable-DAG bridging; see issues/certificate-spelling-gap.md and issues/owned-string-loadable-bridging-slow.md",
     ),
     (
         "owned-vector",
-        "vector_fill.loop(0).preserve: invariant closer misses a ForAll path goal (fails in ~12 s; named-memory-states family)",
+        "pathologically slow with a stale failure frontier; remeasure after the certificate-spelling gap lands (issues/owned-vector-implies-gap.md)",
     ),
 ];
 

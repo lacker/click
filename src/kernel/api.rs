@@ -472,10 +472,9 @@ fn memory_dag_cell_source(
 /// term rewrite.
 ///
 /// Advisory as ever: a `false` here means "the DAG did not answer", and every
-/// caller falls through to its previous path. Derivations are not fully
-/// connected (a block-declaring snapshot carries no edge, recorded as a dead
-/// end in the task file), so falling through is the normal case, not an
-/// error.
+/// caller falls through to its previous path. Derivations are not guaranteed
+/// to connect every pair of snapshots, so falling through is the normal case,
+/// not an error.
 pub(super) fn loads_equal_along_memory_derivations_at(
     left_memory: &SharedCMemory,
     right_memory: &SharedCMemory,
