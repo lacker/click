@@ -6,7 +6,6 @@ pathologically slow cases are skipped by the explicit quarantine lists in
 
 | Issue | Status | Covers |
 |---|---|---|
-| [Local pointer spelling workaround](local-pointer-spelling-workaround.md) | Passing workaround | One explicit `have` that certificate generation should eventually remove |
 | [Language cleanup shortlist](language-cleanup-shortlist.md) | Parked | Small owner-approved surface cleanup for a later language arc |
 
 Keep one file per independent open problem. Put durable implementation design

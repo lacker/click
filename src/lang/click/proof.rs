@@ -13333,6 +13333,11 @@ fn synthesize_surface_pointer(
     {
         return Some(expression);
     }
+    if let Some((name, _)) = state.locals().object_values().find(|(_, value)| {
+        matches!(value, CValue::Pointer(local_pointer) if local_pointer == pointer)
+    }) {
+        return Some(CExpression::Variable(name.to_string()));
+    }
     if !arguments.iter().any(|argument| {
         matches!(
             argument,
@@ -15448,6 +15453,27 @@ fn comparison_program_point_variants(
                     .into_iter()
                     .map(|left| ClickProposition::Implies(Box::new(left), right.clone())),
             );
+        }
+        return Some(variants);
+    }
+    if let ClickProposition::Or(left, right) = proposition {
+        let left_variants = comparison_program_point_variants(left, points)?;
+        let right_variants = comparison_program_point_variants(right, points)?;
+        let mut variants = vec![proposition.clone()];
+        let mut push = |left: ClickProposition, right: ClickProposition| {
+            let candidate = ClickProposition::Or(Box::new(left), Box::new(right));
+            if !variants.contains(&candidate) {
+                variants.push(candidate);
+            }
+        };
+        for left in &left_variants {
+            push(left.clone(), right.as_ref().clone());
+        }
+        for right in &right_variants {
+            push(left.as_ref().clone(), right.clone());
+        }
+        for (left, right) in left_variants.into_iter().zip(right_variants) {
+            push(left, right);
         }
         return Some(variants);
     }

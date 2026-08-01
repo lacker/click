@@ -5,11 +5,9 @@ that selection. The `advance` interface hides which branch supplied the pointer
 and exports only the viewed range needed by the continuation.
 
 The exported `selected == left or selected == right` fact is about a local
-pointer, which has no name once the function has returned. The closer therefore
-names it explicitly at the point where it does have one, with
-`at(statement(1).exit, selected)`; certificate generation cannot yet synthesize
-that spelling on its own (see
-[`issues/local-pointer-spelling-workaround.md`](../issues/local-pointer-spelling-workaround.md)).
+pointer, which has no name once the function has returned. Certificate
+generation recovers a point-qualified spelling from the retained program-point
+state so the final `simp` can replay without a hand-written bridge.
 
 ```c filename=advance_selected_pointer.c
 int32 advance_selected_pointer(int32* left, int32* right, int32 choose_left) {
@@ -49,8 +47,6 @@ int32 advance_selected_pointer(int32* left, int32* right, int32 choose_left) {
             }
         }
         execute_step();
-        have at(statement(1).exit, selected) == left
-            or at(statement(1).exit, selected) == right by { simp(); }
         simp();
     }
 }
