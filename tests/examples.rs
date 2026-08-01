@@ -17,12 +17,7 @@ const DEFAULT_EXAMPLE_TIME_LIMIT: Duration = Duration::from_secs(10 * 60);
 /// suite is a meaningful green gate. Run one with `CLICK_EXAMPLE=<name>`, or
 /// all of them with `CLICK_RUN_QUARANTINED=1`. Each entry names the reason;
 /// remove entries as they are fixed (see docs/advanced/testing-click.md).
-const QUARANTINED: &[(&str, &str)] = &[
-    (
-        "owned-string",
-        "certificate failures are fixed, but the complete project exceeds the 10-minute example budget; see issues/owned-string-slow-proof.md",
-    ),
-];
+const QUARANTINED: &[(&str, &str)] = &[];
 
 #[test]
 fn example_projects() {

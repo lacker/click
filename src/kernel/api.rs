@@ -32,13 +32,20 @@ pub(crate) fn c_resources_directly_match(
     };
     match (left, right) {
         (CResource::Memory(left), CResource::Memory(right)) => {
-            pointers_match_for_resource_replay(left.base(), right.base(), assumptions)
-                && bitvectors_match_for_resource_replay(
+            left == right
+                || (bitvectors_match_for_resource_replay(
                     left.start(),
                     right.start(),
                     assumptions,
-                )
-                && bitvectors_match_for_resource_replay(left.end(), right.end(), assumptions)
+                ) && bitvectors_match_for_resource_replay(
+                    left.end(),
+                    right.end(),
+                    assumptions,
+                ) && pointers_match_for_resource_replay(
+                    left.base(),
+                    right.base(),
+                    assumptions,
+                ))
         }
         (
             CResource::Composite {
@@ -76,7 +83,13 @@ fn bitvectors_match_for_resource_replay(
     right: &Bitvector32Term,
     assumptions: &Assumptions,
 ) -> bool {
-    if bitvector_terms_proven_equal_for_memory_resolution(left, right, assumptions) {
+    if left == right {
+        return true;
+    }
+    if assumptions.bitvector_terms_equal_from_facts(left, right) {
+        return true;
+    }
+    if explicit_atomic_equality_from_memory_derivations(left, right, assumptions) {
         return true;
     }
     let transported_matches = |term: &Bitvector32Term, target: &Bitvector32Term| {
@@ -93,7 +106,47 @@ fn bitvectors_match_for_resource_replay(
                 })
         })
     };
-    transported_matches(left, right) || transported_matches(right, left)
+    transported_matches(left, right)
+        || transported_matches(right, left)
+        || bitvector_terms_proven_equal_for_memory_resolution(left, right, assumptions)
+}
+
+fn pointer_offsets_match_from_memory_derivations(
+    left: &PointerOffsetTerm,
+    right: &PointerOffsetTerm,
+    assumptions: &Assumptions,
+) -> bool {
+    if left == right {
+        return true;
+    }
+    match (left, right) {
+        (
+            PointerOffsetTerm::Add(left_a, left_b),
+            PointerOffsetTerm::Add(right_a, right_b),
+        ) => {
+            pointer_offsets_match_from_memory_derivations(left_a, right_a, assumptions)
+                && pointer_offsets_match_from_memory_derivations(left_b, right_b, assumptions)
+        }
+        (
+            PointerOffsetTerm::Int32Scaled {
+                value: left,
+                byte_width: left_width,
+            },
+            PointerOffsetTerm::Int32Scaled {
+                value: right,
+                byte_width: right_width,
+            },
+        ) => {
+            left_width == right_width
+                && (assumptions.bitvector_terms_equal_from_facts(left, right)
+                    || explicit_atomic_equality_from_memory_derivations(
+                        left,
+                        right,
+                        assumptions,
+                    ))
+        }
+        _ => false,
+    }
 }
 
 fn pointer_offsets_match_for_resource_replay(
@@ -101,7 +154,7 @@ fn pointer_offsets_match_for_resource_replay(
     right: &PointerOffsetTerm,
     assumptions: &Assumptions,
 ) -> bool {
-    if c_pointer_offsets_proven_equal_for_effect(left, right, assumptions) {
+    if pointer_offsets_match_from_memory_derivations(left, right, assumptions) {
         return true;
     }
     let transported_matches = |offset: &PointerOffsetTerm, target: &PointerOffsetTerm| {
@@ -114,7 +167,9 @@ fn pointer_offsets_match_for_resource_replay(
                 })
         })
     };
-    transported_matches(left, right) || transported_matches(right, left)
+    transported_matches(left, right)
+        || transported_matches(right, left)
+        || c_pointer_offsets_proven_equal_for_effect(left, right, assumptions)
 }
 
 fn pointers_match_for_resource_replay(
@@ -122,13 +177,14 @@ fn pointers_match_for_resource_replay(
     right: &Pointer,
     assumptions: &Assumptions,
 ) -> bool {
-    pointers_proven_equal_for_memory_resolution(left, right, assumptions)
+    left == right
         || (left.block == right.block
             && pointer_offsets_match_for_resource_replay(
                 &left.offset,
                 &right.offset,
                 assumptions,
             ))
+        || pointers_proven_equal_for_memory_resolution(left, right, assumptions)
 }
 
 /// Assumption-free canonical form of a whole memory: every cell key and
@@ -434,6 +490,7 @@ const MEMORY_DAG_HOP_DISTINCTNESS_FUEL: usize = 8_000;
 // agree.
 thread_local! {
     static EXTENDED_DAG_BRIDGING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static EXPLICIT_DAG_REPLAY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 pub(super) fn extended_dag_bridging_active() -> bool {
@@ -466,6 +523,13 @@ fn memory_dag_cell_source(
                 ..
             } => {
                 if write == pointer
+                    || EXPLICIT_DAG_REPLAY.with(std::cell::Cell::get)
+                        && write.block == pointer.block
+                        && pointer_offsets_match_from_memory_derivations(
+                            &write.offset,
+                            &pointer.offset,
+                            assumptions,
+                        )
                     || write.block == pointer.block
                         && assumptions.exact_condition_value(&ConditionTerm::pointer_offset_equal(
                             write.offset.clone(),
@@ -487,6 +551,10 @@ fn memory_dag_cell_source(
                 // must replay byte-for-byte.
                 if !write.blocks_proven_distinct(pointer)
                     && !pointer_offsets_with_common_base_proven_distinct(write, pointer, assumptions)
+                    && !(EXPLICIT_DAG_REPLAY.with(std::cell::Cell::get)
+                        && assumptions.pointers_proven_disjoint_by_shallow_explicit_range(
+                            write, pointer,
+                        ))
                     && !(extended_dag_bridging_active()
                         && super::reasoning::with_isolated_memory_resolution_fuel(
                             MEMORY_DAG_HOP_DISTINCTNESS_FUEL,
@@ -690,6 +758,41 @@ pub(super) fn atomic_loads_equal_along_memory_derivations(
             });
         }
     }
+    result
+}
+
+/// Resolves an equality from the execution-recorded memory DAG for explicit
+/// certificate replay. Unlike the planner-facing DAG arm, this may cross
+/// no-op block declarations and stores whose distinctness follows from the
+/// certificate's separation facts; every crossed edge remains justified by
+/// exact facts and the bounded DAG walk.
+pub(crate) fn explicit_atomic_equality_from_memory_derivations(
+    left: &Bitvector32Term,
+    right: &Bitvector32Term,
+    assumptions: &Assumptions,
+) -> bool {
+    let _assumptions_id_scope = assumptions.enter_id_scope();
+    let previous = EXPLICIT_DAG_REPLAY.with(|flag| flag.replace(true));
+    let result = with_extended_dag_bridging(|| {
+        if atomic_loads_equal_along_memory_derivations(left, right, assumptions) {
+            return true;
+        }
+        let resolves_to = |load: &Bitvector32Term, value: &Bitvector32Term| {
+            let Bitvector32Term::MemoryLoad(memory, pointer) = load else {
+                return false;
+            };
+            with_cell_lookup_depth(|| {
+                matches!(
+                    memory_dag_cell_source(memory, pointer, assumptions).resolved_value(pointer),
+                    Some(CValue::Int32(resolved) | CValue::UInt8(resolved))
+                        if resolved == *value
+                )
+            })
+            .unwrap_or(false)
+        };
+        resolves_to(left, right) || resolves_to(right, left)
+    });
+    EXPLICIT_DAG_REPLAY.with(|flag| flag.set(previous));
     result
 }
 

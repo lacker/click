@@ -326,13 +326,13 @@ thread_local! {
 /// live borrow further up the stack: while such a borrow is alive its object
 /// cannot be dropped, so an equal address is the same object with the same
 /// contents.
-pub(super) struct AssumptionsIdScope {
+pub(crate) struct AssumptionsIdScope {
     id: u64,
     pushed: bool,
 }
 
 impl AssumptionsIdScope {
-    fn enter(assumptions: &Assumptions) -> Self {
+    pub(crate) fn enter(assumptions: &Assumptions) -> Self {
         if let Some(id) = ambient_assumptions_memo_id(assumptions) {
             return Self { id, pushed: false };
         }
@@ -5696,6 +5696,100 @@ impl Assumptions {
         })
     }
 
+    pub(super) fn pointers_proven_disjoint_by_shallow_explicit_range(
+        &self,
+        left: &Pointer,
+        right: &Pointer,
+    ) -> bool {
+        self.prop_facts.iter().any(|proposition| match proposition {
+            Proposition::CMemoryDisjoint {
+                left_base,
+                left_start,
+                left_end,
+                right_base,
+                right_start,
+                right_end,
+            } => {
+                self.pointer_in_range_by_shallow_fact_graph(
+                    left, left_base, left_start, left_end,
+                ) && self.pointer_in_range_by_shallow_fact_graph(
+                    right, right_base, right_start, right_end,
+                ) || self.pointer_in_range_by_shallow_fact_graph(
+                    right, left_base, left_start, left_end,
+                ) && self.pointer_in_range_by_shallow_fact_graph(
+                    left, right_base, right_start, right_end,
+                )
+            }
+            Proposition::CResourceSeparate {
+                left: CResource::Memory(left_range),
+                right: CResource::Memory(right_range),
+            } => {
+                self.pointer_in_range_by_shallow_fact_graph(
+                    left,
+                    left_range.base(),
+                    left_range.start(),
+                    left_range.end(),
+                ) && self.pointer_in_range_by_shallow_fact_graph(
+                    right,
+                    right_range.base(),
+                    right_range.start(),
+                    right_range.end(),
+                ) || self.pointer_in_range_by_shallow_fact_graph(
+                    right,
+                    left_range.base(),
+                    left_range.start(),
+                    left_range.end(),
+                ) && self.pointer_in_range_by_shallow_fact_graph(
+                    left,
+                    right_range.base(),
+                    right_range.start(),
+                    right_range.end(),
+                )
+            }
+            _ => false,
+        })
+    }
+
+    fn pointer_in_range_by_shallow_fact_graph(
+        &self,
+        pointer: &Pointer,
+        base: &Pointer,
+        start: &Bitvector32Term,
+        end: &Bitvector32Term,
+    ) -> bool {
+        if pointer_in_range_shallow(pointer, base, start, end) {
+            return true;
+        }
+        if pointer.block != base.block {
+            return false;
+        }
+        let offset_matches = |left: &PointerOffsetTerm, right: &PointerOffsetTerm| {
+            pointer_offsets_match_by_shallow_fact_graph(left, right, self)
+        };
+        let index = match &pointer.offset {
+            PointerOffsetTerm::Add(left, right) if offset_matches(left, &base.offset) => {
+                int32_element_index_from_offset(right)
+            }
+            PointerOffsetTerm::Add(left, right) if offset_matches(right, &base.offset) => {
+                int32_element_index_from_offset(left)
+            }
+            _ if offset_matches(&pointer.offset, &base.offset) => {
+                Some(Bitvector32Term::Constant(0))
+            }
+            _ => None,
+        };
+        let Some(index) = index else {
+            return false;
+        };
+        let (Some(offset), Some(length)) = (
+            affine_bitvector_difference_constant(&index, start),
+            affine_bitvector_difference_constant(end, start),
+        ) else {
+            return false;
+        };
+        0 <= offset && offset < length
+    }
+
     pub(super) fn pointers_proven_disjoint_by_explicit_range_for_memory_resolution_with_depth(
         &self,
         left: &Pointer,
@@ -7157,6 +7251,38 @@ fn exact_less_equal_for_memory_resolution(
 
 fn pointer_in_memory_range_shallow(pointer: &Pointer, range: &CMemoryRange) -> bool {
     pointer_in_range_shallow(pointer, range.base(), range.start(), range.end())
+}
+
+fn pointer_offsets_match_by_shallow_fact_graph(
+    left: &PointerOffsetTerm,
+    right: &PointerOffsetTerm,
+    assumptions: &Assumptions,
+) -> bool {
+    if left == right {
+        return true;
+    }
+    match (left, right) {
+        (
+            PointerOffsetTerm::Add(left_a, left_b),
+            PointerOffsetTerm::Add(right_a, right_b),
+        ) => {
+            pointer_offsets_match_by_shallow_fact_graph(left_a, right_a, assumptions)
+                && pointer_offsets_match_by_shallow_fact_graph(left_b, right_b, assumptions)
+        }
+        (
+            PointerOffsetTerm::Int32Scaled {
+                value: left,
+                byte_width: left_width,
+            },
+            PointerOffsetTerm::Int32Scaled {
+                value: right,
+                byte_width: right_width,
+            },
+        ) => {
+            left_width == right_width && assumptions.bitvector_terms_equal_from_facts(left, right)
+        }
+        _ => false,
+    }
 }
 
 fn pointer_in_memory_range_for_memory_resolution_with_depth(

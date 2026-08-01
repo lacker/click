@@ -243,10 +243,10 @@ fn equal_by_premise_chain(
         let right = right.clone();
         let left_class = classes
             .iter()
-            .position(|class| class.iter().any(|term| terms_equivalent(term, &left)));
+            .position(|class| class.contains(&left));
         let right_class = classes
             .iter()
-            .position(|class| class.iter().any(|term| terms_equivalent(term, &right)));
+            .position(|class| class.contains(&right));
         match (left_class, right_class) {
             (Some(a), Some(b)) if a != b => {
                 let merged = classes.remove(a.max(b));
@@ -310,7 +310,7 @@ fn equal_by_premise_chain(
     let Bitvector32Term::MemoryLoad(target_memory, target_pointer) = &target_left else {
         return false;
     };
-    premises.iter().any(|premise| {
+    premises.iter().chain(available).any(|premise| {
         let Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), true) = premise
         else {
             return false;
@@ -395,7 +395,51 @@ fn check_atomic_derivation_goal(
         .map(normalize_direct_atomic_memory_loads)
         .collect::<Vec<_>>();
     let normalized_target = normalize_direct_atomic_memory_loads(&target);
-    if pointer_offset_equality_by_frame(&target, available)
+    let premise_assumptions = assumptions_from_propositions(&premises);
+    let premise_only_derivation = match tactic {
+        ProofTactic::Derive(_) => premise_assumptions.derive_atomic_proposition(&target),
+        ProofTactic::Calculate(_) => premise_assumptions.derive_simp_atomic_proposition(&target),
+        _ => None,
+    };
+    if premise_only_derivation.is_some() {
+        return Ok(());
+    }
+    let explicit_assumptions = assumptions_from_propositions(available);
+    let explicit_terms_equal = |left: &Bitvector32Term, right: &Bitvector32Term| {
+        left == right
+            || crate::kernel::explicit_atomic_equality_from_memory_derivations(
+                left,
+                right,
+                &explicit_assumptions,
+            )
+    };
+    let explicit_dag_equality = matches!(
+        &target,
+        Proposition::ConditionIs(condition, true)
+            if match condition {
+                ConditionTerm::Bitvector32Equal(left, right) => {
+                    explicit_terms_equal(left, right)
+                }
+                ConditionTerm::PointerOffsetEqual(left, right) => {
+                    pointer_offsets_match_by_term_equivalence(
+                        left,
+                        right,
+                        &explicit_terms_equal,
+                    )
+                }
+                ConditionTerm::PointerEqual(left, right) => {
+                    left.block == right.block
+                        && pointer_offsets_match_by_term_equivalence(
+                            &left.offset,
+                            &right.offset,
+                            &explicit_terms_equal,
+                        )
+                }
+                _ => false,
+            }
+    );
+    if explicit_dag_equality
+        || pointer_offset_equality_by_frame(&target, available)
         || equal_by_premise_chain(&premises, &target, available)
     {
         return Ok(());
@@ -421,29 +465,33 @@ fn check_atomic_derivation_goal(
         combined.extend(effect_context.iter().cloned());
         combined
     };
+    let derive_from = |facts: &[Proposition], target: &Proposition| {
+        let assumptions = assumptions_from_propositions(facts);
+        match tactic {
+            ProofTactic::Derive(_) => assumptions
+                .derive_atomic_proposition(target)
+                .or_else(|| assumptions.derive_proposition(target)),
+            ProofTactic::Calculate(_) => assumptions
+                .derive_simp_atomic_proposition(target)
+                .or_else(|| assumptions.derive_simp_proposition(target)),
+            _ => None,
+        }
+    };
     // Try the premises as spelled before normalizing: snapshot-bridging
     // derivations can depend on the recorded load spellings that
     // normalization rewrites.
-    let raw_assumptions = assumptions_from_propositions(&with_effect_context(&premises));
-    let raw_derivation = match tactic {
-        ProofTactic::Derive(_) => raw_assumptions
-            .derive_atomic_proposition(&target)
-            .or_else(|| raw_assumptions.derive_proposition(&target)),
-        ProofTactic::Calculate(_) => raw_assumptions
-            .derive_simp_atomic_proposition(&target)
-            .or_else(|| raw_assumptions.derive_simp_proposition(&target)),
-        _ => return Err("not a derivation tactic".to_string()),
-    };
-    let assumptions = assumptions_from_propositions(&with_effect_context(&normalized_premises));
-    let derivation = raw_derivation.or_else(|| match tactic {
-        ProofTactic::Derive(_) => assumptions
-            .derive_atomic_proposition(&normalized_target)
-            .or_else(|| assumptions.derive_proposition(&normalized_target)),
-        ProofTactic::Calculate(_) => assumptions
-            .derive_simp_atomic_proposition(&normalized_target)
-            .or_else(|| assumptions.derive_simp_proposition(&normalized_target)),
-        _ => None,
-    });
+    if !matches!(tactic, ProofTactic::Derive(_) | ProofTactic::Calculate(_)) {
+        return Err("not a derivation tactic".to_string());
+    }
+    let derivation = derive_from(&premises, &target)
+        .or_else(|| derive_from(&with_effect_context(&premises), &target))
+        .or_else(|| derive_from(&normalized_premises, &normalized_target))
+        .or_else(|| {
+            derive_from(
+                &with_effect_context(&normalized_premises),
+                &normalized_target,
+            )
+        });
     // Premises recorded at different program points can spell the same load
     // through different snapshots; retry with canonical loads so the chain
     // unifies.
@@ -457,17 +505,12 @@ fn check_atomic_derivation_goal(
         if canonical_premises == normalized_premises && canonical_target == normalized_target {
             return None;
         }
-        let canonical_assumptions =
-            assumptions_from_propositions(&with_effect_context(&canonical_premises));
-        match tactic {
-            ProofTactic::Derive(_) => canonical_assumptions
-                .derive_atomic_proposition(&canonical_target)
-                .or_else(|| canonical_assumptions.derive_proposition(&canonical_target)),
-            ProofTactic::Calculate(_) => canonical_assumptions
-                .derive_simp_atomic_proposition(&canonical_target)
-                .or_else(|| canonical_assumptions.derive_simp_proposition(&canonical_target)),
-            _ => None,
-        }
+        derive_from(&canonical_premises, &canonical_target).or_else(|| {
+            derive_from(
+                &with_effect_context(&canonical_premises),
+                &canonical_target,
+            )
+        })
     });
     if derivation.is_none()
         && (pointer_offset_equality_by_frame(&normalized_target, available)
@@ -1206,6 +1249,20 @@ mod certificate_tests {
         });
 
         assert_eq!(source_tactic_class(&have), SourceTacticClass::Simple);
+    }
+
+    #[test]
+    fn post_execution_timing_charges_have_as_control_flow() {
+        let have = PostExecutionTactic::Have(ProofHave {
+            proposition: ClickProposition::Comparison {
+                left: ContractExpression::CFragment(CExpression::Value(int32(1))),
+                operator: ComparisonOperator::Equal,
+                right: ContractExpression::CFragment(CExpression::Value(int32(1))),
+            },
+            proof: Proof::Script(vec![ProofTactic::Assumption]),
+        });
+
+        assert_eq!(post_execution_tactic_timing(&have), ("have", "control"));
     }
 
     #[test]
@@ -3523,7 +3580,7 @@ fn post_execution_tactic_timing(post_tactic: &PostExecutionTactic) -> (&'static 
             if smart_simp_unfold_prefix(&have.proof).is_some() {
                 "smart"
             } else {
-                "simple"
+                "control"
             },
         ),
         PostExecutionTactic::Transport { premises, .. } => (
@@ -11220,6 +11277,16 @@ fn finish_ordered_proof_replay(
                             )));
                         };
                         let mut certificate_available = path_requirements.clone();
+                        for fact in &replay.effect_facts {
+                            if matches!(
+                                fact.proposition(),
+                                Proposition::CMemoryMutatesOnly { .. }
+                                    | Proposition::CMemoryEffectSummary { .. }
+                            ) && !certificate_available.contains(fact.proposition())
+                            {
+                                certificate_available.push(fact.proposition().clone());
+                            }
+                        }
                         for equation in
                             crate::kernel::certified_store_equations(&replay.effect_facts)
                         {
@@ -11384,24 +11451,51 @@ fn finish_ordered_proof_replay(
                             // reports that, and the expressibility gate only
                             // decides whether a *successful* smart closure may
                             // stand.
-                            let fact = prove_have_at_point(
-                                have,
-                                theorem_environment,
-                                &proof_label,
-                                *tactic_index,
-                                &certificate_available,
-                                parsed_function.parameters(),
-                                arguments,
-                                pre_state,
-                                post_state,
-                                Some(result),
-                                &replay.program_point_states,
-                                Some(&outcome_surface_propositions),
-                                predicate_environment,
-                                click_function_environment,
-                                function_block.requires(),
-                                Some(path_index),
-                            )?;
+                            let replay_have = |available: &[Proposition]| {
+                                prove_have_at_point(
+                                    have,
+                                    theorem_environment,
+                                    &proof_label,
+                                    *tactic_index,
+                                    available,
+                                    parsed_function.parameters(),
+                                    arguments,
+                                    pre_state,
+                                    post_state,
+                                    Some(result),
+                                    &replay.program_point_states,
+                                    Some(&outcome_surface_propositions),
+                                    predicate_environment,
+                                    click_function_environment,
+                                    function_block.requires(),
+                                    Some(path_index),
+                                )
+                            };
+                            let fact = match replay_have(&certificate_available) {
+                                Ok(fact) => fact,
+                                Err(error) => {
+                                    if !error
+                                        .message()
+                                        .contains("missing pure fact: loadable(")
+                                    {
+                                        return Err(error);
+                                    }
+                                    let mut loadable_available = certificate_available.clone();
+                                    for fact in
+                                        crate::kernel::certified_store_loadability_facts(
+                                            &replay.effect_facts,
+                                        )
+                                    {
+                                        if !loadable_available.contains(&fact) {
+                                            loadable_available.push(fact);
+                                        }
+                                    }
+                                    if loadable_available == certificate_available {
+                                        return Err(error);
+                                    }
+                                    replay_have(&loadable_available)?
+                                }
+                            };
                             let mut surface_tactic = ProofTactic::Have(have.clone());
                             if let Err(error) = TacticCertificate::from_proof_tactics(
                                 std::slice::from_ref(&surface_tactic),
@@ -23219,7 +23313,6 @@ fn fold_composite_resources_on_outcome(
                 )));
             }
         }
-
         let CFunctionOutcome::Return { value, state } = outcome else {
             return Err(ClickError::new(format!(
                 "`{claim_label}` path {path_index}: `fold({})` requires a return outcome, got {}\n  execution pure facts: {}",
@@ -23239,6 +23332,7 @@ fn fold_composite_resources_on_outcome(
                 .map(|fact| fact.proposition().clone()),
         );
         let assumptions = assumptions_from_propositions(&fold_facts);
+        let _assumptions_id_scope = crate::kernel::AssumptionsIdScope::enter(&assumptions);
         let mut lowered_contained = Vec::new();
         for contained in composite_body.contains() {
             let contained =
