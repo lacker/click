@@ -5407,18 +5407,30 @@ impl Assumptions {
             return true;
         }
 
-        self.prop_facts.iter().any(|proposition| {
-            let Proposition::CMemoryLoadable {
-                memory: range_memory,
-                base: range_base,
-                bytes: range_bytes,
-            } = proposition
-            else {
-                return false;
-            };
-
-            memory_range_still_available(range_memory, memory, range_base)
-                && self.proves_loadable_region_from_range(range_base, range_bytes, base, bytes)
+        let mut ranges = self
+            .prop_facts
+            .iter()
+            .filter_map(|proposition| {
+                let Proposition::CMemoryLoadable {
+                    memory: range_memory,
+                    base: range_base,
+                    bytes: range_bytes,
+                } = proposition
+                else {
+                    return None;
+                };
+                memory_range_still_available(range_memory, memory, range_base).then(|| {
+                    let preferred = bytes.as_const() == Some(4)
+                        && self
+                            .pointer_element_index_from_base_for_memory_resolution(base, range_base)
+                            .is_some();
+                    (preferred, range_base, range_bytes)
+                })
+            })
+            .collect::<Vec<_>>();
+        ranges.sort_by_key(|(preferred, _, _)| !preferred);
+        ranges.into_iter().any(|(_, range_base, range_bytes)| {
+            self.proves_loadable_region_from_range(range_base, range_bytes, base, bytes)
         })
     }
 
@@ -5848,9 +5860,48 @@ impl Assumptions {
         if pointer.block != base.block {
             return None;
         }
-        if pointer.offset == base.offset {
-            return Some(Bitvector32Term::Constant(0));
+        if let Some(index) =
+            self.pointer_element_index_from_base_for_memory_resolution(pointer, base)
+        {
+            return Some(index);
         }
+
+        if let PointerOffsetTerm::Add(left, right) = &pointer.offset {
+            if self.decide(&ConditionTerm::pointer_offset_equal(
+                left.as_ref().clone(),
+                base.offset.clone(),
+            )) == Some(true)
+            {
+                return int32_element_index_from_offset(right);
+            }
+            if self.decide(&ConditionTerm::pointer_offset_equal(
+                right.as_ref().clone(),
+                base.offset.clone(),
+            )) == Some(true)
+            {
+                return int32_element_index_from_offset(left);
+            }
+        }
+
+        if let PointerOffsetTerm::Add(left, right) = &base.offset {
+            if self.decide(&ConditionTerm::pointer_offset_equal(
+                pointer.offset.clone(),
+                left.as_ref().clone(),
+            )) == Some(true)
+            {
+                return int32_element_index_from_offset(right)
+                    .map(|index| Bitvector32Term::subtract(Bitvector32Term::Constant(0), index));
+            }
+            if self.decide(&ConditionTerm::pointer_offset_equal(
+                pointer.offset.clone(),
+                right.as_ref().clone(),
+            )) == Some(true)
+            {
+                return int32_element_index_from_offset(left)
+                    .map(|index| Bitvector32Term::subtract(Bitvector32Term::Constant(0), index));
+            }
+        }
+
         if self.decide(&ConditionTerm::pointer_offset_equal(
             pointer.offset.clone(),
             base.offset.clone(),
@@ -5859,47 +5910,48 @@ impl Assumptions {
             return Some(Bitvector32Term::Constant(0));
         }
 
+        pointer.element_index_from_base(base)
+    }
+
+    fn pointer_element_index_from_base_for_memory_resolution(
+        &self,
+        pointer: &Pointer,
+        base: &Pointer,
+    ) -> Option<Bitvector32Term> {
+        if pointer.block != base.block {
+            return None;
+        }
+        if pointer.offset == base.offset {
+            return Some(Bitvector32Term::Constant(0));
+        }
+        let offsets_match_for_resolution =
+            |left: &PointerOffsetTerm, right: &PointerOffsetTerm| {
+                left == right
+                    || super::reasoning::with_memory_resolution_fuel(|| {
+                        super::reasoning::pointer_offsets_equal_for_memory_resolution(
+                            left, right, self, 0,
+                        ) == Some(true)
+                    })
+            };
         if let PointerOffsetTerm::Add(left, right) = &pointer.offset {
-            if left.as_ref() == &base.offset
-                || self.decide(&ConditionTerm::pointer_offset_equal(
-                    left.as_ref().clone(),
-                    base.offset.clone(),
-                )) == Some(true)
-            {
+            if offsets_match_for_resolution(left, &base.offset) {
                 return int32_element_index_from_offset(right);
             }
-            if right.as_ref() == &base.offset
-                || self.decide(&ConditionTerm::pointer_offset_equal(
-                    right.as_ref().clone(),
-                    base.offset.clone(),
-                )) == Some(true)
-            {
+            if offsets_match_for_resolution(right, &base.offset) {
                 return int32_element_index_from_offset(left);
             }
         }
-
         if let PointerOffsetTerm::Add(left, right) = &base.offset {
-            if &pointer.offset == left.as_ref()
-                || self.decide(&ConditionTerm::pointer_offset_equal(
-                    pointer.offset.clone(),
-                    left.as_ref().clone(),
-                )) == Some(true)
-            {
+            if offsets_match_for_resolution(&pointer.offset, left) {
                 return int32_element_index_from_offset(right)
                     .map(|index| Bitvector32Term::subtract(Bitvector32Term::Constant(0), index));
             }
-            if &pointer.offset == right.as_ref()
-                || self.decide(&ConditionTerm::pointer_offset_equal(
-                    pointer.offset.clone(),
-                    right.as_ref().clone(),
-                )) == Some(true)
-            {
+            if offsets_match_for_resolution(&pointer.offset, right) {
                 return int32_element_index_from_offset(left)
                     .map(|index| Bitvector32Term::subtract(Bitvector32Term::Constant(0), index));
             }
         }
-
-        pointer.element_index_from_base(base)
+        None
     }
 
     pub(super) fn pointer_in_range(

@@ -4413,6 +4413,9 @@ fn minimal_proposition_derivation(
     {
         return Some(derivation);
     }
+    if condition_derivation_has_deep_terms(proposition) {
+        return None;
+    }
     let derive = |facts: &[Proposition]| {
         let assumptions = assumptions_from_propositions(facts);
         assumptions
@@ -4465,6 +4468,10 @@ fn bounded_condition_derivation(
 ) -> Option<PropositionDerivation> {
     const CANDIDATE_LIMIT: usize = 48;
 
+    if condition_derivation_has_deep_terms(proposition) {
+        return None;
+    }
+
     let candidates = available
         .iter()
         .filter(|fact| matches!(fact, Proposition::ConditionIs(_, _)))
@@ -4490,6 +4497,33 @@ fn bounded_condition_derivation(
         }
     }
     None
+}
+
+fn condition_derivation_has_deep_terms(proposition: &Proposition) -> bool {
+    const TERM_DEPTH_LIMIT: usize = 16;
+
+    // Certificate-context minimization is optional: returning no candidate
+    // leaves the existing diagnostic path in charge. General derivation over
+    // deeply nested memory snapshots can make each singleton/pair probe
+    // pathological, so do not enter that search for terms beyond this bound.
+    let Proposition::ConditionIs(condition, _) = proposition else {
+        return false;
+    };
+    let (left, right) = match condition {
+        ConditionTerm::Bitvector32SignedLessThan(left, right)
+        | ConditionTerm::Bitvector32SignedLessEqual(left, right)
+        | ConditionTerm::Bitvector32SignedGreaterThan(left, right)
+        | ConditionTerm::Bitvector32SignedGreaterEqual(left, right)
+        | ConditionTerm::Bitvector32Equal(left, right)
+        | ConditionTerm::Bitvector32SignedAddOverflows(left, right)
+        | ConditionTerm::Bitvector32SignedSubtractOverflows(left, right)
+        | ConditionTerm::Bitvector32SignedMultiplyOverflows(left, right)
+        | ConditionTerm::Bitvector32SignedDivideOverflows(left, right)
+        | ConditionTerm::Bitvector32SignedShiftLeftOverflows(left, right) => (left, right),
+        _ => return false,
+    };
+    crate::kernel::bitvector_term_deeper_than(left, TERM_DEPTH_LIMIT)
+        || crate::kernel::bitvector_term_deeper_than(right, TERM_DEPTH_LIMIT)
 }
 
 fn derivation_replays_with_materialized_context(

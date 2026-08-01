@@ -558,28 +558,35 @@ pub(super) fn atomic_loads_equal_along_memory_derivations(
         );
     }
     // The same (snapshot, snapshot, pointer) triple is asked thousands of
-    // times per proof; the walks are deterministic given the fact set and
-    // the recorded edges, so the answer is cached under exactly those
-    // inputs. The derivation generation invalidates "false" answers when a
-    // later-recorded edge could connect what was disconnected. Only
-    // depth-zero answers participate: a nested lookup sees the depth cutoff
-    // and its weaker answer must not shadow the full one.
+    // times per proof. A proven equality stays true as new first-wins DAG
+    // edges are recorded: the edges only add faithful derivations of already
+    // existing snapshots. Cache those positive answers independently of the
+    // derivation generation. A negative answer only means "not connected
+    // yet", so it remains generation-scoped and is retried after any new
+    // edge. Only depth-zero answers participate: a nested lookup sees the
+    // depth cutoff and its weaker answer must not shadow the full one.
     let memo_key = (CELL_LOOKUP_DEPTH.with(std::cell::Cell::get) == 0)
         .then(|| super::assumptions::dag_memo_assumptions_id(assumptions))
         .flatten()
-        .map(|memo_id| {
-            (
-                memo_id,
-                c_memory_derivation_generation(),
-                left_memory.arena_id(),
-                right_memory.arena_id(),
-                left_pointer.as_ref().clone(),
-            )
+        .map(|assumptions_id| DagLoadEqualityMemoKey {
+            assumptions_id,
+            left_memory: left_memory.arena_id(),
+            right_memory: right_memory.arena_id(),
+            pointer: left_pointer.as_ref().clone(),
         });
     if let Some(key) = &memo_key
-        && let Some(hit) = DAG_LOAD_EQUALITY_MEMO.with(|memo| memo.borrow().get(key).copied())
+        && DAG_LOAD_EQUALITY_POSITIVE_MEMO.with(|memo| memo.borrow().contains(key))
     {
-        return hit;
+        return true;
+    }
+    let derivation_generation = c_memory_derivation_generation();
+    if let Some(key) = &memo_key
+        && DAG_LOAD_EQUALITY_NEGATIVE_MEMO.with(|memo| {
+            memo.borrow()
+                .contains(&(derivation_generation, key.clone()))
+        })
+    {
+        return false;
     }
     let result = loads_equal_along_memory_derivations_at(
         left_memory,
@@ -599,22 +606,42 @@ pub(super) fn atomic_loads_equal_along_memory_derivations(
     })
     .unwrap_or(false);
     if let Some(key) = memo_key {
-        DAG_LOAD_EQUALITY_MEMO.with(|memo| {
-            let mut memo = memo.borrow_mut();
-            if memo.len() >= DAG_LOAD_EQUALITY_MEMO_LIMIT {
-                memo.clear();
-            }
-            memo.insert(key, result);
-        });
+        if result {
+            DAG_LOAD_EQUALITY_POSITIVE_MEMO.with(|memo| {
+                let mut memo = memo.borrow_mut();
+                if memo.len() >= DAG_LOAD_EQUALITY_MEMO_LIMIT {
+                    memo.clear();
+                }
+                memo.insert(key);
+            });
+        } else {
+            DAG_LOAD_EQUALITY_NEGATIVE_MEMO.with(|memo| {
+                let mut memo = memo.borrow_mut();
+                if memo.len() >= DAG_LOAD_EQUALITY_MEMO_LIMIT {
+                    memo.clear();
+                }
+                memo.insert((derivation_generation, key));
+            });
+        }
     }
     result
 }
 
+#[derive(Clone, Eq, Hash, PartialEq)]
+struct DagLoadEqualityMemoKey {
+    assumptions_id: u64,
+    left_memory: (u32, u32),
+    right_memory: (u32, u32),
+    pointer: Pointer,
+}
+
 thread_local! {
-    #[allow(clippy::type_complexity)]
-    static DAG_LOAD_EQUALITY_MEMO: std::cell::RefCell<
-        std::collections::HashMap<(u64, u64, (u32, u32), (u32, u32), Pointer), bool>,
-    > = std::cell::RefCell::new(std::collections::HashMap::new());
+    static DAG_LOAD_EQUALITY_POSITIVE_MEMO: std::cell::RefCell<
+        std::collections::HashSet<DagLoadEqualityMemoKey>,
+    > = std::cell::RefCell::new(std::collections::HashSet::new());
+    static DAG_LOAD_EQUALITY_NEGATIVE_MEMO: std::cell::RefCell<
+        std::collections::HashSet<(u64, DagLoadEqualityMemoKey)>,
+    > = std::cell::RefCell::new(std::collections::HashSet::new());
 }
 
 const DAG_LOAD_EQUALITY_MEMO_LIMIT: usize = 200_000;

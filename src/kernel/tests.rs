@@ -7268,8 +7268,8 @@ fn sibling_snapshots_resolve_one_cell_to_a_common_ancestor() {
     );
 }
 
-/// The owned-string loadable shape (issues/owned-string-loadable-bridging-slow.md):
-/// the permission fact and its bound facts spell `len` as a load at contract
+/// The owned-string loadable shape: the permission fact and its bound facts
+/// spell `len` as a load at contract
 /// entry, while the index the goal extracts spells it at a later snapshot
 /// separated by a block declaration, stores, and a cell-forgetting prune —
 /// exactly the edges (`BlockDeclared`, `CellsForgotten`) that used to leave
@@ -7292,6 +7292,24 @@ fn loadable_bound_check_bridges_len_spellings_across_block_and_prune_edges() {
     // The recorded facts: the buffer permission and both `len` bounds, all
     // spelled at entry.
     let assumptions = Assumptions::new()
+        // Same-block permissions that cannot cover `buffer[len]`. These used
+        // to trigger costly general equality searches before the matching
+        // symbolic range was considered.
+        .assume_proposition(Proposition::CMemoryLoadable {
+            memory: entry.clone(),
+            base: arc_pointer(0),
+            bytes: Bitvector32Term::Constant(4),
+        })
+        .assume_proposition(Proposition::CMemoryLoadable {
+            memory: entry.clone(),
+            base: arc_pointer(8),
+            bytes: Bitvector32Term::Constant(4),
+        })
+        .assume_proposition(Proposition::CMemoryLoadable {
+            memory: entry.clone(),
+            base: arc_pointer(12),
+            bytes: Bitvector32Term::Constant(4),
+        })
         .assume_proposition(Proposition::CMemoryLoadable {
             memory: entry.clone(),
             base: arc_pointer(16),

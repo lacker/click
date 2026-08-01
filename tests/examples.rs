@@ -20,7 +20,7 @@ const DEFAULT_EXAMPLE_TIME_LIMIT: Duration = Duration::from_secs(10 * 60);
 const QUARANTINED: &[(&str, &str)] = &[
     (
         "owned-string",
-        "certificate spelling fails after expensive loadable-DAG bridging; see issues/certificate-spelling-gap.md and issues/owned-string-loadable-bridging-slow.md",
+        "certificate spelling fails for the post-store terminated_at equality; see issues/certificate-spelling-gap.md",
     ),
     (
         "owned-vector",

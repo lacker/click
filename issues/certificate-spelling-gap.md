@@ -17,8 +17,10 @@ Verified status (2026-07-31):
   is produced, so this is no longer accurately described as only a missing
   spelling for an otherwise-complete candidate. It also retains the independent
   slow fold in `field-derived-slow-fold.md`.
-- `owned-string` (historically 5m26s; see
-  `owned-string-loadable-bridging-slow.md`) has not been rerun in this pass.
+- `owned-string` now reaches its next frontier in about 10.4 s instead of the
+  historical 5m26s. The independent loadable-DAG bridging cost is fixed; the
+  example remains quarantined because certificate replay cannot yet spell the
+  post-store `terminated_at` equality used by `owned_string_push.contract`.
 
 History: these are regressions from the 2026-07 certificate-strictness work;
 bisect verdicts and the full experiment record are in git history
@@ -27,6 +29,6 @@ bisect verdicts and the full experiment record are in git history
 uncommitted covering-loadability experiment was not copied; the applied repair
 is narrower and replay-checked.
 
-Done when: field-derived's effect-chain claims certify, owned-string's frontier
-moves, and this issue can be deleted. The remaining deterministic performance
-bugs are tracked separately.
+Done when: field-derived's effect-chain claims certify, owned-string's
+post-store equality certifies, and this issue can be deleted. The remaining
+deterministic performance bugs are tracked separately.

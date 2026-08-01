@@ -117,8 +117,8 @@ globally.
 
 ## Landed 2026-07-31: fourth and fifth edge kinds, scoped consumers
 
-The owned-string loadable work (issues/owned-string-loadable-bridging-slow.md)
-landed the punted block-allocation edge plus one nobody had recorded:
+The owned-string loadable work landed the punted block-allocation edge plus one
+nobody had recorded:
 
 - `BlockDeclared` — recorded by `CMemory::with_block`, NEVER for havoc
   marker blocks (`havoc:` / `call-havoc:` prefixes): a with_block-spelled
@@ -149,6 +149,16 @@ enclosing query's budget (fuel-coupled spellings must replay).
 Session 1's displacement worry (first-wins letting a BlockDeclared /
 CellsForgotten edge shadow a Store edge on content-equal snapshots) has
 not bitten: both gate passes green in both DAG modes.
+
+The initial implementation made owned-string take 5m26s to reach its next
+failure. The resolved cost had three parts: proven DAG load equalities now live
+in a generation-independent positive cache (only negative answers are retried
+after an edge is added); four-byte loadability checks rank bounded
+structure/DAG-matching ranges ahead of unrelated same-block ranges; and
+certificate minimization declines optional general search over deeply nested
+snapshot terms. The same run now reaches the separate certificate-spelling
+frontier in about 10.4s. The regression test keeps several misleading
+same-block permissions alongside the owned-string symbolic buffer range.
 
 The old rationale, for reference: entry states and executing states sat
 in **disjoint DAG components** ("arena identity is connected, arena
