@@ -2243,6 +2243,60 @@ fn assumptions_prove_implication_with_refuted_antecedent() {
 }
 
 #[test]
+fn simp_derives_vacuous_implication_before_searching_large_consequent() {
+    fn unknown_tree(depth: usize, index: usize) -> Proposition {
+        if depth == 0 {
+            return Proposition::Predicate {
+                name: format!("unknown_{index}"),
+                arguments: Vec::new(),
+            };
+        }
+        Proposition::And(
+            Box::new(unknown_tree(depth - 1, index * 2)),
+            Box::new(unknown_tree(depth - 1, index * 2 + 1)),
+        )
+    }
+
+    let condition = ConditionTerm::equal(
+        Bitvector32Term::Variable(Variable(93)),
+        Bitvector32Term::Constant(0),
+    );
+    let antecedent = Proposition::ConditionIs(condition.clone(), true);
+    let consequent = unknown_tree(9, 0);
+    let goal = Proposition::Implies(Box::new(antecedent), Box::new(consequent));
+    let assumptions = Assumptions::new().assume_condition(condition, false);
+
+    let derivation = assumptions
+        .derive_simp_proposition(&goal)
+        .expect("a refuted antecedent should close before inspecting the consequent");
+    assert!(derivation.replay(&assumptions));
+}
+
+#[test]
+fn simp_derives_implication_body_before_refuting_known_antecedent() {
+    let antecedent_condition = ConditionTerm::equal(
+        Bitvector32Term::Variable(Variable(94)),
+        Bitvector32Term::Constant(0),
+    );
+    let consequent_condition = ConditionTerm::equal(
+        Bitvector32Term::Variable(Variable(95)),
+        Bitvector32Term::Constant(7),
+    );
+    let goal = Proposition::Implies(
+        Box::new(Proposition::ConditionIs(antecedent_condition.clone(), true)),
+        Box::new(Proposition::ConditionIs(consequent_condition.clone(), true)),
+    );
+    let assumptions = Assumptions::new()
+        .assume_condition(antecedent_condition, true)
+        .assume_condition(consequent_condition, true);
+
+    let derivation = assumptions
+        .derive_simp_proposition(&goal)
+        .expect("a known antecedent should use the available consequent directly");
+    assert!(derivation.replay(&assumptions));
+}
+
+#[test]
 fn assumptions_simplify_overflow_through_equality_chain() {
     let index = Bitvector32Term::Variable(Variable(91));
     let length = Bitvector32Term::Variable(Variable(92));

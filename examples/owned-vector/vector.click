@@ -490,7 +490,6 @@ int32 vector_pipeline(
         fact at(statement(4).entry, observed) == at(statement(4).entry, 1);
         fact at(statement(3).entry, owner->data) == at(statement(3).entry, data);
         fact at(statement(3).entry, owner->cap) == at(statement(3).entry, capacity);
-        fact owner->len == ignored;
         fact owner->cap == capacity;
         fact owner->data == data;
         fact observed == (owner->data)[0];
@@ -538,7 +537,47 @@ int32 vector_pipeline(
         fact 0 < owner->len;
         fact owner->len == 1;
     }
-    execute_step();
+    step using {
+        fact owner->data == (owner + 1);
+        fact observed == owner->cap;
+        fact ignored < owner->len;
+        fact owner->len == 1;
+        fact owner->len == at(statement(5).entry, owner->len);
+        fact at(statement(5).entry, owner->len) == 1;
+        fact at(statement(5).entry, 1) <= at(statement(5).entry, capacity);
+        fact at(statement(2).entry, loadable(old(object(owner))));
+        fact at(statement(2).entry, loadable(old(data[0..capacity])));
+        fact at(statement(2).entry, separate(memory(owner[ignored..4]), memory(data[ignored..capacity])));
+        fact at(statement(3).entry, observed) == at(statement(3).entry, ignored);
+        fact at(statement(3).entry, owner->len) == at(statement(3).entry, 0);
+        fact at(statement(4).entry, observed) == at(statement(4).entry, 1);
+        fact at(statement(3).entry, owner->data) == data;
+        fact at(statement(3).entry, owner->cap) == at(statement(3).entry, capacity);
+        fact at(statement(5).entry, observed) == at(statement(5).entry, owner->data[0]);
+        fact at(statement(4).entry, owner->data[0]) == at(statement(4).entry, first);
+        fact owner->cap == at(statement(5).entry, owner->cap);
+        fact owner->data == at(statement(5).entry, owner->data);
+        fact owner->data[0] == replacement;
+        fact owner->data == data;
+        fact at(statement(6).entry, owner->len) == at(statement(6).entry, 1);
+        fact at(statement(6).entry, 0) < at(statement(6).entry, owner->len);
+        fact at(statement(5).entry, owner->data[0]) == at(statement(5).entry, first);
+        fact at(statement(5).entry, owner->data) == at(statement(5).entry, data);
+        fact at(statement(5).entry, 0) < at(statement(5).entry, owner->len);
+        fact at(statement(4).entry, owner->len) == at(statement(4).entry, 1);
+        fact at(statement(5).entry, owner->cap) == at(statement(5).entry, capacity);
+        fact at(statement(4).entry, owner->data) == at(statement(4).entry, data);
+        fact at(statement(4).entry, 0) < at(statement(4).entry, owner->len);
+        fact owner->len == owner->len;
+        fact owner->cap == owner->cap;
+        fact owner->data == owner->data;
+        fact separate(memory(owner->len), memory(owner->cap));
+        fact separate(memory(owner->len), memory(owner->data));
+        fact separate(memory(object(owner)), memory((owner->data)[0..owner->cap]));
+        fact separate(memory(owner->cap), memory(owner->data));
+        fact 1 <= owner->len;
+        fact owner->len <= owner->cap;
+    }
     have observed == at(statement(6).entry, (owner->data)[0]) by {
         derive(observed == at(statement(6).entry, (owner->data)[0])) using {
             fact observed == owner->cap;

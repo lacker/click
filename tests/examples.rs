@@ -22,10 +22,6 @@ const QUARANTINED: &[(&str, &str)] = &[
         "owned-string",
         "certificate failures are fixed, but the complete project exceeds the 10-minute example budget; see issues/owned-string-slow-proof.md",
     ),
-    (
-        "owned-vector",
-        "pathologically slow with a stale failure frontier; remeasure after the certificate-spelling gap lands (issues/owned-vector-implies-gap.md)",
-    ),
 ];
 
 #[test]

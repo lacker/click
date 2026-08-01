@@ -3743,22 +3743,29 @@ impl Assumptions {
             },
             Proposition::Implies(left, right) => {
                 let antecedent = left.as_ref().clone();
-                self.clone()
-                    .assume_proposition(antecedent.clone())
-                    .derive_proposition_using(right, for_simp)
-                    .map(|body| PropositionDerivationRule::Implies {
-                        antecedent,
-                        body: Box::new(body),
-                    })
-                    .or_else(|| {
-                        self.derive_proposition_using(
-                            &Proposition::Not(Box::new(left.as_ref().clone())),
-                            for_simp,
-                        )
+                let negated_antecedent = Proposition::Not(Box::new(antecedent.clone()));
+                if self.proves_exact(&negated_antecedent) {
+                    self.derive_proposition_using(&negated_antecedent, for_simp)
                         .map(|proof| {
                             PropositionDerivationRule::ImpliesFalseAntecedent(Box::new(proof))
                         })
-                    })
+                } else {
+                    self.clone()
+                        .assume_proposition(antecedent.clone())
+                        .derive_proposition_using(right, for_simp)
+                        .map(|body| PropositionDerivationRule::Implies {
+                            antecedent,
+                            body: Box::new(body),
+                        })
+                        .or_else(|| {
+                            self.derive_proposition_using(&negated_antecedent, for_simp)
+                                .map(|proof| {
+                                    PropositionDerivationRule::ImpliesFalseAntecedent(Box::new(
+                                        proof,
+                                    ))
+                                })
+                        })
+                }
             }
             Proposition::ForAll { var, body, .. } => {
                 let body_derivation = self
