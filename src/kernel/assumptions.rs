@@ -219,8 +219,28 @@ fn equality_graph_terms_match(left: &Bitvector32Term, right: &Bitvector32Term) -
 thread_local! {
     static SIMP_REASONING_FUEL: Cell<Option<usize>> = const { Cell::new(None) };
     static SIMP_FACT_REASONING_DEPTH: Cell<usize> = const { Cell::new(0) };
+    static ATOMIC_PREMISE_MINIMIZATION_DEPTH: Cell<usize> = const { Cell::new(0) };
     static CONDITION_DECISIONS_IN_PROGRESS: RefCell<BTreeSet<ConditionTerm>> =
         const { RefCell::new(BTreeSet::new()) };
+}
+
+struct AtomicPremiseMinimizationGuard;
+
+impl AtomicPremiseMinimizationGuard {
+    fn disable() -> Self {
+        ATOMIC_PREMISE_MINIMIZATION_DEPTH.with(|depth| depth.set(depth.get() + 1));
+        Self
+    }
+}
+
+impl Drop for AtomicPremiseMinimizationGuard {
+    fn drop(&mut self) {
+        ATOMIC_PREMISE_MINIMIZATION_DEPTH.with(|depth| depth.set(depth.get() - 1));
+    }
+}
+
+fn atomic_premise_minimization_disabled() -> bool {
+    ATOMIC_PREMISE_MINIMIZATION_DEPTH.with(|depth| depth.get() != 0)
 }
 
 /// True while any condition decision is in progress on this thread. Deep
@@ -246,6 +266,9 @@ thread_local! {
     > = RefCell::new(std::collections::HashMap::new());
     static CONSTANT_NORMALIZATION_MEMO: RefCell<
         std::collections::HashMap<(u64, Bitvector32Term), Option<i64>>,
+    > = RefCell::new(std::collections::HashMap::new());
+    static ATOMIC_DERIVATION_MEMO: RefCell<
+        std::collections::HashMap<(u64, bool), std::collections::HashMap<Proposition, bool>>,
     > = RefCell::new(std::collections::HashMap::new());
 }
 
@@ -303,7 +326,7 @@ thread_local! {
 /// live borrow further up the stack: while such a borrow is alive its object
 /// cannot be dropped, so an equal address is the same object with the same
 /// contents.
-struct AssumptionsIdScope {
+pub(super) struct AssumptionsIdScope {
     id: u64,
     pushed: bool,
 }
@@ -545,6 +568,14 @@ impl Proposition {
 }
 
 impl Assumptions {
+    /// Keep repeated decisions over this borrowed fact set under one memo
+    /// identity. Recursive memory resolution can ask several alias questions
+    /// about the same large context; without an enclosing scope each question
+    /// re-hashes the entire context before consulting the decision memo.
+    pub(super) fn enter_id_scope(&self) -> AssumptionsIdScope {
+        AssumptionsIdScope::enter(self)
+    }
+
     pub fn new() -> Self {
         Self::default()
     }
@@ -3520,6 +3551,18 @@ impl Assumptions {
         self.derive_proposition_using(proposition, false)
     }
 
+    /// Build a replayable derivation while retaining its complete atomic
+    /// premise sets. Internal deterministic checks that immediately replay and
+    /// discard the derivation do not benefit from the deletion-based premise
+    /// minimization used for emitted certificates.
+    pub(super) fn derive_proposition_without_premise_minimization(
+        &self,
+        proposition: &Proposition,
+    ) -> Option<PropositionDerivation> {
+        let _guard = AtomicPremiseMinimizationGuard::disable();
+        self.derive_proposition_using(proposition, false)
+    }
+
     pub fn derive_simp_proposition(
         &self,
         proposition: &Proposition,
@@ -3553,10 +3596,14 @@ impl Assumptions {
         for_simp: bool,
     ) -> Option<PropositionDerivation> {
         self.atomic_derivation_premises(proposition, for_simp)
-            .map(|premises| {
+            .map(|(premises, premises_id)| {
                 proposition_derivation(
                     proposition,
-                    PropositionDerivationRule::ContextualAtomic { premises, for_simp },
+                    PropositionDerivationRule::ContextualAtomic {
+                        premises,
+                        premises_id,
+                        for_simp,
+                    },
                 )
             })
     }
@@ -3571,12 +3618,17 @@ impl Assumptions {
         &self,
         proposition: &Proposition,
         for_simp: bool,
-    ) -> Option<Assumptions> {
+    ) -> Option<(Assumptions, u64)> {
         let condition_goal = match proposition {
             Proposition::ConditionIs(_, _) => true,
             Proposition::Not(body) => matches!(body.as_ref(), Proposition::ConditionIs(_, _)),
             _ => false,
         };
+        if atomic_premise_minimization_disabled() {
+            let (proved, premises_id) =
+                self.proves_atomic_for_derivation_with_id(proposition, for_simp);
+            return proved.then(|| (self.clone(), premises_id));
+        }
         if condition_goal {
             // Arithmetic and equality reasoning should emit the condition
             // facts that actually establish the atomic result, rather than
@@ -3603,7 +3655,10 @@ impl Assumptions {
                         candidate.condition_facts.insert(condition, value);
                     }
                 }
-                return Some(candidate);
+                let (proved, premises_id) =
+                    candidate.proves_atomic_for_derivation_with_id(proposition, for_simp);
+                debug_assert!(proved);
+                return Some((candidate, premises_id));
             }
         }
 
@@ -3632,13 +3687,16 @@ impl Assumptions {
                 let mut candidate = self.clone();
                 candidate.prop_facts.retain(|fact| !candidate_family(fact));
                 candidate.prop_facts.insert(selected);
-                if candidate.proves_atomic_for_derivation(proposition, for_simp) {
-                    return Some(candidate);
+                let (proved, premises_id) =
+                    candidate.proves_atomic_for_derivation_with_id(proposition, for_simp);
+                if proved {
+                    return Some((candidate, premises_id));
                 }
             }
         }
-        self.proves_atomic_for_derivation(proposition, for_simp)
-            .then(|| self.clone())
+        let (proved, premises_id) =
+            self.proves_atomic_for_derivation_with_id(proposition, for_simp);
+        proved.then(|| (self.clone(), premises_id))
     }
 
     fn derive_proposition_using(
@@ -3646,6 +3704,7 @@ impl Assumptions {
         proposition: &Proposition,
         for_simp: bool,
     ) -> Option<PropositionDerivation> {
+        let _id_scope = AssumptionsIdScope::enter(self);
         if !consume_simp_reasoning_fuel() {
             return None;
         }
@@ -3674,12 +3733,13 @@ impl Assumptions {
                 Proposition::Not(inner) => self
                     .derive_proposition_using(inner, for_simp)
                     .map(|proof| PropositionDerivationRule::DoubleNegation(Box::new(proof))),
-                _ => self
-                    .atomic_derivation_premises(proposition, for_simp)
-                    .map(|premises| PropositionDerivationRule::ContextualAtomic {
+                _ => self.atomic_derivation_premises(proposition, for_simp).map(
+                    |(premises, premises_id)| PropositionDerivationRule::ContextualAtomic {
                         premises,
+                        premises_id,
                         for_simp,
-                    }),
+                    },
+                ),
             },
             Proposition::Implies(left, right) => {
                 let antecedent = left.as_ref().clone();
@@ -3709,16 +3769,21 @@ impl Assumptions {
                     .or_else(|| self.derive_finite_forall(proposition, for_simp))
                     .or_else(|| {
                         self.atomic_derivation_premises(proposition, for_simp).map(
-                            |premises| PropositionDerivationRule::ContextualAtomic {
+                            |(premises, premises_id)| PropositionDerivationRule::ContextualAtomic {
                                 premises,
+                                premises_id,
                                 for_simp,
                             },
                         )
                     })
             }
-            _ => self
-                .atomic_derivation_premises(proposition, for_simp)
-                .map(|premises| PropositionDerivationRule::ContextualAtomic { premises, for_simp }),
+            _ => self.atomic_derivation_premises(proposition, for_simp).map(
+                |(premises, premises_id)| PropositionDerivationRule::ContextualAtomic {
+                    premises,
+                    premises_id,
+                    for_simp,
+                },
+            ),
         };
         if let Some(rule) = direct {
             return Some(proposition_derivation(proposition, rule));
@@ -4067,8 +4132,30 @@ impl Assumptions {
     }
 
     fn proves_atomic_for_derivation(&self, proposition: &Proposition, for_simp: bool) -> bool {
-        if for_simp {
-            return match proposition {
+        self.proves_atomic_for_derivation_with_id(proposition, for_simp)
+            .0
+    }
+
+    fn proves_atomic_for_derivation_with_id(
+        &self,
+        proposition: &Proposition,
+        for_simp: bool,
+    ) -> (bool, u64) {
+        let id_scope = AssumptionsIdScope::enter(self);
+        let premises_id = id_scope.id;
+        if !decide_memo_disabled()
+            && let Some(result) = ATOMIC_DERIVATION_MEMO.with(|memo| {
+                memo.borrow()
+                    .get(&(premises_id, for_simp))
+                    .and_then(|entries| entries.get(proposition))
+                    .copied()
+            })
+        {
+            return (result, premises_id);
+        }
+        let truncations_before = SEARCH_TRUNCATIONS.with(Cell::get);
+        let result = if for_simp {
+            match proposition {
                 Proposition::ConditionIs(condition, value) => {
                     self.decide_condition_for_simp(condition) == Some(*value)
                 }
@@ -4079,9 +4166,45 @@ impl Assumptions {
                     _ => self.prop_facts.contains(proposition),
                 },
                 _ => self.proves_atomic_without_search(proposition),
-            };
+            }
+        } else {
+            self.proves_atomic_without_search(proposition)
+        };
+        if !decide_memo_disabled()
+            && (result || SEARCH_TRUNCATIONS.with(Cell::get) == truncations_before)
+        {
+            ATOMIC_DERIVATION_MEMO.with(|memo| {
+                let mut memo = memo.borrow_mut();
+                if memo.len() >= ASSUMPTIONS_MEMO_ID_LIMIT {
+                    memo.clear();
+                }
+                let entries = memo.entry((premises_id, for_simp)).or_default();
+                if entries.len() >= DECIDE_MEMO_LIMIT {
+                    entries.clear();
+                }
+                entries.insert(proposition.clone(), result);
+            });
         }
-        self.proves_atomic_without_search(proposition)
+        (result, premises_id)
+    }
+
+    fn replays_atomic_derivation(
+        &self,
+        proposition: &Proposition,
+        for_simp: bool,
+        premises_id: u64,
+    ) -> bool {
+        if !decide_memo_disabled()
+            && let Some(result) = ATOMIC_DERIVATION_MEMO.with(|memo| {
+                memo.borrow()
+                    .get(&(premises_id, for_simp))
+                    .and_then(|entries| entries.get(proposition))
+                    .copied()
+            })
+        {
+            return result;
+        }
+        self.proves_atomic_for_derivation(proposition, for_simp)
     }
 
     fn derive_finite_forall(
@@ -6571,11 +6694,16 @@ impl PropositionDerivation {
     /// Check this proof tree against an available context without searching for
     /// alternate proofs.
     pub fn replay(&self, available: &Assumptions) -> bool {
+        let id_scope = AssumptionsIdScope::enter(available);
         match &self.rule {
             PropositionDerivationRule::ContextFree => solve_builtin_prop(&self.conclusion),
-            PropositionDerivationRule::ContextualAtomic { premises, for_simp } => {
-                available.includes(premises)
-                    && premises.proves_atomic_for_derivation(&self.conclusion, *for_simp)
+            PropositionDerivationRule::ContextualAtomic {
+                premises,
+                premises_id,
+                for_simp,
+            } => {
+                (id_scope.id == *premises_id || available.includes(premises))
+                    && premises.replays_atomic_derivation(&self.conclusion, *for_simp, *premises_id)
             }
             PropositionDerivationRule::Explosion { premises } => {
                 available.includes(premises) && premises.is_inconsistent()

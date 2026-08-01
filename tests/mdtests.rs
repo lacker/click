@@ -17,16 +17,10 @@ const DEFAULT_MDTEST_TIME_LIMIT: Duration = Duration::from_secs(30);
 /// green gate. Run one with `MDTEST_FILTER=<name>`, or all of them with
 /// `CLICK_RUN_QUARANTINED=1`. Each entry names the reason; remove entries as
 /// they are fixed (see docs/advanced/testing-click.md).
-const QUARANTINED: &[(&str, &str)] = &[
-    (
-        "composite_resource_vector_fill_loop_snapshot.md",
-        "proof passes, but deterministic close_invariants replay takes ~2.8 s (issues/vector-close-invariants-slow.md)",
-    ),
-    (
-        "field_derived_precise_effect_after_metadata_write.md",
-        "effect-chain postconditions produce no replayable minimized derivation; it also has a slow simple fold (issues/certificate-spelling-gap.md, issues/field-derived-slow-fold.md)",
-    ),
-];
+const QUARANTINED: &[(&str, &str)] = &[(
+    "field_derived_precise_effect_after_metadata_write.md",
+    "effect-chain postconditions produce no replayable minimized derivation; it also has a slow simple fold (issues/certificate-spelling-gap.md, issues/field-derived-slow-fold.md)",
+)];
 
 #[test]
 fn mdtests() {

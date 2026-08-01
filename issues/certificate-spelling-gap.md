@@ -9,10 +9,9 @@ range and ordering premises needed to lower binder-local memory accesses.
 Verified status (2026-07-31):
 
 - `bubble_pass3_max_suffix` passes in 0.58 s and is no longer quarantined.
-- `composite_resource_vector_fill_loop_snapshot` proves successfully after
-  adding the explicit resource fold and expanding its final smart certificate.
-  Its only remaining failure is the independent 2.8 s deterministic
-  `close_invariants` replay in `vector-close-invariants-slow.md`.
+- `composite_resource_vector_fill_loop_snapshot` passes and is no longer
+  quarantined; its independent deterministic `close_invariants` slowdown was
+  fixed by caching repeated alias and derivation decisions during replay.
 - `field_derived_precise_effect_after_metadata_write` still fails after about
   215 s on four effect-chain postconditions. No minimized derivation candidate
   is produced, so this is no longer accurately described as only a missing
@@ -29,5 +28,5 @@ uncommitted covering-loadability experiment was not copied; the applied repair
 is narrower and replay-checked.
 
 Done when: field-derived's effect-chain claims certify, owned-string's frontier
-moves, and this issue can be deleted. The two deterministic performance bugs
-are tracked separately.
+moves, and this issue can be deleted. The remaining deterministic performance
+bugs are tracked separately.

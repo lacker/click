@@ -599,7 +599,7 @@ pub(super) fn verify_invariant_checks_at_back_edge_using(
                 {
                     let proposition = obligation.proposition();
                     let Some(derivation) = local
-                        .derive_proposition(proposition)
+                        .derive_proposition_without_premise_minimization(proposition)
                         .or_else(|| local.derive_simp_proposition(proposition))
                     else {
                         return Err(format!(
@@ -613,7 +613,7 @@ pub(super) fn verify_invariant_checks_at_back_edge_using(
                     }
                 }
                 let Some(derivation) = local
-                    .derive_proposition(&path.proposition)
+                    .derive_proposition_without_premise_minimization(&path.proposition)
                     .or_else(|| local.derive_simp_proposition(&path.proposition))
                 else {
                     return Err(format!(

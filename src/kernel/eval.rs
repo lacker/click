@@ -862,7 +862,93 @@ pub(super) fn c_truthiness_as_c_int32_paths(
         .collect()
 }
 
+#[derive(Default)]
+struct MemoryLoadAliasCache {
+    resolution_equal: BTreeMap<Pointer, bool>,
+    resolution_distinct: BTreeMap<Pointer, bool>,
+    equal: BTreeMap<Pointer, bool>,
+    distinct: BTreeMap<Pointer, bool>,
+}
+
+impl MemoryLoadAliasCache {
+    fn resolution_equal(
+        &mut self,
+        pointer: &Pointer,
+        stored_pointer: &Pointer,
+        assumptions: &Assumptions,
+    ) -> bool {
+        *self
+            .resolution_equal
+            .entry(stored_pointer.clone())
+            .or_insert_with(|| {
+                pointers_proven_equal_for_memory_resolution(pointer, stored_pointer, assumptions)
+            })
+    }
+
+    fn resolution_distinct(
+        &mut self,
+        pointer: &Pointer,
+        stored_pointer: &Pointer,
+        assumptions: &Assumptions,
+    ) -> bool {
+        *self
+            .resolution_distinct
+            .entry(stored_pointer.clone())
+            .or_insert_with(|| {
+                pointers_proven_distinct_for_memory_resolution(pointer, stored_pointer, assumptions)
+            })
+    }
+
+    fn equal(
+        &mut self,
+        pointer: &Pointer,
+        stored_pointer: &Pointer,
+        assumptions: &Assumptions,
+    ) -> bool {
+        *self
+            .equal
+            .entry(stored_pointer.clone())
+            .or_insert_with(|| pointers_proven_equal(pointer, stored_pointer, assumptions))
+    }
+
+    fn distinct(
+        &mut self,
+        pointer: &Pointer,
+        stored_pointer: &Pointer,
+        assumptions: &Assumptions,
+    ) -> bool {
+        *self
+            .distinct
+            .entry(stored_pointer.clone())
+            .or_insert_with(|| pointers_proven_distinct(pointer, stored_pointer, assumptions))
+    }
+}
+
 pub(super) fn evaluate_c_memory_load_paths(
+    memory: &CMemory,
+    pointer: Pointer,
+    value_type: CType,
+    facts: Vec<ExecutionPureFact>,
+    obligations: Vec<ProofObligation>,
+    assumptions: &Assumptions,
+    has_external_read_resource: bool,
+) -> Vec<CExpressionPath> {
+    let _assumptions_id_scope = assumptions.enter_id_scope();
+    let mut alias_cache = MemoryLoadAliasCache::default();
+    evaluate_c_memory_load_paths_with_alias_cache(
+        memory,
+        pointer,
+        value_type,
+        facts,
+        obligations,
+        assumptions,
+        has_external_read_resource,
+        &mut alias_cache,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn evaluate_c_memory_load_paths_with_alias_cache(
     memory: &CMemory,
     pointer: Pointer,
     value_type: CType,
@@ -870,6 +956,7 @@ pub(super) fn evaluate_c_memory_load_paths(
     mut obligations: Vec<ProofObligation>,
     assumptions: &Assumptions,
     has_external_read_resource: bool,
+    alias_cache: &mut MemoryLoadAliasCache,
 ) -> Vec<CExpressionPath> {
     // A pointer-typed load of a materialized int32 cell that is not a bare
     // load term (for example a call-havoc variable standing for the framed
@@ -908,10 +995,11 @@ pub(super) fn evaluate_c_memory_load_paths(
                 obligations,
             }];
         }
-    } else if let Some((_, value)) = memory.cells.iter().find(|(stored_pointer, _)| {
-        pointers_proven_equal_for_memory_resolution(&pointer, stored_pointer, assumptions)
+    } else if let Some(value) = memory.cells.iter().find_map(|(stored_pointer, value)| {
+        alias_cache
+            .resolution_equal(&pointer, stored_pointer, assumptions)
+            .then(|| value.clone())
     }) {
-        let value = value.clone();
         if let Some(value) = symbolic_pointer_value_from_int_cell(&pointer, &value, value_type) {
             return vec![CExpressionPath {
                 outcome: CExpressionOutcome::Value(value),
@@ -950,7 +1038,10 @@ pub(super) fn evaluate_c_memory_load_paths(
         }];
     }
 
-    let memory = memory.without_proven_distinct_cells(&pointer, assumptions);
+    let mut memory = memory.clone();
+    memory.cells.retain(|stored_pointer, _| {
+        !alias_cache.resolution_distinct(&pointer, stored_pointer, assumptions)
+    });
 
     if let Some(value) = memory.known_value(&pointer) {
         if let Some(value) = symbolic_pointer_value_from_int_cell(&pointer, &value, value_type) {
@@ -989,9 +1080,19 @@ pub(super) fn evaluate_c_memory_load_paths(
         }];
     }
 
-    if let Some((stored_pointer, stored_value)) =
-        memory.first_unresolved_same_block_cell(&pointer, assumptions)
-    {
+    let unresolved = memory
+        .cells
+        .iter()
+        .find_map(|(stored_pointer, stored_value)| {
+            (stored_pointer != &pointer
+                && !alias_cache.resolution_distinct(&pointer, stored_pointer, assumptions)
+                && !alias_cache.resolution_equal(&pointer, stored_pointer, assumptions)
+                && (assumptions.should_defer_non_exact_condition_reasoning()
+                    || !alias_cache.distinct(&pointer, stored_pointer, assumptions)
+                        && !alias_cache.equal(&pointer, stored_pointer, assumptions)))
+            .then(|| (stored_pointer.clone(), stored_value.clone()))
+        });
+    if let Some((stored_pointer, stored_value)) = unresolved {
         let mut paths = Vec::new();
 
         let mut equal_facts = facts.clone();
@@ -1030,7 +1131,7 @@ pub(super) fn evaluate_c_memory_load_paths(
         )
         .is_some()
         {
-            paths.extend(evaluate_c_memory_load_paths(
+            paths.extend(evaluate_c_memory_load_paths_with_alias_cache(
                 &memory.without_cell(&stored_pointer),
                 pointer,
                 value_type,
@@ -1038,6 +1139,7 @@ pub(super) fn evaluate_c_memory_load_paths(
                 obligations,
                 assumptions,
                 has_external_read_resource,
+                alias_cache,
             ));
         }
 

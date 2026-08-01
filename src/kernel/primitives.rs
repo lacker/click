@@ -2,8 +2,7 @@ use super::api::{int32, normalize_exact_memory_loads_in_pointer_offset, uint8};
 use super::reasoning::{
     bitvector_terms_proven_equal_for_memory_resolution, collect_or_cases,
     instantiate_range_fold_step, int32_element_index_from_offset,
-    memory_snapshots_proven_equal_at_pointer, pointers_proven_distinct,
-    pointers_proven_distinct_for_memory_resolution, pointers_proven_equal,
+    memory_snapshots_proven_equal_at_pointer, pointers_proven_distinct_for_memory_resolution,
     pointers_proven_equal_for_memory_resolution, resource_context_has_read,
     signed_bitvector_constant, signed_i64_bitvector_constant,
 };
@@ -1259,6 +1258,7 @@ pub(super) enum PropositionDerivationRule {
     ContextFree,
     ContextualAtomic {
         premises: Assumptions,
+        premises_id: u64,
         for_simp: bool,
     },
     Explosion {
@@ -2854,18 +2854,6 @@ impl CMemory {
         memory
     }
 
-    pub(super) fn without_proven_distinct_cells(
-        &self,
-        pointer: &Pointer,
-        assumptions: &Assumptions,
-    ) -> Self {
-        let mut memory = self.clone();
-        memory.cells.retain(|cell_pointer, _| {
-            !pointers_proven_distinct_for_memory_resolution(cell_pointer, pointer, assumptions)
-        });
-        memory
-    }
-
     pub(super) fn without_possible_aliasing_cells(
         &self,
         pointer: &Pointer,
@@ -2896,32 +2884,6 @@ impl CMemory {
             record_c_memory_derivation(&memory, CMemoryDerivation::CellsForgotten { base });
         }
         memory
-    }
-
-    pub(super) fn first_unresolved_same_block_cell(
-        &self,
-        pointer: &Pointer,
-        assumptions: &Assumptions,
-    ) -> Option<(Pointer, CValue)> {
-        self.cells
-            .iter()
-            .find(|(cell_pointer, _)| {
-                *cell_pointer != pointer
-                    && !pointers_proven_distinct_for_memory_resolution(
-                        cell_pointer,
-                        pointer,
-                        assumptions,
-                    )
-                    && !pointers_proven_equal_for_memory_resolution(
-                        cell_pointer,
-                        pointer,
-                        assumptions,
-                    )
-                    && (assumptions.should_defer_non_exact_condition_reasoning()
-                        || !pointers_proven_distinct(cell_pointer, pointer, assumptions)
-                            && !pointers_proven_equal(cell_pointer, pointer, assumptions))
-            })
-            .map(|(pointer, value)| (pointer.clone(), value.clone()))
     }
 
     pub(super) fn local_pointer(name: &str) -> Pointer {
