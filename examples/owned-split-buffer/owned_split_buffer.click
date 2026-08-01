@@ -130,7 +130,7 @@ int32 owned_split_buffer_set_right(
 int32 owned_split_buffer_move_right(struct owned_split_buffer* owner) {
     requires owner->split < owner->len;
     owns owned_split_buffer(owner);
-    mutable_field(owner->split);
+    mutable owner->split;
     ensures result == old(owner->split) + 1;
     ensures owner->split == old(owner->split) + 1;
     ensures owner->len == old(owner->len);

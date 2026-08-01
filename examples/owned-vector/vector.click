@@ -41,7 +41,7 @@ int32 vector_init(struct vector* owner, int32 data[], int32 capacity) {
     requires 1 <= capacity;
     consumes object(owner);
     consumes data[0..capacity];
-    mutable_field(owner->len), (owner->cap), (owner->data);
+    mutable owner->len, owner->cap, owner->data;
     produces empty_vector(owner);
     ensures result == 0;
     ensures owner->len == 0;
@@ -424,7 +424,7 @@ int32 vector_push_first(struct vector* owner, int32 value) {
 
 int32 vector_clear(struct vector* owner) {
     consumes nonempty_vector(owner);
-    mutable_field(owner->len);
+    mutable owner->len;
     produces empty_vector(owner);
     ensures result == 0;
     ensures owner->len == 0;

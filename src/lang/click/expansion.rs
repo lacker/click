@@ -1444,7 +1444,7 @@ fn structural_item_proof_edits(
                 let phase = ProofSourceEdit::Explicit(proof_span(tokens, by)?);
                 cursor = token_after_edit(tokens, &phase);
             }
-            "invariant" | "assert" | "immutable" | "mutable" | "mutable_field" => {
+            "invariant" | "assert" | "immutable" | "mutable" => {
                 let edit = find_proof_edit_after(tokens, cursor, block.end)?;
                 cursor = token_after_edit(tokens, &edit);
                 edits.push(edit);
@@ -1456,7 +1456,7 @@ fn structural_item_proof_edits(
                 while item < close {
                     if matches!(
                         tokens[item].text.as_str(),
-                        "immutable" | "mutable" | "mutable_field"
+                        "immutable" | "mutable"
                     ) {
                         let edit = find_proof_edit_after(tokens, item, close)?;
                         item = token_after_edit(tokens, &edit);

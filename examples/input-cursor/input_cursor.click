@@ -102,7 +102,7 @@ int32 input_cursor_peek(struct input_cursor* owner) {
 int32 input_cursor_take(struct input_cursor* owner) {
     requires owner->pos < owner->len;
     owns input_cursor(owner);
-    mutable_field(owner->pos);
+    mutable owner->pos;
 
     ensures result == old((owner->data)[owner->pos]);
     ensures owner->pos == old(owner->pos) + 1;

@@ -26,9 +26,8 @@ grouped execution proof of the function contract:
 
 ```click
 int32 set_first(int32 p[], int32 value) {
-    consumes p[0..1];
+    owns p[0..1];
     mutable p[0..1];
-    produces p[0..1];
     ensures result == value;
     ensures p[0] == value;
 } by {

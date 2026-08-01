@@ -781,7 +781,7 @@ pub(super) fn validate_click_definitions(file: &ClickFile) -> Result<(), ClickEr
                 .any(requirement_contains_resource)
         {
             return Err(ClickError::new(format!(
-                "`{}` must contain at least one `ensures`, `immutable`, `mutable`, `mutable_field`, or resource-consuming `requires` clause",
+                "`{}` must contain at least one `ensures`, `immutable`, `mutable`, or resource-consuming `requires` clause",
                 function.signature().name()
             )));
         }

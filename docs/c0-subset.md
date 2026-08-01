@@ -131,8 +131,8 @@ Click contracts can use field places in resource clauses, such as
 ABI field offsets, and the access resource makes the field loadable for
 symbolic execution. Explicit ranges such as `owns owner[0..3]` are still
 available when a contract needs to describe a broader footprint. Field places
-also work in `loadable(p->field)`, and `mutable_field(p->field)` remains
-available as a field-sized effect helper.
+also work in `loadable(p->field)`, and `mutable p->field` describes a
+field-sized effect.
 
 ## Loops
 

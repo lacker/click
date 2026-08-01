@@ -47,9 +47,8 @@ grouped execution proof after the contract block:
 
 ```click
 int32 set_first(int32 p[], int32 value) {
-    consumes p[0..1];
+    owns p[0..1];
     mutable p[0..1];
-    produces p[0..1];
     ensures result == value;
     ensures p[0] == value;
 } by {
@@ -295,11 +294,10 @@ verifier's resource context rather than copied as pure facts.
 
 ```click
 int32 write_next(int32 p[], int32 x) {
-    consumes p[0..1];
+    owns p[0..1] by auto;
     requires x < 2147483647;
 
     ensures p[0] == x + 1 by auto;
-    produces p[0..1] by auto;
 }
 ```
 
@@ -389,7 +387,9 @@ int32 open(int32 fd) {
 means the function can rely on the viewed/core resource without consuming it.
 `consumes` requires an owned resource and does not return it. `produces`
 returns an owned resource. `requires` and `ensures` accept pure propositions
-only.
+only. Prefer `owns X by proof;` over the exactly equivalent pair
+`consumes X;` and `produces X by proof;`; keep the separate verbs for one-way
+transfers and resource transformations.
 
 An owned memory resource implies its viewed core: ownership permits both loads
 and stores, while a view permits loads and is copyable across calls. A callee

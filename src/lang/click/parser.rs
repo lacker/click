@@ -701,7 +701,7 @@ impl Parser {
                             .map_err(|message| self.error(message))?,
                     );
                 }
-                Some("immutable" | "mutable" | "mutable_field") => {
+                Some("immutable" | "mutable") => {
                     let effect = self.parse_effect_clause()?;
                     effects.push(
                         apply_contract_lets_to_effect_clause(effect, &contract_lets)
@@ -717,13 +717,13 @@ impl Parser {
                 }
                 Some(keyword) => {
                     return Err(self.error(format!(
-                        "expected `let`, `requires`, `owns`, `views`, `consumes`, `produces`, `immutable`, `mutable`, `mutable_field`, `for`, `ensures`, or `}}` in `{}`, got `{keyword}`",
+                        "expected `let`, `requires`, `owns`, `views`, `consumes`, `produces`, `immutable`, `mutable`, `for`, `ensures`, or `}}` in `{}`, got `{keyword}`",
                         signature.name()
                     )));
                 }
                 None => {
                     return Err(self.error(format!(
-                        "expected `let`, `requires`, `owns`, `views`, `consumes`, `produces`, `immutable`, `mutable`, `mutable_field`, `for`, `ensures`, or `}}` in `{}`",
+                        "expected `let`, `requires`, `owns`, `views`, `consumes`, `produces`, `immutable`, `mutable`, `for`, `ensures`, or `}}` in `{}`",
                         signature.name()
                     )));
                 }
@@ -1148,8 +1148,7 @@ impl Parser {
                     proof,
                 }])
             }
-            Some(Token::Ident(kind))
-                if kind == "immutable" || kind == "mutable" || kind == "mutable_field" =>
+            Some(Token::Ident(kind)) if kind == "immutable" || kind == "mutable" =>
             {
                 let effect = self.parse_effect_after_keyword(kind)?;
                 let proof = self.parse_proof_clause_or_default()?;
@@ -1164,12 +1163,9 @@ impl Parser {
                 let mut items = Vec::new();
                 while self.peek() != Some(&Token::RBrace) {
                     let effect_kind = self.expect_ident("step effect")?;
-                    if effect_kind != "immutable"
-                        && effect_kind != "mutable"
-                        && effect_kind != "mutable_field"
-                    {
+                    if effect_kind != "immutable" && effect_kind != "mutable" {
                         return Err(self.error(format!(
-                            "expected `immutable`, `mutable`, or `mutable_field` inside `step`, got `{effect_kind}`"
+                            "expected `immutable` or `mutable` inside `step`, got `{effect_kind}`"
                         )));
                     }
                     let effect = self.parse_effect_after_keyword(effect_kind)?;
@@ -1187,37 +1183,36 @@ impl Parser {
                 Ok(items)
             }
             Some(Token::Ident(kind)) => Err(self.error(format!(
-                "expected `invariant`, `assert`, `immutable`, `mutable`, `mutable_field`, or `step`, got `{kind}`"
+                "expected `invariant`, `assert`, `immutable`, `mutable`, or `step`, got `{kind}`"
             ))),
             Some(token) => Err(self.error(format!(
-                "expected `invariant`, `assert`, `immutable`, `mutable`, `mutable_field`, or `step`, got {token:?}"
+                "expected `invariant`, `assert`, `immutable`, `mutable`, or `step`, got {token:?}"
             ))),
             None => Err(self.error(
-                "expected `invariant`, `assert`, `immutable`, `mutable`, `mutable_field`, or `step`, got end of input",
+                "expected `invariant`, `assert`, `immutable`, `mutable`, or `step`, got end of input",
             )),
         }
     }
 
     fn parse_effect_clause(&mut self) -> Result<EffectClause, ClickError> {
         let effect = match self.next() {
-            Some(Token::Ident(kind))
-                if kind == "immutable" || kind == "mutable" || kind == "mutable_field" =>
+            Some(Token::Ident(kind)) if kind == "immutable" || kind == "mutable" =>
             {
                 self.parse_effect_after_keyword(kind)?
             }
             Some(Token::Ident(kind)) => {
                 return Err(self.error(format!(
-                    "expected `immutable`, `mutable`, or `mutable_field`, got `{kind}`"
+                    "expected `immutable` or `mutable`, got `{kind}`"
                 )));
             }
             Some(token) => {
                 return Err(self.error(format!(
-                    "expected `immutable`, `mutable`, or `mutable_field`, got {token:?}"
+                    "expected `immutable` or `mutable`, got {token:?}"
                 )));
             }
             None => {
                 return Err(self.error(
-                    "expected `immutable`, `mutable`, or `mutable_field`, got end of input",
+                    "expected `immutable` or `mutable`, got end of input",
                 ));
             }
         };
@@ -1230,34 +1225,12 @@ impl Parser {
             return Ok(Effect::Immutable);
         }
 
-        if kind == "mutable_field" {
-            return self.parse_mutable_field_effect();
-        }
-
         let mut segments = vec![self.parse_contract_segment()?];
         while self.peek() == Some(&Token::Comma) {
             self.position += 1;
             segments.push(self.parse_contract_segment()?);
         }
         Ok(Effect::Mutable(segments))
-    }
-
-    fn parse_mutable_field_effect(&mut self) -> Result<Effect, ClickError> {
-        let mut segments = vec![self.parse_current_field_segment()?];
-        while self.peek() == Some(&Token::Comma) {
-            self.position += 1;
-            segments.push(self.parse_current_field_segment()?);
-        }
-        Ok(Effect::Mutable(segments))
-    }
-
-    fn parse_current_field_segment(&mut self) -> Result<ContractSegment, ClickError> {
-        self.expect(Token::LParen)?;
-        let base = self.parse_ensure_primary()?.to_kernel_expression();
-        self.expect(Token::Arrow)?;
-        let field_name = self.expect_ident("field name")?;
-        self.expect(Token::RParen)?;
-        self.resolve_field_segment(base, &field_name)
     }
 
     fn parse_ensure_clause(&mut self) -> Result<EnsureClause, ClickError> {

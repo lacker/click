@@ -24,7 +24,7 @@ The current support is intentionally narrow:
 - `->` field loads and stores for that first field
 - `loadable(obj->ref_count)` as the field-loadability precondition
 - `read(obj[0..1])` or `write(obj[0..1])` as the access permission
-- `mutable_field(obj->ref_count)` for field writes
+- `mutable obj->ref_count` for field writes
 
 Keep this pilot narrow. Add the smallest C0, memory-model, and proof features
 needed by this fixture before broadening to heap allocation or ownership

@@ -1088,7 +1088,7 @@ fn parses_pilot_struct_field_mutable_effect() {
 
             int32 json_object_set_ref_count(struct json_object* obj, int32 count) {
                 requires loadable(obj->ref_count);
-                mutable_field(obj->ref_count) by frame;
+                mutable obj->ref_count by frame;
                 ensures returns_count: result == count by auto;
             }
         "#;
@@ -1104,6 +1104,25 @@ fn parses_pilot_struct_field_mutable_effect() {
             end: CExpression::Value(int32(1)),
             surface: ContractSegmentSurface::Field("ref_count".to_string()),
         }])
+    );
+}
+
+#[test]
+fn rejects_legacy_mutable_field_effect_spelling() {
+    let source = r#"
+            verifying "json_object_set_ref_count.c";
+
+            int32 json_object_set_ref_count(struct json_object* obj, int32 count) {
+                mutable_field(obj->ref_count) by frame;
+                ensures returns_count: result == count by auto;
+            }
+        "#;
+    let error = parse(source).expect_err("legacy mutable-field syntax should be retired");
+
+    assert!(
+        error.message().contains("expected `let`, `requires`"),
+        "{}",
+        error.message()
     );
 }
 
@@ -7932,7 +7951,7 @@ fn observed_cursor_facts_produce_replayable_surface_certificates() {
         int32 input_cursor_take(struct input_cursor* owner) {
             requires owner->pos < owner->len;
             owns input_cursor(owner);
-            mutable_field(owner->pos);
+            mutable owner->pos;
             ensures result == old((owner->data)[owner->pos]);
             ensures owner->pos == old(owner->pos) + 1;
             ensures owner->len == old(owner->len);

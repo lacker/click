@@ -111,9 +111,7 @@ the written value unless a later write changes it again.
 
 ```click
 int32 set_one(int32 p[]) {
-    consumes p[0..1];
-
-    produces p[0..1] by auto;
+    owns p[0..1] by auto;
 }
 ```
 
@@ -130,13 +128,11 @@ Function calls use the callee's verified contract as an opaque summary:
 
 ```click
 int32 helper(int32 p[]) {
-    consumes p[0..1];
-    produces p[0..1] by auto;
+    owns p[0..1] by auto;
 }
 
 int32 caller(int32 p[]) {
-    consumes p[0..1];
-    produces p[0..1] by auto;
+    owns p[0..1] by auto;
 }
 ```
 
@@ -186,9 +182,7 @@ Then a contract can require and return instances of that resource:
 
 ```click
 int32 borrow_fd(int32 fd) {
-    consumes open_fd(fd);
-
-    produces open_fd(fd) by auto;
+    owns open_fd(fd) by auto;
 }
 ```
 
@@ -243,7 +237,7 @@ non-consuming view step:
 
 ```click
 int32 return_fd(int32 fd) {
-    consumes live_fd(fd);
+    owns live_fd(fd) by auto;
 
     ensures result >= 0 by {
         observe(live_fd(fd));
@@ -251,8 +245,6 @@ int32 return_fd(int32 fd) {
         execute_rest();
         simp();
     }
-
-    produces live_fd(fd) by auto;
 }
 ```
 
@@ -385,13 +377,11 @@ A caller can pass a subrange of a larger owned memory resource:
 
 ```click
 int32 helper(int32 p[]) {
-    consumes p[0..1];
-    produces p[0..1] by auto;
+    owns p[0..1] by auto;
 }
 
 int32 caller(int32 p[]) {
-    consumes p[0..2];
-    produces p[0..2] by auto;
+    owns p[0..2] by auto;
 }
 ```
 
