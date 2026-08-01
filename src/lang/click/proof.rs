@@ -119,6 +119,82 @@ fn apply_logical_goal_tactic(
 /// equality premises, with canonical load spellings as term identity. The
 /// decide engine chains constants and variables; certificates also chain
 /// through load terms recorded at intermediate states.
+fn pointer_offsets_match_by_term_equivalence(
+    left: &PointerOffsetTerm,
+    right: &PointerOffsetTerm,
+    terms_equivalent: &impl Fn(&Bitvector32Term, &Bitvector32Term) -> bool,
+) -> bool {
+    match (left, right) {
+        (PointerOffsetTerm::Constant(left), PointerOffsetTerm::Constant(right)) => left == right,
+        (PointerOffsetTerm::Variable(left), PointerOffsetTerm::Variable(right)) => left == right,
+        (
+            PointerOffsetTerm::Int32Scaled {
+                value: left,
+                byte_width: left_width,
+            },
+            PointerOffsetTerm::Int32Scaled {
+                value: right,
+                byte_width: right_width,
+            },
+        ) => left_width == right_width && terms_equivalent(left, right),
+        (PointerOffsetTerm::Add(left_a, left_b), PointerOffsetTerm::Add(right_a, right_b)) => {
+            (pointer_offsets_match_by_term_equivalence(left_a, right_a, terms_equivalent)
+                && pointer_offsets_match_by_term_equivalence(
+                    left_b,
+                    right_b,
+                    terms_equivalent,
+                ))
+                || (pointer_offsets_match_by_term_equivalence(
+                    left_a,
+                    right_b,
+                    terms_equivalent,
+                ) && pointer_offsets_match_by_term_equivalence(
+                    left_b,
+                    right_a,
+                    terms_equivalent,
+                ))
+        }
+        _ => false,
+    }
+}
+
+fn pointer_offset_equality_by_frame(target: &Proposition, available: &[Proposition]) -> bool {
+    let Proposition::ConditionIs(ConditionTerm::PointerOffsetEqual(left, right), true) = target
+    else {
+        return false;
+    };
+    let framing_facts = available
+        .iter()
+        .filter(|fact| {
+            !matches!(
+                fact,
+                Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(_, _), _)
+            )
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    let assumptions = assumptions_from_propositions(&framing_facts);
+    let terms_equivalent = |left: &Bitvector32Term, right: &Bitvector32Term| {
+        left == right
+            || matches!((left, right), (
+                Bitvector32Term::MemoryLoad(left_memory, left_pointer),
+                Bitvector32Term::MemoryLoad(right_memory, right_pointer),
+            ) if left_pointer == right_pointer
+                && (crate::kernel::c_memory_load_is_unchanged(
+                    left_memory,
+                    right_memory,
+                    left_pointer,
+                    &assumptions,
+                ) || crate::kernel::c_memory_load_is_unchanged(
+                    right_memory,
+                    left_memory,
+                    left_pointer,
+                    &assumptions,
+                )))
+    };
+    pointer_offsets_match_by_term_equivalence(left, right, &terms_equivalent)
+}
+
 fn equal_by_premise_chain(
     premises: &[Proposition],
     target: &Proposition,
@@ -129,7 +205,17 @@ fn equal_by_premise_chain(
     else {
         return false;
     };
-    let frame_assumptions = assumptions_from_propositions(available);
+    let framing_facts = available
+        .iter()
+        .filter(|fact| {
+            !matches!(
+                fact,
+                Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(_, _), _)
+            )
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    let frame_assumptions = assumptions_from_propositions(&framing_facts);
     // Two spellings denote the same term when identical, or when they load
     // the same pointer from memories the recorded effect facts prove
     // unchanged between (frame-justified, never by ignoring havoc alone).
@@ -152,17 +238,9 @@ fn equal_by_premise_chain(
                 )))
     };
     let mut classes: Vec<Vec<Bitvector32Term>> = Vec::new();
-    // Ambient equality facts are execution-certified (store equations,
-    // recorded aliases) and may link the listed premises, the same way
-    // frame facts justify load unification.
-    for premise in premises.iter().chain(available) {
-        let Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), true) =
-            crate::kernel::c_condition_fact_with_canonical_loads(premise)
-        else {
-            continue;
-        };
-        let left = *left;
-        let right = *right;
+    let mut add_equality = |left: &Bitvector32Term, right: &Bitvector32Term| {
+        let left = left.clone();
+        let right = right.clone();
         let left_class = classes
             .iter()
             .position(|class| class.iter().any(|term| terms_equivalent(term, &left)));
@@ -179,14 +257,91 @@ fn equal_by_premise_chain(
             (None, Some(b)) => classes[b].push(left),
             (None, None) => classes.push(vec![left, right]),
         }
+    };
+    // Ambient equality facts are execution-certified (store equations,
+    // recorded aliases) and may link the listed premises, the same way
+    // frame facts justify load unification. Keep the raw edge as well as its
+    // canonical form: canonicalizing a store equation can reduce its written
+    // load to the stored value and erase the edge needed to reach a later
+    // snapshot spelling.
+    for premise in premises.iter().chain(available) {
+        if let Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), true) =
+            premise
+        {
+            add_equality(left, right);
+        }
+        let Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), true) =
+            crate::kernel::c_condition_fact_with_canonical_loads(premise)
+        else {
+            continue;
+        };
+        add_equality(&left, &right);
     }
+    drop(add_equality);
     let target_left = *target_left;
     let target_right = *target_right;
-    terms_equivalent(&target_left, &target_right)
+    let terms_linked = |left: &Bitvector32Term, right: &Bitvector32Term| {
+        left == right
+            || classes
+                .iter()
+                .any(|class| class.contains(left) && class.contains(right))
+    };
+    let address_terms_linked = |left: &Bitvector32Term, right: &Bitvector32Term| {
+        terms_linked(left, right)
+            || classes.iter().any(|class| {
+                class
+                    .iter()
+                    .any(|term| terms_equivalent(term, left))
+                    && class
+                        .iter()
+                        .any(|term| terms_equivalent(term, right))
+            })
+            || terms_equivalent(left, right)
+    };
+    if terms_linked(&target_left, &target_right)
+        || terms_equivalent(&target_left, &target_right)
         || classes.iter().any(|class| {
             class.iter().any(|term| terms_equivalent(term, &target_left))
                 && class.iter().any(|term| terms_equivalent(term, &target_right))
         })
+    {
+        return true;
+    }
+    let Bitvector32Term::MemoryLoad(target_memory, target_pointer) = &target_left else {
+        return false;
+    };
+    premises.iter().any(|premise| {
+        let Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), true) = premise
+        else {
+            return false;
+        };
+        let (Bitvector32Term::MemoryLoad(memory, pointer), value) =
+            (left.as_ref(), right.as_ref())
+        else {
+            return false;
+        };
+        let same_block = target_pointer.block == pointer.block;
+        let same_value = terms_linked(&target_right, value);
+        let same_offset = pointer_offsets_match_by_term_equivalence(
+            &target_pointer.offset,
+            &pointer.offset,
+            &address_terms_linked,
+        );
+        same_block
+            && same_value
+            && same_offset
+            && (crate::kernel::c_memory_load_is_unchanged(
+                target_memory,
+                memory,
+                target_pointer,
+                &frame_assumptions,
+            ) || crate::kernel::c_memory_load_is_unchanged(
+                memory,
+                target_memory,
+                pointer,
+                &frame_assumptions,
+            ))
+    })
 }
 
 fn check_atomic_derivation_goal(
@@ -240,6 +395,11 @@ fn check_atomic_derivation_goal(
         .map(normalize_direct_atomic_memory_loads)
         .collect::<Vec<_>>();
     let normalized_target = normalize_direct_atomic_memory_loads(&target);
+    if pointer_offset_equality_by_frame(&target, available)
+        || equal_by_premise_chain(&premises, &target, available)
+    {
+        return Ok(());
+    }
     // Effect summaries and certified-write records are deterministic
     // execution artifacts with no surface spelling; certificate generation
     // deliberately omits them from the premise list (mirroring its
@@ -310,7 +470,8 @@ fn check_atomic_derivation_goal(
         }
     });
     if derivation.is_none()
-        && equal_by_premise_chain(&normalized_premises, &normalized_target, available)
+        && (pointer_offset_equality_by_frame(&normalized_target, available)
+            || equal_by_premise_chain(&normalized_premises, &normalized_target, available))
     {
         return Ok(());
     }
@@ -9625,7 +9786,15 @@ fn prove_pure_proposition_case_at_point(
                         let derivation_lowering_facts = prepared_derivation_lowering_facts
                             .as_ref()
                             .expect("derive lowering facts should be prepared");
-                        let target = if derive.proposition == *proposition {
+                        let target_is_current_goal = derive.proposition == *proposition
+                            || (!unfolded_predicates.is_empty()
+                                && unfold_structural_invariant_proposition(
+                                    predicate_environment,
+                                    proposition,
+                                    &unfolded_predicates,
+                                )
+                                .is_ok_and(|surface| surface == derive.proposition));
+                        let target = if target_is_current_goal {
                             unfolded_goal.clone()
                         } else {
                             lower_point_proposition_with_values(
@@ -11050,6 +11219,14 @@ fn finish_ordered_proof_replay(
                                 "`{proof_label}` path {path_index}, tactic {tactic_index}: `have` requires a return outcome"
                             )));
                         };
+                        let mut certificate_available = path_requirements.clone();
+                        for equation in
+                            crate::kernel::certified_store_equations(&replay.effect_facts)
+                        {
+                            if !certificate_available.contains(&equation) {
+                                certificate_available.push(equation);
+                            }
+                        }
                         let smart_unfolds = smart_simp_unfold_prefix(&have.proof);
                         let (surface_have, fact) = if let Some(smart_unfolds) = smart_unfolds {
                             let fact = lower_outcome_proposition_with_program_points(
@@ -11133,7 +11310,7 @@ fn finish_ordered_proof_replay(
                                 .cloned()
                                 .map(ProofTactic::UnfoldPredicate)
                                 .collect::<Vec<_>>();
-                            proof_tactics.push(proof_tactic);
+                            proof_tactics.push(proof_tactic.clone());
                             let surface_have = ProofHave {
                                 proposition: have.proposition.clone(),
                                 proof: Proof::Script(proof_tactics),
@@ -11143,12 +11320,36 @@ fn finish_ordered_proof_replay(
                                 &surface_tactic,
                             ))
                             .expect("post-execution smart have must lower to a simple tactic");
+                            let uses_store_spelling = matches!(
+                                &proof_tactic,
+                                ProofTactic::Derive(derive) | ProofTactic::Calculate(derive)
+                                    if derive.premises.iter().any(|premise| matches!(
+                                        premise,
+                                        ClickProposition::Comparison {
+                                            left: ContractExpression::At { .. },
+                                            ..
+                                        }
+                                    ))
+                            );
+                            let mut replay_available = certificate_available.clone();
+                            if uses_store_spelling {
+                                for effect in &replay.effect_facts {
+                                    if matches!(
+                                        effect.proposition(),
+                                        Proposition::CMemoryMutatesOnly { .. }
+                                            | Proposition::CMemoryEffectSummary { .. }
+                                    ) && !replay_available.contains(effect.proposition())
+                                    {
+                                        replay_available.push(effect.proposition().clone());
+                                    }
+                                }
+                            }
                             let replayed_fact = prove_have_at_point(
                                 &surface_have,
                                 theorem_environment,
                                 &proof_label,
                                 *tactic_index,
-                                &path_requirements,
+                                &replay_available,
                                 parsed_function.parameters(),
                                 arguments,
                                 pre_state,
@@ -11188,7 +11389,7 @@ fn finish_ordered_proof_replay(
                                 theorem_environment,
                                 &proof_label,
                                 *tactic_index,
-                                &path_requirements,
+                                &certificate_available,
                                 parsed_function.parameters(),
                                 arguments,
                                 pre_state,
@@ -12777,7 +12978,35 @@ fn synthesize_surface_pointer_offset(
                     ))),
                 )))
             };
-            indexed_pointer(left, right).or_else(|| indexed_pointer(right, left))
+            let dynamically_indexed_pointer =
+                |base: &PointerOffsetTerm, index: &PointerOffsetTerm| {
+                    let PointerOffsetTerm::Int32Scaled {
+                        value: index,
+                        byte_width: 4,
+                    } = index
+                    else {
+                        return None;
+                    };
+                    let base = contract_expression_to_c_fragment(
+                        &synthesize_surface_pointer_offset(
+                            base,
+                            parameters,
+                            arguments,
+                            state,
+                        )?,
+                    )?;
+                    let index = contract_expression_to_c_fragment(
+                        &synthesize_surface_bitvector(index, parameters, arguments, state)?,
+                    )?;
+                    Some(ContractExpression::CFragment(CExpression::Add(
+                        Box::new(base),
+                        Box::new(index),
+                    )))
+                };
+            indexed_pointer(left, right)
+                .or_else(|| indexed_pointer(right, left))
+                .or_else(|| dynamically_indexed_pointer(left, right))
+                .or_else(|| dynamically_indexed_pointer(right, left))
         }
         PointerOffsetTerm::Int32Scaled { value, byte_width } if matches!(*byte_width, 1 | 4) => {
             synthesize_surface_bitvector(value, parameters, arguments, state)
@@ -13271,29 +13500,37 @@ fn lower_outcome_simp_tactic(
                         && ambient.derive_atomic_proposition(premise).is_some())
             })
             .collect::<Vec<_>>();
-        let mut selected_premises = Vec::new();
+        let mut selected_premises = Some(Vec::new());
         for required in &context {
-            let selected = source_for_required(required).ok_or_else(|| {
-                ClickError::new(format!(
-                    "planned `simp` context premise is not an available source fact: {required:?}"
-                ))
-            })?;
-            if !selected_premises.contains(&selected) {
+            let Some(selected) = source_for_required(required) else {
+                // The kernel planner may select a derived ambient equality
+                // whose internal pointer spelling has no Surface Click
+                // source. This plan cannot be emitted as a certificate, but
+                // the explicit and normalized fallback planners below may
+                // still find a replayable dependency boundary.
+                selected_premises = None;
+                break;
+            };
+            if let Some(selected_premises) = &mut selected_premises
+                && !selected_premises.contains(&selected)
+            {
                 selected_premises.push(selected);
             }
         }
-        let selected_kernel = selected_premises
-            .iter()
-            .map(|(kernel, _)| kernel.clone())
-            .collect::<Vec<_>>();
-        if derivation.replay(&assumptions_from_propositions(&selected_kernel)) {
-            return Ok(ProofTactic::Calculate(ProofDerive {
-                proposition: surface_goal.clone(),
-                premises: selected_premises
-                    .into_iter()
-                    .map(|(_, surface)| surface)
-                    .collect(),
-            }));
+        if let Some(selected_premises) = selected_premises {
+            let selected_kernel = selected_premises
+                .iter()
+                .map(|(kernel, _)| kernel.clone())
+                .collect::<Vec<_>>();
+            if derivation.replay(&assumptions_from_propositions(&selected_kernel)) {
+                return Ok(ProofTactic::Calculate(ProofDerive {
+                    proposition: surface_goal.clone(),
+                    premises: selected_premises
+                        .into_iter()
+                        .map(|(_, surface)| surface)
+                        .collect(),
+                }));
+            }
         }
     }
     if matches!(normalized_goal, Proposition::ForAll { .. }) {
@@ -13492,6 +13729,55 @@ fn lower_outcome_simp_tactic(
             premise_pairs.push((fact.clone(), surface));
         }
     }
+    // Alias branches created while executing a call are certified execution
+    // facts, not source assertions. When a branch condition is needed to
+    // close an impossible path, synthesize its exact program-point spelling
+    // so the generated certificate can name that dependency.
+    for fact in available
+        .iter()
+        .chain(
+            replay
+                .effect_facts
+                .iter()
+                .map(ExecutionPureFact::proposition),
+        )
+        .filter(|fact| {
+            matches!(
+                fact,
+                Proposition::ConditionIs(ConditionTerm::PointerOffsetEqual(_, _), _)
+            )
+        })
+    {
+        if premise_pairs.iter().any(|(kernel, _)| kernel == fact) {
+            continue;
+        }
+        let entry_point = ProgramPointRef {
+            region: CodeRegionRef::Function,
+            kind: ProgramPointKind::Entry,
+        };
+        let synthesized = std::iter::once((&entry_point, pre_state))
+            .chain(
+                replay
+                    .program_point_states
+                    .iter()
+                    .rev()
+                    .map(|(point, state)| (point, state)),
+            )
+            .find_map(|(point, state)| {
+                let core = synthesize_surface_proposition(fact, parameters, arguments, state)?;
+                let surface = ClickProposition::At {
+                    selector: VisitSelector::ProgramPoint(point.clone()),
+                    proposition: Box::new(core),
+                };
+                check(&surface)
+                    .ok()
+                    .filter(|lowered| condition_polarity_equivalent(lowered, fact))
+                    .map(|_| surface)
+            });
+        if let Some(surface) = synthesized {
+            premise_pairs.push((fact.clone(), surface));
+        }
+    }
     let kernel_premises = premise_pairs
         .iter()
         .map(|(kernel, _)| kernel.clone())
@@ -13574,9 +13860,67 @@ fn lower_outcome_simp_tactic(
                 certified_context.push(fact.proposition().clone());
             }
         }
-        for equation in crate::kernel::certified_store_equations(&replay.effect_facts) {
+        let certified_store_equations =
+            crate::kernel::certified_store_equations(&replay.effect_facts);
+        for equation in &certified_store_equations {
             if !certified_context.contains(&equation) {
-                certified_context.push(equation);
+                certified_context.push(equation.clone());
+            }
+        }
+        let spelled_store_equations = certified_store_equations
+            .iter()
+            .filter_map(|equation| {
+                let surfaces = replay
+                    .surface_propositions
+                    .surfaces(equation)
+                    .collect::<Vec<_>>();
+                let surface = surfaces
+                    .iter()
+                    .find(|surface| {
+                        matches!(
+                            surface,
+                            ClickProposition::Comparison {
+                                left: ContractExpression::At { .. },
+                                ..
+                            }
+                        )
+                    })
+                    .copied()
+                    .or_else(|| surfaces.last().copied())?;
+                Some((equation.clone(), surface.clone()))
+            })
+            .collect::<Vec<_>>();
+        if spelled_store_equations.len() == certified_store_equations.len()
+            && !spelled_store_equations.is_empty()
+        {
+            let kernel_premises = spelled_store_equations
+                .iter()
+                .map(|(kernel, _)| kernel.clone())
+                .collect::<Vec<_>>();
+            let surface_premises = spelled_store_equations
+                .iter()
+                .map(|(_, surface)| surface.clone())
+                .collect::<Vec<_>>();
+            for candidate in [
+                ProofTactic::Derive(ProofDerive {
+                    proposition: surface_goal.clone(),
+                    premises: surface_premises.clone(),
+                }),
+                ProofTactic::Calculate(ProofDerive {
+                    proposition: surface_goal.clone(),
+                    premises: surface_premises.clone(),
+                }),
+            ] {
+                let checked = check_atomic_derivation_goal(
+                    &candidate,
+                    goal.clone(),
+                    kernel_premises.clone(),
+                    goal,
+                    &certified_context,
+                );
+                if checked.is_ok() {
+                    return Ok(candidate);
+                }
             }
         }
         let minimized = minimal_proposition_derivation(goal, &certified_context)
@@ -14050,15 +14394,54 @@ fn certify_outcome_simp_have(
     }
 
     let mut certified_available = available.to_vec();
+    for fact in crate::kernel::certified_store_loadability_facts(&replay.effect_facts) {
+        if !certified_available.contains(&fact) {
+            certified_available.push(fact);
+        }
+    }
     let mut surface_tactics = Vec::new();
     let mut quantified_memory_premises: Vec<(ClickProposition, Proposition)> = Vec::new();
-    for obligation in lowered.loadability_obligations {
+    'obligations: for obligation in lowered.loadability_obligations {
         let SurfaceLoadabilityObligation {
             proposition: obligation,
             segment,
         } = obligation;
         if exact_fact_is_available(&obligation, &certified_available) {
             continue;
+        }
+        let mut coverage_context = certified_available.clone();
+        for fact in &replay.effect_facts {
+            if !coverage_context.contains(fact.proposition()) {
+                coverage_context.push(fact.proposition().clone());
+            }
+        }
+        if crate::kernel::loadable_covered_by_fact(
+            &assumptions_from_propositions(&coverage_context),
+            &obligation,
+        ) {
+            certified_available.push(obligation);
+            continue;
+        }
+        for source in crate::kernel::certified_store_loadability_facts(&replay.effect_facts) {
+            let transition_facts = fact_transport_transition_facts(&replay.effect_facts, &source);
+            let transport_assumptions = transition_facts
+                .iter()
+                .fold(
+                    assumptions_from_propositions(&coverage_context),
+                    |assumptions, fact| {
+                        assumptions.assume_proposition(fact.proposition().clone())
+                    },
+                )
+                .assume_proposition(source.clone());
+            if certified_fact_transport_reaches(
+                &source,
+                &obligation,
+                post_state.memory(),
+                &transport_assumptions,
+            ) {
+                certified_available.push(obligation);
+                continue 'obligations;
+            }
         }
         let recorded_segment = segment.clone();
         let check_surface = |surface: &ClickProposition| {
@@ -20854,6 +21237,57 @@ fn execute_step_from_execution_point(
             },
         );
     }
+    // Preserve a surface name for each store while its exact source statement
+    // is still known. The certified equation records the address evaluated
+    // before the write and the memory immediately after it; a later attempt
+    // to reconstruct that name from the final state can only re-evaluate the
+    // address and loses this association for deep, state-dependent indices.
+    let store_exit_point = ProgramPointRef {
+        region: CodeRegionRef::Statement(statement_index),
+        kind: ProgramPointKind::Exit,
+    };
+    for equation in crate::kernel::certified_store_equations(&transition.execution_facts) {
+        if let Some(ClickProposition::Comparison {
+            left,
+            operator,
+            right,
+        }) =
+            synthesize_surface_proposition(&equation, parameters, arguments, &current_state)
+        {
+            let store_entry_point = ProgramPointRef {
+                region: CodeRegionRef::Statement(statement_index),
+                kind: ProgramPointKind::Entry,
+            };
+            let at = |point: &ProgramPointRef, expression: ContractExpression| {
+                ContractExpression::At {
+                    selector: VisitSelector::ProgramPoint(point.clone()),
+                    expression: Box::new(expression),
+                }
+            };
+            // The neutral pointer addition makes the Index use the outer
+            // exit snapshot's memory while its base and index retain their
+            // entry values.
+            let exit_load = if let ContractExpression::Index(base, index) = left {
+                ContractExpression::Index(
+                    Box::new(ContractExpression::Add(
+                        Box::new(at(&store_entry_point, *base)),
+                        Box::new(ContractExpression::CFragment(CExpression::Value(int32(0)))),
+                    )),
+                    Box::new(at(&store_entry_point, *index)),
+                )
+            } else {
+                left
+            };
+            let surface = ClickProposition::Comparison {
+                left: at(&store_exit_point, exit_load),
+                operator,
+                right: at(&store_entry_point, right),
+            };
+            replay
+                .surface_propositions
+                .record_lowering(&surface, &equation)?;
+        }
+    }
     let execution_pure_facts = transition.execution_facts;
     append_execution_effect_facts(&mut replay.effect_facts, &execution_pure_facts);
     let transition_obligations = transition.obligations;
@@ -22818,42 +23252,46 @@ fn fold_composite_resources_on_outcome(
                 lower_resource_clause(&contained, parameters, arguments, post_state.memory())?;
             lowered_contained.push(lowered);
         }
-        let resources = if let Some(resources) = post_state
-            .resources()
-            .clone()
-            .without_facts(&lowered_contained, &assumptions)
-        {
-            resources
-        } else {
-            // Preserve the precise missing-resource diagnostic on the slow
-            // failure path.
-            let mut diagnostic_resources = post_state.resources().clone();
-            for lowered in &lowered_contained {
-                let diagnostic_facts = diagnostic_resources.facts().to_vec();
-                let Some(resources) = diagnostic_resources.without_fact(lowered, &assumptions)
-                else {
-                    return Err(ClickError::new(format!(
-                        "`{claim_label}` path {path_index}: `fold({})` failed: {}",
-                        describe_resource_clause(resource),
-                        describe_missing_resource_fact(
-                            lowered,
-                            available_pure_facts,
-                            &diagnostic_facts,
-                            parameters,
-                            arguments,
-                            execution_pure_facts
-                        )
-                    )));
-                };
-                diagnostic_resources = resources;
+        let mut resources = post_state.resources().clone();
+        for lowered in &lowered_contained {
+            // Prefer consuming an equivalent whole representation. Generic
+            // range consumption is allowed to treat a requirement as a
+            // subrange; when the two endpoints are framed spellings from
+            // different snapshots, that would leave spurious fragments.
+            let directly_matching = resources.facts().iter().find(|available| {
+                matches!(
+                    (available, lowered),
+                    (CResourceFact::Own(_), CResourceFact::Own(_))
+                        | (CResourceFact::View(_), CResourceFact::View(_))
+                ) && c_resources_directly_match(
+                    available.resource(),
+                    lowered.resource(),
+                    &assumptions,
+                )
+            });
+            if let Some(directly_matching) = directly_matching.cloned() {
+                resources = resources
+                    .without_exact_representation(&directly_matching)
+                    .expect("the directly matched resource came from this context");
+                continue;
             }
-            // The batch consumption above refused a body the one-at-a-time
-            // walk accepted; report that rather than crashing.
-            return Err(ClickError::new(format!(
-                "`{claim_label}` path {path_index}: `fold({})` could not consume the body layer as a whole, though each contained resource is held individually",
-                describe_resource_clause(resource)
-            )));
-        };
+            let diagnostic_facts = resources.facts().to_vec();
+            let Some(next) = resources.without_fact(lowered, &assumptions) else {
+                return Err(ClickError::new(format!(
+                    "`{claim_label}` path {path_index}: `fold({})` failed: {}",
+                    describe_resource_clause(resource),
+                    describe_missing_resource_fact(
+                        lowered,
+                        available_pure_facts,
+                        &diagnostic_facts,
+                        parameters,
+                        arguments,
+                        execution_pure_facts
+                    )
+                )));
+            };
+            resources = next;
+        }
         post_state = post_state.with_resource_context(resources);
 
         let abstract_resource =

@@ -2331,6 +2331,69 @@ fn synthesizes_pointer_offset_equality_as_pointer_comparison() {
 }
 
 #[test]
+fn synthesizes_dynamically_indexed_pointer_offset_equality() {
+    let owner_offset = PointerOffsetTerm::Int32Scaled {
+        value: Box::new(Bitvector32Term::Variable(Variable(41))),
+        byte_width: 4,
+    };
+    let data_offset = PointerOffsetTerm::Int32Scaled {
+        value: Box::new(Bitvector32Term::Variable(Variable(42))),
+        byte_width: 4,
+    };
+    let index = Bitvector32Term::Variable(Variable(43));
+    let proposition = Proposition::ConditionIs(
+        ConditionTerm::PointerOffsetEqual(
+            Box::new(PointerOffsetTerm::Add(
+                Box::new(data_offset.clone()),
+                Box::new(PointerOffsetTerm::Int32Scaled {
+                    value: Box::new(index.clone()),
+                    byte_width: 4,
+                }),
+            )),
+            Box::new(PointerOffsetTerm::Add(
+                Box::new(owner_offset.clone()),
+                Box::new(PointerOffsetTerm::Constant(4)),
+            )),
+        ),
+        true,
+    );
+    let parameters = [
+        syntax::C0Parameter::new(C0Type::Int32Pointer, "owner".to_string(), None),
+        syntax::C0Parameter::new(C0Type::Int32Pointer, "data".to_string(), None),
+        syntax::C0Parameter::new(C0Type::Int32, "index".to_string(), None),
+    ];
+    let arguments = [
+        CExpression::Value(CValue::Pointer(Pointer {
+            block: "arg-memory".into(),
+            offset: owner_offset,
+        })),
+        CExpression::Value(CValue::Pointer(Pointer {
+            block: "arg-memory".into(),
+            offset: data_offset,
+        })),
+        CExpression::Value(CValue::Int32(index)),
+    ];
+
+    let surface = super::proof::synthesize_surface_proposition(
+        &proposition,
+        &parameters,
+        &arguments,
+        &CState::new(),
+    )
+    .expect("dynamically indexed pointer equality should have a Click spelling");
+
+    assert!(matches!(
+        surface,
+        ClickProposition::Comparison {
+            left: ContractExpression::CFragment(CExpression::Add(left, right)),
+            operator: ComparisonOperator::Equal,
+            ..
+        } if matches!(left.as_ref(), CExpression::Variable(name) if name == "data")
+            && matches!(right.as_ref(), CExpression::Variable(name) if name == "index")
+    ));
+}
+
+#[test]
 fn parses_explicit_branch_execution_tactics() {
     let source = FILL3_CLICK.replace(
         "by auto;",

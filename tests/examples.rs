@@ -20,7 +20,7 @@ const DEFAULT_EXAMPLE_TIME_LIMIT: Duration = Duration::from_secs(10 * 60);
 const QUARANTINED: &[(&str, &str)] = &[
     (
         "owned-string",
-        "certificate spelling fails for the post-store terminated_at equality; see issues/certificate-spelling-gap.md",
+        "certificate failures are fixed, but the complete project exceeds the 10-minute example budget; see issues/owned-string-slow-proof.md",
     ),
     (
         "owned-vector",

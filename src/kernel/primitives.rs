@@ -3223,7 +3223,7 @@ impl ResourceContext {
             .then_some(self)
     }
 
-    pub(super) fn without_exact_representation(mut self, fact: &CResourceFact) -> Option<Self> {
+    pub(crate) fn without_exact_representation(mut self, fact: &CResourceFact) -> Option<Self> {
         let index = self.facts.iter().position(|available| available == fact)?;
         self.facts.remove(index);
         Some(self)

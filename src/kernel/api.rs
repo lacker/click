@@ -32,17 +32,13 @@ pub(crate) fn c_resources_directly_match(
     };
     match (left, right) {
         (CResource::Memory(left), CResource::Memory(right)) => {
-            pointers_proven_equal_for_memory_resolution(left.base(), right.base(), assumptions)
-                && bitvector_terms_proven_equal_for_memory_resolution(
+            pointers_match_for_resource_replay(left.base(), right.base(), assumptions)
+                && bitvectors_match_for_resource_replay(
                     left.start(),
                     right.start(),
                     assumptions,
                 )
-                && bitvector_terms_proven_equal_for_memory_resolution(
-                    left.end(),
-                    right.end(),
-                    assumptions,
-                )
+                && bitvectors_match_for_resource_replay(left.end(), right.end(), assumptions)
         }
         (
             CResource::Composite {
@@ -73,6 +69,66 @@ pub(crate) fn c_resources_directly_match(
         }
         _ => false,
     }
+}
+
+fn bitvectors_match_for_resource_replay(
+    left: &Bitvector32Term,
+    right: &Bitvector32Term,
+    assumptions: &Assumptions,
+) -> bool {
+    if bitvector_terms_proven_equal_for_memory_resolution(left, right, assumptions) {
+        return true;
+    }
+    let transported_matches = |term: &Bitvector32Term, target: &Bitvector32Term| {
+        let mut memories = Vec::new();
+        collect_bitvector_memories(target, &mut memories);
+        memories.into_iter().any(|memory| {
+            transport_framed_atomic_bitvector(term, &memory, Some((assumptions, false)))
+                .is_some_and(|transported| {
+                    bitvector_terms_proven_equal_for_memory_resolution(
+                        &transported,
+                        target,
+                        assumptions,
+                    )
+                })
+        })
+    };
+    transported_matches(left, right) || transported_matches(right, left)
+}
+
+fn pointer_offsets_match_for_resource_replay(
+    left: &PointerOffsetTerm,
+    right: &PointerOffsetTerm,
+    assumptions: &Assumptions,
+) -> bool {
+    if c_pointer_offsets_proven_equal_for_effect(left, right, assumptions) {
+        return true;
+    }
+    let transported_matches = |offset: &PointerOffsetTerm, target: &PointerOffsetTerm| {
+        let mut memories = Vec::new();
+        collect_pointer_offset_memories(target, &mut memories);
+        memories.into_iter().any(|memory| {
+            transport_framed_atomic_pointer_offset(offset, &memory, Some((assumptions, false)))
+                .is_some_and(|transported| {
+                    c_pointer_offsets_proven_equal_for_effect(&transported, target, assumptions)
+                })
+        })
+    };
+    transported_matches(left, right) || transported_matches(right, left)
+}
+
+fn pointers_match_for_resource_replay(
+    left: &Pointer,
+    right: &Pointer,
+    assumptions: &Assumptions,
+) -> bool {
+    pointers_proven_equal_for_memory_resolution(left, right, assumptions)
+        || (left.block == right.block
+            && pointer_offsets_match_for_resource_replay(
+                &left.offset,
+                &right.offset,
+                assumptions,
+            ))
 }
 
 /// Assumption-free canonical form of a whole memory: every cell key and
@@ -124,6 +180,11 @@ pub(crate) fn c_memory_load_is_unchanged(
     if memories_match_for_pointer_load(before, after, pointer) {
         return true;
     }
+    if canonical_memory_for_pointer_load(before, pointer)
+        == canonical_memory_for_pointer_load(after, pointer)
+    {
+        return true;
+    }
     // The DAG walk runs before the snapshot comparison: it answers from
     // recorded edges in a bounded number of hops, where
     // `memories_match_for_pointer_load_under_assumptions` first compares
@@ -147,9 +208,13 @@ pub(crate) fn c_memory_load_is_unchanged(
             } => {
                 (effect_before == before
                     || memory_materializes_atomic_load(effect_before, before, pointer)
-                    || c_memories_canonically_equal(effect_before, before))
+                    || c_memories_canonically_equal(effect_before, before)
+                    || canonical_memory_for_pointer_load(effect_before, pointer)
+                        == canonical_memory_for_pointer_load(before, pointer))
                     && (effect_after == after
-                        || c_memories_canonically_equal(effect_after, after))
+                        || c_memories_canonically_equal(effect_after, after)
+                        || canonical_memory_for_pointer_load(effect_after, pointer)
+                            == canonical_memory_for_pointer_load(after, pointer))
                     && pointers.iter().all(|write| {
                         write.blocks_proven_distinct(pointer)
                             || pointer_offsets_with_common_base_proven_distinct(
@@ -162,6 +227,7 @@ pub(crate) fn c_memory_load_is_unchanged(
                                 pointer,
                                 assumptions,
                             )
+                            || assumptions.pointers_proven_disjoint_by_range(write, pointer)
                             || pointer_byte_offset_from_base(write, pointer)
                                 .and_then(|offset| offset.as_const())
                                 .is_some_and(|offset| offset != 0)
@@ -1284,6 +1350,26 @@ pub(crate) fn certified_store_equations(facts: &[ExecutionPureFact]) -> Vec<Prop
                 ),
                 true,
             ))
+        })
+        .collect()
+}
+
+pub(crate) fn certified_store_loadability_facts(
+    facts: &[ExecutionPureFact],
+) -> Vec<Proposition> {
+    facts
+        .iter()
+        .filter_map(|fact| {
+            let store = fact.certified_store_data()?;
+            let byte_width = match store.value {
+                CValue::UInt8(_) => 1,
+                CValue::Int32(_) | CValue::Pointer(_) => 4,
+            };
+            Some(Proposition::CMemoryLoadable {
+                memory: store.after.clone(),
+                base: store.pointer.clone(),
+                bytes: Bitvector32Term::Constant(byte_width),
+            })
         })
         .collect()
 }
@@ -4120,14 +4206,33 @@ fn resource_contexts_definitionally_equal(
     right: &ResourceContext,
     assumptions: &Assumptions,
 ) -> bool {
+    let facts_directly_match = |left: &CResourceFact, right: &CResourceFact| match (left, right) {
+        (CResourceFact::Own(left), CResourceFact::Own(right))
+        | (CResourceFact::View(left), CResourceFact::View(right)) => {
+            c_resources_directly_match(left, right, assumptions)
+        }
+        _ => false,
+    };
     let directly_equal = |left: &ResourceContext, right: &ResourceContext| {
         left.facts()
             .iter()
-            .all(|fact| right.satisfies_fact(fact, assumptions))
+            .all(|fact| {
+                right.satisfies_fact(fact, assumptions)
+                    || right
+                        .facts()
+                        .iter()
+                        .any(|available| facts_directly_match(available, fact))
+            })
             && right
                 .facts()
                 .iter()
-                .all(|fact| left.satisfies_fact(fact, assumptions))
+                .all(|fact| {
+                    left.satisfies_fact(fact, assumptions)
+                        || left
+                            .facts()
+                            .iter()
+                            .any(|available| facts_directly_match(available, fact))
+                })
     };
     if left == right {
         return true;
@@ -4148,7 +4253,8 @@ fn resource_contexts_definitionally_equal(
     ) else {
         return false;
     };
-    directly_equal(&left, &right)
+    let equal = directly_equal(&left, &right);
+    equal
 }
 
 /// Extracts constant bounds `lo <= var < hi` from a universal premise made
@@ -5503,7 +5609,15 @@ pub fn certify_c_function_execution_path_resource_representation(
                     &left.pointer,
                     &right.pointer,
                     &assumptions,
-                ) && c_values_proven_equal_for_memory_resolution(
+                ) || (left.pointer.block == right.pointer.block
+                    && c_pointer_offsets_proven_equal_for_effect(
+                        &left.pointer.offset,
+                        &right.pointer.offset,
+                        &assumptions,
+                    ))
+            })
+            && certified_stores.iter().zip(&desired_stores).all(|(left, right)| {
+                c_values_proven_equal_for_memory_resolution(
                     &left.value,
                     &right.value,
                     &assumptions,
