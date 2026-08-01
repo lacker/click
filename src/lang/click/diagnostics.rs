@@ -102,6 +102,27 @@ pub(super) fn describe_missing_pure_fact(
     )
 }
 
+pub(super) fn describe_unclosed_surface_goal(
+    goal: &ClickProposition,
+    pure_facts: &[Proposition],
+    resource_facts: &[CResourceFact],
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    execution_pure_facts: &[ExecutionPureFact],
+) -> String {
+    format!(
+        "unclosed goal: {}\n  {}",
+        super::printing::source_click_proposition(goal),
+        describe_available_facts(
+            pure_facts,
+            resource_facts,
+            parameters,
+            arguments,
+            execution_pure_facts,
+        )
+    )
+}
+
 pub(super) fn describe_missing_resource_fact(
     required: &CResourceFact,
     pure_facts: &[Proposition],

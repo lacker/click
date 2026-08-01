@@ -35,5 +35,5 @@ int32 weak_set_caller(int32 p[], int32 value) {
 ```
 
 ```expect
-fail: missing pure fact
+fail: unclosed goal: result == value
 ```

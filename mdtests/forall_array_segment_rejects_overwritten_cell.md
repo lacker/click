@@ -24,5 +24,5 @@ int32 forall_array_segment_rejects_overwritten_cell(int32 p[]) {
 ```
 
 ```expect
-fail: missing pure fact
+fail: unclosed goal: forall (int32 k)
 ```

@@ -42,5 +42,5 @@ int32 advance_hidden_branch_fact(int32 x) {
 ```
 
 ```expect
-fail: missing pure fact: ConditionIs(Bitvector32SignedLessEqual
+fail: unclosed goal: result <= 1
 ```

@@ -32,5 +32,5 @@ int32 fill_tail_rejects_tail_segment_unchanged(int32 p[], int32 n) {
 ```
 
 ```expect
-fail: missing pure fact
+fail: unclosed goal: forall (int32 k)
 ```

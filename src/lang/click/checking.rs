@@ -542,6 +542,7 @@ pub(super) fn prove_ensure_proposition_by_simp(
     program_point_states: &ProgramPointStates,
     unfolded_predicates: &[String],
 ) -> Result<(), ClickError> {
+    let surface_goal = proposition;
     let CFunctionOutcome::Return { state, .. } = outcome else {
         return Err(ClickError::new(format!(
             "`simp` failed for `{ensure_label}` path {path_index}: {}\n{}",
@@ -598,10 +599,10 @@ pub(super) fn prove_ensure_proposition_by_simp(
     let assumptions = assumptions_from_propositions(&reasoning_facts);
     match simp_proposition(&proposition, &assumptions) {
         SimpProposition::True => Ok(()),
-        simplified => Err(ClickError::new(format!(
-            "`simp` failed for `{ensure_label}` path {path_index}: simplified proposition was not true: {simplified:?}\n  {}",
-            describe_missing_pure_fact(
-                &proposition,
+        _ => Err(ClickError::new(format!(
+            "`simp` failed for `{ensure_label}` path {path_index}: {}",
+            describe_unclosed_surface_goal(
+                surface_goal,
                 available_pure_facts,
                 state.resources().facts(),
                 parameters,
@@ -3214,12 +3215,12 @@ pub(super) fn prove_ensure_proposition(
                                 right_value.clone(),
                             );
                             match required {
-                                Ok(required) => ClickError::new(format!(
+                                Ok(_) => ClickError::new(format!(
                                     "`ensures {comparison}` failed for `{ensure_label}` path {path_index}: left side evaluated to {}, right side evaluated to {}\n  {}",
                                     describe_c_value(&left_value, parameters, arguments),
                                     describe_c_value(&right_value, parameters, arguments),
-                                    describe_missing_pure_fact(
-                                        &required,
+                                    describe_unclosed_surface_goal(
+                                        proposition,
                                         available_pure_facts,
                                         state.resources().facts(),
                                         parameters,
@@ -3289,7 +3290,8 @@ pub(super) fn prove_ensure_proposition(
             )?;
         }
         _ => {
-            let surface_proposition = describe_click_proposition(proposition);
+            let surface_goal = proposition;
+            let surface_proposition = describe_click_proposition(surface_goal);
             let CFunctionOutcome::Return { value, state } = outcome else {
                 return Err(ClickError::new(format!(
                     "`ensures {surface_proposition}` failed for `{ensure_label}` path {path_index}: {}\n{}",
@@ -3303,14 +3305,14 @@ pub(super) fn prove_ensure_proposition(
                     )
                 )));
             };
-            let mut proposition = lower_outcome_proposition_with_program_points(
+            let mut lowered_proposition = lower_outcome_proposition_with_program_points(
                 parameters,
                 arguments,
                 pre_state,
                 state,
                 value,
                 available_pure_facts,
-                proposition,
+                surface_goal,
                 predicate_environment,
                 click_function_environment,
                 program_point_states,
@@ -3328,11 +3330,11 @@ pub(super) fn prove_ensure_proposition(
                 ))
             })?;
             let assumptions = assumptions_from_propositions(available_pure_facts);
-            proposition = unfold_predicates_in_proposition(
+            lowered_proposition = unfold_predicates_in_proposition(
                 predicate_environment,
                 click_function_environment,
                 unfolded_predicates,
-                &proposition,
+                &lowered_proposition,
                 &assumptions,
             )
             .map_err(|message| {
@@ -3340,11 +3342,11 @@ pub(super) fn prove_ensure_proposition(
                     "`ensures {surface_proposition}` failed for `{ensure_label}` path {path_index}: {message}"
                 ))
             })?;
-            if !assumptions.proves(&proposition) {
+            if !assumptions.proves(&lowered_proposition) {
                 return Err(ClickError::new(format!(
                     "`ensures {surface_proposition}` failed for `{ensure_label}` path {path_index}: {}",
-                    describe_missing_pure_fact(
-                        &proposition,
+                    describe_unclosed_surface_goal(
+                        surface_goal,
                         available_pure_facts,
                         state.resources().facts(),
                         parameters,

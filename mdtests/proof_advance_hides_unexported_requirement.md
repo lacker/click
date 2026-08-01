@@ -33,5 +33,5 @@ int32 advance_hidden_requirement(int32 x) {
 ```
 
 ```expect
-fail: missing pure fact: ConditionIs(Bitvector32SignedGreaterEqual
+fail: unclosed goal: result >= 0
 ```
