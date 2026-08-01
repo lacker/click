@@ -19,7 +19,7 @@ const DEFAULT_MDTEST_TIME_LIMIT: Duration = Duration::from_secs(30);
 /// they are fixed (see docs/advanced/testing-click.md).
 const QUARANTINED: &[(&str, &str)] = &[(
     "field_derived_precise_effect_after_metadata_write.md",
-    "effect-chain postconditions produce no replayable minimized derivation; it also has a slow simple fold (issues/certificate-spelling-gap.md, issues/field-derived-slow-fold.md)",
+    "the proof has a slow simple fold and slow smart tactics; see issues/field-derived-slow-fold.md",
 )];
 
 #[test]

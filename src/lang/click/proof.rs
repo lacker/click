@@ -13961,6 +13961,28 @@ fn lower_outcome_simp_tactic(
                 certified_context.push(equation.clone());
             }
         }
+        for candidate in [
+            ProofTactic::Derive(ProofDerive {
+                proposition: surface_goal.clone(),
+                premises: surface_premises.clone(),
+            }),
+            ProofTactic::Calculate(ProofDerive {
+                proposition: surface_goal.clone(),
+                premises: surface_premises.clone(),
+            }),
+        ] {
+            if check_atomic_derivation_goal(
+                &candidate,
+                goal.clone(),
+                kernel_premises.clone(),
+                goal,
+                &certified_context,
+            )
+            .is_ok()
+            {
+                return Ok(candidate);
+            }
+        }
         let spelled_store_equations = certified_store_equations
             .iter()
             .filter_map(|equation| {
