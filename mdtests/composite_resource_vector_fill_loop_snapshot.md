@@ -31,10 +31,10 @@ resource vector(owner: struct vector*) {
     owns owner->len;
     owns owner->cap;
     owns owner->data;
-    owns (owner->data)[0..owner->cap];
+    owns owner->data[0..owner->cap];
     fact 0 <= owner->len;
     fact owner->len <= owner->cap;
-    fact separate(memory(owner[0..4]), memory((owner->data)[0..owner->cap]));
+    fact separate(memory(owner[0..4]), memory(owner->data[0..owner->cap]));
 }
 
 verifying "composite_resource_vector_fill_loop_snapshot.c";
@@ -44,14 +44,14 @@ int32 composite_resource_vector_fill_loop_snapshot(
     int32 value
 ) {
     owns vector(owner);
-    mutable (owner->data)[0..owner->len];
+    mutable owner->data[0..owner->len];
 
     for loop(0) as fill_cells {
         invariant i >= 0 and i <= owner->len;
-        invariant forall (int32 k) {
-            0 <= k and k < i implies (owner->data)[k] == value
+        invariant forall (k: int32) {
+            0 <= k and k < i implies owner->data[k] == value
         };
-        mutable (owner->data)[0..owner->len] by frame;
+        mutable owner->data[0..owner->len] by frame;
 
         initialize by simp;
         preserve by {
@@ -64,8 +64,8 @@ int32 composite_resource_vector_fill_loop_snapshot(
     }
 
     ensures result == owner->len;
-    ensures forall (int32 k) {
-        0 <= k and k < owner->len implies (owner->data)[k] == value
+    ensures forall (k: int32) {
+        0 <= k and k < owner->len implies owner->data[k] == value
     };
 } by {
     execute();
@@ -74,23 +74,23 @@ int32 composite_resource_vector_fill_loop_snapshot(
     have result == owner->len by {
         normalize();
     }
-    have forall (int32 k) { 0 <= k and k < owner->len implies owner->data[k] == value } by {
-        derive(forall (int32 k) { 0 <= k and k < owner->len implies owner->data[k] == value }) using {
-            fact not at(fill_cells.exit, i) < owner->len;
-            fact forall (int32 k) { at(loop(0).exit, 0) <= at(loop(0).exit, k) and at(loop(0).exit, k) < at(loop(0).exit, i) implies at(loop(0).exit, owner->data[k]) == at(loop(0).exit, value) };
-            fact at(statement(5).entry, loadable(old(owner->len)));
-            fact at(statement(5).entry, loadable(old(owner->cap)));
-            fact at(statement(5).entry, loadable(old(owner->data)));
-            fact at(statement(5).entry, loadable(old((owner->data)[0..owner->cap])));
-            fact at(statement(5).entry, 0) <= at(statement(5).entry, owner->len);
-            fact at(statement(5).entry, owner->len) <= at(statement(5).entry, owner->cap);
-            fact at(statement(5).entry, i) <= at(statement(5).entry, owner->len);
-            fact not at(statement(5).entry, i) < at(statement(5).entry, owner->len);
-            fact at(statement(2).entry, loadable(owner->len));
-            fact at(statement(2).entry, loadable(owner->cap));
-            fact at(statement(2).entry, loadable(owner->data));
-            fact at(statement(2).entry, loadable((owner->data)[0..owner->cap]));
-            fact result == owner->len;
+    have forall (k: int32) { 0 <= k and k < owner->len implies owner->data[k] == value } by {
+        derive using {
+            not at(fill_cells.exit, i) < owner->len;
+            forall (k: int32) { at(loop(0).exit, 0) <= at(loop(0).exit, k) and at(loop(0).exit, k) < at(loop(0).exit, i) implies at(loop(0).exit, owner->data[k]) == at(loop(0).exit, value) };
+            at(statement(5).entry, loadable(old(owner->len)));
+            at(statement(5).entry, loadable(old(owner->cap)));
+            at(statement(5).entry, loadable(old(owner->data)));
+            at(statement(5).entry, loadable(old(owner->data[0..owner->cap])));
+            at(statement(5).entry, 0) <= at(statement(5).entry, owner->len);
+            at(statement(5).entry, owner->len) <= at(statement(5).entry, owner->cap);
+            at(statement(5).entry, i) <= at(statement(5).entry, owner->len);
+            not at(statement(5).entry, i) < at(statement(5).entry, owner->len);
+            at(statement(2).entry, loadable(owner->len));
+            at(statement(2).entry, loadable(owner->cap));
+            at(statement(2).entry, loadable(owner->data));
+            at(statement(2).entry, loadable(owner->data[0..owner->cap]));
+            result == owner->len;
         }
     }
     assumption();

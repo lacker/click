@@ -1,7 +1,7 @@
 # Simple statement branch step requires an exact condition fact
 
 Contextual arithmetic can imply a branch condition without providing the exact
-condition fact. That reasoning belongs to smart `step()`, not `step using {}`.
+condition fact. That reasoning belongs to smart `step()`, not `step() using {}`.
 
 ```c filename=simple_statement_step_branch_requires_exact_fact.c
 int32 positive_branch(int32 flag) {
@@ -19,7 +19,7 @@ verifying "simple_statement_step_branch_requires_exact_fact.c";
 int32 positive_branch(int32 flag) {
     requires flag > 0;
     ensures result == 1 by {
-        step using {}
+        step() using {}
         step();
         simp();
     }

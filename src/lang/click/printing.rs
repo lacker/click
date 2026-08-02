@@ -27,7 +27,7 @@ pub(super) fn source_click_proposition(proposition: &ClickProposition) -> String
             ClickProposition::ForAll { c_type, name, body } => (
                 5,
                 format!(
-                    "forall ({} {name}) {{ {} }}",
+                    "forall ({name}: {}) {{ {} }}",
                     describe_c0_type(*c_type),
                     at_precedence(body, 0)
                 ),
@@ -35,7 +35,7 @@ pub(super) fn source_click_proposition(proposition: &ClickProposition) -> String
             ClickProposition::Exists { c_type, name, body } => (
                 5,
                 format!(
-                    "exists ({} {name}) {{ {} }}",
+                    "exists ({name}: {}) {{ {} }}",
                     describe_c0_type(*c_type),
                     at_precedence(body, 0)
                 ),
@@ -112,12 +112,12 @@ fn write_tactic(output: &mut String, tactic: &ProofTactic, indent: usize) {
     let prefix = "    ".repeat(indent);
     match tactic {
         ProofTactic::Step => {
-            line(output, &prefix, "step using {");
+            line(output, &prefix, "step() using {");
             line(output, &prefix, "}");
         }
         ProofTactic::StepUsing(premises) => {
-            line(output, &prefix, "step using {");
-            write_fact_list(output, premises, indent + 1);
+            line(output, &prefix, "step() using {");
+            write_premise_list(output, premises, indent + 1);
             line(output, &prefix, "}");
         }
         ProofTactic::ApplyLoopSummary(region) => {
@@ -134,7 +134,7 @@ fn write_tactic(output: &mut String, tactic: &ProofTactic, indent: usize) {
                 &prefix,
                 &format!("summarize({}) using {{", describe_code_region_ref(region)),
             );
-            write_fact_list(output, premises, indent + 1);
+            write_premise_list(output, premises, indent + 1);
             line(output, &prefix, "}");
         }
         ProofTactic::UnfoldPredicate(name) => {
@@ -167,7 +167,7 @@ fn write_tactic(output: &mut String, tactic: &ProofTactic, indent: usize) {
                     format_theorem_application(application)
                 ),
             );
-            write_fact_list(output, premises, indent + 1);
+            write_premise_list(output, premises, indent + 1);
             line(output, &prefix, "}");
         }
         ProofTactic::Have(have) => {
@@ -290,7 +290,7 @@ fn write_tactic(output: &mut String, tactic: &ProofTactic, indent: usize) {
                     source_click_proposition(target)
                 ),
             );
-            write_fact_list(output, premises, indent + 1);
+            write_premise_list(output, premises, indent + 1);
             line(output, &prefix, "}");
         }
         ProofTactic::Frame(region) => {
@@ -319,7 +319,7 @@ fn write_tactic(output: &mut String, tactic: &ProofTactic, indent: usize) {
                         .unwrap_or_default()
                 ),
             );
-            write_fact_list(output, premises, indent + 1);
+            write_premise_list(output, premises, indent + 1);
             line(output, &prefix, "}");
         }
         ProofTactic::ExecuteStep => line(output, &prefix, "step();"),
@@ -356,25 +356,18 @@ fn write_proof(output: &mut String, proof: &Proof, indent: usize) {
 
 fn write_derivation(output: &mut String, name: &str, derive: &ProofDerive, indent: usize) {
     let prefix = "    ".repeat(indent);
-    line(
-        output,
-        &prefix,
-        &format!(
-            "{name}({}) using {{",
-            source_click_proposition(&derive.proposition)
-        ),
-    );
-    write_fact_list(output, &derive.premises, indent + 1);
+    line(output, &prefix, &format!("{name} using {{"));
+    write_premise_list(output, &derive.premises, indent + 1);
     line(output, &prefix, "}");
 }
 
-fn write_fact_list(output: &mut String, facts: &[ClickProposition], indent: usize) {
+fn write_premise_list(output: &mut String, facts: &[ClickProposition], indent: usize) {
     let prefix = "    ".repeat(indent);
     for fact in facts {
         line(
             output,
             &prefix,
-            &format!("fact {};", source_click_proposition(fact)),
+            &format!("{};", source_click_proposition(fact)),
         );
     }
 }

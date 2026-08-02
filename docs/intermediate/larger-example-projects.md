@@ -110,3 +110,9 @@ to copy when adding a focused feature.
 Example projects are larger fixtures. They can have several files and a more
 realistic naming style. They should still avoid becoming design sketches: if an
 example is under `examples/`, it should verify.
+
+Some larger sidecars retain exact certificates produced by `click expand` so
+their verification cost stays predictable and the replay boundary remains
+covered. Their READMEs identify those regions. Treat long `using` blocks as
+maintained replay artifacts; begin new proofs with the default prover or a
+clear smart tactic, then profile before expanding.

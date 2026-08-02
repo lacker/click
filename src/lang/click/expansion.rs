@@ -1813,7 +1813,7 @@ int32 identity(int32 x) {
         .expect("the first grouped tactic should expand");
 
         assert!(!expanded.contains("execute();"));
-        assert!(expanded.contains("    step using {\n    }\n    simp();"));
+        assert!(expanded.contains("    step() using {\n    }\n    simp();"));
         verify_c0_sources(&expanded, &[("identity.c", c_source)])
             .expect("the source with one expanded tactic should re-verify");
     }
@@ -1845,7 +1845,7 @@ int32 read_first(int32 p[1]) {
         .expect("the grouped immutable read should have one common expansion");
 
         assert!(!expanded.contains("execute();"));
-        assert!(expanded.contains("step using {"), "{expanded}");
+        assert!(expanded.contains("step() using {"), "{expanded}");
         verify_c0_sources(&expanded, &[("read.c", c_source)])
             .expect("the expanded immutable read should re-verify every grouped claim");
     }
@@ -1883,7 +1883,7 @@ int32 identity(int32 x) {
 
         assert_eq!(expanded.matches("execute();").count(), 1);
         assert!(
-            expanded.contains("    if x == x {\n        step using {"),
+            expanded.contains("    if x == x {\n        step() using {"),
             "{expanded}"
         );
         verify_c0_sources(&expanded, &[("identity.c", c_source)])
@@ -1892,14 +1892,14 @@ int32 identity(int32 x) {
 
     #[test]
     fn locates_a_block_tactic_as_one_source_statement() {
-        let source = "by { have x == x by { simp(); } simp(); }";
+        let source = "by { have x == x by simp; simp(); }";
         let tokens = scan_source_tokens(source).expect("source should scan");
         let proof = proof_span(&tokens, 0).expect("proof should have a span");
 
         let first = find_tactic_span(&tokens, &proof, 0).expect("first tactic should exist");
         let second = find_tactic_span(&tokens, &proof, 1).expect("second tactic should exist");
 
-        assert_eq!(&source[first], "have x == x by { simp(); }");
+        assert_eq!(&source[first], "have x == x by simp;");
         assert_eq!(&source[second], "simp();");
     }
 
@@ -2085,13 +2085,13 @@ int32 identity(int32 x) {
 verifying "inspect.c";
 
 int32 inspect(int32 p[1], int32 x) {
-    requires forall (int32 k) {
+    requires forall (k: int32) {
         0 <= k and k < 1 implies x == x
     };
     owns p[0..1];
     immutable;
     ensures result == 0;
-    ensures forall (int32 k) {
+    ensures forall (k: int32) {
         0 <= k and k < 1 implies x == x
     };
 } by {
@@ -2171,7 +2171,7 @@ int32 inspect(struct box* owner) {
 }
 "#;
         let click_source = r#"
-predicate terminated_at(int32 data[], int32 length) {
+predicate terminated_at(data: int32[], length: int32) {
     data[length] == 0
 }
 
@@ -2179,13 +2179,13 @@ resource owned_box(owner: struct box*) {
     owns owner->len;
     owns owner->cap;
     owns owner->data;
-    owns (owner->data)[0..owner->cap];
+    owns owner->data[0..owner->cap];
     fact 0 <= owner->len;
     fact owner->len < owner->cap;
     fact terminated_at(owner->data, owner->len);
     fact separate(
         memory(object(owner)),
-        memory((owner->data)[0..owner->cap])
+        memory(owner->data[0..owner->cap])
     );
 }
 
@@ -2212,39 +2212,38 @@ int32 inspect(struct box* owner) {
         )
         .expect("the declaration should expand with unfolded surface facts");
 
-        // The assertions below are about the emitted `step using` premises,
+        // The assertions below are about the emitted `step() using` premises,
         // not the resource declaration echoed above them; scope to the block
         // so a spelling surviving only in the declaration cannot pass.
         let step_using = expanded
-            .split("step using {")
+            .split("step() using {")
             .nth(1)
             .and_then(|rest| rest.split_once('}'))
             .map(|(block, _)| block)
-            .expect("the expansion should emit a step using block");
+            .expect("the expansion should emit a step() using block");
         assert!(
-            step_using.contains(
-                "fact separate(memory(object(owner)), memory((owner->data)[0..owner->cap]));"
-            ),
+            step_using
+                .contains("separate(memory(object(owner)), memory(owner->data[0..owner->cap]));"),
             "{expanded}"
         );
         // The aggregate premise replaces its per-field decomposition.
         assert!(
-            !step_using.contains("memory(owner->len), memory((owner->data)"),
+            !step_using.contains("memory(owner->len), memory(owner->data["),
             "{expanded}"
         );
         assert!(
-            !step_using.contains("memory(owner->cap), memory((owner->data)"),
+            !step_using.contains("memory(owner->cap), memory(owner->data["),
             "{expanded}"
         );
         assert!(
-            !step_using.contains("memory(owner->data), memory((owner->data)"),
+            !step_using.contains("memory(owner->data), memory(owner->data["),
             "{expanded}"
         );
         // The proof unfolds `terminated_at`, so the premise carries the
         // unfolded predicate body's canonical spelling, and only the resource
         // declaration keeps the folded call spelling.
         assert!(
-            step_using.contains("fact owner->data[owner->len] == 0;"),
+            step_using.contains("owner->data[owner->len] == 0;"),
             "{expanded}"
         );
         assert!(!step_using.contains("terminated_at"), "{expanded}");
@@ -2570,8 +2569,8 @@ int32 count(int32 n) {
     return 0;
 }"#;
         let click_source = r#"verifying "bubble_pass3.c";
-predicate all_le_range(int32 p[], int32 lo, int32 hi, int32 x) {
-    forall (int32 k) {
+predicate all_le_range(p: int32[], lo: int32, hi: int32, x: int32) {
+    forall (k: int32) {
         0 <= k and lo <= k and k < hi implies p[k] <= x
     }
 }
@@ -2667,7 +2666,7 @@ int32 fill_tail_keeps_first(int32 p[], int32 n) {
     return x;
 }"#;
         let click_source = r#"verifying "count_up.c";
-predicate acceptable(int32 x) {
+predicate acceptable(x: int32) {
     x >= 0
 }
 theorem nonnegative_is_acceptable(x: int32) {
@@ -2779,7 +2778,7 @@ int32 all_bits() {
     return 0;
 }"#;
         let click_source = r#"verifying "compare_swap2.c";
-predicate sorted_pair(int32 p[2]) {
+predicate sorted_pair(p: int32[2]) {
     p[0] <= p[1]
 }
 int32 compare_swap2(int32 p[2]) {

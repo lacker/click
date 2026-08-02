@@ -28,6 +28,10 @@ int32 function_name(int32 p[], int32 n) {
 
 `verifying "file.c";` names a C source supplied to the verifier. Function
 signatures in the `.click` file are checked against the parsed C0 source.
+Those attached signatures deliberately retain C declaration order. Typed
+binders introduced by Click itself use `name: type`: theorem and resource
+parameters, pure-function and predicate parameters, typed `let` bindings, and
+`forall`/`exists` variables.
 
 Click signatures currently understand `int32`, `uint8`, `int32*`, `uint8*`,
 pilot `struct name*` parameters, and array-parameter spellings such as
@@ -75,7 +79,7 @@ function reaches its return frontier:
 
 ```click
 execute();
-have exists (int32 k) { k == result } by {
+have exists (k: int32) { k == result } by {
     witness(k = result);
     simp();
 }
@@ -107,8 +111,9 @@ theorem increment_preserves_positive(x: int32) {
 }
 ```
 
-Theorem parameters use `name: type` spelling. A theorem body uses the same
-contract-block shape as C function specs: immutable `let` bindings,
+Like every Click-native declaration, theorem parameters use `name: type`
+spelling. A theorem body uses the same contract-block shape as C function
+specs: immutable `let` bindings,
 proposition `requires` clauses, and proposition `ensures` clauses with proof
 clauses. A theorem-only `.click` file does not need a `verifying "file.c";`
 declaration.
@@ -160,13 +165,13 @@ theorem int32_sign_split(x: int32) {
 The same construct can appear before or after C execution in a function proof.
 It splits proof reasoning only; it does not itself execute a C `if` statement.
 Inside a case, smart `step()` uses the exact case fact to enter the selected C
-arm. Expansion prints the corresponding `step using { ... }` certificate.
+arm. Expansion prints the corresponding `step() using { ... }` certificate.
 
 When one transition needs contextual pure facts, list them explicitly:
 
 ```click
-step using {
-    fact x < 2147483647;
+step() using {
+    x < 2147483647;
 }
 ```
 
@@ -403,8 +408,8 @@ Click proposition connectives are words:
 ```click
 result == x and not (result != x)
 result == x implies result >= 0
-forall (int32 k) { 0 <= k and k < n implies p[k] == old(p[k]) }
-exists (int32 k) { 0 <= k and k < n and p[k] == x }
+forall (k: int32) { 0 <= k and k < n implies p[k] == old(p[k]) }
+exists (k: int32) { 0 <= k and k < n and p[k] == x }
 ```
 
 Do not use C logical operators such as `&&`, `||`, or `!` in Click
@@ -424,7 +429,7 @@ elaborator assumes the item is inside the range, so bodies such as `p[k] == x`
 can use `loadable(p[lo..hi])` for memory safety.
 
 Prefer these range combinators for guarded memory reads. A plain proposition
-such as `exists (int32 k) { lo <= k and k < hi and p[k] == x }` does not
+such as `exists (k: int32) { lo <= k and k < hi and p[k] == x }` does not
 currently let the earlier conjunct guard the later memory read during lowering.
 
 Existential goals are proved explicitly in proof scripts with `witness`.
@@ -446,7 +451,7 @@ It is mainly used in postconditions and invariants:
 
 ```click
 ensures p[0] == old(p[0]) by auto;
-ensures forall (int32 k) { 0 <= k and k < n implies p[k] == old(p[k]) } by auto;
+ensures forall (k: int32) { 0 <= k and k < n implies p[k] == old(p[k]) } by auto;
 ```
 
 Inside `old(...)`, `result` is unavailable.
@@ -527,18 +532,19 @@ to rewind execution or enter an unselected branch.
 ## Pure Click Functions
 
 Click functions are specification-level value definitions, not executable C
-functions.
+functions. Their parameters are Click-native binders and therefore use
+`name: type`, unlike attached C function signatures.
 
 ```click
-function inc(int32 x) -> int32 {
+function inc(x: int32) -> int32 {
     x + 1
 }
 
-function eq_as_int(int32 x, int32 y) -> int32 {
+function eq_as_int(x: int32, y: int32) -> int32 {
     if x == y { 1 } else { 0 }
 }
 
-function count3(int32 p[], int32 x) -> int32 {
+function count3(p: int32[], x: int32) -> int32 {
     let initial: int32 = 0;
     (0..3).fold(initial, |acc, k| {
         acc + if p[k] == x { 1 } else { 0 }
@@ -621,7 +627,7 @@ Use `object(obj)` for the complete storage of a struct object:
 
 ```click
 consumes object(owner);
-fact separate(memory(object(owner)), memory((owner->data)[0..owner->cap]));
+fact separate(memory(object(owner)), memory(owner->data[0..owner->cap]));
 ```
 
 `object(owner)` is layout-aware: it denotes the imported C struct's aligned
@@ -650,9 +656,9 @@ the kernel and can be reasoned about by supported fold laws.
 Predicates return Click propositions:
 
 ```click
-predicate sorted_range(int32 p[], int32 lo, int32 hi) {
-    forall (int32 i) {
-        forall (int32 j) {
+predicate sorted_range(p: int32[], lo: int32, hi: int32) {
+    forall (i: int32) {
+        forall (j: int32) {
             lo <= i and i < j and j < hi implies p[i] <= p[j]
         }
     }

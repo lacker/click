@@ -30,20 +30,20 @@ resource owned_buffer(owner: struct owner*) {
     owns owner->len;
     owns owner->cap;
     owns owner->data;
-    owns (owner->data)[0..owner->cap];
+    owns owner->data[0..owner->cap];
     fact 0 <= owner->len;
     fact owner->len <= owner->cap;
-    fact separate(memory(owner[0..3]), memory((owner->data)[0..owner->cap]));
+    fact separate(memory(owner[0..3]), memory(owner->data[0..owner->cap]));
 }
 
 resource owned_buffer_with_room(owner: struct owner*) {
     owns owner->len;
     owns owner->cap;
     owns owner->data;
-    owns (owner->data)[0..owner->cap];
+    owns owner->data[0..owner->cap];
     fact 0 <= owner->len;
     fact owner->len < owner->cap;
-    fact separate(memory(owner[0..3]), memory((owner->data)[0..owner->cap]));
+    fact separate(memory(owner[0..3]), memory(owner->data[0..owner->cap]));
 }
 
 verifying "push_one.c";
@@ -55,30 +55,28 @@ int32 push_one(struct owner* owner, int32 value) {
         unfold(owned_buffer_with_room(owner));
         execute();
         have 0 <= owner->len by {
-            derive(0 <= owner->len) using {
-                fact at(statement(6).entry, separate(memory(owner->len), memory(owner->cap)));
-                fact at(statement(6).entry, separate(memory(owner->len), memory(owner->data)));
-                fact at(statement(6).entry, separate(memory(owner->len), memory((owner->data)[0..owner->cap])));
-                fact at(statement(6).entry, separate(memory(owner->cap), memory(owner->data)));
-                fact at(statement(6).entry, separate(memory(owner->cap), memory((owner->data)[0..owner->cap])));
-                fact at(statement(6).entry, separate(memory(owner->data), memory((owner->data)[0..owner->cap])));
-                fact at(statement(6).entry, loadable(old(owner->len)));
-                fact at(statement(6).entry, loadable(old(owner->cap)));
-                fact at(statement(6).entry, loadable(old(owner->data)));
-                fact at(statement(6).entry, loadable(old((owner->data)[0..owner->cap])));
-                fact at(statement(6).entry, 0) <= at(statement(6).entry, index);
-                fact at(statement(6).entry, index) < at(statement(6).entry, owner->cap);
-                fact at(statement(6).entry, separate(memory(owner[0..3]), memory((owner->data)[0..owner->cap])));
-                fact contains(owned_buffer_with_room(owner), memory(owner->len));
-                fact contains(owned_buffer_with_room(owner), memory(owner->cap));
-                fact contains(owned_buffer_with_room(owner), memory(owner->data));
-                fact contains(owned_buffer_with_room(owner), memory((owner->data)[0..owner->cap]));
+            derive using {
+                at(statement(6).entry, separate(memory(owner->len), memory(owner->cap)));
+                at(statement(6).entry, separate(memory(owner->len), memory(owner->data)));
+                at(statement(6).entry, separate(memory(owner->len), memory(owner->data[0..owner->cap])));
+                at(statement(6).entry, separate(memory(owner->cap), memory(owner->data)));
+                at(statement(6).entry, separate(memory(owner->cap), memory(owner->data[0..owner->cap])));
+                at(statement(6).entry, separate(memory(owner->data), memory(owner->data[0..owner->cap])));
+                at(statement(6).entry, loadable(old(owner->len)));
+                at(statement(6).entry, loadable(old(owner->cap)));
+                at(statement(6).entry, loadable(old(owner->data)));
+                at(statement(6).entry, loadable(old(owner->data[0..owner->cap])));
+                at(statement(6).entry, 0) <= at(statement(6).entry, index);
+                at(statement(6).entry, index) < at(statement(6).entry, owner->cap);
+                at(statement(6).entry, separate(memory(owner[0..3]), memory(owner->data[0..owner->cap])));
+                contains(owned_buffer_with_room(owner), memory(owner->len));
+                contains(owned_buffer_with_room(owner), memory(owner->cap));
+                contains(owned_buffer_with_room(owner), memory(owner->data));
+                contains(owned_buffer_with_room(owner), memory(owner->data[0..owner->cap]));
             }
         }
-        have owner->len <= owner->cap by { simp(); }
-        have separate(memory(owner[0..3]), memory((owner->data)[0..owner->cap])) by {
-            simp();
-        }
+        have owner->len <= owner->cap by simp;
+        have separate(memory(owner[0..3]), memory(owner->data[0..owner->cap])) by simp;
         fold(owned_buffer(owner));
     }
 
@@ -86,30 +84,28 @@ int32 push_one(struct owner* owner, int32 value) {
         unfold(owned_buffer_with_room(owner));
         execute();
         have 0 <= owner->len by {
-            derive(0 <= owner->len) using {
-                fact at(statement(6).entry, separate(memory(owner->len), memory(owner->cap)));
-                fact at(statement(6).entry, separate(memory(owner->len), memory(owner->data)));
-                fact at(statement(6).entry, separate(memory(owner->len), memory((owner->data)[0..owner->cap])));
-                fact at(statement(6).entry, separate(memory(owner->cap), memory(owner->data)));
-                fact at(statement(6).entry, separate(memory(owner->cap), memory((owner->data)[0..owner->cap])));
-                fact at(statement(6).entry, separate(memory(owner->data), memory((owner->data)[0..owner->cap])));
-                fact at(statement(6).entry, loadable(old(owner->len)));
-                fact at(statement(6).entry, loadable(old(owner->cap)));
-                fact at(statement(6).entry, loadable(old(owner->data)));
-                fact at(statement(6).entry, loadable(old((owner->data)[0..owner->cap])));
-                fact at(statement(6).entry, 0) <= at(statement(6).entry, index);
-                fact at(statement(6).entry, index) < at(statement(6).entry, owner->cap);
-                fact at(statement(6).entry, separate(memory(owner[0..3]), memory((owner->data)[0..owner->cap])));
-                fact contains(owned_buffer_with_room(owner), memory(owner->len));
-                fact contains(owned_buffer_with_room(owner), memory(owner->cap));
-                fact contains(owned_buffer_with_room(owner), memory(owner->data));
-                fact contains(owned_buffer_with_room(owner), memory((owner->data)[0..owner->cap]));
+            derive using {
+                at(statement(6).entry, separate(memory(owner->len), memory(owner->cap)));
+                at(statement(6).entry, separate(memory(owner->len), memory(owner->data)));
+                at(statement(6).entry, separate(memory(owner->len), memory(owner->data[0..owner->cap])));
+                at(statement(6).entry, separate(memory(owner->cap), memory(owner->data)));
+                at(statement(6).entry, separate(memory(owner->cap), memory(owner->data[0..owner->cap])));
+                at(statement(6).entry, separate(memory(owner->data), memory(owner->data[0..owner->cap])));
+                at(statement(6).entry, loadable(old(owner->len)));
+                at(statement(6).entry, loadable(old(owner->cap)));
+                at(statement(6).entry, loadable(old(owner->data)));
+                at(statement(6).entry, loadable(old(owner->data[0..owner->cap])));
+                at(statement(6).entry, 0) <= at(statement(6).entry, index);
+                at(statement(6).entry, index) < at(statement(6).entry, owner->cap);
+                at(statement(6).entry, separate(memory(owner[0..3]), memory(owner->data[0..owner->cap])));
+                contains(owned_buffer_with_room(owner), memory(owner->len));
+                contains(owned_buffer_with_room(owner), memory(owner->cap));
+                contains(owned_buffer_with_room(owner), memory(owner->data));
+                contains(owned_buffer_with_room(owner), memory(owner->data[0..owner->cap]));
             }
         }
-        have owner->len <= owner->cap by { simp(); }
-        have separate(memory(owner[0..3]), memory((owner->data)[0..owner->cap])) by {
-            simp();
-        }
+        have owner->len <= owner->cap by simp;
+        have separate(memory(owner[0..3]), memory(owner->data[0..owner->cap])) by simp;
         fold(owned_buffer(owner));
         simp();
     }

@@ -19,7 +19,7 @@ uint8 fill_byte_tail(uint8 p[], int32 n) {
 ```click
 verifying "uint8_loop_invariant_pure_function.c";
 
-function first_byte(uint8 p[]) -> uint8 {
+function first_byte(p: uint8[]) -> uint8 {
     p[0]
 }
 

@@ -24,79 +24,77 @@ int32 fill_n_segment_invariant(int32 p[], int32 n) {
     consumes p[0..n];
     for loop(0) {
         invariant i >= 0 and i <= n;
-        invariant forall (int32 k) {
+        invariant forall (k: int32) {
             0 <= k and k < i implies p[k] == k
         };
         initialize by auto;
         preserve by {
             step();
             step();
-            have i == at(loop(0).entry, i) + 1 by {
-                simp();
-            }
+            have i == at(loop(0).entry, i) + 1 by simp;
             simp();
         }
     }
     ensures returns_n: result == n;
-    ensures filled_segment: forall (int32 k) {
+    ensures filled_segment: forall (k: int32) {
         0 <= k and k < n implies p[k] == k
     };
 } by {
-    step using {
-        fact n >= 0;
-        fact n <= 2147483647;
-        fact loadable(p[0..n]);
+    step() using {
+        n >= 0;
+        n <= 2147483647;
+        loadable(p[0..n]);
     }
-    step using {
-        fact n >= 0;
-        fact n <= 2147483647;
-        fact loadable(old(p[0..n]));
+    step() using {
+        n >= 0;
+        n <= 2147483647;
+        loadable(old(p[0..n]));
     }
     have i >= 0 by {
         normalize();
     }
     have i <= n by {
-        derive(i <= n) using {
-            fact n >= 0;
+        derive using {
+            n >= 0;
         }
     }
-    have forall (int32 k) { 0 <= k and k < i implies p[k] == k } by {
+    have forall (k: int32) { 0 <= k and k < i implies p[k] == k } by {
         normalize();
     }
     summarize(loop(0)) using {
-        fact n >= 0 and n <= 2147483647;
-        fact loadable(old(p[0..n]));
-        fact i >= 0;
-        fact i <= n;
-        fact forall (int32 k) { 0 <= k and k < i implies p[k] == k };
+        n >= 0 and n <= 2147483647;
+        loadable(old(p[0..n]));
+        i >= 0;
+        i <= n;
+        forall (k: int32) { 0 <= k and k < i implies p[k] == k };
     }
-    step using {
-        fact n >= 0;
-        fact n <= 2147483647;
-        fact loadable(old(p[0..n]));
-        fact at(loop(0).exit, i) >= at(loop(0).exit, 0);
-        fact at(loop(0).exit, i) <= at(loop(0).exit, n);
-        fact not i < n;
+    step() using {
+        n >= 0;
+        n <= 2147483647;
+        loadable(old(p[0..n]));
+        at(loop(0).exit, i) >= at(loop(0).exit, 0);
+        at(loop(0).exit, i) <= at(loop(0).exit, n);
+        not i < n;
     }
     have result == n by {
-        derive(result == n) using {
-            fact at(statement(5).entry, n) >= at(statement(5).entry, 0);
-            fact at(statement(5).entry, n) <= at(statement(5).entry, 2147483647);
-            fact at(statement(5).entry, loadable(old(p[0..n])));
-            fact at(statement(5).entry, i) >= at(statement(5).entry, 0);
-            fact at(statement(5).entry, i) <= at(statement(5).entry, n);
-            fact not at(statement(5).entry, i) < at(statement(5).entry, n);
-            fact at(statement(2).entry, n) >= at(statement(2).entry, 0) and at(statement(2).entry, n) <= at(statement(2).entry, 2147483647);
-            fact at(statement(2).entry, i) >= at(statement(2).entry, 0);
-            fact at(statement(2).entry, i) <= at(statement(2).entry, n);
-            fact forall (int32 k) { at(statement(2).entry, 0) <= at(statement(2).entry, k) and at(statement(2).entry, k) < at(statement(2).entry, i) implies at(statement(2).entry, p[k]) == at(statement(2).entry, k) };
-            fact at(loop(0).exit, i) >= at(loop(0).exit, 0) and at(loop(0).exit, i) <= at(loop(0).exit, n);
+        derive using {
+            at(statement(5).entry, n) >= at(statement(5).entry, 0);
+            at(statement(5).entry, n) <= at(statement(5).entry, 2147483647);
+            at(statement(5).entry, loadable(old(p[0..n])));
+            at(statement(5).entry, i) >= at(statement(5).entry, 0);
+            at(statement(5).entry, i) <= at(statement(5).entry, n);
+            not at(statement(5).entry, i) < at(statement(5).entry, n);
+            at(statement(2).entry, n) >= at(statement(2).entry, 0) and at(statement(2).entry, n) <= at(statement(2).entry, 2147483647);
+            at(statement(2).entry, i) >= at(statement(2).entry, 0);
+            at(statement(2).entry, i) <= at(statement(2).entry, n);
+            forall (k: int32) { at(statement(2).entry, 0) <= at(statement(2).entry, k) and at(statement(2).entry, k) < at(statement(2).entry, i) implies at(statement(2).entry, p[k]) == at(statement(2).entry, k) };
+            at(loop(0).exit, i) >= at(loop(0).exit, 0) and at(loop(0).exit, i) <= at(loop(0).exit, n);
         }
     }
-    have forall (int32 k) { 0 <= k and k < n implies p[k] == k } by {
-        derive(forall (int32 k) { 0 <= k and k < n implies p[k] == k }) using {
-            fact result == n;
-            fact forall (int32 k) { at(loop(0).exit, 0) <= at(loop(0).exit, k) and at(loop(0).exit, k) < at(loop(0).exit, i) implies at(loop(0).exit, p[k]) == at(loop(0).exit, k) };
+    have forall (k: int32) { 0 <= k and k < n implies p[k] == k } by {
+        derive using {
+            result == n;
+            forall (k: int32) { at(loop(0).exit, 0) <= at(loop(0).exit, k) and at(loop(0).exit, k) < at(loop(0).exit, i) implies at(loop(0).exit, p[k]) == at(loop(0).exit, k) };
         }
     }
     assumption();

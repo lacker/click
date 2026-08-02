@@ -12,7 +12,7 @@ int32 shift_uint8_promoted(uint8 x) {
 ```click
 verifying "shift_uint8_promoted.c";
 
-function byte_shl1(uint8 x) -> int32 {
+function byte_shl1(x: uint8) -> int32 {
     x << 1
 }
 

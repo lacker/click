@@ -16,7 +16,7 @@ int32 read_first(int32 p[]) {
 verifying "bounded_increment.c";
 verifying "read_first.c";
 
-function inc_with_let(int32 x) -> int32 {
+function inc_with_let(x: int32) -> int32 {
     let next: int32 = x + 1;
     next
 }

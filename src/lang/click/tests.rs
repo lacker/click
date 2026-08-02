@@ -62,10 +62,10 @@ fn parses_expanded_typed_loads_and_old_loadability() {
         int32 example(int32 owner[], int32 data[]) {
             ensures result == 0;
         } by {
-            step using {
-                fact loadable(old(owner[0..6]));
-                fact load_int32_pointer((owner + 2)) == data;
-                fact separate(
+            step() using {
+                loadable(old(owner[0..6]));
+                load_int32_pointer((owner + 2)) == data;
+                separate(
                     memory(owner[0..6]),
                     memory(load_int32_pointer((owner + 2))[0..load_int32(owner)])
                 );
@@ -80,7 +80,7 @@ fn parses_expanded_typed_loads_and_old_loadability() {
         panic!("expected a proof script");
     };
     let ProofTactic::StepUsing(premises) = &tactics[0] else {
-        panic!("expected a step using tactic");
+        panic!("expected a step() using tactic");
     };
     assert!(matches!(
         &premises[0],
@@ -145,9 +145,7 @@ fn executes_verified_loop_inside_selected_branch() {
             ensures result == 1 by {
                 step();
                 step();
-                have at(count.exit, i) == 1 by {
-                    simp();
-                }
+                have at(count.exit, i) == 1 by simp;
                 step();
                 simp();
             }
@@ -334,7 +332,7 @@ fn verifies_explicit_structural_logic_tactics() {
         }
 
         theorem intro_forall_rule() {
-            ensures forall (int32 k) { k == k } by {
+            ensures forall (k: int32) { k == k } by {
                 intro();
                 normalize();
             }
@@ -374,8 +372,8 @@ fn verifies_atomic_derivation_from_explicit_premises() {
         theorem derives_nonnegative(x: int32) {
             requires x > 0;
             ensures x >= 0 by {
-                derive(x >= 0) using {
-                    fact x > 0;
+                derive using {
+                    x > 0;
                 }
             }
         }
@@ -383,8 +381,8 @@ fn verifies_atomic_derivation_from_explicit_premises() {
         theorem calculates_nonnegative(x: int32) {
             requires x > 0;
             ensures x >= 0 by {
-                derive(x >= 0) using {
-                    fact x > 0;
+                derive using {
+                    x > 0;
                 }
             }
         }
@@ -604,7 +602,7 @@ fn proof_source_printing_preserves_proposition_precedence() {
     })]);
 
     assert!(
-        source.contains("forall (int32 k) { x <= 0 and x < 2 implies x == 1 }"),
+        source.contains("forall (k: int32) { x <= 0 and x < 2 implies x == 1 }"),
         "{source}"
     );
     let proof_source =
@@ -613,7 +611,6 @@ fn proof_source_printing_preserves_proposition_precedence() {
 
     let context_free =
         super::printing::format_partial_tactic_sequence(&[ProofTactic::Derive(ProofDerive {
-            proposition: comparison(ComparisonOperator::Equal, 0),
             premises: Vec::new(),
         })]);
     assert_eq!(context_free, "normalize();");
@@ -623,7 +620,7 @@ fn proof_source_printing_preserves_proposition_precedence() {
 fn normalize_closes_context_free_quantified_contradictions() {
     let source = r#"
 theorem impossible_interval() {
-    ensures forall (int32 k) {
+    ensures forall (k: int32) {
         0 <= k and k < 0 implies k == 7
     } by {
         normalize();
@@ -795,7 +792,7 @@ fn parses_loadable_segment_proposition() {
     let source = r#"
             verifying "read.c";
 
-            predicate shifted_loadable(int32* p, int32 n) {
+            predicate shifted_loadable(p: int32*, n: int32) {
                 loadable((p + 1)[0..n])
             }
 
@@ -852,7 +849,7 @@ fn parses_resource_relation_propositions() {
                 owns p[0..n];
             }
 
-            predicate separated_backing(int32* p, int32* q, int32 n) {
+            predicate separated_backing(p: int32*, q: int32*, n: int32) {
                 separate(memory(p[0..n]), backing(q, n))
             }
 
@@ -1061,15 +1058,24 @@ fn parses_struct_object_segments_without_exposing_layout_cells() {
         verifying "initialize.c";
 
         int32 initialize(struct vector* owner) {
+            requires loadable(owner->data[0..owner->cap]);
             consumes object(owner);
             produces object(owner);
-            ensures separate(memory(object(owner)), memory((owner->data)[0..owner->cap]));
+            ensures separate(memory(object(owner)), memory(owner->data[0..owner->cap]));
         }
     "#;
     let file = parse_c0_click_file(click_source, &[("initialize.c", c_source)])
         .expect("whole struct objects should have a source-level segment spelling");
     let function = &file.function_blocks()[0];
-    let Requirement::Resource(ResourceClause::Write(segment)) = &function.requires()[0] else {
+    let Requirement::LoadableSegment { segment: range } = &function.requires()[0] else {
+        panic!("expected a field-backed loadable range")
+    };
+    assert_eq!(
+        super::diagnostics::describe_contract_segment(range),
+        "owner->data[0..owner->cap]"
+    );
+
+    let Requirement::Resource(ResourceClause::Write(segment)) = &function.requires()[1] else {
         panic!("expected an owned object requirement")
     };
 
@@ -1609,6 +1615,64 @@ fn rejects_retired_tactic_spellings_with_migrations() {
 }
 
 #[test]
+fn rejects_redundant_exact_premise_spellings_with_migrations() {
+    let old_derive = r#"
+        theorem legacy(x: int32) {
+            requires x == x;
+            ensures x == x by {
+                derive(x == x) using {
+                    x == x;
+                }
+            }
+        }
+    "#;
+    let error = parse(old_derive).expect_err("derive target should be rejected");
+    assert!(
+        error.message().contains("derive using"),
+        "{}",
+        error.message()
+    );
+
+    let old_fact_prefix = r#"
+        theorem legacy(x: int32) {
+            requires x == x;
+            ensures x == x by {
+                derive using {
+                    fact x == x;
+                }
+            }
+        }
+    "#;
+    let error = parse(old_fact_prefix).expect_err("using fact prefix should be rejected");
+    assert!(error.message().contains("redundant"), "{}", error.message());
+
+    let old_step = FILL3_CLICK.replace("by auto;", "by { step using {} }");
+    let error = parse(&old_step).expect_err("unparenthesized exact step should be rejected");
+    assert!(
+        error.message().contains("step() using"),
+        "{}",
+        error.message()
+    );
+}
+
+#[test]
+fn rejects_c_style_click_native_binders_with_migrations() {
+    for source in [
+        "predicate legacy(int32 x) { x == x }",
+        "function legacy(int32 x) -> int32 { x }",
+        "theorem legacy() { ensures forall (int32 k) { k == k } by auto; }",
+        "theorem legacy() { ensures exists (int32 k) { k == k } by auto; }",
+    ] {
+        let error = parse(source).expect_err("C-style Click-native binder should be rejected");
+        assert!(
+            error.message().contains("name: type"),
+            "{}",
+            error.message()
+        );
+    }
+}
+
+#[test]
 fn parses_smart_step_proof_tactic() {
     let source = FILL3_CLICK.replace("by auto;", "by { step(); execute(); simp(); }");
     let file = parse(&source).expect("smart step proof script should parse");
@@ -1638,7 +1702,7 @@ fn simple_step_supports_explicit_fact_transport() {
     let click_source = r#"
             verifying "transport.c";
 
-            predicate first_is_seven(int32 p[]) {
+            predicate first_is_seven(p: int32[]) {
                 p[0] == 7
             }
 
@@ -1652,7 +1716,7 @@ fn simple_step_supports_explicit_fact_transport() {
                 unfold(first_is_seven);
                 step();
                 transport(old(p[0]) == 7, p[0] == 7) using {
-                    fact old(p[0]) == 7;
+                    old(p[0]) == 7;
                 }
                 step();
                 frame();
@@ -1665,7 +1729,7 @@ fn simple_step_supports_explicit_fact_transport() {
 
     let missing_source = click_source.replace(
         "transport(old(p[0]) == 7, p[0] == 7) using {
-                    fact old(p[0]) == 7;
+                    old(p[0]) == 7;
                 }",
         "transport(old(p[0]) == 7, p[0] == 7) using {}",
     );
@@ -1691,7 +1755,7 @@ fn explicit_fact_transport_can_certify_a_derived_source() {
     let click_source = r#"
             verifying "transport.c";
 
-            predicate ordered(int32 p[]) {
+            predicate ordered(p: int32[]) {
                 0 <= p[0] and p[0] <= p[1]
             }
 
@@ -1746,7 +1810,7 @@ fn clone_field_stores_with_observed_source_resource_verify() {
             fact owner->pos <= owner->len;
             fact separate(
                 memory(owner[0..4]),
-                memory((owner->data)[0..owner->len])
+                memory(owner->data[0..owner->len])
             );
         }
 
@@ -1756,7 +1820,7 @@ fn clone_field_stores_with_observed_source_resource_verify() {
             requires separate(memory(target[0..4]), memory(source[0..4]));
             requires separate(
                 memory(target[0..4]),
-                memory((source->data)[0..source->len])
+                memory(source->data[0..source->len])
             );
             consumes target[0..4];
             views cursor(source);
@@ -1874,7 +1938,7 @@ fn simple_step_does_not_contextually_prove_execution_prerequisites() {
                 requires x < 2147483647;
                 ensures result > x;
             } by {
-                step using {
+                step() using {
                 }
                 simp();
             }
@@ -1903,8 +1967,8 @@ fn step_using_limits_execution_to_explicit_pure_premises() {
                 requires x < 2147483647;
                 ensures result == x + 1;
             } by {
-                step using {
-                    fact x < 2147483647;
+                step() using {
+                    x < 2147483647;
                 }
                 simp();
             }
@@ -1951,7 +2015,7 @@ fn execute_step_records_a_point_checked_surface_expansion() {
     let source = verified[0]
         .expanded_proof_source()
         .expect("checked expansion should have canonical source");
-    assert!(source.contains("step using"));
+    assert!(source.contains("step() using"));
     assert!(source.contains("normalize();"));
 
     let execute_offset = click_source
@@ -1971,7 +2035,7 @@ fn execute_step_records_a_point_checked_surface_expansion() {
     let rewritten =
         expand_c0_tactic_source_at(click_source, &[("increment.c", c_source)], line, column)
             .expect("the overflow-safe step should expand");
-    assert!(rewritten.contains("fact x < 2147483647;"), "{rewritten}");
+    assert!(rewritten.contains("x < 2147483647;"), "{rewritten}");
     verify_c0_sources(&rewritten, &[("increment.c", c_source)])
         .expect("the emitted numeric prerequisite should replay");
 }
@@ -2015,7 +2079,7 @@ fn execute_rest_return_certificate_omits_unused_ambient_facts() {
         position.column,
     )
     .expect("the return execution should expand");
-    assert!(rewritten.contains("    step using {"), "{rewritten}");
+    assert!(rewritten.contains("    step() using {"), "{rewritten}");
     verify_c0_sources(&rewritten, &[("return_x.c", c_source)])
         .expect("the minimal return certificate should replay");
 }
@@ -2031,7 +2095,7 @@ fn execute_step_omits_materialization_only_transport() {
     let click_source = r#"
             verifying "transport.c";
 
-            predicate first_is_seven(int32 p[]) {
+            predicate first_is_seven(p: int32[]) {
                 p[0] == 7
             }
 
@@ -2101,7 +2165,7 @@ fn execute_step_omits_materialized_mixed_snapshot_transport() {
     let click_source = r#"
             verifying "transport.c";
 
-            predicate first_less_than_second(int32 p[]) {
+            predicate first_less_than_second(p: int32[]) {
                 p[0] < p[1]
             }
 
@@ -2168,7 +2232,7 @@ fn execute_step_omits_materialization_transport_across_statements() {
     let click_source = r#"
             verifying "transport.c";
 
-            predicate first_less_than_second(int32 p[]) {
+            predicate first_less_than_second(p: int32[]) {
                 p[0] < p[1]
             }
 
@@ -2304,7 +2368,7 @@ fn execute_step_expands_call_assign_fact_from_internal_snapshot() {
         column,
     )
     .expect("call-assign facts should normalize to the source statement exit");
-    assert!(expanded.contains("step using {"), "{expanded}");
+    assert!(expanded.contains("step() using {"), "{expanded}");
 }
 
 #[test]
@@ -2603,7 +2667,7 @@ fn parses_apply_theorem_with_explicit_premises() {
         "by {
             execute();
             apply(nonnegative(result)) using {
-                fact result >= 0;
+                result >= 0;
             }
             simp();
         }",
@@ -2624,7 +2688,7 @@ fn parses_transport_with_explicit_premises() {
         "by {
             step();
             transport(old(p[0]) == 0, p[0] == 0) using {
-                fact old(p[0]) == 0;
+                old(p[0]) == 0;
             }
             execute();
             simp();
@@ -2819,7 +2883,6 @@ fn canonical_tactic_printer_round_trips_nested_surface_certificate() {
             then_tactics: vec![ProofTactic::Have(ProofHave {
                 proposition: nonnegative.clone(),
                 proof: Proof::Script(vec![ProofTactic::Derive(ProofDerive {
-                    proposition: nonnegative.clone(),
                     premises: vec![nonnegative.clone()],
                 })]),
             })],
@@ -3017,7 +3080,7 @@ fn apply_using_replays_only_with_its_explicit_premises() {
                 ensures result == x + 1;
             } by {
                 apply(increment_is_defined(x)) using {
-                    fact x < 2147483647;
+                    x < 2147483647;
                 }
                 step();
                 simp();
@@ -3029,7 +3092,7 @@ fn apply_using_replays_only_with_its_explicit_premises() {
 
     let missing_premise = click_source.replace(
         "apply(increment_is_defined(x)) using {
-                    fact x < 2147483647;
+                    x < 2147483647;
                 }",
         "apply(increment_is_defined(x)) using {}",
     );
@@ -3063,12 +3126,10 @@ fn apply_using_uses_ambient_loadability_only_to_lower_explicit_premises() {
                 views data[0..1];
                 ensures result == data[0];
             } by {
-                have data[0] == data[0] by {
-                    simp();
-                }
+                have data[0] == data[0] by simp;
                 step();
                 apply(preserve_equal(data[0], data[0])) using {
-                    fact data[0] == data[0];
+                    data[0] == data[0];
                 }
                 simp();
             }
@@ -3115,7 +3176,7 @@ fn source_expander_makes_theorem_application_premises_explicit() {
     .expect("bare theorem application should expand");
 
     assert!(expanded.contains("apply(increment_is_defined(x)) using {"));
-    assert!(expanded.contains("fact x < 2147483647;"));
+    assert!(expanded.contains("x < 2147483647;"));
     verify_c0_sources(&expanded, &[("increment.c", c_source)])
         .expect("expanded theorem application should replay");
 }
@@ -3143,7 +3204,7 @@ fn defined_rejects_concrete_undefined_expression() {
 fn parses_local_have_proof_tactic() {
     let source = FILL3_CLICK.replace(
         "by auto;",
-        "by { have n < 2147483647 by { simp(); } execute(); simp(); }",
+        "by { have n < 2147483647 by simp; execute(); simp(); }",
     );
     let file = parse(&source).expect("local have tactic should parse");
     let tactics = file.function_blocks()[0].ensures()[0]
@@ -3154,9 +3215,9 @@ fn parses_local_have_proof_tactic() {
     assert!(matches!(
         &tactics[0],
         ProofTactic::Have(ProofHave {
-            proof: Proof::Script(inner),
+            proof: Proof::Tactic(SmartTactic::Simp),
             ..
-        }) if inner == &[ProofTactic::Simp]
+        })
     ));
     assert_eq!(
         &tactics[1..],
@@ -3225,7 +3286,7 @@ fn parses_labeled_requirement() {
             verifying "id.c";
 
             int32 id(int32 x) {
-                requires has_x: exists (int32 k) { k == x };
+                requires has_x: exists (k: int32) { k == x };
                 ensures result == x by auto;
             }
         "#;
@@ -3433,7 +3494,7 @@ fn parses_click_proposition_syntax() {
     let source = r#"
             verifying "logic.c";
 
-            predicate nonnegative(int32 x) {
+            predicate nonnegative(x: int32) {
                 x >= 0
             }
 
@@ -3443,7 +3504,7 @@ fn parses_click_proposition_syntax() {
                 ensures bounded: result >= 0 and result < 10 by auto;
                 ensures implication: result == x implies result >= 0 by auto;
                 ensures named_predicate: nonnegative(result) by auto;
-                ensures quantified: forall (int32 k) {
+                ensures quantified: forall (k: int32) {
                     0 <= k implies k >= 0
                 } by auto;
                 immutable by auto;
@@ -3490,7 +3551,7 @@ fn parses_click_proposition_syntax() {
 #[test]
 fn parses_rust_style_let_annotations() {
     let source = r#"
-            function inc_with_let(int32 x) -> int32 {
+            function inc_with_let(x: int32) -> int32 {
                 let next: int32 = x + 1;
                 next
             }
@@ -3629,7 +3690,7 @@ fn rejects_predicate_call_with_wrong_arity() {
     let source = r#"
             verifying "identity.c";
 
-            predicate nonnegative(int32 x) {
+            predicate nonnegative(x: int32) {
                 x >= 0
             }
 
@@ -3663,7 +3724,7 @@ fn verifies_opaque_predicate_from_requirement() {
     let click_source = r#"
             verifying "identity_pointer_fact.c";
 
-            predicate sorted_pair(int32* p) {
+            predicate sorted_pair(p: int32*) {
                 p[0] <= p[1]
             }
 
@@ -3693,7 +3754,7 @@ fn heap_dependent_ensures_still_owes_its_loads() {
     let click_source = r#"
             verifying "claim_sorted.c";
 
-            predicate sorted_pair(int32* p) {
+            predicate sorted_pair(p: int32*) {
                 p[0] <= p[1]
             }
 
@@ -3733,7 +3794,7 @@ fn call_site_owes_the_definedness_of_a_heap_dependent_precondition() {
             verifying "needs_sorted.c";
             verifying "calls_it.c";
 
-            predicate sorted_pair(int32* p) {
+            predicate sorted_pair(p: int32*) {
                 p[0] <= p[1]
             }
 
@@ -3767,7 +3828,7 @@ fn unfolds_predicate_requirement_to_prove_consequence() {
     let click_source = r#"
             verifying "keep_pair.c";
 
-            predicate sorted_pair(int32* p) {
+            predicate sorted_pair(p: int32*) {
                 p[0] <= p[1]
             }
 
@@ -3817,7 +3878,7 @@ fn unfolds_predicate_goal_to_prove_compare_swap_sorted() {
     let click_source = r#"
             verifying "compare_swap2.c";
 
-            predicate sorted_pair(int32* p) {
+            predicate sorted_pair(p: int32*) {
                 p[0] <= p[1]
             }
 
@@ -3848,9 +3909,9 @@ fn unfolds_general_sorted_predicate() {
     let click_source = r#"
             verifying "keep_sorted.c";
 
-            predicate sorted(int32* p, int32 n) {
-                forall (int32 i) {
-                    forall (int32 j) {
+            predicate sorted(p: int32*, n: int32) {
+                forall (i: int32) {
+                    forall (j: int32) {
                         0 <= i and 0 <= j and i < j and j < n implies p[i] <= p[j]
                     }
                 }
@@ -3923,7 +3984,7 @@ fn verifies_simp_normalizes_simple_postconditions() {
 #[test]
 fn proof_sugar_and_bare_smart_tactics_have_the_same_frontier_semantics() {
     let c_source = "int32 identity(int32 x) { return x; }";
-    let simp_errors = ["by simp;", "by { simp; }", "by { simp(); }"].map(|proof| {
+    let simp_errors = ["by simp;", "by { simp; }", "by simp;"].map(|proof| {
         let source = format!(
             "verifying \"identity.c\"; int32 identity(int32 x) {{ ensures result == x {proof} }}"
         );
@@ -4077,7 +4138,7 @@ fn post_execution_transport_observes_a_preceding_have() {
                     normalize();
                 }
                 transport(result == x, result == x) using {
-                    fact result == x;
+                    result == x;
                 }
                 assumption();
             }
@@ -4273,12 +4334,8 @@ fn smart_apply_preserves_statement_snapshots_in_explicit_premises() {
             } by {
                 unfold(one_cell(p));
                 step();
-                have at(statement(0).entry, p[0]) == 1 by {
-                    simp();
-                }
-                have at(statement(0).exit, p[0]) == 0 by {
-                    simp();
-                }
+                have at(statement(0).entry, p[0]) == 1 by simp;
+                have at(statement(0).exit, p[0]) == 0 by simp;
                 apply(changed_one_to_zero(
                     at(statement(0).entry, p[0]),
                     at(statement(0).exit, p[0])
@@ -4307,7 +4364,7 @@ fn smart_apply_preserves_statement_snapshots_in_explicit_premises() {
         expand_c0_tactic_source_at(click_source, &[("decrement.c", c_source)], line, column)
             .expect("the snapshot theorem application should expand");
     assert!(
-        expanded.contains("fact at(statement(0).entry, p[0]) == 1;"),
+        expanded.contains("at(statement(0).entry, p[0]) == 1;"),
         "{expanded}"
     );
     verify_c0_sources(&expanded, &[("decrement.c", c_source)])
@@ -4339,7 +4396,7 @@ fn statement_snapshots_support_complete_loadability_propositions() {
                     at(statement(0).entry, loadable(p[0..2])),
                     loadable(p[0..2])
                 ) using {
-                    fact at(statement(0).entry, loadable(p[0..2]));
+                    at(statement(0).entry, loadable(p[0..2]));
                 }
                 execute();
                 frame();
@@ -4670,9 +4727,9 @@ fn selected_pure_case_split_simp_expands_by_removal() {
     let click_source = r#"
             verifying "sort3.c";
 
-            predicate sorted_range(int32 p[], int32 lo, int32 hi) {
-                forall (int32 i) {
-                    forall (int32 j) {
+            predicate sorted_range(p: int32[], lo: int32, hi: int32) {
+                forall (i: int32) {
+                    forall (j: int32) {
                         0 <= i and 0 <= j and lo <= i and i < j and j < hi implies p[i] <= p[j]
                     }
                 }
@@ -4724,9 +4781,7 @@ fn source_expander_lowers_smart_simp_inside_have() {
             int32 identity(int32 x) {
                 ensures result == x;
             } by {
-                have x == x by {
-                    simp();
-                }
+                have x == x by simp;
                 execute();
                 simp();
             }
@@ -4824,7 +4879,7 @@ fn source_expander_lowers_smart_simp_after_unfold_inside_have() {
             }
         "#;
     let click_source = r#"
-            predicate reflexive(int32 x) {
+            predicate reflexive(x: int32) {
                 x == x
             }
 
@@ -4895,9 +4950,7 @@ fn source_expander_preserves_pointer_field_spelling_inside_smart_have() {
                 immutable;
                 ensures result == 0;
             } by {
-                have owner->data == data by {
-                    simp();
-                }
+                have owner->data == data by simp;
                 execute();
                 frame();
                 simp();
@@ -4944,8 +4997,8 @@ fn source_expander_spells_an_indexed_load_through_a_pointer_field() {
     let click_source = r#"
             verifying "holder.c";
 
-            predicate second_is(struct holder* owner, int32 value) {
-                (owner->data)[1] == value
+            predicate second_is(owner: struct holder*, value: int32) {
+                owner->data[1] == value
             }
 
             int32 holder_read(
@@ -4962,9 +5015,7 @@ fn source_expander_spells_an_indexed_load_through_a_pointer_field() {
                 ensures result == 0;
             } by {
                 unfold(second_is);
-                have data[1] == value by {
-                    simp();
-                }
+                have data[1] == value by simp;
                 execute();
                 frame();
                 simp();
@@ -5004,7 +5055,7 @@ fn smart_have_uses_transport_planned_at_the_mutation_boundary() {
     let click_source = r#"
             verifying "transport.c";
 
-            predicate first_is_seven(int32 p[]) {
+            predicate first_is_seven(p: int32[]) {
                 p[0] == 7
             }
 
@@ -5014,9 +5065,7 @@ fn smart_have_uses_transport_planned_at_the_mutation_boundary() {
                 mutable p[1..2] by {
                     unfold(first_is_seven);
                     step();
-                    have p[0] == 7 by {
-                        simp();
-                    }
+                    have p[0] == 7 by simp;
                     step();
                     frame();
                 }
@@ -5065,7 +5114,7 @@ fn smart_have_uses_fact_selected_by_explicit_step_at_the_mutation_boundary() {
     let click_source = r#"
             verifying "transport.c";
 
-            predicate first_is_seven(int32 p[]) {
+            predicate first_is_seven(p: int32[]) {
                 p[0] == 7
             }
 
@@ -5074,13 +5123,11 @@ fn smart_have_uses_fact_selected_by_explicit_step_at_the_mutation_boundary() {
                 consumes p[0..2];
                 mutable p[1..2] by {
                     unfold(first_is_seven);
-                    step using {
-                        fact p[0] == 7;
-                        fact loadable(p[0..2]);
+                    step() using {
+                        p[0] == 7;
+                        loadable(p[0..2]);
                     }
-                    have p[0] == 7 by {
-                        simp();
-                    }
+                    have p[0] == 7 by simp;
                     step();
                     frame();
                 }
@@ -5104,7 +5151,7 @@ fn smart_have_uses_fact_selected_by_explicit_step_at_the_mutation_boundary() {
 
     let expanded =
         expand_c0_tactic_source_at(click_source, &[("transport.c", c_source)], line, column)
-            .expect("the fact selected by `step using` should reach the current snapshot");
+            .expect("the fact selected by `step() using` should reach the current snapshot");
     let expanded_have = &expanded[expanded
         .find("have p[0] == 7")
         .expect("expanded proof should retain the selected have")
@@ -5158,9 +5205,7 @@ fn source_expander_recalls_a_fact_at_a_recorded_statement_entry() {
             } by {
                 observe(one(p));
                 execute_until(statement(2));
-                have at(statement(1).entry, p[0]) == 1 by {
-                    simp();
-                }
+                have at(statement(1).entry, p[0]) == 1 by simp;
                 execute();
                 frame();
                 simp();
@@ -5270,7 +5315,7 @@ fn source_expander_derives_separation_from_call_postconditions() {
                 execute_until(statement(2));
                 have separate(
                     memory(right[0..4]),
-                    memory((left->data)[0..left->len])
+                    memory(left->data[0..left->len])
                 ) by {
                     simp();
                 }
@@ -5297,10 +5342,10 @@ fn source_expander_derives_separation_from_call_postconditions() {
 
     let expanded = expand_c0_tactic_source_at(click_source, &c_sources, line, column)
         .expect("call postconditions should expand into an explicit separation derivation");
-    assert!(expanded.contains("fact left->len == length"), "{expanded}");
-    assert!(expanded.contains("fact left->data == data"), "{expanded}");
+    assert!(expanded.contains("left->len == length"), "{expanded}");
+    assert!(expanded.contains("left->data == data"), "{expanded}");
     assert!(!expanded.contains("load_int32_pointer"), "{expanded}");
-    assert!(expanded.contains("derive(separate("), "{expanded}");
+    assert!(expanded.contains("derive using {"), "{expanded}");
     verify_c0_sources(&expanded, &c_sources)
         .expect("the expanded separation derivation should replay");
 }
@@ -5876,7 +5921,7 @@ fn verifies_quantified_old_memory_postcondition() {
             int32 write_second(int32* p) {
                 requires loadable(p[0..2]);
                 consumes p[1..2];
-                ensures keeps_first_cell: forall (int32 k) {
+                ensures keeps_first_cell: forall (k: int32) {
                     0 <= k and k < 1 implies p[k] == old(p[k])
                 } by auto;
             }
@@ -6034,7 +6079,7 @@ fn quantified_old_memory_rejects_overwritten_cell() {
             int32 write_second(int32* p) {
                 requires loadable(p[0..2]);
                 consumes p[1..2];
-                ensures keeps_second_cell: forall (int32 k) {
+                ensures keeps_second_cell: forall (k: int32) {
                     1 <= k and k < 2 implies p[k] == old(p[k])
                 } by auto;
             }
@@ -6376,11 +6421,11 @@ fn verifies_old_memory_loop_invariant_with_segment_bounds() {
                 consumes p[0..n];
                 for loop(0) {
                     invariant i >= 1 and i <= n;
-                    invariant forall (int32 k) {
+                    invariant forall (k: int32) {
                         0 <= k and k < 1 implies p[k] == old(p[k])
                     };
                 }
-                ensures frame_and_result: forall (int32 k) {
+                ensures frame_and_result: forall (k: int32) {
                     0 <= k and k < 1 implies p[k] == old(p[k])
                 } and result == n by auto;
             }
@@ -7233,13 +7278,13 @@ fn loop_phase_proofs_can_unfold_invariant_predicates() {
     let click_source = r#"
             verifying "loop_sorted_range_invariant.c";
 
-            predicate sorted(int32 p[], int32 n) {
+            predicate sorted(p: int32[], n: int32) {
                 sorted_range(p, 0, n)
             }
 
-            predicate sorted_range(int32 p[], int32 lo, int32 hi) {
-                forall (int32 i) {
-                    forall (int32 j) {
+            predicate sorted_range(p: int32[], lo: int32, hi: int32) {
+                forall (i: int32) {
+                    forall (j: int32) {
                         0 <= i and 0 <= j and lo <= i and i < j and j < hi implies p[i] <= p[j]
                     }
                 }
@@ -7307,20 +7352,20 @@ fn verifies_symbolic_copy_segment_invariant() {
                 for loop(0) {
                     invariant i >= 0;
                     invariant i <= n;
-                    invariant forall (int32 k) {
+                    invariant forall (k: int32) {
                         0 <= k and k < i implies dst[k] == old(src[k])
                     };
                     mutable dst[0..n] by auto;
                 }
                 ensures returns_n: result == n by auto;
-                ensures source_unchanged: forall (int32 k) {
+                ensures source_unchanged: forall (k: int32) {
                     0 <= k and k < n implies src[k] == old(src[k])
                 } by {
                     execute();
                     frame(loop(0));
                     simp();
                 }
-                ensures copied_segment: forall (int32 k) {
+                ensures copied_segment: forall (k: int32) {
                     0 <= k and k < n implies dst[k] == old(src[k])
                 } by auto;
             }
@@ -7360,12 +7405,12 @@ fn auto_certificate_replays_for_loop_frame_claim() {
                 for loop(0) {
                     invariant i >= 0;
                     invariant i <= n;
-                    invariant forall (int32 k) {
+                    invariant forall (k: int32) {
                         0 <= k and k < i implies dst[k] == old(src[k])
                     };
                     mutable dst[0..n] by auto;
                 }
-                ensures source_unchanged: forall (int32 k) {
+                ensures source_unchanged: forall (k: int32) {
                     0 <= k and k < n implies src[k] == old(src[k])
                 } by auto;
             }
@@ -7408,12 +7453,12 @@ fn auto_certificate_replays_for_loop_frame_claim() {
                 for loop(0) {
                     invariant i >= 0;
                     invariant i <= n;
-                    invariant forall (int32 k) {
+                    invariant forall (k: int32) {
                         0 <= k and k < i implies dst[k] == old(src[k])
                     };
                     mutable dst[0..n] by auto;
                 }
-                ensures source_unchanged: forall (int32 k) {
+                ensures source_unchanged: forall (k: int32) {
                     0 <= k and k < n implies src[k] == old(src[k])
                 } by {
                     execute();
@@ -7694,8 +7739,8 @@ fn apply_loop_summary_using_limits_context_to_explicit_premises() {
                     step();
                     step();
                     summarize(loop(0)) using {
-                        fact n >= 0;
-                        fact n <= 2147483647;
+                        n >= 0;
+                        n <= 2147483647;
                     }
                     step();
                     simp();
@@ -7993,7 +8038,7 @@ fn observed_cursor_facts_produce_replayable_surface_certificates() {
             fact owner->pos <= owner->len;
             fact separate(
                 memory(owner[0..4]),
-                memory((owner->data)[0..owner->len])
+                memory(owner->data[0..owner->len])
             );
         }
 
@@ -8004,7 +8049,7 @@ fn observed_cursor_facts_produce_replayable_surface_certificates() {
             requires owner->pos < owner->len;
             views input_cursor(owner);
             immutable;
-            ensures result == (owner->data)[owner->pos];
+            ensures result == owner->data[owner->pos];
         } by {
             observe(input_cursor(owner));
             observe(readable_input(owner->data, owner->len));
@@ -8017,7 +8062,7 @@ fn observed_cursor_facts_produce_replayable_surface_certificates() {
             requires owner->pos < owner->len;
             owns input_cursor(owner);
             mutable owner->pos;
-            ensures result == old((owner->data)[owner->pos]);
+            ensures result == old(owner->data[owner->pos]);
             ensures owner->pos == old(owner->pos) + 1;
             ensures owner->len == old(owner->len);
             ensures owner->data == old(owner->data);
@@ -8025,11 +8070,11 @@ fn observed_cursor_facts_produce_replayable_surface_certificates() {
             unfold(input_cursor(owner));
             observe(readable_input(owner->data, owner->len));
             execute();
-            have 0 <= owner->pos by { simp(); }
-            have owner->pos <= owner->len by { simp(); }
+            have 0 <= owner->pos by simp;
+            have owner->pos <= owner->len by simp;
             have separate(
                 memory(owner[0..4]),
-                memory((owner->data)[0..owner->len])
+                memory(owner->data[0..owner->len])
             ) by {
                 simp();
             }
@@ -8074,7 +8119,7 @@ fn explicit_store_step_with_unfolded_resource_facts_verifies() {
         }
     "#;
     let click_source = r#"
-        predicate terminated_at(int32 data[], int32 length) {
+        predicate terminated_at(data: int32[], length: int32) {
             data[length] == 0
         }
 
@@ -8082,13 +8127,13 @@ fn explicit_store_step_with_unfolded_resource_facts_verifies() {
             owns owner->len;
             owns owner->cap;
             owns owner->data;
-            owns (owner->data)[0..owner->cap];
+            owns owner->data[0..owner->cap];
             fact 0 <= owner->len;
             fact owner->len < owner->cap;
             fact terminated_at(owner->data, owner->len);
             fact separate(
                 memory(owner[0..4]),
-                memory((owner->data)[0..owner->cap])
+                memory(owner->data[0..owner->cap])
             );
         }
 
@@ -8103,35 +8148,35 @@ fn explicit_store_step_with_unfolded_resource_facts_verifies() {
             requires index < owner->len;
             owns owned_string(owner);
             ensures result == value;
-            ensures (owner->data)[index] == value;
+            ensures owner->data[index] == value;
         } by {
             unfold(owned_string(owner));
             unfold(terminated_at);
-            step using {
-                fact 0 <= index;
-                fact index < owner->len;
-                fact loadable(owner->len);
-                fact loadable(owner->cap);
-                fact loadable(owner->data);
-                fact 0 <= owner->len;
-                fact owner->len < owner->cap;
-                fact terminated_at(owner->data, owner->len);
-                fact separate(
+            step() using {
+                0 <= index;
+                index < owner->len;
+                loadable(owner->len);
+                loadable(owner->cap);
+                loadable(owner->data);
+                0 <= owner->len;
+                owner->len < owner->cap;
+                terminated_at(owner->data, owner->len);
+                separate(
                     memory(owner[0..4]),
-                    memory((owner->data)[0..owner->cap])
+                    memory(owner->data[0..owner->cap])
                 );
-                fact (owner->data)[owner->len] == 0;
+                owner->data[owner->len] == 0;
             }
             have terminated_at(owner->data, owner->len) by {
                 unfold(terminated_at);
                 simp();
             }
-            have (owner->data)[owner->len] == 0 by simp;
+            have owner->data[owner->len] == 0 by simp;
             have 0 <= owner->len by simp;
             have owner->len < owner->cap by simp;
             have separate(
                 memory(owner[0..4]),
-                memory((owner->data)[0..owner->cap])
+                memory(owner->data[0..owner->cap])
             ) by {
                 simp();
             }
@@ -8165,7 +8210,7 @@ fn expanded_read_step_keeps_named_range_separation_premises() {
         }
     "#;
     let click_source = r#"
-        predicate terminated_at(int32 data[], int32 length) {
+        predicate terminated_at(data: int32[], length: int32) {
             data[length] == 0
         }
 
@@ -8173,13 +8218,13 @@ fn expanded_read_step_keeps_named_range_separation_premises() {
             owns owner->len;
             owns owner->cap;
             owns owner->data;
-            owns (owner->data)[0..owner->cap];
+            owns owner->data[0..owner->cap];
             fact 0 <= owner->len;
             fact owner->len < owner->cap;
             fact terminated_at(owner->data, owner->len);
             fact separate(
                 memory(owner[0..4]),
-                memory((owner->data)[0..owner->cap])
+                memory(owner->data[0..owner->cap])
             );
         }
 
@@ -8189,29 +8234,25 @@ fn expanded_read_step_keeps_named_range_separation_premises() {
             requires 1 <= owner->len;
             owns owned_string(owner);
             mutable owner[0..1], (owner->data + (owner->len - 1))[0..1];
-            ensures result == old((owner->data)[owner->len - 1]);
+            ensures result == old(owner->data[owner->len - 1]);
             ensures owner->len == old(owner->len) - 1;
             ensures owner->cap == old(owner->cap);
             ensures owner->data == old(owner->data);
-            ensures (owner->data)[owner->len] == 0;
+            ensures owner->data[owner->len] == 0;
         } by {
             unfold(owned_string(owner));
-            have 0 <= owner->len - 1 by {
-                simp();
-            }
-            have owner->len - 1 < owner->len by {
-                simp();
-            }
+            have 0 <= owner->len - 1 by simp;
+            have owner->len - 1 < owner->len by simp;
             execute();
             have terminated_at(owner->data, owner->len) by {
                 unfold(terminated_at);
                 simp();
             }
-            have 0 <= owner->len by { simp(); }
-            have owner->len < owner->cap by { simp(); }
+            have 0 <= owner->len by simp;
+            have owner->len < owner->cap by simp;
             have separate(
                 memory(owner[0..4]),
-                memory((owner->data)[0..owner->cap])
+                memory(owner->data[0..owner->cap])
             ) by {
                 simp();
             }

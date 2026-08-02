@@ -63,26 +63,26 @@ verifying "count_three_matches.c";
 verifying "range_helpers.c";
 verifying "identity_permutation.c";
 
-function inc(int32 x) -> int32 {
+function inc(x: int32) -> int32 {
     x + 1
 }
 
-function head(int32 p[]) -> int32 {
+function head(p: int32[]) -> int32 {
     p[0]
 }
 
-function eq_as_int(int32 x, int32 y) -> int32 {
+function eq_as_int(x: int32, y: int32) -> int32 {
     if x == y { 1 } else { 0 }
 }
 
-function count3(int32 p[], int32 x) -> int32 {
+function count3(p: int32[], x: int32) -> int32 {
     let initial = 0;
     (0..3).fold(initial, |acc, k| {
         acc + if p[k] == x { 1 } else { 0 }
     })
 }
 
-predicate one_more(int32 x, int32 y) {
+predicate one_more(x: int32, y: int32) {
     inc(x) == y
 }
 

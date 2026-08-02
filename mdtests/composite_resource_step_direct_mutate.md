@@ -25,11 +25,11 @@ resource owned_buffer(owner: struct owner*) {
     owns owner->len;
     owns owner->cap;
     owns owner->data;
-    owns (owner->data)[0..owner->cap];
+    owns owner->data[0..owner->cap];
     fact 0 <= owner->len;
     fact owner->len <= owner->cap;
     fact 0 <= owner->cap;
-    fact separate(memory(owner[0..3]), memory((owner->data)[0..owner->cap]));
+    fact separate(memory(owner[0..3]), memory(owner->data[0..owner->cap]));
 }
 
 verifying "len_then_clear_step.c";
@@ -44,12 +44,10 @@ int32 len_then_clear_step(struct owner* owner) {
         unfold(owned_buffer(owner));
         step();
         step();
-        have 0 <= owner->len by { simp(); }
-        have owner->len <= owner->cap by { simp(); }
-        have 0 <= owner->cap by { simp(); }
-        have separate(memory(owner[0..3]), memory((owner->data)[0..owner->cap])) by {
-            simp();
-        }
+        have 0 <= owner->len by simp;
+        have owner->len <= owner->cap by simp;
+        have 0 <= owner->cap by simp;
+        have separate(memory(owner[0..3]), memory(owner->data[0..owner->cap])) by simp;
         fold(owned_buffer(owner));
     }
 }

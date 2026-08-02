@@ -26,7 +26,7 @@ verifying "tactics_prepare_execution.c";
 verifying "tactics_prepare_execution_apply.c";
 verifying "tactics_prepare_execution_have.c";
 
-predicate incrementable(int32 x) {
+predicate incrementable(x: int32) {
     x < 2147483647
 }
 

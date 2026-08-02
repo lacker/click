@@ -23,18 +23,18 @@ resource owned_buffer(owner: struct owner*) {
     owns owner->len;
     owns owner->cap;
     owns owner->data;
-    owns (owner->data)[0..1];
+    owns owner->data[0..1];
     fact 1 <= owner->len;
     fact owner->len <= owner->cap;
     fact 1 <= owner->cap;
-    fact separate(memory(owner[0..3]), memory((owner->data)[0..1]));
+    fact separate(memory(owner[0..3]), memory(owner->data[0..1]));
 }
 
 verifying "buffer_get_first.c";
 
 int32 buffer_get_first(struct owner* owner) {
     consumes owned_buffer(owner);
-    ensures result == (owner->data)[0];
+    ensures result == owner->data[0];
     produces owned_buffer(owner);
 } by {
     unfold(owned_buffer(owner));

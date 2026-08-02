@@ -20,7 +20,7 @@ int32 set_before_terminator(
 ```click
 verifying "set_before_terminator.c";
 
-predicate terminated(int32 data[], int32 length) {
+predicate terminated(data: int32[], length: int32) {
     data[length] == 0
 }
 
@@ -49,7 +49,7 @@ int32 set_before_terminator(
         simp();
     }
     step();
-    have index < index + 1 by { simp(); }
+    have index < index + 1 by simp;
     frame();
     simp();
 }

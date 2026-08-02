@@ -29,9 +29,7 @@ int32 count_from_to(int32 i, int32 n) {
 
     ensures result == n and at(count.exit, i) == n by {
         execute_until(statement(2));
-        have at(count.exit, i) == n by {
-            simp();
-        }
+        have at(count.exit, i) == n by simp;
         step();
         simp();
     }
@@ -43,9 +41,7 @@ int32 count_from_to(int32 i, int32 n) {
 
     ensures execute_until_crosses_loop: result == n by {
         execute_until(statement(2));
-        have at(count.exit, i) == n by {
-            simp();
-        }
+        have at(count.exit, i) == n by simp;
         step();
         simp();
     }

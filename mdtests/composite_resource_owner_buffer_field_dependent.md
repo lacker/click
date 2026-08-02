@@ -23,9 +23,9 @@ int32 set_owned_first(struct owner* owner) {
 resource owned_buffer(owner: struct owner*) {
     owns owner->len;
     owns owner->data;
-    owns (owner->data)[0..owner->len];
+    owns owner->data[0..owner->len];
     fact owner->len == 1;
-    fact separate(memory(owner[0..2]), memory((owner->data)[0..owner->len]));
+    fact separate(memory(owner[0..2]), memory(owner->data[0..owner->len]));
 }
 
 verifying "set_owned_first.c";

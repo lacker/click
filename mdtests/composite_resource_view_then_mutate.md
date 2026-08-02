@@ -36,11 +36,11 @@ resource owned_buffer(owner: struct owner*) {
     owns owner->len;
     owns owner->cap;
     owns owner->data;
-    owns (owner->data)[0..owner->cap];
+    owns owner->data[0..owner->cap];
     fact 0 <= owner->len;
     fact owner->len <= owner->cap;
     fact 0 <= owner->cap;
-    fact separate(memory(owner[0..3]), memory((owner->data)[0..owner->cap]));
+    fact separate(memory(owner[0..3]), memory(owner->data[0..owner->cap]));
 }
 
 verifying "buffer_len.c";
@@ -63,12 +63,10 @@ int32 len_then_clear(struct owner* owner) {
         execute_until(statement(2));
         unfold(owned_buffer(owner));
         execute();
-        have 0 <= owner->len by { simp(); }
-        have owner->len <= owner->cap by { simp(); }
-        have 0 <= owner->cap by { simp(); }
-        have separate(memory(owner[0..3]), memory((owner->data)[0..owner->cap])) by {
-            simp();
-        }
+        have 0 <= owner->len by simp;
+        have owner->len <= owner->cap by simp;
+        have 0 <= owner->cap by simp;
+        have separate(memory(owner[0..3]), memory(owner->data[0..owner->cap])) by simp;
         fold(owned_buffer(owner));
     }
 }

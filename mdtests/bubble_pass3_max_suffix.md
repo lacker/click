@@ -24,8 +24,8 @@ int32 bubble_pass3(int32 p[3]) {
 ```click
 verifying "bubble_pass3.c";
 
-predicate all_le_range(int32 p[], int32 lo, int32 hi, int32 x) {
-    forall (int32 k) {
+predicate all_le_range(p: int32[], lo: int32, hi: int32, x: int32) {
+    forall (k: int32) {
         0 <= k and lo <= k and k < hi implies p[k] <= x
     }
 }

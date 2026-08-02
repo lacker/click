@@ -13,11 +13,11 @@ int32 identity(int32 x) {
 verifying "grouped_post_order.c";
 
 int32 identity(int32 x) {
-    ensures exists (int32 k) { k + 1 == result + 1 };
+    ensures exists (k: int32) { k + 1 == result + 1 };
 } by {
     execute();
     simp();
-    have exists (int32 k) { k + 1 == result + 1 } by {
+    have exists (k: int32) { k + 1 == result + 1 } by {
         witness(k = result);
         simp();
     }

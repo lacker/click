@@ -12,7 +12,7 @@ int32 theorem_apply_identity(int32 x) {
 ```click
 verifying "theorem_apply_identity.c";
 
-predicate nonnegative(int32 x) {
+predicate nonnegative(x: int32) {
     x >= 0
 }
 

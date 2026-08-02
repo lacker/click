@@ -29,18 +29,14 @@ int32 increment_nonnegative(int32 x) {
         if x >= 0 {
             step();
             step();
-            have y < 2147483647 by {
-                simp();
-            }
+            have y < 2147483647 by simp;
             step();
             step();
             simp();
         } else {
             step();
             step();
-            have y < 2147483647 by {
-                simp();
-            }
+            have y < 2147483647 by simp;
             step();
             step();
             simp();

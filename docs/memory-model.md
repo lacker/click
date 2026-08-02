@@ -88,7 +88,7 @@ ensures p[0] == old(p[0]) by auto;
 For quantified old-memory postconditions:
 
 ```click
-ensures forall (int32 k) {
+ensures forall (k: int32) {
     0 <= k and k < n implies p[k] == old(p[k])
 } by auto;
 ```
@@ -152,7 +152,7 @@ not count as an external mutation.
 A pure Click function or predicate parameter written as an array or pointer:
 
 ```click
-predicate permutation(int32 a[], int32 b[], int32 lo, int32 hi)
+predicate permutation(a: int32[], b: int32[], lo: int32, hi: int32)
 ```
 
 receives pure array refs for `a` and `b`. Each ref carries:

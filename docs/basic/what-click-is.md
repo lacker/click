@@ -53,7 +53,7 @@ You will see these terms throughout the book:
 - **Contract**: the `requires`, `ensures`, `immutable`, and `mutable` clauses
   for a function.
 - **Proposition**: a logical claim written in Click, such as `result == x` or
-  `forall (int32 k) { ... }`.
+  `forall (k: int32) { ... }`.
 - **Proof clause**: the `by ...` part that tells Click how to prove a guarantee.
 
 The basic workflow is to write a contract, run Click, and improve either the

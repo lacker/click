@@ -33,18 +33,18 @@ verifying "grouped_post_have_branch.c";
 verifying "grouped_current_have.c";
 
 int32 identity(int32 x) {
-    requires has_k: exists (int32 k) { k == x };
+    requires has_k: exists (k: int32) { k == x };
     immutable;
     ensures result == x;
-    ensures result_witness: exists (int32 j) { j == result };
-    ensures chosen_witness: exists (int32 j) { j == x };
+    ensures result_witness: exists (j: int32) { j == result };
+    ensures chosen_witness: exists (j: int32) { j == x };
 } by {
     execute();
-    have exists (int32 j) { j == result } by {
+    have exists (j: int32) { j == result } by {
         witness(j = result);
         simp();
     }
-    have exists (int32 j) { j == x } by {
+    have exists (j: int32) { j == x } by {
         choose(k from requirement has_k);
         witness(j = k);
         simp();
@@ -62,9 +62,9 @@ int32 branch_value(int32 flag) {
 }
 
 int32 current_have(int32 x) {
-    ensures exists (int32 j) { j == result };
+    ensures exists (j: int32) { j == result };
 } by {
-    have exists (int32 j) { j == x } by {
+    have exists (j: int32) { j == x } by {
         witness(j = x);
         simp();
     }

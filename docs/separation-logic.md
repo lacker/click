@@ -237,7 +237,7 @@ tactics prepare facts and resources before the next C statement. At function exi
 whose meaning depends on `result` or the post-state are checked separately for
 each completed execution path.
 
-`step using { fact P; ... }` is the simple execution tactic. It advances by one
+`step() using { P; ... }` is the simple execution tactic. It advances by one
 supported transition using exactly the listed premises. Bare `step()` is its
 smart, contextual counterpart.
 

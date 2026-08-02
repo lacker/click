@@ -4,7 +4,7 @@ This checks that scalar bounds hidden behind a predicate can justify a
 composite resource fact memory read.
 
 ```click
-predicate in_bounds(int32 k, int32 n) {
+predicate in_bounds(k: int32, n: int32) {
     0 <= k and k < n
 }
 

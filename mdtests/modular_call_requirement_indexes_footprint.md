@@ -30,12 +30,8 @@ int32 clear_last(int32 p[], int32 n) {
     ensures result == 0;
     ensures p[n - 1] == 0;
 } by {
-    have 0 <= n - 1 by {
-        simp();
-    }
-    have n - 1 < n by {
-        simp();
-    }
+    have 0 <= n - 1 by simp;
+    have n - 1 < n by simp;
     execute();
     frame();
     simp();

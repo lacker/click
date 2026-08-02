@@ -9,7 +9,7 @@ int32 identity(int32 x) {
 ```
 
 ```click
-predicate nonnegative(int32 x) {
+predicate nonnegative(x: int32) {
     x >= 0
 }
 

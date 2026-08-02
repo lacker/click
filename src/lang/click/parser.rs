@@ -253,7 +253,7 @@ impl Parser {
         self.expect_ident_spelling("predicate")?;
         let name = self.expect_ident("predicate name")?;
         self.expect(Token::LParen)?;
-        let parsed_parameters = self.parse_parameters()?;
+        let parsed_parameters = self.parse_click_parameters()?;
         self.expect(Token::RParen)?;
         self.expect(Token::LBrace)?;
         let previous_struct_params = std::mem::replace(
@@ -274,7 +274,7 @@ impl Parser {
         self.expect_ident_spelling("function")?;
         let name = self.expect_ident("function name")?;
         self.expect(Token::LParen)?;
-        let parsed_parameters = self.parse_parameters()?;
+        let parsed_parameters = self.parse_click_parameters()?;
         self.expect(Token::RParen)?;
         self.expect(Token::Arrow)?;
         let return_type = self.parse_type()?.c_type;
@@ -298,7 +298,7 @@ impl Parser {
         self.expect_ident_spelling("resource")?;
         let name = self.expect_ident("resource name")?;
         self.expect(Token::LParen)?;
-        let parsed_parameters = self.parse_resource_parameters()?;
+        let parsed_parameters = self.parse_click_parameters()?;
         self.expect(Token::RParen)?;
         let previous_struct_params = std::mem::replace(
             &mut self.current_struct_params,
@@ -376,7 +376,7 @@ impl Parser {
         self.parse_declared_resource_call()
     }
 
-    fn parse_resource_parameters(&mut self) -> Result<ParsedParameters, ClickError> {
+    fn parse_click_parameters(&mut self) -> Result<ParsedParameters, ClickError> {
         let mut parameters = Vec::new();
         let mut struct_params = BTreeMap::new();
         let mut declared_loadable_bytes = Vec::new();
@@ -389,7 +389,12 @@ impl Parser {
         }
 
         loop {
-            let name = self.expect_ident("resource parameter name")?;
+            let name = self.expect_ident("Click parameter name")?;
+            if matches!(name.as_str(), "int32" | "uint8" | "struct") {
+                return Err(
+                    self.error("Click-native binders use `name: type`, for example `value: int32`")
+                );
+            }
             self.expect(Token::Colon)?;
             let parsed_type = self.parse_type()?;
             let parsed_parameter = self.parse_parameter_array_suffix(name, parsed_type)?;
@@ -424,7 +429,7 @@ impl Parser {
         self.expect_ident_spelling("theorem")?;
         let name = self.expect_ident("theorem name")?;
         self.expect(Token::LParen)?;
-        let parsed_parameters = self.parse_resource_parameters()?;
+        let parsed_parameters = self.parse_click_parameters()?;
         self.expect(Token::RParen)?;
         self.expect(Token::LBrace)?;
 
@@ -1340,8 +1345,14 @@ impl Parser {
         if self.peek_ident() == Some("forall") {
             self.position += 1;
             self.expect(Token::LParen)?;
-            let c_type = self.parse_type()?.c_type;
             let name = self.expect_ident("forall variable name")?;
+            if matches!(name.as_str(), "int32" | "uint8" | "struct") {
+                return Err(self.error(
+                    "Click-native binders use `name: type`, for example `forall (k: int32)`",
+                ));
+            }
+            self.expect(Token::Colon)?;
+            let c_type = self.parse_type()?.c_type;
             self.expect(Token::RParen)?;
             self.expect(Token::LBrace)?;
             let body = self.parse_proposition()?;
@@ -1356,8 +1367,14 @@ impl Parser {
         if self.peek_ident() == Some("exists") {
             self.position += 1;
             self.expect(Token::LParen)?;
-            let c_type = self.parse_type()?.c_type;
             let name = self.expect_ident("exists variable name")?;
+            if matches!(name.as_str(), "int32" | "uint8" | "struct") {
+                return Err(self.error(
+                    "Click-native binders use `name: type`, for example `exists (k: int32)`",
+                ));
+            }
+            self.expect(Token::Colon)?;
+            let c_type = self.parse_type()?.c_type;
             self.expect(Token::RParen)?;
             self.expect(Token::LBrace)?;
             let body = self.parse_proposition()?;
@@ -1647,7 +1664,7 @@ impl Parser {
                 "`bounded_execute()` was removed; use `execute()` or `by auto;` and configure the tool budget",
             ),
             "advance" => Some("`advance(...)` was renamed to `reach(...)`"),
-            "calculate" => Some("`calculate(...)` was merged into `derive(...)`"),
+            "calculate" => Some("`calculate(...)` was merged into `derive using { ... }`"),
             "double_negation" => {
                 Some("`double_negation()` was removed; use `intro(); contradiction(P);`")
             }
@@ -1724,18 +1741,12 @@ impl Parser {
             }));
         }
         if name == "derive" {
-            self.expect(Token::LParen)?;
-            let proposition = self.parse_proposition()?;
-            self.expect(Token::RParen)?;
-            self.expect_ident_spelling("using")?;
-            self.expect(Token::LBrace)?;
-            let mut premises = Vec::new();
-            while self.peek() != Some(&Token::RBrace) {
-                self.expect_ident_spelling("fact")?;
-                premises.push(self.parse_proposition()?);
-                self.expect(Token::Semicolon)?;
+            if self.peek() == Some(&Token::LParen) {
+                return Err(
+                    self.error("`derive` now targets the current goal; use `derive using { ... }`")
+                );
             }
-            self.expect(Token::RBrace)?;
+            let premises = self.parse_exact_premises()?;
             if premises.is_empty() {
                 return Err(self.error(format!(
                     "`{name}` requires at least one explicit premise; use `normalize()` for a context-free goal"
@@ -1744,32 +1755,23 @@ impl Parser {
             if self.peek() == Some(&Token::Semicolon) {
                 self.position += 1;
             }
-            let derivation = ProofDerive {
-                proposition,
-                premises,
-            };
+            let derivation = ProofDerive { premises };
             return Ok(ProofTactic::Derive(derivation));
         }
         let tactic = match name.as_str() {
             "step" => {
-                if self.peek() == Some(&Token::LParen) {
-                    self.expect_empty_tactic_args(&name)?;
-                    ProofTactic::ExecuteStep
-                } else {
-                    self.expect_ident_spelling("using")?;
-                    self.expect(Token::LBrace)?;
-                    let mut premises = Vec::new();
-                    while self.peek() != Some(&Token::RBrace) {
-                        self.expect_ident_spelling("fact")?;
-                        premises.push(self.parse_proposition()?);
-                        self.expect(Token::Semicolon)?;
-                    }
-                    self.expect(Token::RBrace)?;
+                if self.peek() != Some(&Token::LParen) {
+                    return Err(self.error("`step using` was replaced by `step() using { ... }`"));
+                }
+                self.expect_empty_tactic_args(&name)?;
+                if self.peek_ident() == Some("using") {
+                    let premises = self.parse_exact_premises()?;
                     if self.peek() == Some(&Token::Semicolon) {
                         self.position += 1;
                     }
                     return Ok(ProofTactic::StepUsing(premises));
                 }
+                ProofTactic::ExecuteStep
             }
             "close_invariants" => {
                 self.expect_empty_tactic_args(&name)?;
@@ -1782,15 +1784,7 @@ impl Parser {
                 if self.peek_ident() != Some("using") {
                     ProofTactic::ContextualLoopSummary(region_ref)
                 } else {
-                    self.position += 1;
-                    self.expect(Token::LBrace)?;
-                    let mut premises = Vec::new();
-                    while self.peek() != Some(&Token::RBrace) {
-                        self.expect_ident_spelling("fact")?;
-                        premises.push(self.parse_proposition()?);
-                        self.expect(Token::Semicolon)?;
-                    }
-                    self.expect(Token::RBrace)?;
+                    let premises = self.parse_exact_premises()?;
                     if self.peek() == Some(&Token::Semicolon) {
                         self.position += 1;
                     }
@@ -1821,15 +1815,7 @@ impl Parser {
                 if self.peek_ident() != Some("using") {
                     ProofTactic::ContextualFrame(region_ref)
                 } else {
-                    self.position += 1;
-                    self.expect(Token::LBrace)?;
-                    let mut premises = Vec::new();
-                    while self.peek() != Some(&Token::RBrace) {
-                        self.expect_ident_spelling("fact")?;
-                        premises.push(self.parse_proposition()?);
-                        self.expect(Token::Semicolon)?;
-                    }
-                    self.expect(Token::RBrace)?;
+                    let premises = self.parse_exact_premises()?;
                     if self.peek() == Some(&Token::Semicolon) {
                         self.position += 1;
                     }
@@ -1859,15 +1845,7 @@ impl Parser {
                 if self.peek_ident() != Some("using") {
                     ProofTactic::ApplyTheorem(application)
                 } else {
-                    self.position += 1;
-                    self.expect(Token::LBrace)?;
-                    let mut premises = Vec::new();
-                    while self.peek() != Some(&Token::RBrace) {
-                        self.expect_ident_spelling("fact")?;
-                        premises.push(self.parse_proposition()?);
-                        self.expect(Token::Semicolon)?;
-                    }
-                    self.expect(Token::RBrace)?;
+                    let premises = self.parse_exact_premises()?;
                     if self.peek() == Some(&Token::Semicolon) {
                         self.position += 1;
                     }
@@ -1945,15 +1923,7 @@ impl Parser {
                 if self.peek_ident() != Some("using") {
                     ProofTactic::Transport { source, target }
                 } else {
-                    self.position += 1;
-                    self.expect(Token::LBrace)?;
-                    let mut premises = Vec::new();
-                    while self.peek() != Some(&Token::RBrace) {
-                        self.expect_ident_spelling("fact")?;
-                        premises.push(self.parse_proposition()?);
-                        self.expect(Token::Semicolon)?;
-                    }
-                    self.expect(Token::RBrace)?;
+                    let premises = self.parse_exact_premises()?;
                     if self.peek() == Some(&Token::Semicolon) {
                         self.position += 1;
                     }
@@ -2037,6 +2007,23 @@ impl Parser {
             return Err(self.error(format!("`{name}` expects no arguments")));
         }
         self.expect(Token::RParen)
+    }
+
+    fn parse_exact_premises(&mut self) -> Result<Vec<ClickProposition>, ClickError> {
+        self.expect_ident_spelling("using")?;
+        self.expect(Token::LBrace)?;
+        let mut premises = Vec::new();
+        while self.peek() != Some(&Token::RBrace) {
+            if self.peek_ident() == Some("fact") {
+                return Err(self.error(
+                    "`fact` is redundant in a tactic `using` block; list the proposition directly",
+                ));
+            }
+            premises.push(self.parse_proposition()?);
+            self.expect(Token::Semicolon)?;
+        }
+        self.expect(Token::RBrace)?;
+        Ok(premises)
     }
 
     fn parse_proof_fact_source(&mut self) -> Result<ProofFactSource, ClickError> {
@@ -2169,7 +2156,7 @@ impl Parser {
                 surface: ContractSegmentSurface::Object(struct_name.clone()),
             });
         }
-        let (surface_base, base) = if matches!(
+        let (mut surface_base, mut base) = if matches!(
             self.peek_ident(),
             Some("load_int32" | "load_uint8" | "load_int32_pointer" | "load_uint8_pointer")
         ) && self.peek_next() == Some(&Token::LParen)
@@ -2192,10 +2179,40 @@ impl Parser {
             let base = expression.to_kernel_expression();
             (ContractExpression::CFragment(base.clone()), base)
         };
-        if self.peek() == Some(&Token::Arrow) {
+        let mut struct_name = match &surface_base {
+            ContractExpression::CFragment(CExpression::Variable(name)) => {
+                self.current_struct_params.get(name).cloned()
+            }
+            _ => None,
+        };
+        while self.peek() == Some(&Token::Arrow) {
             self.position += 1;
             let field_name = self.expect_ident("field name")?;
-            return self.resolve_field_segment(base, &field_name);
+            if !matches!(self.peek(), Some(Token::Arrow | Token::LBracket)) {
+                return self.resolve_field_segment(base, &field_name);
+            }
+            let (lowered, next_struct_name) = if let Some(base_struct_name) = &struct_name
+                && self.struct_layouts.contains_key(base_struct_name)
+            {
+                let field = self.resolve_struct_field_metadata(base_struct_name, &field_name)?;
+                let pointer = self.offset_field_pointer(base, field.offset_bytes);
+                (
+                    CExpression::TypedLoad {
+                        pointer: Box::new(pointer),
+                        value_type: field.c_type.to_kernel_type(),
+                    },
+                    field.struct_name,
+                )
+            } else {
+                (self.resolve_field_load(base, &field_name)?, None)
+            };
+            surface_base = ContractExpression::Field {
+                base: Box::new(surface_base),
+                field: field_name,
+                lowered: lowered.clone(),
+            };
+            base = lowered;
+            struct_name = next_struct_name;
         }
         self.expect(Token::LBracket)?;
         let start_expression = self.parse_contract_expression()?;

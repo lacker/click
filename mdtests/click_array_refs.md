@@ -31,7 +31,7 @@ verifying "old_count_after_write.c";
 verifying "keep_first_change_second.c";
 verifying "identity_two_arrays.c";
 
-predicate same_first(int32 a[], int32 b[]) {
+predicate same_first(a: int32[], b: int32[]) {
     a[0] == b[0]
 }
 

@@ -42,9 +42,7 @@ int32 branch_count_to_one(int32 flag, int32 i) {
         and at(statement(4).entry, i) == 1 by {
         step();
         step();
-        have at(count.exit, i) == 1 by {
-            simp();
-        }
+        have at(count.exit, i) == 1 by simp;
         step();
         simp();
     }

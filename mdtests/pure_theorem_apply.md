@@ -3,7 +3,7 @@
 This checks that a pure theorem proof can apply an earlier theorem declaration.
 
 ```click
-predicate nonnegative(int32 x) {
+predicate nonnegative(x: int32) {
     x >= 0
 }
 

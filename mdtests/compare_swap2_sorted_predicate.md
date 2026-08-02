@@ -20,7 +20,7 @@ int32 compare_swap2_sorted_predicate(int32 p[2]) {
 ```click
 verifying "compare_swap2_sorted_predicate.c";
 
-predicate sorted_pair(int32 p[2]) {
+predicate sorted_pair(p: int32[2]) {
     p[0] <= p[1]
 }
 

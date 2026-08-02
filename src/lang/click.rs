@@ -1280,7 +1280,6 @@ pub struct ProofAdvance {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ProofDerive {
-    proposition: ClickProposition,
     premises: Vec<ClickProposition>,
 }
 

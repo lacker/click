@@ -5,7 +5,7 @@ Pure Click functions compute specification values. They do not run as C code.
 For example, the standard library defines `count`:
 
 ```click
-function count(int32 p[], int32 lo, int32 hi, int32 x) -> int32 {
+function count(p: int32[], lo: int32, hi: int32, x: int32) -> int32 {
     (lo..hi).fold(0, |acc, k| {
         acc + if p[k] == x { 1 } else { 0 }
     })
@@ -17,7 +17,7 @@ This function counts occurrences in a range of an array-ref parameter.
 Pure Click functions can use immutable `let` bindings:
 
 ```click
-function inc_with_let(int32 x) -> int32 {
+function inc_with_let(x: int32) -> int32 {
     let next: int32 = x + 1;
     next
 }
@@ -40,8 +40,8 @@ function count(...) -> int32 { ... }
 A predicate returns a proposition:
 
 ```click
-predicate permutation(int32 a[], int32 b[], int32 lo, int32 hi) {
-    forall (int32 x) {
+predicate permutation(a: int32[], b: int32[], lo: int32, hi: int32) {
+    forall (x: int32) {
         count(a, lo, hi, x) == count(b, lo, hi, x)
     }
 }

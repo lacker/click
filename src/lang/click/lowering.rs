@@ -588,7 +588,7 @@ impl AnnotationLowerer<'_> {
             )),
             ClickProposition::ForAll { c_type, name, body } => {
                 if *c_type != C0Type::Int32 {
-                    return Err("only `forall (int32 ...)` is supported".to_string());
+                    return Err("only `forall (...: int32)` is supported".to_string());
                 }
                 let variable = Variable(self.next_quantifier_variable);
                 self.next_quantifier_variable += 1;
@@ -618,7 +618,7 @@ impl AnnotationLowerer<'_> {
             }
             ClickProposition::Exists { c_type, name, body } => {
                 if *c_type != C0Type::Int32 {
-                    return Err("only `exists (int32 ...)` is supported".to_string());
+                    return Err("only `exists (...: int32)` is supported".to_string());
                 }
                 let variable = Variable(self.next_quantifier_variable);
                 self.next_quantifier_variable += 1;
@@ -4278,7 +4278,7 @@ impl KernelPropositionLowerer {
             )),
             ClickProposition::ForAll { c_type, name, body } => {
                 if *c_type != C0Type::Int32 {
-                    return Err(ClickError::new("only `forall (int32 ...)` is supported"));
+                    return Err(ClickError::new("only `forall (...: int32)` is supported"));
                 }
                 let variable = Variable(self.next_variable);
                 self.next_variable += 1;
@@ -4303,7 +4303,7 @@ impl KernelPropositionLowerer {
             }
             ClickProposition::Exists { c_type, name, body } => {
                 if *c_type != C0Type::Int32 {
-                    return Err(ClickError::new("only `exists (int32 ...)` is supported"));
+                    return Err(ClickError::new("only `exists (...: int32)` is supported"));
                 }
                 let variable = Variable(self.next_variable);
                 self.next_variable += 1;

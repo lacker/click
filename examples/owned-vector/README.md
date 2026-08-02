@@ -47,6 +47,15 @@ so folding either resource tests dependent composite-resource definitions.
 The integration test in `tests/examples.rs` verifies every C file against
 `vector.click`.
 
+## Proof Style
+
+The sidecar mixes concise smart proofs with expanded exact certificates. Read
+the `vector_len` and other short accessor proofs first. Long `step() using`,
+`summarize ... using`, and `derive using` blocks are checked replay artifacts
+retained for predictable performance and expansion coverage; ordinary
+authoring should begin with the corresponding smart tactic and expand only
+after profiling.
+
 ## Current Boundary
 
 The caller supplies the backing array, capacity is at least one, and the example

@@ -1,5 +1,9 @@
 # Propositions
 
+Typed logical binders use Click's `name: type` convention, as in
+`forall (k: int32)` and `exists (item: uint8)`. The `type name` convention is
+reserved for attached C function signatures.
+
 A proposition is a claim that can be true or false.
 
 Contracts are built from propositions:
@@ -37,11 +41,11 @@ Do not write C logical operators such as `&&`, `||`, or `!` in propositions.
 Click supports universal and existential claims:
 
 ```click
-forall (int32 k) {
+forall (k: int32) {
     0 <= k and k < n implies p[k] == old(p[k])
 }
 
-exists (int32 k) {
+exists (k: int32) {
     0 <= k and k < n and p[k] == value
 }
 ```

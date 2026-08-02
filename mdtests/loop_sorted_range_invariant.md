@@ -18,20 +18,20 @@ int32 loop_sorted_range_invariant(int32 p[3]) {
 ```click
 verifying "loop_sorted_range_invariant.c";
 
-predicate sorted(int32 p[], int32 n) {
+predicate sorted(p: int32[], n: int32) {
     sorted_range(p, 0, n)
 }
 
-predicate sorted_range(int32 p[], int32 lo, int32 hi) {
-    forall (int32 i) {
-        forall (int32 j) {
+predicate sorted_range(p: int32[], lo: int32, hi: int32) {
+    forall (i: int32) {
+        forall (j: int32) {
             0 <= i and 0 <= j and lo <= i and i < j and j < hi implies p[i] <= p[j]
         }
     }
 }
 
-predicate all_le_range(int32 p[], int32 lo, int32 hi, int32 x) {
-    forall (int32 k) {
+predicate all_le_range(p: int32[], lo: int32, hi: int32, x: int32) {
+    forall (k: int32) {
         0 <= k and lo <= k and k < hi implies p[k] <= x
     }
 }
@@ -61,10 +61,10 @@ int32 loop_sorted_range_invariant(int32 p[3]) {
         have sorted(p, 3) by {
             unfold(sorted);
             unfold(sorted_range);
-            derive(sorted(p, 3)) using {
-                fact forall (int32 i) { forall (int32 j) { 0 <= i and 0 <= j and 0 <= i and i < j and j < 3 implies p[i] <= p[j] } };
-                fact at(statement(4).entry, loadable(old(p[0..3])));
-                fact at(statement(2).entry, loadable(p[0..3]));
+            derive using {
+                forall (i: int32) { forall (j: int32) { 0 <= i and 0 <= j and 0 <= i and i < j and j < 3 implies p[i] <= p[j] } };
+                at(statement(4).entry, loadable(old(p[0..3])));
+                at(statement(2).entry, loadable(p[0..3]));
             }
         }
         assumption();

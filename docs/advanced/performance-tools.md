@@ -134,7 +134,7 @@ rewritten artifact before deciding that expansion improved performance.
   composable operations.
 - Kernel Click has no textual syntax. Tool output is documented Surface Click
   accepted by the ordinary parser. Canonical struct spellings include
-  `owner->field`, `(owner->pointer_field)[start..end]`, and `object(owner)`.
+  `owner->field`, `owner->pointer_field[start..end]`, and `object(owner)`.
 - Everything consumed by certificate replay needs a checked surface spelling.
 - An empty proof `if` branch is legal: it contributes its case split, and every
   path goal remains owed at path end.

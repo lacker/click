@@ -571,11 +571,6 @@ pub(super) fn describe_contract_segment(segment: &ContractSegment) -> String {
     let current = match &segment.surface {
         ContractSegmentSurface::Range { base, start, end } => {
             let rendered_base = describe_contract_expression(base);
-            let rendered_base = if matches!(base, ContractExpression::Field { .. }) {
-                format!("({rendered_base})")
-            } else {
-                rendered_base
-            };
             format!(
                 "{rendered_base}[{}..{}]",
                 describe_contract_expression(start),
@@ -841,12 +836,12 @@ pub(super) fn describe_click_proposition(proposition: &ClickProposition) -> Stri
             describe_binary_click_proposition(left, "=>", right)
         }
         ClickProposition::ForAll { c_type, name, body } => format!(
-            "forall ({} {name}) {{ {} }}",
+            "forall ({name}: {}) {{ {} }}",
             describe_c0_type(*c_type),
             describe_click_proposition(body)
         ),
         ClickProposition::Exists { c_type, name, body } => format!(
-            "exists ({} {name}) {{ {} }}",
+            "exists ({name}: {}) {{ {} }}",
             describe_c0_type(*c_type),
             describe_click_proposition(body)
         ),

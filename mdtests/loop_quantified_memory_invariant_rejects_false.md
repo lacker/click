@@ -22,7 +22,7 @@ int32 loop_quantified_memory_invariant_rejects_false(int32 p[], int32 n) {
     requires loadable(p[0..n]);
     for loop(0) {
         invariant i >= 0 and i <= n;
-        invariant forall (int32 k) {
+        invariant forall (k: int32) {
             0 <= k and k < 1 implies p[k] == p[k] + 1
         };
     }

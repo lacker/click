@@ -25,12 +25,12 @@ int32 fill_tail_rejects_tail_segment_unchanged(int32 p[], int32 n) {
     for loop(0) {
         invariant i >= 1 and i <= n;
     }
-    ensures tail_unchanged: forall (int32 k) {
+    ensures tail_unchanged: forall (k: int32) {
         1 <= k and k < n implies p[k] == old(p[k])
     } by auto;
 }
 ```
 
 ```expect
-fail: unclosed goal: forall (int32 k)
+fail: unclosed goal: forall (k: int32)
 ```

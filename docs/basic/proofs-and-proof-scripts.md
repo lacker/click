@@ -7,6 +7,10 @@ Use an omitted proof clause or `by auto;` by default. `auto` orchestrates C
 execution, effect reasoning, and proposition reasoning, and retains a checked
 certificate when it succeeds.
 
+Prefer smart tactics while authoring unless profiling identifies a hotspot.
+Exact `using` blocks are ordinary Click and may be committed after expansion,
+but manually listing every premise is not the normal starting workflow.
+
 Click also has two single-purpose proof sugars:
 
 - `by simp;` simplifies the goal at the current proof state.
@@ -39,17 +43,17 @@ Simple tactics perform one explicit rule. Paired operations use `using` to
 mark that boundary:
 
 ```click
-step using {
-    fact x < 2147483647;
+step() using {
+    x < 2147483647;
 }
 
 summarize(loop(0)) using {
-    fact n >= 0;
+    n >= 0;
 }
 
 frame() using {
-    fact i >= 0;
-    fact i < n;
+    i >= 0;
+    i < n;
 }
 ```
 
@@ -58,7 +62,7 @@ premises; it is not the same spelling as the contextual bare tactic.
 
 Other common simple proposition tactics are `assumption()`, `normalize()`,
 `rewrite(...)`, `intro()`, `split()`, `left()`, `right()`,
-`contradiction(...)`, and `derive(...) using { ... }`.
+`contradiction(...)`, and `derive using { ... }`.
 
 ## Pure and execution proofs
 

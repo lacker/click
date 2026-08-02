@@ -63,9 +63,7 @@ int32 swap_get(int32 data[]) {
 } by {
     step();
     step();
-    have data[0] == old(data[1]) by {
-        simp();
-    }
+    have data[0] == old(data[1]) by simp;
     step();
     step();
     frame();

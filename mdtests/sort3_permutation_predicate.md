@@ -28,7 +28,7 @@ int32 sort3_permutation_predicate(int32 p[3]) {
 ```click
 verifying "sort3_permutation_predicate.c";
 
-predicate permutation3(int32 p[], int32 a, int32 b, int32 c) {
+predicate permutation3(p: int32[], a: int32, b: int32, c: int32) {
     (p[0] == a and p[1] == b and p[2] == c)
     or
     (p[0] == a and p[1] == c and p[2] == b)

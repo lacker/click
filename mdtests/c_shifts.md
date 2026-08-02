@@ -37,7 +37,7 @@ function shl_const() -> int32 {
     3 << 2
 }
 
-function ashr2(int32 x) -> int32 {
+function ashr2(x: int32) -> int32 {
     x >> 2
 }
 

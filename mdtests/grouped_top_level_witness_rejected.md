@@ -13,7 +13,7 @@ int32 identity(int32 x) {
 verifying "grouped_witness.c";
 
 int32 identity(int32 x) {
-    ensures exists (int32 k) { k == result };
+    ensures exists (k: int32) { k == result };
 } by {
     execute();
     witness(k = result);

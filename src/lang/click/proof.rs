@@ -681,7 +681,6 @@ fn theorem_claim_label(
 
 fn lower_pure_simp_certificate(
     theorem: &TheoremDefinition,
-    surface_goal: &ClickProposition,
     context: &PureTheoremContext,
     certificate: &ProofReplayPlan,
 ) -> Option<Vec<ProofTactic>> {
@@ -710,10 +709,7 @@ fn lower_pure_simp_certificate(
                     .derive_atomic_proposition(derivation.conclusion())
                     .or_else(|| exact_assumptions.derive_proposition(derivation.conclusion()))
                     .is_some();
-                let derivation = ProofDerive {
-                    proposition: surface_goal.clone(),
-                    premises,
-                };
+                let derivation = ProofDerive { premises };
                 if derive {
                     ProofTactic::Derive(derivation)
                 } else {
@@ -821,7 +817,6 @@ fn verify_theorem_ensure(
         || {
             pure_theorem_surface_certificate(
                 theorem,
-                surface_goal,
                 claim_label,
                 context,
                 &goal,
@@ -876,7 +871,6 @@ fn pure_goal_certificate_gateway<T>(
 
 fn pure_theorem_surface_certificate(
     theorem: &TheoremDefinition,
-    surface_goal: &ClickProposition,
     claim_label: &str,
     context: &PureTheoremContext,
     goal: &Proposition,
@@ -912,7 +906,7 @@ fn pure_theorem_surface_certificate(
     }
     let assumptions = assumptions_from_propositions(&context.requires);
     if let Some(plan) = plan_simp_certificate(goal, &assumptions)
-        && let Some(tactics) = lower_pure_simp_certificate(theorem, surface_goal, context, &plan)
+        && let Some(tactics) = lower_pure_simp_certificate(theorem, context, &plan)
     {
         return TacticCertificate::from_proof_tactics(&tactics).map_err(|error| {
             ClickError::new(format!(
@@ -1025,22 +1019,11 @@ fn pure_theorem_surface_certificate(
         for proposition in unfolded {
             flatten_surface_conjunction(proposition, &mut premises);
         }
-        // `unfold` rewrites the goal as well as the premises, so the closing
-        // derivation targets the unfolded goal spelling.
-        let unfolded_goal = unfold_structural_invariant_proposition(
-            predicate_environment,
-            surface_goal,
-            &unfolded_predicates,
-        )
-        .map_err(|message| ClickError::new(format!("`{claim_label}`: {message}")))?;
         let mut tactics = unfolded_predicates
             .into_iter()
             .map(ProofTactic::UnfoldPredicate)
             .collect::<Vec<_>>();
-        tactics.push(ProofTactic::Derive(ProofDerive {
-            proposition: unfolded_goal,
-            premises,
-        }));
+        tactics.push(ProofTactic::Derive(ProofDerive { premises }));
         return TacticCertificate::from_proof_tactics(&tactics).map_err(|error| {
             ClickError::new(format!(
                 "smart proof for `{claim_label}` produced an invalid unfolded certificate: {error:?}"
@@ -1059,7 +1042,7 @@ fn pure_theorem_surface_certificate(
             .filter_map(Requirement::proposition)
             .cloned()
             .collect::<Vec<_>>();
-        if let Some(tactics) = lower_pure_branching_tactics(surface_goal, &premise_pool, tactics) {
+        if let Some(tactics) = lower_pure_branching_tactics(&premise_pool, tactics) {
             return TacticCertificate::from_proof_tactics(&tactics).map_err(|error| {
                 ClickError::new(format!(
                     "smart proof for `{claim_label}` produced an invalid branching certificate: {error:?}"
@@ -1078,7 +1061,6 @@ fn pure_theorem_surface_certificate(
 /// premise pool, and each closing `simp` becomes a `derive` of the goal from
 /// exactly that pool.
 fn lower_pure_branching_tactics(
-    surface_goal: &ClickProposition,
     premise_pool: &[ClickProposition],
     tactics: &[ProofTactic],
 ) -> Option<Vec<ProofTactic>> {
@@ -1092,20 +1074,11 @@ fn lower_pure_branching_tactics(
                 else_pool.push(ClickProposition::Not(Box::new(proof_if.condition.clone())));
                 lowered.push(ProofTactic::If(ProofIf {
                     condition: proof_if.condition.clone(),
-                    then_tactics: lower_pure_branching_tactics(
-                        surface_goal,
-                        &then_pool,
-                        &proof_if.then_tactics,
-                    )?,
-                    else_tactics: lower_pure_branching_tactics(
-                        surface_goal,
-                        &else_pool,
-                        &proof_if.else_tactics,
-                    )?,
+                    then_tactics: lower_pure_branching_tactics(&then_pool, &proof_if.then_tactics)?,
+                    else_tactics: lower_pure_branching_tactics(&else_pool, &proof_if.else_tactics)?,
                 }));
             }
             ProofTactic::Simp => lowered.push(ProofTactic::Derive(ProofDerive {
-                proposition: surface_goal.clone(),
                 premises: premise_pool.to_vec(),
             })),
             tactic if matches!(tactic.class(), TacticClass::Simple(_)) => {
@@ -2139,21 +2112,7 @@ fn prove_pure_theorem_tactics(
                 })?;
             }
             ProofTactic::Derive(derive) | ProofTactic::Calculate(derive) => {
-                let target = lower_pure_theorem_proposition(
-                    claim_label,
-                    &derive.proposition,
-                    &context.values,
-                    &context.array_refs,
-                    &context.memory,
-                    predicate_environment,
-                    click_function_environment,
-                )
-                .map_err(|message| {
-                    ClickError::new(format!(
-                        "`{claim_label}` tactic {tactic_index}: could not lower `{}` target: {message}",
-                        tactic_name(tactic)
-                    ))
-                })?;
+                let target = goal.clone();
                 let premises = derive
                     .premises
                     .iter()
@@ -5624,7 +5583,7 @@ fn certified_transitions_from_execution(
                             prerequisite_policy,
                             StatementPrerequisitePolicy::Explicit
                         ) {
-                            // `step using` exposes a deliberately small premise
+                            // `step() using` exposes a deliberately small premise
                             // set. Permit one proof-producing atomic check over
                             // exactly that set, after execution has deferred
                             // every non-exact obligation. This keeps certificate
@@ -10030,36 +9989,7 @@ fn prove_pure_proposition_case_at_point(
                         let derivation_lowering_facts = prepared_derivation_lowering_facts
                             .as_ref()
                             .expect("derive lowering facts should be prepared");
-                        let target_is_current_goal = derive.proposition == *proposition
-                            || (!unfolded_predicates.is_empty()
-                                && unfold_structural_invariant_proposition(
-                                    predicate_environment,
-                                    proposition,
-                                    &unfolded_predicates,
-                                )
-                                .is_ok_and(|surface| surface == derive.proposition));
-                        let target = if target_is_current_goal {
-                            unfolded_goal.clone()
-                        } else {
-                            lower_point_proposition_with_values(
-                                &derive.proposition,
-                                &derivation_lowering_facts,
-                                values.clone(),
-                                &array_refs,
-                                pre_state,
-                                state,
-                                result,
-                                program_point_states,
-                                predicate_environment,
-                                click_function_environment,
-                            )
-                            .map_err(|message| {
-                                ClickError::new(format!(
-                                    "`{claim_label}` {proof_name} proof {outer_tactic_index}: could not lower `{}` target: {message}",
-                                    tactic_name(tactic)
-                                ))
-                            })?
-                        };
+                        let target = unfolded_goal.clone();
                         let premises = derive
                             .premises
                             .iter()
@@ -13794,12 +13724,10 @@ fn lower_surface_atomic_derivation(
         ProofTactic::Normalize
     } else if kind == Some(false) {
         ProofTactic::Derive(ProofDerive {
-            proposition: conclusion.clone(),
             premises: surface_premises,
         })
     } else {
         ProofTactic::Calculate(ProofDerive {
-            proposition: conclusion.clone(),
             premises: surface_premises,
         })
     };
@@ -13957,7 +13885,6 @@ fn lower_outcome_simp_tactic(
                 .collect::<Vec<_>>();
             if derivation.replay(&assumptions_from_propositions(&selected_kernel)) {
                 return Ok(ProofTactic::Calculate(ProofDerive {
-                    proposition: surface_goal.clone(),
                     premises: selected_premises
                         .into_iter()
                         .map(|(_, surface)| surface)
@@ -14022,7 +13949,6 @@ fn lower_outcome_simp_tactic(
                 .collect::<Result<Vec<_>, _>>();
             if let Ok(surface_premises) = surface_premises {
                 return Ok(ProofTactic::Calculate(ProofDerive {
-                    proposition: surface_goal.clone(),
                     premises: surface_premises,
                 }));
             }
@@ -14064,7 +13990,6 @@ fn lower_outcome_simp_tactic(
                 .collect::<Result<Vec<_>, _>>();
             if let Ok(surface_premises) = surface_premises {
                 return Ok(ProofTactic::Calculate(ProofDerive {
-                    proposition: surface_goal.clone(),
                     premises: surface_premises,
                 }));
             }
@@ -14090,7 +14015,6 @@ fn lower_outcome_simp_tactic(
             let assumptions = assumptions_from_propositions(std::slice::from_ref(&available_fact));
             if assumptions.derive_simp_proposition(goal).is_some() {
                 return Ok(ProofTactic::Calculate(ProofDerive {
-                    proposition: surface_goal.clone(),
                     premises: vec![candidate],
                 }));
             }
@@ -14122,7 +14046,6 @@ fn lower_outcome_simp_tactic(
             .is_some()
         {
             return Ok(ProofTactic::Derive(ProofDerive {
-                proposition: surface_goal.clone(),
                 premises: vec![surface],
             }));
         }
@@ -14132,7 +14055,6 @@ fn lower_outcome_simp_tactic(
             .is_some()
         {
             return Ok(ProofTactic::Calculate(ProofDerive {
-                proposition: surface_goal.clone(),
                 premises: vec![surface],
             }));
         }
@@ -14250,7 +14172,6 @@ fn lower_outcome_simp_tactic(
             .collect::<Vec<_>>();
         if derivation.replay(&assumptions_from_propositions(&selected_kernel)) {
             return Ok(ProofTactic::Calculate(ProofDerive {
-                proposition: surface_goal.clone(),
                 premises: selected.into_iter().map(|(_, surface)| surface).collect(),
             }));
         }
@@ -14265,7 +14186,6 @@ fn lower_outcome_simp_tactic(
             .is_some()
     {
         Ok(ProofTactic::Derive(ProofDerive {
-            proposition: surface_goal.clone(),
             premises: surface_premises,
         }))
     } else if exact_assumptions
@@ -14278,7 +14198,6 @@ fn lower_outcome_simp_tactic(
             .is_some()
     {
         Ok(ProofTactic::Calculate(ProofDerive {
-            proposition: surface_goal.clone(),
             premises: surface_premises,
         }))
     } else {
@@ -14302,11 +14221,9 @@ fn lower_outcome_simp_tactic(
         }
         for candidate in [
             ProofTactic::Derive(ProofDerive {
-                proposition: surface_goal.clone(),
                 premises: surface_premises.clone(),
             }),
             ProofTactic::Calculate(ProofDerive {
-                proposition: surface_goal.clone(),
                 premises: surface_premises.clone(),
             }),
         ] {
@@ -14358,11 +14275,9 @@ fn lower_outcome_simp_tactic(
                 .collect::<Vec<_>>();
             for candidate in [
                 ProofTactic::Derive(ProofDerive {
-                    proposition: surface_goal.clone(),
                     premises: surface_premises.clone(),
                 }),
                 ProofTactic::Calculate(ProofDerive {
-                    proposition: surface_goal.clone(),
                     premises: surface_premises.clone(),
                 }),
             ] {
@@ -14486,7 +14401,6 @@ fn lower_outcome_simp_tactic(
             }
             if complete && !spelled_premises.is_empty() {
                 let derive = ProofDerive {
-                    proposition: surface_goal.clone(),
                     premises: spelled_premises,
                 };
                 let candidate = if for_simp {
@@ -15563,7 +15477,6 @@ fn certify_outcome_existential_simp(
     if !derivation_premises.is_empty() {
         let calculate = |premises: &[ClickProposition]| {
             ProofTactic::Calculate(ProofDerive {
-                proposition: surface_goal.clone(),
                 premises: premises.to_vec(),
             })
         };
@@ -16223,7 +16136,7 @@ fn record_surface_replay_tactic(
                     // A certified statement prerequisite may be represented by
                     // a source fact whose lowering differs only by canonical
                     // load materialization. Keep that checked equivalence here:
-                    // the generated `step using` certificate is subsequently
+                    // the generated `step() using` certificate is subsequently
                     // replayed by the ordinary executor, which remains the
                     // authority on whether the selected premise is sufficient.
                     let Ok(surface) = checked_surface_comparison_fact_at_point(
@@ -16797,7 +16710,7 @@ fn record_surface_replay_tactic(
                     Some((_surface_source, _)),
                     Some((surface_target, lowered_surface_target)),
                 ) if selected_by_preceding_step => {
-                    // `step using` replays with Selected fact transport, so a
+                    // `step() using` replays with Selected fact transport, so a
                     // listed statement-entry source is already carried by the
                     // certified statement transition. Do not ask the
                     // post-state context to independently reconstruct the
@@ -18138,7 +18051,7 @@ fn replay_linear_tactics(
                 let all_pure_facts = requirement_pure_facts.clone();
                 let (tactic_name, prerequisite_policy, loop_step_policy) = match tactic {
                     ProofTactic::StepUsing(_) => (
-                        "step using",
+                        "step() using",
                         StatementPrerequisitePolicy::Explicit,
                         LoopStepPolicy::EnterBody,
                     ),

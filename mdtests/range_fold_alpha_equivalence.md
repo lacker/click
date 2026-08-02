@@ -13,13 +13,13 @@ int32 range_fold_alpha_equivalence(int32 lo, int32 hi) {
 ```click
 verifying "range_fold_alpha_equivalence.c";
 
-function sum_range_a(int32 lo, int32 hi) -> int32 {
+function sum_range_a(lo: int32, hi: int32) -> int32 {
     (lo..hi).fold(0, |acc, k| {
         acc + k
     })
 }
 
-function sum_range_b(int32 lo, int32 hi) -> int32 {
+function sum_range_b(lo: int32, hi: int32) -> int32 {
     (lo..hi).fold(0, |total, i| {
         total + i
     })

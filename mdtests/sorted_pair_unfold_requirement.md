@@ -12,7 +12,7 @@ int32 sorted_pair_unfold_requirement(int32 p[2]) {
 ```click
 verifying "sorted_pair_unfold_requirement.c";
 
-predicate sorted_pair(int32 p[2]) {
+predicate sorted_pair(p: int32[2]) {
     p[0] <= p[1]
 }
 

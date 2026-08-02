@@ -57,7 +57,7 @@ int32 cstr_stdlib(uint8 p[], int32 len, int32 max) {
 int32 plain_cstr(uint8 p[]) {
     requires input_is_cstr: cstr(p);
 
-    ensures exposes_ghost_length: exists (int32 len) {
+    ensures exposes_ghost_length: exists (len: int32) {
         cstr_len(p, len)
     } by {
         execute();

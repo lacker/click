@@ -67,7 +67,7 @@ by frame;
 ```
 
 Omitting a proof clause uses `auto`. `by simp;` means the same operation as
-`by { simp(); }`, and `by frame;` means the same operation as
+`by simp;`, and `by frame;` means the same operation as
 `by { frame(); }`. All four forms act at the current proof frontier; neither
 `simp` nor `frame` implicitly executes C. See the
 [proof tactics reference](proof-tactics.md).
@@ -85,7 +85,7 @@ known equalities, evaluates equality-linked constant arithmetic, and uses the
 discrete relationship between strict and non-strict integer bounds.
 
 Bare `frame()` (including `by frame;`) performs smart contextual range
-reasoning. The simple exact form is `frame() using { fact P; ... }`.
+reasoning. The simple exact form is `frame() using { P; ... }`.
 
 The exhaustive simple/smart classification is in the
 [proof tactics reference](proof-tactics.md).
@@ -106,14 +106,15 @@ Current tactics. The [proof tactics reference](proof-tactics.md) is the
 authoritative inventory and classifies each spelling as simple, smart, or
 control flow.
 
-- `step using { fact P; ... }`: advance one small C transition using exactly
+- `step() using { P; ... }`: advance one small C transition using exactly
   the listed execution premises. It does not automatically transport memory-dependent facts to
   the new snapshot; use `transport(source, target)` explicitly. At a C `if`, an
   exact condition fact selects and enters one arm. At a loop head, it evaluates
   the condition once and enters one iteration or advances past the loop.
 - `step();`: execute one small C transition from the current execution
   point with contextual prerequisite reasoning and automatic supported fact
-  transport. It uses the same branch and loop-head transitions as `step using`.
+  transport. It uses the same branch and loop-head transitions as
+  `step() using`.
 - `execute();`: build symbolic verification paths from the current
   execution point to function exit. From function entry, this executes the
   whole C0 function. It applies verified abstract loop rules where available.
@@ -125,13 +126,13 @@ control flow.
   must produce exactly one normal successor.
 - `summarize(loop(N));`: contextually apply an already verified loop's abstract rule
   at its entry and advance to its exit in one transition, without entering the
-  body. Its simple `using { fact P; ... }` form names the complete premise set.
+  body. Its simple `using { P; ... }` form names the complete premise set.
 - `close_invariants();`: discharge a loop's whole invariant bundle at the back
   edge. It is accepted only inside `preserve by { ... }`, and at most once per
   path. Omitting it makes Click append the closer implicitly.
 - `frame();` and `frame(loop(N));`: smart contextual frame reasoning for the
   function or selected loop.
-- `frame() using { fact P; ... }` and the region form: the simple exact-premise
+- `frame() using { P; ... }` and the region form: the simple exact-premise
   frame check. Expansion always emits this form.
 - `unfold(name);`: unfold matching predicate facts and goals.
 - `unfold(resource);`: consume one owned composite resource fact and expose its
@@ -146,7 +147,7 @@ control flow.
   for a derivation. It adds the theorem's conclusions and never changes the
   resource context. This bare spelling is smart because its premises come from
   the ambient context.
-- `apply(theorem_name(args...)) using { fact P; ... }`: the simple spelling,
+- `apply(theorem_name(args...)) using { P; ... }`: the simple spelling,
   drawing premises only from the listed facts. Expansion rewrites bare `apply`
   into this form.
 - `have proposition by { ... }`: run a scoped pure proof and add its proposition
@@ -186,9 +187,9 @@ control flow.
   current statement frontier. Conditions use framing; structural memory facts
   such as `loadable(...)` use the certified execution effects. Like `apply`,
   this bare spelling is smart.
-- `transport(source, target) using { fact P; ... }`: the simple, exact-premise
+- `transport(source, target) using { P; ... }`: the simple, exact-premise
   spelling of the same rule.
-- `derive(P) using { fact Q; ... }`: check one atomic consequence using Click's
+- `derive using { Q; ... }`: close the current atomic goal using Click's
   deterministic atomic theories and exactly the listed premises.
 - `intro();`, `split();`, `left();`, `right();`, `contradiction(P);`: one
   structural logical rule each. They are
@@ -330,8 +331,8 @@ current source forms are intentionally narrow: `requirement name` means a
 proposition, either directly or after an explicit `unfold(predicate);` step.
 
 ```click
-requires has_k: exists (int32 k) { k == x };
-ensures again: exists (int32 j) { j == x } by {
+requires has_k: exists (k: int32) { k == x };
+ensures again: exists (j: int32) { j == x } by {
     execute();
     choose(k from requirement has_k);
     witness(j = k);
@@ -506,7 +507,7 @@ cannot depend on locals modified by the loop. Use `step` effects for
 iteration-relative footprints.
 
 A whole-loop segment may depend on fields reached through a stable owner, such
-as `(owner->data)[0..owner->len]`. Structural loop setup projects the immediate
+as `owner->data[0..owner->len]`. Structural loop setup projects the immediate
 core of a held composite resource, so an owned `vector(owner)` can justify
 reading those fields without redundant `views` clauses. The verified effect
 summary then preserves field values outside the mutable backing range in the

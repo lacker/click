@@ -48,11 +48,11 @@ verifying "remainder_constant.c";
 verifying "division_precedence.c";
 verifying "negative_division.c";
 
-function half(int32 x) -> int32 {
+function half(x: int32) -> int32 {
     x / 2
 }
 
-function rem3(int32 x) -> int32 {
+function rem3(x: int32) -> int32 {
     x % 3
 }
 

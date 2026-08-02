@@ -28,13 +28,13 @@ int32 sort3(int32 p[3]) {
 ```click
 verifying "sort3.c";
 
-predicate sorted(int32 p[], int32 n) {
+predicate sorted(p: int32[], n: int32) {
     sorted_range(p, 0, n)
 }
 
-predicate sorted_range(int32 p[], int32 lo, int32 hi) {
-    forall (int32 i) {
-        forall (int32 j) {
+predicate sorted_range(p: int32[], lo: int32, hi: int32) {
+    forall (i: int32) {
+        forall (j: int32) {
             0 <= i and 0 <= j and lo <= i and i < j and j < hi implies p[i] <= p[j]
         }
     }

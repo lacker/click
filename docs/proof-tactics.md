@@ -15,16 +15,22 @@ either **smart**, **simple**, or **control flow**:
 are not script tactics. Successful smart tactics and `auto` retain checked
 surface certificates that `click expand` can print and replay.
 
+For ordinary authoring, start with the omitted default, `by auto;`, or the
+smallest comprehensible smart tactic. Use `click profile` before replacing a
+smart tactic with an exact certificate. The simple forms below are public,
+maintained Surface Click, but long `using` blocks are normally expansion output
+rather than a recommended first draft.
+
 ## Execution
 
 | Surface form | Class | Meaning |
 | --- | --- | --- |
 | `step()` | smart | Advance one small C transition, selecting prerequisites and supported fact transports from context. |
-| `step using { fact P; ... }` | simple | Perform one transition using exactly the listed pure premises. An empty block is valid. |
+| `step() using { P; ... }` | simple | Perform one transition using exactly the listed pure premises. An empty block is valid. |
 | `execute()` | smart | Execute from the current frontier to function exit. It follows verified loop summaries and can plan explicit branch alternatives. |
 | `execute_until(statement(N))` | smart | Execute forward to the selected statement entry without creating a new proof interface. |
 | `summarize(loop(N))` | smart | Cross one already verified loop as an opaque transition, selecting its prerequisites contextually. |
-| `summarize(loop(N)) using { fact P; ... }` | simple | Apply that loop summary using exactly the listed premises. An empty block is valid. |
+| `summarize(loop(N)) using { P; ... }` | simple | Apply that loop summary using exactly the listed premises. An empty block is valid. |
 | `reach(point) ensuring { ... } by { ... }` | control | Prove a scoped execution region and expose only its declared fact/resource interface at the target point. |
 
 The boundaries are intentional: `step` is one transition, `summarize` is one
@@ -32,7 +38,7 @@ verified loop transition, `execute_until` repeats transitions to a point, and
 `execute` runs to function exit. `reach` is a scoped proof and interface join,
 not another spelling of repeated execution.
 
-Expansion of execution automation uses `step using` and `summarize using`,
+Expansion of execution automation uses `step() using` and `summarize using`,
 including empty `using {}` blocks. The older branch-specific, budget-specific,
 and certificate-oriented execution names are not part of the surface language.
 
@@ -48,9 +54,9 @@ and certificate-oriented execution names are not part of the surface language.
 | `split()` | simple | Close a conjunction when both conjuncts are exact available facts. |
 | `left()` / `right()` | simple | Close the selected disjunct from an exact available fact. |
 | `contradiction(P)` | simple | Close from exact facts `P` and `not P`. |
-| `derive(P) using { fact Q; ... }` | simple | Establish one atomic proposition from exactly the listed premises using Click's deterministic atomic theories. |
+| `derive using { Q; ... }` | simple | Establish the current atomic proposition goal from exactly the listed premises using Click's deterministic atomic theories. |
 | `apply(theorem(args))` | smart | Apply a theorem while selecting its premises from context. |
-| `apply(theorem(args)) using { fact P; ... }` | simple | Apply a theorem using exactly the listed premises. |
+| `apply(theorem(args)) using { P; ... }` | simple | Apply a theorem using exactly the listed premises. |
 | `have P by { ... }` | control | Prove `P` in a nested proof and add it to the surrounding context. |
 | `if P { ... } else { ... }` | control | Split the proof on the exact condition `P`. This does not execute a C `if`. |
 | `witness ...` / `choose ...` | control | Introduce or select existential evidence in the supported proposition contexts. |
@@ -60,7 +66,9 @@ same proof state. Neither form implicitly executes a function. Write
 `execute(); simp();` when both operations are intended, or use `by auto;`.
 
 `derive` is the only public atomic-derivation tactic; `calculate` is not an
-alias. The former `double_negation` and `vacuous` leaves are ordinary
+alias. Its target is always the current pure goal; repeating that proposition
+inside the tactic is intentionally not accepted. The former `double_negation`
+and `vacuous` leaves are ordinary
 compositions: use `intro(); contradiction(P);`.
 
 ## Effects, resources, and snapshots
@@ -68,9 +76,9 @@ compositions: use `intro(); contradiction(P);`.
 | Surface form | Class | Meaning |
 | --- | --- | --- |
 | `frame()` / `frame(region)` | smart | Prove the applicable effect/frame condition while selecting range and effect premises contextually. |
-| `frame() using { fact P; ... }` | simple | Check the frame condition using exactly the listed premises. The region form and an empty block are valid. |
+| `frame() using { P; ... }` | simple | Check the frame condition using exactly the listed premises. The region form and an empty block are valid. |
 | `transport(P, Q)` | smart | Re-spell an available fact across certified execution snapshots, selecting frame evidence contextually. |
-| `transport(P, Q) using { fact R; ... }` | simple | Perform that transport using exactly the listed evidence. |
+| `transport(P, Q) using { R; ... }` | simple | Perform that transport using exactly the listed evidence. |
 | `unfold(name)` | simple | Unfold a predicate or supported resource definition. |
 | `fold(resource)` | simple | Fold a supported resource definition from explicit current facts/resources. |
 | `observe(resource)` | simple | Project the declared non-consuming view of a held composite resource. |
@@ -112,5 +120,5 @@ focused migration message:
 | `execute_then_step()` / `execute_else_step()` | smart `step()` or proof-level `if` |
 | `bounded_execute()` | `execute()` or `by auto;` |
 | `advance(...)` | `reach(...)` |
-| `calculate(...)` | `derive(...)` |
+| `calculate(...)` | `derive using { ... }` |
 | `double_negation()` / `vacuous()` | `intro()` followed by `contradiction(...)` |

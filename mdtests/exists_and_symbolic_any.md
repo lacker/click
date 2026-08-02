@@ -15,9 +15,9 @@ int32 exists_and_symbolic_any(int32 x, int32 n) {
 verifying "exists_and_symbolic_any.c";
 
 int32 exists_and_symbolic_any(int32 x, int32 n) {
-    requires exists (int32 k) { k == x };
+    requires exists (k: int32) { k == x };
     requires (0..n).any(|k| { k == x });
-    ensures same_exists: exists (int32 k) { k == x } by auto;
+    ensures same_exists: exists (k: int32) { k == x } by auto;
     ensures same_any: (0..n).any(|k| { k == x }) by auto;
     ensures concrete_any_still_unrolls: (0..3).any(|k| { k == 1 }) by auto;
 }

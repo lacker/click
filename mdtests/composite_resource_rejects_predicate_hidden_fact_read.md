@@ -4,7 +4,7 @@ This checks that memory reads hidden behind a predicate still need to be backed
 by contained write permission.
 
 ```click
-predicate flag_is_zero(int32* flag) {
+predicate flag_is_zero(flag: int32*) {
     flag[0] == 0
 }
 

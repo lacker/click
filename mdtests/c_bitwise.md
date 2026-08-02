@@ -62,11 +62,11 @@ verifying "bitwise_uint8_promoted.c";
 verifying "bitwise_uint8_not.c";
 verifying "bitwise_uint8_narrow_constant.c";
 
-function low_nibble(int32 x) -> int32 {
+function low_nibble(x: int32) -> int32 {
     x & 15
 }
 
-function byte_low_nibble(uint8 x) -> int32 {
+function byte_low_nibble(x: uint8) -> int32 {
     x & 15
 }
 
@@ -74,7 +74,7 @@ function all_bits() -> int32 {
     ~0
 }
 
-function byte_not(uint8 x) -> int32 {
+function byte_not(x: uint8) -> int32 {
     ~x
 }
 

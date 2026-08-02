@@ -1162,7 +1162,7 @@ pub(super) fn lower_predicate_body_proposition_with_environment(
         }
         ClickProposition::ForAll { c_type, name, body } => {
             if *c_type != C0Type::Int32 {
-                return Err("only `forall (int32 ...)` is supported".to_string());
+                return Err("only `forall (...: int32)` is supported".to_string());
             }
             let variable = Variable(*next_variable);
             *next_variable += 1;
@@ -1198,7 +1198,7 @@ pub(super) fn lower_predicate_body_proposition_with_environment(
         }
         ClickProposition::Exists { c_type, name, body } => {
             if *c_type != C0Type::Int32 {
-                return Err("only `exists (int32 ...)` is supported".to_string());
+                return Err("only `exists (...: int32)` is supported".to_string());
             }
             let variable = Variable(*next_variable);
             *next_variable += 1;
@@ -4347,7 +4347,7 @@ pub(super) fn lower_outcome_proposition_with_environment(
         }
         ClickProposition::ForAll { c_type, name, body } => {
             if *c_type != C0Type::Int32 {
-                return Err("only `forall (int32 ...)` is supported".to_string());
+                return Err("only `forall (...: int32)` is supported".to_string());
             }
             let variable = Variable(*next_variable);
             *next_variable += 1;
@@ -4385,7 +4385,7 @@ pub(super) fn lower_outcome_proposition_with_environment(
         }
         ClickProposition::Exists { c_type, name, body } => {
             if *c_type != C0Type::Int32 {
-                return Err("only `exists (int32 ...)` is supported".to_string());
+                return Err("only `exists (...: int32)` is supported".to_string());
             }
             let variable = Variable(*next_variable);
             *next_variable += 1;

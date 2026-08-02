@@ -17,12 +17,12 @@ verifying "forall_array_segment_rejects_overwritten_cell.c";
 int32 forall_array_segment_rejects_overwritten_cell(int32 p[]) {
     requires loadable(p[0..1]);
     consumes p[0..1];
-    ensures segment_unchanged: forall (int32 k) {
+    ensures segment_unchanged: forall (k: int32) {
         0 <= k and k < 1 implies p[k] == old(p[k])
     } by auto;
 }
 ```
 
 ```expect
-fail: unclosed goal: forall (int32 k)
+fail: unclosed goal: forall (k: int32)
 ```

@@ -24,11 +24,11 @@ resource owned_buffer(owner: struct owner*) {
     owns owner->len;
     owns owner->cap;
     owns owner->data;
-    owns (owner->data)[0..1];
+    owns owner->data[0..1];
     fact 1 <= owner->len;
     fact owner->len <= owner->cap;
     fact 1 <= owner->cap;
-    fact separate(memory(owner[0..3]), memory((owner->data)[0..1]));
+    fact separate(memory(owner[0..3]), memory(owner->data[0..1]));
 }
 
 verifying "buffer_set_first.c";
@@ -40,12 +40,10 @@ int32 buffer_set_first(struct owner* owner, int32 value) {
 } by {
     unfold(owned_buffer(owner));
     execute();
-    have 1 <= owner->len by { simp(); }
-    have owner->len <= owner->cap by { simp(); }
-    have 1 <= owner->cap by { simp(); }
-    have separate(memory(owner[0..3]), memory((owner->data)[0..1])) by {
-        simp();
-    }
+    have 1 <= owner->len by simp;
+    have owner->len <= owner->cap by simp;
+    have 1 <= owner->cap by simp;
+    have separate(memory(owner[0..3]), memory(owner->data[0..1])) by simp;
     fold(owned_buffer(owner));
     simp();
 }

@@ -32,16 +32,16 @@ int32 copy_n_segment_invariant(int32 dst[], int32 src[], int32 n) {
     for loop(0) {
         invariant i >= 0;
         invariant i <= n;
-        invariant forall (int32 k) {
+        invariant forall (k: int32) {
             0 <= k and k < i implies dst[k] == old(src[k])
         };
         mutable dst[0..n] by frame;
     }
     ensures returns_n: result == n by auto;
-    ensures source_unchanged: forall (int32 k) {
+    ensures source_unchanged: forall (k: int32) {
         0 <= k and k < n implies src[k] == old(src[k])
     } by auto;
-    ensures copied_segment: forall (int32 k) {
+    ensures copied_segment: forall (k: int32) {
         0 <= k and k < n implies dst[k] == old(src[k])
     } by auto;
 }

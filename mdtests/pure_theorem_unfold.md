@@ -4,7 +4,7 @@ This checks that pure theorem proof scripts can unfold predicate assumptions and
 then simplify the theorem goal.
 
 ```click
-predicate nonnegative(int32 x) {
+predicate nonnegative(x: int32) {
     x >= 0
 }
 

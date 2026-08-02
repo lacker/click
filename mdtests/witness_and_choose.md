@@ -26,14 +26,14 @@ int32 witness_zero(int32 n) {
 }
 
 int32 choose_requirement(int32 x) {
-    requires has_k: exists (int32 k) { k == x };
-    ensures found_again_by_index: exists (int32 j) { j == x } by {
+    requires has_k: exists (k: int32) { k == x };
+    ensures found_again_by_index: exists (j: int32) { j == x } by {
         execute();
         choose(k from requirement 0);
         witness(j = k);
         simp();
     }
-    ensures found_again_by_label: exists (int32 j) { j == x } by {
+    ensures found_again_by_label: exists (j: int32) { j == x } by {
         execute();
         choose(k from requirement has_k);
         witness(j = k);

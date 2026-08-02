@@ -62,7 +62,7 @@ ensures src[0] == old(src[0]) by auto;
 For larger regions, use quantified or range-shaped facts:
 
 ```click
-ensures forall (int32 k) {
+ensures forall (k: int32) {
     0 <= k and k < n implies src[k] == old(src[k])
 } by auto;
 ```

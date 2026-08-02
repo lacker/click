@@ -183,9 +183,9 @@ and `predicate` definitions are treated as Click array-ref parameters.
 This is intentionally source-compatible with existing C-like signatures:
 
 ```click
-function count(int32 p[], int32 lo, int32 hi, int32 x) -> int32 { ... }
+function count(p: int32[], lo: int32, hi: int32, x: int32) -> int32 { ... }
 
-predicate sorted(int32* p, int32 n) { ... }
+predicate sorted(p: int32*, n: int32) { ... }
 ```
 
 The parameter spelling fixes the array-ref element type. A pure Click function

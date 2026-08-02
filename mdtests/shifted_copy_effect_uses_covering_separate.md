@@ -33,7 +33,7 @@ int32 shifted_copy_effect_uses_covering_separate(int32 dst[], int32 src[], int32
         invariant i <= n;
         mutable (dst + 1)[0..n - 1] by frame;
     }
-    ensures source_unchanged: forall (int32 k) {
+    ensures source_unchanged: forall (k: int32) {
         0 <= k and k < n implies src[k] == old(src[k])
     };
     ensures returns_n: result == n;

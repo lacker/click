@@ -25,5 +25,11 @@ and a first-child read through verified function contracts. The swap remains a
 focused direct proof because transporting its `old(...)` summary through a
 multi-call stepped proof is a separate execution-proof concern.
 
+The sidecar mixes concise smart proofs with expanded exact certificates. Read
+the small getter/setter proofs first. Long `step() using` and `derive using`
+blocks are checked replay artifacts retained for predictable performance and
+expansion coverage; ordinary authoring should start with smart tactics and
+expand only after profiling.
+
 The caller supplies both backing arrays. Allocation, deallocation, resizing,
 and recursive resource definitions are outside this example's scope.

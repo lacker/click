@@ -315,10 +315,6 @@ fn expand_declared_resource_tactic(
             expand_declared_resource_proposition(proposition, resource_definitions)?,
         )),
         ProofTactic::Derive(derive) => Ok(ProofTactic::Derive(ProofDerive {
-            proposition: expand_declared_resource_proposition(
-                derive.proposition,
-                resource_definitions,
-            )?,
             premises: derive
                 .premises
                 .into_iter()
@@ -326,10 +322,6 @@ fn expand_declared_resource_tactic(
                 .collect::<Result<Vec<_>, _>>()?,
         })),
         ProofTactic::Calculate(derive) => Ok(ProofTactic::Calculate(ProofDerive {
-            proposition: expand_declared_resource_proposition(
-                derive.proposition,
-                resource_definitions,
-            )?,
             premises: derive
                 .premises
                 .into_iter()

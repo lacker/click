@@ -5,7 +5,7 @@ A predicate gives a name to a proposition.
 For example:
 
 ```click
-predicate sorted_pair(int32 p[]) {
+predicate sorted_pair(p: int32[]) {
     p[0] <= p[1]
 }
 ```
@@ -38,7 +38,7 @@ instead of being expanded everywhere.
 Predicates can package preconditions:
 
 ```click
-predicate has_zero(int32 p[], int32 n) {
+predicate has_zero(p: int32[], n: int32) {
     (0..n).any(|k| { p[k] == 0 })
 }
 

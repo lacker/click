@@ -77,7 +77,7 @@ facts, so `p[k]` is memory-safe when the caller has a matching
 
 Plain logical conjunction does not currently act as a left-to-right guard for
 lowering. For example, prefer `(lo..hi).any(|k| { p[k] == x })` over an
-explicit `exists (int32 k) { lo <= k and k < hi and p[k] == x }` until the
+explicit `exists (k: int32) { lo <= k and k < hi and p[k] == x }` until the
 surface language has a designed guard story for partial C fragments.
 
 ## Predicates Are Opaque
@@ -111,7 +111,7 @@ lowering concept for parameters written as `int32 p[]`, `int32* p`,
 
 ## Existentials Need Explicit Facts
 
-`exists (int32 k) { ... }` is supported, and symbolic `(lo..hi).any(...)`
+`exists (k: int32) { ... }` is supported, and symbolic `(lo..hi).any(...)`
 lowers to a bounded existential. Proof scripts can prove existential goals
 with `witness(k = expression);` and can open direct existential preconditions
 with `choose(k from requirement N);`. If an explicitly unfolded predicate

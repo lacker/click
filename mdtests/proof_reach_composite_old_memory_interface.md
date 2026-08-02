@@ -34,7 +34,7 @@ int32 retain_original(struct buffer* owner, int32 flag) {
 ```click
 resource buffer(owner: struct buffer*) {
     owns owner->data;
-    owns (owner->data)[0..1];
+    owns owner->data[0..1];
 }
 
 verifying "read_first.c";
@@ -44,7 +44,7 @@ int32 read_first(struct buffer* owner) {
     views buffer(owner);
     immutable;
 
-    ensures result == (owner->data)[0] by auto;
+    ensures result == owner->data[0] by auto;
 }
 
 int32 retain_original(struct buffer* owner, int32 flag) {
@@ -54,16 +54,16 @@ int32 retain_original(struct buffer* owner, int32 flag) {
         assert flag == flag by auto;
     }
 
-    ensures result == old((owner->data)[0]);
+    ensures result == old(owner->data[0]);
 } by {
     execute_until(choose_original);
     observe(buffer(owner));
     reach(choose_original.exit)
     ensuring {
         fact selected == original;
-        fact original == old((owner->data)[0]);
+        fact original == old(owner->data[0]);
         owns buffer(owner);
-        views (owner->data)[0..1];
+        views owner->data[0..1];
     }
     by {
         if flag != 0 {

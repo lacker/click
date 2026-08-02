@@ -17,7 +17,7 @@ int32 loop_explicit_initialize_and_preserve(int32 x) {
 ```click
 verifying "loop_explicit_initialize_and_preserve.c";
 
-predicate acceptable(int32 x) {
+predicate acceptable(x: int32) {
     x >= 0
 }
 

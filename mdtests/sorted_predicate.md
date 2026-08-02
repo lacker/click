@@ -13,9 +13,9 @@ int32 sorted_predicate(int32 p[], int32 n) {
 ```click
 verifying "sorted_predicate.c";
 
-predicate sorted(int32 p[], int32 n) {
-    forall (int32 i) {
-        forall (int32 j) {
+predicate sorted(p: int32[], n: int32) {
+    forall (i: int32) {
+        forall (j: int32) {
             0 <= i and 0 <= j and i < j and j < n implies p[i] <= p[j]
         }
     }

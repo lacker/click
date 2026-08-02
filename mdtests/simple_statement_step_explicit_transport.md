@@ -14,7 +14,7 @@ int32 set_second_return_first(int32 p[2]) {
 ```click
 verifying "simple_statement_step_explicit_transport.c";
 
-predicate first_is_seven(int32 p[]) {
+predicate first_is_seven(p: int32[]) {
     p[0] == 7
 }
 

@@ -38,5 +38,11 @@ content cell. `owned_string_pop_preserves_first` verifies through that modular
 contract that popping a string of length at least two preserves its first
 element.
 
+The sidecar mixes concise smart proofs with expanded exact certificates. Read
+the short accessor proofs first. Long `step() using`, `transport ... using`,
+and `derive using` blocks are checked replay artifacts retained for predictable
+performance and expansion coverage; ordinary authoring should begin with the
+corresponding smart tactic and expand only after profiling.
+
 The caller supplies the backing storage. Allocation, deallocation, resizing,
 and encoding validation are outside this example's scope.
