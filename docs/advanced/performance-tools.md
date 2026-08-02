@@ -85,9 +85,11 @@ promise.
 
 `click-profile` reconciles child-process wall time across frontend,
 environment, exclusive SIMPLE/SMART/CONTROL time, kernel certification, and an
-`UNATTRIBUTED` residual. A residual over 250 ms or 10% is an explicit
-`UNEXPLAINED` diagnosis. Work counts and conservative development baselines
-then distinguish smart hotspots, simple engine bugs, healthy volume,
+`UNATTRIBUTED` residual. A residual is an explicit `UNEXPLAINED` diagnosis when
+it reaches one second, or when it is both at least 250 ms and at least 10% of
+the run. The floor keeps ordinary process-startup noise from making a small,
+healthy profile look incomplete. Work counts and conservative development
+baselines then distinguish smart hotspots, simple engine bugs, healthy volume,
 certification bottlenecks, setup bottlenecks, and incomplete attribution.
 Wall-clock baselines are deliberately conservative and are not a
 machine-independent SLA.

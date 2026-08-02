@@ -18,7 +18,8 @@ const DEFAULT_SIMPLE_THRESHOLD: Duration = Duration::from_millis(500);
 const DEFAULT_CONTROL_THRESHOLD: Duration = Duration::from_secs(2);
 const DEFAULT_TIME_LIMIT: Duration = Duration::from_secs(30);
 const EXPANSION_TIME_LIMIT: Duration = Duration::from_secs(60);
-const MATERIAL_UNATTRIBUTED_TIME: Duration = Duration::from_millis(250);
+const MATERIAL_UNATTRIBUTED_FLOOR: Duration = Duration::from_millis(250);
+const MATERIAL_UNATTRIBUTED_TIME: Duration = Duration::from_secs(1);
 const MATERIAL_UNATTRIBUTED_SHARE: f64 = 10.0;
 const SIMPLE_AVERAGE_LIMIT: Duration = Duration::from_millis(50);
 const CERTIFICATION_PER_CLAIM_LIMIT: Duration = Duration::from_millis(250);
@@ -529,7 +530,8 @@ impl TimeAccounting {
     fn materially_unattributed(self) -> bool {
         let unattributed = self.unattributed();
         unattributed >= MATERIAL_UNATTRIBUTED_TIME
-            || (!self.denominator().is_zero()
+            || (unattributed >= MATERIAL_UNATTRIBUTED_FLOOR
+                && !self.denominator().is_zero()
                 && self.share(unattributed) >= MATERIAL_UNATTRIBUTED_SHARE)
     }
 }
@@ -1945,11 +1947,11 @@ click timing: function example_function 2.200s
         assert!(report.contains("WORK AND THROUGHPUT"), "{report}");
         assert!(report.contains("C TRANSITIONS"), "{report}");
         assert!(report.contains("SIMPLE BY KIND"), "{report}");
-        assert!(report.contains("UNEXPLAINED"), "{report}");
+        assert!(!report.contains("UNEXPLAINED"), "{report}");
     }
 
     #[test]
-    fn fractional_unattributed_time_is_material_below_the_absolute_limit() {
+    fn small_fractional_unattributed_time_is_process_noise() {
         let output = r#"
 click timing: source examples/sample.click
 click timing: phase frontend 0.080000s
@@ -1960,6 +1962,36 @@ click timing: function example_function 0.080s
         profile.accounting.wall_total = Duration::from_millis(100);
 
         assert_eq!(profile.accounting.unattributed(), Duration::from_millis(20));
+        assert!(!profile.accounting.materially_unattributed());
+    }
+
+    #[test]
+    fn fractional_unattributed_time_is_material_above_the_noise_floor() {
+        let output = r#"
+click timing: source examples/sample.click
+click timing: phase frontend 0.700000s
+click timing: function example_function 0.700s
+"#;
+        let mut profile = parse_profile("sample", output, Thresholds::default(), false)
+            .expect("the current timing format should parse");
+        profile.accounting.wall_total = Duration::from_secs(1);
+
+        assert_eq!(profile.accounting.unattributed(), Duration::from_millis(300));
+        assert!(profile.accounting.materially_unattributed());
+    }
+
+    #[test]
+    fn one_second_unattributed_is_material_at_a_small_share() {
+        let output = r#"
+click timing: source examples/sample.click
+click timing: phase frontend 99.000000s
+click timing: function example_function 99.000s
+"#;
+        let mut profile = parse_profile("sample", output, Thresholds::default(), false)
+            .expect("the current timing format should parse");
+        profile.accounting.wall_total = Duration::from_secs(100);
+
+        assert_eq!(profile.accounting.unattributed(), Duration::from_secs(1));
         assert!(profile.accounting.materially_unattributed());
     }
 
@@ -2219,7 +2251,7 @@ click timing: function example_function 5.300s
 "#;
         let mut profile = parse_profile("sample", output, Thresholds::default(), false)
             .expect("the current timing format should parse");
-        profile.accounting.wall_total = Duration::from_secs(6);
+        profile.accounting.wall_total = Duration::from_secs(7);
 
         let report = render_profiles(&[profile], Thresholds::default(), DEFAULT_TIME_LIMIT);
         for diagnosis in [

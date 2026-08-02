@@ -180,8 +180,9 @@ tactic.
 The category sections list only steps that crossed a tail threshold. `TIME
 ACCOUNTING` reconciles bounded child-process wall time across frontend,
 environment, exclusive tactic classes, kernel certification, and an
-`UNATTRIBUTED` residual. A residual over 250 ms or 10% is an explicit
-incomplete-profile finding.
+`UNATTRIBUTED` residual. A residual is an incomplete-profile finding when it
+reaches one second, or when it is both at least 250 ms and at least 10% of the
+run. Smaller fractional residuals are normal process-startup noise.
 
 `WORK AND THROUGHPUT` counts completed simple leaves by kind, C transitions,
 smart attempts and outcomes, functions, claims, and certification paths. It
