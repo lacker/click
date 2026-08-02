@@ -770,7 +770,7 @@ pub(super) fn describe_contract_expression(expression: &ContractExpression) -> S
         ContractExpression::Let {
             name, value, body, ..
         } => format!(
-            "let {name} = {}; {}",
+            "(let {name} = {}; {})",
             describe_contract_expression(value),
             describe_contract_expression(body)
         ),

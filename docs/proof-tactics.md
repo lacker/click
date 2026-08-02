@@ -97,9 +97,10 @@ rules. `normalize()` remains the tactic for a context-free atomic goal.
 nontrivial contextual reasoning rather than one fixed kernel rule. Determinism
 alone does not make a tactic simple.
 
-Click does not yet expose a surface tactic that prints or expands a smart
-tactic. Internally, every current smart tactic selects and replays a proof
-plan: `simp`, the one-step execution tactics,
+Expansion is a command-line source transformation rather than an in-language
+tactic: `click-expand` replaces one selected smart tactic with its checked
+surface certificate. Internally, every current smart tactic selects and
+replays a proof plan: `simp`, the one-step execution tactics,
 `execute_until`, `bounded_execute`, and `execute_rest`. The contextual
 `by frame` prover is certificate-backed as well; explicit `frame()` remains the
 exact simple tactic. `auto` searches only among these certificate-backed tactic
@@ -247,8 +248,8 @@ exactly the tactic beginning there with its checked expansion, and writes the
 complete expanded sidecar to standard output. Nested branch and `advance`
 tactics use the same location scheme. Source files from `verifying`
 declarations are resolved relative to the sidecar. An optional
-`--time-limit <DURATION>` reruns the expansion in a bounded child process;
-there is no default limit.
+`--time-limit <DURATION>` overrides the default 60-second bounded child
+process.
 One-step execution uses only the context premises named by its recorded
 proposition derivations. Atomic comparison and structural-memory transport are
 emitted as explicit `transport` steps whose sources name the relevant

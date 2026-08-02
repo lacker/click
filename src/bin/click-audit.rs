@@ -9,22 +9,23 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use click::cli::{
-    self, BoundedOutput, ChildOutput, files_with_extension, find_projects, format_duration,
-    parse_duration, read_verifying_sources, run_bounded, run_bounded_with_input, source_refs,
+    self, BoundedOutput, ChildOutput, MdTestExpectation, files_with_extension, find_mdtests,
+    find_projects, format_duration, looks_like_mdtest, parse_duration, read_verifying_sources,
+    run_bounded, run_bounded_with_input, source_refs,
 };
 use click::lang::click::{
     C0VerificationSession, SourcePosition, c0_smart_tactic_source_sites, c0_tactic_source_position,
-    expand_c0_tactic_source_at, verify_c0_sources_at, verifying_source_paths,
+    expand_c0_tactic_source_at, verify_c0_sources_at,
 };
 
 const DEFAULT_SESSION_LIMIT: Duration = Duration::from_secs(5 * 60);
 const DEFAULT_EXPANSION_LIMIT: Duration = Duration::from_secs(2 * 60);
 const DEFAULT_VERIFICATION_LIMIT: Duration = Duration::from_secs(5 * 60);
-const DEFAULT_SLOW_SITE_LIMIT: Duration = Duration::from_secs(10);
+const DEFAULT_PERFORMANCE_SLACK: Duration = Duration::from_millis(500);
 const DEFAULT_TIME_LIMIT: Duration = Duration::from_secs(10 * 60);
 const MAX_DIAGNOSTIC_CHARS: usize = 2_000;
 const USAGE: &str = "\
-usage: click-audit [OPTIONS] <example-project|examples-directory>
+usage: click-audit [OPTIONS] <example-project|examples-directory|mdtest.md|mdtests-directory|repository-root>
 
 The audit inventories smart tactics without executing proofs, then audits each
 selected site in source order: it expands the site, verifies the rewritten
@@ -34,16 +35,17 @@ expansion fixed point (the audited smart tactic is gone from its claim and
 the emitted expansion introduced no new smart tactic). By default it stops at
 the first failure and prints an inclusive --start-at resume command.
 
-Slowness is a finding: a site whose four steps together exceed the slow-site
-limit fails the audit (profile it with click-profile), and the whole run
-stops at the time limit with a resume cursor, so an audit can never quietly
-run for an hour.
+Raw phase time grows with proof-unit size and is reported but is not itself a
+failure. On the first site of each claim, audit compares cold verification of
+the expanded proof with the original proof in the same run. A regression must
+be both over 2x and over the performance slack, then repeat once, to fail.
+Hard child and whole-run limits remain safety failures.
 
 defaults:
   --session-time-limit 5m     original-sidecar session initialization
   --expansion-time-limit 2m   one source expansion
   --verification-time-limit 5m rewritten-sidecar verification
-  --slow-site-limit 10s       a slower passing site is reported as a failure
+  --performance-slack 500ms   minimum same-run expanded verification regression
   --time-limit 10m            whole-run wall clock; prints the resume cursor
 
 options:
@@ -51,7 +53,8 @@ options:
                               (`--discovery-time-limit` is a compatibility alias)
   --expansion-time-limit <DURATION>
   --verification-time-limit <DURATION>
-  --slow-site-limit <DURATION>
+  --performance-slack <DURATION>
+  --slow-site-limit <DURATION> deprecated alias for --performance-slack
   --time-limit <DURATION>
   --start-at <PATH:LINE:COLUMN>
                               inclusively resume at this source location
@@ -71,7 +74,7 @@ struct Arguments {
     session_limit: Duration,
     expansion_limit: Duration,
     verification_limit: Duration,
-    slow_site_limit: Duration,
+    performance_slack: Duration,
     time_limit: Duration,
     start_at: Option<SourceLocation>,
     keep_going: bool,
@@ -88,7 +91,10 @@ struct SourceLocation {
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct AuditSite {
     click_path: PathBuf,
+    /// Position in the user-edited container (`.click` or markdown).
     position: SourcePosition,
+    /// Position in the extracted Click source used by verification APIs.
+    click_position: SourcePosition,
     claim: String,
     tactic_name: String,
 }
@@ -234,7 +240,7 @@ fn parse_arguments(arguments: impl IntoIterator<Item = String>) -> Result<Argume
     let mut session_limit = DEFAULT_SESSION_LIMIT;
     let mut expansion_limit = DEFAULT_EXPANSION_LIMIT;
     let mut verification_limit = DEFAULT_VERIFICATION_LIMIT;
-    let mut slow_site_limit = DEFAULT_SLOW_SITE_LIMIT;
+    let mut performance_slack = DEFAULT_PERFORMANCE_SLACK;
     let mut time_limit = DEFAULT_TIME_LIMIT;
     let mut start_at = None;
     let mut keep_going = false;
@@ -251,8 +257,8 @@ fn parse_arguments(arguments: impl IntoIterator<Item = String>) -> Result<Argume
             "--verification-time-limit" => {
                 verification_limit = parse_next_duration(&mut arguments, &argument)?;
             }
-            "--slow-site-limit" => {
-                slow_site_limit = parse_next_duration(&mut arguments, &argument)?;
+            "--performance-slack" | "--slow-site-limit" => {
+                performance_slack = parse_next_duration(&mut arguments, &argument)?;
             }
             "--time-limit" => {
                 time_limit = parse_next_duration(&mut arguments, &argument)?;
@@ -291,7 +297,7 @@ fn parse_arguments(arguments: impl IntoIterator<Item = String>) -> Result<Argume
         session_limit,
         expansion_limit,
         verification_limit,
-        slow_site_limit,
+        performance_slack,
         time_limit,
         start_at,
         keep_going,
@@ -315,9 +321,9 @@ fn parse_next_duration(
 }
 
 fn run_audit(arguments: Arguments) -> Result<(), String> {
-    let projects = find_projects(&arguments.path)?;
+    let sources = audit_targets(&arguments.path)?;
     println!("INVENTORY");
-    let sites = inventory_sites(&projects)?;
+    let sites = inventory_sites(&sources)?;
     println!("  {} unique smart source sites", sites.len());
 
     let start_at = arguments
@@ -352,11 +358,11 @@ fn run_audit(arguments: Arguments) -> Result<(), String> {
 
     println!(
         "\nClick expansion audit (session {}, expansion {}, verification {}, \
-         slow site {}, run limit {})",
+         performance slack {}, run limit {})",
         format_duration(arguments.session_limit),
         format_duration(arguments.expansion_limit),
         format_duration(arguments.verification_limit),
-        format_duration(arguments.slow_site_limit),
+        format_duration(arguments.performance_slack),
         format_duration(arguments.time_limit),
     );
 
@@ -426,41 +432,16 @@ fn run_audit(arguments: Arguments) -> Result<(), String> {
             current,
             arguments.expansion_limit,
             arguments.verification_limit,
+            arguments.performance_slack,
             cold_reverify,
         ) {
             Ok(timings) => {
-                let total = timings.expansion
-                    + timings.session_verification
-                    + timings.reverification
-                    + timings.reexpansion;
-                if total > arguments.slow_site_limit {
-                    // Slowness is a finding: a passing site this slow is a
-                    // performance bug, not a success.
-                    println!("SLOW");
-                    println!(
-                        "    site passed but took {} (expand {}, verify {}, reverify {}, \
-                         reexpand {}), over the {} slow-site limit; profile it with \
-                         click-profile",
-                        format_duration(total),
-                        format_duration(timings.expansion),
-                        format_duration(timings.session_verification),
-                        format_duration(timings.reverification),
-                        format_duration(timings.reexpansion),
-                        format_duration(arguments.slow_site_limit),
-                    );
-                    print_resume(&arguments, site);
-                    site_failures += 1;
-                    if !arguments.keep_going {
-                        break;
-                    }
-                    cursor += 1;
-                    continue;
-                }
                 audited_sites += 1;
                 println!(
-                    "ok (expand {}, verify {}, reverify {}, reexpand {})",
+                    "ok (expand {}, verify {}, original {}, reverify {}, reexpand {})",
                     format_duration(timings.expansion),
                     format_duration(timings.session_verification),
+                    format_duration(timings.original_reverification),
                     format_duration(timings.reverification),
                     format_duration(timings.reexpansion),
                 );
@@ -518,19 +499,107 @@ fn run_audit(arguments: Arguments) -> Result<(), String> {
     }
 }
 
-fn inventory_sites(projects: &[PathBuf]) -> Result<Vec<AuditSite>, String> {
+fn audit_targets(path: &Path) -> Result<Vec<PathBuf>, String> {
+    if looks_like_mdtest(path) {
+        return find_mdtests(path);
+    }
+    if path.is_file() && path.extension().is_some_and(|extension| extension == "click") {
+        return Ok(vec![fs::canonicalize(path).map_err(|error| {
+            format!("failed to resolve `{}`: {error}", path.display())
+        })?]);
+    }
+    let examples = path.join("examples");
+    let mdtests = path.join("mdtests");
+    if examples.is_dir() && mdtests.is_dir() {
+        let mut sources = audit_targets(&examples)?;
+        sources.extend(audit_targets(&mdtests)?);
+        sources.sort();
+        sources.dedup();
+        return Ok(sources);
+    }
+    match find_projects(path) {
+        Ok(projects) => {
+            let mut sources = Vec::new();
+            for project in projects {
+                sources.extend(files_with_extension(&project, "click")?);
+            }
+            sources.sort();
+            sources
+                .into_iter()
+                .map(|source| {
+                    fs::canonicalize(&source).map_err(|error| {
+                        format!("failed to resolve `{}`: {error}", source.display())
+                    })
+                })
+                .collect()
+        }
+        Err(project_error) => {
+            if path.is_dir() && !files_with_extension(path, "md")?.is_empty() {
+                find_mdtests(path)
+            } else {
+                Err(project_error)
+            }
+        }
+    }
+}
+
+struct AuditSource {
+    container_source: String,
+    click_source: String,
+    c_sources: Vec<(String, String)>,
+    line_offset: usize,
+}
+
+fn load_audit_source(path: &Path) -> Result<AuditSource, String> {
+    let source = fs::read_to_string(path)
+        .map_err(|error| format!("failed to read `{}`: {error}", path.display()))?;
+    load_audit_source_from_text(path, source)
+}
+
+fn load_audit_source_from_text(path: &Path, container_source: String) -> Result<AuditSource, String> {
+    if looks_like_mdtest(path) {
+        let mdtest = cli::parse_mdtest(path, &container_source)?;
+        let click_source = mdtest
+            .click_source
+            .ok_or_else(|| format!("mdtest `{}` has no ```click block", path.display()))?;
+        return Ok(AuditSource {
+            container_source,
+            click_source,
+            c_sources: mdtest.c_sources,
+            line_offset: mdtest.click_start_line.saturating_sub(1),
+        });
+    }
+    let c_sources = read_verifying_sources(path, &container_source)?;
+    Ok(AuditSource {
+        click_source: container_source.clone(),
+        container_source,
+        c_sources,
+        line_offset: 0,
+    })
+}
+
+fn inventory_sites(sources: &[PathBuf]) -> Result<Vec<AuditSite>, String> {
     let mut sites = BTreeMap::new();
-    for project in projects {
-        let mut click_paths = files_with_extension(project, "click")?;
-        click_paths.sort();
-        for click_path in click_paths {
-            let canonical_path = fs::canonicalize(&click_path).map_err(|error| {
-                format!("failed to resolve `{}`: {error}", click_path.display())
-            })?;
-            let click_source = fs::read_to_string(&canonical_path).map_err(|error| {
+    for source_path in sources {
+        let canonical_path = fs::canonicalize(source_path).map_err(|error| {
+            format!("failed to resolve `{}`: {error}", source_path.display())
+        })?;
+        if looks_like_mdtest(&canonical_path) {
+            let markdown = fs::read_to_string(&canonical_path).map_err(|error| {
                 format!("failed to read `{}`: {error}", canonical_path.display())
             })?;
-            let c_sources = read_verifying_sources(&canonical_path, &click_source)?;
+            let mdtest = cli::parse_mdtest(&canonical_path, &markdown)?;
+            if matches!(mdtest.expectation, Some(MdTestExpectation::FailContains(_))) {
+                continue;
+            }
+        }
+        let source = load_audit_source(&canonical_path)?;
+        let AuditSource {
+            click_source,
+            c_sources,
+            line_offset,
+            ..
+        } = source;
             let refs = source_refs(&c_sources);
             let syntactic_sites =
                 c0_smart_tactic_source_sites(&click_source, &refs).map_err(|error| {
@@ -556,15 +625,23 @@ fn inventory_sites(projects: &[PathBuf]) -> Result<Vec<AuditSite>, String> {
                         error.message()
                     )
                 })?;
-                let key = (canonical_path.clone(), position.line, position.column);
+                let container_position = SourcePosition {
+                    line: position.line + line_offset,
+                    column: position.column,
+                };
+                let key = (
+                    canonical_path.clone(),
+                    container_position.line,
+                    container_position.column,
+                );
                 sites.entry(key).or_insert(AuditSite {
                     click_path: canonical_path.clone(),
-                    position,
+                    position: container_position,
+                    click_position: position,
                     claim: syntactic.claim_label,
                     tactic_name: syntactic.tactic_name,
                 });
             }
-        }
     }
     Ok(sites.into_values().collect())
 }
@@ -617,8 +694,8 @@ fn resume_command(arguments: &Arguments, location: &SourceLocation) -> String {
         format_duration(arguments.expansion_limit),
         "--verification-time-limit".to_string(),
         format_duration(arguments.verification_limit),
-        "--slow-site-limit".to_string(),
-        format_duration(arguments.slow_site_limit),
+        "--performance-slack".to_string(),
+        format_duration(arguments.performance_slack),
         "--time-limit".to_string(),
         format_duration(arguments.time_limit),
     ];
@@ -655,6 +732,7 @@ fn shell_quote(word: &str) -> String {
 struct SiteTimings {
     expansion: Duration,
     session_verification: Duration,
+    original_reverification: Duration,
     reverification: Duration,
     reexpansion: Duration,
 }
@@ -664,6 +742,7 @@ fn audit_site(
     worker: &mut AuditSessionWorker,
     expansion_limit: Duration,
     verification_limit: Duration,
+    performance_slack: Duration,
     cold_reverify: bool,
 ) -> Result<SiteTimings, String> {
     let executable =
@@ -688,10 +767,14 @@ fn audit_site(
     if expanded == original {
         return Err("expansion returned the original sidecar unchanged".to_string());
     }
-    verifying_source_paths(&expanded)
-        .map_err(|error| format!("expanded sidecar did not parse: {}", error.message()))?;
+    let expanded_source = load_audit_source_from_text(&site.click_path, expanded.clone())
+        .map_err(|error| format!("expanded proof container did not parse: {error}"))?;
+    let expanded_position = claim_source_position(&expanded_source, &site.claim)?;
 
-    let verification_elapsed = worker.verify(&expanded, site.position, verification_limit)?;
+    // Expansion can insert or remove lines at the selected tactic.  Resolve
+    // the proof unit again by claim instead of sending its now-stale source
+    // coordinate to the retained verification session.
+    let verification_elapsed = worker.verify(&expanded, expanded_position, verification_limit)?;
 
     // Checklist step 6: reverify the rewritten proof unit from normal
     // inputs by running the targeted entry point in a fresh process under
@@ -703,25 +786,65 @@ fn audit_site(
     // session's cached environment masks, which one site per claim already
     // exercises — repeating it for every site of a many-site claim would
     // double the whole audit for no additional coverage.
-    let reverification_elapsed = if cold_reverify {
-        let mut reverification = Command::new(&executable);
-        reverification
-            .arg("--internal-verify-rewritten")
-            .arg(&site.click_path)
-            .arg(&site.claim);
-        let reverification = require_success(
-            run_bounded_with_input(
-                reverification,
-                Some(expanded.clone().into_bytes()),
-                verification_limit,
-                "proof-unit reverification",
-            )?,
+    let (original_reverification_elapsed, reverification_elapsed) = if cold_reverify {
+        let original_elapsed = cold_verify(
+            &executable,
+            site,
+            &original,
             verification_limit,
-            "proof-unit reverification",
+            "original proof-unit verification",
         )?;
-        reverification.elapsed
+        let expanded_elapsed = cold_verify(
+            &executable,
+            site,
+            &expanded,
+            verification_limit,
+            "expanded proof-unit verification",
+        )?;
+        if verification_regressed(original_elapsed, expanded_elapsed, performance_slack) {
+            // Timing-only findings get one fresh serial confirmation, matching
+            // the ordinary tactic-budget gate's noise policy.
+            let confirmed_original = cold_verify(
+                &executable,
+                site,
+                &original,
+                verification_limit,
+                "confirmation original proof-unit verification",
+            )?;
+            let confirmed_expanded = cold_verify(
+                &executable,
+                site,
+                &expanded,
+                verification_limit,
+                "confirmation expanded proof-unit verification",
+            )?;
+            if verification_regressed(
+                confirmed_original,
+                confirmed_expanded,
+                performance_slack,
+            ) {
+                let artifact = audit_artifact_path(&site.click_path);
+                return Err(format!(
+                    "expanded proof-unit verification regressed in two serial comparisons: \
+                     {} -> {}, then {} -> {} (failure requires over 2x and over {}); \
+                     reproduce the exact expanded workload with:\n  \
+                     cargo run --quiet --bin click-expand -- --time-limit {} {} > {}\n  \
+                     cargo run --quiet --bin click-profile -- {}",
+                    format_duration(original_elapsed),
+                    format_duration(expanded_elapsed),
+                    format_duration(confirmed_original),
+                    format_duration(confirmed_expanded),
+                    format_duration(performance_slack),
+                    format_duration(expansion_limit),
+                    location,
+                    artifact.display(),
+                    artifact.display(),
+                ));
+            }
+        }
+        (original_elapsed, expanded_elapsed)
     } else {
-        Duration::ZERO
+        (Duration::ZERO, Duration::ZERO)
     };
 
     // Checklist step 7: re-expanding the same claim against the rewritten
@@ -753,25 +876,102 @@ fn audit_site(
         ));
     }
 
-    // Checklist step 8 (comparing branch/path outcomes between the original
-    // and rewritten proofs) is intentionally not implemented yet.
+    // Proof scripts have no runtime semantics: re-verifying the same isolated
+    // claim is the semantic invariant. Requiring the prover to visit identical
+    // internal branch/path states would reject valid explicit certificates and
+    // is intentionally not an audit invariant.
 
     Ok(SiteTimings {
         expansion: expansion.elapsed,
         session_verification: verification_elapsed,
+        original_reverification: original_reverification_elapsed,
         reverification: reverification_elapsed,
         reexpansion: reexpansion.elapsed,
     })
 }
 
+fn cold_verify(
+    executable: &Path,
+    site: &AuditSite,
+    source: &str,
+    verification_limit: Duration,
+    label: &str,
+) -> Result<Duration, String> {
+    let mut verification = Command::new(executable);
+    verification
+        .arg("--internal-verify-rewritten")
+        .arg(&site.click_path)
+        .arg(&site.claim);
+    let output = require_success(
+        run_bounded_with_input(
+            verification,
+            Some(source.as_bytes().to_vec()),
+            verification_limit,
+            label,
+        )?,
+        verification_limit,
+        label,
+    )?;
+    Ok(output.elapsed)
+}
+
+fn verification_regressed(
+    original: Duration,
+    expanded: Duration,
+    performance_slack: Duration,
+) -> bool {
+    expanded > original.saturating_mul(2) && expanded > original + performance_slack
+}
+
+fn audit_artifact_path(source: &Path) -> PathBuf {
+    let stem = source
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or("expanded");
+    let extension = source
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .unwrap_or("click");
+    source.with_file_name(format!("{stem}.audit-expanded.{extension}"))
+}
+
 fn expand_location(location: &str) -> Result<String, String> {
     let (click_path, line, column) = cli::parse_source_location(location)?;
-    let click_source = fs::read_to_string(&click_path)
-        .map_err(|error| format!("failed to read `{}`: {error}", click_path.display()))?;
-    let sources = read_verifying_sources(&click_path, &click_source)?;
-    let refs = source_refs(&sources);
-    expand_c0_tactic_source_at(&click_source, &refs, line, column)
-        .map_err(|error| error.message().to_string())
+    let source = load_audit_source(&click_path)?;
+    let click_line = line.checked_sub(source.line_offset).ok_or_else(|| {
+        format!("line {line} is before the mdtest's ```click block")
+    })?;
+    if click_line == 0 || click_line > source.click_source.lines().count() {
+        return Err(format!("line {line} is outside the proof container's Click source"));
+    }
+    let refs = source_refs(&source.c_sources);
+    let expanded_click = expand_c0_tactic_source_at(
+        &source.click_source,
+        &refs,
+        click_line,
+        column,
+    )
+    .map_err(|error| error.message().to_string())?;
+    if looks_like_mdtest(&click_path) {
+        Ok(splice_click_source(&source, &expanded_click))
+    } else {
+        Ok(expanded_click)
+    }
+}
+
+fn splice_click_source(source: &AuditSource, expanded_click: &str) -> String {
+    let lines = source.container_source.lines().collect::<Vec<_>>();
+    let body_start = source.line_offset;
+    let body_len = source.click_source.lines().count();
+    let mut spliced = Vec::with_capacity(lines.len());
+    spliced.extend_from_slice(&lines[..body_start]);
+    spliced.extend(expanded_click.lines());
+    spliced.extend_from_slice(&lines[body_start + body_len..]);
+    let mut result = spliced.join("\n");
+    if source.container_source.ends_with('\n') {
+        result.push('\n');
+    }
+    result
 }
 
 fn read_stdin_source(label: &str) -> Result<String, String> {
@@ -792,19 +992,22 @@ fn verify_rewritten_from_stdin(
     claim_label: &str,
 ) -> Result<(), String> {
     let rewritten = read_stdin_source("rewritten sidecar")?;
-    let sources = read_verifying_sources(original_click_path, &rewritten)?;
-    let refs = source_refs(&sources);
-    let position = c0_tactic_source_position(&rewritten, &refs, claim_label, 0).map_err(
-        |error| {
-            format!(
-                "could not locate `{claim_label}` in the rewritten sidecar: {}",
-                error.message()
-            )
-        },
-    )?;
-    verify_c0_sources_at(&rewritten, &refs, position.line, position.column)
+    let source = load_audit_source_from_text(original_click_path, rewritten)?;
+    let refs = source_refs(&source.c_sources);
+    let position = claim_source_position(&source, claim_label)?;
+    verify_c0_sources_at(&source.click_source, &refs, position.line, position.column)
         .map(|_| ())
         .map_err(|error| error.message().to_string())
+}
+
+fn claim_source_position(source: &AuditSource, claim_label: &str) -> Result<SourcePosition, String> {
+    let refs = source_refs(&source.c_sources);
+    c0_tactic_source_position(&source.click_source, &refs, claim_label, 0).map_err(|error| {
+        format!(
+            "could not locate `{claim_label}` in the rewritten sidecar: {}",
+            error.message()
+        )
+    })
 }
 
 /// Checklist step 7 worker: checks the rewritten sidecar (read from stdin)
@@ -816,16 +1019,17 @@ fn verify_rewritten_from_stdin(
 /// actually checkable per site: the audited smart tactic must be gone from
 /// the claim's smart inventory, and the emitted expansion must not have
 /// introduced any new smart tactic (certificates are explicit tactics), so
-/// the claim's smart-site count drops by exactly one. Other smart sites of
-/// the claim are audited on their own turns against the original sidecar.
+/// the claim's smart-site multiset strictly shrinks. A path-aligned
+/// certificate can replace more than one symmetric occurrence at once, so an
+/// exact one-site decrease would reject a stronger valid expansion. Other
+/// smart sites of the claim are audited on their own turns against the
+/// original sidecar.
 /// On success the rewritten source is echoed so the caller's byte-identical
 /// comparison passes.
 fn reexpand_from_stdin(click_path: &Path, claim_label: &str) -> Result<String, String> {
-    let original = fs::read_to_string(click_path)
-        .map_err(|error| format!("failed to read `{}`: {error}", click_path.display()))?;
+    let original = load_audit_source(click_path)?;
     let rewritten = read_stdin_source("rewritten sidecar")?;
-    let original_sources = read_verifying_sources(click_path, &original)?;
-    let rewritten_sources = read_verifying_sources(click_path, &rewritten)?;
+    let rewritten_source = load_audit_source_from_text(click_path, rewritten.clone())?;
     let claim_sites = |source: &str, sources: &[(String, String)]| {
         let refs = sources
             .iter()
@@ -846,16 +1050,34 @@ fn reexpand_from_stdin(click_path: &Path, claim_label: &str) -> Result<String, S
                 )
             })
     };
-    let original_sites = claim_sites(&original, &original_sources)?;
-    let rewritten_sites = claim_sites(&rewritten, &rewritten_sources)?;
-    if rewritten_sites.len() + 1 != original_sites.len() {
+    let original_sites = claim_sites(&original.click_source, &original.c_sources)?;
+    let rewritten_sites = claim_sites(&rewritten_source.click_source, &rewritten_source.c_sources)?;
+    let mut unmatched_original = original_sites.clone();
+    let introduced = rewritten_sites.iter().find(|rewritten| {
+        let Some(index) = unmatched_original
+            .iter()
+            .position(|original| original == *rewritten)
+        else {
+            return true;
+        };
+        unmatched_original.remove(index);
+        false
+    });
+    if let Some(introduced) = introduced {
         return Err(format!(
-            "expansion did not remove exactly the audited smart tactic from `{claim_label}`: \
+            "expansion introduced smart tactic `{introduced}` in `{claim_label}`: \
              {} smart site(s) before ({}), {} after ({})",
             original_sites.len(),
             original_sites.join(", "),
             rewritten_sites.len(),
             rewritten_sites.join(", "),
+        ));
+    }
+    if unmatched_original.is_empty() {
+        return Err(format!(
+            "expansion did not remove a smart tactic from `{claim_label}`: {} site(s) before and {} after",
+            original_sites.len(),
+            rewritten_sites.len(),
         ));
     }
     Ok(rewritten)
@@ -925,11 +1147,9 @@ fn truncate_diagnostic(diagnostic: &str) -> String {
 }
 
 fn run_session_worker(click_path: &Path) -> Result<(), String> {
-    let click_source = fs::read_to_string(click_path)
-        .map_err(|error| format!("failed to read `{}`: {error}", click_path.display()))?;
-    let c_sources = read_verifying_sources(click_path, &click_source)?;
-    let refs = source_refs(&c_sources);
-    let session = match C0VerificationSession::new(&click_source, &refs) {
+    let source = load_audit_source(click_path)?;
+    let refs = source_refs(&source.c_sources);
+    let session = match C0VerificationSession::new(&source.click_source, &refs) {
         Ok((session, _)) => {
             write_session_response(&mut std::io::stdout(), Ok(()))?;
             session
@@ -944,8 +1164,9 @@ fn run_session_worker(click_path: &Path) -> Result<(), String> {
         let Some((rewritten, position)) = read_session_request(&mut stdin)? else {
             return Ok(());
         };
+        let rewritten = load_audit_source_from_text(click_path, rewritten)?;
         let result = session
-            .verify_at(&rewritten, position.line, position.column)
+            .verify_at(&rewritten.click_source, position.line, position.column)
             .map(|_| ())
             .map_err(|error| error.message().to_string());
         write_session_response(&mut std::io::stdout(), result)?;
@@ -1125,7 +1346,7 @@ mod tests {
             session_limit: Duration::from_secs(30),
             expansion_limit: Duration::from_secs(2),
             verification_limit: Duration::from_secs(3),
-            slow_site_limit: Duration::from_secs(10),
+            performance_slack: Duration::from_millis(500),
             time_limit: Duration::from_secs(600),
             start_at: None,
             keep_going: false,
@@ -1139,9 +1360,29 @@ mod tests {
         assert_eq!(
             resume_command(&arguments, &location),
             "click-audit --session-time-limit 30s --expansion-time-limit 2s \
-             --verification-time-limit 3s --slow-site-limit 10s --time-limit 10m \
+             --verification-time-limit 3s --performance-slack 500ms --time-limit 10m \
              --max-sites 1 --start-at /tmp/example.click:12:34 'examples with spaces'"
         );
+    }
+
+    #[test]
+    fn performance_comparison_requires_ratio_and_absolute_slack() {
+        let slack = Duration::from_millis(500);
+        assert!(!verification_regressed(
+            Duration::from_secs(5),
+            Duration::from_secs(9),
+            slack,
+        ));
+        assert!(!verification_regressed(
+            Duration::from_millis(100),
+            Duration::from_millis(250),
+            slack,
+        ));
+        assert!(verification_regressed(
+            Duration::from_secs(1),
+            Duration::from_millis(2_501),
+            slack,
+        ));
     }
 
     #[test]
@@ -1149,6 +1390,7 @@ mod tests {
         let site = |path: &str, line| AuditSite {
             click_path: PathBuf::from(path),
             position: SourcePosition { line, column: 3 },
+            click_position: SourcePosition { line, column: 3 },
             claim: "claim".to_string(),
             tactic_name: "simp".to_string(),
         };
@@ -1246,8 +1488,44 @@ int32 example() {
                 .unwrap();
 
         assert_ne!(expanded, click_source);
-        verifying_source_paths(&expanded).unwrap();
+        click::lang::click::verifying_source_paths(&expanded).unwrap();
         verify_c0_sources(&expanded, &sources).unwrap();
+    }
+
+    #[test]
+    fn rewritten_claim_position_survives_an_expansion_that_removes_a_tactic() {
+        let c_source = "int32 example() { return 0; }";
+        let click_source = r#"verifying "example.c";
+int32 example() {
+    ensures result == 0;
+} by {
+    execute_rest();
+    simp();
+}
+"#;
+        let sources = [("example.c", c_source)];
+        let position =
+            c0_tactic_source_position(click_source, &sources, "example.contract", 1).unwrap();
+        let expanded =
+            expand_c0_tactic_source_at(click_source, &sources, position.line, position.column)
+                .expect("redundant trailing simp should expand away");
+        assert!(!expanded.contains("simp();"));
+
+        let source = AuditSource {
+            container_source: expanded.clone(),
+            click_source: expanded,
+            c_sources: vec![("example.c".to_string(), c_source.to_string())],
+            line_offset: 0,
+        };
+        let relocated = claim_source_position(&source, "example.contract")
+            .expect("the rewritten claim should have a fresh selector");
+        verify_c0_sources_at(
+            &source.click_source,
+            &[("example.c", c_source)],
+            relocated.line,
+            relocated.column,
+        )
+        .expect("the relocated rewritten proof should verify");
     }
 
     #[test]
@@ -1289,6 +1567,40 @@ int32 count_to_one() {
         assert!(inventory.iter().any(|site| {
             site.claim_label == "count_to_one.loop(0).preserve" && site.tactic_name == "simp"
         }));
+    }
+
+    #[test]
+    fn repository_root_targets_examples_and_passing_mdtests() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let targets = audit_targets(&root).expect("repository audit targets should resolve");
+        assert!(
+            targets.iter().any(|path| {
+                path.extension().is_some_and(|extension| extension == "click")
+            }),
+            "example sidecars must be included"
+        );
+        assert!(
+            targets
+                .iter()
+                .any(|path| path.ends_with("mdtests/scalar.md")),
+            "passing mdtests must be included"
+        );
+    }
+
+    #[test]
+    fn markdown_inventory_and_expansion_use_container_coordinates() {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("mdtests/scalar.md");
+        let sites = inventory_sites(std::slice::from_ref(&path))
+            .expect("the scalar mdtest should inventory");
+        let site = sites.first().expect("the scalar mdtest has one smart site");
+        assert!(site.position.line > site.click_position.line);
+        let location = format_location(&site_location(site));
+        let expanded = expand_location(&location).expect("the markdown smart site should expand");
+        let source = load_audit_source_from_text(&path, expanded)
+            .expect("expanded markdown should re-extract");
+        let refs = source_refs(&source.c_sources);
+        verify_c0_sources(&source.click_source, &refs)
+            .expect("expanded markdown proof should verify");
     }
 
     #[test]

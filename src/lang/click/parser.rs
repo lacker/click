@@ -24,6 +24,7 @@ fn is_tactic_name(name: &str) -> bool {
 enum Token {
     Ident(String),
     Number(u32),
+    UInt8Number(u8),
     CharLiteral(u8),
     String(String),
     LBrace,
@@ -65,6 +66,7 @@ impl Token {
         match self {
             Self::Ident(name) => format!("identifier `{name}`"),
             Self::Number(value) => format!("number `{value}`"),
+            Self::UInt8Number(value) => format!("uint8 number `{value}u8`"),
             Self::CharLiteral(value) => {
                 format!("character literal `{}`", (*value as char).escape_default())
             }
@@ -75,7 +77,11 @@ impl Token {
 
     fn spelling(&self) -> &'static str {
         match self {
-            Self::Ident(_) | Self::Number(_) | Self::CharLiteral(_) | Self::String(_) => "",
+            Self::Ident(_)
+            | Self::Number(_)
+            | Self::UInt8Number(_)
+            | Self::CharLiteral(_)
+            | Self::String(_) => "",
             Self::LBrace => "{",
             Self::RBrace => "}",
             Self::LParen => "(",
@@ -2443,6 +2449,13 @@ impl Parser {
     }
 
     fn parse_contract_unary(&mut self) -> Result<ContractExpression, ClickError> {
+        if self.peek() == Some(&Token::Minus) {
+            self.position += 1;
+            return Ok(ContractExpression::Subtract(
+                Box::new(ContractExpression::CFragment(CExpression::Value(int32(0)))),
+                Box::new(self.parse_contract_unary()?),
+            ));
+        }
         if self.peek() == Some(&Token::Tilde) {
             self.position += 1;
             return Ok(ContractExpression::BitwiseNot(Box::new(
@@ -2648,6 +2661,9 @@ impl Parser {
             Some(Token::Number(value)) => Ok(ContractExpression::CFragment(CExpression::Value(
                 CValue::Int32(Bitvector32Term::Constant(value)),
             ))),
+            Some(Token::UInt8Number(value)) => Ok(ContractExpression::CFragment(
+                CExpression::Value(CValue::UInt8(Bitvector32Term::Constant(u32::from(value)))),
+            )),
             Some(Token::CharLiteral(value)) => Ok(ContractExpression::CFragment(
                 CExpression::Value(CValue::UInt8(Bitvector32Term::Constant(u32::from(value)))),
             )),
@@ -2815,6 +2831,13 @@ impl Parser {
     }
 
     fn parse_ensure_unary(&mut self) -> Result<C0Expression, ClickError> {
+        if self.peek() == Some(&Token::Minus) {
+            self.position += 1;
+            return Ok(C0Expression::Subtract(
+                Box::new(C0Expression::Int32Literal(0)),
+                Box::new(self.parse_ensure_unary()?),
+            ));
+        }
         if self.peek() == Some(&Token::Tilde) {
             self.position += 1;
             return Ok(C0Expression::BitwiseNot(Box::new(
@@ -2855,6 +2878,7 @@ impl Parser {
             }
             Some(Token::Ident(name)) => Ok(C0Expression::Variable(name)),
             Some(Token::Number(value)) => Ok(C0Expression::Int32Literal(value)),
+            Some(Token::UInt8Number(value)) => Ok(C0Expression::UInt8Literal(value)),
             Some(Token::CharLiteral(value)) => Ok(C0Expression::UInt8Literal(value)),
             Some(Token::LParen) => {
                 let expression = self.parse_ensure_expression()?;
@@ -3150,7 +3174,26 @@ fn tokenize(source: &str) -> Result<(Vec<Token>, Vec<SourcePosition>), ClickErro
                 let value = spelling.parse::<u32>().map_err(|_| {
                     ClickError::new(format!("{position}: number `{spelling}` does not fit in u32"))
                 })?;
-                tokens.push(Token::Number(value));
+                if chars.get(index) == Some(&'u') && chars.get(index + 1) == Some(&'8') {
+                    if chars
+                        .get(index + 2)
+                        .is_some_and(|next| is_ident_continue(*next))
+                    {
+                        return Err(ClickError::new(format!(
+                            "{position}: invalid uint8 literal `{spelling}u8{}`",
+                            chars[index + 2]
+                        )));
+                    }
+                    let value = u8::try_from(value).map_err(|_| {
+                        ClickError::new(format!(
+                            "{position}: uint8 literal `{spelling}u8` is outside 0..255"
+                        ))
+                    })?;
+                    tokens.push(Token::UInt8Number(value));
+                    index += 2;
+                } else {
+                    tokens.push(Token::Number(value));
+                }
             }
             ch if is_ident_start(ch) => {
                 let start = index;

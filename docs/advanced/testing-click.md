@@ -144,8 +144,10 @@ cargo run --quiet --bin click-profile -- mdtests/bubble_sort3_two_pass_sorted.md
 cargo run --quiet --bin click-profile -- mdtests
 ```
 
-Pass one example-project directory, the complete `examples` directory, one
-markdown test, or a directory of them. An mdtest is profiled from its embedded
+Pass one sidecar, one example-project directory, the complete `examples`
+directory, one markdown test, or a directory of them. Direct sidecar profiling
+is useful for the sibling `.expanded.click` artifact printed by the expansion
+workflow. An mdtest is profiled from its embedded
 ` ```c ` and ` ```click ` blocks using the same extraction the mdtests gate
 uses, and reported locations point into the markdown file. Quarantine does not
 apply — a quarantined mdtest is exactly the one worth profiling. The two modes
@@ -161,8 +163,10 @@ after 30 seconds. Override them with `--smart-threshold`,
 The verifier emits each tactic's class into the timing stream. The report uses
 that class to prescribe the next action:
 
-- `SMART` steps are expansion candidates. The report prints a pasteable
-  `click-expand` command for each one.
+- Successful `SMART` hotspots are expansion candidates. The report prints
+  pasteable commands that write a sibling artifact, verify it, and reprofile
+  that exact artifact with the same limits. Failed or interrupted smart search
+  has no certificate and is reported as a Click bug to reduce.
 - `SIMPLE` steps are deterministic certificate replay. Do not expand them;
   reduce and fix the verifier bottleneck first.
 - `CONTROL` steps are proof containers. Inspect their nested smart and simple
@@ -173,13 +177,19 @@ applies the same advice. This prevents a slow internal certificate replay from
 being mistaken for smart search merely because it is nested inside a smart
 tactic.
 
-The category sections list only steps that crossed a threshold, so they say
-what to act on but not how the run divided overall. The `TIME ACCOUNTING`
-section says that: exclusive time per class — a container's row excludes the
-steps nested inside it — plus the kernel certification phase and an
-`UNATTRIBUTED` remainder. A large remainder is itself the finding: it means
-machinery that emits no `click timing:` line is burning the time, and the
-report cannot yet tell you whether that time is expandable or a bug.
+The category sections list only steps that crossed a tail threshold. `TIME
+ACCOUNTING` reconciles bounded child-process wall time across frontend,
+environment, exclusive tactic classes, kernel certification, and an
+`UNATTRIBUTED` residual. A residual over 250 ms or 10% is an explicit
+incomplete-profile finding.
+
+`WORK AND THROUGHPUT` counts completed simple leaves by kind, C transitions,
+smart attempts and outcomes, functions, claims, and certification paths. It
+reports aggregate rates and tactic averages/maxima. `DIAGNOSES` combines those
+rates with the tail guards to distinguish SMART HOTSPOT, SIMPLE ENGINE BUG,
+HEALTHY VOLUME, CERTIFICATION BOTTLENECK, SETUP BOTTLENECK, and UNEXPLAINED.
+The displayed baselines are conservative development bounds, not a universal
+hardware SLA.
 
 A step whose timing names a tactic index the surface proof does not have keeps
 its timing and loses only its location; those are listed under `STEPS WITHOUT A
@@ -200,10 +210,21 @@ boundary:
 
 ```sh
 cargo run --quiet --bin click-audit -- examples
+cargo run --quiet --bin click-audit -- mdtests
+cargo run --quiet --bin click-audit -- .
 ```
 
-The audit first parses every sidecar and builds a deterministic inventory of
-smart source sites without executing any proof, printing its size:
+The repository-root form is the complete manual release/certificate-boundary
+gate: it covers examples and every passing mdtest in one resumable run.
+Negative mdtests are excluded because their intended result is proof failure,
+so they cannot supply accepted certificates. The ordinary `cargo test` and
+nextest gates keep fast unit, timing-parser, expansion, and markdown smoke
+coverage; they do not run the exhaustive audit.
+
+The audit first parses every proof container and builds a deterministic
+inventory of smart source sites without executing any proof, printing its
+size. Locations in mdtests use markdown coordinates, like `click-profile` and
+`click-expand`:
 
 ```text
 INVENTORY
@@ -212,45 +233,43 @@ INVENTORY
 
 It then walks those unique `file:line:column` locations in path and source
 order. A bounded verifier worker is started lazily when the cursor reaches a
-sidecar, so resuming in a later file does not initialize earlier files. The
-resulting certified function environment stays alive while the audit handles
-that file. Each site gets four timed checks:
+sidecar or mdtest, so resuming in a later file does not initialize earlier
+files. The resulting certified function environment stays alive while the
+audit handles that file. Each site gets these checks:
 
 1. **expand** — run expansion for that location in a bounded child process,
-   require the emitted sidecar to differ from the on-disk original, and require
-   it to round-trip through the ordinary Surface Click parser (there is no
-   separate generated or Kernel Click grammar);
-2. **verify** — verify the rewritten sidecar in the retained session. That
+   require the emitted proof container to differ from the on-disk original,
+   and require it to round-trip through the ordinary Surface Click parser
+   (there is no separate generated or Kernel Click grammar);
+2. **verify** — verify the rewritten proof in the retained session. That
    entry point additionally requires the location to resolve to the same proof
-   unit as the baseline and the rewritten file to be identical to the baseline
-   outside that proof unit; it then drops the selected function's rule from the
-   certified baseline environment and reverifies just that proof unit, reusing
-   its already-certified dependencies;
-3. **reverify** — reverify the same audited *proof unit* in a fresh process
-   through the normal targeted entry point. This runs once per claim, not once
-   per site: the retained session already established that the rewrite changed
-   nothing outside the proof unit, so a whole-file pass here would redo every
-   other unit for every site. Later sites of an already-covered claim report
-   `reverify 0s`;
+   unit as the baseline and the Click source to be identical outside that unit;
+   it then reverifies just that proof unit while reusing certified dependencies;
+3. **original/reverify** — on the first site of each claim, cold-verify the
+   original and expanded versions of the same targeted proof unit in fresh
+   processes. Later sites of the claim report both as `0s`;
 4. **reexpand** — check that the rewrite is an expansion fixed point. The check
    is claim-based, because the rewrite moves and replaces tactics so the site
    cannot be re-found by its original position: the audited smart tactic must be
    gone from its claim's smart inventory and the emitted expansion must not
-   have introduced a new smart tactic, so the claim's smart-site count drops by
-   exactly one.
+   have introduced a new smart tactic, so the claim's smart-site multiset
+   strictly shrinks. A path-aligned certificate may remove multiple symmetric
+   occurrences at once.
 
-A passing site prints its four timings:
+A passing site prints all phase timings:
 
 ```text
-[1/26] examples/input-cursor/input_cursor.click:8:9  incremented_zero_is_one.ensures_0 (simp) ... ok (expand 22ms, verify 29ms, reverify 37ms, reexpand 23ms)
+[1/26] examples/input-cursor/input_cursor.click:8:9  incremented_zero_is_one.ensures_0 (simp) ... ok (expand 22ms, verify 29ms, original 37ms, reverify 35ms, reexpand 23ms)
 ```
 
-### Slowness is a finding
+### Rate-aware performance comparison
 
-A site whose four checks together exceed `--slow-site-limit` (default 10
-seconds) is reported `SLOW` and **counts as a failure**, even though every
-check passed. Profile such a site with `click-profile` rather than raising the
-limit.
+Raw site totals are informational because all verification phases naturally
+grow with proof-unit size. Audit compares expanded cold verification with its
+same-run original baseline. The expanded proof must be both more than twice as
+slow and more than `--performance-slack` slower (default 500 ms), then repeat
+that regression in a second serial comparison, to fail. The failure prints
+commands that materialize and profile the exact expanded artifact.
 
 The whole run is also bounded by `--time-limit` (default 10 minutes). Reaching
 it stops the audit, prints the resume cursor, and exits unsuccessfully, so an
@@ -262,20 +281,21 @@ audit can never quietly run for an hour.
 | --- | --- | --- |
 | `--session-time-limit` | 5m | original-sidecar session initialization |
 | `--expansion-time-limit` | 2m | one expansion, and the re-expansion check |
-| `--verification-time-limit` | 5m | retained-session verification, and the cold reverification |
-| `--slow-site-limit` | 10s | one site's four checks together |
+| `--verification-time-limit` | 5m | retained and cold proof-unit verification |
+| `--performance-slack` | 500ms | minimum same-run regression in addition to the 2x ratio |
 | `--time-limit` | 10m | the whole run's wall clock |
 
 `--discovery-time-limit` remains as a compatibility alias for
-`--session-time-limit`.
+`--session-time-limit`; `--slow-site-limit` is a compatibility alias for
+`--performance-slack`.
 
-By default the audit stops at the first session, expansion, verification, or
-slow-site failure and prints a copy-pasteable continuation command carrying
-every current limit:
+By default the audit stops at the first session, expansion, verification,
+fixed-point, or confirmed performance failure and prints a copy-pasteable
+continuation command carrying every current limit:
 
 ```sh
 click-audit --session-time-limit 5m --expansion-time-limit 2m \
-  --verification-time-limit 5m --slow-site-limit 10s --time-limit 10m \
+  --verification-time-limit 5m --performance-slack 500ms --time-limit 10m \
   --start-at path/to/file.click:LINE:COLUMN examples
 ```
 
@@ -291,8 +311,13 @@ unchanged baseline source, so an earlier rewrite cannot hide or cause a later
 failure. With `--keep-going`, a timed-out worker is rebuilt from a fresh
 complete verification before the audit continues. The command exits
 unsuccessfully if session initialization, expansion, parsing, source isolation,
-proof-unit verification, the fixed-point check, or the slow-site limit fails,
-or if the run limit is reached.
+proof-unit verification, the fixed-point check, the confirmed relative
+performance contract, or the run limit fails.
+
+Proof scripts have no runtime semantics. Re-verifying the same isolated claim
+is the semantic audit condition; requiring the automation and explicit
+certificate to visit byte-identical internal branch/path states would reject
+valid expansions and is intentionally not an audit invariant.
 
 ## Unit Tests
 

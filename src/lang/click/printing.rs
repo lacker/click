@@ -48,7 +48,7 @@ pub(super) fn source_click_proposition(proposition: &ClickProposition) -> String
             } => (
                 5,
                 format!(
-                    "({}..{}).all({item} => {})",
+                    "({}..{}).all(|{item}| {{ {} }})",
                     describe_contract_expression(start),
                     describe_contract_expression(end),
                     at_precedence(body, 0)
@@ -62,7 +62,7 @@ pub(super) fn source_click_proposition(proposition: &ClickProposition) -> String
             } => (
                 5,
                 format!(
-                    "({}..{}).any({item} => {})",
+                    "({}..{}).any(|{item}| {{ {} }})",
                     describe_contract_expression(start),
                     describe_contract_expression(end),
                     at_precedence(body, 0)

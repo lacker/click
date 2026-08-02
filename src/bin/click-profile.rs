@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::fmt::Write as _;
 use std::fs;
@@ -18,6 +18,13 @@ const DEFAULT_SIMPLE_THRESHOLD: Duration = Duration::from_millis(500);
 const DEFAULT_CONTROL_THRESHOLD: Duration = Duration::from_secs(2);
 const DEFAULT_TIME_LIMIT: Duration = Duration::from_secs(30);
 const EXPANSION_TIME_LIMIT: Duration = Duration::from_secs(60);
+const MATERIAL_UNATTRIBUTED_TIME: Duration = Duration::from_millis(250);
+const MATERIAL_UNATTRIBUTED_SHARE: f64 = 10.0;
+const SIMPLE_AVERAGE_LIMIT: Duration = Duration::from_millis(50);
+const CERTIFICATION_PER_CLAIM_LIMIT: Duration = Duration::from_millis(250);
+const CERTIFICATION_PER_PATH_LIMIT: Duration = Duration::from_secs(1);
+const SETUP_PER_FILE_LIMIT: Duration = Duration::from_millis(250);
+const VOLUME_REPORT_THRESHOLD: Duration = Duration::from_secs(1);
 
 const USAGE: &str = "\
 usage: click-profile [OPTIONS] <example-project|examples-directory|mdtest.md|mdtests-directory>
@@ -123,6 +130,7 @@ struct StepKey {
 struct SlowStep {
     key: StepKey,
     elapsed: Duration,
+    failed: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -138,6 +146,7 @@ struct ProjectProfile {
     /// are reported instead of ignored.
     unknown_timing: BTreeMap<String, UnknownTiming>,
     accounting: TimeAccounting,
+    work: WorkMetrics,
     /// Reasons a reported step's source position could not be resolved,
     /// counted. Auto-planned loop-phase certificates carry synthesized tactic
     /// indices that no surface proof has, so those steps are reported with
@@ -149,6 +158,74 @@ struct ProjectProfile {
 struct UnknownTiming {
     count: usize,
     example: String,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct OperationStats {
+    count: usize,
+    total: Duration,
+    max: Duration,
+}
+
+impl OperationStats {
+    fn add(&mut self, elapsed: Duration) {
+        self.count += 1;
+        self.total += elapsed;
+        self.max = self.max.max(elapsed);
+    }
+
+    fn average(self) -> Duration {
+        if self.count == 0 {
+            Duration::ZERO
+        } else {
+            self.total / u32::try_from(self.count).unwrap_or(u32::MAX)
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct WorkMetrics {
+    source_files: usize,
+    functions: usize,
+    claims: usize,
+    certification_paths: usize,
+    tactics: BTreeMap<(TacticCategory, String), OperationStats>,
+    c_transitions: OperationStats,
+    failed_tactics: Vec<StepKey>,
+}
+
+impl WorkMetrics {
+    fn add_tactic(&mut self, key: &StepKey, elapsed: Duration) {
+        self.tactics
+            .entry((key.category, key.tactic_name.clone()))
+            .or_default()
+            .add(elapsed);
+        if key.category == TacticCategory::Simple && is_c_transition(&key.tactic_name) {
+            self.c_transitions.add(elapsed);
+        }
+    }
+
+    fn category(&self, category: TacticCategory) -> OperationStats {
+        self.tactics
+            .iter()
+            .filter(|((candidate, _), _)| *candidate == category)
+            .fold(OperationStats::default(), |mut total, (_, stats)| {
+                total.count += stats.count;
+                total.total += stats.total;
+                total.max = total.max.max(stats.max);
+                total
+            })
+    }
+}
+
+fn is_c_transition(tactic_name: &str) -> bool {
+    matches!(
+        tactic_name,
+        "step"
+            | "certified_statement_step"
+            | "apply_loop_summary"
+            | "certified_loop_summary_step"
+    )
 }
 
 fn entry() -> Result<(), String> {
@@ -272,6 +349,9 @@ fn profile_targets(path: &Path) -> Result<Vec<PathBuf>, String> {
     if looks_like_mdtest(path) {
         return find_mdtests(path);
     }
+    if path.is_file() && path.extension().is_some_and(|extension| extension == "click") {
+        return Ok(vec![path.to_path_buf()]);
+    }
     match find_projects(path) {
         Ok(projects) => Ok(projects),
         Err(message) => {
@@ -301,9 +381,18 @@ fn profile_target(
         // the default stack on the snapshot-heavy proofs worth profiling.
         .env("RUST_MIN_STACK", "67108864");
     let label = format!("profiler for `{}`", project.display());
-    let (status, stdout, stderr) = match run_bounded(command, time_limit, &label)? {
-        BoundedOutput::Completed(output) => (Some(output.status), output.stdout, output.stderr),
-        BoundedOutput::TimedOut { stdout, stderr, .. } => (None, stdout, stderr),
+    let (status, stdout, stderr, wall_elapsed) = match run_bounded(command, time_limit, &label)? {
+        BoundedOutput::Completed(output) => (
+            Some(output.status),
+            output.stdout,
+            output.stderr,
+            output.elapsed,
+        ),
+        BoundedOutput::TimedOut {
+            stdout,
+            stderr,
+            elapsed,
+        } => (None, stdout, stderr, elapsed),
     };
     let project_name = project
         .file_name()
@@ -313,6 +402,7 @@ fn profile_target(
     let stderr = String::from_utf8_lossy(&stderr);
     let mut profile = parse_profile(&project_name, &stderr, thresholds, status.is_none())
         .map_err(|message| format!("while profiling `{}`: {message}", project.display()))?;
+    profile.accounting.wall_total = wall_elapsed;
     if status.is_some_and(|status| !status.success()) {
         profile.verification_failure = Some(extract_verification_failure(
             &String::from_utf8_lossy(&stdout),
@@ -358,10 +448,10 @@ const TIMING_PREFIX: &str = "click timing: ";
 /// `click timing:` under `src/`). Longer prefixes come first so `claim paths`
 /// is not swallowed by `claim`.
 ///
-/// `claim paths` and `claim` are sub-phases of `contract claims`, which the
-/// accounting already consumes whole; counting them again would double-count
-/// certification time.
-const IGNORED_TIMING_KINDS: &[&str] = &["contract entry resources", "claim paths", "claim"];
+/// Detailed claim events are consumed as work counts but not as elapsed-time
+/// buckets: `contract claims` already owns their time, so adding it again
+/// would double-count certification.
+const IGNORED_TIMING_KINDS: &[&str] = &["contract entry resources"];
 
 /// The two `click timing:` kinds that together make up the kernel
 /// certification phase of one function.
@@ -380,8 +470,15 @@ struct TimeAccounting {
     smart: Duration,
     control: Duration,
     certification: Duration,
-    /// Sum of the `click timing: function` lines: the whole verified run.
+    frontend: Duration,
+    environment: Duration,
+    /// Sum of the `click timing: function` lines. These cover function proof
+    /// and certification work, but not the complete verifier invocation.
     total: Duration,
+    /// Parent-observed duration of the bounded child, including process start,
+    /// source I/O, and verifier work. Synthetic parser tests leave this zero
+    /// and use the function total as their denominator.
+    wall_total: Duration,
 }
 
 impl TimeAccounting {
@@ -394,25 +491,30 @@ impl TimeAccounting {
     }
 
     fn attributed(self) -> Duration {
-        self.simple + self.smart + self.control + self.certification
+        self.frontend
+            + self.environment
+            + self.simple
+            + self.smart
+            + self.control
+            + self.certification
     }
 
-    /// Time inside the verified functions that no `click timing:` line
-    /// claims. A large share here means the profile is not yet a diagnosis:
-    /// the machinery burning it is uninstrumented.
+    /// Time in the best available denominator that no non-overlapping phase or
+    /// tactic timing claims. A large share means the profile is incomplete.
     fn unattributed(self) -> Duration {
-        self.total.saturating_sub(self.attributed())
+        self.denominator().saturating_sub(self.attributed())
     }
 
-    /// The denominator for shares: the reported function total, or — when a
-    /// run failed before reporting one — everything the profile did measure.
-    /// A failing proof is exactly the kind worth profiling, so its split must
-    /// still be readable.
+    /// The denominator for shares: parent-observed child wall time, falling
+    /// back to the reported function total and then measured phases for unit
+    /// tests and failures without a parent measurement.
     fn denominator(self) -> Duration {
-        if self.total.is_zero() {
-            self.attributed()
-        } else {
+        if !self.wall_total.is_zero() {
+            self.wall_total
+        } else if !self.total.is_zero() {
             self.total
+        } else {
+            self.attributed()
         }
     }
 
@@ -422,6 +524,13 @@ impl TimeAccounting {
             return 0.0;
         }
         part.as_secs_f64() / denominator.as_secs_f64() * 100.0
+    }
+
+    fn materially_unattributed(self) -> bool {
+        let unattributed = self.unattributed();
+        unattributed >= MATERIAL_UNATTRIBUTED_TIME
+            || (!self.denominator().is_zero()
+                && self.share(unattributed) >= MATERIAL_UNATTRIBUTED_SHARE)
     }
 }
 
@@ -434,10 +543,22 @@ enum TimingEvent {
     Started(StepKey),
     /// A tactic finished, with its elapsed time.
     Finished(StepKey, Duration),
+    /// Verification ultimately returned an error created inside this tactic.
+    Failed(StepKey),
     /// One verified function's whole wall-clock time.
     FunctionTotal(Duration),
     /// One kernel certification phase of a function.
     Certification(Duration),
+    /// Parsing C/Click source, lowering declarations, and selecting the
+    /// verification dependency closure.
+    Frontend(Duration),
+    /// Constructing definition/function environments and verifying pure
+    /// theorem dependencies before function proofs run.
+    Environment(Duration),
+    /// Number of certification paths prepared for one function.
+    CertificationPaths(usize),
+    /// One contract claim completed certification checking.
+    ClaimCompleted,
     /// A recognized kind the profiler does not consume.
     Ignored,
     /// A `click timing:` line matching no known kind. Counted and reported.
@@ -456,6 +577,8 @@ fn parse_profile(
     // time into exclusive time.
     let mut open: Vec<(StepKey, Duration)> = Vec::new();
     let mut accounting = TimeAccounting::default();
+    let mut work = WorkMetrics::default();
+    let mut source_files = BTreeSet::new();
     let mut unknown_timing: BTreeMap<String, UnknownTiming> = BTreeMap::new();
     let mut source_path = PathBuf::new();
     for line in output.lines() {
@@ -464,7 +587,10 @@ fn parse_profile(
             continue;
         }
         match classify_timing_line(line, &source_path)? {
-            TimingEvent::Source(path) => source_path = path,
+            TimingEvent::Source(path) => {
+                source_files.insert(path.clone());
+                source_path = path;
+            }
             TimingEvent::Started(key) => open.push((key, Duration::ZERO)),
             TimingEvent::Finished(key, elapsed) => {
                 let nested = match open.iter().rposition(|(candidate, _)| candidate == &key) {
@@ -477,16 +603,35 @@ fn parse_profile(
                     }
                     None => Duration::ZERO,
                 };
-                accounting.add_tactic(key.category, elapsed.saturating_sub(nested));
+                let exclusive = elapsed.saturating_sub(nested);
+                accounting.add_tactic(key.category, exclusive);
+                work.add_tactic(&key, exclusive);
                 if let Some((_, parent_nested)) = open.last_mut() {
                     *parent_nested += elapsed;
                 }
-                if elapsed >= thresholds.for_category(key.category) {
-                    slow_steps.push(SlowStep { key, elapsed });
+                if exclusive >= thresholds.for_category(key.category) {
+                    slow_steps.push(SlowStep {
+                        key,
+                        elapsed: exclusive,
+                        failed: false,
+                    });
                 }
             }
-            TimingEvent::FunctionTotal(elapsed) => accounting.total += elapsed,
+            TimingEvent::Failed(key) => {
+                if let Some(step) = slow_steps.iter_mut().rev().find(|step| step.key == key) {
+                    step.failed = true;
+                }
+                work.failed_tactics.push(key);
+            }
+            TimingEvent::FunctionTotal(elapsed) => {
+                accounting.total += elapsed;
+                work.functions += 1;
+            }
             TimingEvent::Certification(elapsed) => accounting.certification += elapsed,
+            TimingEvent::Frontend(elapsed) => accounting.frontend += elapsed,
+            TimingEvent::Environment(elapsed) => accounting.environment += elapsed,
+            TimingEvent::CertificationPaths(count) => work.certification_paths += count,
+            TimingEvent::ClaimCompleted => work.claims += 1,
             TimingEvent::Ignored => {}
             TimingEvent::Unknown => {
                 let kind = unknown_timing_kind(line);
@@ -500,6 +645,7 @@ fn parse_profile(
             }
         }
     }
+    work.source_files = source_files.len();
     Ok(ProjectProfile {
         project: project.to_string(),
         slow_steps,
@@ -508,6 +654,7 @@ fn parse_profile(
         verification_failure: None,
         unknown_timing,
         accounting,
+        work,
         unresolved_positions: BTreeMap::new(),
     })
 }
@@ -533,6 +680,11 @@ fn classify_timing_line(line: &str, source_path: &Path) -> Result<TimingEvent, S
             .map(TimingEvent::Started)
             .ok_or_else(|| drift_message(line));
     }
+    if let Some(rest) = strip_kind(body, "failed tactic") {
+        return parse_step_key(rest, source_path)
+            .map(TimingEvent::Failed)
+            .ok_or_else(|| drift_message(line));
+    }
     if let Some(rest) = strip_kind(body, "tactic") {
         let (rest, elapsed) = split_trailing_seconds(rest).ok_or_else(|| drift_message(line))?;
         let key = parse_step_key(rest, source_path).ok_or_else(|| drift_message(line))?;
@@ -542,11 +694,34 @@ fn classify_timing_line(line: &str, source_path: &Path) -> Result<TimingEvent, S
         let (_, elapsed) = split_trailing_seconds(rest).ok_or_else(|| drift_message(line))?;
         return Ok(TimingEvent::FunctionTotal(elapsed));
     }
+    if let Some(rest) = strip_kind(body, "phase") {
+        let (name, elapsed) = split_trailing_seconds(rest).ok_or_else(|| drift_message(line))?;
+        return match name.trim() {
+            "frontend" => Ok(TimingEvent::Frontend(elapsed)),
+            "environment" => Ok(TimingEvent::Environment(elapsed)),
+            _ => Ok(TimingEvent::Unknown),
+        };
+    }
     for kind in CERTIFICATION_TIMING_KINDS {
         if let Some(rest) = strip_kind(body, kind) {
             let (_, elapsed) = split_trailing_seconds(rest).ok_or_else(|| drift_message(line))?;
             return Ok(TimingEvent::Certification(elapsed));
         }
+    }
+    if let Some(rest) = strip_kind(body, "claim paths") {
+        let (head, _) = split_trailing_seconds(rest).ok_or_else(|| drift_message(line))?;
+        let (_, prepared) = head
+            .rsplit_once(" prepared ")
+            .ok_or_else(|| drift_message(line))?;
+        let count = prepared
+            .strip_suffix(" in")
+            .and_then(|count| count.parse::<usize>().ok())
+            .ok_or_else(|| drift_message(line))?;
+        return Ok(TimingEvent::CertificationPaths(count));
+    }
+    if let Some(rest) = strip_kind(body, "claim") {
+        split_trailing_seconds(rest).ok_or_else(|| drift_message(line))?;
+        return Ok(TimingEvent::ClaimCompleted);
     }
     if IGNORED_TIMING_KINDS
         .iter()
@@ -757,13 +932,17 @@ fn render_profiles(
         TacticCategory::Simple,
         "SIMPLE — FIX THE ENGINE; DO NOT EXPAND",
         "A slow simple tactic is deterministic certificate replay. Reduce its verifier path and fix that bottleneck before expanding more smart tactics.",
+        thresholds,
+        time_limit,
     );
     render_category(
         &mut output,
         &slow_steps,
         TacticCategory::Smart,
-        "SMART — EXPAND TO TRADE PROOF SIZE FOR SPEED",
-        "Expand one location, apply the rewritten sidecar, then verify by profiling again.",
+        "SMART — EXPAND SUCCESSES; REDUCE FAILURES",
+        "Expand a successful hotspot and compare its rewritten profile. A failed smart search has no certificate and is a Click bug to reduce.",
+        thresholds,
+        time_limit,
     );
     render_category(
         &mut output,
@@ -771,9 +950,13 @@ fn render_profiles(
         TacticCategory::Control,
         "CONTROL — INSPECT NESTED STEPS",
         "This is a proof container. Use its nested SMART/SIMPLE timings; do not optimize or expand it based on the container row alone.",
+        thresholds,
+        time_limit,
     );
 
     render_accounting(&mut output, profiles);
+    render_work_metrics(&mut output, profiles);
+    render_diagnoses(&mut output, profiles);
 
     let failed = profiles
         .iter()
@@ -820,8 +1003,12 @@ fn render_profiles(
                 key.statement_index
             )
             .expect("writing a String cannot fail");
-            if let (TacticCategory::Smart, Some(position)) = (key.category, key.position) {
-                render_expansion_command(&mut output, key, position);
+            if key.category == TacticCategory::Smart {
+                writeln!(
+                    output,
+                    "              interrupted before a certificate was produced; reduce the search in Click"
+                )
+                .expect("writing a String cannot fail");
             }
         }
     }
@@ -830,15 +1017,22 @@ fn render_profiles(
         .iter()
         .any(|step| step.key.category == TacticCategory::Simple)
         || profiles.iter().any(|profile| {
-            profile.timed_out
+            (profile.timed_out
                 && profile
                     .active
                     .iter()
-                    .any(|key| key.category == TacticCategory::Simple)
+                    .any(|key| key.category == TacticCategory::Simple))
+                || {
+                    let simple = profile.work.category(TacticCategory::Simple);
+                    simple.count > 0 && simple.average() > SIMPLE_AVERAGE_LIMIT
+                }
         });
     let has_smart_candidate = slow_steps
         .iter()
-        .any(|step| step.key.category == TacticCategory::Smart)
+        .any(|step| step.key.category == TacticCategory::Smart && !step.failed);
+    let has_smart_failure = slow_steps
+        .iter()
+        .any(|step| step.key.category == TacticCategory::Smart && step.failed)
         || profiles.iter().any(|profile| {
             profile.timed_out
                 && profile
@@ -856,6 +1050,23 @@ fn render_profiles(
                     .iter()
                     .any(|key| key.category == TacticCategory::Control)
         });
+    let has_certification_problem = profiles.iter().any(|profile| {
+        (profile.work.claims > 0
+            && average_time(profile.accounting.certification, profile.work.claims)
+                > CERTIFICATION_PER_CLAIM_LIMIT)
+            || (profile.work.certification_paths > 0
+                && average_time(
+                    profile.accounting.certification,
+                    profile.work.certification_paths,
+                ) > CERTIFICATION_PER_PATH_LIMIT)
+    });
+    let has_setup_problem = profiles.iter().any(|profile| {
+        profile.work.source_files > 0
+            && (average_time(profile.accounting.frontend, profile.work.source_files)
+                > SETUP_PER_FILE_LIMIT
+                || average_time(profile.accounting.environment, profile.work.source_files)
+                    > SETUP_PER_FILE_LIMIT)
+    });
     let unknown_timing = profiles
         .iter()
         .filter(|profile| !profile.unknown_timing.is_empty())
@@ -908,13 +1119,11 @@ fn render_profiles(
     }
 
     let has_unknown_timing = !unknown_timing.is_empty();
-    // Threshold-free on purpose: a run where the invisible machinery outweighs
-    // everything the profiler can name is not a profile yet, whatever the
-    // thresholds are set to.
-    let mostly_unattributed = profiles.iter().any(|profile| {
-        !profile.accounting.total.is_zero()
-            && profile.accounting.unattributed() > profile.accounting.attributed()
-    });
+    // This is independent of tactic thresholds: a material invisible
+    // remainder means the profile is incomplete even if every tactic is fast.
+    let materially_unattributed = profiles
+        .iter()
+        .any(|profile| profile.accounting.materially_unattributed());
     let has_verification_failure = profiles
         .iter()
         .any(|profile| profile.verification_failure.is_some());
@@ -930,6 +1139,12 @@ fn render_profiles(
             "\nNEXT: fix or reduce the SIMPLE bottleneck first. Expanding surrounding SMART tactics can only move or expose this deterministic cost."
         )
         .expect("writing a String cannot fail");
+    } else if has_smart_failure {
+        writeln!(
+            output,
+            "\nNEXT: reduce the failed or interrupted SMART search in Click. It produced no certificate, so click-expand is not available for this finding."
+        )
+        .expect("writing a String cannot fail");
     } else if has_smart_candidate {
         writeln!(
             output,
@@ -942,24 +1157,47 @@ fn render_profiles(
             "\nNEXT: inspect the nested timings inside the CONTROL container; act on a nested SIMPLE or SMART step, not on the container row."
         )
         .expect("writing a String cannot fail");
+    } else if has_certification_problem {
+        writeln!(
+            output,
+            "\nNEXT: reduce the CERTIFICATION bottleneck; tactic expansion is not the indicated fix for this rate."
+        )
+        .expect("writing a String cannot fail");
+    } else if has_setup_problem {
+        writeln!(
+            output,
+            "\nNEXT: reduce the SETUP bottleneck in frontend or environment construction."
+        )
+        .expect("writing a String cannot fail");
     } else if has_unknown_timing {
         writeln!(
             output,
             "\nNEXT: nothing crossed the configured thresholds, but unrecognized timing lines mean this green is not trustworthy. Teach the parser those kinds and rerun."
         )
         .expect("writing a String cannot fail");
-    } else if mostly_unattributed {
+    } else if materially_unattributed {
         writeln!(
             output,
-            "\nNEXT: nothing crossed the configured thresholds, but more time went unattributed than to every timed step combined. Instrument the machinery burning it before reading this profile as clean."
+            "\nNEXT: nothing crossed the configured thresholds, but a material amount of wall time is UNATTRIBUTED. Instrument that machinery before reading this profile as clean."
         )
         .expect("writing a String cannot fail");
     } else {
-        writeln!(
-            output,
-            "\nNEXT: no completed smart expansion candidates or simple engine bottlenecks crossed the configured thresholds."
-        )
-        .expect("writing a String cannot fail");
+        if profiles
+            .iter()
+            .any(|profile| profile.accounting.denominator() >= VOLUME_REPORT_THRESHOLD)
+        {
+            writeln!(
+                output,
+                "\nNEXT: measured cost is HEALTHY VOLUME at the current baselines; reduce proof volume or improve Click's aggregate throughput rather than expanding an arbitrary tactic."
+            )
+            .expect("writing a String cannot fail");
+        } else {
+            writeln!(
+                output,
+                "\nNEXT: the measured run is within the current baselines."
+            )
+            .expect("writing a String cannot fail");
+        }
     }
 
     output
@@ -981,7 +1219,7 @@ fn render_accounting(output: &mut String, profiles: &[ProjectProfile]) {
     writeln!(output, "\nTIME ACCOUNTING").expect("writing a String cannot fail");
     writeln!(
         output,
-        "  Tactic time is exclusive: a container excludes the steps nested inside it, so the rows sum to the total. UNATTRIBUTED is verifier machinery that emits no `click timing:` line."
+        "  The total is child-process wall time when available. Tactic time is exclusive, and every row is non-overlapping. UNATTRIBUTED includes source I/O, process overhead, and verifier machinery with no recognized phase timing."
     )
     .expect("writing a String cannot fail");
     for profile in measured {
@@ -991,7 +1229,7 @@ fn render_accounting(output: &mut String, profiles: &[ProjectProfile]) {
             "  {}: {} total{}",
             profile.project,
             format_fractional_duration(accounting.denominator()),
-            if accounting.total.is_zero() {
+            if accounting.wall_total.is_zero() && accounting.total.is_zero() {
                 " measured (the run reported no function total, so this is the measured time only)"
             } else {
                 ""
@@ -999,6 +1237,8 @@ fn render_accounting(output: &mut String, profiles: &[ProjectProfile]) {
         )
         .expect("writing a String cannot fail");
         for (label, part) in [
+            ("FRONTEND", accounting.frontend),
+            ("ENVIRONMENT", accounting.environment),
             ("SIMPLE", accounting.simple),
             ("SMART", accounting.smart),
             ("CONTROL", accounting.control),
@@ -1016,12 +1256,297 @@ fn render_accounting(output: &mut String, profiles: &[ProjectProfile]) {
     }
 }
 
+fn render_work_metrics(output: &mut String, profiles: &[ProjectProfile]) {
+    let measured = profiles
+        .iter()
+        .filter(|profile| {
+            profile.work.source_files > 0
+                || profile.work.functions > 0
+                || !profile.work.tactics.is_empty()
+        })
+        .collect::<Vec<_>>();
+    if measured.is_empty() {
+        return;
+    }
+    writeln!(output, "\nWORK AND THROUGHPUT").expect("writing a String cannot fail");
+    writeln!(
+        output,
+        "  Counts come from completed verifier operations, not source-line estimates. C transitions are a semantic subset of SIMPLE and are not an additional time bucket."
+    )
+    .expect("writing a String cannot fail");
+    for profile in measured {
+        let work = &profile.work;
+        writeln!(
+            output,
+            "  {}: {} file{}, {} function{}, {} claim{}, {} certification path{}",
+            profile.project,
+            work.source_files,
+            if work.source_files == 1 { "" } else { "s" },
+            work.functions,
+            if work.functions == 1 { "" } else { "s" },
+            work.claims,
+            if work.claims == 1 { "" } else { "s" },
+            work.certification_paths,
+            if work.certification_paths == 1 {
+                ""
+            } else {
+                "s"
+            },
+        )
+        .expect("writing a String cannot fail");
+        render_operation_stats(output, "C TRANSITIONS", work.c_transitions);
+        for category in [
+            TacticCategory::Simple,
+            TacticCategory::Smart,
+            TacticCategory::Control,
+        ] {
+            render_operation_stats(
+                output,
+                &format!(
+                    "{} {}",
+                    category.label(),
+                    if category == TacticCategory::Smart {
+                        "ATTEMPTS"
+                    } else {
+                        "COMPLETED"
+                    }
+                ),
+                work.category(category),
+            );
+        }
+        let failed_smart = work
+            .failed_tactics
+            .iter()
+            .filter(|key| key.category == TacticCategory::Smart)
+            .count();
+        let smart_attempts = work.category(TacticCategory::Smart).count;
+        if smart_attempts > 0 || failed_smart > 0 {
+            writeln!(
+                output,
+                "    {:>24}  {:>6} succeeded, {:>6} failed",
+                "SMART OUTCOMES",
+                smart_attempts.saturating_sub(failed_smart),
+                failed_smart,
+            )
+            .expect("writing a String cannot fail");
+        }
+        if work.source_files > 0 {
+            render_rate(
+                output,
+                "FRONTEND / FILE",
+                profile.accounting.frontend,
+                work.source_files,
+            );
+            render_rate(
+                output,
+                "ENVIRONMENT / FILE",
+                profile.accounting.environment,
+                work.source_files,
+            );
+        }
+        if work.claims > 0 {
+            render_rate(
+                output,
+                "CERTIFICATION / CLAIM",
+                profile.accounting.certification,
+                work.claims,
+            );
+        }
+        if work.certification_paths > 0 {
+            render_rate(
+                output,
+                "CERTIFICATION / PATH",
+                profile.accounting.certification,
+                work.certification_paths,
+            );
+        }
+        let simple_kinds = work
+            .tactics
+            .iter()
+            .filter(|((category, _), _)| *category == TacticCategory::Simple)
+            .collect::<Vec<_>>();
+        if !simple_kinds.is_empty() {
+            writeln!(output, "    SIMPLE BY KIND").expect("writing a String cannot fail");
+            for ((_, name), stats) in simple_kinds {
+                render_operation_stats(output, name, *stats);
+            }
+        }
+    }
+}
+
+fn render_operation_stats(output: &mut String, label: &str, stats: OperationStats) {
+    writeln!(
+        output,
+        "    {label:>24}  {:>6}  total {:>10}  avg {:>10}  max {:>10}",
+        stats.count,
+        format_fractional_duration(stats.total),
+        format_fractional_duration(stats.average()),
+        format_fractional_duration(stats.max),
+    )
+    .expect("writing a String cannot fail");
+}
+
+fn render_rate(output: &mut String, label: &str, total: Duration, count: usize) {
+    let average = average_time(total, count);
+    writeln!(
+        output,
+        "    {label:>24}  {:>10}",
+        format_fractional_duration(average),
+    )
+    .expect("writing a String cannot fail");
+}
+
+fn average_time(total: Duration, count: usize) -> Duration {
+    if count == 0 {
+        Duration::ZERO
+    } else {
+        total / u32::try_from(count).unwrap_or(u32::MAX)
+    }
+}
+
+fn render_diagnoses(output: &mut String, profiles: &[ProjectProfile]) {
+    writeln!(output, "\nDIAGNOSES").expect("writing a String cannot fail");
+    writeln!(
+        output,
+        "  Conservative development baselines: SIMPLE average <= {}, certification <= {}/claim and <= {}/path, frontend/environment <= {}/file. Per-tactic thresholds remain the long-tail guards.",
+        format_fractional_duration(SIMPLE_AVERAGE_LIMIT),
+        format_fractional_duration(CERTIFICATION_PER_CLAIM_LIMIT),
+        format_fractional_duration(CERTIFICATION_PER_PATH_LIMIT),
+        format_fractional_duration(SETUP_PER_FILE_LIMIT),
+    )
+    .expect("writing a String cannot fail");
+    for profile in profiles {
+        writeln!(output, "  {}:", profile.project).expect("writing a String cannot fail");
+        let mut findings = 0;
+        let simple = profile.work.category(TacticCategory::Simple);
+        let slow_simple = profile
+            .slow_steps
+            .iter()
+            .any(|step| step.key.category == TacticCategory::Simple);
+        if slow_simple || (simple.count > 0 && simple.average() > SIMPLE_AVERAGE_LIMIT) {
+            findings += 1;
+            writeln!(
+                output,
+                "    SIMPLE ENGINE BUG — deterministic replay crossed a tail or throughput bound; reduce and fix Click."
+            )
+            .expect("writing a String cannot fail");
+        }
+        if profile
+            .slow_steps
+            .iter()
+            .any(|step| step.key.category == TacticCategory::Smart && !step.failed)
+        {
+            findings += 1;
+            writeln!(
+                output,
+                "    SMART HOTSPOT — expand one reported successful smart site, verify the artifact, and compare its profile."
+            )
+            .expect("writing a String cannot fail");
+        }
+        if profile
+            .slow_steps
+            .iter()
+            .any(|step| step.key.category == TacticCategory::Smart && step.failed)
+            || (profile.timed_out
+                && profile
+                    .active
+                    .iter()
+                    .any(|key| key.category == TacticCategory::Smart))
+        {
+            findings += 1;
+            writeln!(
+                output,
+                "    SMART SEARCH FAILURE — unsuccessful or interrupted smart search crossed its bound; reduce Click because no certificate exists to expand."
+            )
+            .expect("writing a String cannot fail");
+        }
+        if profile
+            .slow_steps
+            .iter()
+            .any(|step| step.key.category == TacticCategory::Control)
+        {
+            findings += 1;
+            writeln!(
+                output,
+                "    CONTROL BOTTLENECK — inspect its exclusive bookkeeping and nested tactic findings."
+            )
+            .expect("writing a String cannot fail");
+        }
+        let certification_per_claim =
+            average_time(profile.accounting.certification, profile.work.claims);
+        let certification_per_path = average_time(
+            profile.accounting.certification,
+            profile.work.certification_paths,
+        );
+        if (profile.work.claims > 0
+            && certification_per_claim > CERTIFICATION_PER_CLAIM_LIMIT)
+            || (profile.work.certification_paths > 0
+                && certification_per_path > CERTIFICATION_PER_PATH_LIMIT)
+        {
+            findings += 1;
+            writeln!(
+                output,
+                "    CERTIFICATION BOTTLENECK — kernel certification is expensive for its measured claims or paths."
+            )
+            .expect("writing a String cannot fail");
+        }
+        let frontend_per_file =
+            average_time(profile.accounting.frontend, profile.work.source_files);
+        let environment_per_file =
+            average_time(profile.accounting.environment, profile.work.source_files);
+        if profile.work.source_files > 0
+            && (frontend_per_file > SETUP_PER_FILE_LIMIT
+                || environment_per_file > SETUP_PER_FILE_LIMIT)
+        {
+            findings += 1;
+            writeln!(
+                output,
+                "    SETUP BOTTLENECK — frontend or environment construction is expensive for its file count."
+            )
+            .expect("writing a String cannot fail");
+        }
+        if profile.accounting.materially_unattributed() || !profile.unknown_timing.is_empty() {
+            findings += 1;
+            writeln!(
+                output,
+                "    UNEXPLAINED — a material residual or unknown timing event prevents a complete diagnosis."
+            )
+            .expect("writing a String cannot fail");
+        }
+        if profile.verification_failure.is_some() {
+            findings += 1;
+            writeln!(
+                output,
+                "    INCOMPLETE — verification failed, so counts and rates describe only the completed frontier."
+            )
+            .expect("writing a String cannot fail");
+        }
+        if findings == 0 {
+            if profile.accounting.denominator() >= VOLUME_REPORT_THRESHOLD {
+                writeln!(
+                    output,
+                    "    HEALTHY VOLUME — no measured operation or normalized rate crossed a bound; total cost comes from work volume at the current baselines."
+                )
+                .expect("writing a String cannot fail");
+            } else {
+                writeln!(
+                    output,
+                    "    WITHIN BASELINE — the measured run is small and no bound was crossed."
+                )
+                .expect("writing a String cannot fail");
+            }
+        }
+    }
+}
+
 fn render_category(
     output: &mut String,
     slow_steps: &[&SlowStep],
     category: TacticCategory,
     title: &str,
     advice: &str,
+    thresholds: Thresholds,
+    time_limit: Duration,
 ) {
     writeln!(output, "\n{title}").expect("writing a String cannot fail");
     writeln!(output, "  {advice}").expect("writing a String cannot fail");
@@ -1044,16 +1569,23 @@ fn render_category(
     for step in matching {
         writeln!(
             output,
-            "  {:>10}  {}  {}  {}  statement {}",
+            "  {:>10}  {}  {}  {}  statement {}{}",
             format_fractional_duration(step.elapsed),
             step_location(&step.key),
             step.key.claim,
             step.key.tactic_name,
             step.key.statement_index,
+            if step.failed {
+                "  FAILED — no certificate to expand"
+            } else {
+                ""
+            },
         )
         .expect("writing a String cannot fail");
-        if let (TacticCategory::Smart, Some(position)) = (category, step.key.position) {
-            render_expansion_command(output, &step.key, position);
+        if !step.failed
+            && let (TacticCategory::Smart, Some(position)) = (category, step.key.position)
+        {
+            render_expansion_command(output, &step.key, position, thresholds, time_limit);
         }
     }
 }
@@ -1072,16 +1604,54 @@ fn step_location(key: &StepKey) -> String {
     }
 }
 
-fn render_expansion_command(output: &mut String, key: &StepKey, position: SourcePosition) {
+fn render_expansion_command(
+    output: &mut String,
+    key: &StepKey,
+    position: SourcePosition,
+    thresholds: Thresholds,
+    time_limit: Duration,
+) {
+    let artifact = expanded_artifact_path(&key.source_path);
     writeln!(
         output,
-        "              expand: cargo run --quiet --bin click-expand -- --time-limit {} {}:{}:{}",
+        "              expand: cargo run --quiet --bin click-expand -- --time-limit {} {}:{}:{} > {}",
         format_duration(EXPANSION_TIME_LIMIT),
         key.source_path.display(),
         position.line,
         position.column,
+        artifact.display(),
     )
     .expect("writing a String cannot fail");
+    if !looks_like_mdtest(&artifact) {
+        writeln!(
+            output,
+            "              verify: cargo run --quiet --bin click-verify -- {}",
+            artifact.display(),
+        )
+        .expect("writing a String cannot fail");
+    }
+    writeln!(
+        output,
+        "           reprofile: cargo run --quiet --bin click-profile -- --smart-threshold {} --simple-threshold {} --control-threshold {} --time-limit {} {}",
+        format_duration(thresholds.smart),
+        format_duration(thresholds.simple),
+        format_duration(thresholds.control),
+        format_duration(time_limit),
+        artifact.display(),
+    )
+    .expect("writing a String cannot fail");
+}
+
+fn expanded_artifact_path(source: &Path) -> PathBuf {
+    let extension = source
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .unwrap_or("click");
+    let stem = source
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or("expanded");
+    source.with_file_name(format!("{stem}.expanded.{extension}"))
 }
 
 /// Verifies one markdown test in the child process, from the same embedded
@@ -1126,8 +1696,19 @@ fn verify_mdtest(path: &Path) -> Result<(), String> {
 }
 
 fn verify_project(project: &Path) -> Result<(), String> {
-    let mut c_paths = files_with_extension(project, "c")?;
-    let mut click_paths = files_with_extension(project, "click")?;
+    let (root, mut click_paths) = if project.is_file()
+        && project
+            .extension()
+            .is_some_and(|extension| extension == "click")
+    {
+        (
+            project.parent().unwrap_or_else(|| Path::new(".")),
+            vec![project.to_path_buf()],
+        )
+    } else {
+        (project, files_with_extension(project, "click")?)
+    };
+    let mut c_paths = files_with_extension(root, "c")?;
     c_paths.sort();
     click_paths.sort();
     if click_paths.is_empty() {
@@ -1217,6 +1798,10 @@ click timing: tactic example.contract 0 execute_step class smart statement 1 sou
 
         assert_eq!(profile.slow_steps.len(), 1);
         assert_eq!(profile.slow_steps[0].key.tactic_name, "execute_step");
+        assert_eq!(profile.work.source_files, 1);
+        assert_eq!(profile.work.functions, 1);
+        assert_eq!(profile.work.claims, 1);
+        assert_eq!(profile.work.certification_paths, 12);
         assert!(
             profile.unknown_timing.is_empty(),
             "certification kinds must be recognized, not counted as drift: {:?}",
@@ -1254,6 +1839,19 @@ click timing: function example_function 12.000s
         assert_eq!(profile.accounting.certification, Duration::from_millis(1_500));
         assert_eq!(profile.accounting.unattributed(), Duration::from_millis(2_500));
         assert!(profile.active.is_empty());
+        assert_eq!(profile.slow_steps.len(), 2);
+        assert!(profile.slow_steps.iter().any(|step| {
+            step.key.category == TacticCategory::Smart
+                && step.elapsed == Duration::from_secs(3)
+        }));
+        assert!(profile.slow_steps.iter().any(|step| {
+            step.key.category == TacticCategory::Simple
+                && step.elapsed == Duration::from_secs(4)
+        }));
+        assert!(profile
+            .slow_steps
+            .iter()
+            .all(|step| step.key.category != TacticCategory::Control));
 
         let report = render_profiles(&[profile], Thresholds::default(), DEFAULT_TIME_LIMIT);
         assert!(report.contains("TIME ACCOUNTING"), "{report}");
@@ -1281,7 +1879,7 @@ click timing: function example_function 20.000s
 
         let report = render_profiles(&[profile], Thresholds::default(), DEFAULT_TIME_LIMIT);
 
-        assert!(report.contains("more time went unattributed"), "{report}");
+        assert!(report.contains("UNEXPLAINED"), "{report}");
         assert!(!report.contains(
             "NEXT: no completed smart expansion candidates or simple engine bottlenecks"
         ));
@@ -1314,6 +1912,57 @@ click timing: tactic example.contract 1 fold class simple statement 1 source 1 2
         assert!(report.contains("SIMPLE      2.000s   25.0%"), "{report}");
     }
 
+    #[test]
+    fn whole_run_accounting_includes_setup_phases_and_wall_residual() {
+        let output = r#"
+click timing: source examples/sample.click
+click timing: phase frontend 0.500000s
+click timing: phase environment 1.000000s
+click timing: tactic example.contract 0 step class simple statement 1 source 0 0.200000s
+click timing: contract execution example_function 1.000000s
+click timing: contract claims example_function 1.000000s
+click timing: function example_function 2.200s
+"#;
+        let mut profile = parse_profile("sample", output, Thresholds::default(), false)
+            .expect("the current timing format should parse");
+        profile.accounting.wall_total = Duration::from_secs(4);
+
+        assert_eq!(profile.accounting.frontend, Duration::from_millis(500));
+        assert_eq!(profile.accounting.environment, Duration::from_secs(1));
+        assert_eq!(profile.accounting.simple, Duration::from_millis(200));
+        assert_eq!(profile.accounting.certification, Duration::from_secs(2));
+        assert_eq!(profile.accounting.unattributed(), Duration::from_millis(300));
+        assert_eq!(profile.work.source_files, 1);
+        assert_eq!(profile.work.functions, 1);
+        assert_eq!(profile.work.c_transitions.count, 1);
+        assert_eq!(profile.work.c_transitions.total, Duration::from_millis(200));
+
+        let report = render_profiles(&[profile], Thresholds::default(), DEFAULT_TIME_LIMIT);
+        assert!(report.contains("4.000s total"), "{report}");
+        assert!(report.contains("FRONTEND"), "{report}");
+        assert!(report.contains("ENVIRONMENT"), "{report}");
+        assert!(report.contains("UNATTRIBUTED"), "{report}");
+        assert!(report.contains("WORK AND THROUGHPUT"), "{report}");
+        assert!(report.contains("C TRANSITIONS"), "{report}");
+        assert!(report.contains("SIMPLE BY KIND"), "{report}");
+        assert!(report.contains("UNEXPLAINED"), "{report}");
+    }
+
+    #[test]
+    fn fractional_unattributed_time_is_material_below_the_absolute_limit() {
+        let output = r#"
+click timing: source examples/sample.click
+click timing: phase frontend 0.080000s
+click timing: function example_function 0.080s
+"#;
+        let mut profile = parse_profile("sample", output, Thresholds::default(), false)
+            .expect("the current timing format should parse");
+        profile.accounting.wall_total = Duration::from_millis(100);
+
+        assert_eq!(profile.accounting.unattributed(), Duration::from_millis(20));
+        assert!(profile.accounting.materially_unattributed());
+    }
+
     /// The kinds the accounting consumes are load-bearing now, so a drifted
     /// one is a loud error rather than a silently missing bucket.
     #[test]
@@ -1322,6 +1971,7 @@ click timing: tactic example.contract 1 fold class simple statement 1 source 1 2
             "click timing: function example_function twelve",
             "click timing: contract execution example_function 1.0",
             "click timing: contract claims example_function",
+            "click timing: phase frontend eventually",
         ] {
             let output = format!("click timing: source examples/sample.click\n{drifted}\n");
             let message = parse_profile("sample", &output, Thresholds::default(), false)
@@ -1449,6 +2099,13 @@ click timing: widget 0.5s
             .expect("a directory of markdown tests profiles all of them");
         assert!(mdtests.len() > 1);
         assert!(mdtests.iter().all(|path| looks_like_mdtest(path)), "{mdtests:?}");
+
+        let sidecar = manifest.join("examples/input-cursor/input_cursor.click");
+        assert_eq!(
+            profile_targets(&sidecar),
+            Ok(vec![sidecar.clone()]),
+            "a direct sidecar target is needed to profile an expanded artifact"
+        );
     }
 
     /// Quarantine is a property of the gate, not of the file, so the profiler
@@ -1533,11 +2190,87 @@ click timing: tactic example.contract 2 have class control statement 3 source 30
 
         assert!(report.contains("SIMPLE — FIX THE ENGINE; DO NOT EXPAND"));
         assert!(report.contains("WARNING: expanding an enclosing smart tactic is not a fix"));
-        assert!(report.contains("SMART — EXPAND TO TRADE PROOF SIZE FOR SPEED"));
+        assert!(report.contains("SMART — EXPAND SUCCESSES; REDUCE FAILURES"));
         assert!(report.contains("CONTROL — INSPECT NESTED STEPS"));
         assert!(report.contains("NEXT: fix or reduce the SIMPLE bottleneck first"));
         assert_eq!(report.matches("expand: cargo run").count(), 1);
         assert!(report.contains("--time-limit 1m"));
+        assert!(report.contains("sample.expanded.click"), "{report}");
+        assert!(report.contains("verify: cargo run --quiet --bin click-verify"), "{report}");
+        assert!(report.contains("reprofile: cargo run --quiet --bin click-profile"), "{report}");
+        assert!(report.contains("--smart-threshold 2s"), "{report}");
+    }
+
+    #[test]
+    fn diagnoses_mixed_engine_search_certification_setup_and_residual_findings() {
+        let output = r#"
+click timing: source examples/sample.click
+click timing: phase frontend 0.300000s
+click timing: phase environment 0.010000s
+click timing: tactic example.contract 0 step class simple statement 1 source 0 0.100000s
+click timing: tactic example.contract 1 fold class simple statement 1 source 1 0.100000s
+click timing: tactic example.contract 2 unfold class simple statement 1 source 2 0.100000s
+click timing: tactic example.contract 3 simp class smart statement 1 source 3 3.000000s
+click timing: contract execution example_function 1.000000s
+click timing: contract claims example_function 1.000000s
+click timing: claim paths example_function prepared 1 in 0.100000s
+click timing: claim example_function Ensure(0) 0.100000s
+click timing: function example_function 5.300s
+"#;
+        let mut profile = parse_profile("sample", output, Thresholds::default(), false)
+            .expect("the current timing format should parse");
+        profile.accounting.wall_total = Duration::from_secs(6);
+
+        let report = render_profiles(&[profile], Thresholds::default(), DEFAULT_TIME_LIMIT);
+        for diagnosis in [
+            "SIMPLE ENGINE BUG",
+            "SMART HOTSPOT",
+            "CERTIFICATION BOTTLENECK",
+            "SETUP BOTTLENECK",
+            "UNEXPLAINED",
+        ] {
+            assert!(report.contains(diagnosis), "missing {diagnosis}:\n{report}");
+        }
+    }
+
+    #[test]
+    fn diagnoses_large_healthy_aggregate_as_volume() {
+        let output = r#"
+click timing: source examples/sample.click
+click timing: tactic example.contract 0 simp class smart statement 1 source 0 0.400000s
+click timing: tactic example.contract 1 simp class smart statement 1 source 1 0.400000s
+click timing: tactic example.contract 2 simp class smart statement 1 source 2 0.400000s
+click timing: function example_function 1.200s
+"#;
+        let profile = parse_profile("sample", output, Thresholds::default(), false)
+            .expect("the current timing format should parse");
+
+        let report = render_profiles(&[profile], Thresholds::default(), DEFAULT_TIME_LIMIT);
+        assert!(report.contains("HEALTHY VOLUME"), "{report}");
+        assert!(report.contains("NEXT: measured cost is HEALTHY VOLUME"), "{report}");
+    }
+
+    #[test]
+    fn slow_failed_smart_search_is_not_an_expansion_candidate() {
+        let output = r#"
+click timing: source examples/sample.click
+click timing: started tactic example.contract 0 simp class smart statement 1 source 0
+click timing: tactic example.contract 0 simp class smart statement 1 source 0 3.000000s
+click timing: failed tactic example.contract 0 simp class smart statement 1 source 0
+"#;
+        let mut profile = parse_profile("sample", output, Thresholds::default(), false)
+            .expect("a failed tactic outcome should parse");
+        profile.slow_steps[0].key.position = Some(SourcePosition {
+            line: 10,
+            column: 5,
+        });
+
+        let report = render_profiles(&[profile], Thresholds::default(), DEFAULT_TIME_LIMIT);
+        assert!(report.contains("SMART SEARCH FAILURE"), "{report}");
+        assert!(report.contains("FAILED — no certificate to expand"), "{report}");
+        assert!(report.contains("0 succeeded,      1 failed"), "{report}");
+        assert!(!report.contains("expand: cargo run"), "{report}");
+        assert!(report.contains("click-expand is not available"), "{report}");
     }
 
     #[test]

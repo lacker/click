@@ -77,6 +77,37 @@ const MAX_CONCRETE_RANGE_FOLD_STEPS: i64 = 1024;
 
 const CLICK_STANDARD_LIBRARY: &str = include_str!("../../stdlib/prelude.click");
 
+/// Emits one non-overlapping verifier phase on every exit path, including an
+/// early `?`. Profiling enables this with `CLICK_TIMINGS`; ordinary
+/// verification pays only one environment lookup and an `Instant` read.
+struct VerificationTimingPhase {
+    name: &'static str,
+    started: std::time::Instant,
+    enabled: bool,
+}
+
+impl VerificationTimingPhase {
+    fn new(name: &'static str) -> Self {
+        Self {
+            name,
+            started: std::time::Instant::now(),
+            enabled: std::env::var_os("CLICK_TIMINGS").is_some(),
+        }
+    }
+}
+
+impl Drop for VerificationTimingPhase {
+    fn drop(&mut self) {
+        if self.enabled {
+            eprintln!(
+                "click timing: phase {} {:.6}s",
+                self.name,
+                self.started.elapsed().as_secs_f64(),
+            );
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ClickFile {
     verifying_sources: Vec<String>,
@@ -1442,12 +1473,44 @@ pub struct ClickError {
     /// carrying this flag instead of a real failure. Control flow must test
     /// this flag, never the message text.
     expansion_complete: bool,
+    timing_tactic: Option<TimingTacticContext>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct TimingTacticContext {
+    claim_label: String,
+    tactic_index: usize,
+    tactic_name: String,
+    tactic_class: String,
+    statement_index: usize,
+    source_index: usize,
+}
+
+thread_local! {
+    static ACTIVE_TIMING_TACTICS: std::cell::RefCell<Vec<TimingTacticContext>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+fn push_timing_tactic(context: TimingTacticContext) {
+    ACTIVE_TIMING_TACTICS.with(|active| active.borrow_mut().push(context));
+}
+
+fn pop_timing_tactic(context: &TimingTacticContext) {
+    ACTIVE_TIMING_TACTICS.with(|active| {
+        let mut active = active.borrow_mut();
+        if let Some(index) = active.iter().rposition(|candidate| candidate == context) {
+            active.remove(index);
+        }
+    });
+}
+
+fn current_timing_tactic() -> Option<TimingTacticContext> {
+    ACTIVE_TIMING_TACTICS.with(|active| active.borrow().last().cloned())
 }
 
 #[derive(Clone)]
 pub struct C0VerificationSession {
     c_sources: Vec<(String, String)>,
-    baseline_click_source: String,
     baseline_file: ClickFile,
     verified_function_environment: CExecutionEnvironment,
 }
@@ -1856,6 +1919,7 @@ impl ClickError {
         Self {
             message: message.into(),
             expansion_complete: false,
+            timing_tactic: current_timing_tactic(),
         }
     }
 
@@ -1865,6 +1929,7 @@ impl ClickError {
         Self {
             message: "internal: selected tactic expansion complete".into(),
             expansion_complete: true,
+            timing_tactic: None,
         }
     }
 
@@ -1874,6 +1939,23 @@ impl ClickError {
 
     pub fn message(&self) -> &str {
         &self.message
+    }
+
+    fn emit_timing_failure(&self) {
+        if std::env::var_os("CLICK_TIMINGS").is_none() || self.expansion_complete {
+            return;
+        }
+        if let Some(tactic) = &self.timing_tactic {
+            eprintln!(
+                "click timing: failed tactic {} {} {} class {} statement {} source {}",
+                tactic.claim_label,
+                tactic.tactic_index,
+                tactic.tactic_name,
+                tactic.tactic_class,
+                tactic.statement_index,
+                tactic.source_index,
+            );
+        }
     }
 }
 
@@ -1950,12 +2032,12 @@ fn proof_unit_erased_click_file(mut file: ClickFile, target: &VerificationTarget
             effect.proof = Proof::Default;
         }
         for clause in &mut function.structural_clauses {
-            if clause.initialize_proof.is_some() {
-                clause.initialize_proof = Some(Proof::Default);
-            }
-            if clause.preserve_proof.is_some() {
-                clause.preserve_proof = Some(Proof::Default);
-            }
+            // Omitted loop-phase proofs and explicit default/expanded proofs
+            // are all syntax for the selected function's proof unit.  Erase
+            // presence as well as contents so inserting an expansion for an
+            // omitted phase does not look like an interface change.
+            clause.initialize_proof = None;
+            clause.preserve_proof = None;
             for item in &mut clause.items {
                 item.proof = Proof::Default;
             }
@@ -1968,7 +2050,11 @@ pub fn verify_c0_sources(
     click_source: &str,
     c_sources: &[(&str, &str)],
 ) -> Result<Vec<VerifiedCTheorem>, ClickError> {
-    verify_c0_sources_targeted(click_source, c_sources, None)
+    let result = verify_c0_sources_targeted(click_source, c_sources, None);
+    if let Err(error) = &result {
+        error.emit_timing_failure();
+    }
+    result
 }
 
 impl C0VerificationSession {
@@ -1985,7 +2071,6 @@ impl C0VerificationSession {
                     .iter()
                     .map(|(name, source)| ((*name).to_string(), (*source).to_string()))
                     .collect(),
-                baseline_click_source: click_source.to_string(),
                 baseline_file,
                 verified_function_environment,
             },
@@ -2005,11 +2090,21 @@ impl C0VerificationSession {
             .map(|(name, source)| (name.as_str(), source.as_str()))
             .collect::<Vec<_>>();
         let target = verification_target_at(click_source, &c_sources, line, column)?;
-        let baseline_target =
-            verification_target_at(&self.baseline_click_source, &c_sources, line, column)?;
-        if target != baseline_target {
+        let target_exists_in_baseline = match &target {
+            VerificationTarget::Function(name) => self
+                .baseline_file
+                .function_blocks()
+                .iter()
+                .any(|function| function.signature().name() == name),
+            VerificationTarget::Theorem(name) => self
+                .baseline_file
+                .theorem_definitions()
+                .iter()
+                .any(|theorem| theorem.name() == name),
+        };
+        if !target_exists_in_baseline {
             return Err(ClickError::new(
-                "rewritten source location resolves to a different proof unit",
+                "rewritten source location resolves to a proof unit absent from the baseline",
             ));
         }
         let rewritten_file = parse_c0_click_file(click_source, &c_sources)?;
@@ -2065,87 +2160,109 @@ fn verify_c0_sources_with_environment(
     verification_target: Option<VerificationTarget>,
     initial_function_environment: Option<CExecutionEnvironment>,
 ) -> Result<(Vec<VerifiedCTheorem>, CExecutionEnvironment), ClickError> {
-    let c_sources: BTreeMap<&str, &str> = c_sources.iter().copied().collect();
-    let struct_layouts = parse_c_struct_layouts(&c_sources)?;
-    let file = parser::parse_with_struct_layouts(click_source, struct_layouts)?;
-    let parsed_sources = parse_verified_sources(&file, &c_sources)?;
-    let expansion_functions = proof::active_c0_tactic_expansion_request()
-        .map(|request| tactic_expansion_required_functions(&file, &parsed_sources, request))
-        .transpose()?;
-    let selected_functions = if expansion_functions.is_some() {
-        expansion_functions
-    } else {
-        match verification_target.as_ref() {
-            Some(VerificationTarget::Function(function_name)) => {
-                if initial_function_environment.is_some() {
-                    Some(BTreeSet::from([function_name.clone()]))
-                } else {
-                    Some(verification_required_functions(
-                        &file,
-                        &parsed_sources,
-                        function_name,
-                    )?)
+    let (file, parsed_sources, selected_functions) = {
+        let _timing = VerificationTimingPhase::new("frontend");
+        let c_sources: BTreeMap<&str, &str> = c_sources.iter().copied().collect();
+        let struct_layouts = parse_c_struct_layouts(&c_sources)?;
+        let file = parser::parse_with_struct_layouts(click_source, struct_layouts)?;
+        let parsed_sources = parse_verified_sources(&file, &c_sources)?;
+        let expansion_functions = proof::active_c0_tactic_expansion_request()
+            .map(|request| tactic_expansion_required_functions(&file, &parsed_sources, request))
+            .transpose()?;
+        let selected_functions = if expansion_functions.is_some() {
+            expansion_functions
+        } else {
+            match verification_target.as_ref() {
+                Some(VerificationTarget::Function(function_name)) => {
+                    if initial_function_environment.is_some() {
+                        Some(BTreeSet::from([function_name.clone()]))
+                    } else {
+                        Some(verification_required_functions(
+                            &file,
+                            &parsed_sources,
+                            function_name,
+                        )?)
+                    }
                 }
+                Some(VerificationTarget::Theorem(_)) => Some(BTreeSet::new()),
+                None => None,
             }
-            Some(VerificationTarget::Theorem(_)) => Some(BTreeSet::new()),
-            None => None,
-        }
+        };
+        (file, parsed_sources, selected_functions)
     };
-    let predicate_definitions = combined_predicate_definitions(&file)?;
-    let click_function_definitions = combined_click_function_definitions(&file)?;
-    let resource_definitions = combined_resource_definitions(&file)?;
-    let theorem_definitions = combined_theorem_definitions(&file)?;
-    let predicate_environment = PredicateEnvironment::new(&predicate_definitions);
-    let click_function_environment = ClickFunctionEnvironment::new(&click_function_definitions);
-    let resource_environment = ResourceEnvironment::new(&resource_definitions);
-    let built_function_environment = build_function_environment(
-        &parsed_sources,
-        file.function_blocks(),
-        &predicate_environment,
-        &click_function_environment,
-        &resource_environment,
-    )?;
-    let mut function_environment =
-        initial_function_environment.unwrap_or(built_function_environment);
-    let verified_theorems = verify_theorem_definitions(
-        &theorem_definitions,
-        &predicate_environment,
-        &click_function_environment,
-    )?;
-    // Verified pure theorems over scalar parameters become closed
-    // universally-quantified facts, so kernel contract certification can
-    // discharge obligations the surface proof established by `apply`.
-    let theorem_certification_facts = verified_theorems
-        .iter()
-        .filter(|theorem| {
-            theorem
-                .theorem_definition
-                .parameters()
-                .iter()
-                .all(|parameter| matches!(parameter.c_type(), C0Type::Int32))
-        })
-        .map(|theorem| {
-            let implication = theorem
-                .requires
-                .iter()
-                .rev()
-                .fold(theorem.conclusion.clone(), |body, requirement| {
-                    Proposition::Implies(Box::new(requirement.clone()), Box::new(body))
-                });
-            theorem
-                .theorem_definition
-                .parameters()
-                .iter()
-                .enumerate()
-                .rev()
-                .fold(implication, |body, (index, _)| Proposition::ForAll {
-                    var: crate::kernel::Variable(index as u64),
-                    sort: crate::kernel::Sort::CInt32,
-                    body: Box::new(body),
-                })
-        })
-        .collect::<Vec<_>>();
-    let theorem_environment = TheoremEnvironment::new(&theorem_definitions);
+    let (
+        predicate_environment,
+        click_function_environment,
+        resource_environment,
+        mut function_environment,
+        theorem_certification_facts,
+        theorem_environment,
+    ) = {
+        let _timing = VerificationTimingPhase::new("environment");
+        let predicate_definitions = combined_predicate_definitions(&file)?;
+        let click_function_definitions = combined_click_function_definitions(&file)?;
+        let resource_definitions = combined_resource_definitions(&file)?;
+        let theorem_definitions = combined_theorem_definitions(&file)?;
+        let predicate_environment = PredicateEnvironment::new(&predicate_definitions);
+        let click_function_environment =
+            ClickFunctionEnvironment::new(&click_function_definitions);
+        let resource_environment = ResourceEnvironment::new(&resource_definitions);
+        let built_function_environment = build_function_environment(
+            &parsed_sources,
+            file.function_blocks(),
+            &predicate_environment,
+            &click_function_environment,
+            &resource_environment,
+        )?;
+        let function_environment =
+            initial_function_environment.unwrap_or(built_function_environment);
+        let verified_theorems = verify_theorem_definitions(
+            &theorem_definitions,
+            &predicate_environment,
+            &click_function_environment,
+        )?;
+        // Verified pure theorems over scalar parameters become closed
+        // universally-quantified facts, so kernel contract certification can
+        // discharge obligations the surface proof established by `apply`.
+        let theorem_certification_facts = verified_theorems
+            .iter()
+            .filter(|theorem| {
+                theorem
+                    .theorem_definition
+                    .parameters()
+                    .iter()
+                    .all(|parameter| matches!(parameter.c_type(), C0Type::Int32))
+            })
+            .map(|theorem| {
+                let implication = theorem.requires.iter().rev().fold(
+                    theorem.conclusion.clone(),
+                    |body, requirement| {
+                        Proposition::Implies(Box::new(requirement.clone()), Box::new(body))
+                    },
+                );
+                theorem
+                    .theorem_definition
+                    .parameters()
+                    .iter()
+                    .enumerate()
+                    .rev()
+                    .fold(implication, |body, (index, _)| Proposition::ForAll {
+                        var: crate::kernel::Variable(index as u64),
+                        sort: crate::kernel::Sort::CInt32,
+                        body: Box::new(body),
+                    })
+            })
+            .collect::<Vec<_>>();
+        let theorem_environment = TheoremEnvironment::new(&theorem_definitions);
+        (
+            predicate_environment,
+            click_function_environment,
+            resource_environment,
+            function_environment,
+            theorem_certification_facts,
+            theorem_environment,
+        )
+    };
     let mut verified = Vec::new();
 
     for function_block in file.function_blocks {
@@ -2528,8 +2645,18 @@ fn tactic_expansion_required_functions(
         .ok_or_else(|| ClickError::new(format!("no C source defines `{function_name}`")))?
         .1;
     let statement_calls = c0_statement_calls(parsed_function.body());
-    let touched_end = proof_statement_prefix_end(tactics, tactic_index, statement_calls.len());
     let mut required = BTreeSet::from([function_name]);
+    // Capturing a tactic in one claim still verifies every earlier claim of
+    // the same function first. Those proofs may execute farther through the
+    // body than the selected claim has reached. When there is no earlier
+    // claim, keep the narrower prefix selection: expansion must still be able
+    // to emit before an unrelated invalid suffix or untouched callee is
+    // checked by the ordinary whole-file verifier.
+    let has_earlier_claim = match claim {
+        CProofClaim::Grouped => false,
+        CProofClaim::Effect(index) => index > 0,
+        CProofClaim::Ensure(index) => !function_block.effects().is_empty() || index > 0,
+    };
     let structural_traversal = function_block.structural_clauses().iter().any(|clause| {
         matches!(clause.region(), CodeRegion::Loop(_))
             || clause
@@ -2537,13 +2664,14 @@ fn tactic_expansion_required_functions(
                 .iter()
                 .any(|item| item.kind() == StructuralItemKind::Assert)
     });
+    let touched_end = if has_earlier_claim || structural_traversal {
+        statement_calls.len()
+    } else {
+        proof_statement_prefix_end(tactics, tactic_index, statement_calls.len())
+    };
     let mut pending = statement_calls
         .iter()
-        .take(if structural_traversal {
-            statement_calls.len()
-        } else {
-            touched_end
-        })
+        .take(touched_end)
         .flatten()
         .cloned()
         .collect::<Vec<_>>();
@@ -2556,6 +2684,36 @@ fn tactic_expansion_required_functions(
         }
     }
     Ok(required)
+}
+
+fn proof_statement_prefix_end(
+    tactics: &[ProofTactic],
+    selected_tactic: usize,
+    statement_count: usize,
+) -> usize {
+    let mut cursor = 0_usize;
+    let Some(prefix) = tactics.get(..=selected_tactic) else {
+        return statement_count;
+    };
+    for tactic in prefix {
+        match tactic {
+            ProofTactic::Step | ProofTactic::StepUsing(_) | ProofTactic::ExecuteStep => {
+                cursor = cursor.saturating_add(1)
+            }
+            ProofTactic::ExecuteUntil(CodeRegionRef::Statement(target)) => {
+                cursor = target.saturating_add(1)
+            }
+            ProofTactic::ExecuteRest | ProofTactic::BoundedExecute => cursor = statement_count,
+            ProofTactic::ExecuteThenStep
+            | ProofTactic::ExecuteElseStep
+            | ProofTactic::If(_)
+            | ProofTactic::Advance(_)
+            | ProofTactic::ExecuteUntil(CodeRegionRef::Function | CodeRegionRef::Loop(_))
+            | ProofTactic::ExecuteUntil(CodeRegionRef::Label(_)) => return statement_count,
+            _ => {}
+        }
+    }
+    cursor.min(statement_count)
 }
 
 fn verification_required_functions(
@@ -2585,38 +2743,6 @@ fn verification_required_functions(
         pending.extend(c0_statement_calls(parsed.body()).into_iter().flatten());
     }
     Ok(required)
-}
-
-fn proof_statement_prefix_end(
-    tactics: &[ProofTactic],
-    selected_tactic: usize,
-    statement_count: usize,
-) -> usize {
-    let mut cursor = 0_usize;
-    let Some(prefix) = tactics.get(..=selected_tactic) else {
-        return statement_count;
-    };
-    for tactic in prefix {
-        match tactic {
-            ProofTactic::Step | ProofTactic::StepUsing(_) | ProofTactic::ExecuteStep => {
-                cursor = cursor.saturating_add(1)
-            }
-            ProofTactic::ExecuteUntil(CodeRegionRef::Statement(target)) => {
-                cursor = target.saturating_add(1)
-            }
-            ProofTactic::ExecuteRest | ProofTactic::BoundedExecute => cursor = statement_count,
-            ProofTactic::ExecuteThenStep
-            | ProofTactic::ExecuteElseStep
-            | ProofTactic::If(_)
-            | ProofTactic::Advance(_)
-            | ProofTactic::ExecuteUntil(CodeRegionRef::Function | CodeRegionRef::Loop(_)) => {
-                return statement_count;
-            }
-            ProofTactic::ExecuteUntil(CodeRegionRef::Label(_)) => return statement_count,
-            _ => {}
-        }
-    }
-    cursor.min(statement_count)
 }
 
 fn c0_statement_calls(statement: &syntax::C0Statement) -> Vec<BTreeSet<String>> {
@@ -3163,6 +3289,7 @@ fn validate_loop_initialization_tactics(tactics: &[ProofTactic]) -> Result<(), C
         match tactic {
             ProofTactic::UnfoldPredicate(_)
             | ProofTactic::ApplyTheorem(_)
+            | ProofTactic::ApplyTheoremUsing { .. }
             | ProofTactic::Have(_)
             | ProofTactic::Assumption
             | ProofTactic::Normalize

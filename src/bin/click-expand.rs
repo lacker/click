@@ -11,8 +11,10 @@ use click::cli::{
 };
 use click::lang::click::expand_c0_tactic_source_at;
 
+const DEFAULT_TIME_LIMIT: Duration = Duration::from_secs(60);
+
 const USAGE: &str =
-    "usage: click-expand [--time-limit <DURATION>] <sidecar.click|mdtest.md>:<line>:<column>";
+    "usage: click-expand [--time-limit <DURATION>] <sidecar.click|mdtest.md>:<line>:<column>\n\nThe expansion is bounded to 60s by default; --time-limit overrides it.";
 
 fn main() {
     if let Err(message) = entry() {
@@ -26,7 +28,8 @@ struct Arguments {
     click_path: PathBuf,
     line: usize,
     column: usize,
-    time_limit: Option<Duration>,
+    time_limit: Duration,
+    child: bool,
 }
 
 fn entry() -> Result<(), String> {
@@ -36,19 +39,22 @@ fn entry() -> Result<(), String> {
         return Ok(());
     }
     let arguments = parse_arguments(raw)?;
-    if let Some(time_limit) = arguments.time_limit {
-        run_with_time_limit(&arguments, time_limit)
-    } else {
+    if arguments.child {
         run(&arguments)
+    } else {
+        run_with_time_limit(&arguments, arguments.time_limit)
     }
 }
 
 fn parse_arguments(arguments: impl IntoIterator<Item = String>) -> Result<Arguments, String> {
     let mut positional = Vec::new();
     let mut time_limit = None;
+    let mut child = false;
     let mut arguments = arguments.into_iter();
     while let Some(argument) = arguments.next() {
-        if argument == "--time-limit" {
+        if argument == "--child" {
+            child = true;
+        } else if argument == "--time-limit" {
             if time_limit.is_some() {
                 return Err("`--time-limit` may only be supplied once".to_string());
             }
@@ -70,7 +76,8 @@ fn parse_arguments(arguments: impl IntoIterator<Item = String>) -> Result<Argume
         click_path,
         line,
         column,
-        time_limit,
+        time_limit: time_limit.unwrap_or(DEFAULT_TIME_LIMIT),
+        child,
     })
 }
 
@@ -78,7 +85,7 @@ fn run_with_time_limit(arguments: &Arguments, time_limit: Duration) -> Result<()
     let executable = env::current_exe()
         .map_err(|error| format!("failed to locate click-expand executable: {error}"))?;
     let mut command = Command::new(executable);
-    command.arg(format!(
+    command.arg("--child").arg(format!(
         "{}:{}:{}",
         arguments.click_path.display(),
         arguments.line,
@@ -213,7 +220,11 @@ mod tests {
                 .expect("trailing time limit should parse");
 
         assert_eq!(before, after);
-        assert_eq!(before.time_limit, Some(Duration::from_secs(30)));
+        assert_eq!(before.time_limit, Duration::from_secs(30));
+        assert!(!before.child);
+        let default = parse_arguments(["example.click:12:5".to_string()])
+            .expect("the default expansion should be bounded");
+        assert_eq!(default.time_limit, DEFAULT_TIME_LIMIT);
     }
 
     #[test]
@@ -256,6 +267,6 @@ mod tests {
         );
         assert_eq!(arguments.line, 12);
         assert_eq!(arguments.column, 7);
-        assert_eq!(arguments.time_limit, Some(Duration::from_secs(30)));
+        assert_eq!(arguments.time_limit, Duration::from_secs(30));
     }
 }

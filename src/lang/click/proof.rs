@@ -3196,6 +3196,14 @@ pub(super) fn capture_c0_proof_site_expansion(
         Err(_) => Err(ClickError::new(
             "selected proof completed without recording an expansion",
         )),
+        Ok(_) if matches!(site, ProofSite::LoopPhase { .. }) => {
+            // A loop phase nested under an unreachable C path can have no
+            // initialization/preservation obligations at all.  There is no
+            // path certificate to retain in that case; emit a canonical
+            // simple proof.  Reverification remains the authority and will
+            // reject `assumption` if the phase was actually reachable.
+            Ok(vec![ProofTactic::Assumption])
+        }
         Ok(_) => Err(ClickError::new(format!(
             "verification did not retain a certificate for {}",
             site.description()
@@ -4282,6 +4290,49 @@ fn exact_fact_contains_conjunct(fact: &Proposition, required: &Proposition) -> b
                 || exact_fact_contains_conjunct(right, required))
 }
 
+fn propositions_are_exact_negations(left: &Proposition, right: &Proposition) -> bool {
+    match (left, right) {
+        (
+            Proposition::ConditionIs(left_condition, left_value),
+            Proposition::ConditionIs(right_condition, right_value),
+        ) => left_condition == right_condition && left_value != right_value,
+        (Proposition::Not(body), proposition) | (proposition, Proposition::Not(body)) => {
+            body.as_ref() == proposition
+                || matches!(
+                    (body.as_ref(), proposition),
+                    (
+                        Proposition::ConditionIs(left_condition, left_value),
+                        Proposition::ConditionIs(right_condition, right_value),
+                    ) if left_condition == right_condition && left_value == right_value
+                )
+        }
+        _ => false,
+    }
+}
+
+fn negate_click_proposition(proposition: &ClickProposition) -> ClickProposition {
+    match proposition {
+        ClickProposition::Comparison {
+            left,
+            operator,
+            right,
+        } => ClickProposition::Comparison {
+            left: left.clone(),
+            operator: match operator {
+                ComparisonOperator::Equal => ComparisonOperator::NotEqual,
+                ComparisonOperator::NotEqual => ComparisonOperator::Equal,
+                ComparisonOperator::LessThan => ComparisonOperator::GreaterEqual,
+                ComparisonOperator::LessEqual => ComparisonOperator::GreaterThan,
+                ComparisonOperator::GreaterThan => ComparisonOperator::LessEqual,
+                ComparisonOperator::GreaterEqual => ComparisonOperator::LessThan,
+            },
+            right: right.clone(),
+        },
+        ClickProposition::Not(body) => body.as_ref().clone(),
+        proposition => ClickProposition::Not(Box::new(proposition.clone())),
+    }
+}
+
 pub(super) fn condition_polarity_equivalent(left: &Proposition, right: &Proposition) -> bool {
     if left == right {
         return true;
@@ -4823,9 +4874,11 @@ fn assumptions_for_direct_fact_transport(propositions: &[Proposition]) -> Assump
 }
 
 fn facts_for_direct_surface_lowering(propositions: &[Proposition]) -> Vec<Proposition> {
-    propositions
-        .iter()
-        .filter(|proposition| {
+    let mut facts = Vec::new();
+    for proposition in propositions {
+        let mut conjuncts = Vec::new();
+        atomic_conjuncts(proposition, &mut conjuncts);
+        facts.extend(conjuncts.into_iter().filter_map(|proposition| {
             matches!(
                 proposition,
                 Proposition::CMemoryLoadable { .. }
@@ -4836,21 +4889,28 @@ fn facts_for_direct_surface_lowering(propositions: &[Proposition]) -> Vec<Propos
                     | Proposition::CMemoryMutatesOnly { .. }
                     | Proposition::CMemoryEffectSummary { .. }
             )
-        })
-        .cloned()
-        .collect()
+            .then(|| proposition.clone())
+        }));
+    }
+    facts.sort();
+    facts.dedup();
+    facts
 }
 
 fn facts_for_direct_derivation_lowering(propositions: &[Proposition]) -> Vec<Proposition> {
     let mut facts = facts_for_direct_surface_lowering(propositions);
     for proposition in propositions {
-        let direct_condition = matches!(
-            proposition,
-            Proposition::ConditionIs(ConditionTerm::PointerOffsetEqual(_, _), _)
-        ) || matches!(proposition, Proposition::ConditionIs(_, _))
-            && !c_condition_fact_has_memory(proposition);
-        if direct_condition && !facts.contains(proposition) {
-            facts.push(proposition.clone());
+        let mut conjuncts = Vec::new();
+        atomic_conjuncts(proposition, &mut conjuncts);
+        for proposition in conjuncts {
+            let direct_condition = matches!(
+                proposition,
+                Proposition::ConditionIs(ConditionTerm::PointerOffsetEqual(_, _), _)
+            ) || matches!(proposition, Proposition::ConditionIs(_, _))
+                && !c_condition_fact_has_memory(proposition);
+            if direct_condition && !facts.contains(proposition) {
+                facts.push(proposition.clone());
+            }
         }
     }
     facts
@@ -4859,23 +4919,27 @@ fn facts_for_direct_derivation_lowering(propositions: &[Proposition]) -> Vec<Pro
 fn facts_for_smart_have_lowering(propositions: &[Proposition]) -> Vec<Proposition> {
     let mut facts = facts_for_direct_derivation_lowering(propositions);
     for proposition in propositions {
-        let Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), true) =
-            proposition
-        else {
-            continue;
-        };
-        let is_atomic_alias = matches!(
-            (left.as_ref(), right.as_ref()),
-            (
-                Bitvector32Term::MemoryLoad(_, _),
-                Bitvector32Term::Constant(_) | Bitvector32Term::Variable(_)
-            ) | (
-                Bitvector32Term::Constant(_) | Bitvector32Term::Variable(_),
-                Bitvector32Term::MemoryLoad(_, _)
-            )
-        );
-        if is_atomic_alias && !facts.contains(proposition) {
-            facts.push(proposition.clone());
+        let mut conjuncts = Vec::new();
+        atomic_conjuncts(proposition, &mut conjuncts);
+        for proposition in conjuncts {
+            let Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), true) =
+                proposition
+            else {
+                continue;
+            };
+            let is_atomic_alias = matches!(
+                (left.as_ref(), right.as_ref()),
+                (
+                    Bitvector32Term::MemoryLoad(_, _),
+                    Bitvector32Term::Constant(_) | Bitvector32Term::Variable(_)
+                ) | (
+                    Bitvector32Term::Constant(_) | Bitvector32Term::Variable(_),
+                    Bitvector32Term::MemoryLoad(_, _)
+                )
+            );
+            if is_atomic_alias && !facts.contains(proposition) {
+                facts.push(proposition.clone());
+            }
         }
     }
     facts
@@ -4884,34 +4948,38 @@ fn facts_for_smart_have_lowering(propositions: &[Proposition]) -> Vec<Propositio
 fn facts_for_simple_goal_lowering(propositions: &[Proposition]) -> Vec<Proposition> {
     let mut facts = facts_for_smart_have_lowering(propositions);
     for proposition in propositions {
-        let include = match proposition {
-            Proposition::ConditionIs(
-                ConditionTerm::Bitvector32SignedLessThan(_, _)
-                | ConditionTerm::Bitvector32SignedLessEqual(_, _)
-                | ConditionTerm::Bitvector32SignedGreaterThan(_, _)
-                | ConditionTerm::Bitvector32SignedGreaterEqual(_, _)
-                | ConditionTerm::PointerOffsetEqual(_, _),
-                _,
-            ) => true,
-            // A false-polarity atomic alias decides branch conditions
-            // (`if (p[i] == x)`) whose negative arm the goal's `If` terms
-            // still carry; the smart-have set only admits the true polarity.
-            Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), false) => {
-                matches!(
-                    (left.as_ref(), right.as_ref()),
-                    (
-                        Bitvector32Term::MemoryLoad(_, _),
-                        Bitvector32Term::Constant(_) | Bitvector32Term::Variable(_)
-                    ) | (
-                        Bitvector32Term::Constant(_) | Bitvector32Term::Variable(_),
-                        Bitvector32Term::MemoryLoad(_, _)
+        let mut conjuncts = Vec::new();
+        atomic_conjuncts(proposition, &mut conjuncts);
+        for proposition in conjuncts {
+            let include = match proposition {
+                Proposition::ConditionIs(
+                    ConditionTerm::Bitvector32SignedLessThan(_, _)
+                    | ConditionTerm::Bitvector32SignedLessEqual(_, _)
+                    | ConditionTerm::Bitvector32SignedGreaterThan(_, _)
+                    | ConditionTerm::Bitvector32SignedGreaterEqual(_, _)
+                    | ConditionTerm::PointerOffsetEqual(_, _),
+                    _,
+                ) => true,
+                // A false-polarity atomic alias decides branch conditions
+                // (`if (p[i] == x)`) whose negative arm the goal's `If` terms
+                // still carry; the smart-have set only admits the true polarity.
+                Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), false) => {
+                    matches!(
+                        (left.as_ref(), right.as_ref()),
+                        (
+                            Bitvector32Term::MemoryLoad(_, _),
+                            Bitvector32Term::Constant(_) | Bitvector32Term::Variable(_)
+                        ) | (
+                            Bitvector32Term::Constant(_) | Bitvector32Term::Variable(_),
+                            Bitvector32Term::MemoryLoad(_, _)
+                        )
                     )
-                )
+                }
+                _ => false,
+            };
+            if include && !facts.contains(proposition) {
+                facts.push(proposition.clone());
             }
-            _ => false,
-        };
-        if include && !facts.contains(proposition) {
-            facts.push(proposition.clone());
         }
     }
     facts
@@ -6083,6 +6151,13 @@ fn verify_execution_proofs_forward(
                 if let Some(source_index) = selected_tactic_index_for_site(&site)
                     && let Some((_, Proof::Script(source_tactics))) = initialization_proof
                     && matches!(source_tactics.get(source_index), Some(ProofTactic::Simp))
+                    && !source_tactics.iter().any(|tactic| {
+                        matches!(
+                            tactic,
+                            ProofTactic::ApplyTheorem(_)
+                                | ProofTactic::ApplyTheoremUsing { .. }
+                        )
+                    })
                 {
                     record_proof_site_tactic_expansion(
                         &site,
@@ -6257,10 +6332,22 @@ fn plan_point_pure_goal_certificate(
     theorem_environment: &TheoremEnvironment,
 ) -> Result<(Proposition, TacticCertificate), ClickError> {
     let applied_theorem_script;
+    let lowered_applied_theorem_script = matches!(proof, Proof::Script(tactics)
+        if tactics.iter().any(|tactic| matches!(
+            tactic,
+            ProofTactic::ApplyTheorem(_) | ProofTactic::ApplyTheoremUsing { .. }
+        ))
+            && tactics.iter().all(|tactic| {
+                matches!(tactic.class(), TacticClass::Simple(_))
+                    || matches!(tactic, ProofTactic::Simp | ProofTactic::ApplyTheorem(_))
+            }));
     let proof = if let Proof::Script(tactics) = proof
         && tactics
             .iter()
-            .any(|tactic| matches!(tactic, ProofTactic::ApplyTheorem(_)))
+            .any(|tactic| matches!(
+                tactic,
+                ProofTactic::ApplyTheorem(_) | ProofTactic::ApplyTheoremUsing { .. }
+            ))
         && tactics.iter().all(|tactic| {
             matches!(tactic.class(), TacticClass::Simple(_))
                 || matches!(tactic, ProofTactic::Simp | ProofTactic::ApplyTheorem(_))
@@ -6303,6 +6390,16 @@ fn plan_point_pure_goal_certificate(
     if let Proof::Script(tactics) = proof
         && let Ok(certificate) = TacticCertificate::from_proof_tactics(tactics)
     {
+        if lowered_applied_theorem_script
+            && let Some(source_index) = selected_tactic_index_for_site(proof_site)
+            && let Some(tactic) = certificate.tactics().get(source_index)
+        {
+            record_proof_site_tactic_expansion(
+                proof_site,
+                source_index,
+                std::slice::from_ref(tactic),
+            );
+        }
         let fact = if let Some(prelowered_goal) = prelowered_goal {
             prelowered_goal.clone()
         } else {
@@ -6869,9 +6966,37 @@ fn verify_loop_initialization_pure_proof(
         &assumptions_from_propositions(&context.pure_facts),
     )
     .map_err(|message| ClickError::new(format!("`{claim_label}`: {message}")))?;
+    // Expansion lowers a shared initialize proof to optional predicate
+    // unfolds followed by one explicit `have` per invariant.  Recognize that
+    // surface-certificate shape on the next verification pass and replay it
+    // directly.  Sending it back through the per-invariant planner would
+    // treat the whole certificate as the proof of every individual `have`,
+    // recursively duplicate it, and can make a valid first expansion fail.
+    let source_certificate = proof.tactics().and_then(|tactics| {
+        let invariant_start = tactics.len().checked_sub(invariant_items.len())?;
+        let prefix_is_explicit = tactics[..invariant_start]
+            .iter()
+            .all(|tactic| matches!(tactic, ProofTactic::UnfoldPredicate(_)));
+        let invariants_match = tactics[invariant_start..]
+            .iter()
+            .zip(&invariant_items)
+            .all(|(tactic, item)| {
+                matches!(
+                    tactic,
+                    ProofTactic::Have(have)
+                        if item.proposition() == Some(&have.proposition)
+                )
+            });
+        (prefix_is_explicit && invariants_match)
+            .then(|| TacticCertificate::from_proof_tactics(tactics).ok())
+            .flatten()
+    });
     let (certificate, available) = pure_goal_certificate_gateway(
         &claim_label,
         || {
+            if let Some(certificate) = source_certificate {
+                return Ok(certificate);
+            }
             let mut planning_available = context.pure_facts.clone();
             let mut tactics = Vec::new();
             for (invariant_index, item) in invariant_items.iter().enumerate() {
@@ -7424,6 +7549,15 @@ fn verify_one_loop_preservation_proof(
                     closer_source
                 );
             }
+            let timing_context = TimingTacticContext {
+                claim_label: claim_label.clone(),
+                tactic_index: closer_index,
+                source_index: closer_source,
+                tactic_name: closer_name.to_string(),
+                tactic_class: closer_class.to_string(),
+                statement_index: context.replay.frontier.next_statement_index,
+            };
+            push_timing_tactic(timing_context.clone());
             TacticTiming {
                 claim_label: claim_label.clone(),
                 tactic_index: closer_index,
@@ -7432,6 +7566,7 @@ fn verify_one_loop_preservation_proof(
                 tactic_class: closer_class,
                 statement_index: context.replay.frontier.next_statement_index,
                 start: std::time::Instant::now(),
+                context: timing_context,
             }
         });
         let closer_tactics = if invariant_checks.is_empty()
@@ -8855,6 +8990,52 @@ fn memory_erased_comparison(proposition: &Proposition) -> Option<Proposition> {
     Some(Proposition::ConditionIs(erased, *value))
 }
 
+/// Compares branch facts after erasing the memory snapshot captured at the
+/// branch point. In addition to the kernel's canonical spellings, accept the
+/// ordinary complementary and operand-reversed spellings of signed order
+/// comparisons (for example, `!(a < b)` and `a >= b`).
+fn path_condition_equivalent(left: &Proposition, right: &Proposition) -> bool {
+    fn signed_order_equivalent(left: &Proposition, right: &Proposition) -> bool {
+        let (
+            Proposition::ConditionIs(left_condition, left_value),
+            Proposition::ConditionIs(right_condition, right_value),
+        ) = (left, right)
+        else {
+            return false;
+        };
+        use ConditionTerm::{
+            Bitvector32SignedGreaterEqual as Ge, Bitvector32SignedGreaterThan as Gt,
+            Bitvector32SignedLessEqual as Le, Bitvector32SignedLessThan as Lt,
+        };
+        match (left_condition, right_condition) {
+            (Lt(left, right), Ge(other_left, other_right))
+            | (Ge(left, right), Lt(other_left, other_right))
+            | (Le(left, right), Gt(other_left, other_right))
+            | (Gt(left, right), Le(other_left, other_right)) => {
+                left == other_left && right == other_right && left_value != right_value
+            }
+            (Lt(left, right), Gt(other_left, other_right))
+            | (Gt(left, right), Lt(other_left, other_right))
+            | (Le(left, right), Ge(other_left, other_right))
+            | (Ge(left, right), Le(other_left, other_right)) => {
+                left == other_right && right == other_left && left_value == right_value
+            }
+            _ => false,
+        }
+    }
+
+    if condition_polarity_equivalent(left, right) || signed_order_equivalent(left, right) {
+        return true;
+    }
+    let (Some(left), Some(right)) = (
+        memory_erased_comparison(left),
+        memory_erased_comparison(right),
+    ) else {
+        return false;
+    };
+    condition_polarity_equivalent(&left, &right) || signed_order_equivalent(&left, &right)
+}
+
 /// The outermost memory snapshot a comparison proposition loads from, used
 /// to pick the transport destination for certified-fact matching.
 fn proposition_outer_load_memory(proposition: &Proposition) -> Option<&CMemory> {
@@ -10138,12 +10319,15 @@ pub(super) fn prove_claim_by_tactics(
         &pure_facts,
         claim_label,
     )?;
+    let function_entry_state = c_function_entry_state(&state, &function, &arguments)
+        .ok_or_else(|| ClickError::new(format!("`{claim_label}` could not bind function arguments")))?;
     let proof_claims = [*claim];
     let mut replay = TacticReplayState {
         proof_site: proof_site_for_claims(function_block, &proof_claims, false),
         source_layout: SourceExecutionLayout::new(parsed_function.body()),
         ordered_finalization: true,
         execution_start_facts: pure_facts.clone(),
+        function_entry_state: Some(function_entry_state),
         surface_propositions,
         ..TacticReplayState::default()
     };
@@ -10259,12 +10443,16 @@ pub(super) fn prove_claims_by_grouped_tactics(
         &pure_facts,
         &proof_label,
     )?;
+    let function_entry_state = c_function_entry_state(&state, &function, &arguments).ok_or_else(|| {
+        ClickError::new(format!("`{proof_label}` could not bind function arguments"))
+    })?;
     let mut replay = TacticReplayState {
         proof_site: proof_site_for_claims(function_block, claims, true),
         source_layout: SourceExecutionLayout::new(parsed_function.body()),
         ordered_finalization: true,
         grouped_contract: true,
         execution_start_facts: pure_facts.clone(),
+        function_entry_state: Some(function_entry_state),
         surface_propositions,
         ..TacticReplayState::default()
     };
@@ -10964,7 +11152,7 @@ fn finish_ordered_proof_replay(
         let mut surface_post_tactics_by_path = Vec::with_capacity(execution.paths().len());
         let mut deferred_capture_tactics_by_path = Vec::with_capacity(execution.paths().len());
 
-        for (path_index, path) in execution.paths().iter().enumerate() {
+        'execution_path: for (path_index, path) in execution.paths().iter().enumerate() {
             let certified_path =
                 &certified_execution.paths()[certified_path_for_replay[path_index]];
             let mut path_grouped_surface_closers = Vec::new();
@@ -11025,6 +11213,27 @@ fn finish_ordered_proof_replay(
                             Proposition::Not(Box::new(condition))
                         }
                     };
+                    if path_requirements
+                        .iter()
+                        .any(|available| propositions_are_exact_negations(available, &fact))
+                    {
+                        continue 'execution_path;
+                    }
+                    let mut case_context = path_requirements.clone();
+                    case_context.push(fact.clone());
+                    if assumptions_from_propositions(&case_context)
+                        .derive_proposition(&false_proposition())
+                        .is_some()
+                    {
+                        // A proof-level branch only owns execution outcomes
+                        // compatible with its assumption.  The sibling branch
+                        // certifies this path; replaying this branch's exact
+                        // per-outcome certificate against a contradictory
+                        // path would require it to list an unrelated
+                        // contradiction instead of the premises it was
+                        // generated from.
+                        continue 'execution_path;
+                    }
                     path_requirements.push(fact);
                 }
             }
@@ -11077,6 +11286,15 @@ fn finish_ordered_proof_replay(
                             source_index
                         );
                     }
+                    let timing_context = TimingTacticContext {
+                        claim_label: proof_label.clone(),
+                        tactic_index: *tactic_index,
+                        source_index: *source_index,
+                        tactic_name: tactic_name.to_string(),
+                        tactic_class: tactic_class.to_string(),
+                        statement_index: replay.frontier.next_statement_index,
+                    };
+                    push_timing_tactic(timing_context.clone());
                     TacticTiming {
                         claim_label: proof_label.clone(),
                         tactic_index: *tactic_index,
@@ -11085,6 +11303,7 @@ fn finish_ordered_proof_replay(
                         tactic_class,
                         statement_index: replay.frontier.next_statement_index,
                         start: std::time::Instant::now(),
+                        context: timing_context,
                     }
                 });
                 match post_tactic {
@@ -11234,6 +11453,7 @@ fn finish_ordered_proof_replay(
                                 "`{proof_label}` path {path_index}, tactic {tactic_index}: theorem application requires a return outcome"
                             )));
                         };
+                        let requirements_before = path_requirements.clone();
                         path_requirements = apply_theorem_using_at_outcome(
                             theorem_environment,
                             application,
@@ -11252,6 +11472,11 @@ fn finish_ordered_proof_replay(
                             click_function_environment,
                             &unfolded_predicates,
                         )?;
+                        record_certificate_facts_from_replay(
+                            &requirements_before,
+                            &path_requirements,
+                            &mut surface_certificate_facts,
+                        );
                         record_post_execution_surface_tactic(
                             &mut path_surface_post_tactics,
                             &mut path_deferred_capture_tactics,
@@ -12394,11 +12619,15 @@ fn finish_ordered_proof_replay(
             }
         }
         if tactic_expansion_capture_is_active() {
-            let deferred = replay.deferred_tactic_capture.as_ref().ok_or_else(|| {
-                ClickError::new(format!(
-                    "`{proof_label}` selected post-execution tactic lost its deferred capture"
-                ))
-            })?;
+            let Some(deferred) = replay.deferred_tactic_capture.as_ref() else {
+                // Structured proofs produce one replay context per logical
+                // case.  A selected deferred tactic activates the shared
+                // probe while those contexts are being built, but contexts
+                // from sibling branches legitimately have no capture.  Let
+                // them finish; the matching context records the expansion,
+                // or the outer probe reports that no result was ever seen.
+                return Ok(verified);
+            };
             // A tactic whose claims all closed by exact checks or grouped
             // transitions contributes no surface tactics of its own (see
             // `ClosedClaim::claim_tactics`): its exact expansion is empty and
@@ -12577,6 +12806,24 @@ fn checked_surface_comparison_fact_at_point(
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<ClickProposition, ClickError> {
+    // A uniquely recorded spelling for this exact available fact has already
+    // crossed the same lowering boundary in this proof context. Reuse it
+    // before exploring program-point variants; the latter is intentionally
+    // exhaustive and becomes quadratic when every statement in a branched
+    // certificate carries the same small premise set.
+    if let Some(surface) = replay
+        .surface_propositions
+        .surfaces(kernel)
+        .filter(|surface| {
+            replay
+                .surface_propositions
+                .unique_kernel(surface)
+                == Some(kernel)
+        })
+        .last()
+    {
+        return Ok(surface.clone());
+    }
     let matches_kernel = |lowered: &Proposition| {
         if matches!(match_kind, SurfaceFactMatch::CanonicalExact) {
             return normalize_direct_atomic_memory_loads(lowered)
@@ -13197,10 +13444,27 @@ fn synthesize_surface_bitvector(
             {
                 Some(indexed_field)
             } else {
+                let value_type = parameters.iter().zip(arguments).find_map(
+                    |(parameter, argument)| {
+                        let CExpression::Value(CValue::Pointer(base)) = argument else {
+                            return None;
+                        };
+                        pointer.element_index_from_base(base)?;
+                        match parameter.c_type() {
+                            C0Type::UInt8Pointer | C0Type::UInt8Array(_) => Some(CType::UInt8),
+                            C0Type::Int32Pointer | C0Type::Int32Array(_) => Some(CType::Int32),
+                            C0Type::Int32 | C0Type::UInt8 => None,
+                        }
+                    },
+                );
                 let pointer = synthesize_surface_pointer(pointer, parameters, arguments, state)?;
-                Some(ContractExpression::CFragment(CExpression::Load(Box::new(
-                    pointer,
-                ))))
+                Some(ContractExpression::CFragment(match value_type {
+                    Some(CType::UInt8) => CExpression::TypedLoad {
+                        pointer: Box::new(pointer),
+                        value_type: CType::UInt8,
+                    },
+                    _ => CExpression::Load(Box::new(pointer)),
+                }))
             }
         }
         Bitvector32Term::Variable(_)
@@ -16243,29 +16507,46 @@ fn record_surface_replay_tactic(
                     .collect::<Vec<_>>();
                 let mut premises = Vec::new();
                 for (fact, normalized, materialized) in normalized_needed {
-                    let candidates = surface_available.iter().filter(|available| {
-                        *available == fact
-                            || normalize_proposition(available) == normalized
-                            || normalize_direct_atomic_memory_loads(available) == materialized
-                            || assumptions_from_propositions(std::slice::from_ref(*available))
-                                .proves(fact)
-                    });
-                    if let Some(surface) = candidates
-                        .filter_map(|available_fact| {
-                            checked_surface_comparison_fact_at_point(
-                                replay,
-                                available_fact,
-                                SurfaceFactMatch::CanonicalExact,
-                                &surface_available,
-                                parameters,
-                                arguments,
-                                state,
-                                predicate_environment,
-                                click_function_environment,
-                            )
-                            .ok()
+                    let check_candidate = |available_fact: &Proposition| {
+                        checked_surface_comparison_fact_at_point(
+                            replay,
+                            available_fact,
+                            SurfaceFactMatch::CanonicalExact,
+                            &surface_available,
+                            parameters,
+                            arguments,
+                            state,
+                            predicate_environment,
+                            click_function_environment,
+                        )
+                        .ok()
+                    };
+                    // Exact and normalization-equivalent premises are the
+                    // common case. Try that cheap path across the whole
+                    // context before asking the general prover whether an
+                    // unrelated ambient fact entails this dependency.
+                    let surface = surface_available
+                        .iter()
+                        .filter(|available| {
+                            *available == fact
+                                || normalize_proposition(available) == normalized
+                                || normalize_direct_atomic_memory_loads(available) == materialized
                         })
-                        .next()
+                        .find_map(&check_candidate)
+                        .or_else(|| {
+                            surface_available.iter().find_map(|available_fact| {
+                                if assumptions_from_propositions(std::slice::from_ref(
+                                    available_fact,
+                                ))
+                                .proves(fact)
+                                {
+                                    check_candidate(available_fact)
+                                } else {
+                                    None
+                                }
+                            })
+                        });
+                    if let Some(surface) = surface
                         && !premises.contains(&surface)
                     {
                         premises.push(surface);
@@ -16529,10 +16810,15 @@ fn record_surface_replay_tactic(
             facts,
             ..
         } => {
+            // Planning records the exact statement-entry point where the
+            // branch decision was made. Keep that spelling here: alternatives
+            // can replay without their common statement-step prefix, so a
+            // transient "last step" pointer is not a reliable anchor.
+            let condition = condition.clone();
             let surface_fact = if *value {
                 condition.clone()
             } else {
-                ClickProposition::Not(Box::new(condition.clone()))
+                negate_click_proposition(&condition)
             };
             let lowered = lower_surface_candidate_at_point(
                 replay,
@@ -16545,10 +16831,18 @@ fn record_surface_replay_tactic(
                 click_function_environment,
             );
             match lowered {
-                Ok(kernel_fact) if facts.contains(&kernel_fact) => {
+                Ok(kernel_fact)
+                    if facts
+                        .iter()
+                        .any(|fact| path_condition_equivalent(fact, &kernel_fact)) =>
+                {
+                    let certified_fact = facts
+                        .iter()
+                        .find(|fact| path_condition_equivalent(fact, &kernel_fact))
+                        .expect("the matching certified path fact was checked above");
                     if let Err(error) = replay
                         .surface_propositions
-                        .record_lowering(&surface_fact, &kernel_fact)
+                        .record_lowering(&surface_fact, certified_fact)
                     {
                         replay.surface_replay.block(format!(
                             "could not retain the certified path-condition spelling: {}",
@@ -16573,7 +16867,7 @@ fn record_surface_replay_tactic(
             }
             replay.surface_replay.path_choices.push(SurfacePathChoice {
                 occurrence: *occurrence,
-                condition: condition.clone(),
+                condition,
                 value: *value,
                 tactic_offset: replay.surface_replay.tactics.len(),
             });
@@ -17062,6 +17356,7 @@ struct TacticTiming {
     tactic_class: &'static str,
     statement_index: usize,
     start: std::time::Instant,
+    context: TimingTacticContext,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -17140,6 +17435,15 @@ impl TacticTiming {
                     claim_label, tactic_index, name, tactic_class, statement_index, source_index
                 );
             }
+            let context = TimingTacticContext {
+                claim_label: claim_label.to_string(),
+                tactic_index,
+                tactic_name: name.to_string(),
+                tactic_class: tactic_class.to_string(),
+                statement_index,
+                source_index,
+            };
+            push_timing_tactic(context.clone());
             Self {
                 claim_label: claim_label.to_string(),
                 tactic_index,
@@ -17148,6 +17452,7 @@ impl TacticTiming {
                 tactic_class,
                 statement_index,
                 start: std::time::Instant::now(),
+                context,
             }
         })
     }
@@ -17165,6 +17470,7 @@ impl Drop for TacticTiming {
             self.source_index,
             self.start.elapsed().as_secs_f64()
         );
+        pop_timing_tactic(&self.context);
     }
 }
 
@@ -19840,26 +20146,7 @@ fn introduce_proof_case_assumption(
     let surface_fact = if value {
         condition.clone()
     } else {
-        match condition {
-            ClickProposition::Comparison {
-                left,
-                operator,
-                right,
-            } => ClickProposition::Comparison {
-                left: left.clone(),
-                operator: match operator {
-                    ComparisonOperator::Equal => ComparisonOperator::NotEqual,
-                    ComparisonOperator::NotEqual => ComparisonOperator::Equal,
-                    ComparisonOperator::LessThan => ComparisonOperator::GreaterEqual,
-                    ComparisonOperator::LessEqual => ComparisonOperator::GreaterThan,
-                    ComparisonOperator::GreaterThan => ComparisonOperator::LessEqual,
-                    ComparisonOperator::GreaterEqual => ComparisonOperator::LessThan,
-                },
-                right: right.clone(),
-            },
-            ClickProposition::Not(body) => body.as_ref().clone(),
-            condition => ClickProposition::Not(Box::new(condition.clone())),
-        }
+        negate_click_proposition(condition)
     };
     let kernel_fact = if value {
         proposition
@@ -20482,11 +20769,55 @@ fn execute_branch_step_from_execution_point(
     {
         let occurrence = replay.next_path_choice;
         replay.next_path_choice += 1;
+        let statement_condition = surface_with_source_site(
+            &surface_c_condition(&condition),
+            &ProgramPointRef {
+                region: CodeRegionRef::Statement(statement_index),
+                kind: ProgramPointKind::Entry,
+            },
+        )?;
+        // Prefer a spelling in terms of the shared function-entry snapshot.
+        // It remains available after independently explored paths are merged,
+        // whereas a later statement-entry state can legitimately differ
+        // across those paths and is therefore not retained in the common
+        // replay interface. Sorting networks are the representative case:
+        // the second comparison's current operand is an entry value selected
+        // by the first comparison.
+        let condition = replay
+            .function_entry_state
+            .as_ref()
+            .and_then(|entry_state| {
+                condition_transition.path_facts.iter().find_map(|fact| {
+                    let Proposition::ConditionIs(_, _) = fact else {
+                        return None;
+                    };
+                    let surface = synthesize_surface_proposition(
+                        fact,
+                        parameters,
+                        arguments,
+                        entry_state,
+                    )?;
+                    let surface = surface_with_source_site(
+                        &surface,
+                        &ProgramPointRef {
+                            region: CodeRegionRef::Function,
+                            kind: ProgramPointKind::Entry,
+                        },
+                    )
+                    .ok()?;
+                    Some(if condition_transition.is_true {
+                        surface
+                    } else {
+                        negate_click_proposition(&surface)
+                    })
+                })
+            })
+            .unwrap_or(statement_condition);
         replay
             .planned_tactics
             .push(ProofTactic::CertifiedPathAssumption {
                 occurrence,
-                condition: surface_c_condition(&condition),
+                condition,
                 value: condition_transition.is_true,
                 facts: condition_transition.path_facts.clone(),
                 theorem: condition_transition.theorem.clone(),

@@ -4502,7 +4502,10 @@ fn selected_branched_post_execution_apply_merges_path_certificates() {
         expand_c0_tactic_source_at(click_source, &[("choose.c", c_source)], line, column)
             .expect("branched post-execution apply should produce path certificates");
     assert!(!expanded.contains("apply(retain_one_or_two(result));"));
-    assert!(expanded.contains("if flag != 0 {"), "{expanded}");
+    assert!(
+        expanded.contains("if at(function.entry, flag) != at(function.entry, 0) {"),
+        "{expanded}"
+    );
     assert_eq!(
         expanded
             .matches("apply(retain_one_or_two(result)) using {")
@@ -4559,7 +4562,10 @@ fn selected_branched_post_execution_have_merges_path_certificates() {
         expand_c0_tactic_source_at(click_source, &[("choose.c", c_source)], line, column)
             .expect("branched post-execution have should produce path certificates");
     assert!(!expanded.contains("have result == 1 or result == 2 by simp"));
-    assert!(expanded.contains("if flag != 0 {"), "{expanded}");
+    assert!(
+        expanded.contains("if at(function.entry, flag) != at(function.entry, 0) {"),
+        "{expanded}"
+    );
     assert_eq!(
         expanded
             .matches("have result == 1 or result == 2 by {")
@@ -8396,9 +8402,15 @@ int32 caller(int32 x) {
     let expanded =
         expand_c0_tactic_source_at(click_source, &sources, position.line, position.column)
             .expect("caller simp should expand");
+    let expanded_position =
+        c0_tactic_source_position(&expanded, &sources, "caller.contract", 0).unwrap();
 
     let verified = session
-        .verify_at(&expanded, position.line, position.column)
+        .verify_at(
+            &expanded,
+            expanded_position.line,
+            expanded_position.column,
+        )
         .expect("session should verify the rewritten caller");
     assert!(
         verified
@@ -8408,7 +8420,11 @@ int32 caller(int32 x) {
 
     let broken_target = expanded.replacen("assumption();", "left();", 1);
     session
-        .verify_at(&broken_target, position.line, position.column)
+        .verify_at(
+            &broken_target,
+            expanded_position.line,
+            expanded_position.column,
+        )
         .expect_err("the selected function must be rechecked");
 
     let changed_dependency = expanded.replacen(
@@ -8417,13 +8433,69 @@ int32 caller(int32 x) {
         1,
     );
     let error = session
-        .verify_at(&changed_dependency, position.line, position.column)
+        .verify_at(
+            &changed_dependency,
+            expanded_position.line,
+            expanded_position.column,
+        )
         .expect_err("dependency source changes must invalidate the baseline session");
     assert!(
         error.message().contains("outside the selected proof unit"),
         "{}",
         error.message()
     );
+
+    let shifted = expanded.replacen("int32 caller", "\n\nint32 caller", 1);
+    let shifted_position =
+        c0_tactic_source_position(&shifted, &sources, "caller.contract", 0).unwrap();
+    assert_ne!(shifted_position.line, position.line);
+    session
+        .verify_at(&shifted, shifted_position.line, shifted_position.column)
+        .expect("session selection should follow the rewritten claim, not baseline coordinates");
+}
+
+#[test]
+fn verification_session_accepts_expansion_of_an_omitted_loop_phase() {
+    let c_source = r#"int32 count(int32 n) {
+    int32 i;
+    i = 0;
+    while (i < n) {
+        i = i + 1;
+    }
+    return i;
+}"#;
+    let click_source = r#"verifying "count.c";
+int32 count(int32 n) {
+    requires n >= 0 and n <= 2147483647;
+    for loop(0) {
+        invariant i >= 0 and i <= n;
+    }
+    ensures result == n by auto;
+}"#;
+    let sources = [("count.c", c_source)];
+    let (session, _) =
+        C0VerificationSession::new(click_source, &sources).expect("baseline should verify");
+    let omitted = c0_tactic_source_position(
+        click_source,
+        &sources,
+        "count.loop(0).initialize",
+        0,
+    )
+    .expect("omitted initialization should have a selector");
+    let expanded =
+        expand_c0_tactic_source_at(click_source, &sources, omitted.line, omitted.column)
+            .expect("omitted initialization should expand");
+    let relocated = c0_tactic_source_position(
+        &expanded,
+        &sources,
+        "count.loop(0).initialize",
+        0,
+    )
+    .expect("expanded initialization should have a selector");
+
+    session
+        .verify_at(&expanded, relocated.line, relocated.column)
+        .expect("inserted loop-phase proof is inside the selected proof unit");
 }
 
 /// `condition_polarity_equivalent` used to answer through
