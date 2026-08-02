@@ -21,7 +21,7 @@ int32 set_first(int32 p[], int32 value) {
     ensures result == value;
     ensures p[0] == value;
 } by {
-    execute_rest();
+    execute();
     frame();
     simp();
 }

@@ -3568,8 +3568,10 @@ fn materialize_access_segment_cells(
         if matches!(memory.load(&pointer), CExpressionOutcome::Value(_)) {
             continue;
         }
-        let load =
-            Bitvector32Term::MemoryLoad(crate::kernel::intern_c_memory(base_memory.clone()), Box::new(pointer.clone()));
+        let load = Bitvector32Term::MemoryLoad(
+            crate::kernel::intern_c_memory(base_memory.clone()),
+            Box::new(pointer.clone()),
+        );
         let value = match element_width {
             1 => CValue::UInt8(load),
             _ => CValue::Int32(load),

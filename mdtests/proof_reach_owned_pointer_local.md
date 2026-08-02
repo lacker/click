@@ -1,6 +1,6 @@
-# advance abstracts an owned selected pointer
+# reach abstracts an owned selected pointer
 
-Both branches select an owned input pointer. The `advance` interface exports
+Both branches select an owned input pointer. The `reach` interface exports
 ownership of the selected cell, allowing the shared suffix to mutate it without
 retaining either branch's concrete symbolic state.
 
@@ -35,23 +35,23 @@ int32 advance_owned_selected_pointer(
     consumes right[0..1];
 
     ensures result == value by {
-        execute_step();
-        advance(statement(1).exit)
+        step();
+        reach(statement(1).exit)
         ensuring {
             fact selected == left or selected == right;
             owns selected[0..1];
         }
         by {
             if choose_left != 0 {
-                execute_then_step();
-                execute_step();
+                step();
+                step();
             } else {
-                execute_else_step();
-                execute_step();
+                step();
+                step();
             }
         }
-        execute_step();
-        execute_step();
+        step();
+        step();
         simp();
     }
 }

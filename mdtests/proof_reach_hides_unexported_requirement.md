@@ -1,4 +1,4 @@
-# advance hides unexported preconditions
+# reach hides unexported preconditions
 
 Even stable parameters retain only their symbolic identity. Pure preconditions
 must be exported when the continuation needs them.
@@ -18,15 +18,15 @@ int32 advance_hidden_requirement(int32 x) {
     requires x >= 0;
 
     ensures result >= 0 by {
-        execute_step();
-        advance(statement(1).exit)
+        step();
+        reach(statement(1).exit)
         ensuring {
             fact y == 0;
         }
         by {
-            execute_step();
+            step();
         }
-        execute_step();
+        step();
         simp();
     }
 }

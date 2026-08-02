@@ -185,10 +185,9 @@ and the continuation stack for enclosing branch regions. The current
 implementation has these frontier points:
 
 - function entry, before C execution has started,
-- statement entry after `execute_step()`, explicit entry into a selected `if`
+- statement entry after `step()`, explicit entry into a selected `if`
   arm, or a straight-line `execute_until(statement(N))` pause,
-- function exit, after `execute_rest()` (equivalently its legacy spelling
-  `symbolic_execute()`) has executed the rest of the function.
+- function exit, after `execute()` has executed the rest of the function.
 
 Condition edges and statement execution produce shared certified transitions.
 The ordinary execution tactics and region execution-proof traversal consume
@@ -238,12 +237,11 @@ tactics prepare facts and resources before the next C statement. At function exi
 whose meaning depends on `result` or the post-state are checked separately for
 each completed execution path.
 
-`step()` is the simple execution tactic. It advances by one supported
-straight-line statement and expects needed pure facts and resource facts to
-already be available in the proof context. `execute_step()` is its smart,
-contextual counterpart.
+`step using { fact P; ... }` is the simple execution tactic. It advances by one
+supported transition using exactly the listed premises. Bare `step()` is its
+smart, contextual counterpart.
 
-`advance(point) ensuring { Q } by { steps }` is the sequencing rule for scoped
+`reach(point) ensuring { Q } by { steps }` is the sequencing rule for scoped
 execution. Every proof case in `steps` must reach `point` and prove `Q`. Click
 then replaces branch-local scalar values, mutable memory, pure facts, resource
 facts, and snapshots with one fresh symbolic frontier satisfying exactly `Q`
@@ -262,9 +260,9 @@ therefore read dependent metadata needed to describe the owned backing range.
 This projection is one step and duplicable; it does not unfold or consume the
 owned composite.
 
-`symbolic_execute()` is a legacy spelling of `execute_rest()`. The parser maps
-both spellings to the same tactic, which advances the current execution point
-to function exit. New proofs should write `execute_rest()`.
+`execute()` advances the current execution point to function exit. The former
+`execute_rest()` and `symbolic_execute()` spellings are rejected with a
+migration message.
 
 ## Observable Facts
 

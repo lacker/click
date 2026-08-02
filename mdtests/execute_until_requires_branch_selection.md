@@ -17,7 +17,7 @@ verifying "execute_until_unresolved_branch.c";
 int32 execute_until_unresolved_branch(int32 flag) {
     ensures result >= 0 by {
         execute_until(statement(3));
-        execute_rest();
+        execute();
         simp();
     }
 }

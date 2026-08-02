@@ -1454,10 +1454,7 @@ fn structural_item_proof_edits(
                 let close = matching_delimiter(tokens, open, "{", "}")?;
                 let mut item = open + 1;
                 while item < close {
-                    if matches!(
-                        tokens[item].text.as_str(),
-                        "immutable" | "mutable"
-                    ) {
+                    if matches!(tokens[item].text.as_str(), "immutable" | "mutable") {
                         let edit = find_proof_edit_after(tokens, item, close)?;
                         item = token_after_edit(tokens, &edit);
                         edits.push(edit);
@@ -1699,7 +1696,7 @@ fn find_advance_body(
             "}" => {
                 depth = depth
                     .checked_sub(1)
-                    .ok_or_else(|| ClickError::new("unbalanced `advance` tactic source block"))?
+                    .ok_or_else(|| ClickError::new("unbalanced `reach` tactic source block"))?
             }
             "by" if depth == 0
                 && tokens.get(cursor + 1).map(|token| token.text.as_str()) == Some("{") =>
@@ -1710,7 +1707,7 @@ fn find_advance_body(
             _ => {}
         }
     }
-    Err(ClickError::new("could not locate `advance` proof body"))
+    Err(ClickError::new("could not locate `reach` proof body"))
 }
 
 #[cfg(test)]
@@ -1801,7 +1798,7 @@ verifying "identity.c";
 int32 identity(int32 x) {
     ensures result == x;
 } by {
-    execute_rest();
+    execute();
     simp();
 }
 "#;
@@ -1815,8 +1812,8 @@ int32 identity(int32 x) {
         )
         .expect("the first grouped tactic should expand");
 
-        assert!(!expanded.contains("execute_rest();"));
-        assert!(expanded.contains("    step();\n    simp();"));
+        assert!(!expanded.contains("execute();"));
+        assert!(expanded.contains("    step using {\n    }\n    simp();"));
         verify_c0_sources(&expanded, &[("identity.c", c_source)])
             .expect("the source with one expanded tactic should re-verify");
     }
@@ -1832,7 +1829,7 @@ int32 read_first(int32 p[1]) {
     immutable;
     ensures result == p[0];
 } by {
-    execute_rest();
+    execute();
     frame();
     simp();
 }
@@ -1847,7 +1844,7 @@ int32 read_first(int32 p[1]) {
         )
         .expect("the grouped immutable read should have one common expansion");
 
-        assert!(!expanded.contains("execute_rest();"));
+        assert!(!expanded.contains("execute();"));
         assert!(expanded.contains("step using {"), "{expanded}");
         verify_c0_sources(&expanded, &[("read.c", c_source)])
             .expect("the expanded immutable read should re-verify every grouped claim");
@@ -1863,16 +1860,16 @@ int32 identity(int32 x) {
     ensures result == x;
 } by {
     if x == x {
-        execute_rest();
+        execute();
         simp();
     } else {
-        execute_rest();
+        execute();
         simp();
     }
 }
 "#;
         let then_offset = click_source
-            .find("        execute_rest();")
+            .find("        execute();")
             .expect("then tactic should exist")
             + 8;
         let position = position_at_offset(click_source, then_offset);
@@ -1884,8 +1881,11 @@ int32 identity(int32 x) {
         )
         .expect("the nested then tactic should expand");
 
-        assert_eq!(expanded.matches("execute_rest();").count(), 1);
-        assert!(expanded.contains("    if x == x {\n        step();"), "{expanded}");
+        assert_eq!(expanded.matches("execute();").count(), 1);
+        assert!(
+            expanded.contains("    if x == x {\n        step using {"),
+            "{expanded}"
+        );
         verify_c0_sources(&expanded, &[("identity.c", c_source)])
             .expect("the source with one nested expansion should re-verify");
     }
@@ -1914,14 +1914,14 @@ verifying "caller.c";
 int32 zero() {
     ensures result == 0;
 } by {
-    execute_rest();
+    execute();
     simp();
 }
 
 int32 caller() {
     ensures result == 0;
 } by {
-    execute_rest();
+    execute();
     simp();
 }
 "#;
@@ -1936,7 +1936,7 @@ int32 caller() {
         )
         .expect("opaque call internals should not become surface premises");
 
-        assert_eq!(expanded.matches("execute_rest();").count(), 1);
+        assert_eq!(expanded.matches("execute();").count(), 1);
         verify_c0_sources(&expanded, &sources)
             .expect("the caller with one expanded tactic should re-verify");
     }
@@ -1952,14 +1952,14 @@ verifying "caller.c";
 int32 zero() {
     ensures result == 0;
 } by {
-    execute_rest();
+    execute();
     simp();
 }
 
 int32 caller() {
     ensures result == 0;
 } by {
-    execute_rest();
+    execute();
     simp();
 }
 "#;
@@ -1983,14 +1983,14 @@ verifying "caller.c";
 int32 zero() {
     ensures result == 0;
 } by {
-    execute_rest();
+    execute();
     simp();
 }
 
 int32 caller() {
     ensures result == 0;
 } by {
-    execute_rest();
+    execute();
     have at(statement(1).entry, c(result)) == 0 by {
         normalize();
     }
@@ -2015,15 +2015,15 @@ verifying "caller.c";
 int32 zero() {
     ensures result == 0;
 } by {
-    execute_rest();
+    execute();
     simp();
 }
 
 int32 caller() {
     ensures result == 0;
 } by {
-    execute_step();
-    execute_rest();
+    step();
+    execute();
     simp();
 }
 "#;
@@ -2058,7 +2058,7 @@ int32 identity(int32 x) {
     ensures result == x;
     ensures result == old(x);
 } by {
-    execute_rest();
+    execute();
     simp();
 }
 "#;
@@ -2095,7 +2095,7 @@ int32 inspect(int32 p[1], int32 x) {
         0 <= k and k < 1 implies x == x
     };
 } by {
-    execute_rest();
+    execute();
     frame();
     simp();
 }
@@ -2135,7 +2135,7 @@ int32 increment_and_return_old(int32 p[1]) {
     ensures result == old(p[0]);
     ensures p[0] == 0;
 } by {
-    execute_rest();
+    execute();
     frame();
     simp();
 }
@@ -2197,8 +2197,8 @@ int32 inspect(struct box* owner) {
 } by {
     unfold(owned_box(owner));
     unfold(terminated_at);
-    execute_step();
-    execute_rest();
+    step();
+    execute();
     simp();
 }
 "#;
@@ -2324,7 +2324,7 @@ int32 count(int32 n) {
         invariant n == n;
         initialize by simp;
         preserve by {
-            execute_step();
+            step();
             simp();
         }
     }
@@ -2368,7 +2368,7 @@ int32 count(int32 n) {
             preserve_position.column,
         )
         .expect("a smart tactic inside loop preservation should expand");
-        assert!(!expanded.contains("execute_step();"));
+        assert!(!expanded.contains("step();"));
         verify_c0_sources(&expanded, &[("count.c", c_source)]).unwrap_or_else(|error| {
             panic!(
                 "expanded loop-preservation tactic should re-verify: {}\n{expanded}",
@@ -2478,7 +2478,7 @@ int32 count(int32 n) {
             )
             .expect("structural effect smart proof should expand");
             assert!(expanded.contains("immutable by {\n"));
-            assert!(expanded.contains("frame();"));
+            assert!(expanded.contains("frame() using {"));
             verify_c0_sources(&expanded, &[("count.c", c_source)])
                 .expect("expanded structural effect certificate should re-verify");
         }
@@ -2591,7 +2591,7 @@ int32 bubble_pass3(int32 p[3]) {
         mutable p[0..3] by frame;
     }
     ensures all_le_range(p, 0, 2, p[2]) by {
-        execute_rest();
+        execute();
         unfold(all_le_range);
         simp();
     }
@@ -2649,13 +2649,9 @@ int32 fill_tail_keeps_first(int32 p[], int32 n) {
             0,
         )
         .expect("omitted initialization should have a selector");
-        let expanded = expand_c0_tactic_source_at(
-            click_source,
-            &sources,
-            position.line,
-            position.column,
-        )
-        .expect("initialization proof should expand");
+        let expanded =
+            expand_c0_tactic_source_at(click_source, &sources, position.line, position.column)
+                .expect("initialization proof should expand");
 
         assert!(expanded.contains("have p[0] == old(p[0]) by"));
         verify_c0_sources(&expanded, &sources)
@@ -2690,13 +2686,13 @@ int32 count_up(int32 x) {
             simp();
         }
         preserve by {
-            execute_step();
+            step();
             apply(nonnegative_is_acceptable(x));
             simp();
         }
     }
     ensures acceptable(result) by {
-        execute_rest();
+        execute();
         unfold(acceptable);
         simp();
     }
@@ -2709,13 +2705,9 @@ int32 count_up(int32 x) {
                     .find(needle)
                     .expect("initialization tactic should be present");
             let position = position_at_offset(click_source, offset);
-            let expanded = expand_c0_tactic_source_at(
-                click_source,
-                &sources,
-                position.line,
-                position.column,
-            )
-            .expect("initialization tactic should expand");
+            let expanded =
+                expand_c0_tactic_source_at(click_source, &sources, position.line, position.column)
+                    .expect("initialization tactic should expand");
             verify_c0_sources(&expanded, &sources)
                 .expect("expanded initialization tactic should re-verify");
         }
@@ -2729,7 +2721,7 @@ int32 contains(uint8 p[], int32 n) {
     requires loadable(p[0..n]);
     requires has_x: bytes_contains(p, 0, n, 'x');
     ensures bytes_contains(p, 0, n, 'x') by {
-        execute_rest();
+        execute();
         unfold(bytes_contains);
         choose(found from requirement has_x);
         witness(k = found);
@@ -2794,7 +2786,7 @@ int32 compare_swap2(int32 p[2]) {
     requires loadable(p[0..2]);
     consumes p[0..2];
     ensures sorted_pair(p) by {
-        execute_rest();
+        execute();
         unfold(sorted_pair);
         simp();
     }
@@ -2843,7 +2835,7 @@ int32 increment(int32 x) {
             "increment.result_value",
             0,
         )
-            .expect("semicolons inside contract lets must not split source tactics");
+        .expect("semicolons inside contract lets must not split source tactics");
     }
 
     #[test]
@@ -2854,7 +2846,7 @@ int32 inspect(uint8 p[], int32 len) {
     requires loadable(p[0..len + 1]);
     requires exact: cstr_len(p, len);
     ensures 0 <= len by {
-        execute_rest();
+        execute();
         apply(cstr_len_nonnegative(p, len));
         simp();
     }
@@ -2889,20 +2881,20 @@ int32 inspect(uint8 p[], int32 len) {
 verifying "set_then_read.c";
 int32 set_cell(int32 p[], int32 value) {
     owns p[0..1] by auto;
-    mutable p[0..1] by frame;
+    mutable p[0..1] by { execute(); frame(); }
     ensures p[0] == value by auto;
     ensures result == value by auto;
 }
 int32 set_then_read(int32 p[], int32 value) {
     owns p[0..1] by {
-        execute_step();
-        execute_step();
-        execute_step();
+        step();
+        step();
+        step();
     }
     ensures result == value by {
-        execute_step();
-        execute_step();
-        execute_step();
+        step();
+        step();
+        step();
         simp();
     }
 }"#;
@@ -2910,20 +2902,12 @@ int32 set_then_read(int32 p[], int32 value) {
             ("set_cell.c", callee_source),
             ("set_then_read.c", caller_source),
         ];
-        let position = c0_tactic_source_position(
-            click_source,
-            &sources,
-            "set_then_read.ensures_1",
-            0,
-        )
-        .expect("later claim should have a source tactic");
-        let expanded = expand_c0_tactic_source_at(
-            click_source,
-            &sources,
-            position.line,
-            position.column,
-        )
-        .expect("selected later-claim tactic should expand with the callee available");
+        let position =
+            c0_tactic_source_position(click_source, &sources, "set_then_read.ensures_1", 0)
+                .expect("later claim should have a source tactic");
+        let expanded =
+            expand_c0_tactic_source_at(click_source, &sources, position.line, position.column)
+                .expect("selected later-claim tactic should expand with the callee available");
 
         verify_c0_sources(&expanded, &sources)
             .expect("expanded later claim should re-verify with its earlier claim");
@@ -2951,20 +2935,12 @@ int32 branch_count(int32 flag, int32 i) {
     ensures result == 1 by auto;
 }"#;
         let sources = [("branch_count.c", c_source)];
-        let position = c0_tactic_source_position(
-            click_source,
-            &sources,
-            "branch_count.loop(0).preserve",
-            0,
-        )
-        .expect("omitted preservation should have a selector");
-        let expanded = expand_c0_tactic_source_at(
-            click_source,
-            &sources,
-            position.line,
-            position.column,
-        )
-        .expect("unreachable omitted preservation should expand");
+        let position =
+            c0_tactic_source_position(click_source, &sources, "branch_count.loop(0).preserve", 0)
+                .expect("omitted preservation should have a selector");
+        let expanded =
+            expand_c0_tactic_source_at(click_source, &sources, position.line, position.column)
+                .expect("unreachable omitted preservation should expand");
 
         assert!(expanded.contains("preserve by {\n            assumption();"));
         verify_c0_sources(&expanded, &sources)
@@ -2987,30 +2963,31 @@ int32 branch_count(int32 flag, int32 i) {
 int32 nested(int32 x) {
     requires x < 2147483647;
     ensures result >= 0 by {
-        execute_step();
+        step();
         if x >= 0 {
-            execute_then_step();
-            execute_step();
+            step();
+            step();
             if y > 0 {
-                execute_then_step();
-                execute_step();
-                execute_step();
+                step();
+                step();
+                step();
                 simp();
             } else {
-                execute_else_step();
-                execute_step();
-                execute_step();
+                step();
+                step();
+                step();
                 simp();
             }
         } else {
-            execute_else_step();
-            execute_step();
-            execute_step();
+            step();
+            step();
+            step();
             simp();
         }
     }
 }"#;
-        let needle = "execute_else_step();\n                execute_step();\n                execute_step();\n                simp";
+        let needle =
+            "step();\n                step();\n                step();\n                simp";
         let offset = click_source
             .find(needle)
             .map(|start| start + needle.rfind("simp").unwrap())
@@ -3098,7 +3075,7 @@ int32 count(int32 n) {
         let c_source = "int32 identity(int32 x) { return x; }";
         let smart = r#"verifying "identity.c";
 int32 identity(int32 x) {
-    ensures result == x by simp;
+    ensures result == x by { execute(); simp(); }
 }
 "#;
         let smart_position = position_at_offset(smart, smart.find("simp").unwrap());
@@ -3109,7 +3086,8 @@ int32 identity(int32 x) {
             smart_position.column,
         )
         .expect("single smart proof should expand as a whole proof");
-        assert!(!smart_expanded.contains("by simp"));
+        assert!(smart_expanded.contains("execute();"));
+        assert!(!smart_expanded.contains("simp();"));
         verify_c0_sources(&smart_expanded, &[("identity.c", c_source)]).unwrap();
 
         let implicit = r#"verifying "identity.c";

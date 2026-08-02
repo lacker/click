@@ -33,19 +33,9 @@ pub(crate) fn c_resources_directly_match(
     match (left, right) {
         (CResource::Memory(left), CResource::Memory(right)) => {
             left == right
-                || (bitvectors_match_for_resource_replay(
-                    left.start(),
-                    right.start(),
-                    assumptions,
-                ) && bitvectors_match_for_resource_replay(
-                    left.end(),
-                    right.end(),
-                    assumptions,
-                ) && pointers_match_for_resource_replay(
-                    left.base(),
-                    right.base(),
-                    assumptions,
-                ))
+                || (bitvectors_match_for_resource_replay(left.start(), right.start(), assumptions)
+                    && bitvectors_match_for_resource_replay(left.end(), right.end(), assumptions)
+                    && pointers_match_for_resource_replay(left.base(), right.base(), assumptions))
         }
         (
             CResource::Composite {
@@ -120,10 +110,7 @@ fn pointer_offsets_match_from_memory_derivations(
         return true;
     }
     match (left, right) {
-        (
-            PointerOffsetTerm::Add(left_a, left_b),
-            PointerOffsetTerm::Add(right_a, right_b),
-        ) => {
+        (PointerOffsetTerm::Add(left_a, left_b), PointerOffsetTerm::Add(right_a, right_b)) => {
             pointer_offsets_match_from_memory_derivations(left_a, right_a, assumptions)
                 && pointer_offsets_match_from_memory_derivations(left_b, right_b, assumptions)
         }
@@ -139,11 +126,7 @@ fn pointer_offsets_match_from_memory_derivations(
         ) => {
             left_width == right_width
                 && (assumptions.bitvector_terms_equal_from_facts(left, right)
-                    || explicit_atomic_equality_from_memory_derivations(
-                        left,
-                        right,
-                        assumptions,
-                    ))
+                    || explicit_atomic_equality_from_memory_derivations(left, right, assumptions))
         }
         _ => false,
     }
@@ -179,11 +162,7 @@ fn pointers_match_for_resource_replay(
 ) -> bool {
     left == right
         || (left.block == right.block
-            && pointer_offsets_match_for_resource_replay(
-                &left.offset,
-                &right.offset,
-                assumptions,
-            ))
+            && pointer_offsets_match_for_resource_replay(&left.offset, &right.offset, assumptions))
         || pointers_proven_equal_for_memory_resolution(left, right, assumptions)
 }
 
@@ -550,19 +529,24 @@ fn memory_dag_cell_source(
                 // enclosing query's fuel — fuel-coupled spellings elsewhere
                 // must replay byte-for-byte.
                 if !write.blocks_proven_distinct(pointer)
-                    && !pointer_offsets_with_common_base_proven_distinct(write, pointer, assumptions)
+                    && !pointer_offsets_with_common_base_proven_distinct(
+                        write,
+                        pointer,
+                        assumptions,
+                    )
                     && !(EXPLICIT_DAG_REPLAY.with(std::cell::Cell::get)
-                        && assumptions.pointers_proven_disjoint_by_shallow_explicit_range(
-                            write, pointer,
-                        ))
+                        && assumptions
+                            .pointers_proven_disjoint_by_shallow_explicit_range(write, pointer))
                     && !(extended_dag_bridging_active()
                         && super::reasoning::with_isolated_memory_resolution_fuel(
                             MEMORY_DAG_HOP_DISTINCTNESS_FUEL,
-                            || pointers_proven_distinct_for_memory_resolution(
-                                write,
-                                pointer,
-                                assumptions,
-                            ),
+                            || {
+                                pointers_proven_distinct_for_memory_resolution(
+                                    write,
+                                    pointer,
+                                    assumptions,
+                                )
+                            },
                         ))
                 {
                     return MemoryDagCell::Unwritten { node: current };
@@ -649,7 +633,6 @@ fn with_cell_lookup_depth<T>(body: impl FnOnce() -> T) -> Option<T> {
     CELL_LOOKUP_DEPTH.with(|cell| cell.set(depth));
     Some(result)
 }
-
 
 /// The [`loads_equal_along_memory_derivations_at`] arm as a term-level test:
 /// true only when both sides are atomic loads the DAG resolves alike.
@@ -814,7 +797,6 @@ thread_local! {
 }
 
 const DAG_LOAD_EQUALITY_MEMO_LIMIT: usize = 200_000;
-
 
 /// Bounded search for a chain of recorded effects carrying a load from one
 /// snapshot to another with the pointer untouched at every hop. Endpoints
@@ -1372,12 +1354,10 @@ pub(super) fn canonicalize_pointer_loads(pointer: &Pointer, depth: usize) -> Poi
                 canonical_offset(left, depth),
                 canonical_offset(right, depth),
             ),
-            PointerOffsetTerm::Int32Scaled { value, byte_width } => {
-                PointerOffsetTerm::scale_int32(
-                    canonicalize_atomic_loads_with_depth(value, depth),
-                    *byte_width,
-                )
-            }
+            PointerOffsetTerm::Int32Scaled { value, byte_width } => PointerOffsetTerm::scale_int32(
+                canonicalize_atomic_loads_with_depth(value, depth),
+                *byte_width,
+            ),
         }
     }
     Pointer {
@@ -1457,9 +1437,7 @@ pub(crate) fn certified_store_equations(facts: &[ExecutionPureFact]) -> Vec<Prop
         .collect()
 }
 
-pub(crate) fn certified_store_loadability_facts(
-    facts: &[ExecutionPureFact],
-) -> Vec<Proposition> {
+pub(crate) fn certified_store_loadability_facts(facts: &[ExecutionPureFact]) -> Vec<Proposition> {
     facts
         .iter()
         .filter_map(|fact| {
@@ -1733,7 +1711,10 @@ fn transport_framed_atomic_bitvector(
                     }
                 })
             {
-                Bitvector32Term::MemoryLoad(crate::kernel::intern_c_memory(after.clone()), Box::new(transported_pointer))
+                Bitvector32Term::MemoryLoad(
+                    crate::kernel::intern_c_memory(after.clone()),
+                    Box::new(transported_pointer),
+                )
             } else {
                 term.clone()
             }
@@ -3693,8 +3674,7 @@ pub fn loadable_covered_by_fact(assumptions: &Assumptions, goal: &Proposition) -
         let Some(delta_bytes) = pointer_offset_byte_delta(&base.offset, &fact_base.offset) else {
             return false;
         };
-        let start = assumptions
-            .simplify_bitvector_under_assumptions(&Bitvector32Term::Constant(0));
+        let start = assumptions.simplify_bitvector_under_assumptions(&Bitvector32Term::Constant(0));
         let delta = assumptions.simplify_bitvector_under_assumptions(&delta_bytes);
         let end = assumptions.simplify_bitvector_under_assumptions(&Bitvector32Term::add(
             delta_bytes,
@@ -3739,9 +3719,8 @@ pub fn loadable_covered_by_fact(assumptions: &Assumptions, goal: &Proposition) -
             .as_const()
             .and_then(|byte_width| u32::try_from(byte_width).ok())
             .is_some_and(|byte_width| {
-                assumptions.proves_loadable_cell_from_region(
-                    fact_base, fact_bytes, base, byte_width,
-                )
+                assumptions
+                    .proves_loadable_cell_from_region(fact_base, fact_bytes, base, byte_width)
             })
     })
 }
@@ -4317,25 +4296,19 @@ fn resource_contexts_definitionally_equal(
         _ => false,
     };
     let directly_equal = |left: &ResourceContext, right: &ResourceContext| {
-        left.facts()
-            .iter()
-            .all(|fact| {
-                right.satisfies_fact(fact, assumptions)
-                    || right
-                        .facts()
-                        .iter()
-                        .any(|available| facts_directly_match(available, fact))
-            })
-            && right
-                .facts()
-                .iter()
-                .all(|fact| {
-                    left.satisfies_fact(fact, assumptions)
-                        || left
-                            .facts()
-                            .iter()
-                            .any(|available| facts_directly_match(available, fact))
-                })
+        left.facts().iter().all(|fact| {
+            right.satisfies_fact(fact, assumptions)
+                || right
+                    .facts()
+                    .iter()
+                    .any(|available| facts_directly_match(available, fact))
+        }) && right.facts().iter().all(|fact| {
+            left.satisfies_fact(fact, assumptions)
+                || left
+                    .facts()
+                    .iter()
+                    .any(|available| facts_directly_match(available, fact))
+        })
     };
     if left == right {
         return true;
@@ -4364,7 +4337,12 @@ fn resource_contexts_definitionally_equal(
 /// exclusively of constant comparisons against `var`. Returns `None` when any
 /// conjunct is not such a bound, so instantiating the conclusion stays sound.
 fn constant_variable_bounds(var: Variable, premise: &Proposition) -> Option<(u32, u32)> {
-    fn collect(var: Variable, premise: &Proposition, lo: &mut Option<u32>, hi: &mut Option<u32>) -> bool {
+    fn collect(
+        var: Variable,
+        premise: &Proposition,
+        lo: &mut Option<u32>,
+        hi: &mut Option<u32>,
+    ) -> bool {
         let bound = Bitvector32Term::Variable(var);
         match premise {
             Proposition::And(left, right) => {
@@ -4741,10 +4719,7 @@ fn shifted_order_condition_proven(
         (true, false) | (true, true) => ConditionTerm::signed_less_than(new_left, new_right),
         (false, _) => ConditionTerm::signed_less_equal(new_left, new_right),
     };
-    certification_proves_proposition(
-        assumptions,
-        &Proposition::ConditionIs(condition, true),
-    )
+    certification_proves_proposition(assumptions, &Proposition::ConditionIs(condition, true))
 }
 
 /// Compares two range folds up to renaming of their bound accumulator and
@@ -5707,25 +5682,31 @@ pub fn certify_c_function_execution_path_resource_representation(
             .filter_map(|fact| fact.certified_store_data())
             .collect::<Vec<_>>();
         certified_stores.len() == desired_stores.len()
-            && certified_stores.iter().zip(&desired_stores).all(|(left, right)| {
-                pointers_proven_equal_for_memory_resolution(
-                    &left.pointer,
-                    &right.pointer,
-                    &assumptions,
-                ) || (left.pointer.block == right.pointer.block
-                    && c_pointer_offsets_proven_equal_for_effect(
-                        &left.pointer.offset,
-                        &right.pointer.offset,
+            && certified_stores
+                .iter()
+                .zip(&desired_stores)
+                .all(|(left, right)| {
+                    pointers_proven_equal_for_memory_resolution(
+                        &left.pointer,
+                        &right.pointer,
                         &assumptions,
-                    ))
-            })
-            && certified_stores.iter().zip(&desired_stores).all(|(left, right)| {
-                c_values_proven_equal_for_memory_resolution(
-                    &left.value,
-                    &right.value,
-                    &assumptions,
-                )
-            })
+                    ) || (left.pointer.block == right.pointer.block
+                        && c_pointer_offsets_proven_equal_for_effect(
+                            &left.pointer.offset,
+                            &right.pointer.offset,
+                            &assumptions,
+                        ))
+                })
+            && certified_stores
+                .iter()
+                .zip(&desired_stores)
+                .all(|(left, right)| {
+                    c_values_proven_equal_for_memory_resolution(
+                        &left.value,
+                        &right.value,
+                        &assumptions,
+                    )
+                })
     };
     if !values_equal || !memories_equal {
         return None;
@@ -6653,7 +6634,8 @@ pub(crate) fn bitvector_term_deeper_than(term: &Bitvector32Term, limit: usize) -
                 term_depth_exceeds(left, remaining - 1) || term_depth_exceeds(right, remaining - 1)
             }
             ConditionTerm::PointerOffsetEqual(left, right) => {
-                offset_depth_exceeds(left, remaining - 1) || offset_depth_exceeds(right, remaining - 1)
+                offset_depth_exceeds(left, remaining - 1)
+                    || offset_depth_exceeds(right, remaining - 1)
             }
             ConditionTerm::PointerEqual(left, right) => {
                 pointer_depth_exceeds(left, remaining - 1)

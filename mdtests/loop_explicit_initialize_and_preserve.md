@@ -42,14 +42,14 @@ int32 loop_explicit_initialize_and_preserve(int32 x) {
         }
 
         preserve by {
-            execute_step();
+            step();
             apply(nonnegative_is_acceptable(x));
             simp();
         }
     }
 
     ensures acceptable(result) by {
-        execute_rest();
+        execute();
         unfold(acceptable);
         simp();
     }

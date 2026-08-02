@@ -16,7 +16,7 @@ Larger example projects live directly under `examples/`. They contain ordinary
 - `mdtests/simp_postconditions.md`: deterministic `simp` postconditions.
 - `mdtests/simp_equality_order_transport.md`: deterministic equality rewriting,
   discrete integer-bound normalization, and equality-linked arithmetic.
-- `mdtests/tactic_execute_rest.md`: explicit execution tactic `execute_rest()`,
+- `mdtests/tactic_execute.md`: explicit execution tactic `execute()`,
   the clearer name for whole-function symbolic execution from the current proof
   execution point.
 
@@ -220,13 +220,13 @@ sequence:
   permission plus a fact.
 - `mdtests/composite_resource_composes_token.md`: a composite resource can
   bundle another token resource with memory permission and a fact.
-- `mdtests/proof_advance_composite_resource_transform.md`: different branch
+- `mdtests/proof_reach_composite_resource_transform.md`: different branch
   token transformations fold and export one composite resource through an
-  `advance` interface, then `observe` recovers its fact after the join.
-- `mdtests/proof_advance_pointer_local.md`: selects a pointer in separate
-  branches, exports its viewed range through an `advance` interface, and
+  `reach` interface, then `observe` recovers its fact after the join.
+- `mdtests/proof_reach_pointer_local.md`: selects a pointer in separate
+  branches, exports its viewed range through an `reach` interface, and
   transports the selected value to the result after the join.
-- `mdtests/proof_advance_owned_pointer_local.md`: exports ownership of a
+- `mdtests/proof_reach_owned_pointer_local.md`: exports ownership of a
   branch-selected pointer, mutates it after the join, and reads back the write.
 - `mdtests/composite_resource_two_arrays.md`: a composite resource can
   bundle permissions for multiple arrays.
@@ -270,8 +270,8 @@ sequence:
 - `mdtests/composite_resource_execute_until_direct_mutate.md`: first passing
   execution-point proof, pausing before a direct mutation so the composite
   resource can be unfolded at the mutation point.
-- `mdtests/composite_resource_execute_step_direct_mutate.md`: statement-level
-  execution-point proof, using `execute_step()` to interleave execution with
+- `mdtests/composite_resource_step_direct_mutate.md`: statement-level
+  execution-point proof, using `step()` to interleave execution with
   `observe`, `unfold`, and `fold`.
 - `mdtests/composite_resource_view_then_mutate.md`: caller observes an owned
   composite before a view-only helper call, then unfolds before a later owned

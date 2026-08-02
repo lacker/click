@@ -72,7 +72,7 @@ int32 input_cursor_init(
     ensures owner->len == length;
     ensures owner->data == data;
 } by {
-    execute_rest();
+    execute();
     fold(input_cursor(owner));
     frame();
     simp();
@@ -94,7 +94,7 @@ int32 input_cursor_peek(struct input_cursor* owner) {
 } by {
     observe(input_cursor(owner));
     observe(readable_input(owner->data, owner->len));
-    execute_rest();
+    execute();
     frame();
     simp();
 }
@@ -183,7 +183,7 @@ int32 input_cursor_take(struct input_cursor* owner) {
         }
     }
     have owner->pos <= owner->len by {
-        calculate(owner->pos <= owner->len) using {
+        derive(owner->pos <= owner->len) using {
             fact old(owner->pos) < owner->len;
         }
     }
@@ -252,8 +252,8 @@ int32 input_cursor_clone(
     ensures target->data == source->data;
 } by {
     observe(input_cursor(source));
-    execute_step();
-    execute_step();
+    step();
+    step();
     step using {
         fact at(statement(0).entry, separate(memory(object(target)), memory(object(source))));
         fact at(statement(0).entry, separate(memory(object(target)), memory((source->data)[0..source->len])));
@@ -518,6 +518,47 @@ int32 input_cursor_shared_pipeline(
         fact left->data == left->data;
         fact left->len == length;
     }
-    frame();
+    frame() using {
+        fact loadable(right[0..4]);
+        fact right_value == right->data[right->pos];
+        fact right->data[right->pos] == data[0];
+        fact right_value == *data;
+        fact 1 <= length;
+        fact left->pos == left_value;
+        fact loadable(left[0..4]);
+        fact separate(memory(object(left)), memory(data[0..length]));
+        fact separate(memory(object(right)), memory(data[0..length]));
+        fact 0 <= length;
+        fact at(statement(7).entry, left->pos) == at(statement(7).entry, 1);
+        fact left->pos == at(statement(5).entry, (left->pos + 1));
+        fact left->len == left->len;
+        fact left->pos == (at(statement(5).entry, left->pos) + 1);
+        fact separate(memory(object(left)), memory(object(right)));
+        fact ignored == left->pos;
+        fact at(statement(4).entry, left->len) == at(statement(4).entry, length);
+        fact loadable(data[0..length]);
+        fact left->pos == 0;
+        fact at(statement(4).entry, left->data) == at(statement(4).entry, data);
+        fact at(statement(4).entry, left->pos) < at(statement(4).entry, left->len);
+        fact left_value == at(statement(5).entry, left->data[left->pos]);
+        fact left->len == at(statement(5).entry, left->len);
+        fact left->data == at(statement(5).entry, left->data);
+        fact right->pos == at(statement(5).entry, left->pos);
+        fact at(statement(6).entry, right->len) == at(statement(6).entry, left->len);
+        fact at(statement(5).entry, left->pos) < left->len;
+        fact at(statement(6).entry, right->pos) < at(statement(6).entry, right->len);
+        fact right->pos == right_value;
+        fact at(statement(5).entry, right->data) == at(statement(5).entry, left->data);
+        fact at(statement(5).entry, left->data) == data;
+        fact at(statement(5).entry, right->data) == at(statement(5).entry, data);
+        fact separate(memory(object(right)), memory((left->data)[0..left->len]));
+        fact right->pos == left->pos;
+        fact at(statement(5).entry, right->len) == at(statement(5).entry, left->len);
+        fact at(statement(5).entry, left->len) == length;
+        fact at(statement(5).entry, right->pos) < at(statement(5).entry, right->len);
+        fact at(statement(5).entry, right->pos) == at(statement(5).entry, 0);
+        fact left->data == left->data;
+        fact at(statement(7).entry, left->data) == at(statement(7).entry, left->data);
+    }
     simp();
 }

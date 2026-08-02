@@ -40,13 +40,13 @@ int32 vector_set(struct vector* owner, int32 index, int32 value) {
 
     owns vector(owner) by {
         unfold(vector(owner));
-        execute_rest();
+        execute();
         fold(vector(owner));
     }
 
     ensures result == value by {
         unfold(vector(owner));
-        execute_rest();
+        execute();
         fold(vector(owner));
         simp();
     }

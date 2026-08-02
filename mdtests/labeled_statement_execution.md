@@ -37,23 +37,23 @@ int32 labeled_statement_execution(int32 flag) {
         and at(update.entry, y) >= 0
         and at(update.exit, y) == 2
         and at(done.entry, y) == 2 by {
-        execute_step();
-        advance(choose.exit)
+        step();
+        reach(choose.exit)
         ensuring {
             fact y >= 0;
             fact y <= 1;
         }
         by {
             if flag != 0 {
-                execute_then_step();
-                execute_step();
+                step();
+                step();
             } else {
-                execute_else_step();
-                execute_step();
+                step();
+                step();
             }
         }
         execute_until(done);
-        execute_step();
+        step();
         simp();
     }
 }

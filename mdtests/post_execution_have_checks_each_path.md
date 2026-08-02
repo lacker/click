@@ -19,7 +19,7 @@ verifying "post_have_each_path.c";
 int32 branch_value(int32 flag) {
     ensures result >= 0;
 } by {
-    execute_rest();
+    execute();
     have result == 1 by simp;
     simp();
 }

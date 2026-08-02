@@ -406,7 +406,8 @@ fn bitvector_terms_equal_for_memory_resolution(
     const CANONICAL_COMPARE_DEPTH_LIMIT: usize = 64;
     if !super::api::bitvector_term_deeper_than(left, CANONICAL_COMPARE_DEPTH_LIMIT)
         && !super::api::bitvector_term_deeper_than(right, CANONICAL_COMPARE_DEPTH_LIMIT)
-        && super::api::canonicalize_atomic_loads(left) == super::api::canonicalize_atomic_loads(right)
+        && super::api::canonicalize_atomic_loads(left)
+            == super::api::canonicalize_atomic_loads(right)
     {
         return true;
     }
@@ -893,7 +894,9 @@ const MAX_SCALAR_LOAD_BYTES: i64 = 4;
 
 /// Splits a pointer offset into its non-constant atoms and total constant
 /// byte shift, folding constants nested inside scaled indices.
-pub(super) fn offset_atoms_and_constant(offset: &PointerOffsetTerm) -> (Vec<PointerOffsetTerm>, i64) {
+pub(super) fn offset_atoms_and_constant(
+    offset: &PointerOffsetTerm,
+) -> (Vec<PointerOffsetTerm>, i64) {
     fn collect(offset: &PointerOffsetTerm, atoms: &mut Vec<PointerOffsetTerm>, shift: &mut i64) {
         match offset {
             PointerOffsetTerm::Constant(value) => *shift += *value,
@@ -3982,7 +3985,9 @@ pub(super) fn substitute_bitvector_variable(
             )
         }
         Bitvector32Term::MemoryLoad(memory, pointer) => Bitvector32Term::MemoryLoad(
-            crate::kernel::intern_c_memory(substitute_bitvector_variable_in_memory(memory, from, to)),
+            crate::kernel::intern_c_memory(substitute_bitvector_variable_in_memory(
+                memory, from, to,
+            )),
             Box::new(substitute_bitvector_variable_in_pointer(pointer, from, to)),
         ),
     }

@@ -22,7 +22,7 @@ int32 compare_swap2_permutation(int32 p[2]) {
     requires loadable(p[0..2]);
     consumes p[0..2];
     ensures pair_permutation: permutation(p, old(p), 0, 2) by {
-        execute_rest();
+        execute();
         unfold(permutation);
         simp();
     }

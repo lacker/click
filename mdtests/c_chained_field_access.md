@@ -79,7 +79,7 @@ int32 chain_get(struct outer* o) {
     produces inner_cell(o);
 } by {
     unfold(inner_cell(o));
-    execute_rest();
+    execute();
     fold(inner_cell(o));
     simp();
 }
@@ -90,7 +90,7 @@ int32 chain_set(struct outer* o) {
     produces inner_cell(o);
 } by {
     unfold(inner_cell(o));
-    execute_rest();
+    execute();
     fold(inner_cell(o));
     simp();
 }
@@ -101,7 +101,7 @@ int32 deep_get(struct root* r) {
 } by {
     unfold(nested(r));
     unfold(leaf_cell(r->mid));
-    execute_rest();
+    execute();
     fold(leaf_cell(r->mid));
     fold(nested(r));
     simp();

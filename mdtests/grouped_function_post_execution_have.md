@@ -39,7 +39,7 @@ int32 identity(int32 x) {
     ensures result_witness: exists (int32 j) { j == result };
     ensures chosen_witness: exists (int32 j) { j == x };
 } by {
-    execute_rest();
+    execute();
     have exists (int32 j) { j == result } by {
         witness(j = result);
         simp();
@@ -56,7 +56,7 @@ int32 identity(int32 x) {
 int32 branch_value(int32 flag) {
     ensures result >= 0;
 } by {
-    execute_rest();
+    execute();
     have result >= 0 by simp;
     simp();
 }
@@ -68,7 +68,7 @@ int32 current_have(int32 x) {
         witness(j = x);
         simp();
     }
-    execute_rest();
+    execute();
     simp();
 }
 ```

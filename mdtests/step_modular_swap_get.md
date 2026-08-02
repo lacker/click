@@ -1,6 +1,6 @@
 # stepped modular swap then get
 
-This checks that separate `execute_step()` calls assign distinct opaque call
+This checks that separate `step()` calls assign distinct opaque call
 identities and preserve an explicitly established `old(...)` fact across a
 later immutable modular call.
 
@@ -41,7 +41,7 @@ int32 swap_pair(int32 data[]) {
     ensures data[0] == old(data[1]);
     ensures data[1] == old(data[0]);
 } by {
-    execute_rest();
+    execute();
     frame();
     simp();
 }
@@ -51,7 +51,7 @@ int32 get_first(int32 data[]) {
     immutable;
     ensures result == data[0];
 } by {
-    execute_rest();
+    execute();
     frame();
     simp();
 }
@@ -61,13 +61,13 @@ int32 swap_get(int32 data[]) {
     mutable data[0..2];
     ensures result == old(data[1]);
 } by {
-    execute_step();
-    execute_step();
+    step();
+    step();
     have data[0] == old(data[1]) by {
         simp();
     }
-    execute_step();
-    execute_step();
+    step();
+    step();
     frame();
     simp();
 }

@@ -12,7 +12,7 @@ verifying "labeled_statement_unknown_target.c";
 int32 labeled_statement_unknown_target(int32 x) {
     ensures result == x by {
         execute_until(missing);
-        execute_rest();
+        execute();
         simp();
     }
 }

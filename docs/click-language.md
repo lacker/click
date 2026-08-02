@@ -52,7 +52,7 @@ int32 set_first(int32 p[], int32 value) {
     ensures result == value;
     ensures p[0] == value;
 } by {
-    execute_rest();
+    execute();
     frame();
     simp();
 }
@@ -74,7 +74,7 @@ Goal-specific pure reasoning can be isolated with `have`, including after the
 function reaches its return frontier:
 
 ```click
-execute_rest();
+execute();
 have exists (int32 k) { k == result } by {
     witness(k = result);
     simp();
@@ -115,15 +115,12 @@ declaration.
 
 Theorems are intentionally pure. They do not support resource `requires`,
 resource `ensures`, effects, region proof blocks, `old(...)`, `at(...)`, or
-`result`. Pure theorem proof scripts currently support `unfold(name);`,
-`apply(theorem(args));` and `apply(theorem(args)) using { ... }`,
-`assumption();`, `normalize();`, `rewrite(equality);`, `simp();`, the
-structural logical rules `intro();`, `conjunction();`, `left();`, `right();`,
-`double_negation();`, `vacuous();`, and `contradiction(P);`, the atomic theory
-rules `derive(P) using { ... }` and `calculate(P) using { ... }`, and
-proof-level `if`. C execution tactics, resource tactics, `by frame;`, `have`,
-`witness`, `choose`, and `advance` are rejected. Applying a theorem never
-consumes, creates, returns, opens, or closes resources.
+`result`. Pure theorem scripts can simplify, unfold predicates, apply
+theorems, introduce logical structure, rewrite, use exact assumptions, and
+derive atomic propositions. They cannot execute C or transform resources.
+Applying a theorem never consumes, creates, returns, opens, or closes
+resources. The exact inventory is in the
+[proof tactics reference](proof-tactics.md).
 
 Theorems can be reused by explicit application:
 
@@ -162,20 +159,8 @@ theorem int32_sign_split(x: int32) {
 
 The same construct can appear before or after C execution in a function proof.
 It splits proof reasoning only; it does not itself execute a C `if` statement.
-Inside those proof cases, `step()` enters the uniquely selected arm when its
-condition truth value is already an exact pure fact. `execute_step()` performs
-the same transition with contextual condition reasoning.
-`execute_then_step()` and `execute_else_step()` remain useful smart forms when
-the proof should also assert which arm it expects to enter. Each tactic moves
-the execution point to the start of the arm without executing its body.
-
-For straight-line execution, `step()` is the simple form: it accepts only exact
-or context-free execution prerequisites and does not automatically transport
-facts between memory snapshots. `execute_step()` is the smart automated
-convenience form. An explicit `transport(source, target)` applies
-the certified transport rule for the stated atomic fact family. Conditions use
-the frame rule; structural facts such as `loadable(...)` are re-derived from
-the exact source plus certified execution effects.
+Inside a case, smart `step()` uses the exact case fact to enter the selected C
+arm. Expansion prints the corresponding `step using { ... }` certificate.
 
 When one transition needs contextual pure facts, list them explicitly:
 
@@ -188,29 +173,29 @@ step using {
 Only those listed pure facts are visible to that C transition. Other facts stay
 in the proof context for later tactics.
 
-At an annotated loop entry, `apply_loop_summary(loop(N))` is the simple tactic
-that consumes the already verified loop rule and advances to its abstract exit.
-Ordinary `step()` instead evaluates the loop condition and enters at most one
-iteration.
+At an annotated loop entry, smart `summarize(loop(N))` consumes the already
+verified loop rule and reaches its abstract exit. Its simple certificate is
+`summarize(loop(N)) using { ... }`. Ordinary `step()` instead evaluates the
+loop condition and enters at most one iteration.
 
-When both proof cases should continue through common code, `advance` gives the
+When both proof cases should continue through common code, `reach` gives the
 branch-local execution a shared, explicit postcondition:
 
 ```click
-advance(statement(1).exit)
+reach(statement(1).exit)
 ensuring {
     fact y >= 0;
 }
 by {
     if x >= 0 {
-        execute_then_step();
-        execute_step();
+        step();
+        step();
     } else {
-        execute_else_step();
-        execute_step();
+        step();
+        step();
     }
 }
-execute_step();
+step();
 ```
 
 Each case must reach exactly the requested statement entry or exit and prove
@@ -227,7 +212,7 @@ annotations, and `at(statement(N).entry|exit, ...)` snapshots.
 
 A structural clause may give a statement or loop a stable name with
 `for statement(N) as label` or `for loop(N) as label`. Prefer that label in
-proof scripts: `execute_until(label)`, `advance(label.exit)`, and
+proof scripts: `execute_until(label)`, `reach(label.exit)`, and
 `at(label.entry, expression_or_proposition)` all resolve to the same code
 region.
 
@@ -240,7 +225,7 @@ library, so a theorem proof can apply stdlib theorems and earlier theorem
 declarations. C function proof scripts can apply any verified theorem from the
 standard library or the current file. Before function exit, `apply(...)`
 immediately adds its conclusions to the current pure facts, so they can justify
-the next `execute_step()`. After function exit it is checked separately on each
+the next `step()`. After function exit it is checked separately on each
 path, where `result`, post-state expressions, and ordinary `old(...)` arguments
 can be evaluated.
 
@@ -448,7 +433,7 @@ range item name is the existential binder:
 
 ```click
 ensures found: (lo..hi).any(|k| { p[k] == result }) by {
-    execute_rest();
+    execute();
     witness(k = lo);
     simp();
 }
@@ -526,16 +511,16 @@ proved.
 The expression and proposition forms of `at(statement(N).entry, ...)` and
 `at(statement(N).exit, ...)` are currently supported in explicit proof-script
 claims after deterministic execution records that statement point.
-`execute_step()`, `execute_until(...)`, and `execute_rest()` all record every
+`step()`, `execute_until(...)`, and `execute()` all record every
 deterministic statement boundary they cross. Executing an annotated loop uses
 its verified abstract rule and records both `at(loop_label.entry, expression)`
 and the unique post-loop state `at(loop_label.exit, expression)`. Branches still
 require explicit arm selection and joining before a unique exit snapshot exists.
-`advance(loop_label.exit)` can use that exit as a checked abstract interface for
+`reach(loop_label.exit)` can use that exit as a checked abstract interface for
 the proof that follows.
 
 `execute_until(statement(N))` starts at the current execution point, so it can
-follow earlier `execute_step`, explicit branch-entry, or `advance` steps. The
+follow earlier `step`, explicit branch-entry, or `reach` steps. The
 target must be forward and reachable on that selected path; it cannot be used
 to rewind execution or enter an unselected branch.
 
@@ -595,7 +580,7 @@ Proposition clauses may also use witness lets:
 let k: int32 where k == x;
 
 ensures result == k by {
-    execute_rest();
+    execute();
     witness(k = x);
     simp();
 }
@@ -680,7 +665,7 @@ proof asks for it:
 
 ```click
 ensures sorted: sorted_range(p, 0, n) by {
-    execute_rest();
+    execute();
     unfold(sorted_range);
     simp();
 }

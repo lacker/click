@@ -21,7 +21,7 @@ int32 byte_slice_range_predicates(uint8 p[], int32 n) {
     requires no_y_in_prefix: bytes_all_not_eq(p, 0, 3, 'y');
 
     ensures opened_contains: bytes_contains(p, 0, n, 'x') by {
-        execute_rest();
+        execute();
         unfold(bytes_contains);
         choose(found from requirement has_x);
         witness(k = found);
@@ -29,7 +29,7 @@ int32 byte_slice_range_predicates(uint8 p[], int32 n) {
     }
 
     ensures second_prefix_byte_is_not_y: p[1] != 'y' by {
-        execute_rest();
+        execute();
         unfold(bytes_all_not_eq);
         simp();
     }

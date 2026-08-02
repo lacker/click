@@ -143,12 +143,12 @@ fn executes_verified_loop_inside_selected_branch() {
             }
 
             ensures result == 1 by {
-                execute_then_step();
-                execute_step();
+                step();
+                step();
                 have at(count.exit, i) == 1 by {
                     simp();
                 }
-                execute_step();
+                step();
                 simp();
             }
         }
@@ -300,7 +300,7 @@ fn verifies_explicit_structural_logic_tactics() {
         theorem conjunction_rule(x: int32) {
             requires x == x;
             ensures x == x and x == x by {
-                conjunction();
+                split();
             }
         }
 
@@ -321,7 +321,8 @@ fn verifies_explicit_structural_logic_tactics() {
         theorem double_negation_rule(x: int32) {
             requires x == x;
             ensures not (not (x == x)) by {
-                double_negation();
+                intro();
+                contradiction(x == x);
             }
         }
 
@@ -342,7 +343,8 @@ fn verifies_explicit_structural_logic_tactics() {
         theorem vacuous_rule(x: int32) {
             requires not (x != x);
             ensures x != x implies x == 0 by {
-                vacuous();
+                intro();
+                contradiction(x != x);
             }
         }
 
@@ -381,7 +383,7 @@ fn verifies_atomic_derivation_from_explicit_premises() {
         theorem calculates_nonnegative(x: int32) {
             requires x > 0;
             ensures x >= 0 by {
-                calculate(x >= 0) using {
+                derive(x >= 0) using {
                     fact x > 0;
                 }
             }
@@ -527,8 +529,10 @@ fn surface_synthesis_prefers_struct_field_places_to_typed_loads() {
     ));
     assert_eq!(describe_contract_expression(&left), "owner->len");
 
-    let data_pointer =
-        Bitvector32Term::MemoryLoad(crate::kernel::intern_c_memory(CMemory::new()), Box::new(owner.offset_by_bytes(8)));
+    let data_pointer = Bitvector32Term::MemoryLoad(
+        crate::kernel::intern_c_memory(CMemory::new()),
+        Box::new(owner.offset_by_bytes(8)),
+    );
     let first_data_cell = Pointer {
         block: "arg-memory".into(),
         offset: PointerOffsetTerm::Int32Scaled {
@@ -1173,7 +1177,7 @@ fn parses_grouped_function_proof() {
                 ensures result == value;
                 ensures p[0] == value;
             } by {
-                execute_rest();
+                execute();
                 frame();
                 simp();
             }
@@ -1186,7 +1190,7 @@ fn parses_grouped_function_proof() {
         Some(
             [
                 ProofTactic::ExecuteRest,
-                ProofTactic::Frame(None),
+                ProofTactic::ContextualFrame(None),
                 ProofTactic::Simp
             ]
             .as_slice()
@@ -1204,7 +1208,7 @@ fn rejects_mixed_grouped_and_individual_claim_proofs() {
             int32 identity(int32 value) {
                 ensures result == value by auto;
             } by {
-                execute_rest();
+                execute();
                 simp();
             }
         "#;
@@ -1231,7 +1235,7 @@ fn grouped_function_proof_checks_every_claim() {
                 ensures result == value;
                 ensures result != value;
             } by {
-                execute_rest();
+                execute();
                 simp();
             }
         "#;
@@ -1270,7 +1274,7 @@ fn grouped_function_certificates_share_finalized_specification() {
                 ensures result == value;
                 ensures p[0] == value;
             } by {
-                execute_rest();
+                execute();
                 frame();
                 simp();
             }
@@ -1351,7 +1355,7 @@ fn omitted_region_proofs_use_default_prover() {
 
 #[test]
 fn parses_proof_tactic_script() {
-    let source = FILL3_CLICK.replace("by auto;", "by { execute_rest(); frame(loop(0)); simp(); }");
+    let source = FILL3_CLICK.replace("by auto;", "by { execute(); frame(loop(0)); simp(); }");
     let file = parse(&source).expect("explicit proof script should parse");
     let ensure = &file.function_blocks()[0].ensures()[0];
 
@@ -1360,7 +1364,7 @@ fn parses_proof_tactic_script() {
         Some(
             [
                 ProofTactic::ExecuteRest,
-                ProofTactic::Frame(Some(CodeRegionRef::Loop(0))),
+                ProofTactic::ContextualFrame(Some(CodeRegionRef::Loop(0))),
                 ProofTactic::Simp,
             ]
             .as_slice()
@@ -1433,7 +1437,7 @@ fn parses_resource_observe_unfold_and_fold_tactics() {
                 owns uncalled(flag) by {
                     observe(uncalled(flag));
                     unfold(uncalled(flag));
-                    execute_rest();
+                    execute();
                     fold(uncalled(flag));
                 }
             }
@@ -1554,33 +1558,21 @@ fn parses_resource_verb_function_clauses() {
 }
 
 #[test]
-fn parses_bounded_execute_proof_tactic() {
-    let source = FILL3_CLICK.replace("by auto;", "by { bounded_execute(); }");
-    let file = parse(&source).expect("bounded explicit proof script should parse");
+fn parses_execute_proof_tactic() {
+    let source = FILL3_CLICK.replace("by auto;", "by { execute(); }");
+    let file = parse(&source).expect("execute proof script should parse");
     let ensure = &file.function_blocks()[0].ensures()[0];
 
     assert_eq!(
         ensure.proof().tactics(),
-        Some([ProofTactic::BoundedExecute].as_slice())
+        Some([ProofTactic::ExecuteRest].as_slice())
     );
 }
 
 #[test]
-fn parses_execute_rest_proof_tactic() {
-    let source = FILL3_CLICK.replace("by auto;", "by { execute_rest(); simp(); }");
-    let file = parse(&source).expect("execute_rest explicit proof script should parse");
-    let ensure = &file.function_blocks()[0].ensures()[0];
-
-    assert_eq!(
-        ensure.proof().tactics(),
-        Some([ProofTactic::ExecuteRest, ProofTactic::Simp].as_slice())
-    );
-}
-
-#[test]
-fn parses_symbolic_execute_as_execute_rest() {
-    let source = FILL3_CLICK.replace("by auto;", "by { symbolic_execute(); simp(); }");
-    let file = parse(&source).expect("legacy alias should parse as execute_rest");
+fn parses_execute_and_simp_proof_tactics() {
+    let source = FILL3_CLICK.replace("by auto;", "by { execute(); simp(); }");
+    let file = parse(&source).expect("execute and simp proof script should parse");
     let ensure = &file.function_blocks()[0].ensures()[0];
 
     assert_eq!(
@@ -1590,9 +1582,36 @@ fn parses_symbolic_execute_as_execute_rest() {
 }
 
 #[test]
-fn parses_execute_step_proof_tactic() {
-    let source = FILL3_CLICK.replace("by auto;", "by { execute_step(); execute_rest(); simp(); }");
-    let file = parse(&source).expect("execute_step explicit proof script should parse");
+fn rejects_retired_tactic_spellings_with_migrations() {
+    for (spelling, replacement) in [
+        ("conjunction", "split"),
+        ("apply_loop_summary", "summarize"),
+        ("execute_rest", "execute"),
+        ("symbolic_execute", "execute"),
+        ("execute_step", "step"),
+        ("execute_then_step", "step"),
+        ("execute_else_step", "step"),
+        ("bounded_execute", "execute"),
+        ("advance", "reach"),
+        ("calculate", "derive"),
+        ("double_negation", "intro"),
+        ("vacuous", "intro"),
+    ] {
+        let source =
+            format!("theorem legacy(x: int32) {{ ensures x == x by {{ {spelling}(); }} }}");
+        let error = parse(&source).expect_err("retired tactic should be rejected");
+        assert!(
+            error.message().contains(replacement),
+            "{spelling}: {}",
+            error.message()
+        );
+    }
+}
+
+#[test]
+fn parses_smart_step_proof_tactic() {
+    let source = FILL3_CLICK.replace("by auto;", "by { step(); execute(); simp(); }");
+    let file = parse(&source).expect("smart step proof script should parse");
     let ensure = &file.function_blocks()[0].ensures()[0];
 
     assert_eq!(
@@ -1745,9 +1764,9 @@ fn clone_field_stores_with_observed_source_resource_verify() {
             ensures result == source->pos;
         } by {
             observe(cursor(source));
-            execute_step();
-            execute_step();
-            execute_step();
+            step();
+            step();
+            step();
             step();
             frame();
             simp();
@@ -1769,8 +1788,10 @@ fn simple_statement_transition_does_not_transport_facts_automatically() {
         block: "arg-memory".into(),
         offset: PointerOffsetTerm::Constant(4),
     };
-    let first_value =
-        Bitvector32Term::MemoryLoad(crate::kernel::intern_c_memory(base_memory.clone()), Box::new(first.clone()));
+    let first_value = Bitvector32Term::MemoryLoad(
+        crate::kernel::intern_c_memory(base_memory.clone()),
+        Box::new(first.clone()),
+    );
     let before_memory = base_memory
         .clone()
         .store(first.clone(), int32(first_value.clone()))
@@ -1853,7 +1874,8 @@ fn simple_step_does_not_contextually_prove_execution_prerequisites() {
                 requires x < 2147483647;
                 ensures result > x;
             } by {
-                step();
+                step using {
+                }
                 simp();
             }
         "#;
@@ -1861,7 +1883,7 @@ fn simple_step_does_not_contextually_prove_execution_prerequisites() {
     let error = verify_c0_sources(click_source, &[("increment.c", c_source)])
         .expect_err("simple tactic must preserve the overflow prerequisite");
     assert!(
-        error.message().contains("missing exact prerequisite"),
+        error.message().contains("signed overflow"),
         "{}",
         error.message()
     );
@@ -1906,7 +1928,7 @@ fn execute_step_records_a_point_checked_surface_expansion() {
                 requires x < 2147483647;
                 ensures result == x + 1;
             } by {
-                execute_step();
+                step();
                 normalize();
             }
         "#;
@@ -1933,7 +1955,7 @@ fn execute_step_records_a_point_checked_surface_expansion() {
     assert!(source.contains("normalize();"));
 
     let execute_offset = click_source
-        .find("execute_step()")
+        .find("step()")
         .expect("proof should contain execute_step");
     let line = click_source[..execute_offset]
         .bytes()
@@ -1968,7 +1990,7 @@ fn execute_rest_return_certificate_omits_unused_ambient_facts() {
                 requires x < 100;
                 ensures result == x;
             } by {
-                execute_rest();
+                execute();
                 simp();
             }
         "#;
@@ -1983,7 +2005,7 @@ fn execute_rest_return_certificate_omits_unused_ambient_facts() {
     assert_eq!(expanded[2], ProofTactic::Assumption);
 
     let execute_offset = click_source
-        .find("execute_rest()")
+        .find("execute()")
         .expect("proof should contain execute_rest");
     let position = expansion::position_at_offset(click_source, execute_offset);
     let rewritten = expand_c0_tactic_source_at(
@@ -1993,8 +2015,7 @@ fn execute_rest_return_certificate_omits_unused_ambient_facts() {
         position.column,
     )
     .expect("the return execution should expand");
-    assert!(rewritten.contains("    step();"), "{rewritten}");
-    assert!(!rewritten.contains("step using"), "{rewritten}");
+    assert!(rewritten.contains("    step using {"), "{rewritten}");
     verify_c0_sources(&rewritten, &[("return_x.c", c_source)])
         .expect("the minimal return certificate should replay");
 }
@@ -2022,8 +2043,8 @@ fn execute_step_omits_materialization_only_transport() {
                     have p[0] == 7 by {
                         assumption();
                     }
-                    execute_step();
-                    execute_step();
+                    step();
+                    step();
                     frame();
                 }
                 produces p[0..2];
@@ -2048,7 +2069,7 @@ fn execute_step_omits_materialization_only_transport() {
     TacticCertificate::from_proof_tactics(expanded)
         .expect("the materialization-free expansion should be a surface certificate");
     let execute_offset = click_source
-        .find("execute_step()")
+        .find("step()")
         .expect("proof should contain execute_step");
     let line = click_source[..execute_offset]
         .bytes()
@@ -2089,8 +2110,8 @@ fn execute_step_omits_materialized_mixed_snapshot_transport() {
                 consumes p[0..2];
                 mutable p[0..1] by {
                     unfold(first_less_than_second);
-                    execute_step();
-                    execute_step();
+                    step();
+                    step();
                     frame();
                 }
                 produces p[0..2];
@@ -2115,7 +2136,7 @@ fn execute_step_omits_materialized_mixed_snapshot_transport() {
     TacticCertificate::from_proof_tactics(expanded)
         .expect("the mixed-snapshot expansion should be a surface certificate");
     let execute_offset = click_source
-        .find("execute_step()")
+        .find("step()")
         .expect("proof should contain execute_step");
     let line = click_source[..execute_offset]
         .bytes()
@@ -2158,9 +2179,9 @@ fn execute_step_omits_materialization_transport_across_statements() {
                 consumes q[0..1];
                 mutable p[0..1], q[0..1] by {
                     unfold(first_less_than_second);
-                    execute_step();
-                    execute_step();
-                    execute_step();
+                    step();
+                    step();
+                    step();
                     frame();
                 }
                 produces p[0..2];
@@ -2188,7 +2209,7 @@ fn execute_step_omits_materialization_transport_across_statements() {
     TacticCertificate::from_proof_tactics(expanded)
         .expect("the multi-statement expansion should be a surface certificate");
     let execute_offset = click_source
-        .find("execute_step()")
+        .find("step()")
         .expect("proof should contain execute_step");
     let line = click_source[..execute_offset]
         .bytes()
@@ -2234,8 +2255,8 @@ fn execute_step_expands_call_assign_fact_from_internal_snapshot() {
                 ensures result == 7;
                 ensures p[0] == 7;
             } by {
-                execute_step();
-                execute_step();
+                step();
+                step();
                 frame();
                 simp();
             }
@@ -2247,8 +2268,8 @@ fn execute_step_expands_call_assign_fact_from_internal_snapshot() {
                 ensures result == 7;
                 ensures p[0] == 7;
             } by {
-                execute_step();
-                execute_step();
+                step();
+                step();
                 frame();
                 simp();
             }
@@ -2259,7 +2280,7 @@ fn execute_step_expands_call_assign_fact_from_internal_snapshot() {
         .expect("caller should be present");
     let execute_offset = caller_offset
         + click_source[caller_offset..]
-            .find("execute_step()")
+            .find("step()")
             .expect("caller should execute its call");
     let line = click_source[..execute_offset]
         .bytes()
@@ -2414,7 +2435,7 @@ fn synthesizes_dynamically_indexed_pointer_offset_equality() {
 fn parses_explicit_branch_execution_tactics() {
     let source = FILL3_CLICK.replace(
         "by auto;",
-        "by { if n <= 0 { execute_then_step(); execute_rest(); simp(); } else { execute_else_step(); execute_rest(); simp(); } }",
+        "by { if n <= 0 { step(); execute(); simp(); } else { step(); execute(); simp(); } }",
     );
     let file = parse(&source).expect("explicit branch execution tactics should parse");
     let tactics = file.function_blocks()[0].ensures()[0]
@@ -2428,8 +2449,8 @@ fn parses_explicit_branch_execution_tactics() {
             then_tactics,
             else_tactics,
             ..
-        }) if then_tactics.first() == Some(&ProofTactic::ExecuteThenStep)
-            && else_tactics.first() == Some(&ProofTactic::ExecuteElseStep)
+        }) if then_tactics.first() == Some(&ProofTactic::ExecuteStep)
+            && else_tactics.first() == Some(&ProofTactic::ExecuteStep)
     ));
 }
 
@@ -2452,7 +2473,7 @@ fn empty_proof_if_branches_contribute_only_their_case_split() {
             int32 sign_bit(int32 x) {
                 ensures result == 0 or result == 1;
             } by {
-                execute_rest();
+                execute();
                 if x < 0 {
                 } else {
                 }
@@ -2472,16 +2493,16 @@ fn parses_advance_with_fact_and_resource_assertions() {
     let source = FILL3_CLICK.replace(
         "by auto;",
         r#"by {
-            advance(statement(1).exit)
+            reach(statement(1).exit)
             ensuring {
                 fact i >= 0;
                 owns p[0..3];
                 views p[0..3];
             }
             by {
-                execute_step();
+                step();
             }
-            execute_rest();
+            execute();
             simp();
         }"#,
     );
@@ -2513,7 +2534,7 @@ fn parses_advance_with_fact_and_resource_assertions() {
 fn parses_execute_until_proof_tactic() {
     let source = FILL3_CLICK.replace(
         "by auto;",
-        "by { execute_until(statement(1)); execute_rest(); simp(); }",
+        "by { execute_until(statement(1)); execute(); simp(); }",
     );
     let file = parse(&source).expect("execute_until explicit proof script should parse");
     let ensure = &file.function_blocks()[0].ensures()[0];
@@ -2533,7 +2554,7 @@ fn parses_execute_until_proof_tactic() {
 
 #[test]
 fn parses_unfold_proof_tactic() {
-    let source = FILL3_CLICK.replace("by auto;", "by { execute_rest(); unfold(sorted); simp(); }");
+    let source = FILL3_CLICK.replace("by auto;", "by { execute(); unfold(sorted); simp(); }");
     let file = parse(&source).expect("unfold explicit proof script should parse");
     let ensure = &file.function_blocks()[0].ensures()[0];
 
@@ -2554,7 +2575,7 @@ fn parses_unfold_proof_tactic() {
 fn parses_apply_theorem_proof_tactic() {
     let source = FILL3_CLICK.replace(
         "by auto;",
-        "by { execute_rest(); apply(nonnegative(result)); simp(); }",
+        "by { execute(); apply(nonnegative(result)); simp(); }",
     );
     let file = parse(&source).expect("apply explicit proof script should parse");
     let ensure = &file.function_blocks()[0].ensures()[0];
@@ -2580,7 +2601,7 @@ fn parses_apply_theorem_with_explicit_premises() {
     let source = FILL3_CLICK.replace(
         "by auto;",
         "by {
-            execute_rest();
+            execute();
             apply(nonnegative(result)) using {
                 fact result >= 0;
             }
@@ -2605,7 +2626,7 @@ fn parses_transport_with_explicit_premises() {
             transport(old(p[0]) == 0, p[0] == 0) using {
                 fact old(p[0]) == 0;
             }
-            execute_rest();
+            execute();
             simp();
         }",
     );
@@ -2708,6 +2729,10 @@ fn parses_and_classifies_simple_and_smart_tactics() {
         TacticClass::Simple(SimpleTactic::LoopSummaryTransition)
     ));
     assert!(matches!(
+        ProofTactic::ContextualLoopSummary(CodeRegionRef::Loop(0)).class(),
+        TacticClass::Smart(SmartTacticKind::LoopSummary)
+    ));
+    assert!(matches!(
         ProofTactic::CertifiedStatementStep {
             prerequisite_derivations: Vec::new(),
             exact_premises: Vec::new(),
@@ -2743,11 +2768,19 @@ fn parses_and_classifies_simple_and_smart_tactics() {
         TacticClass::Simple(SimpleTactic::Frame)
     ));
     assert!(matches!(
+        ProofTactic::FrameUsing {
+            region: None,
+            premises: Vec::new(),
+        }
+        .class(),
+        TacticClass::Simple(SimpleTactic::Frame)
+    ));
+    assert!(matches!(
         ProofTactic::CloseInvariants.class(),
         TacticClass::Simple(SimpleTactic::CloseInvariants)
     ));
     assert!(matches!(
-        ProofTactic::ContextualFrame.class(),
+        ProofTactic::ContextualFrame(None).class(),
         TacticClass::Smart(SmartTacticKind::Frame)
     ));
     assert!(matches!(
@@ -3110,7 +3143,7 @@ fn defined_rejects_concrete_undefined_expression() {
 fn parses_local_have_proof_tactic() {
     let source = FILL3_CLICK.replace(
         "by auto;",
-        "by { have n < 2147483647 by { simp(); } execute_rest(); simp(); }",
+        "by { have n < 2147483647 by { simp(); } execute(); simp(); }",
     );
     let file = parse(&source).expect("local have tactic should parse");
     let tactics = file.function_blocks()[0].ensures()[0]
@@ -3135,7 +3168,7 @@ fn parses_local_have_proof_tactic() {
 fn parses_proof_if_tactic() {
     let source = FILL3_CLICK.replace(
         "by auto;",
-        "by { if n <= 0 { execute_rest(); simp(); } else { execute_rest(); simp(); } }",
+        "by { if n <= 0 { execute(); simp(); } else { execute(); simp(); } }",
     );
     let file = parse(&source).expect("proof if should parse");
     let tactics = file.function_blocks()[0].ensures()[0]
@@ -3158,7 +3191,7 @@ fn parses_proof_if_tactic() {
 fn parses_existential_proof_tactics() {
     let source = FILL3_CLICK.replace(
         "by auto;",
-        "by { execute_rest(); choose(k from requirement has_k); witness(j = k + 1); simp(); }",
+        "by { execute(); choose(k from requirement has_k); witness(j = k + 1); simp(); }",
     );
     let file = parse(&source).expect("existential explicit proof script should parse");
     let ensure = &file.function_blocks()[0].ensures()[0];
@@ -3300,8 +3333,8 @@ fn parses_loop_invariants_and_statement_asserts() {
                     }
                     initialize by simp;
                     preserve by {
-                        execute_step();
-                        execute_step();
+                        step();
+                        step();
                         simp();
                     }
                 }
@@ -3385,7 +3418,7 @@ fn rejects_legacy_structural_region_syntax() {
 
 #[test]
 fn rejects_legacy_proof_tactic_region_syntax() {
-    let source = FILL3_CLICK.replace("by auto;", "by { execute_rest(); frame(loop 0); }");
+    let source = FILL3_CLICK.replace("by auto;", "by { execute(); frame(loop 0); }");
     let error = parse(&source).expect_err("legacy proof tactic region syntax should fail");
 
     assert!(
@@ -3742,7 +3775,7 @@ fn unfolds_predicate_requirement_to_prove_consequence() {
                 requires loadable(p[0..2]);
                 requires sorted_pair(p);
                 ensures consequence: p[0] <= p[1] by {
-                    execute_rest();
+                    execute();
                     unfold(sorted_pair);
                     simp();
                 }
@@ -3792,7 +3825,7 @@ fn unfolds_predicate_goal_to_prove_compare_swap_sorted() {
                 requires loadable(p[0..2]);
                 consumes p[0..2];
                 ensures sorted: sorted_pair(p) by {
-                    execute_rest();
+                    execute();
                     unfold(sorted_pair);
                     simp();
                 }
@@ -3828,7 +3861,7 @@ fn unfolds_general_sorted_predicate() {
                 requires loadable(p[0..n]);
                 requires sorted(p, n);
                 ensures still_sorted: sorted(p, n) by {
-                    execute_rest();
+                    execute();
                     unfold(sorted);
                     simp();
                 }
@@ -3874,8 +3907,8 @@ fn verifies_simp_normalizes_simple_postconditions() {
             verifying "identity.c";
 
             int32 identity(int32 x) {
-                ensures add_zero: result == x + 0 by simp;
-                ensures prop_simp: result == x and not (result != x) by simp;
+                ensures add_zero: result == x + 0 by { execute(); simp(); }
+                ensures prop_simp: result == x and not (result != x) by { execute(); simp(); }
             }
         "#;
 
@@ -3883,8 +3916,36 @@ fn verifies_simp_normalizes_simple_postconditions() {
         .expect("simp should prove local normalized postconditions");
 
     assert_eq!(verified.len(), 2);
-    assert_eq!(verified[0].proof_kind(), ProofKind::Simp);
-    assert_eq!(verified[1].proof_kind(), ProofKind::Simp);
+    assert_eq!(verified[0].proof_kind(), ProofKind::TacticScript);
+    assert_eq!(verified[1].proof_kind(), ProofKind::TacticScript);
+}
+
+#[test]
+fn proof_sugar_and_bare_smart_tactics_have_the_same_frontier_semantics() {
+    let c_source = "int32 identity(int32 x) { return x; }";
+    let simp_errors = ["by simp;", "by { simp; }", "by { simp(); }"].map(|proof| {
+        let source = format!(
+            "verifying \"identity.c\"; int32 identity(int32 x) {{ ensures result == x {proof} }}"
+        );
+        verify_c0_sources(&source, &[("identity.c", c_source)])
+            .expect_err("simp at function entry should not execute")
+            .message()
+            .to_string()
+    });
+    assert_eq!(simp_errors[0], simp_errors[1]);
+    assert_eq!(simp_errors[0], simp_errors[2]);
+    assert!(simp_errors[0].contains("requires execution to reach function exit first"));
+
+    let frame_errors = ["by frame;", "by { frame(); }"].map(|proof| {
+        let source =
+            format!("verifying \"identity.c\"; int32 identity(int32 x) {{ immutable {proof} }}");
+        verify_c0_sources(&source, &[("identity.c", c_source)])
+            .expect_err("frame at function entry should not execute")
+            .message()
+            .to_string()
+    });
+    assert_eq!(frame_errors[0], frame_errors[1]);
+    assert!(frame_errors[0].contains("requires execution to reach function exit first"));
 }
 
 #[test]
@@ -3898,7 +3959,7 @@ fn smart_simp_expansion_replays_as_surface_click() {
             verifying "identity.c";
 
             int32 identity(int32 x) {
-                ensures result == x by simp;
+                ensures result == x by { execute(); simp(); }
             }
         "#;
 
@@ -3907,7 +3968,7 @@ fn smart_simp_expansion_replays_as_surface_click() {
     let expanded = verified[0]
         .expanded_proof_source()
         .expect("smart simp should lower to surface tactics");
-    let expanded_source = click_source.replacen("by simp;", &expanded, 1);
+    let expanded_source = click_source.replacen("by { execute(); simp(); }", &expanded, 1);
     verify_c0_sources(&expanded_source, &[("identity.c", c_source)])
         .expect("printed smart simp expansion should replay");
 }
@@ -3925,7 +3986,7 @@ fn selected_post_execution_simp_waits_for_its_surface_closer() {
             int32 identity(int32 x) {
                 ensures result == x;
             } by {
-                execute_rest();
+                execute();
                 simp();
             }
         "#;
@@ -3969,7 +4030,7 @@ fn selected_post_execution_smart_have_uses_its_path_certificate() {
             int32 identity(int32 x) {
                 ensures result == x;
             } by {
-                execute_rest();
+                execute();
                 have result == x by simp;
                 simp();
             }
@@ -4011,7 +4072,7 @@ fn post_execution_transport_observes_a_preceding_have() {
             int32 identity(int32 x) {
                 ensures result == x;
             } by {
-                execute_rest();
+                execute();
                 have result == x by {
                     normalize();
                 }
@@ -4039,7 +4100,7 @@ fn selected_post_execution_transport_emits_an_explicit_certificate() {
             int32 identity(int32 x) {
                 ensures result == x;
             } by {
-                execute_rest();
+                execute();
                 have result == x by {
                     normalize();
                 }
@@ -4090,7 +4151,7 @@ fn selected_post_execution_smart_apply_uses_exact_path_premises() {
             int32 identity(int32 x) {
                 ensures x == result;
             } by {
-                execute_rest();
+                execute();
                 apply(int32_equality_symmetric(result, x));
                 simp();
             }
@@ -4167,7 +4228,7 @@ fn smart_apply_surfaces_a_framed_comparison_after_an_immutable_call() {
                 observe(equal_cell(data, expected));
                 execute_until(statement(2));
                 apply(int32_equality_transitive(observed, data[0], expected));
-                execute_rest();
+                execute();
                 frame();
                 simp();
             }
@@ -4211,7 +4272,7 @@ fn smart_apply_preserves_statement_snapshots_in_explicit_premises() {
                 ensures result == 0;
             } by {
                 unfold(one_cell(p));
-                execute_step();
+                step();
                 have at(statement(0).entry, p[0]) == 1 by {
                     simp();
                 }
@@ -4222,7 +4283,7 @@ fn smart_apply_preserves_statement_snapshots_in_explicit_premises() {
                     at(statement(0).entry, p[0]),
                     at(statement(0).exit, p[0])
                 ));
-                execute_rest();
+                execute();
                 frame();
                 simp();
             }
@@ -4270,7 +4331,7 @@ fn statement_snapshots_support_complete_loadability_propositions() {
                 produces p[0..2];
                 ensures result == p[0];
             } by {
-                execute_step();
+                step();
                 have at(statement(0).entry, loadable(p[0..2])) by {
                     assumption();
                 }
@@ -4280,7 +4341,7 @@ fn statement_snapshots_support_complete_loadability_propositions() {
                 ) using {
                     fact at(statement(0).entry, loadable(p[0..2]));
                 }
-                execute_rest();
+                execute();
                 frame();
                 simp();
             }
@@ -4310,7 +4371,7 @@ fn statement_snapshots_preserve_declared_resource_argument_types() {
                 ensures result == owner[0];
             } by {
                 unfold(owner_cell(owner));
-                execute_rest();
+                execute();
                 have at(
                     statement(0).entry,
                     contains(owner_cell(owner), memory(owner[0..1]))
@@ -4343,7 +4404,7 @@ fn source_expander_locates_statement_assertion_proofs() {
                 }
                 ensures result == x;
             } by {
-                execute_rest();
+                execute();
                 simp();
             }
         "#;
@@ -4419,7 +4480,7 @@ fn smart_apply_uses_ambient_loadability_only_for_argument_lowering() {
                     pair->second,
                     data
                 ));
-                execute_rest();
+                execute();
                 frame();
                 simp();
             }
@@ -4478,7 +4539,7 @@ fn selected_branched_post_execution_apply_merges_path_certificates() {
             int32 choose(int32 flag) {
                 ensures result == 1 or result == 2;
             } by {
-                execute_rest();
+                execute();
                 apply(retain_one_or_two(result));
                 simp();
             }
@@ -4538,7 +4599,7 @@ fn selected_branched_post_execution_have_merges_path_certificates() {
             int32 choose(int32 flag) {
                 ensures result == 1 or result == 2;
             } by {
-                execute_rest();
+                execute();
                 have result == 1 or result == 2 by simp;
                 simp();
             }
@@ -4621,7 +4682,7 @@ fn selected_pure_case_split_simp_expands_by_removal() {
                 requires loadable(p[0..3]);
                 consumes p[0..3];
                 ensures sorted: sorted_range(p, 0, 3) by {
-                    execute_rest();
+                    execute();
                     unfold(sorted_range);
                     simp();
                 }
@@ -4666,7 +4727,7 @@ fn source_expander_lowers_smart_simp_inside_have() {
                 have x == x by {
                     simp();
                 }
-                execute_rest();
+                execute();
                 simp();
             }
         "#;
@@ -4692,7 +4753,7 @@ fn source_expander_lowers_smart_simp_inside_have() {
         .find("have x == x")
         .expect("expanded proof should retain the selected have")
         ..expanded
-            .find("execute_rest()")
+            .find("execute()")
             .expect("expanded proof should retain its suffix")];
     assert!(expanded_have.contains("normalize();"), "{expanded_have}");
     assert!(!expanded_have.contains("simp();"), "{expanded_have}");
@@ -4722,7 +4783,7 @@ fn source_expander_lowers_smart_apply_inside_have() {
                 have x == x by {
                     apply(int32_reflexive(x));
                 }
-                execute_rest();
+                execute();
                 simp();
             }
         "#;
@@ -4748,7 +4809,7 @@ fn source_expander_lowers_smart_apply_inside_have() {
         .find("have x == x")
         .expect("expanded proof should retain the selected have")
         ..expanded
-            .find("execute_rest()")
+            .find("execute()")
             .expect("expanded proof should retain its suffix")];
     assert!(expanded_have.contains("apply(int32_reflexive(x)) using {"));
     verify_c0_sources(&expanded, &[("identity.c", c_source)])
@@ -4776,7 +4837,7 @@ fn source_expander_lowers_smart_simp_after_unfold_inside_have() {
                     unfold(reflexive);
                     simp();
                 }
-                execute_rest();
+                execute();
                 simp();
             }
         "#;
@@ -4802,7 +4863,7 @@ fn source_expander_lowers_smart_simp_after_unfold_inside_have() {
         .find("have reflexive(x)")
         .expect("expanded proof should retain the selected have")
         ..expanded
-            .find("execute_rest()")
+            .find("execute()")
             .expect("expanded proof should retain its suffix")];
     assert!(
         expanded_have.contains("unfold(reflexive);"),
@@ -4837,7 +4898,7 @@ fn source_expander_preserves_pointer_field_spelling_inside_smart_have() {
                 have owner->data == data by {
                     simp();
                 }
-                execute_rest();
+                execute();
                 frame();
                 simp();
             }
@@ -4904,7 +4965,7 @@ fn source_expander_spells_an_indexed_load_through_a_pointer_field() {
                 have data[1] == value by {
                     simp();
                 }
-                execute_rest();
+                execute();
                 frame();
                 simp();
             }
@@ -4952,11 +5013,11 @@ fn smart_have_uses_transport_planned_at_the_mutation_boundary() {
                 consumes p[0..2];
                 mutable p[1..2] by {
                     unfold(first_is_seven);
-                    execute_step();
+                    step();
                     have p[0] == 7 by {
                         simp();
                     }
-                    execute_step();
+                    step();
                     frame();
                 }
                 produces p[0..2];
@@ -4984,7 +5045,7 @@ fn smart_have_uses_transport_planned_at_the_mutation_boundary() {
         .find("have p[0] == 7")
         .expect("expanded proof should retain the selected have")
         ..expanded
-            .find("execute_step();\n                    frame();")
+            .find("step();\n                    frame();")
             .expect("expanded proof should retain its suffix")];
     assert!(expanded_have.contains("assumption();"), "{expanded_have}");
     assert!(!expanded_have.contains("transport("), "{expanded_have}");
@@ -5020,7 +5081,7 @@ fn smart_have_uses_fact_selected_by_explicit_step_at_the_mutation_boundary() {
                     have p[0] == 7 by {
                         simp();
                     }
-                    execute_step();
+                    step();
                     frame();
                 }
                 produces p[0..2];
@@ -5048,7 +5109,7 @@ fn smart_have_uses_fact_selected_by_explicit_step_at_the_mutation_boundary() {
         .find("have p[0] == 7")
         .expect("expanded proof should retain the selected have")
         ..expanded
-            .find("execute_step();\n                    frame();")
+            .find("step();\n                    frame();")
             .expect("expanded proof should retain its suffix")];
     assert!(expanded_have.contains("assumption();"), "{expanded_have}");
     assert!(!expanded_have.contains("simp();"), "{expanded_have}");
@@ -5085,7 +5146,7 @@ fn source_expander_recalls_a_fact_at_a_recorded_statement_entry() {
                 ensures result == 1;
             } by {
                 observe(one(p));
-                execute_rest();
+                execute();
                 frame();
                 simp();
             }
@@ -5100,7 +5161,7 @@ fn source_expander_recalls_a_fact_at_a_recorded_statement_entry() {
                 have at(statement(1).entry, p[0]) == 1 by {
                     simp();
                 }
-                execute_rest();
+                execute();
                 frame();
                 simp();
             }
@@ -5184,7 +5245,7 @@ fn source_expander_derives_separation_from_call_postconditions() {
                 ensures owner->len == length;
                 ensures owner->data == data;
             } by {
-                execute_rest();
+                execute();
                 frame();
                 simp();
             }
@@ -5213,7 +5274,7 @@ fn source_expander_derives_separation_from_call_postconditions() {
                 ) by {
                     simp();
                 }
-                execute_rest();
+                execute();
                 frame();
                 simp();
             }
@@ -5259,7 +5320,7 @@ fn branched_smart_simp_expansion_replays_as_surface_click() {
             verifying "choose.c";
 
             int32 choose(int32 flag) {
-                ensures result == 1 or result == 2 by simp;
+                ensures result == 1 or result == 2 by { execute(); simp(); }
             }
         "#;
 
@@ -5268,7 +5329,7 @@ fn branched_smart_simp_expansion_replays_as_surface_click() {
     let expanded = verified[0]
         .expanded_proof_source()
         .expect("branched smart simp should lower to surface tactics");
-    let expanded_source = click_source.replacen("by simp;", &expanded, 1);
+    let expanded_source = click_source.replacen("by { execute(); simp(); }", &expanded, 1);
     verify_c0_sources(&expanded_source, &[("choose.c", c_source)])
         .expect("printed branched smart simp expansion should replay");
 }
@@ -5284,8 +5345,8 @@ fn source_expander_replaces_only_the_selected_claim_proof() {
             verifying "identity.c";
 
             int32 identity(int32 x) {
-                ensures first: result == x by simp;
-                ensures second: result == x + 0 by simp;
+                ensures first: result == x by { execute(); simp(); }
+                ensures second: result == x + 0 by { execute(); simp(); }
             }
         "#;
 
@@ -5296,8 +5357,8 @@ fn source_expander_replaces_only_the_selected_claim_proof() {
         CProofClaim::Ensure(1),
     )
     .expect("selected smart proof should expand");
-    assert_eq!(expanded.matches("by simp;").count(), 1);
-    assert!(expanded.contains("ensures first: result == x by simp;"));
+    assert_eq!(expanded.matches("by { execute(); simp(); }").count(), 1);
+    assert!(expanded.contains("ensures first: result == x by { execute(); simp(); }"));
     verify_c0_sources(&expanded, &[("identity.c", c_source)]).unwrap_or_else(|error| {
         panic!(
             "source-expanded sidecar should re-verify: {}\n{expanded}",
@@ -5320,7 +5381,7 @@ fn source_expander_replaces_and_replays_grouped_proof() {
                 ensures first: result == x;
                 ensures second: result == x + 0;
             } by {
-                execute_rest();
+                execute();
                 simp();
             }
         "#;
@@ -5332,7 +5393,7 @@ fn source_expander_replaces_and_replays_grouped_proof() {
         CProofClaim::Grouped,
     )
     .expect("grouped proof should expand");
-    assert!(!expanded.contains("execute_rest();"));
+    assert!(!expanded.contains("execute();"));
     verify_c0_sources(&expanded, &[("identity.c", c_source)])
         .expect("expanded grouped proof should re-verify");
 }
@@ -5354,7 +5415,7 @@ fn source_expander_replaces_and_replays_contextual_frame() {
                 requires i >= 0;
                 requires i < n;
                 consumes p[0..n];
-                mutable p[0..n] by frame;
+                mutable p[0..n] by { execute(); frame(); }
             }
         "#;
 
@@ -5365,7 +5426,7 @@ fn source_expander_replaces_and_replays_contextual_frame() {
         CProofClaim::Effect(0),
     )
     .expect("contextual frame should expand");
-    assert!(!expanded.contains("by frame;"));
+    assert!(!expanded.contains("execute();"));
     verify_c0_sources(&expanded, &[("write_in_bounds.c", c_source)])
         .expect("expanded contextual frame should re-verify");
 }
@@ -5381,7 +5442,7 @@ fn source_expander_is_idempotent() {
             verifying "identity.c";
 
             int32 identity(int32 x) {
-                ensures result == x by simp;
+                ensures result == x by { execute(); simp(); }
             }
         "#;
     let sources = [("identity.c", c_source)];
@@ -5502,7 +5563,7 @@ fn verifies_simple_postcondition_with_proof_tactics() {
 
             int32 identity(int32 x) {
                 ensures returns_x: result == x by {
-                    execute_rest();
+                    execute();
                     simp();
                 }
             }
@@ -5554,7 +5615,7 @@ fn verifies_mutable_effect_with_bounded_frame_tactics() {
                 requires loadable(p[0..2]);
                 consumes p[1..2];
                 mutable p[1..2] by {
-                    bounded_execute();
+                    execute();
                     frame();
                 }
             }
@@ -5562,7 +5623,7 @@ fn verifies_mutable_effect_with_bounded_frame_tactics() {
 
     let verified = verify_c0_sources(click_source, &[("write_second.c", c_source)])
         .expect("bounded frame tactics should prove mutable effect");
-    let expected_tactics = [ProofTactic::BoundedExecute, ProofTactic::Frame(None)];
+    let expected_tactics = [ProofTactic::ExecuteRest, ProofTactic::ContextualFrame(None)];
 
     assert_eq!(verified.len(), 1);
     assert_eq!(verified[0].proof_kind(), ProofKind::TacticScript);
@@ -5584,7 +5645,7 @@ fn bare_frame_tactic_rejects_ensure_claim() {
 
             int32 identity(int32 x) {
                 ensures returns_x: result == x by {
-                    execute_rest();
+                    execute();
                     frame();
                 }
             }
@@ -5596,7 +5657,7 @@ fn bare_frame_tactic_rejects_ensure_claim() {
     assert!(
         error
             .message()
-            .contains("`frame()` proves function-level effect claims"),
+            .contains("`frame` has no effect claim to prove"),
         "{}",
         error.message()
     );
@@ -5640,33 +5701,23 @@ fn auto_certificate_replays_for_bounded_execution() {
         Some(expected_tactics.as_slice())
     );
 
-    let explicit_click_source = r#"
-            verifying "fill3_array_loop.c";
-
-            int32 fill3_array_loop(int32 p[3]) {
-                requires loadable(p[0..3]);
-                consumes p[0..3];
-                for loop(0) {
-                    invariant i >= 0;
-                    invariant i <= 3;
-                }
-                ensures writes_third: p[2] == 2 by {
-                    bounded_execute();
-                    simp();
-                }
-            }
-        "#;
+    let certificate = auto_verified[0]
+        .expanded_proof_source()
+        .expect("bounded auto proof should have a surface certificate");
+    let explicit_click_source = auto_click_source.replacen("by auto;", &certificate, 1);
 
     let explicit_verified =
-        verify_c0_sources(explicit_click_source, &[("fill3_array_loop.c", c_source)])
+        verify_c0_sources(&explicit_click_source, &[("fill3_array_loop.c", c_source)])
             .expect("bounded auto certificate should replay as explicit tactics");
 
     assert_eq!(explicit_verified.len(), 1);
     assert_eq!(explicit_verified[0].proof_kind(), ProofKind::TacticScript);
-    assert_eq!(
-        explicit_verified[0].proof_tactics(),
-        Some(expected_tactics.as_slice())
-    );
+    TacticCertificate::from_proof_tactics(
+        explicit_verified[0]
+            .proof_tactics()
+            .expect("expanded proof should retain simple tactics"),
+    )
+    .expect("expanded auto proof should contain only certificate tactics");
 }
 
 #[test]
@@ -5859,7 +5910,7 @@ fn separate_requirement_proves_symbolic_unwritten_read() {
                 consumes p[i..i + 1];
                 views p[j..j + 1];
                 requires separate(memory(p[i..i + 1]), memory(p[j..j + 1]));
-                mutable p[i..i + 1] by frame;
+                mutable p[i..i + 1] by { execute(); frame(); }
                 ensures keeps_j: result == old(p[j]) by auto;
             }
         "#;
@@ -5888,7 +5939,7 @@ fn contextual_frame_expands_to_surface_bounds_and_exact_frame() {
                 requires i < n;
                 requires loadable(p[0..n]);
                 consumes p[0..n];
-                mutable p[0..n] by frame;
+                mutable p[0..n] by { execute(); frame(); }
             }
         "#;
 
@@ -5896,7 +5947,7 @@ fn contextual_frame_expands_to_surface_bounds_and_exact_frame() {
         .expect("contextual frame should verify");
     let theorem = verified
         .iter()
-        .find(|theorem| theorem.proof_kind() == ProofKind::Frame)
+        .find(|theorem| theorem.effect_clause().is_some())
         .expect("effect claim should use the frame proof");
     let expanded = theorem.expanded_proof_tactics().unwrap_or_else(|| {
         panic!(
@@ -5909,7 +5960,10 @@ fn contextual_frame_expands_to_surface_bounds_and_exact_frame() {
             .iter()
             .any(|tactic| matches!(tactic, ProofTactic::Have(_)))
     );
-    assert_eq!(expanded.last(), Some(&ProofTactic::Frame(None)));
+    assert!(matches!(
+        expanded.last(),
+        Some(ProofTactic::FrameUsing { region: None, .. })
+    ));
     TacticCertificate::from_proof_tactics(expanded)
         .expect("contextual frame expansion should be a surface certificate");
 }
@@ -5931,7 +5985,7 @@ fn contextual_frame_expands_independently_in_branch_leaves() {
 
             int32 write_selected(int32 p[2], int32 flag) {
                 consumes p[0..2];
-                mutable p[0..2] by frame;
+                mutable p[0..2] by { execute(); frame(); }
             }
         "#;
 
@@ -5939,7 +5993,7 @@ fn contextual_frame_expands_independently_in_branch_leaves() {
         .expect("branched contextual frame should verify");
     let theorem = verified
         .iter()
-        .find(|theorem| theorem.proof_kind() == ProofKind::Frame)
+        .find(|theorem| theorem.effect_clause().is_some())
         .expect("effect claim should use the frame proof");
     let expanded = theorem.expanded_proof_tactics().unwrap_or_else(|| {
         panic!(
@@ -5954,14 +6008,14 @@ fn contextual_frame_expands_independently_in_branch_leaves() {
             _ => None,
         })
         .expect("branched frame expansion should retain the branch");
-    assert_eq!(
+    assert!(matches!(
         proof_if.then_tactics.last(),
-        Some(&ProofTactic::Frame(None))
-    );
-    assert_eq!(
+        Some(ProofTactic::FrameUsing { region: None, .. })
+    ));
+    assert!(matches!(
         proof_if.else_tactics.last(),
-        Some(&ProofTactic::Frame(None))
-    );
+        Some(ProofTactic::FrameUsing { region: None, .. })
+    ));
     TacticCertificate::from_proof_tactics(expanded)
         .expect("branched frame expansion should be a surface certificate");
 }
@@ -6018,8 +6072,8 @@ fn verifies_mutable_segment_effect() {
             int32 write_second(int32* p) {
                 requires loadable(p[0..2]);
                 consumes p[1..2];
-                mutable p[1..2] by frame;
-                mutable p[0..2] by frame;
+                mutable p[1..2] by { execute(); frame(); }
+                mutable p[0..2] by { execute(); frame(); }
                 ensures returns_written: result == 9 by auto;
             }
         "#;
@@ -6032,8 +6086,8 @@ fn verifies_mutable_segment_effect() {
         verified[0].effect_clause().unwrap().effect(),
         Effect::Mutable(_)
     ));
-    assert_eq!(verified[0].proof_kind(), ProofKind::Frame);
-    assert_eq!(verified[1].proof_kind(), ProofKind::Frame);
+    assert_eq!(verified[0].proof_kind(), ProofKind::TacticScript);
+    assert_eq!(verified[1].proof_kind(), ProofKind::TacticScript);
 }
 
 #[test]
@@ -6050,7 +6104,7 @@ fn verifies_shifted_loadable_and_mutable_segment() {
             int32 write_second(int32* p) {
                 requires loadable((p + 1)[0..1]);
                 consumes (p + 1)[0..1];
-                mutable (p + 1)[0..1] by frame;
+                mutable (p + 1)[0..1] by { execute(); frame(); }
                 ensures returns_written: result == 9 by auto;
             }
         "#;
@@ -6059,7 +6113,7 @@ fn verifies_shifted_loadable_and_mutable_segment() {
         .expect("shifted loadable should prove access and frame");
 
     assert_eq!(verified.len(), 2);
-    assert_eq!(verified[0].proof_kind(), ProofKind::Frame);
+    assert_eq!(verified[0].proof_kind(), ProofKind::TacticScript);
     assert_eq!(verified[1].proof_kind(), ProofKind::LoopVerification);
 }
 
@@ -6074,7 +6128,7 @@ fn frame_rejects_ensure_clause() {
             verifying "identity.c";
 
             int32 identity(int32 x) {
-                ensures returns_argument: result == x by frame;
+                ensures returns_argument: result == x by { execute(); frame(); }
             }
         "#;
 
@@ -6084,7 +6138,7 @@ fn frame_rejects_ensure_clause() {
     assert!(
         error
             .message()
-            .contains("`frame` only proves effect clauses"),
+            .contains("`frame` has no effect claim to prove"),
         "{}",
         error.message()
     );
@@ -6182,7 +6236,7 @@ fn immutable_allows_stack_local_writes() {
             verifying "count_to_one.c";
 
             int32 count_to_one() {
-                immutable by frame;
+                immutable by { execute(); frame(); }
                 ensures returns_one: result == 1 by auto;
             }
         "#;
@@ -6191,7 +6245,7 @@ fn immutable_allows_stack_local_writes() {
         .expect("stack-local writes should not count as external mutation");
 
     assert_eq!(verified.len(), 2);
-    assert_eq!(verified[0].proof_kind(), ProofKind::Frame);
+    assert_eq!(verified[0].proof_kind(), ProofKind::TacticScript);
 }
 
 #[test]
@@ -6835,7 +6889,7 @@ fn function_immutable_allows_nonwriting_loop_with_mutable_bound() {
                     invariant i <= n;
                     mutable p[0..n] by frame;
                 }
-                immutable by frame;
+                immutable by { execute(); frame(); }
                 ensures returns_n: result == n by auto;
             }
         "#;
@@ -6844,7 +6898,7 @@ fn function_immutable_allows_nonwriting_loop_with_mutable_bound() {
         .expect("a mutable upper bound does not imply the loop actually writes memory");
 
     assert_eq!(verified.len(), 2);
-    assert_eq!(verified[0].proof_kind(), ProofKind::Frame);
+    assert_eq!(verified[0].proof_kind(), ProofKind::TacticScript);
     assert_eq!(verified[1].proof_kind(), ProofKind::LoopVerification);
 }
 
@@ -6874,7 +6928,7 @@ fn function_mutable_uses_loop_effect_summary() {
                     invariant i <= n;
                     mutable p[0..n] by frame;
                 }
-                mutable p[0..n] by frame;
+                mutable p[0..n] by { execute(); frame(); }
                 ensures returns_n: result == n by auto;
             }
         "#;
@@ -6883,7 +6937,7 @@ fn function_mutable_uses_loop_effect_summary() {
         .expect("function-level mutable should consume loop effect summary");
 
     assert_eq!(verified.len(), 2);
-    assert_eq!(verified[0].proof_kind(), ProofKind::Frame);
+    assert_eq!(verified[0].proof_kind(), ProofKind::TacticScript);
     assert_eq!(verified[1].proof_kind(), ProofKind::LoopVerification);
 }
 
@@ -6913,7 +6967,7 @@ fn function_mutable_rejects_loop_effect_outside_function_bound() {
                     invariant i <= n;
                     mutable p[0..n] by frame;
                 }
-                mutable p[0..0] by frame;
+                mutable p[0..0] by { execute(); frame(); }
                 ensures returns_n: result == n by auto;
             }
         "#;
@@ -6959,7 +7013,7 @@ fn function_mutable_accepts_shifted_loop_effect_subset() {
                     invariant i <= n;
                     mutable (p + 1)[0..n - 1] by frame;
                 }
-                mutable p[0..n] by frame;
+                mutable p[0..n] by { execute(); frame(); }
                 ensures returns_n: result == n by auto;
             }
         "#;
@@ -6968,7 +7022,7 @@ fn function_mutable_accepts_shifted_loop_effect_subset() {
         .expect("function-level mutable should accept a shifted loop effect subset");
 
     assert_eq!(verified.len(), 2);
-    assert_eq!(verified[0].proof_kind(), ProofKind::Frame);
+    assert_eq!(verified[0].proof_kind(), ProofKind::TacticScript);
     assert_eq!(verified[1].proof_kind(), ProofKind::LoopVerification);
 }
 
@@ -6998,7 +7052,7 @@ fn function_immutable_rejects_writing_loop_effect_summary() {
                     invariant i <= n;
                     mutable p[0..n] by frame;
                 }
-                immutable by frame;
+                immutable by { execute(); frame(); }
                 ensures returns_n: result == n by auto;
             }
         "#;
@@ -7066,7 +7120,7 @@ fn loop_initialize_rejects_execution_tactics() {
                 for loop(0) {
                     invariant i >= 0;
                     initialize by {
-                        execute_step();
+                        step();
                         simp();
                     }
                 }
@@ -7080,7 +7134,7 @@ fn loop_initialize_rejects_execution_tactics() {
     assert!(
         error.message().contains("`initialize`")
             && error.message().contains("is a pure proof")
-            && error.message().contains("execute_step"),
+            && error.message().contains("step"),
         "{}",
         error.message()
     );
@@ -7106,7 +7160,7 @@ fn loop_preserve_requires_one_complete_iteration() {
                 for loop(0) {
                     invariant i >= 0;
                     preserve by {
-                        execute_step();
+                        step();
                         simp();
                     }
                 }
@@ -7205,13 +7259,13 @@ fn loop_phase_proofs_can_unfold_invariant_predicates() {
                     preserve by {
                         unfold(sorted);
                         unfold(sorted_range);
-                        execute_step();
+                        step();
                         close_invariants();
                     }
                     immutable by frame;
                 }
                 ensures still_sorted: sorted(p, 3) by {
-                    execute_rest();
+                    execute();
                     frame(loop(0));
                     unfold(sorted);
                     unfold(sorted_range);
@@ -7262,7 +7316,7 @@ fn verifies_symbolic_copy_segment_invariant() {
                 ensures source_unchanged: forall (int32 k) {
                     0 <= k and k < n implies src[k] == old(src[k])
                 } by {
-                    execute_rest();
+                    execute();
                     frame(loop(0));
                     simp();
                 }
@@ -7362,7 +7416,7 @@ fn auto_certificate_replays_for_loop_frame_claim() {
                 ensures source_unchanged: forall (int32 k) {
                     0 <= k and k < n implies src[k] == old(src[k])
                 } by {
-                    execute_rest();
+                    execute();
                     frame(loop(0));
                     simp();
                 }
@@ -7374,9 +7428,14 @@ fn auto_certificate_replays_for_loop_frame_claim() {
 
     assert_eq!(explicit_verified.len(), 1);
     assert_eq!(explicit_verified[0].proof_kind(), ProofKind::TacticScript);
+    let explicit_expected = [
+        ProofTactic::ExecuteRest,
+        ProofTactic::ContextualFrame(Some(CodeRegionRef::Loop(0))),
+        ProofTactic::Simp,
+    ];
     assert_eq!(
         explicit_verified[0].proof_tactics(),
-        Some(expected_tactics.as_slice())
+        Some(explicit_expected.as_slice())
     );
 }
 
@@ -7518,13 +7577,13 @@ fn step_and_execute_step_advance_one_concrete_loop_transition() {
             int32 count_two() {
                 ensures returns_two: result == 2 by {
                     step();
-                    execute_step();
                     step();
-                    execute_step();
                     step();
-                    execute_step();
                     step();
-                    execute_step();
+                    step();
+                    step();
+                    step();
+                    step();
                     simp();
                 }
             }
@@ -7561,7 +7620,7 @@ fn apply_loop_summary_advances_one_verified_loop_transition() {
                 ensures returns_two: result == 2 by {
                     step();
                     step();
-                    apply_loop_summary(loop(0));
+                    summarize(loop(0));
                     step();
                     simp();
                 }
@@ -7634,7 +7693,7 @@ fn apply_loop_summary_using_limits_context_to_explicit_premises() {
                 ensures returns_n: result == n by {
                     step();
                     step();
-                    apply_loop_summary(loop(0)) using {
+                    summarize(loop(0)) using {
                         fact n >= 0;
                         fact n <= 2147483647;
                     }
@@ -7669,7 +7728,7 @@ fn bounded_execute_resumes_and_explores_symbolic_branches() {
                 ensures result == 1 or result == 2 by {
                     step();
                     step();
-                    bounded_execute();
+                    execute();
                     normalize();
                     simp();
                 }
@@ -7949,7 +8008,7 @@ fn observed_cursor_facts_produce_replayable_surface_certificates() {
         } by {
             observe(input_cursor(owner));
             observe(readable_input(owner->data, owner->len));
-            execute_rest();
+            execute();
             frame();
             simp();
         }
@@ -7965,7 +8024,7 @@ fn observed_cursor_facts_produce_replayable_surface_certificates() {
         } by {
             unfold(input_cursor(owner));
             observe(readable_input(owner->data, owner->len));
-            execute_rest();
+            execute();
             have 0 <= owner->pos by { simp(); }
             have owner->pos <= owner->len by { simp(); }
             have separate(
@@ -8077,7 +8136,7 @@ fn explicit_store_step_with_unfolded_resource_facts_verifies() {
                 simp();
             }
             fold(owned_string(owner));
-            execute_step();
+            step();
             simp();
         }
     "#;
@@ -8143,7 +8202,7 @@ fn expanded_read_step_keeps_named_range_separation_premises() {
             have owner->len - 1 < owner->len by {
                 simp();
             }
-            execute_rest();
+            execute();
             have terminated_at(owner->data, owner->len) by {
                 unfold(terminated_at);
                 simp();
@@ -8162,7 +8221,7 @@ fn expanded_read_step_keeps_named_range_separation_premises() {
         }
     "#;
     let execute_offset = click_source
-        .find("execute_rest()")
+        .find("execute()")
         .expect("proof should contain execute_rest");
     let line = click_source[..execute_offset]
         .bytes()
@@ -8206,14 +8265,14 @@ verifying "bad.c";
 int32 good(int32 x) {
     ensures result == x;
 } by {
-    execute_rest();
+    execute();
     simp();
 }
 
 int32 bad(int32 x) {
     ensures result == x + 1;
 } by {
-    execute_rest();
+    execute();
     simp();
 }
 "#;
@@ -8253,19 +8312,19 @@ verifying "caller.c";
 int32 callee(int32 x) {
     ensures result == x + 1;
 } by {
-    execute_rest();
+    execute();
     simp();
 }
 
 int32 caller(int32 x) {
     ensures result == x + 1;
 } by {
-    execute_rest();
+    execute();
     simp();
 }
 "#;
     let sources = [("callee.c", callee_c), ("caller.c", caller_c)];
-    let caller_proof = click_source.rfind("execute_rest()").unwrap();
+    let caller_proof = click_source.rfind("execute()").unwrap();
     let position = expansion::position_at_offset(click_source, caller_proof);
 
     let error = verify_c0_sources_at(click_source, &sources, position.line, position.column)
@@ -8294,7 +8353,7 @@ verifying "caller.c";
 int32 callee(int32 x) {
     ensures result == x;
 } by {
-    execute_rest();
+    execute();
     simp();
 }
 
@@ -8302,7 +8361,7 @@ int32 caller(int32 x) {
     ensures result == x;
 } by {
     execute_until(statement(1));
-    execute_rest();
+    execute();
     simp();
 }
 "#;
@@ -8337,7 +8396,7 @@ verifying "caller.c";
 int32 callee(int32 x) {
     ensures result == x;
 } by {
-    execute_rest();
+    execute();
     simp();
 }
 
@@ -8347,19 +8406,19 @@ int32 caller(int32 x) {
     }
     ensures result == x;
 } by {
-    execute_step();
-    execute_rest();
+    step();
+    execute();
     simp();
 }
 "#;
     let sources = [("callee.c", callee_c), ("caller.c", caller_c)];
-    let selected = click_source.rfind("execute_step").unwrap();
+    let selected = click_source.rfind("step()").unwrap();
     let position = expansion::position_at_offset(click_source, selected);
 
     let expanded =
         expand_c0_tactic_source_at(click_source, &sources, position.line, position.column)
             .expect("structural traversal dependencies should be verified before expansion");
-    assert!(!expanded.contains("execute_step();"));
+    assert!(!expanded.contains("    step();"));
 }
 
 #[test]
@@ -8383,14 +8442,14 @@ verifying "caller.c";
 int32 callee(int32 x) {
     ensures result == x;
 } by {
-    execute_rest();
+    execute();
     simp();
 }
 
 int32 caller(int32 x) {
     ensures result == x;
 } by {
-    execute_rest();
+    execute();
     simp();
 }
 "#;
@@ -8406,11 +8465,7 @@ int32 caller(int32 x) {
         c0_tactic_source_position(&expanded, &sources, "caller.contract", 0).unwrap();
 
     let verified = session
-        .verify_at(
-            &expanded,
-            expanded_position.line,
-            expanded_position.column,
-        )
+        .verify_at(&expanded, expanded_position.line, expanded_position.column)
         .expect("session should verify the rewritten caller");
     assert!(
         verified
@@ -8475,23 +8530,12 @@ int32 count(int32 n) {
     let sources = [("count.c", c_source)];
     let (session, _) =
         C0VerificationSession::new(click_source, &sources).expect("baseline should verify");
-    let omitted = c0_tactic_source_position(
-        click_source,
-        &sources,
-        "count.loop(0).initialize",
-        0,
-    )
-    .expect("omitted initialization should have a selector");
-    let expanded =
-        expand_c0_tactic_source_at(click_source, &sources, omitted.line, omitted.column)
-            .expect("omitted initialization should expand");
-    let relocated = c0_tactic_source_position(
-        &expanded,
-        &sources,
-        "count.loop(0).initialize",
-        0,
-    )
-    .expect("expanded initialization should have a selector");
+    let omitted = c0_tactic_source_position(click_source, &sources, "count.loop(0).initialize", 0)
+        .expect("omitted initialization should have a selector");
+    let expanded = expand_c0_tactic_source_at(click_source, &sources, omitted.line, omitted.column)
+        .expect("omitted initialization should expand");
+    let relocated = c0_tactic_source_position(&expanded, &sources, "count.loop(0).initialize", 0)
+        .expect("expanded initialization should have a selector");
 
     session
         .verify_at(&expanded, relocated.line, relocated.column)

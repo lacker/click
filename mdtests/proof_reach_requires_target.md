@@ -1,4 +1,4 @@
-# advance requires every case to reach its target
+# reach requires every case to reach its target
 
 ```c filename=advance_wrong_target.c
 int32 advance_wrong_target(int32 x) {
@@ -17,26 +17,26 @@ verifying "advance_wrong_target.c";
 
 int32 advance_wrong_target(int32 x) {
     ensures result == result by {
-        execute_step();
-        advance(statement(2).exit)
+        step();
+        reach(statement(2).exit)
         ensuring {
             fact y >= 0;
         }
         by {
             if x >= 0 {
-                execute_then_step();
-                execute_step();
+                step();
+                step();
             } else {
-                execute_else_step();
-                execute_step();
+                step();
+                step();
             }
         }
-        execute_step();
+        step();
         simp();
     }
 }
 ```
 
 ```expect
-fail: `advance` branch did not reach `statement(2).exit`
+fail: `reach` branch did not reach `statement(2).exit`
 ```

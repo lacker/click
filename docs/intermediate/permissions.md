@@ -137,7 +137,7 @@ int32 caller(int32 p[]) {
 ```
 
 The caller must have a resource that covers every callee resource requirement.
-`execute_step()` checks the pure and resource preconditions, advances across the
+`step()` checks the pure and resource preconditions, advances across the
 entire call, transfers the declared resources, applies the memory effect, and
 adds the pure postconditions. It does not execute the callee body. The callee
 must therefore have been verified earlier in the file; otherwise Click reports
@@ -242,7 +242,7 @@ int32 return_fd(int32 fd) {
     ensures result >= 0 by {
         observe(live_fd(fd));
         observe(nonnegative_fd(fd));
-        execute_rest();
+        execute();
         simp();
     }
 }
@@ -273,13 +273,13 @@ int32 complete_once(int32 flag[]) {
 
     produces called(flag) by {
         unfold(uncalled(flag));
-        execute_rest();
+        execute();
         fold(called(flag));
     }
 
     ensures result == 1 by {
         unfold(uncalled(flag));
-        execute_rest();
+        execute();
         fold(called(flag));
         simp();
     }
@@ -302,7 +302,7 @@ int32 init_once(int32 flag[]) {
     consumes flag[0..1];
 
     produces uncalled(flag) by {
-        execute_rest();
+        execute();
         fold(uncalled(flag));
     }
 }

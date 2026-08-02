@@ -52,7 +52,7 @@ int32 owned_segmented_buffer_init(
     ensures owner->first_data == first_data;
     ensures owner->second_data == second_data;
 } by {
-    execute_rest();
+    execute();
     have 0 <= owner->first_len by { simp(); }
     have 0 <= owner->second_len by { simp(); }
     fold(owned_segment(owner->first_data, owner->first_len));
@@ -105,7 +105,7 @@ int32 owned_segmented_buffer_set_first(
 } by {
     unfold(owned_segmented_buffer(owner));
     unfold(owned_segment(owner->first_data, owner->first_len));
-    execute_step();
+    step();
     step using {
         fact 0 <= index;
         fact index < owner->first_len;
@@ -145,7 +145,7 @@ int32 owned_segmented_buffer_set_second(
 } by {
     unfold(owned_segmented_buffer(owner));
     unfold(owned_segment(owner->second_data, owner->second_len));
-    execute_step();
+    step();
     step using {
         fact 0 <= index;
         fact index < owner->second_len;
@@ -179,7 +179,7 @@ int32 owned_segmented_buffer_swap(struct owned_segmented_buffer* owner) {
     ensures owner->second_data == old(owner->first_data);
 } by {
     unfold(owned_segmented_buffer(owner));
-    execute_rest();
+    execute();
     have 1 <= owner->first_len by { simp(); }
     have 1 <= owner->second_len by { simp(); }
     fold(owned_segmented_buffer(owner));

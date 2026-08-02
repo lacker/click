@@ -1,6 +1,6 @@
 # Simple statement step enters an exact branch
 
-`step()` can advance through a C `if` when an exact pure fact determines its
+`step()` can reach through a C `if` when an exact pure fact determines its
 condition. It enters the selected arm without executing the arm body.
 
 ```c filename=simple_statement_step_branch.c

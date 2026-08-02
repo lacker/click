@@ -1,4 +1,4 @@
-# execute_rest order reasoning terminates
+# execute order reasoning terminates
 
 Order facts over a memory-loaded index can enter pointer and alias reasoning
 while certifying a batched execution. Re-entering the same condition query
@@ -41,7 +41,7 @@ int32 increment(struct counter* owner) {
     have owner->value < owner->cap by simp;
     have 0 <= owner->value by simp;
     have owner->value < 1 by simp;
-    execute_rest();
+    execute();
     frame();
     simp();
 }

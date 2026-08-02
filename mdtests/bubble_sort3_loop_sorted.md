@@ -44,7 +44,7 @@ int32 bubble_sort3_loop(int32 p[3]) {
     requires loadable(p[0..3]);
     consumes p[0..3];
     ensures sorted: sorted(p, 3) by {
-        bounded_execute();
+        execute();
         unfold(sorted);
         unfold(sorted_range);
     }

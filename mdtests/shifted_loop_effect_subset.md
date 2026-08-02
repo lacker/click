@@ -30,7 +30,7 @@ int32 shifted_loop_effect_subset(int32 p[], int32 n) {
         invariant i <= n;
         mutable (p + 1)[0..n - 1] by frame;
     }
-    mutable p[0..n] by frame;
+    mutable p[0..n] by auto;
     ensures returns_n: result == n;
 }
 ```

@@ -23,9 +23,9 @@ verifying "helper.c";
 
 int32 caller(int32 x) {
     ensures result == x by {
-        execute_step();
-        execute_step();
-        execute_step();
+        step();
+        step();
+        step();
         simp();
     }
 }

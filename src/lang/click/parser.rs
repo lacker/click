@@ -1202,24 +1202,17 @@ impl Parser {
 
     fn parse_effect_clause(&mut self) -> Result<EffectClause, ClickError> {
         let effect = match self.next() {
-            Some(Token::Ident(kind)) if kind == "immutable" || kind == "mutable" =>
-            {
+            Some(Token::Ident(kind)) if kind == "immutable" || kind == "mutable" => {
                 self.parse_effect_after_keyword(kind)?
             }
             Some(Token::Ident(kind)) => {
-                return Err(self.error(format!(
-                    "expected `immutable` or `mutable`, got `{kind}`"
-                )));
+                return Err(self.error(format!("expected `immutable` or `mutable`, got `{kind}`")));
             }
             Some(token) => {
-                return Err(self.error(format!(
-                    "expected `immutable` or `mutable`, got {token:?}"
-                )));
+                return Err(self.error(format!("expected `immutable` or `mutable`, got {token:?}")));
             }
             None => {
-                return Err(self.error(
-                    "expected `immutable` or `mutable`, got end of input",
-                ));
+                return Err(self.error("expected `immutable` or `mutable`, got end of input"));
             }
         };
         let proof = self.parse_proof_clause_or_default()?;
@@ -1640,6 +1633,29 @@ impl Parser {
 
     fn parse_proof_tactic(&mut self) -> Result<ProofTactic, ClickError> {
         let name = self.expect_ident("tactic")?;
+        if let Some(replacement) = match name.as_str() {
+            "conjunction" => Some("`conjunction()` was renamed to `split()`"),
+            "apply_loop_summary" => {
+                Some("`apply_loop_summary(...)` was renamed to `summarize(...)`")
+            }
+            "execute_rest" | "symbolic_execute" => Some("this tactic was renamed to `execute()`"),
+            "execute_step" => Some("`execute_step()` was replaced by smart `step()`"),
+            "execute_then_step" | "execute_else_step" => Some(
+                "branch-specific execution tactics were removed; use smart `step()` or proof-level `if`",
+            ),
+            "bounded_execute" => Some(
+                "`bounded_execute()` was removed; use `execute()` or `by auto;` and configure the tool budget",
+            ),
+            "advance" => Some("`advance(...)` was renamed to `reach(...)`"),
+            "calculate" => Some("`calculate(...)` was merged into `derive(...)`"),
+            "double_negation" => {
+                Some("`double_negation()` was removed; use `intro(); contradiction(P);`")
+            }
+            "vacuous" => Some("`vacuous()` was removed; use `intro(); contradiction(antecedent);`"),
+            _ => None,
+        } {
+            return Err(self.error(replacement));
+        }
         if name == "have" {
             let proposition = self.parse_proposition()?;
             let proof = self.parse_by_clause()?;
@@ -1666,7 +1682,7 @@ impl Parser {
                 else_tactics,
             }));
         }
-        if name == "advance" {
+        if name == "reach" {
             self.expect(Token::LParen)?;
             let target = self.parse_program_point_ref()?;
             self.expect(Token::RParen)?;
@@ -1674,7 +1690,7 @@ impl Parser {
             self.expect(Token::LBrace)?;
             let mut assertions = Vec::new();
             while self.peek() != Some(&Token::RBrace) {
-                let kind = self.expect_ident("advance assertion kind")?;
+                let kind = self.expect_ident("reach assertion kind")?;
                 let assertion = match kind.as_str() {
                     "fact" => ProofAssertion::Fact(self.parse_proposition()?),
                     "owns" => ProofAssertion::Resource(
@@ -1685,7 +1701,7 @@ impl Parser {
                     ),
                     _ => {
                         return Err(self.error(format!(
-                            "expected advance assertion `fact`, `owns`, or `views`, got `{kind}`"
+                            "expected reach assertion `fact`, `owns`, or `views`, got `{kind}`"
                         )));
                     }
                 };
@@ -1697,7 +1713,7 @@ impl Parser {
             }
             self.expect(Token::RBrace)?;
             self.expect_ident_spelling("by")?;
-            let tactics = self.parse_tactic_block("`advance` proof")?;
+            let tactics = self.parse_tactic_block("`reach` proof")?;
             if self.peek() == Some(&Token::Semicolon) {
                 self.position += 1;
             }
@@ -1707,7 +1723,7 @@ impl Parser {
                 tactics,
             }));
         }
-        if matches!(name.as_str(), "derive" | "calculate") {
+        if name == "derive" {
             self.expect(Token::LParen)?;
             let proposition = self.parse_proposition()?;
             self.expect(Token::RParen)?;
@@ -1732,17 +1748,13 @@ impl Parser {
                 proposition,
                 premises,
             };
-            return Ok(if name == "derive" {
-                ProofTactic::Derive(derivation)
-            } else {
-                ProofTactic::Calculate(derivation)
-            });
+            return Ok(ProofTactic::Derive(derivation));
         }
         let tactic = match name.as_str() {
             "step" => {
                 if self.peek() == Some(&Token::LParen) {
                     self.expect_empty_tactic_args(&name)?;
-                    ProofTactic::Step
+                    ProofTactic::ExecuteStep
                 } else {
                     self.expect_ident_spelling("using")?;
                     self.expect(Token::LBrace)?;
@@ -1753,11 +1765,6 @@ impl Parser {
                         self.expect(Token::Semicolon)?;
                     }
                     self.expect(Token::RBrace)?;
-                    if premises.is_empty() {
-                        return Err(self.error(
-                            "`step using` requires at least one explicit premise; use `step()` without premises",
-                        ));
-                    }
                     if self.peek() == Some(&Token::Semicolon) {
                         self.position += 1;
                     }
@@ -1768,12 +1775,12 @@ impl Parser {
                 self.expect_empty_tactic_args(&name)?;
                 ProofTactic::CloseInvariants
             }
-            "apply_loop_summary" => {
+            "summarize" => {
                 self.expect(Token::LParen)?;
                 let region_ref = self.parse_code_region_ref()?;
                 self.expect(Token::RParen)?;
                 if self.peek_ident() != Some("using") {
-                    ProofTactic::ApplyLoopSummary(region_ref)
+                    ProofTactic::ContextualLoopSummary(region_ref)
                 } else {
                     self.position += 1;
                     self.expect(Token::LBrace)?;
@@ -1784,11 +1791,6 @@ impl Parser {
                         self.expect(Token::Semicolon)?;
                     }
                     self.expect(Token::RBrace)?;
-                    if premises.is_empty() {
-                        return Err(self.error(
-                            "`apply_loop_summary using` requires at least one explicit premise",
-                        ));
-                    }
                     if self.peek() == Some(&Token::Semicolon) {
                         self.position += 1;
                     }
@@ -1798,23 +1800,7 @@ impl Parser {
                     });
                 }
             }
-            "symbolic_execute" => {
-                self.expect_empty_tactic_args(&name)?;
-                ProofTactic::ExecuteRest
-            }
-            "execute_step" => {
-                self.expect_empty_tactic_args(&name)?;
-                ProofTactic::ExecuteStep
-            }
-            "execute_then_step" => {
-                self.expect_empty_tactic_args(&name)?;
-                ProofTactic::ExecuteThenStep
-            }
-            "execute_else_step" => {
-                self.expect_empty_tactic_args(&name)?;
-                ProofTactic::ExecuteElseStep
-            }
-            "execute_rest" => {
+            "execute" => {
                 self.expect_empty_tactic_args(&name)?;
                 ProofTactic::ExecuteRest
             }
@@ -1824,10 +1810,6 @@ impl Parser {
                 self.expect(Token::RParen)?;
                 ProofTactic::ExecuteUntil(region_ref)
             }
-            "bounded_execute" => {
-                self.expect_empty_tactic_args(&name)?;
-                ProofTactic::BoundedExecute
-            }
             "frame" => {
                 self.expect(Token::LParen)?;
                 let region_ref = if self.peek() == Some(&Token::RParen) {
@@ -1836,7 +1818,26 @@ impl Parser {
                     Some(self.parse_code_region_ref()?)
                 };
                 self.expect(Token::RParen)?;
-                ProofTactic::Frame(region_ref)
+                if self.peek_ident() != Some("using") {
+                    ProofTactic::ContextualFrame(region_ref)
+                } else {
+                    self.position += 1;
+                    self.expect(Token::LBrace)?;
+                    let mut premises = Vec::new();
+                    while self.peek() != Some(&Token::RBrace) {
+                        self.expect_ident_spelling("fact")?;
+                        premises.push(self.parse_proposition()?);
+                        self.expect(Token::Semicolon)?;
+                    }
+                    self.expect(Token::RBrace)?;
+                    if self.peek() == Some(&Token::Semicolon) {
+                        self.position += 1;
+                    }
+                    return Ok(ProofTactic::FrameUsing {
+                        region: region_ref,
+                        premises,
+                    });
+                }
             }
             "unfold" => {
                 self.expect(Token::LParen)?;
@@ -1911,7 +1912,7 @@ impl Parser {
                 self.expect_empty_tactic_args(&name)?;
                 ProofTactic::Intro
             }
-            "conjunction" => {
+            "split" => {
                 self.expect_empty_tactic_args(&name)?;
                 ProofTactic::Conjunction
             }
@@ -1922,14 +1923,6 @@ impl Parser {
             "right" => {
                 self.expect_empty_tactic_args(&name)?;
                 ProofTactic::Right
-            }
-            "double_negation" => {
-                self.expect_empty_tactic_args(&name)?;
-                ProofTactic::DoubleNegation
-            }
-            "vacuous" => {
-                self.expect_empty_tactic_args(&name)?;
-                ProofTactic::Vacuous
             }
             "contradiction" => {
                 self.expect(Token::LParen)?;
@@ -2894,10 +2887,9 @@ impl Parser {
         let at = self.error_context();
         match self.next() {
             Some(Token::Ident(name)) => Ok(name),
-            Some(token) => Err(self.error_at(
-                at,
-                format!("expected {expected}, got {}", token.describe()),
-            )),
+            Some(token) => {
+                Err(self.error_at(at, format!("expected {expected}, got {}", token.describe())))
+            }
             None => Err(self.error_at(at, format!("expected {expected}, got end of input"))),
         }
     }
@@ -2918,10 +2910,9 @@ impl Parser {
         let at = self.error_context();
         match self.next() {
             Some(Token::Number(value)) => Ok(value),
-            Some(token) => Err(self.error_at(
-                at,
-                format!("expected {expected}, got {}", token.describe()),
-            )),
+            Some(token) => {
+                Err(self.error_at(at, format!("expected {expected}, got {}", token.describe())))
+            }
             None => Err(self.error_at(at, format!("expected {expected}, got end of input"))),
         }
     }
@@ -2935,10 +2926,9 @@ impl Parser {
         let at = self.error_context();
         match self.next() {
             Some(Token::String(value)) => Ok(value),
-            Some(token) => Err(self.error_at(
-                at,
-                format!("expected {expected}, got {}", token.describe()),
-            )),
+            Some(token) => {
+                Err(self.error_at(at, format!("expected {expected}, got {}", token.describe())))
+            }
             None => Err(self.error_at(at, format!("expected {expected}, got end of input"))),
         }
     }
@@ -2949,11 +2939,7 @@ impl Parser {
             Some(token) if token == expected => Ok(()),
             Some(token) => Err(self.error_at(
                 at,
-                format!(
-                    "expected {}, got {}",
-                    expected.describe(),
-                    token.describe()
-                ),
+                format!("expected {}, got {}", expected.describe(), token.describe()),
             )),
             None => Err(self.error_at(
                 at,
@@ -3172,7 +3158,9 @@ fn tokenize(source: &str) -> Result<(Vec<Token>, Vec<SourcePosition>), ClickErro
                 }
                 let spelling: String = chars[start..index].iter().collect();
                 let value = spelling.parse::<u32>().map_err(|_| {
-                    ClickError::new(format!("{position}: number `{spelling}` does not fit in u32"))
+                    ClickError::new(format!(
+                        "{position}: number `{spelling}` does not fit in u32"
+                    ))
                 })?;
                 if chars.get(index) == Some(&'u') && chars.get(index + 1) == Some(&'8') {
                     if chars

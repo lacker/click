@@ -22,7 +22,7 @@ int32 init_bad(int32 flag[]) {
     consumes flag[0..1];
 
     produces uncalled(flag) by {
-        execute_rest();
+        execute();
         fold(uncalled(flag));
     }
 }

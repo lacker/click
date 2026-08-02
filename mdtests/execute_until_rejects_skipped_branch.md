@@ -18,9 +18,9 @@ int32 execute_until_skipped_branch(int32 flag) {
     requires flag != 0;
 
     ensures result == 1 by {
-        execute_then_step();
+        step();
         execute_until(statement(2));
-        execute_rest();
+        execute();
         simp();
     }
 }

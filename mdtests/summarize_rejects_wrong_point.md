@@ -1,6 +1,6 @@
-# `apply_loop_summary` reports the frontier it was applied at
+# `summarize` reports the frontier it was applied at
 
-`apply_loop_summary(loop(N))` is a simple tactic that only applies at that
+`summarize(loop(N))` is a simple tactic that only applies at that
 loop's entry. Applied anywhere else it must name the loop it was asked for
 and the statement the replay frontier actually sits on, rather than stepping
 a frontier that has no loop to summarize.
@@ -27,13 +27,13 @@ int32 sum_to(int32 n) {
     }
 
     ensures nonneg: result >= 0 by {
-        execute_rest();
-        apply_loop_summary(loop(0));
+        execute();
+        summarize(loop(0));
         simp();
     }
 }
 ```
 
 ```expect
-fail: `apply_loop_summary(loop(0))` is not at that loop's entry
+fail: `summarize(loop(0))` is not at that loop's entry
 ```

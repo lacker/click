@@ -29,19 +29,24 @@ fn apply_logical_goal_tactic(
                 *goal = *body;
                 Ok(false)
             }
+            Proposition::Not(body) => {
+                if !available.contains(&body) {
+                    available.push(*body);
+                }
+                *goal = Proposition::ConditionIs(ConditionTerm::Constant(false), true);
+                Ok(false)
+            }
             _ => Err(format!(
-                "`intro` requires an implication or universal goal, got {goal:?}"
+                "`intro` requires an implication, negation, or universal goal, got {goal:?}"
             )),
         },
         ProofTactic::Conjunction => {
             let Proposition::And(left, right) = goal else {
-                return Err(format!(
-                    "`conjunction` requires a conjunction goal, got {goal:?}"
-                ));
+                return Err(format!("`split` requires a conjunction goal, got {goal:?}"));
             };
             if !available.contains(left.as_ref()) || !available.contains(right.as_ref()) {
                 return Err(format!(
-                    "`conjunction` requires both conjuncts as exact facts: {left:?} and {right:?}"
+                    "`split` requires both conjuncts as exact facts: {left:?} and {right:?}"
                 ));
             }
             Ok(true)
@@ -139,20 +144,9 @@ fn pointer_offsets_match_by_term_equivalence(
         ) => left_width == right_width && terms_equivalent(left, right),
         (PointerOffsetTerm::Add(left_a, left_b), PointerOffsetTerm::Add(right_a, right_b)) => {
             (pointer_offsets_match_by_term_equivalence(left_a, right_a, terms_equivalent)
-                && pointer_offsets_match_by_term_equivalence(
-                    left_b,
-                    right_b,
-                    terms_equivalent,
-                ))
-                || (pointer_offsets_match_by_term_equivalence(
-                    left_a,
-                    right_b,
-                    terms_equivalent,
-                ) && pointer_offsets_match_by_term_equivalence(
-                    left_b,
-                    right_a,
-                    terms_equivalent,
-                ))
+                && pointer_offsets_match_by_term_equivalence(left_b, right_b, terms_equivalent))
+                || (pointer_offsets_match_by_term_equivalence(left_a, right_b, terms_equivalent)
+                    && pointer_offsets_match_by_term_equivalence(left_b, right_a, terms_equivalent))
         }
         _ => false,
     }
@@ -241,12 +235,8 @@ fn equal_by_premise_chain(
     let mut add_equality = |left: &Bitvector32Term, right: &Bitvector32Term| {
         let left = left.clone();
         let right = right.clone();
-        let left_class = classes
-            .iter()
-            .position(|class| class.contains(&left));
-        let right_class = classes
-            .iter()
-            .position(|class| class.contains(&right));
+        let left_class = classes.iter().position(|class| class.contains(&left));
+        let right_class = classes.iter().position(|class| class.contains(&right));
         match (left_class, right_class) {
             (Some(a), Some(b)) if a != b => {
                 let merged = classes.remove(a.max(b));
@@ -289,20 +279,20 @@ fn equal_by_premise_chain(
     let address_terms_linked = |left: &Bitvector32Term, right: &Bitvector32Term| {
         terms_linked(left, right)
             || classes.iter().any(|class| {
-                class
-                    .iter()
-                    .any(|term| terms_equivalent(term, left))
-                    && class
-                        .iter()
-                        .any(|term| terms_equivalent(term, right))
+                class.iter().any(|term| terms_equivalent(term, left))
+                    && class.iter().any(|term| terms_equivalent(term, right))
             })
             || terms_equivalent(left, right)
     };
     if terms_linked(&target_left, &target_right)
         || terms_equivalent(&target_left, &target_right)
         || classes.iter().any(|class| {
-            class.iter().any(|term| terms_equivalent(term, &target_left))
-                && class.iter().any(|term| terms_equivalent(term, &target_right))
+            class
+                .iter()
+                .any(|term| terms_equivalent(term, &target_left))
+                && class
+                    .iter()
+                    .any(|term| terms_equivalent(term, &target_right))
         })
     {
         return true;
@@ -315,8 +305,7 @@ fn equal_by_premise_chain(
         else {
             return false;
         };
-        let (Bitvector32Term::MemoryLoad(memory, pointer), value) =
-            (left.as_ref(), right.as_ref())
+        let (Bitvector32Term::MemoryLoad(memory, pointer), value) = (left.as_ref(), right.as_ref())
         else {
             return false;
         };
@@ -395,9 +384,17 @@ fn check_atomic_derivation_goal(
         .map(normalize_direct_atomic_memory_loads)
         .collect::<Vec<_>>();
     let normalized_target = normalize_direct_atomic_memory_loads(&target);
+    if matches!(
+        normalize_proposition(&normalized_target),
+        SimpProposition::True
+    ) {
+        return Ok(());
+    }
     let premise_assumptions = assumptions_from_propositions(&premises);
     let premise_only_derivation = match tactic {
-        ProofTactic::Derive(_) => premise_assumptions.derive_atomic_proposition(&target),
+        ProofTactic::Derive(_) => premise_assumptions
+            .derive_atomic_proposition(&target)
+            .or_else(|| premise_assumptions.derive_simp_atomic_proposition(&target)),
         ProofTactic::Calculate(_) => premise_assumptions.derive_simp_atomic_proposition(&target),
         _ => None,
     };
@@ -470,7 +467,9 @@ fn check_atomic_derivation_goal(
         match tactic {
             ProofTactic::Derive(_) => assumptions
                 .derive_atomic_proposition(target)
-                .or_else(|| assumptions.derive_proposition(target)),
+                .or_else(|| assumptions.derive_proposition(target))
+                .or_else(|| assumptions.derive_simp_atomic_proposition(target))
+                .or_else(|| assumptions.derive_simp_proposition(target)),
             ProofTactic::Calculate(_) => assumptions
                 .derive_simp_atomic_proposition(target)
                 .or_else(|| assumptions.derive_simp_proposition(target)),
@@ -505,12 +504,8 @@ fn check_atomic_derivation_goal(
         if canonical_premises == normalized_premises && canonical_target == normalized_target {
             return None;
         }
-        derive_from(&canonical_premises, &canonical_target).or_else(|| {
-            derive_from(
-                &with_effect_context(&canonical_premises),
-                &canonical_target,
-            )
-        })
+        derive_from(&canonical_premises, &canonical_target)
+            .or_else(|| derive_from(&with_effect_context(&canonical_premises), &canonical_target))
     });
     if derivation.is_none()
         && (pointer_offset_equality_by_frame(&normalized_target, available)
@@ -1064,9 +1059,7 @@ fn pure_theorem_surface_certificate(
             .filter_map(Requirement::proposition)
             .cloned()
             .collect::<Vec<_>>();
-        if let Some(tactics) =
-            lower_pure_branching_tactics(surface_goal, &premise_pool, tactics)
-        {
+        if let Some(tactics) = lower_pure_branching_tactics(surface_goal, &premise_pool, tactics) {
             return TacticCertificate::from_proof_tactics(&tactics).map_err(|error| {
                 ClickError::new(format!(
                     "smart proof for `{claim_label}` produced an invalid branching certificate: {error:?}"
@@ -1449,7 +1442,7 @@ struct ProofAdvanceCheck {
 }
 
 // Pure proofs and point-local `have` proofs use flat logical cases. Execution
-// proofs use `InternalProofNode`, where `advance` has region-join semantics.
+// proofs use `InternalProofNode`, where `reach` has region-join semantics.
 fn expand_proof_if_cases(
     tactics: &[ProofTactic],
     claim_label: &str,
@@ -2634,10 +2627,8 @@ pub(super) fn initial_claim_context(
     ),
     ClickError,
 > {
-    let (mut state, arguments) = initial_call_state(
-        function_block.requires(),
-        parsed_function.parameters(),
-    )?;
+    let (mut state, arguments) =
+        initial_call_state(function_block.requires(), parsed_function.parameters())?;
     state = materialize_folded_composite_resource_cells(
         resource_environment,
         parsed_function.parameters(),
@@ -2934,7 +2925,7 @@ pub(super) fn prove_claim_by_frame(
         )));
     }
 
-    let tactics = [ProofTactic::ExecuteRest, ProofTactic::ContextualFrame];
+    let tactics = [ProofTactic::ContextualFrame(None)];
     let mut theorems = prove_claim_by_tactics(
         source_path,
         function_block,
@@ -2978,7 +2969,7 @@ pub(super) fn prove_claim_by_simp(
         )));
     }
 
-    let tactics = [ProofTactic::ExecuteRest, ProofTactic::Simp];
+    let tactics = [ProofTactic::Simp];
     let mut theorems = prove_claim_by_tactics(
         source_path,
         function_block,
@@ -3057,7 +3048,7 @@ struct TacticReplayState {
     /// does not record a function-entry snapshot behaves exactly as before.
     function_entry_state: Option<CState>,
     concrete_loop_execution: bool,
-    /// The execution frontier was intentionally replaced by an `advance`
+    /// The execution frontier was intentionally replaced by an `reach`
     /// interface. Its state is a specification abstraction, not an exact
     /// symbolic body outcome; whole-function kernel certification checks every
     /// concrete path before any contract claim is exported.
@@ -3550,6 +3541,11 @@ enum PostExecutionTactic {
     Rewrite(ClickProposition),
     FrameRegion(CodeRegionRef),
     Frame,
+    FrameUsing {
+        region: Option<CodeRegionRef>,
+        premises: Vec<ClickProposition>,
+        facts: Vec<Proposition>,
+    },
     CertifiedFrame(Vec<Vec<PropositionDerivation>>),
     Simp,
 }
@@ -3607,7 +3603,8 @@ fn post_execution_tactic_timing(post_tactic: &PostExecutionTactic) -> (&'static 
         PostExecutionTactic::Rewrite(_) => ("rewrite", "simple"),
         PostExecutionTactic::FrameRegion(_) => ("frame", "simple"),
         PostExecutionTactic::Frame => ("frame", "simple"),
-        PostExecutionTactic::CertifiedFrame(_) => ("certified_frame", "simple"),
+        PostExecutionTactic::FrameUsing { .. } => ("frame", "simple"),
+        PostExecutionTactic::CertifiedFrame(_) => ("frame", "simple"),
     }
 }
 
@@ -4234,7 +4231,12 @@ fn snapshot_bridged_fact_is_available_under(
     else {
         return false;
     };
-    snapshot_bridge_proves(&required_condition, &candidates, assumptions.clone(), framing)
+    snapshot_bridge_proves(
+        &required_condition,
+        &candidates,
+        assumptions.clone(),
+        framing,
+    )
 }
 
 /// Normalises `required` and collects the available conjuncts that could be
@@ -6154,8 +6156,7 @@ fn verify_execution_proofs_forward(
                     && !source_tactics.iter().any(|tactic| {
                         matches!(
                             tactic,
-                            ProofTactic::ApplyTheorem(_)
-                                | ProofTactic::ApplyTheoremUsing { .. }
+                            ProofTactic::ApplyTheorem(_) | ProofTactic::ApplyTheoremUsing { .. }
                         )
                     })
                 {
@@ -6333,26 +6334,25 @@ fn plan_point_pure_goal_certificate(
 ) -> Result<(Proposition, TacticCertificate), ClickError> {
     let applied_theorem_script;
     let lowered_applied_theorem_script = matches!(proof, Proof::Script(tactics)
-        if tactics.iter().any(|tactic| matches!(
-            tactic,
-            ProofTactic::ApplyTheorem(_) | ProofTactic::ApplyTheoremUsing { .. }
-        ))
-            && tactics.iter().all(|tactic| {
-                matches!(tactic.class(), TacticClass::Simple(_))
-                    || matches!(tactic, ProofTactic::Simp | ProofTactic::ApplyTheorem(_))
-            }));
-    let proof = if let Proof::Script(tactics) = proof
-        && tactics
-            .iter()
-            .any(|tactic| matches!(
-                tactic,
-                ProofTactic::ApplyTheorem(_) | ProofTactic::ApplyTheoremUsing { .. }
-            ))
+    if tactics.iter().any(|tactic| matches!(
+        tactic,
+        ProofTactic::ApplyTheorem(_) | ProofTactic::ApplyTheoremUsing { .. }
+    ))
         && tactics.iter().all(|tactic| {
             matches!(tactic.class(), TacticClass::Simple(_))
                 || matches!(tactic, ProofTactic::Simp | ProofTactic::ApplyTheorem(_))
+        }));
+    let proof = if let Proof::Script(tactics) = proof
+        && tactics.iter().any(|tactic| {
+            matches!(
+                tactic,
+                ProofTactic::ApplyTheorem(_) | ProofTactic::ApplyTheoremUsing { .. }
+            )
         })
-    {
+        && tactics.iter().all(|tactic| {
+            matches!(tactic.class(), TacticClass::Simple(_))
+                || matches!(tactic, ProofTactic::Simp | ProofTactic::ApplyTheorem(_))
+        }) {
         // An applied theorem's conclusion becomes an available fact, so the
         // trailing smart `simp` lowers to the deterministic `assumption` and
         // a bare `apply` lowers to `apply using` with the theorem's own
@@ -6977,16 +6977,17 @@ fn verify_loop_initialization_pure_proof(
         let prefix_is_explicit = tactics[..invariant_start]
             .iter()
             .all(|tactic| matches!(tactic, ProofTactic::UnfoldPredicate(_)));
-        let invariants_match = tactics[invariant_start..]
-            .iter()
-            .zip(&invariant_items)
-            .all(|(tactic, item)| {
-                matches!(
-                    tactic,
-                    ProofTactic::Have(have)
-                        if item.proposition() == Some(&have.proposition)
-                )
-            });
+        let invariants_match =
+            tactics[invariant_start..]
+                .iter()
+                .zip(&invariant_items)
+                .all(|(tactic, item)| {
+                    matches!(
+                        tactic,
+                        ProofTactic::Have(have)
+                            if item.proposition() == Some(&have.proposition)
+                    )
+                });
         (prefix_is_explicit && invariants_match)
             .then(|| TacticCertificate::from_proof_tactics(tactics).ok())
             .flatten()
@@ -7450,15 +7451,12 @@ fn verify_one_loop_preservation_proof(
     );
 
     let proof_claims = [];
-    // Positive closer results from the planner half, keyed by the exact
-    // inputs that vary between contexts: the back-edge state and the pure
-    // facts the closer's assumptions are built from. `loop_entry_state` and
-    // `invariant_checks` are identical for both halves by construction. The
-    // certificate replay below re-runs the same deterministic derivation on
-    // identical inputs, so an exact-key hit reuses the planner's Ok instead
-    // of re-deriving it; any input difference falls through to the full
-    // check, so a would-fail replay can never be turned into a pass.
-    let mut verified_closer_inputs: Vec<(CState, Vec<Proposition>)> = Vec::new();
+    // Positive closer results from the planner half, keyed by the certificate
+    // path that produced them. Replay starts from the same loop-entry context
+    // and checks every deterministic leaf tactic, so reaching the same case
+    // path reproduces the closer inputs without an expensive deep comparison
+    // of snapshot-rich states and proposition sets.
+    let mut verified_closer_paths: Vec<Vec<ProofCaseChoice>> = Vec::new();
     let program = build_internal_proof(tactics, &claim_label)?;
     let sentinel = CStatement::Return(CExpression::Value(int32(0)));
     let remaining = c_seq(body.clone(), sentinel.clone());
@@ -7531,6 +7529,15 @@ fn verify_one_loop_preservation_proof(
                 "`{claim_label}` must execute exactly one complete loop-body iteration"
             )));
         }
+        let case_path = context
+            .replay
+            .case_assumptions
+            .iter()
+            .map(|choice| ProofCaseChoice {
+                condition: choice.condition.clone(),
+                value: choice.value,
+            })
+            .collect::<Vec<_>>();
         let (closer_index, closer_source, closer_name, closer_class) =
             if let Some((tactic_index, source_index)) = context.replay.region_simp {
                 (tactic_index, source_index, "simp", "smart")
@@ -7584,7 +7591,7 @@ fn verify_one_loop_preservation_proof(
                     "`{claim_label}` (loop {loop_index} invariant bundle preservation) could not certify every guarded invariant-lowering path: {message}"
                 )));
             }
-            verified_closer_inputs.push((context.state.clone(), context.pure_facts.clone()));
+            verified_closer_paths.push(case_path.clone());
             vec![ProofTactic::CloseInvariants]
         };
         if context.replay.region_simp.is_some_and(|(_, source_index)| {
@@ -7596,15 +7603,6 @@ fn verify_one_loop_preservation_proof(
             };
             return Err(finish_tactic_expansion_capture(&capture, false));
         }
-        let case_path = context
-            .replay
-            .case_assumptions
-            .iter()
-            .map(|choice| ProofCaseChoice {
-                condition: choice.condition.clone(),
-                value: choice.value,
-            })
-            .collect::<Vec<_>>();
         let prefix = certificate_leaf_for_case_path(
             &claim_label,
             &context.replay.surface_replay.tactics,
@@ -7698,11 +7696,17 @@ fn verify_one_loop_preservation_proof(
                     step.statement_index,
                 )
             });
-            let planner_already_verified =
-                std::env::var_os("CLICK_DISABLE_CLOSER_REUSE").is_none()
-                    && verified_closer_inputs.iter().any(|(state, facts)| {
-                        state == &context.state && facts == &context.pure_facts
-                    });
+            let case_path = context
+                .replay
+                .case_assumptions
+                .iter()
+                .map(|choice| ProofCaseChoice {
+                    condition: choice.condition.clone(),
+                    value: choice.value,
+                })
+                .collect::<Vec<_>>();
+            let planner_already_verified = std::env::var_os("CLICK_DISABLE_CLOSER_REUSE").is_none()
+                && verified_closer_paths.contains(&case_path);
             if !planner_already_verified {
                 c_loop_invariants_hold_at_back_edge_using(
                     &context.state,
@@ -8132,8 +8136,11 @@ fn checked_surface_fact_at_outcome(
         if (matches!(
             (kernel, recorded),
             (Proposition::ForAll { .. }, Proposition::ForAll { .. })
-        ) || quantified_replay_equivalent_available_fact(kernel, std::slice::from_ref(recorded))
-            .is_some())
+        ) || quantified_replay_equivalent_available_fact(
+            kernel,
+            std::slice::from_ref(recorded),
+        )
+        .is_some())
             && let Ok(surface) = replay.surface_propositions.surface(recorded)
             && !bases.contains(surface)
         {
@@ -8181,8 +8188,10 @@ fn checked_surface_fact_at_outcome(
     // the surface instead — the same rewrite the script's `unfold(...)`
     // performs — and let the round trip below decide whether the result is the
     // fact we were asked for.
-    if matches!(kernel, Proposition::ForAll { .. } | Proposition::Exists { .. })
-        && !replay.unfolded_predicates.is_empty()
+    if matches!(
+        kernel,
+        Proposition::ForAll { .. } | Proposition::Exists { .. }
+    ) && !replay.unfolded_predicates.is_empty()
     {
         // A drain that unfolds an ambient predicate replaces the folded fact
         // with its quantified body, so the body can carry a recorded folded
@@ -8940,10 +8949,9 @@ fn memory_erased_comparison(proposition: &Proposition) -> Option<Proposition> {
     }
     fn erase_offset(offset: &PointerOffsetTerm) -> PointerOffsetTerm {
         match offset {
-            PointerOffsetTerm::Add(left, right) => PointerOffsetTerm::Add(
-                Box::new(erase_offset(left)),
-                Box::new(erase_offset(right)),
-            ),
+            PointerOffsetTerm::Add(left, right) => {
+                PointerOffsetTerm::Add(Box::new(erase_offset(left)), Box::new(erase_offset(right)))
+            }
             PointerOffsetTerm::Int32Scaled { value, byte_width } => {
                 PointerOffsetTerm::Int32Scaled {
                     value: Box::new(erase_term(value)),
@@ -8981,10 +8989,9 @@ fn memory_erased_comparison(proposition: &Proposition) -> Option<Proposition> {
                 Box::new(erase_term(right)),
             )
         }
-        ConditionTerm::Bitvector32Equal(left, right) => ConditionTerm::Bitvector32Equal(
-            Box::new(erase_term(left)),
-            Box::new(erase_term(right)),
-        ),
+        ConditionTerm::Bitvector32Equal(left, right) => {
+            ConditionTerm::Bitvector32Equal(Box::new(erase_term(left)), Box::new(erase_term(right)))
+        }
         _ => return None,
     };
     Some(Proposition::ConditionIs(erased, *value))
@@ -9080,8 +9087,7 @@ fn certified_fact_transport_reaches_through(
     if certified_fact_transport_reaches(source, target, after, assumptions) {
         return true;
     }
-    let rewritten =
-        crate::kernel::rewrite_condition_through_certified_stores(source, transitions);
+    let rewritten = crate::kernel::rewrite_condition_through_certified_stores(source, transitions);
     if &rewritten == source {
         return false;
     }
@@ -9390,7 +9396,10 @@ fn plan_smart_have_at_current_point(
             {
                 let canonical_left = crate::kernel::canonicalize_atomic_loads(left);
                 let canonical_right = crate::kernel::canonicalize_atomic_loads(right);
-                eprintln!("HAVE PROBE canonical_eq={}", canonical_left == canonical_right);
+                eprintln!(
+                    "HAVE PROBE canonical_eq={}",
+                    canonical_left == canonical_right
+                );
                 let _ = std::fs::write(
                     format!("{dir}/canonical-left.txt"),
                     format!("{canonical_left:#?}"),
@@ -9506,7 +9515,7 @@ fn prove_pure_proposition_at_point(
         .any(|proof_case| !proof_case.advance_checks.is_empty())
     {
         return Err(ClickError::new(format!(
-            "`{claim_label}` {proof_name} proof {outer_tactic_index}: `advance` is not available in a pure proof"
+            "`{claim_label}` {proof_name} proof {outer_tactic_index}: `reach` is not available in a pure proof"
         )));
     }
 
@@ -10319,8 +10328,10 @@ pub(super) fn prove_claim_by_tactics(
         &pure_facts,
         claim_label,
     )?;
-    let function_entry_state = c_function_entry_state(&state, &function, &arguments)
-        .ok_or_else(|| ClickError::new(format!("`{claim_label}` could not bind function arguments")))?;
+    let function_entry_state =
+        c_function_entry_state(&state, &function, &arguments).ok_or_else(|| {
+            ClickError::new(format!("`{claim_label}` could not bind function arguments"))
+        })?;
     let proof_claims = [*claim];
     let mut replay = TacticReplayState {
         proof_site: proof_site_for_claims(function_block, &proof_claims, false),
@@ -10443,9 +10454,10 @@ pub(super) fn prove_claims_by_grouped_tactics(
         &pure_facts,
         &proof_label,
     )?;
-    let function_entry_state = c_function_entry_state(&state, &function, &arguments).ok_or_else(|| {
-        ClickError::new(format!("`{proof_label}` could not bind function arguments"))
-    })?;
+    let function_entry_state =
+        c_function_entry_state(&state, &function, &arguments).ok_or_else(|| {
+            ClickError::new(format!("`{proof_label}` could not bind function arguments"))
+        })?;
     let mut replay = TacticReplayState {
         proof_site: proof_site_for_claims(function_block, claims, true),
         source_layout: SourceExecutionLayout::new(parsed_function.body()),
@@ -11023,7 +11035,7 @@ fn finish_ordered_proof_replay(
     let result = (|| {
         let execution = replay.execution().ok_or_else(|| {
             ClickError::new(format!(
-                "`{proof_label}` execution proof must reach function exit with `execute_step()`, `execute_rest()`, or `bounded_execute()`"
+                "`{proof_label}` execution proof must reach function exit with `step()`, `execute()`, or `execute()`"
             ))
         })?;
         if execution.paths().is_empty() {
@@ -11516,6 +11528,20 @@ fn finish_ordered_proof_replay(
                                 certificate_available.push(equation);
                             }
                         }
+                        let exact_derivation_script = have.proof.tactics().is_some_and(|tactics| {
+                            tactics.iter().any(|tactic| {
+                                matches!(tactic, ProofTactic::Derive(_) | ProofTactic::Calculate(_))
+                            })
+                        });
+                        if exact_derivation_script {
+                            for fact in crate::kernel::certified_store_loadability_facts(
+                                &replay.effect_facts,
+                            ) {
+                                if !certificate_available.contains(&fact) {
+                                    certificate_available.push(fact);
+                                }
+                            }
+                        }
                         let smart_unfolds = smart_simp_unfold_prefix(&have.proof);
                         let (surface_have, fact) = if let Some(smart_unfolds) = smart_unfolds {
                             let fact = lower_outcome_proposition_with_program_points(
@@ -11664,12 +11690,12 @@ fn finish_ordered_proof_replay(
                             // is exactly what the gate requires.
                             // `validate_certificate_tactics` is the settled
                             // judgment for "surface-expressible" and already
-                            // descends through nested `have`/`if`/`advance`
+                            // descends through nested `have`/`if`/`reach`
                             // bodies, so use it rather than a flat scan that
                             // mistakes any structured script for a smart one.
                             //
                             // Replay runs first so a script rejected on its
-                            // own terms (`advance` in a pure proof, say) still
+                            // own terms (`reach` in a pure proof, say) still
                             // reports that, and the expressibility gate only
                             // decides whether a *successful* smart closure may
                             // stand.
@@ -11696,18 +11722,13 @@ fn finish_ordered_proof_replay(
                             let fact = match replay_have(&certificate_available) {
                                 Ok(fact) => fact,
                                 Err(error) => {
-                                    if !error
-                                        .message()
-                                        .contains("missing pure fact: loadable(")
-                                    {
+                                    if !error.message().contains("missing pure fact: loadable(") {
                                         return Err(error);
                                     }
                                     let mut loadable_available = certificate_available.clone();
-                                    for fact in
-                                        crate::kernel::certified_store_loadability_facts(
-                                            &replay.effect_facts,
-                                        )
-                                    {
+                                    for fact in crate::kernel::certified_store_loadability_facts(
+                                        &replay.effect_facts,
+                                    ) {
                                         if !loadable_available.contains(&fact) {
                                             loadable_available.push(fact);
                                         }
@@ -12136,12 +12157,72 @@ fn finish_ordered_proof_replay(
                             )?;
                             closures[claim_index] = ClaimClosure::by_exact_check();
                         }
+                        let mut premises = Vec::new();
+                        for fact in &path_requirements {
+                            if let Some(surface) =
+                                replay.surface_propositions.surfaces(fact).next().cloned()
+                                && !premises.contains(&surface)
+                            {
+                                premises.push(surface);
+                            }
+                        }
                         record_post_execution_surface_tactic(
                             &mut path_surface_post_tactics,
                             &mut path_deferred_capture_tactics,
                             replay.deferred_tactic_capture.as_ref(),
                             *tactic_index,
-                            ProofTactic::Frame(None),
+                            ProofTactic::FrameUsing {
+                                region: None,
+                                premises,
+                            },
+                        );
+                    }
+                    PostExecutionTactic::FrameUsing {
+                        region,
+                        premises,
+                        facts,
+                    } => {
+                        for fact in facts {
+                            if !exact_fact_is_available(fact, &path_requirements)
+                                && materialization_equivalent_available_fact(
+                                    fact,
+                                    &path_requirements,
+                                )
+                                .is_none()
+                            {
+                                return Err(ClickError::new(format!(
+                                    "`{proof_label}` path {path_index}, tactic {tactic_index}: `frame using` requires an exact premise that has not been established: {fact:?}"
+                                )));
+                            }
+                        }
+                        for (claim_index, claim) in claims.iter().enumerate() {
+                            if !matches!(claim, FunctionClaimRef::Effect(_, _)) {
+                                continue;
+                            }
+                            let claim_label =
+                                function_claim_label(function_block.signature().name(), claim);
+                            check_effect_claim_exact(
+                                &claim_label,
+                                path_index,
+                                &path.execution_facts(),
+                                facts,
+                                claim,
+                                parsed_function.parameters(),
+                                arguments,
+                                pre_state,
+                                &outcome,
+                            )?;
+                            closures[claim_index] = ClaimClosure::by_exact_check();
+                        }
+                        record_post_execution_surface_tactic(
+                            &mut path_surface_post_tactics,
+                            &mut path_deferred_capture_tactics,
+                            replay.deferred_tactic_capture.as_ref(),
+                            *tactic_index,
+                            ProofTactic::FrameUsing {
+                                region: region.clone(),
+                                premises: premises.clone(),
+                            },
                         );
                     }
                     PostExecutionTactic::CertifiedFrame(path_derivations) => {
@@ -12814,12 +12895,7 @@ fn checked_surface_comparison_fact_at_point(
     if let Some(surface) = replay
         .surface_propositions
         .surfaces(kernel)
-        .filter(|surface| {
-            replay
-                .surface_propositions
-                .unique_kernel(surface)
-                == Some(kernel)
-        })
+        .filter(|surface| replay.surface_propositions.unique_kernel(surface) == Some(kernel))
         .last()
     {
         return Ok(surface.clone());
@@ -13326,16 +13402,11 @@ fn synthesize_surface_pointer_offset(
                         return None;
                     };
                     let base = contract_expression_to_c_fragment(
-                        &synthesize_surface_pointer_offset(
-                            base,
-                            parameters,
-                            arguments,
-                            state,
-                        )?,
+                        &synthesize_surface_pointer_offset(base, parameters, arguments, state)?,
                     )?;
-                    let index = contract_expression_to_c_fragment(
-                        &synthesize_surface_bitvector(index, parameters, arguments, state)?,
-                    )?;
+                    let index = contract_expression_to_c_fragment(&synthesize_surface_bitvector(
+                        index, parameters, arguments, state,
+                    )?)?;
                     Some(ContractExpression::CFragment(CExpression::Add(
                         Box::new(base),
                         Box::new(index),
@@ -13444,19 +13515,21 @@ fn synthesize_surface_bitvector(
             {
                 Some(indexed_field)
             } else {
-                let value_type = parameters.iter().zip(arguments).find_map(
-                    |(parameter, argument)| {
-                        let CExpression::Value(CValue::Pointer(base)) = argument else {
-                            return None;
-                        };
-                        pointer.element_index_from_base(base)?;
-                        match parameter.c_type() {
-                            C0Type::UInt8Pointer | C0Type::UInt8Array(_) => Some(CType::UInt8),
-                            C0Type::Int32Pointer | C0Type::Int32Array(_) => Some(CType::Int32),
-                            C0Type::Int32 | C0Type::UInt8 => None,
-                        }
-                    },
-                );
+                let value_type =
+                    parameters
+                        .iter()
+                        .zip(arguments)
+                        .find_map(|(parameter, argument)| {
+                            let CExpression::Value(CValue::Pointer(base)) = argument else {
+                                return None;
+                            };
+                            pointer.element_index_from_base(base)?;
+                            match parameter.c_type() {
+                                C0Type::UInt8Pointer | C0Type::UInt8Array(_) => Some(CType::UInt8),
+                                C0Type::Int32Pointer | C0Type::Int32Array(_) => Some(CType::Int32),
+                                C0Type::Int32 | C0Type::UInt8 => None,
+                            }
+                        });
                 let pointer = synthesize_surface_pointer(pointer, parameters, arguments, state)?;
                 Some(ContractExpression::CFragment(match value_type {
                     Some(CType::UInt8) => CExpression::TypedLoad {
@@ -13594,9 +13667,9 @@ fn synthesize_surface_pointer(
     {
         return Some(expression);
     }
-    if let Some((name, _)) = state.locals().object_values().find(|(_, value)| {
-        matches!(value, CValue::Pointer(local_pointer) if local_pointer == pointer)
-    }) {
+    if let Some((name, _)) = state.locals().object_values().find(
+        |(_, value)| matches!(value, CValue::Pointer(local_pointer) if local_pointer == pointer),
+    ) {
         return Some(CExpression::Variable(name.to_string()));
     }
     if !arguments.iter().any(|argument| {
@@ -14810,9 +14883,7 @@ fn certify_outcome_simp_have(
                 .iter()
                 .fold(
                     assumptions_from_propositions(&coverage_context),
-                    |assumptions, fact| {
-                        assumptions.assume_proposition(fact.proposition().clone())
-                    },
+                    |assumptions, fact| assumptions.assume_proposition(fact.proposition().clone()),
                 )
                 .assume_proposition(source.clone());
             if certified_fact_transport_reaches(
@@ -14877,7 +14948,10 @@ fn certify_outcome_simp_have(
                     // only when ordinary (non-deferred) lowering of the whole
                     // goal proves it from the explicit generated premises.
                     if quantified_memory_premises.is_empty()
-                        && matches!(goal, Proposition::ForAll { .. } | Proposition::Exists { .. })
+                        && matches!(
+                            goal,
+                            Proposition::ForAll { .. } | Proposition::Exists { .. }
+                        )
                     {
                         let mut atomic_available = Vec::new();
                         for fact in available {
@@ -15288,9 +15362,7 @@ fn certify_outcome_simp_have(
             &replayed_goal,
             &assumptions_from_propositions(&replay_available),
         );
-        if replay.unfolded_predicates.is_empty()
-            || replayed_unfolded.as_ref() != Ok(goal)
-        {
+        if replay.unfolded_predicates.is_empty() || replayed_unfolded.as_ref() != Ok(goal) {
             return Err(ClickError::new(format!(
                 "`{claim_label}` path {path_index}, tactic {tactic_index}: smart `simp` certificate replayed a different goal"
             )));
@@ -15432,8 +15504,10 @@ fn certify_outcome_existential_simp(
             proposition: surface_goal.clone(),
             proof: Proof::Script(tactics),
         };
-        let surface_tactics =
-            vec![ProofTactic::Have(surface_have.clone()), ProofTactic::Assumption];
+        let surface_tactics = vec![
+            ProofTactic::Have(surface_have.clone()),
+            ProofTactic::Assumption,
+        ];
         let certificate = TacticCertificate::from_proof_tactics(&surface_tactics)
             .map_err(|error| format!("produced an invalid certificate: {error:?}"))?;
         let replayed_goal = prove_have_at_point(
@@ -16087,12 +16161,13 @@ fn record_surface_replay_tactic(
                     // reconstructed by the replay for itself. One it does not
                     // reproduce is only available because the ambient context
                     // carried it, so the certificate has to spell it.
-                    let non_reconstructible_permission = matches!(
-                        fact,
-                        Proposition::CMemoryDisjoint { .. }
-                            | Proposition::CResourceSeparate { .. }
-                            | Proposition::CMemoryLoadable { .. }
-                    ) && !exact_fact_is_available(fact, &projected_resource_facts);
+                    let non_reconstructible_permission =
+                        matches!(
+                            fact,
+                            Proposition::CMemoryDisjoint { .. }
+                                | Proposition::CResourceSeparate { .. }
+                                | Proposition::CMemoryLoadable { .. }
+                        ) && !exact_fact_is_available(fact, &projected_resource_facts);
                     if !selected_by_derivation && !non_reconstructible_permission {
                         continue;
                     }
@@ -16605,7 +16680,7 @@ fn record_surface_replay_tactic(
                 }
                 let normalized = normalize_direct_atomic_memory_loads(proposition);
                 for recorded in replay.surface_propositions.kernel_facts() {
-    let matches = normalize_direct_atomic_memory_loads(recorded) == normalized
+                    let matches = normalize_direct_atomic_memory_loads(recorded) == normalized
                         || (memory_erased_comparison(recorded).is_some()
                             && memory_erased_comparison(recorded)
                                 == memory_erased_comparison(proposition)
@@ -16682,8 +16757,7 @@ fn record_surface_replay_tactic(
                     // whose lowering provably transports to the certified
                     // spelling.
                     if memory_erased_comparison(&actual).is_some()
-                        && memory_erased_comparison(&actual)
-                            == memory_erased_comparison(expected)
+                        && memory_erased_comparison(&actual) == memory_erased_comparison(expected)
                         && let Some(after) = proposition_outer_load_memory(expected)
                         && certified_fact_transport_reaches_through(
                             &actual,
@@ -16917,6 +16991,24 @@ fn record_surface_replay_tactic(
                 .iter()
                 .map(|derivations| {
                     let mut tactics = Vec::new();
+                    let mut premises = Vec::new();
+                    for fact in available.iter().cloned().chain(
+                        derivations
+                            .iter()
+                            .flat_map(PropositionDerivation::context_premises),
+                    ) {
+                        if let Some(surface) = replay
+                            .surface_propositions
+                            .surfaces(&fact)
+                            .find(|surface| {
+                                replay.surface_propositions.unique_kernel(surface) == Some(&fact)
+                            })
+                            .cloned()
+                            && !premises.contains(&surface)
+                        {
+                            premises.push(surface);
+                        }
+                    }
                     for derivation in derivations {
                         let (conclusion, proof) = lower_surface_atomic_derivation(
                             replay,
@@ -16929,12 +17021,16 @@ fn record_surface_replay_tactic(
                             predicate_environment,
                             click_function_environment,
                         )?;
+                        premises.push(conclusion.clone());
                         tactics.push(ProofTactic::Have(ProofHave {
                             proposition: conclusion,
                             proof,
                         }));
                     }
-                    tactics.push(ProofTactic::Frame(None));
+                    tactics.push(ProofTactic::FrameUsing {
+                        region: None,
+                        premises,
+                    });
                     Ok::<_, ClickError>(tactics)
                 })
                 .collect::<Result<Vec<_>, _>>();
@@ -17345,6 +17441,10 @@ fn tactic_is_deferred_post_execution(tactic: &ProofTactic) -> bool {
             | ProofTactic::Rewrite(_)
             | ProofTactic::Simp
             | ProofTactic::Frame(None | Some(CodeRegionRef::Function))
+            | ProofTactic::FrameUsing {
+                region: None | Some(CodeRegionRef::Function),
+                ..
+            }
     )
 }
 
@@ -17656,7 +17756,10 @@ fn replay_linear_tactics(
             branch_path = result.branch_path;
             assumptions = assumptions_from_propositions(&requirement_pure_facts);
             if capture_this_tactic {
-                return Err(finish_tactic_expansion_capture(&replay.surface_replay, false));
+                return Err(finish_tactic_expansion_capture(
+                    &replay.surface_replay,
+                    false,
+                ));
             }
             continue;
         }
@@ -17715,7 +17818,10 @@ fn replay_linear_tactics(
             branch_path = result.branch_path;
             assumptions = assumptions_from_propositions(&requirement_pure_facts);
             if capture_this_tactic {
-                return Err(finish_tactic_expansion_capture(&replay.surface_replay, false));
+                return Err(finish_tactic_expansion_capture(
+                    &replay.surface_replay,
+                    false,
+                ));
             }
             continue;
         }
@@ -18045,7 +18151,7 @@ fn replay_linear_tactics(
                         )?
                         else {
                             return Err(ClickError::new(format!(
-                                "`{claim_label}` tactic {tactic_index}: `apply_loop_summary` expects a loop region"
+                                "`{claim_label}` tactic {tactic_index}: `summarize` expects a loop region"
                             )));
                         };
                         let current_loop = replay
@@ -18057,12 +18163,12 @@ fn replay_linear_tactics(
                             });
                         if current_loop != Some(expected_loop) {
                             return Err(ClickError::new(format!(
-                                "`{claim_label}` tactic {tactic_index}: `apply_loop_summary(loop({expected_loop}))` is not at that loop's entry; current statement is statement({})",
+                                "`{claim_label}` tactic {tactic_index}: `summarize(loop({expected_loop}))` is not at that loop's entry; current statement is statement({})",
                                 replay.frontier.next_statement_index
                             )));
                         }
                         (
-                            "apply_loop_summary using",
+                            "summarize using",
                             StatementPrerequisitePolicy::Explicit,
                             LoopStepPolicy::ApplyVerifiedRule,
                         )
@@ -18124,13 +18230,14 @@ fn replay_linear_tactics(
                     // snapshot spellings and recorded effects: the recorded
                     // fact and the premise print identically but embed
                     // different memory snapshots.
-                    let premise_is_available = exact_fact_is_available_across_effects(
-                        &premise,
-                        &all_pure_facts,
-                        &replay.effect_facts,
-                    ) || materialization_equivalent_available_fact(&premise, &all_pure_facts)
-                        .is_some()
-                        || crate::kernel::loadable_covered_by_fact(&assumptions, &premise);
+                    let premise_is_available =
+                        exact_fact_is_available_across_effects(
+                            &premise,
+                            &all_pure_facts,
+                            &replay.effect_facts,
+                        ) || materialization_equivalent_available_fact(&premise, &all_pure_facts)
+                            .is_some()
+                            || crate::kernel::loadable_covered_by_fact(&assumptions, &premise);
                     if !premise_is_available {
                         return Err(ClickError::new(format!(
                             "`{claim_label}` tactic {tactic_index}: `{tactic_name}` requires an exact premise: {}",
@@ -18265,7 +18372,7 @@ fn replay_linear_tactics(
                         )?
                         else {
                             return Err(ClickError::new(format!(
-                                "`{claim_label}` tactic {tactic_index}: `apply_loop_summary` expects a loop region"
+                                "`{claim_label}` tactic {tactic_index}: `summarize` expects a loop region"
                             )));
                         };
                         let current_loop = replay
@@ -18277,7 +18384,7 @@ fn replay_linear_tactics(
                             });
                         if current_loop != Some(expected_loop) {
                             return Err(ClickError::new(format!(
-                                "`{claim_label}` tactic {tactic_index}: `apply_loop_summary(loop({expected_loop}))` is not at that loop's entry; current statement is statement({})",
+                                "`{claim_label}` tactic {tactic_index}: `summarize(loop({expected_loop}))` is not at that loop's entry; current statement is statement({})",
                                 replay.frontier.next_statement_index
                             )));
                         }
@@ -18417,6 +18524,86 @@ fn replay_linear_tactics(
                 }
                 assumptions = assumptions_from_propositions(&requirement_pure_facts);
             }
+            ProofTactic::ContextualLoopSummary(region_ref) => {
+                let CodeRegion::Loop(expected_loop) =
+                    resolve_code_region_ref(function_block, region_ref, claim_label, tactic_index)?
+                else {
+                    return Err(ClickError::new(format!(
+                        "`{claim_label}` tactic {tactic_index}: `summarize` expects a loop region"
+                    )));
+                };
+                let current_loop = replay
+                    .source_layout
+                    .statement(replay.frontier.next_statement_index)
+                    .and_then(|region| match region.kind {
+                        SourceStatementKind::Loop { loop_index } => Some(loop_index),
+                        SourceStatementKind::Plain | SourceStatementKind::If { .. } => None,
+                    });
+                if current_loop != Some(expected_loop) {
+                    return Err(ClickError::new(format!(
+                        "`{claim_label}` tactic {tactic_index}: `summarize(loop({expected_loop}))` is not at that loop's entry; current statement is statement({})",
+                        replay.frontier.next_statement_index
+                    )));
+                }
+                let mut planning_replay = replay.clone();
+                planning_replay.planned_tactics.clear();
+                let mut planning_state = state.clone();
+                let mut planning_facts = requirement_pure_facts.clone();
+                execute_step_from_execution_point(
+                    &mut planning_replay,
+                    &mut planning_state,
+                    &mut planning_facts,
+                    function_block,
+                    function,
+                    parsed_function.parameters(),
+                    arguments,
+                    &assumptions,
+                    function_environment,
+                    claim_label,
+                    tactic_index,
+                    "summarize",
+                    &[],
+                    None,
+                    StatementPrerequisitePolicy::Planning,
+                    StatementFactTransportPolicy::Automatic,
+                    LoopStepPolicy::ApplyVerifiedRule,
+                )?;
+                let certificate =
+                    ProofReplayPlan::from_planned_tactics(&planning_replay.planned_tactics)
+                        .map_err(|error| {
+                            ClickError::new(format!(
+                                "`{claim_label}` tactic {tactic_index}: `summarize` planned a non-certificate tactic {:?}",
+                                error.smart_tactic()
+                            ))
+                        })?;
+                let result = replay_smart_plan(
+                    ProofReplayContext {
+                        state,
+                        pure_facts: requirement_pure_facts,
+                        replay,
+                        branch_path,
+                    },
+                    function_block,
+                    parsed_function,
+                    claims,
+                    claim_label,
+                    function_environment,
+                    predicate_environment,
+                    click_function_environment,
+                    resource_environment,
+                    theorem_environment,
+                    function,
+                    arguments,
+                    tactic_index,
+                    source_index,
+                    &certificate,
+                )?;
+                state = result.state;
+                requirement_pure_facts = result.pure_facts;
+                replay = result.replay;
+                branch_path = result.branch_path;
+                assumptions = assumptions_from_propositions(&requirement_pure_facts);
+            }
             ProofTactic::ExecuteStep => {
                 let mut planning_replay = replay.clone();
                 planning_replay.planned_tactics.clear();
@@ -18434,7 +18621,7 @@ fn replay_linear_tactics(
                     function_environment,
                     claim_label,
                     tactic_index,
-                    "execute_step",
+                    "step",
                     &[],
                     None,
                     StatementPrerequisitePolicy::Planning,
@@ -18445,7 +18632,7 @@ fn replay_linear_tactics(
                     ProofReplayPlan::from_planned_tactics(&planning_replay.planned_tactics)
                         .map_err(|error| {
                             ClickError::new(format!(
-                                "`{claim_label}` tactic {tactic_index}: `execute_step` planned a non-certificate tactic {:?}",
+                                "`{claim_label}` tactic {tactic_index}: `step` planned a non-certificate tactic {:?}",
                                 error.smart_tactic()
                             ))
                         })?;
@@ -18504,7 +18691,7 @@ fn replay_linear_tactics(
                     ProofReplayPlan::from_planned_tactics(&planning_replay.planned_tactics)
                         .map_err(|error| {
                             ClickError::new(format!(
-                                "`{claim_label}` tactic {tactic_index}: `execute_then_step` planned a non-certificate tactic {:?}",
+                                "`{claim_label}` tactic {tactic_index}: `step` planned a non-certificate tactic {:?}",
                                 error.smart_tactic()
                             ))
                         })?;
@@ -18563,7 +18750,7 @@ fn replay_linear_tactics(
                     ProofReplayPlan::from_planned_tactics(&planning_replay.planned_tactics)
                         .map_err(|error| {
                             ClickError::new(format!(
-                                "`{claim_label}` tactic {tactic_index}: `execute_else_step` planned a non-certificate tactic {:?}",
+                                "`{claim_label}` tactic {tactic_index}: `step` planned a non-certificate tactic {:?}",
                                 error.smart_tactic()
                             ))
                         })?;
@@ -18600,7 +18787,7 @@ fn replay_linear_tactics(
                 planning_replay.planned_tactics.clear();
                 let mut planning_state = state.clone();
                 let mut planning_facts = requirement_pure_facts.clone();
-                execute_rest_from_execution_point(
+                let direct_result = execute_rest_from_execution_point(
                     &mut planning_replay,
                     &mut planning_state,
                     &mut planning_facts,
@@ -18611,12 +18798,31 @@ fn replay_linear_tactics(
                     function_environment,
                     claim_label,
                     tactic_index,
-                )?;
+                );
+                if direct_result.is_err() {
+                    planning_replay = replay.clone();
+                    planning_replay.planned_tactics.clear();
+                    planning_state = state.clone();
+                    planning_facts = requirement_pure_facts.clone();
+                    bounded_execute_from_execution_point(
+                        &mut planning_replay,
+                        &mut planning_state,
+                        &mut planning_facts,
+                        function_block,
+                        function,
+                        parsed_function.parameters(),
+                        arguments,
+                        function_environment,
+                        claim_label,
+                        tactic_index,
+                        StatementPrerequisitePolicy::Planning,
+                    )?;
+                }
                 let certificate =
                     ProofReplayPlan::from_planned_tactics(&planning_replay.planned_tactics)
                         .map_err(|error| {
                             ClickError::new(format!(
-                                "`{claim_label}` tactic {tactic_index}: `execute_rest` planned a non-certificate tactic {:?}",
+                                "`{claim_label}` tactic {tactic_index}: `execute` planned a non-certificate tactic {:?}",
                                 error.smart_tactic()
                             ))
                         })?;
@@ -18732,7 +18938,7 @@ fn replay_linear_tactics(
                     ProofReplayPlan::from_planned_tactics(&planning_replay.planned_tactics)
                         .map_err(|error| {
                             ClickError::new(format!(
-                                "`{claim_label}` tactic {tactic_index}: `bounded_execute` planned a non-certificate tactic {:?}",
+                                "`{claim_label}` tactic {tactic_index}: `execute` planned a non-certificate tactic {:?}",
                                 error.smart_tactic()
                             ))
                         })?;
@@ -18764,7 +18970,41 @@ fn replay_linear_tactics(
                 branch_path = result.branch_path;
                 assumptions = assumptions_from_propositions(&requirement_pure_facts);
             }
-            ProofTactic::ContextualFrame => {
+            ProofTactic::ContextualFrame(region_ref) => {
+                if region_ref.is_some() {
+                    let certificate = ProofReplayPlan::from_planned_tactics(&[ProofTactic::Frame(
+                        region_ref.clone(),
+                    )])
+                    .expect("exact frame is a simple tactic");
+                    let result = replay_smart_plan(
+                        ProofReplayContext {
+                            state,
+                            pure_facts: requirement_pure_facts,
+                            replay,
+                            branch_path,
+                        },
+                        function_block,
+                        parsed_function,
+                        claims,
+                        claim_label,
+                        function_environment,
+                        predicate_environment,
+                        click_function_environment,
+                        resource_environment,
+                        theorem_environment,
+                        function,
+                        arguments,
+                        tactic_index,
+                        source_index,
+                        &certificate,
+                    )?;
+                    state = result.state;
+                    requirement_pure_facts = result.pure_facts;
+                    replay = result.replay;
+                    branch_path = result.branch_path;
+                    assumptions = assumptions_from_propositions(&requirement_pure_facts);
+                    continue;
+                }
                 require_function_exit(&replay, claim_label, tactic_index, "frame")?;
                 let Some(effect_claim) = claims
                     .iter()
@@ -18835,7 +19075,76 @@ fn replay_linear_tactics(
                 branch_path = result.branch_path;
                 assumptions = assumptions_from_propositions(&requirement_pure_facts);
             }
-            ProofTactic::Frame(region_ref) => {
+            ProofTactic::Frame(region_ref)
+            | ProofTactic::FrameUsing {
+                region: region_ref, ..
+            } => {
+                let surface_premises = match tactic {
+                    ProofTactic::FrameUsing { premises, .. } => Some(premises),
+                    ProofTactic::Frame(_) => None,
+                    _ => unreachable!(),
+                };
+                let mut frame_facts = Vec::new();
+                if let Some(surface_premises) = surface_premises {
+                    let all_pure_facts = requirement_pure_facts.clone();
+                    let pre_state = replay.old_reference_state(&state).clone();
+                    for surface_premise in surface_premises {
+                        let premise = if let Some(recorded) = replay
+                            .surface_propositions
+                            .available_kernel(surface_premise, &all_pure_facts)
+                        {
+                            recorded.clone()
+                        } else {
+                            lower_point_proposition(
+                                surface_premise,
+                                &all_pure_facts,
+                                parsed_function.parameters(),
+                                arguments,
+                                &pre_state,
+                                &state,
+                                None,
+                                &replay.program_point_states,
+                                predicate_environment,
+                                click_function_environment,
+                            )
+                            .map_err(|message| {
+                                ClickError::new(format!(
+                                    "`{claim_label}` tactic {tactic_index}: could not lower `frame using` premise `{}`: {message}",
+                                    super::printing::source_click_proposition(surface_premise)
+                                ))
+                            })?
+                        };
+                        replay
+                            .surface_propositions
+                            .record_lowering(surface_premise, &premise)?;
+                        if !(replay.ordered_finalization && replay.is_at_function_exit())
+                            && !exact_fact_is_available_across_effects(
+                                &premise,
+                                &all_pure_facts,
+                                &replay.effect_facts,
+                            )
+                            && materialization_equivalent_available_fact(&premise, &all_pure_facts)
+                                .is_none()
+                        {
+                            return Err(ClickError::new(format!(
+                                "`{claim_label}` tactic {tactic_index}: `frame using` requires an exact premise: {}",
+                                describe_missing_pure_fact(
+                                    &premise,
+                                    &all_pure_facts,
+                                    state.resources().facts(),
+                                    parsed_function.parameters(),
+                                    arguments,
+                                    &replay.effect_facts,
+                                )
+                            )));
+                        }
+                        if !frame_facts.contains(&premise) {
+                            frame_facts.push(premise);
+                        }
+                    }
+                } else {
+                    frame_facts = requirement_pure_facts.clone();
+                }
                 if let Some(goal) = replay.loop_effect_goal.as_mut() {
                     if region_ref.is_some() {
                         return Err(ClickError::new(format!(
@@ -18851,8 +19160,8 @@ fn replay_linear_tactics(
                         &goal.before_state,
                         &state,
                         std::slice::from_ref(&goal.check),
-                        &requirement_pure_facts,
-                        &assumptions,
+                        &frame_facts,
+                        &assumptions_from_propositions(&frame_facts),
                     )
                     .map_err(|message| {
                         ClickError::new(format!(
@@ -18904,11 +19213,16 @@ fn replay_linear_tactics(
                         claim_label,
                         tactic_index,
                     )?;
-                    replay.defer_post_execution(
-                        tactic_index,
-                        source_index,
-                        PostExecutionTactic::Frame,
-                    );
+                    let deferred = if let Some(premises) = surface_premises {
+                        PostExecutionTactic::FrameUsing {
+                            region: region_ref.clone(),
+                            premises: premises.clone(),
+                            facts: frame_facts,
+                        }
+                    } else {
+                        PostExecutionTactic::Frame
+                    };
+                    replay.defer_post_execution(tactic_index, source_index, deferred);
                     replay.frames.insert(region_ref.clone());
                     continue;
                 }
@@ -18945,7 +19259,7 @@ fn replay_linear_tactics(
                                 parsed_function.parameters(),
                                 arguments,
                                 &state,
-                                &requirement_pure_facts,
+                                &frame_facts,
                             )?;
                         }
                         Some(CodeRegion::Loop(_)) => {}
@@ -19526,7 +19840,10 @@ fn replay_linear_tactics(
             }
         }
         if capture_this_tactic && !deferred_post_execution && !deferred_region_simp {
-            return Err(finish_tactic_expansion_capture(&replay.surface_replay, false));
+            return Err(finish_tactic_expansion_capture(
+                &replay.surface_replay,
+                false,
+            ));
         }
     }
 
@@ -20083,7 +20400,7 @@ fn execute_internal_proof(
             }
             let joined_context = joined_context.ok_or_else(|| {
                 ClickError::new(format!(
-                    "`{claim_label}` tactic {index}: `advance` body produced no proof frontier"
+                    "`{claim_label}` tactic {index}: `reach` body produced no proof frontier"
                 ))
             })?;
             execute_internal_proof(
@@ -20228,7 +20545,7 @@ fn apply_advance_interface(
                     .loop_statement(loop_index)
                     .ok_or_else(|| {
                         ClickError::new(format!(
-                            "`{claim_label}` tactic {tactic_index}: `advance` could not resolve source loop({loop_index})"
+                            "`{claim_label}` tactic {tactic_index}: `reach` could not resolve source loop({loop_index})"
                         ))
                     })?;
                 let continuation_node = replay
@@ -20245,14 +20562,14 @@ fn apply_advance_interface(
             }
             (CodeRegion::Function, _, _) => {
                 return Err(ClickError::new(format!(
-                    "`{claim_label}` tactic {tactic_index}: `advance` requires a statement or loop entry or exit target"
+                    "`{claim_label}` tactic {tactic_index}: `reach` requires a statement or loop entry or exit target"
                 )));
             }
             _ => false,
         };
     if !at_target {
         return Err(ClickError::new(format!(
-            "`{claim_label}` tactic {tactic_index}: `advance` branch did not reach `{}.{}`",
+            "`{claim_label}` tactic {tactic_index}: `reach` branch did not reach `{}.{}`",
             describe_code_region_ref(&target.region),
             match target.kind {
                 ProgramPointKind::Entry => "entry",
@@ -20280,7 +20597,7 @@ fn apply_advance_interface(
                     )
                     .map_err(|message| {
                         ClickError::new(format!(
-                            "`{claim_label}` tactic {tactic_index}: could not lower `advance` fact: {message}"
+                            "`{claim_label}` tactic {tactic_index}: could not lower `reach` fact: {message}"
                         ))
                 })?;
                 replay
@@ -20289,7 +20606,7 @@ fn apply_advance_interface(
                 let assumptions = assumptions_from_propositions(&concrete_facts);
                 if !concrete_facts.contains(&fact) && !assumptions.proves(&fact) {
                     return Err(ClickError::new(format!(
-                        "`{claim_label}` tactic {tactic_index}: `advance` did not establish fact: {}",
+                        "`{claim_label}` tactic {tactic_index}: `reach` did not establish fact: {}",
                         describe_missing_pure_fact(
                             &fact,
                             &concrete_facts,
@@ -20317,7 +20634,7 @@ fn apply_advance_interface(
                 )?;
                 if !is_observed_core && !state.resources().satisfies_fact(&expected, &assumptions) {
                     return Err(ClickError::new(format!(
-                        "`{claim_label}` tactic {tactic_index}: `advance` did not establish resource fact: {}",
+                        "`{claim_label}` tactic {tactic_index}: `reach` did not establish resource fact: {}",
                         describe_missing_resource_fact(
                             &expected,
                             &concrete_facts,
@@ -20336,7 +20653,7 @@ fn apply_advance_interface(
     let mut abstract_state =
         abstract_c_state_for_join(state, stable_join_locals).map_err(|message| {
             ClickError::new(format!(
-                "`{claim_label}` tactic {tactic_index}: could not abstract `advance` target state: {message}"
+                "`{claim_label}` tactic {tactic_index}: could not abstract `reach` target state: {message}"
             ))
         })?;
 
@@ -20432,7 +20749,7 @@ fn apply_advance_interface(
                 )
                 .map_err(|message| {
                     ClickError::new(format!(
-                        "`{claim_label}` tactic {tactic_index}: could not project `advance` resource `{name}`: {message}"
+                        "`{claim_label}` tactic {tactic_index}: could not project `reach` resource `{name}`: {message}"
                     ))
                 })?;
                 abstract_state = abstract_state.with_memory(memory);
@@ -20460,7 +20777,7 @@ fn apply_advance_interface(
                 )
                 .map_err(|message| {
                     ClickError::new(format!(
-                        "`{claim_label}` tactic {tactic_index}: could not abstract `advance` fact: {message}"
+                        "`{claim_label}` tactic {tactic_index}: could not abstract `reach` fact: {message}"
                     ))
                 })?;
             if !exported_pure_facts.contains(&fact) {
@@ -20474,7 +20791,7 @@ fn apply_advance_interface(
             .try_compose_with_facts(exported_resources.facts().iter().cloned(), &exported_assumptions)
             .map_err(|error| {
                 ClickError::new(format!(
-                    "`{claim_label}` tactic {tactic_index}: invalid `advance` resource interface: {error:?}"
+                    "`{claim_label}` tactic {tactic_index}: invalid `reach` resource interface: {error:?}"
                 ))
             })?;
     abstract_state = abstract_state.with_resource_context(exported_resources);
@@ -20619,10 +20936,10 @@ fn execute_branch_step_from_execution_point(
     branch_step_policy: BranchStepPolicy,
 ) -> Result<bool, ClickError> {
     let tactic_name = match requested_branch {
-        Some(true) => "execute_then_step",
-        Some(false) => "execute_else_step",
+        Some(true) => "step",
+        Some(false) => "step",
         None if matches!(prerequisite_policy, StatementPrerequisitePolicy::Exact) => "step",
-        None => "execute_step",
+        None => "step",
     };
     let statement_index = replay.frontier.next_statement_index;
     let source_region = replay.source_layout.statement(statement_index).ok_or_else(|| {
@@ -20791,12 +21108,8 @@ fn execute_branch_step_from_execution_point(
                     let Proposition::ConditionIs(_, _) = fact else {
                         return None;
                     };
-                    let surface = synthesize_surface_proposition(
-                        fact,
-                        parameters,
-                        arguments,
-                        entry_state,
-                    )?;
+                    let surface =
+                        synthesize_surface_proposition(fact, parameters, arguments, entry_state)?;
                     let surface = surface_with_source_site(
                         &surface,
                         &ProgramPointRef {
@@ -21721,19 +22034,17 @@ fn execute_step_from_execution_point(
             left,
             operator,
             right,
-        }) =
-            synthesize_surface_proposition(&equation, parameters, arguments, &current_state)
+        }) = synthesize_surface_proposition(&equation, parameters, arguments, &current_state)
         {
             let store_entry_point = ProgramPointRef {
                 region: CodeRegionRef::Statement(statement_index),
                 kind: ProgramPointKind::Entry,
             };
-            let at = |point: &ProgramPointRef, expression: ContractExpression| {
-                ContractExpression::At {
+            let at =
+                |point: &ProgramPointRef, expression: ContractExpression| ContractExpression::At {
                     selector: VisitSelector::ProgramPoint(point.clone()),
                     expression: Box::new(expression),
-                }
-            };
+                };
             // The neutral pointer addition makes the Index use the outer
             // exit snapshot's memory while its base and index retain their
             // entry values.
@@ -21996,7 +22307,7 @@ fn bounded_execute_from_execution_point(
         }
         if executed_steps == BOUNDED_EXECUTE_STEP_LIMIT {
             return Err(ClickError::new(format!(
-                "`{claim_label}` tactic {tactic_index}: `bounded_execute` exhausted its {BOUNDED_EXECUTE_STEP_LIMIT}-step budget at statement({})",
+                "`{claim_label}` tactic {tactic_index}: `execute` exhausted its {BOUNDED_EXECUTE_STEP_LIMIT}-step budget at statement({})",
                 frontier.replay.frontier.next_statement_index
             )));
         }
@@ -22008,7 +22319,7 @@ fn bounded_execute_from_execution_point(
             .statement(frontier.replay.frontier.next_statement_index)
             .ok_or_else(|| {
                 ClickError::new(format!(
-                    "`{claim_label}` tactic {tactic_index}: `bounded_execute` could not resolve source statement({})",
+                    "`{claim_label}` tactic {tactic_index}: `execute` could not resolve source statement({})",
                     frontier.replay.frontier.next_statement_index
                 ))
             })?;
@@ -22052,7 +22363,7 @@ fn bounded_execute_from_execution_point(
             function_environment,
             claim_label,
             tactic_index,
-            "bounded_execute",
+            "execute",
             &[],
             None,
             prerequisite_policy,
@@ -22061,7 +22372,7 @@ fn bounded_execute_from_execution_point(
         )
         .map_err(|error| {
             ClickError::new(format!(
-                "`{claim_label}` tactic {tactic_index}: `bounded_execute` failed after {executed_steps} small execution steps: {}",
+                "`{claim_label}` tactic {tactic_index}: `execute` failed after {executed_steps} small execution steps: {}",
                 error.message()
             ))
         })?;
@@ -22076,7 +22387,7 @@ fn bounded_execute_from_execution_point(
                     ProofReplayPlan::from_planned_tactics(&frontier.replay.planned_tactics)
                         .map_err(|error| {
                             ClickError::new(format!(
-                                "`{claim_label}` tactic {tactic_index}: `bounded_execute` path planned a non-certificate tactic {:?}",
+                                "`{claim_label}` tactic {tactic_index}: `execute` path planned a non-certificate tactic {:?}",
                                 error.smart_tactic()
                             ))
                         })
@@ -22115,7 +22426,7 @@ fn merge_bounded_execution_frontiers(
 ) -> Result<(), ClickError> {
     if completed.is_empty() {
         return Err(ClickError::new(format!(
-            "`{claim_label}` tactic {tactic_index}: `bounded_execute` produced no complete execution paths"
+            "`{claim_label}` tactic {tactic_index}: `execute` produced no complete execution paths"
         )));
     }
 
@@ -22126,7 +22437,7 @@ fn merge_bounded_execution_frontiers(
         .clone()
         .ok_or_else(|| {
             ClickError::new(format!(
-                "`{claim_label}` tactic {tactic_index}: `bounded_execute` has no execution start state"
+                "`{claim_label}` tactic {tactic_index}: `execute` has no execution start state"
             ))
         })?;
     let mut common_pure_facts = completed[0].pure_facts.clone();
@@ -22234,7 +22545,7 @@ fn execute_rest_from_execution_point(
             function_environment,
             claim_label,
             tactic_index,
-            "execute_rest",
+            "execute",
             &[],
             None,
             StatementPrerequisitePolicy::Planning,
@@ -22363,10 +22674,7 @@ fn split_next_execution_step(
     let (assertion_prefix, source_statement, remaining) =
         split_next_source_operation(statement, assertion_prefix_count)?;
     if matches!(source_statement, CStatement::If { .. }) {
-        return Err(
-            "next statement is an `if`; use `execute_then_step()` or `execute_else_step()`"
-                .to_string(),
-        );
+        return Err("next statement is an `if`; use `step()` or `step()`".to_string());
     }
     let step_statement = assertion_prefix
         .map(|prefix| c_seq(prefix, source_statement.clone()))
@@ -22379,8 +22687,9 @@ fn split_next_source_operation(
     assertion_prefix_count: usize,
 ) -> Result<(Option<CStatement>, CStatement, Option<CStatement>), String> {
     let mut statements = Vec::new();
-    flatten_top_level_sequence(statement, &mut statements)
-        .map_err(|message| format!("could not flatten the lowered statement sequence: {message}"))?;
+    flatten_top_level_sequence(statement, &mut statements).map_err(|message| {
+        format!("could not flatten the lowered statement sequence: {message}")
+    })?;
     let source_statement_offset = assertion_prefix_count;
     let Some(source_statement) = statements.get(source_statement_offset) else {
         return Err("lowered statement is missing its source operation".to_string());
@@ -23971,8 +24280,10 @@ fn materialize_composite_resource_cells(
         if matches!(memory.load(&pointer), CExpressionOutcome::Value(_)) {
             continue;
         }
-        let load =
-            Bitvector32Term::MemoryLoad(crate::kernel::intern_c_memory(base_memory.clone()), Box::new(pointer.clone()));
+        let load = Bitvector32Term::MemoryLoad(
+            crate::kernel::intern_c_memory(base_memory.clone()),
+            Box::new(pointer.clone()),
+        );
         let value = match element_width {
             1 => CValue::UInt8(load),
             _ => CValue::Int32(load),
@@ -24188,7 +24499,7 @@ fn bounded_execution_tactic_candidates(claim: &FunctionClaimRef<'_>) -> Vec<Vec<
         }
         FunctionClaimRef::Effect(_, _) => vec![vec![
             ProofTactic::BoundedExecute,
-            ProofTactic::ContextualFrame,
+            ProofTactic::ContextualFrame(None),
         ]],
     }
 }
@@ -24211,7 +24522,7 @@ fn auto_loop_verification_tactic_candidates(
             vec![simp]
         }
         FunctionClaimRef::Effect(_, _) => {
-            base.push(ProofTactic::ContextualFrame);
+            base.push(ProofTactic::ContextualFrame(None));
             vec![base]
         }
     }

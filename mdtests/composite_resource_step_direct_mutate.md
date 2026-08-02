@@ -39,11 +39,11 @@ int32 len_then_clear_step(struct owner* owner) {
 
     produces owned_buffer(owner) by {
         observe(owned_buffer(owner));
-        execute_step();
-        execute_step();
+        step();
+        step();
         unfold(owned_buffer(owner));
-        execute_step();
-        execute_step();
+        step();
+        step();
         have 0 <= owner->len by { simp(); }
         have owner->len <= owner->cap by { simp(); }
         have 0 <= owner->cap by { simp(); }

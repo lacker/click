@@ -46,7 +46,7 @@ int32 sort3_permutation_predicate(int32 p[3]) {
     requires loadable(p[0..3]);
     consumes p[0..3];
     ensures permutation: permutation3(p, old(p[0]), old(p[1]), old(p[2])) by {
-        execute_rest();
+        execute();
         unfold(permutation3);
         simp();
     }

@@ -15,7 +15,7 @@ verifying "use_token.c";
 int32 use_token(int32 fd) {
     ensures zero: result == 0 by {
         observe(missing_resource(fd));
-        execute_rest();
+        execute();
         simp();
     }
 }

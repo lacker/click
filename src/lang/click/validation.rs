@@ -285,6 +285,13 @@ fn expand_declared_resource_tactic(
                     .collect::<Result<Vec<_>, _>>()?,
             })
         }
+        ProofTactic::FrameUsing { region, premises } => Ok(ProofTactic::FrameUsing {
+            region,
+            premises: premises
+                .into_iter()
+                .map(|premise| expand_declared_resource_proposition(premise, resource_definitions))
+                .collect::<Result<Vec<_>, _>>()?,
+        }),
         ProofTactic::ApplyTheoremUsing {
             application,
             premises,
@@ -2313,7 +2320,7 @@ fn validate_pure_theorem_tactics(
             }
             ProofTactic::Advance(_) => {
                 return Err(ClickError::new(format!(
-                    "execution tactic `advance` is not available in the pure proof for theorem `{theorem_name}`"
+                    "execution tactic `reach` is not available in the pure proof for theorem `{theorem_name}`"
                 )));
             }
             ProofTactic::Step
@@ -2321,6 +2328,7 @@ fn validate_pure_theorem_tactics(
             | ProofTactic::StepUsing(_)
             | ProofTactic::ApplyLoopSummary(_)
             | ProofTactic::ApplyLoopSummaryUsing { .. }
+            | ProofTactic::ContextualLoopSummary(_)
             | ProofTactic::CertifiedStatementStep { .. }
             | ProofTactic::CertifiedLoopSummaryStep { .. }
             | ProofTactic::CertifiedStatementReplay(_)
@@ -2336,8 +2344,9 @@ fn validate_pure_theorem_tactics(
             | ProofTactic::ExecuteRest
             | ProofTactic::ExecuteUntil(_)
             | ProofTactic::BoundedExecute
-            | ProofTactic::ContextualFrame
+            | ProofTactic::ContextualFrame(_)
             | ProofTactic::Frame(_)
+            | ProofTactic::FrameUsing { .. }
             | ProofTactic::ObserveResource(_)
             | ProofTactic::Transport { .. }
             | ProofTactic::TransportUsing { .. }
@@ -2360,50 +2369,50 @@ pub(super) fn tactic_name(tactic: &ProofTactic) -> &'static str {
     match tactic {
         ProofTactic::Step => "step",
         ProofTactic::StepUsing(_) => "step",
-        ProofTactic::ApplyLoopSummary(_) | ProofTactic::ApplyLoopSummaryUsing { .. } => {
-            "apply_loop_summary"
-        }
-        ProofTactic::CertifiedStatementStep { .. } => "certified_statement_step",
-        ProofTactic::CertifiedLoopSummaryStep { .. } => "certified_loop_summary_step",
-        ProofTactic::CertifiedStatementReplay(_) => "certified_statement_step",
-        ProofTactic::CertifiedLoopSummaryReplay(_) => "certified_loop_summary_step",
-        ProofTactic::ExecuteStep => "execute_step",
-        ProofTactic::ExecuteThenStep => "execute_then_step",
-        ProofTactic::ExecuteElseStep => "execute_else_step",
-        ProofTactic::ExecuteRest => "execute_rest",
+        ProofTactic::ApplyLoopSummary(_)
+        | ProofTactic::ApplyLoopSummaryUsing { .. }
+        | ProofTactic::ContextualLoopSummary(_) => "summarize",
+        ProofTactic::CertifiedStatementStep { .. } => "step",
+        ProofTactic::CertifiedLoopSummaryStep { .. } => "summarize",
+        ProofTactic::CertifiedStatementReplay(_) => "step",
+        ProofTactic::CertifiedLoopSummaryReplay(_) => "summarize",
+        ProofTactic::ExecuteStep => "step",
+        ProofTactic::ExecuteThenStep => "step",
+        ProofTactic::ExecuteElseStep => "step",
+        ProofTactic::ExecuteRest => "execute",
         ProofTactic::ExecuteUntil(_) => "execute_until",
-        ProofTactic::BoundedExecute => "bounded_execute",
-        ProofTactic::ContextualFrame => "frame",
-        ProofTactic::Frame(_) => "frame",
+        ProofTactic::BoundedExecute => "execute",
+        ProofTactic::ContextualFrame(_) => "frame",
+        ProofTactic::Frame(_) | ProofTactic::FrameUsing { .. } => "frame",
         ProofTactic::UnfoldPredicate(_) | ProofTactic::UnfoldResource(_) => "unfold",
         ProofTactic::FoldResource(_) => "fold",
         ProofTactic::ApplyTheorem(_) | ProofTactic::ApplyTheoremUsing { .. } => "apply",
         ProofTactic::Have(_) => "have",
         ProofTactic::If(_) => "if",
-        ProofTactic::Advance(_) => "advance",
+        ProofTactic::Advance(_) => "reach",
         ProofTactic::ObserveResource(_) => "observe",
         ProofTactic::Witness(_) => "witness",
         ProofTactic::Choose(_) => "choose",
         ProofTactic::Assumption => "assumption",
         ProofTactic::Normalize => "normalize",
         ProofTactic::Intro => "intro",
-        ProofTactic::Conjunction => "conjunction",
+        ProofTactic::Conjunction => "split",
         ProofTactic::Left => "left",
         ProofTactic::Right => "right",
-        ProofTactic::DoubleNegation => "double_negation",
-        ProofTactic::Vacuous => "vacuous",
+        ProofTactic::DoubleNegation => "intro",
+        ProofTactic::Vacuous => "intro",
         ProofTactic::Contradiction(_) => "contradiction",
         ProofTactic::Derive(_) => "derive",
-        ProofTactic::Calculate(_) => "calculate",
+        ProofTactic::Calculate(_) => "derive",
         ProofTactic::CloseInvariants => "close_invariants",
         ProofTactic::Rewrite(_) => "rewrite",
         ProofTactic::Transport { .. } | ProofTactic::TransportUsing { .. } => "transport",
-        ProofTactic::ExactPropositionDerivation(_) => "exact_proposition_derivation",
-        ProofTactic::CertifiedFactTransport { .. } => "certified_fact_transport",
-        ProofTactic::FinishCertifiedFactTransports(_) => "finish_certified_fact_transports",
-        ProofTactic::CertifiedPathAssumption { .. } => "certified_path_assumption",
-        ProofTactic::CertifiedFrame(_) => "certified_frame",
-        ProofTactic::CertifiedAlternatives(_) => "certified_alternatives",
+        ProofTactic::ExactPropositionDerivation(_) => "derive",
+        ProofTactic::CertifiedFactTransport { .. }
+        | ProofTactic::FinishCertifiedFactTransports(_) => "transport",
+        ProofTactic::CertifiedPathAssumption { .. } => "if",
+        ProofTactic::CertifiedFrame(_) => "frame",
+        ProofTactic::CertifiedAlternatives(_) => "execute",
         ProofTactic::Simp => "simp",
     }
 }

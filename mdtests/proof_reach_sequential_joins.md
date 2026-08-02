@@ -1,4 +1,4 @@
-# advance interfaces compose sequentially
+# reach interfaces compose sequentially
 
 ```c filename=advance_sequential_joins.c
 int32 advance_sequential_joins(int32 x) {
@@ -23,35 +23,35 @@ verifying "advance_sequential_joins.c";
 
 int32 advance_sequential_joins(int32 x) {
     ensures result >= 0 by {
-        execute_step();
-        execute_step();
-        advance(statement(2).exit)
+        step();
+        step();
+        reach(statement(2).exit)
         ensuring {
             fact y >= 0;
         }
         by {
             if x >= 0 {
-                execute_then_step();
-                execute_step();
+                step();
+                step();
             } else {
-                execute_else_step();
-                execute_step();
+                step();
+                step();
             }
         }
-        advance(statement(5).exit)
+        reach(statement(5).exit)
         ensuring {
             fact z >= 0;
         }
         by {
             if y > 0 {
-                execute_then_step();
-                execute_step();
+                step();
+                step();
             } else {
-                execute_else_step();
-                execute_step();
+                step();
+                step();
             }
         }
-        execute_step();
+        step();
         simp();
     }
 }

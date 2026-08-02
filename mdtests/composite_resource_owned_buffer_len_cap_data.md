@@ -53,7 +53,7 @@ int32 push_one(struct owner* owner, int32 value) {
 
     produces owned_buffer(owner) by {
         unfold(owned_buffer_with_room(owner));
-        execute_rest();
+        execute();
         have 0 <= owner->len by {
             derive(0 <= owner->len) using {
                 fact at(statement(6).entry, separate(memory(owner->len), memory(owner->cap)));
@@ -84,7 +84,7 @@ int32 push_one(struct owner* owner, int32 value) {
 
     ensures result <= owner->cap by {
         unfold(owned_buffer_with_room(owner));
-        execute_rest();
+        execute();
         have 0 <= owner->len by {
             derive(0 <= owner->len) using {
                 fact at(statement(6).entry, separate(memory(owner->len), memory(owner->cap)));

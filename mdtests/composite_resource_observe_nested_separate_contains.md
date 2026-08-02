@@ -37,7 +37,7 @@ int32 observe_nested_separate_contains(struct owner* owner) {
     ensures separate(memory(owner[0..3]), memory((owner->data)[0..owner->cap])) by {
         observe(nested_owned_buffer(owner));
         observe(backing_buffer(owner));
-        execute_rest();
+        execute();
         simp();
     }
 }

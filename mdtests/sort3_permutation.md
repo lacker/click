@@ -32,7 +32,7 @@ int32 sort3_permutation(int32 p[3]) {
     requires loadable(p[0..3]);
     consumes p[0..3];
     ensures permutation: permutation(p, old(p), 0, 3) by {
-        execute_rest();
+        execute();
         unfold(permutation);
         simp();
     }

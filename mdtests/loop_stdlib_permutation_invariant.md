@@ -34,7 +34,7 @@ int32 loop_stdlib_permutation_invariant(int32 p[3]) {
         immutable by frame;
     }
     ensures permutation_after_loop: permutation(p, old(p), 0, 3) by {
-        execute_rest();
+        execute();
         frame(loop(0));
         unfold(permutation);
         simp();

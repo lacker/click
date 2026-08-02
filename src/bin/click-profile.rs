@@ -220,13 +220,22 @@ impl WorkMetrics {
 }
 
 fn is_c_transition(tactic_name: &str) -> bool {
-    matches!(
-        tactic_name,
-        "step"
-            | "certified_statement_step"
-            | "apply_loop_summary"
-            | "certified_loop_summary_step"
-    )
+    matches!(tactic_name, "step" | "summarize")
+}
+
+fn canonical_tactic_name(name: &str) -> &str {
+    match name {
+        "execute_step" | "certified_statement_step" => "step",
+        "execute_rest" | "symbolic_execute" | "bounded_execute" => "execute",
+        "apply_loop_summary" | "certified_loop_summary_step" => "summarize",
+        "certified_fact_transport" | "finish_certified_fact_transports" => "transport",
+        "certified_path_assumption" => "if",
+        "certified_frame" => "frame",
+        "exact_proposition_derivation" | "calculate" => "derive",
+        "advance" => "reach",
+        "conjunction" => "split",
+        name => name,
+    }
 }
 
 fn entry() -> Result<(), String> {
@@ -350,7 +359,11 @@ fn profile_targets(path: &Path) -> Result<Vec<PathBuf>, String> {
     if looks_like_mdtest(path) {
         return find_mdtests(path);
     }
-    if path.is_file() && path.extension().is_some_and(|extension| extension == "click") {
+    if path.is_file()
+        && path
+            .extension()
+            .is_some_and(|extension| extension == "click")
+    {
         return Ok(vec![path.to_path_buf()]);
     }
     match find_projects(path) {
@@ -792,7 +805,7 @@ fn parse_step_key(rest: &str, source_path: &Path) -> Option<StepKey> {
         source_path: source_path.to_path_buf(),
         claim: fields[0].to_string(),
         tactic_index: fields[1].parse().ok()?,
-        tactic_name: fields[2].to_string(),
+        tactic_name: canonical_tactic_name(fields[2]).to_string(),
         category: TacticCategory::parse(fields[4])?,
         statement_index: fields[6].parse().ok()?,
         source_index: fields[8].parse().ok()?,
@@ -1480,8 +1493,7 @@ fn render_diagnoses(output: &mut String, profiles: &[ProjectProfile]) {
             profile.accounting.certification,
             profile.work.certification_paths,
         );
-        if (profile.work.claims > 0
-            && certification_per_claim > CERTIFICATION_PER_CLAIM_LIMIT)
+        if (profile.work.claims > 0 && certification_per_claim > CERTIFICATION_PER_CLAIM_LIMIT)
             || (profile.work.certification_paths > 0
                 && certification_per_path > CERTIFICATION_PER_PATH_LIMIT)
         {
@@ -1768,13 +1780,10 @@ click timing: tactic example.contract 2 certified_statement_step class simple st
         let profile = parse_profile("sample", output, Thresholds::default(), true)
             .expect("the current timing format should parse");
         assert_eq!(profile.slow_steps.len(), 1);
-        assert_eq!(
-            profile.slow_steps[0].key.tactic_name,
-            "certified_statement_step"
-        );
+        assert_eq!(profile.slow_steps[0].key.tactic_name, "step");
         assert_eq!(profile.slow_steps[0].key.category, TacticCategory::Simple);
         assert_eq!(profile.active.len(), 1);
-        assert_eq!(profile.active[0].tactic_name, "execute_step");
+        assert_eq!(profile.active[0].tactic_name, "step");
         assert_eq!(profile.active[0].category, TacticCategory::Smart);
         assert!(profile.unknown_timing.is_empty());
     }
@@ -1799,7 +1808,7 @@ click timing: tactic example.contract 0 execute_step class smart statement 1 sou
             .expect("the current timing format should parse");
 
         assert_eq!(profile.slow_steps.len(), 1);
-        assert_eq!(profile.slow_steps[0].key.tactic_name, "execute_step");
+        assert_eq!(profile.slow_steps[0].key.tactic_name, "step");
         assert_eq!(profile.work.source_files, 1);
         assert_eq!(profile.work.functions, 1);
         assert_eq!(profile.work.claims, 1);
@@ -1832,28 +1841,38 @@ click timing: function example_function 12.000s
         let profile = parse_profile("sample", output, Thresholds::default(), false)
             .expect("the current timing format should parse");
 
-        assert!(profile.unknown_timing.is_empty(), "{:?}", profile.unknown_timing);
+        assert!(
+            profile.unknown_timing.is_empty(),
+            "{:?}",
+            profile.unknown_timing
+        );
         assert_eq!(profile.accounting.total, Duration::from_secs(12));
         assert_eq!(profile.accounting.smart, Duration::from_secs(3));
         assert_eq!(profile.accounting.simple, Duration::from_secs(4));
         // 8s container minus the 3s + 4s it ran.
         assert_eq!(profile.accounting.control, Duration::from_secs(1));
-        assert_eq!(profile.accounting.certification, Duration::from_millis(1_500));
-        assert_eq!(profile.accounting.unattributed(), Duration::from_millis(2_500));
+        assert_eq!(
+            profile.accounting.certification,
+            Duration::from_millis(1_500)
+        );
+        assert_eq!(
+            profile.accounting.unattributed(),
+            Duration::from_millis(2_500)
+        );
         assert!(profile.active.is_empty());
         assert_eq!(profile.slow_steps.len(), 2);
         assert!(profile.slow_steps.iter().any(|step| {
-            step.key.category == TacticCategory::Smart
-                && step.elapsed == Duration::from_secs(3)
+            step.key.category == TacticCategory::Smart && step.elapsed == Duration::from_secs(3)
         }));
         assert!(profile.slow_steps.iter().any(|step| {
-            step.key.category == TacticCategory::Simple
-                && step.elapsed == Duration::from_secs(4)
+            step.key.category == TacticCategory::Simple && step.elapsed == Duration::from_secs(4)
         }));
-        assert!(profile
-            .slow_steps
-            .iter()
-            .all(|step| step.key.category != TacticCategory::Control));
+        assert!(
+            profile
+                .slow_steps
+                .iter()
+                .all(|step| step.key.category != TacticCategory::Control)
+        );
 
         let report = render_profiles(&[profile], Thresholds::default(), DEFAULT_TIME_LIMIT);
         assert!(report.contains("TIME ACCOUNTING"), "{report}");
@@ -1933,7 +1952,10 @@ click timing: function example_function 2.200s
         assert_eq!(profile.accounting.environment, Duration::from_secs(1));
         assert_eq!(profile.accounting.simple, Duration::from_millis(200));
         assert_eq!(profile.accounting.certification, Duration::from_secs(2));
-        assert_eq!(profile.accounting.unattributed(), Duration::from_millis(300));
+        assert_eq!(
+            profile.accounting.unattributed(),
+            Duration::from_millis(300)
+        );
         assert_eq!(profile.work.source_files, 1);
         assert_eq!(profile.work.functions, 1);
         assert_eq!(profile.work.c_transitions.count, 1);
@@ -1976,7 +1998,10 @@ click timing: function example_function 0.700s
             .expect("the current timing format should parse");
         profile.accounting.wall_total = Duration::from_secs(1);
 
-        assert_eq!(profile.accounting.unattributed(), Duration::from_millis(300));
+        assert_eq!(
+            profile.accounting.unattributed(),
+            Duration::from_millis(300)
+        );
         assert!(profile.accounting.materially_unattributed());
     }
 
@@ -2025,14 +2050,21 @@ click timing: function example_function 4.000s
 "#;
         let mut profile = parse_profile("sample", output, Thresholds::default(), false)
             .expect("the current timing format should parse");
-        profile
-            .unresolved_positions
-            .insert("`example.contract` has no source tactic occurrence 7".to_string(), 1);
+        profile.unresolved_positions.insert(
+            "`example.contract` has no source tactic occurrence 7".to_string(),
+            1,
+        );
 
         let report = render_profiles(&[profile], Thresholds::default(), DEFAULT_TIME_LIMIT);
 
-        assert!(report.contains("STEPS WITHOUT A SOURCE LOCATION"), "{report}");
-        assert!(report.contains("examples/sample.click (no source location)"), "{report}");
+        assert!(
+            report.contains("STEPS WITHOUT A SOURCE LOCATION"),
+            "{report}"
+        );
+        assert!(
+            report.contains("examples/sample.click (no source location)"),
+            "{report}"
+        );
         assert!(report.contains("no source tactic occurrence 7"), "{report}");
         assert!(report.contains("4.000s"), "{report}");
     }
@@ -2130,7 +2162,10 @@ click timing: widget 0.5s
         let mdtests = profile_targets(&manifest.join("mdtests"))
             .expect("a directory of markdown tests profiles all of them");
         assert!(mdtests.len() > 1);
-        assert!(mdtests.iter().all(|path| looks_like_mdtest(path)), "{mdtests:?}");
+        assert!(
+            mdtests.iter().all(|path| looks_like_mdtest(path)),
+            "{mdtests:?}"
+        );
 
         let sidecar = manifest.join("examples/input-cursor/input_cursor.click");
         assert_eq!(
@@ -2228,8 +2263,14 @@ click timing: tactic example.contract 2 have class control statement 3 source 30
         assert_eq!(report.matches("expand: cargo run").count(), 1);
         assert!(report.contains("--time-limit 1m"));
         assert!(report.contains("sample.expanded.click"), "{report}");
-        assert!(report.contains("verify: cargo run --quiet --bin click-verify"), "{report}");
-        assert!(report.contains("reprofile: cargo run --quiet --bin click-profile"), "{report}");
+        assert!(
+            report.contains("verify: cargo run --quiet --bin click-verify"),
+            "{report}"
+        );
+        assert!(
+            report.contains("reprofile: cargo run --quiet --bin click-profile"),
+            "{report}"
+        );
         assert!(report.contains("--smart-threshold 2s"), "{report}");
     }
 
@@ -2279,7 +2320,10 @@ click timing: function example_function 1.200s
 
         let report = render_profiles(&[profile], Thresholds::default(), DEFAULT_TIME_LIMIT);
         assert!(report.contains("HEALTHY VOLUME"), "{report}");
-        assert!(report.contains("NEXT: measured cost is HEALTHY VOLUME"), "{report}");
+        assert!(
+            report.contains("NEXT: measured cost is HEALTHY VOLUME"),
+            "{report}"
+        );
     }
 
     #[test]
@@ -2299,7 +2343,10 @@ click timing: failed tactic example.contract 0 simp class smart statement 1 sour
 
         let report = render_profiles(&[profile], Thresholds::default(), DEFAULT_TIME_LIMIT);
         assert!(report.contains("SMART SEARCH FAILURE"), "{report}");
-        assert!(report.contains("FAILED — no certificate to expand"), "{report}");
+        assert!(
+            report.contains("FAILED — no certificate to expand"),
+            "{report}"
+        );
         assert!(report.contains("0 succeeded,      1 failed"), "{report}");
         assert!(!report.contains("expand: cargo run"), "{report}");
         assert!(report.contains("click-expand is not available"), "{report}");

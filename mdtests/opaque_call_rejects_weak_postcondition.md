@@ -24,7 +24,7 @@ verifying "weak_set_caller.c";
 
 int32 weak_set(int32 p[], int32 value) {
     owns p[0..1] by auto;
-    mutable p[0..1] by frame;
+    mutable p[0..1] by auto;
     ensures result == value by auto;
 }
 

@@ -2,7 +2,7 @@
 
 `execute_until` composes with earlier execution steps, selected branches, and
 abstract joins. It records the same statement snapshots as repeated
-`execute_step` calls.
+`step` calls.
 
 ```c filename=execute_until_after_step.c
 int32 execute_until_after_step(int32 x) {
@@ -51,9 +51,9 @@ int32 execute_until_after_step(int32 x) {
     ensures result == 5
         and at(statement(2).exit, y) == 5
         and at(statement(3).entry, y) == 5 by {
-        execute_step();
+        step();
         execute_until(statement(3));
-        execute_step();
+        step();
         simp();
     }
 }
@@ -64,34 +64,34 @@ int32 execute_until_selected_branch(int32 flag) {
     ensures result == 2
         and at(statement(3).entry, y) == 1
         and at(statement(5).entry, y) == 2 by {
-        execute_step();
-        execute_then_step();
+        step();
+        step();
         execute_until(statement(3));
         execute_until(statement(5));
-        execute_step();
+        step();
         simp();
     }
 }
 
 int32 execute_until_after_advance(int32 flag) {
     ensures result == 3 by {
-        execute_step();
-        advance(statement(1).exit)
+        step();
+        reach(statement(1).exit)
         ensuring {
             fact y >= 0;
             fact y <= 1;
         }
         by {
             if flag != 0 {
-                execute_then_step();
-                execute_step();
+                step();
+                step();
             } else {
-                execute_else_step();
-                execute_step();
+                step();
+                step();
             }
         }
         execute_until(statement(6));
-        execute_step();
+        step();
         simp();
     }
 }

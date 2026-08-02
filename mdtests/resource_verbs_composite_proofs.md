@@ -37,7 +37,7 @@ verifying "inspect_cell.c";
 int32 initialize_cell(int32 p[]) {
     consumes p[0..1];
     produces initialized_cell(p) by {
-        execute_rest();
+        execute();
         fold(initialized_cell(p));
     }
 }
@@ -45,7 +45,7 @@ int32 initialize_cell(int32 p[]) {
 int32 set_cell_one(int32 p[]) {
     owns initialized_cell(p) by {
         unfold(initialized_cell(p));
-        execute_rest();
+        execute();
         fold(initialized_cell(p));
     }
 }

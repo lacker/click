@@ -39,7 +39,7 @@ int32 buffer_set_first(struct owner* owner, int32 value) {
     ensures result == value;
 } by {
     unfold(owned_buffer(owner));
-    execute_rest();
+    execute();
     have 1 <= owner->len by { simp(); }
     have owner->len <= owner->cap by { simp(); }
     have 1 <= owner->cap by { simp(); }

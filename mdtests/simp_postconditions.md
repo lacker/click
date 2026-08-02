@@ -14,8 +14,8 @@ int32 simp_postconditions(int32 x) {
 verifying "simp_postconditions.c";
 
 int32 simp_postconditions(int32 x) {
-    ensures add_zero: result == x + 0 by simp;
-    ensures prop_simp: result == x and not (result != x) by simp;
+    ensures add_zero: result == x + 0 by { execute(); simp(); }
+    ensures prop_simp: result == x and not (result != x) by { execute(); simp(); }
 }
 ```
 

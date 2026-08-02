@@ -29,12 +29,12 @@ int32 loop_preserve_branch(int32 n) {
         invariant i <= n;
         preserve by {
             if i < 0 {
-                execute_then_step();
-                execute_step();
+                step();
+                step();
                 simp();
             } else {
-                execute_else_step();
-                execute_step();
+                step();
+                step();
                 simp();
             }
         }

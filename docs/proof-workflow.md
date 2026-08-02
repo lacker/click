@@ -31,7 +31,7 @@ int32 set_first(int32 p[], int32 value) {
     ensures result == value;
     ensures p[0] == value;
 } by {
-    execute_rest();
+    execute();
     frame();
     simp();
 }
@@ -45,7 +45,7 @@ available for independent proofs, but cannot be mixed with a grouped proof in
 the same function.
 
 The shorthand `} by auto;` builds one deterministic grouped script:
-`execute_rest()`, declared loop checks, `frame()` when the contract has effects,
+`execute()`, declared loop checks, `frame()` when the contract has effects,
 and `simp()` when it has postconditions. Composite-resource folds and theorem
 applications remain explicit.
 
@@ -66,14 +66,14 @@ by simp;
 by frame;
 ```
 
-Omitting a proof clause uses `auto`. Each of these may also be written with
-braces — `by { auto; }`, `by { simp; }`, `by { frame; }` — which parses to the
-identical whole-claim smart proof. That is not the same as the one-tactic
-script `by { simp(); }`, which is an explicit proof script; see the
-[proof tactics reference](proof-tactics.md#synonyms-and-legacy-spellings).
+Omitting a proof clause uses `auto`. `by simp;` means the same operation as
+`by { simp(); }`, and `by frame;` means the same operation as
+`by { frame(); }`. All four forms act at the current proof frontier; neither
+`simp` nor `frame` implicitly executes C. See the
+[proof tactics reference](proof-tactics.md).
 
 For an individual claim, `auto` is the broad orchestration tactic. It first
-tries verification execution, then may try the smart `bounded_execute()` proof
+tries verification execution, then may try the smart `execute()` proof
 script and records the tactics that succeeded. Grouped `auto` has the fixed
 expansion described above, so grouped proofs do not depend on proof search.
 
@@ -84,9 +84,8 @@ and several kernel equality patterns. For order goals, it also rewrites through
 known equalities, evaluates equality-linked constant arithmetic, and uses the
 discrete relationship between strict and non-strict integer bounds.
 
-`by frame` smartly proves `immutable` and `mutable` effect clauses using
-contextual range reasoning. It rejects ordinary postconditions. The explicit
-tactic `frame()` instead requires exact range bounds.
+Bare `frame()` (including `by frame;`) performs smart contextual range
+reasoning. The simple exact form is `frame() using { fact P; ... }`.
 
 The exhaustive simple/smart classification is in the
 [proof tactics reference](proof-tactics.md).
@@ -97,7 +96,7 @@ Explicit proof scripts use function-call-shaped tactics:
 
 ```click
 by {
-    execute_rest();
+    execute();
     unfold(sorted);
     simp();
 }
@@ -107,45 +106,33 @@ Current tactics. The [proof tactics reference](proof-tactics.md) is the
 authoritative inventory and classifies each spelling as simple, smart, or
 control flow.
 
-- `step();`: advance one small C transition using only exact or context-free execution
-  prerequisites. It does not automatically transport memory-dependent facts to
+- `step using { fact P; ... }`: advance one small C transition using exactly
+  the listed execution premises. It does not automatically transport memory-dependent facts to
   the new snapshot; use `transport(source, target)` explicitly. At a C `if`, an
   exact condition fact selects and enters one arm. At a loop head, it evaluates
   the condition once and enters one iteration or advances past the loop.
-- `execute_step();`: execute one small C transition from the current execution
+- `step();`: execute one small C transition from the current execution
   point with contextual prerequisite reasoning and automatic supported fact
-  transport. It uses the same branch and loop-head transitions as `step()`.
-- `execute_then_step();`: require the next C statement to be an `if`,
-  contextually prove its condition, and move the execution point to the
-  beginning of its then arm without executing the arm body.
-- `execute_else_step();`: the corresponding operation for the else arm; it
-  proves the C condition false and moves to the beginning of that arm.
-- `execute_rest();`: build symbolic verification paths from the current
+  transport. It uses the same branch and loop-head transitions as `step using`.
+- `execute();`: build symbolic verification paths from the current
   execution point to function exit. From function entry, this executes the
   whole C0 function. It applies verified abstract loop rules where available.
-- `step using { fact P; ... };`: the same transition, restricted to exactly the
-  listed pure facts as execution premises.
-- `symbolic_execute();`: legacy source spelling of `execute_rest();`; both
-  spellings parse to the same tactic. Prefer `execute_rest()`.
 - `execute_until(statement(N));`: execute the current deterministic prefix up
   to the entry of statement region `N`. It can cross verified loops, but an
   unresolved `if` still requires explicit branch entry. It composes with prior
-  execution steps, selected branches, and `advance` joins. The target must be
+  execution steps, selected branches, and `reach` joins. The target must be
   forward and reachable on the current execution path, and each source step
   must produce exactly one normal successor.
-- `bounded_execute();`: repeatedly apply contextual one-step execution for
-  concrete-loop proofs, stopping at function exit or a fixed step budget.
-- `apply_loop_summary(loop(N));`: apply an already verified loop's abstract rule
+- `summarize(loop(N));`: contextually apply an already verified loop's abstract rule
   at its entry and advance to its exit in one transition, without entering the
-  body. Its `using { fact P; ... }` form names the contextual premises.
+  body. Its simple `using { fact P; ... }` form names the complete premise set.
 - `close_invariants();`: discharge a loop's whole invariant bundle at the back
   edge. It is accepted only inside `preserve by { ... }`, and at most once per
   path. Omitting it makes Click append the closer implicitly.
-- `frame();`: check the current function-level certified write summary against
-  its declared effect using exact available range bounds.
-- `frame(loop(N));`: perform the same exact check for loop code region `N` and
-  expose its summary for later postcondition reasoning. Contract clauses may
-  instead use smart contextual `by frame`.
+- `frame();` and `frame(loop(N));`: smart contextual frame reasoning for the
+  function or selected loop.
+- `frame() using { fact P; ... }` and the region form: the simple exact-premise
+  frame check. Expansion always emits this form.
 - `unfold(name);`: unfold matching predicate facts and goals.
 - `unfold(resource);`: consume one owned composite resource fact and expose its
   immediate body facts.
@@ -174,8 +161,8 @@ control flow.
   with the proposition added to the pure facts and once with its negation
   added. Each branch has its own proof script and must finish the current
   claim. A proof-level `if` is therefore the final step in its surrounding
-  script unless it is inside `advance`; it does not execute a C `if` statement.
-- `advance(program_point) ensuring { ... } by { ... }`: execute the nested
+  script unless it is inside `reach`; it does not execute a C `if` statement.
+- `reach(program_point) ensuring { ... } by { ... }`: execute the nested
   proof cases to the exact statement entry or exit, checking the listed `fact`,
   `owns`, and `views` assertions in every case. Click then forgets
   branch-specific facts, scalar values, mutable memory, and resources, and
@@ -201,12 +188,10 @@ control flow.
   this bare spelling is smart.
 - `transport(source, target) using { fact P; ... }`: the simple, exact-premise
   spelling of the same rule.
-- `derive(P) using { fact Q; ... }`: check one atomic consequence using the
-  ordinary kernel theory rules and exactly the listed premises.
-- `calculate(P) using { fact Q; ... }`: the same shape, using the simplifier's
-  deterministic equality and arithmetic rules.
-- `intro();`, `conjunction();`, `left();`, `right();`, `double_negation();`,
-  `vacuous();`, `contradiction(P);`: one structural logical rule each. They are
+- `derive(P) using { fact Q; ... }`: check one atomic consequence using Click's
+  deterministic atomic theories and exactly the listed premises.
+- `intro();`, `split();`, `left();`, `right();`, `contradiction(P);`: one
+  structural logical rule each. They are
   accepted only while a pure goal is active, typically inside `have ... by` or
   a theorem proof.
 - `simp();`: request smart contextual simplification when the proof block is
@@ -220,23 +205,23 @@ Explicit C branch execution composes with proof-level case analysis:
 
 ```click
 if x >= 0 {
-    execute_then_step();
-    execute_step(); // Execute the first statement in the C then arm.
+    step();
+    step(); // Execute the first statement in the C then arm.
 } else {
-    execute_else_step();
-    execute_step(); // Execute the first statement in the C else arm.
+    step();
+    step(); // Execute the first statement in the C else arm.
 }
 ```
 
 The branch steps execute only the selected control-flow edge. Ordinary
-`execute_step()` calls handle statements inside the arm, so nested C `if`
+`step()` calls handle statements inside the arm, so nested C `if`
 statements can be entered with another explicit branch step.
 
-Use `advance` when branch-local execution should establish a common interface
+Use `reach` when branch-local execution should establish a common interface
 before the rest of the function proof:
 
 ```click
-advance(statement(1).exit)
+reach(statement(1).exit)
 ensuring {
     fact y >= 0;
     owns buffer(data, len);
@@ -244,14 +229,14 @@ ensuring {
 }
 by {
     if x >= 0 {
-        execute_then_step();
-        execute_step();
+        step();
+        step();
     } else {
-        execute_else_step();
-        execute_step();
+        step();
+        step();
     }
 }
-execute_step();
+step();
 ```
 
 `statement(N).entry` means immediately before statement region `N` executes.
@@ -259,9 +244,9 @@ execute_step();
 statement IDs globally in source preorder: a compound statement receives its
 ID before the statements nested in its arms or body. A sequence itself does
 not receive an ID. Every nested case must reach exactly the requested point
-and establish every assertion. `advance` is the
+and establish every assertion. `reach` is the
 execution-proof counterpart to `have`: `have` runs a pure proof without moving
-the execution point, while `advance` proves a postcondition for a scoped code
+the execution point, while `reach` proves a postcondition for a scoped code
 region and advances to its exit. Facts and resources needed by the
 continuation must be listed explicitly. Deterministic consequences of listed
 resources, such as memory loadability and the view of an owned resource,
@@ -299,11 +284,11 @@ current tactic language can express the argument.
 
 An execution proof tracks an execution frontier: the current
 execution point together with its enclosing continuation stack. Proof scripts can
-start at function entry, advance by one statement with `execute_step();`, enter
+start at function entry, advance by one statement with `step();`, enter
 a selected C branch, join branch-local proofs at an explicit statement point
-with `advance`, pause at a statement
+with `reach`, pause at a statement
 entry with `execute_until(statement(N));`, and execute to function exit with
-`execute_rest();`. Resource steps such as `observe`, `unfold`, and `fold` can
+`execute();`. Resource steps such as `observe`, `unfold`, and `fold` can
 happen between those execution steps.
 
 The execution frontier carries the same global statement ID assigned by
@@ -312,13 +297,13 @@ continuations, and nested loops. Checks inserted by annotation lowering remain
 attached to their source statement and do not become extra tactics.
 
 Ordinary statement steps, explicit branch entry, and region execution-proof
-traversal use the same certified condition and statement transitions. `advance` composes
+traversal use the same certified condition and statement transitions. `reach` composes
 those transitions inside its body and then replaces the reached branch-local
-frontiers with the declared abstract interface. `execute_rest()` is the batch
+frontiers with the declared abstract interface. `execute()` is the batch
 form that continues from the same frontier to function exit.
 
-`advance` accepts statement entry/exit targets and loop entry/exit targets. In
-particular, `advance(loop_name.exit) ensuring { ... } by { ... }` executes to a
+`reach` accepts statement entry/exit targets and loop entry/exit targets. In
+particular, `reach(loop_name.exit) ensuring { ... } by { ... }` executes to a
 verified loop's abstract exit and makes the declared facts and resources the
 only proof-visible interface afterward.
 
@@ -332,7 +317,7 @@ typical existential-introduction proof names a witness:
 
 ```click
 ensures found: (0..n).any(|k| { k == result }) by {
-    execute_rest();
+    execute();
     witness(k = 0);
     simp();
 }
@@ -347,7 +332,7 @@ proposition, either directly or after an explicit `unfold(predicate);` step.
 ```click
 requires has_k: exists (int32 k) { k == x };
 ensures again: exists (int32 j) { j == x } by {
-    execute_rest();
+    execute();
     choose(k from requirement has_k);
     witness(j = k);
     simp();
@@ -360,7 +345,7 @@ first:
 ```click
 requires has_x: bytes_contains(p, 0, n, 'x');
 ensures again: bytes_contains(p, 0, n, 'x') by {
-    execute_rest();
+    execute();
     unfold(bytes_contains);
     choose(found from requirement has_x);
     witness(k = found);
@@ -404,7 +389,7 @@ execute_until(update);
 have at(update.entry, y) >= 0 by simp;
 ```
 
-The same label can be used by `advance(update.exit)`, `at(update.entry, ...)`,
+The same label can be used by `reach(update.exit)`, `at(update.entry, ...)`,
 `at(update.exit, ...)`, and region tactics such as `frame(update)` when the
 region kind is accepted. Numeric `statement(N)` and `loop(N)` references remain
 the way labels are attached and are useful for short proofs.
@@ -430,7 +415,7 @@ The initial `loop_name.entry` support is available in invariants on that loop
 and in its explicit `preserve` proof.
 
 Statement entry and exit snapshots are currently recorded by deterministic
-proof execution. `execute_step()`, `execute_until(...)`, and `execute_rest()`
+proof execution. `step()`, `execute_until(...)`, and `execute()`
 record each deterministic boundary they cross. An `at(...)` expression reads
 memory, reassigned parameters, and declared scalar, pointer, or array locals
 from the selected state. `at(selector, proposition)` instead snapshots the
@@ -459,7 +444,7 @@ for loop(0) {
     initialize by auto;
     preserve by {
         unfold(sorted);
-        execute_step();
+        step();
         simp();
     }
 }

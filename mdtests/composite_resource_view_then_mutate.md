@@ -50,7 +50,7 @@ int32 buffer_len(struct owner* owner) {
     views owned_buffer(owner);
 
     ensures result <= owner->cap by {
-        execute_rest();
+        execute();
         simp();
     }
 }
@@ -62,7 +62,7 @@ int32 len_then_clear(struct owner* owner) {
         observe(owned_buffer(owner));
         execute_until(statement(2));
         unfold(owned_buffer(owner));
-        execute_rest();
+        execute();
         have 0 <= owner->len by { simp(); }
         have owner->len <= owner->cap by { simp(); }
         have 0 <= owner->cap by { simp(); }

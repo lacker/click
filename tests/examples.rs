@@ -92,7 +92,10 @@ fn example_projects() {
         projects.len()
     );
     for (index, diagnostics) in failures {
-        message.push_str(&format!("\n`{}` {diagnostics}\n", projects[index].display()));
+        message.push_str(&format!(
+            "\n`{}` {diagnostics}\n",
+            projects[index].display()
+        ));
     }
     panic!("{message}");
 }

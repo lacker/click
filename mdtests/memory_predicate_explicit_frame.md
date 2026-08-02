@@ -42,13 +42,13 @@ int32 set_before_terminator(
     ensures result == 0;
 } by {
     unfold(terminated);
-    execute_step();
+    step();
     have data[length] == 0 by simp;
     have terminated(data, length) by {
         unfold(terminated);
         simp();
     }
-    execute_step();
+    step();
     have index < index + 1 by { simp(); }
     frame();
     simp();

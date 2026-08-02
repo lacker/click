@@ -52,7 +52,7 @@ int32 clone_cursor(struct cursor* target, struct cursor* source) {
     ensures target->data == source->data;
 } by {
     observe(owned_cursor(source));
-    execute_rest();
+    execute();
     fold(owned_cursor(target));
     frame();
     simp();

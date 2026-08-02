@@ -40,7 +40,7 @@ int32 identity(int32 x) {
     requires x == 7;
     ensures result == 7;
 } by {
-    execute_rest();
+    execute();
     rewrite(x == 7);
     normalize();
 }

@@ -40,7 +40,7 @@ int32 buffer_get(struct owner* owner, int32 index) {
 
     ensures result == (owner->data)[index] by {
         observe(owned_buffer(owner));
-        execute_rest();
+        execute();
         simp();
     }
 }

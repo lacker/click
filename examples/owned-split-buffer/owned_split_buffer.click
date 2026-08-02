@@ -56,7 +56,7 @@ int32 owned_split_buffer_init(
     ensures owner->len == length;
     ensures owner->data == data;
 } by {
-    execute_rest();
+    execute();
     fold(owned_split_buffer(owner));
     frame();
     simp();
@@ -78,7 +78,7 @@ int32 owned_split_buffer_set_left(
     ensures owner->data == old(owner->data);
 } by {
     unfold(owned_split_buffer(owner));
-    execute_rest();
+    execute();
     fold(owned_split_buffer(owner));
     have index < index + 1 by { simp(); }
     frame();
@@ -137,8 +137,8 @@ int32 owned_split_buffer_move_right(struct owned_split_buffer* owner) {
     ensures owner->data == old(owner->data);
 } by {
     unfold(owned_split_buffer(owner));
-    execute_step();
-    execute_step();
+    step();
+    step();
     have 0 <= owner->split by { simp(); }
     have owner->split <= owner->len by { simp(); }
     have separate(
@@ -242,7 +242,7 @@ int32 owned_split_buffer_pipeline(
         }
     }
     have 1 < owner->len by {
-        calculate(1 < owner->len) using {
+        derive(1 < owner->len) using {
             fact 2 <= length;
             fact ignored == left_value;
             fact owner->len == length;

@@ -29,7 +29,7 @@ int32 later_loop_preserve() {
     for loop(1) {
         invariant j >= 0 and j <= 1;
         preserve by {
-            execute_step();
+            step();
             simp();
         }
     }

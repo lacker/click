@@ -48,7 +48,7 @@ int32 vector_init(struct vector* owner, int32 data[], int32 capacity) {
     ensures owner->cap == capacity;
     ensures owner->data == data;
 } by {
-    execute_rest();
+    execute();
     fold(empty_vector(owner));
     frame();
     simp();
@@ -70,7 +70,7 @@ int32 vector_get(struct vector* owner, int32 index) {
     ensures result == (owner->data)[index];
     ensures result == old((owner->data)[index]);
 } by {
-    execute_rest();
+    execute();
     frame();
     have result == (owner->data)[index] by {
         normalize();
@@ -94,9 +94,9 @@ int32 vector_set(struct vector* owner, int32 index, int32 value) {
     ensures owner->data == old(owner->data);
 } by {
     unfold(nonempty_vector(owner));
-    execute_step();
-    execute_step();
-    execute_step();
+    step();
+    step();
+    step();
     step using {
         fact 0 <= index;
         fact index < owner->len;
@@ -126,8 +126,8 @@ int32 vector_fill(struct vector* owner, int32 value) {
         initialize by simp;
         preserve by {
             have i < owner->cap by simp;
-            execute_step();
-            execute_step();
+            step();
+            step();
             close_invariants();
         }
     }
@@ -206,7 +206,7 @@ int32 vector_fill(struct vector* owner, int32 value) {
     have forall (int32 k) { 0 <= k and k < i implies (owner->data)[k] == value } by {
         normalize();
     }
-    apply_loop_summary(loop(0)) using {
+    summarize(loop(0)) using {
         fact separate(memory(owner->len), memory(owner->cap));
         fact 1 <= owner->len;
         fact owner->len <= owner->cap;
@@ -262,7 +262,7 @@ int32 vector_fill(struct vector* owner, int32 value) {
     }
     assumption();
     have forall (int32 k) { 0 <= k and k < owner->len implies (owner->data)[k] == value } by {
-        calculate(forall (int32 k) { 0 <= k and k < owner->len implies (owner->data)[k] == value }) using {
+        derive(forall (int32 k) { 0 <= k and k < owner->len implies (owner->data)[k] == value }) using {
             fact not at(statement(5).entry, i) < at(statement(5).entry, owner->len);
             fact at(statement(2).entry, i) <= at(statement(2).entry, owner->len);
             fact 1 <= at(statement(5).entry, owner->len);
@@ -307,8 +307,8 @@ int32 vector_replace_if(
 
     ensures replace != 0 implies result == replacement;
 } by {
-    execute_step();
-    execute_step();
+    step();
+    step();
     step using {
         fact index < owner->len;
         fact 0 <= index;
@@ -318,7 +318,7 @@ int32 vector_replace_if(
         fact loadable(old(owner->data));
         fact loadable(old(owner->len));
     }
-    advance(choose_replacement.exit)
+    reach(choose_replacement.exit)
     ensuring {
         fact replace != 0 implies selected == replacement;
         fact not (replace != 0) implies selected == original;
@@ -327,7 +327,7 @@ int32 vector_replace_if(
     }
     by {
         if replace != 0 {
-            execute_then_step();
+            step();
             step using {
                 fact index < owner->len;
                 fact 0 <= index;
@@ -343,7 +343,7 @@ int32 vector_replace_if(
             have not (replace != 0) implies selected == original by simp;
             have index < index + 1 by simp;
         } else {
-            execute_else_step();
+            step();
             step using {
                 fact index < owner->len;
                 fact 0 <= index;
@@ -360,7 +360,7 @@ int32 vector_replace_if(
             have index < index + 1 by simp;
         }
     }
-    execute_rest();
+    execute();
     have index < index + 1 by { simp(); }
     frame();
     simp();
@@ -378,14 +378,14 @@ int32 vector_push_first(struct vector* owner, int32 value) {
     have owner->len < owner->cap by simp;
     have 0 <= owner->len by simp;
     have owner->len < 1 by simp;
-    execute_step();
-    execute_step();
-    execute_step();
-    execute_step();
-    execute_step();
-    execute_step();
-    execute_step();
-    execute_step();
+    step();
+    step();
+    step();
+    step();
+    step();
+    step();
+    step();
+    step();
     have owner->len == 1 by simp;
     have 1 <= owner->len by simp;
     have owner->len <= owner->cap by simp;
@@ -393,7 +393,7 @@ int32 vector_push_first(struct vector* owner, int32 value) {
         simp();
     }
     fold(nonempty_vector(owner));
-    execute_step();
+    step();
     frame();
     have result == 1 by {
         assumption();
@@ -430,7 +430,7 @@ int32 vector_clear(struct vector* owner) {
     ensures owner->len == 0;
 } by {
     unfold(nonempty_vector(owner));
-    execute_rest();
+    execute();
     have owner->len == 0 by simp;
     have 1 <= owner->cap by simp;
     have separate(memory(object(owner)), memory((owner->data)[0..owner->cap])) by {
@@ -595,6 +595,6 @@ int32 vector_pipeline(
     have observed == replacement by {
         simp();
     }
-    execute_rest();
+    execute();
     simp();
 }

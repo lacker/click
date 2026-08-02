@@ -26,7 +26,7 @@ verifying "replace_caller.c";
 
 int32 replace_cell(int32 p[], int32 value) {
     owns p[0..1] by auto;
-    mutable p[0..1] by frame;
+    mutable p[0..1] by auto;
     ensures result == old(p[0]) by auto;
     ensures p[0] == value by auto;
 }

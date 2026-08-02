@@ -37,7 +37,7 @@ so folding either resource tests dependent composite-resource definitions.
 - `vector_fill` uses `nonempty_vector(owner)` directly and an explicit loop
   preservation proof to initialize its field-dependent backing range.
 - `vector_replace_if` calls verified vector operations on both sides of a
-  branch, then exports a common resource-and-fact interface with `advance`.
+  branch, then exports a common resource-and-fact interface with `reach`.
 - `vector_push_first` transitions an empty vector to a nonempty vector.
 - `vector_clear` transitions a nonempty vector back to an empty vector.
 - `vector_pipeline` composes the mutating and indexed operations through their

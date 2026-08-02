@@ -18,7 +18,7 @@ int32 identity(int32 x) {
 
     ensures same: result == x by {
         transport(x >= 0, x >= 0);
-        execute_rest();
+        execute();
         simp();
     }
 }

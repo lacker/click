@@ -17,7 +17,7 @@ verifying "pointer_base_loadable.c";
 int32 pointer_base_loadable(int32* p) {
     requires loadable((p + 1)[0..1]);
     consumes (p + 1)[0..1];
-    mutable (p + 1)[0..1] by frame;
+    mutable (p + 1)[0..1] by auto;
     ensures returns_written: result == 9 by auto;
 }
 ```

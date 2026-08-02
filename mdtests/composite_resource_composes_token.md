@@ -37,7 +37,7 @@ int32 init_server(int32 fd, int32 state[]) {
     consumes state[0..1];
 
     produces live_server(fd, state) by {
-        execute_rest();
+        execute();
         fold(live_server(fd, state));
     }
 }
@@ -47,7 +47,7 @@ int32 use_server(int32 fd, int32 state[]) {
 
     ensures result == fd by {
         unfold(live_server(fd, state));
-        execute_rest();
+        execute();
         fold(live_server(fd, state));
         simp();
     }

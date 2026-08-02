@@ -29,8 +29,8 @@ int32 fill_n_segment_invariant(int32 p[], int32 n) {
         };
         initialize by auto;
         preserve by {
-            execute_step();
-            execute_step();
+            step();
+            step();
             have i == at(loop(0).entry, i) + 1 by {
                 simp();
             }
@@ -63,7 +63,7 @@ int32 fill_n_segment_invariant(int32 p[], int32 n) {
     have forall (int32 k) { 0 <= k and k < i implies p[k] == k } by {
         normalize();
     }
-    apply_loop_summary(loop(0)) using {
+    summarize(loop(0)) using {
         fact n >= 0 and n <= 2147483647;
         fact loadable(old(p[0..n]));
         fact i >= 0;

@@ -57,8 +57,8 @@ int32 composite_resource_vector_fill_loop_snapshot(
         preserve by {
             unfold(vector(owner));
             have i < owner->cap by simp;
-            execute_step();
-            execute_step();
+            step();
+            step();
             close_invariants();
         }
     }
@@ -68,7 +68,7 @@ int32 composite_resource_vector_fill_loop_snapshot(
         0 <= k and k < owner->len implies (owner->data)[k] == value
     };
 } by {
-    execute_rest();
+    execute();
     fold(vector(owner));
     frame();
     have result == owner->len by {

@@ -45,7 +45,7 @@ int32 keep_first_change_second(int32 p[2], int32 x) {
     requires loadable(p[0..2]);
     consumes p[1..2];
     ensures first_cell_preserved: same_first(p, old(p)) by {
-        execute_rest();
+        execute();
         unfold(same_first);
         simp();
     }
@@ -57,7 +57,7 @@ int32 identity_two_arrays(int32 p[1], int32 q[1]) {
     requires same_first(p, q);
     ensures exact_opaque_fact: same_first(p, q) by auto;
     ensures unfolded_requirement: p[0] == q[0] by {
-        execute_rest();
+        execute();
         unfold(same_first);
         simp();
     }

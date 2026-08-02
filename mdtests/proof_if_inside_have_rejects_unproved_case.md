@@ -20,7 +20,7 @@ int32 unproved_have_case(int32 x) {
                 simp();
             }
         }
-        execute_step();
+        step();
         simp();
     }
 }

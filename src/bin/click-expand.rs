@@ -13,8 +13,7 @@ use click::lang::click::expand_c0_tactic_source_at;
 
 const DEFAULT_TIME_LIMIT: Duration = Duration::from_secs(60);
 
-const USAGE: &str =
-    "usage: click-expand [--time-limit <DURATION>] <sidecar.click|mdtest.md>:<line>:<column>\n\nThe expansion is bounded to 60s by default; --time-limit overrides it.";
+const USAGE: &str = "usage: click-expand [--time-limit <DURATION>] <sidecar.click|mdtest.md>:<line>:<column>\n\nThe expansion is bounded to 60s by default; --time-limit overrides it.";
 
 fn main() {
     if let Err(message) = entry() {
@@ -167,9 +166,8 @@ fn run_mdtest(arguments: &Arguments) -> Result<(), String> {
     })?;
     let click_line = mdtest_click_line(&mdtest, click_source, arguments.line)?;
     let sources = source_refs(&mdtest.c_sources);
-    let expanded =
-        expand_c0_tactic_source_at(click_source, &sources, click_line, arguments.column)
-            .map_err(|error| error.message().to_string())?;
+    let expanded = expand_c0_tactic_source_at(click_source, &sources, click_line, arguments.column)
+        .map_err(|error| error.message().to_string())?;
     print!(
         "{}",
         spliced_markdown(&markdown, &mdtest, click_source, &expanded)

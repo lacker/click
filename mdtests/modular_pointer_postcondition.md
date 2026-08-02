@@ -37,7 +37,7 @@ int32 set_pointer(struct holder* owner, int32* data) {
     ensures result == 0;
     ensures owner->data == data;
 } by {
-    execute_rest();
+    execute();
     frame();
     simp();
 }
@@ -52,7 +52,7 @@ int32 call_set_pointer(struct holder* owner, int32* data) {
     have owner->data == data by {
         simp();
     }
-    execute_rest();
+    execute();
     frame();
     simp();
 }

@@ -38,7 +38,7 @@ int32 buffer_get_first(struct owner* owner) {
     produces owned_buffer(owner);
 } by {
     unfold(owned_buffer(owner));
-    execute_rest();
+    execute();
     fold(owned_buffer(owner));
     simp();
 }

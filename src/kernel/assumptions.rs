@@ -989,8 +989,7 @@ impl Assumptions {
         } else {
             ambient_assumptions_memo_id(self)
         };
-        let memo_key =
-            memo_id.map(|memo_id| (memo_id, left.clone(), right.clone()));
+        let memo_key = memo_id.map(|memo_id| (memo_id, left.clone(), right.clone()));
         if let Some(memo_key) = &memo_key
             && let Some(hit) =
                 EQUAL_FROM_FACTS_MEMO.with(|memo| memo.borrow().get(memo_key).copied())
@@ -1337,8 +1336,7 @@ impl Assumptions {
         }
         let _scope = AssumptionsIdScope::enter(self);
         let key = (_scope.id, term.clone());
-        if let Some(hit) =
-            CONSTANT_NORMALIZATION_MEMO.with(|memo| memo.borrow().get(&key).copied())
+        if let Some(hit) = CONSTANT_NORMALIZATION_MEMO.with(|memo| memo.borrow().get(&key).copied())
         {
             return hit;
         }
@@ -3973,7 +3971,9 @@ impl Assumptions {
                             || self.propositions_equal_modulo_proven_terms(&renamed, body, 0)
                     })
             }
-            Proposition::Exists { var, sort, body, .. } => {
+            Proposition::Exists {
+                var, sort, body, ..
+            } => {
                 self.prop_facts.contains(proposition)
                     || self.proves_exists_from_facts(*var, sort, body)
             }
@@ -4119,11 +4119,9 @@ impl Assumptions {
                 continue;
             };
             for (side, other) in [(left, right), (right, left)] {
-                let mentions_var = substitute_bitvector_variable(
-                    other,
-                    var,
-                    &Bitvector32Term::Constant(0),
-                ) != **other;
+                let mentions_var =
+                    substitute_bitvector_variable(other, var, &Bitvector32Term::Constant(0))
+                        != **other;
                 if **side == bound && !mentions_var {
                     witnesses.push((**other).clone());
                 }
@@ -5710,15 +5708,21 @@ impl Assumptions {
                 right_start,
                 right_end,
             } => {
-                self.pointer_in_range_by_shallow_fact_graph(
-                    left, left_base, left_start, left_end,
-                ) && self.pointer_in_range_by_shallow_fact_graph(
-                    right, right_base, right_start, right_end,
-                ) || self.pointer_in_range_by_shallow_fact_graph(
-                    right, left_base, left_start, left_end,
-                ) && self.pointer_in_range_by_shallow_fact_graph(
-                    left, right_base, right_start, right_end,
-                )
+                self.pointer_in_range_by_shallow_fact_graph(left, left_base, left_start, left_end)
+                    && self.pointer_in_range_by_shallow_fact_graph(
+                        right,
+                        right_base,
+                        right_start,
+                        right_end,
+                    )
+                    || self.pointer_in_range_by_shallow_fact_graph(
+                        right, left_base, left_start, left_end,
+                    ) && self.pointer_in_range_by_shallow_fact_graph(
+                        left,
+                        right_base,
+                        right_start,
+                        right_end,
+                    )
             }
             Proposition::CResourceSeparate {
                 left: CResource::Memory(left_range),
@@ -5854,7 +5858,12 @@ impl Assumptions {
                     self,
                     depth,
                 ) || pointer_in_range_for_memory_resolution_with_depth(
-                    left, right_base, right_start, right_end, self, depth,
+                    left,
+                    right_base,
+                    right_start,
+                    right_end,
+                    self,
+                    depth,
                 ) && pointer_in_range_for_memory_resolution_with_depth(
                     right, left_base, left_start, left_end, self, depth,
                 )
@@ -5873,7 +5882,10 @@ impl Assumptions {
                 ) || pointer_in_memory_range_for_memory_resolution_with_depth(
                     right, left_range, self, depth,
                 ) && pointer_in_memory_range_for_memory_resolution_with_depth(
-                    left, right_range, self, depth,
+                    left,
+                    right_range,
+                    self,
+                    depth,
                 )
             }
             _ => false,
@@ -6025,15 +6037,14 @@ impl Assumptions {
         if pointer.offset == base.offset {
             return Some(Bitvector32Term::Constant(0));
         }
-        let offsets_match_for_resolution =
-            |left: &PointerOffsetTerm, right: &PointerOffsetTerm| {
-                left == right
-                    || super::reasoning::with_memory_resolution_fuel(|| {
-                        super::reasoning::pointer_offsets_equal_for_memory_resolution(
-                            left, right, self, 0,
-                        ) == Some(true)
-                    })
-            };
+        let offsets_match_for_resolution = |left: &PointerOffsetTerm, right: &PointerOffsetTerm| {
+            left == right
+                || super::reasoning::with_memory_resolution_fuel(|| {
+                    super::reasoning::pointer_offsets_equal_for_memory_resolution(
+                        left, right, self, 0,
+                    ) == Some(true)
+                })
+        };
         if let PointerOffsetTerm::Add(left, right) = &pointer.offset {
             if offsets_match_for_resolution(left, &base.offset) {
                 return int32_element_index_from_offset(right);
@@ -7007,9 +7018,7 @@ impl PropositionDerivation {
 /// The `(variable, pivot)` an assumed condition licenses splitting on, when it
 /// says `variable <= pivot` in either spelling. Shared by the search and the
 /// replay so the two cannot drift.
-fn upper_bound_split_candidate(
-    condition: &ConditionTerm,
-) -> Option<(Variable, &Bitvector32Term)> {
+fn upper_bound_split_candidate(condition: &ConditionTerm) -> Option<(Variable, &Bitvector32Term)> {
     let (left, right, plus_one) = match condition {
         ConditionTerm::Bitvector32SignedLessThan(left, right) => (left, right, true),
         ConditionTerm::Bitvector32SignedLessEqual(left, right) => (left, right, false),
@@ -7262,10 +7271,7 @@ fn pointer_offsets_match_by_shallow_fact_graph(
         return true;
     }
     match (left, right) {
-        (
-            PointerOffsetTerm::Add(left_a, left_b),
-            PointerOffsetTerm::Add(right_a, right_b),
-        ) => {
+        (PointerOffsetTerm::Add(left_a, left_b), PointerOffsetTerm::Add(right_a, right_b)) => {
             pointer_offsets_match_by_shallow_fact_graph(left_a, right_a, assumptions)
                 && pointer_offsets_match_by_shallow_fact_graph(left_b, right_b, assumptions)
         }
@@ -7278,9 +7284,7 @@ fn pointer_offsets_match_by_shallow_fact_graph(
                 value: right,
                 byte_width: right_width,
             },
-        ) => {
-            left_width == right_width && assumptions.bitvector_terms_equal_from_facts(left, right)
-        }
+        ) => left_width == right_width && assumptions.bitvector_terms_equal_from_facts(left, right),
         _ => false,
     }
 }
@@ -7911,7 +7915,9 @@ fn atomic_load_equality_resolves(
     }
     LOAD_EQUALITY_RESOLUTION_ACTIVE.with(|active| active.set(true));
     let resolved = super::reasoning::bitvector_terms_proven_equal_for_memory_resolution(
-        left, right, assumptions,
+        left,
+        right,
+        assumptions,
     );
     LOAD_EQUALITY_RESOLUTION_ACTIVE.with(|active| active.set(false));
     resolved

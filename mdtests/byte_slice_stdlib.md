@@ -44,19 +44,19 @@ int32 byte_slice_facts(uint8 p[], uint8 q[]) {
     requires all_q_are_a: bytes_all_eq(q, 0, 2, 'a');
 
     ensures shifted_second_equal: p[2] == q[1] by {
-        execute_rest();
+        execute();
         unfold(bytes_equal);
         simp();
     }
 
     ensures first_q_is_a: q[0] == 'a' by {
-        execute_rest();
+        execute();
         unfold(bytes_all_eq);
         simp();
     }
 
     ensures current_equals_old: bytes_equal_range(p, old(p), 0, 3) by {
-        execute_rest();
+        execute();
         unfold(bytes_equal_range);
         simp();
     }

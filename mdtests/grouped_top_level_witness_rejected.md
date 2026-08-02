@@ -15,7 +15,7 @@ verifying "grouped_witness.c";
 int32 identity(int32 x) {
     ensures exists (int32 k) { k == result };
 } by {
-    execute_rest();
+    execute();
     witness(k = result);
     simp();
 }

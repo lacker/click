@@ -19,7 +19,7 @@ int32 identity(int32 x) {
     requires nonnegative(x);
     ensures result >= 0;
 } by {
-    execute_rest();
+    execute();
     simp();
     unfold(nonnegative);
 }

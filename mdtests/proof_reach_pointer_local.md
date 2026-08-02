@@ -1,7 +1,7 @@
-# advance abstracts a selected pointer
+# reach abstracts a selected pointer
 
 Both branches select a valid input pointer, and the shared suffix reads through
-that selection. The `advance` interface hides which branch supplied the pointer
+that selection. The `reach` interface hides which branch supplied the pointer
 and exports only the viewed range needed by the continuation.
 
 The exported `selected == left or selected == right` fact is about a local
@@ -29,8 +29,8 @@ int32 advance_selected_pointer(int32* left, int32* right, int32 choose_left) {
     views right[0..1];
 
     ensures result == left[0] or result == right[0] by {
-        execute_step();
-        advance(statement(1).exit)
+        step();
+        reach(statement(1).exit)
         ensuring {
             fact selected == left or selected == right;
             views selected[0..1];
@@ -39,14 +39,14 @@ int32 advance_selected_pointer(int32* left, int32* right, int32 choose_left) {
         }
         by {
             if choose_left != 0 {
-                execute_then_step();
-                execute_step();
+                step();
+                step();
             } else {
-                execute_else_step();
-                execute_step();
+                step();
+                step();
             }
         }
-        execute_step();
+        step();
         simp();
     }
 }

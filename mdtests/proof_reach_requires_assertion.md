@@ -1,4 +1,4 @@
-# advance requires every case to establish its assertions
+# reach requires every case to establish its assertions
 
 ```c filename=advance_missing_fact.c
 int32 advance_missing_fact(int32 x) {
@@ -17,21 +17,21 @@ verifying "advance_missing_fact.c";
 
 int32 advance_missing_fact(int32 x) {
     ensures result == result by {
-        execute_step();
-        advance(statement(1).exit)
+        step();
+        reach(statement(1).exit)
         ensuring {
             fact y == x;
         }
         by {
             if x >= 0 {
-                execute_then_step();
-                execute_step();
+                step();
+                step();
             } else {
-                execute_else_step();
-                execute_step();
+                step();
+                step();
             }
         }
-        execute_step();
+        step();
         simp();
     }
 }
@@ -39,5 +39,5 @@ int32 advance_missing_fact(int32 x) {
 
 ```expect
 fail: in else branch of proof `if x >= 0`:
-`advance_missing_fact.ensures_0` tactic 1: `advance` did not establish fact
+`advance_missing_fact.ensures_0` tactic 1: `reach` did not establish fact
 ```

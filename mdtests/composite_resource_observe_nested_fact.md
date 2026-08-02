@@ -27,7 +27,7 @@ int32 return_fd(int32 fd) {
     ensures result >= 0 by {
         observe(live_fd(fd));
         observe(nonnegative_fd(fd));
-        execute_rest();
+        execute();
         simp();
     }
 

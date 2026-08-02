@@ -34,13 +34,13 @@ int32 buffer_len(struct owner* owner) {
 
     ensures result <= owner->cap by {
         observe(owned_buffer(owner));
-        execute_rest();
+        execute();
         simp();
     }
 
     produces owned_buffer(owner) by {
         observe(owned_buffer(owner));
-        execute_rest();
+        execute();
     }
 }
 ```

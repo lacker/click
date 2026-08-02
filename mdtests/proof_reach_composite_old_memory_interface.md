@@ -1,4 +1,4 @@
-# advance exports entry-state memory through a composite view
+# reach exports entry-state memory through a composite view
 
 An abstract branch join can retain a scalar relation to entry-state memory when
 the interface exports the exact view that makes the old load meaningful.
@@ -58,7 +58,7 @@ int32 retain_original(struct buffer* owner, int32 flag) {
 } by {
     execute_until(choose_original);
     observe(buffer(owner));
-    advance(choose_original.exit)
+    reach(choose_original.exit)
     ensuring {
         fact selected == original;
         fact original == old((owner->data)[0]);
@@ -67,14 +67,14 @@ int32 retain_original(struct buffer* owner, int32 flag) {
     }
     by {
         if flag != 0 {
-            execute_then_step();
-            execute_step();
+            step();
+            step();
         } else {
-            execute_else_step();
-            execute_step();
+            step();
+            step();
         }
     }
-    execute_rest();
+    execute();
     simp();
 }
 ```

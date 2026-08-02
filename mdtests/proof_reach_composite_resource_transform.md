@@ -1,7 +1,7 @@
-# advance joins different resource transformations
+# reach joins different resource transformations
 
 Each branch consumes a different path token through a helper call. Both calls
-return the same permit, which is folded into `ready_bundle`. After `advance`
+return the same permit, which is folded into `ready_bundle`. After `reach`
 forgets the original precondition and branch resources, `observe` recovers the
 nonnegative-key fact from the exported composite resource.
 
@@ -66,25 +66,25 @@ int32 select_ready(int32 key, int32 choose_left) {
     consumes ready_permit(key);
 
     ensures result >= 0 by {
-        execute_step();
-        advance(statement(1).exit)
+        step();
+        reach(statement(1).exit)
         ensuring {
             fact selected == key;
             owns ready_bundle(key);
         }
         by {
             if choose_left != 0 {
-                execute_then_step();
-                execute_step();
+                step();
+                step();
                 fold(ready_bundle(key));
             } else {
-                execute_else_step();
-                execute_step();
+                step();
+                step();
                 fold(ready_bundle(key));
             }
         }
         observe(ready_bundle(key));
-        execute_step();
+        step();
         simp();
     }
 }

@@ -15,8 +15,8 @@ mod reasoning;
 mod spec;
 
 pub use api::*;
-pub use primitives::*;
 pub(crate) use assumptions::{AssumptionsIdScope, conditions_equal_ignoring_memories};
+pub use primitives::*;
 pub(crate) use reasoning::memory_effect_write_pointers;
 
 mod prelude {

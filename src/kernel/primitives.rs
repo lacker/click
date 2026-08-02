@@ -854,8 +854,7 @@ pub(crate) fn memory_dag_disabled() -> bool {
     *DISABLED.get_or_init(|| std::env::var_os("CLICK_DISABLE_MEMORY_DAG").is_some())
 }
 
-static NEXT_MEMORY_ARENA_TOKEN: std::sync::atomic::AtomicU32 =
-    std::sync::atomic::AtomicU32::new(0);
+static NEXT_MEMORY_ARENA_TOKEN: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
 #[derive(Default)]
 struct CMemoryArena {
@@ -951,7 +950,6 @@ pub fn intern_c_memory(memory: CMemory) -> SharedCMemory {
         }
     })
 }
-
 
 /// Interns by reference: an already-interned snapshot is found without
 /// cloning it, so hot memoization lookups keyed by interned identity pay a
@@ -2748,9 +2746,7 @@ impl CMemory {
         // evidence`). The havoc producers insert their markers directly,
         // but tests and any future caller may spell them through this
         // constructor, so the refusal lives here.
-        if memory_dag_disabled()
-            || block.starts_with("havoc:")
-            || block.starts_with("call-havoc:")
+        if memory_dag_disabled() || block.starts_with("havoc:") || block.starts_with("call-havoc:")
         {
             self.blocks.insert(block, CBlock::new(size));
             return self;
@@ -2942,7 +2938,10 @@ impl CMemory {
         CValue::Pointer(Pointer {
             block: pointer.block.clone(),
             offset: PointerOffsetTerm::scale_int32(
-                Bitvector32Term::MemoryLoad(crate::kernel::intern_c_memory(self.clone()), Box::new(pointer.clone())),
+                Bitvector32Term::MemoryLoad(
+                    crate::kernel::intern_c_memory(self.clone()),
+                    Box::new(pointer.clone()),
+                ),
                 i64::from(pointee_byte_width),
             ),
         })
@@ -3692,10 +3691,7 @@ fn range_endpoint_terms_equal(
     // Structural descent covers the common affine endpoint spellings
     // (base + load, load - base, load * scale).
     let structurally_bridged = match (left, right) {
-        (
-            Bitvector32Term::Add(left_a, left_b),
-            Bitvector32Term::Add(right_a, right_b),
-        )
+        (Bitvector32Term::Add(left_a, left_b), Bitvector32Term::Add(right_a, right_b))
         | (
             Bitvector32Term::Subtract(left_a, left_b),
             Bitvector32Term::Subtract(right_a, right_b),
@@ -3771,11 +3767,8 @@ pub(super) fn memory_range_covers(
     ) {
         return false;
     }
-    if (pointers_proven_equal_for_memory_resolution(
-        available.base(),
-        required.base(),
-        assumptions,
-    ) || pointer_bases_equal_with_load_bridging(available.base(), required.base(), assumptions))
+    if (pointers_proven_equal_for_memory_resolution(available.base(), required.base(), assumptions)
+        || pointer_bases_equal_with_load_bridging(available.base(), required.base(), assumptions))
         && range_endpoint_terms_equal(available.start(), required.start(), assumptions)
         && range_endpoint_terms_equal(available.end(), required.end(), assumptions)
     {

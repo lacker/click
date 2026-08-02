@@ -88,8 +88,10 @@ fn display_path(sidecar: &Path, root: &Path) -> String {
     let shown: PathBuf = if relative == sidecar {
         sidecar.to_path_buf()
     } else {
-        root.file_name()
-            .map_or_else(|| relative.to_path_buf(), |name| Path::new(name).join(relative))
+        root.file_name().map_or_else(
+            || relative.to_path_buf(),
+            |name| Path::new(name).join(relative),
+        )
     };
     shown.display().to_string()
 }

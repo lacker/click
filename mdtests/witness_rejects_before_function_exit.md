@@ -19,7 +19,7 @@ int32 pick(int32 x) {
 
     ensures exists: (0..1).any(|k| result == x) by {
         witness(k = 0);
-        execute_rest();
+        execute();
         simp();
     }
 }

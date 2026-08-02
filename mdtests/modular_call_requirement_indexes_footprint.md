@@ -36,7 +36,7 @@ int32 clear_last(int32 p[], int32 n) {
     have n - 1 < n by {
         simp();
     }
-    execute_rest();
+    execute();
     frame();
     simp();
 }
@@ -47,7 +47,7 @@ int32 call_clear_last(int32 p[], int32 n) {
     mutable (p + (n - 1))[0..1];
     ensures result == 0;
 } by {
-    execute_rest();
+    execute();
     frame();
     simp();
 }

@@ -25,7 +25,7 @@ int32 xor_swap(int32 x, int32 y) {
     ensures result == old(y)
         and at(swapped.entry, x) == old(y)
         and at(swapped.entry, y) == old(x) by {
-        execute_rest();
+        execute();
         simp();
     }
 }

@@ -425,8 +425,8 @@ fn run_audit(arguments: Arguments) -> Result<(), String> {
             .as_mut()
             .expect("the selected sidecar session was initialized")
             .1;
-        let cold_reverify = cold_reverified_claims
-            .insert((site.click_path.clone(), site.claim.clone()));
+        let cold_reverify =
+            cold_reverified_claims.insert((site.click_path.clone(), site.claim.clone()));
         match audit_site(
             site,
             current,
@@ -503,7 +503,11 @@ fn audit_targets(path: &Path) -> Result<Vec<PathBuf>, String> {
     if looks_like_mdtest(path) {
         return find_mdtests(path);
     }
-    if path.is_file() && path.extension().is_some_and(|extension| extension == "click") {
+    if path.is_file()
+        && path
+            .extension()
+            .is_some_and(|extension| extension == "click")
+    {
         return Ok(vec![fs::canonicalize(path).map_err(|error| {
             format!("failed to resolve `{}`: {error}", path.display())
         })?]);
@@ -556,7 +560,10 @@ fn load_audit_source(path: &Path) -> Result<AuditSource, String> {
     load_audit_source_from_text(path, source)
 }
 
-fn load_audit_source_from_text(path: &Path, container_source: String) -> Result<AuditSource, String> {
+fn load_audit_source_from_text(
+    path: &Path,
+    container_source: String,
+) -> Result<AuditSource, String> {
     if looks_like_mdtest(path) {
         let mdtest = cli::parse_mdtest(path, &container_source)?;
         let click_source = mdtest
@@ -581,9 +588,8 @@ fn load_audit_source_from_text(path: &Path, container_source: String) -> Result<
 fn inventory_sites(sources: &[PathBuf]) -> Result<Vec<AuditSite>, String> {
     let mut sites = BTreeMap::new();
     for source_path in sources {
-        let canonical_path = fs::canonicalize(source_path).map_err(|error| {
-            format!("failed to resolve `{}`: {error}", source_path.display())
-        })?;
+        let canonical_path = fs::canonicalize(source_path)
+            .map_err(|error| format!("failed to resolve `{}`: {error}", source_path.display()))?;
         if looks_like_mdtest(&canonical_path) {
             let markdown = fs::read_to_string(&canonical_path).map_err(|error| {
                 format!("failed to read `{}`: {error}", canonical_path.display())
@@ -600,48 +606,48 @@ fn inventory_sites(sources: &[PathBuf]) -> Result<Vec<AuditSite>, String> {
             line_offset,
             ..
         } = source;
-            let refs = source_refs(&c_sources);
-            let syntactic_sites =
-                c0_smart_tactic_source_sites(&click_source, &refs).map_err(|error| {
-                    format!(
-                        "could not inventory smart tactics in `{}`: {}",
-                        canonical_path.display(),
-                        error.message()
-                    )
-                })?;
-            for syntactic in syntactic_sites {
-                let position = c0_tactic_source_position(
-                    &click_source,
-                    &refs,
-                    &syntactic.claim_label,
-                    syntactic.source_index,
+        let refs = source_refs(&c_sources);
+        let syntactic_sites =
+            c0_smart_tactic_source_sites(&click_source, &refs).map_err(|error| {
+                format!(
+                    "could not inventory smart tactics in `{}`: {}",
+                    canonical_path.display(),
+                    error.message()
                 )
-                .map_err(|error| {
-                    format!(
-                        "could not resolve {} source {} in `{}`: {}",
-                        syntactic.claim_label,
-                        syntactic.source_index,
-                        canonical_path.display(),
-                        error.message()
-                    )
-                })?;
-                let container_position = SourcePosition {
-                    line: position.line + line_offset,
-                    column: position.column,
-                };
-                let key = (
-                    canonical_path.clone(),
-                    container_position.line,
-                    container_position.column,
-                );
-                sites.entry(key).or_insert(AuditSite {
-                    click_path: canonical_path.clone(),
-                    position: container_position,
-                    click_position: position,
-                    claim: syntactic.claim_label,
-                    tactic_name: syntactic.tactic_name,
-                });
-            }
+            })?;
+        for syntactic in syntactic_sites {
+            let position = c0_tactic_source_position(
+                &click_source,
+                &refs,
+                &syntactic.claim_label,
+                syntactic.source_index,
+            )
+            .map_err(|error| {
+                format!(
+                    "could not resolve {} source {} in `{}`: {}",
+                    syntactic.claim_label,
+                    syntactic.source_index,
+                    canonical_path.display(),
+                    error.message()
+                )
+            })?;
+            let container_position = SourcePosition {
+                line: position.line + line_offset,
+                column: position.column,
+            };
+            let key = (
+                canonical_path.clone(),
+                container_position.line,
+                container_position.column,
+            );
+            sites.entry(key).or_insert(AuditSite {
+                click_path: canonical_path.clone(),
+                position: container_position,
+                click_position: position,
+                claim: syntactic.claim_label,
+                tactic_name: syntactic.tactic_name,
+            });
+        }
     }
     Ok(sites.into_values().collect())
 }
@@ -818,11 +824,7 @@ fn audit_site(
                 verification_limit,
                 "confirmation expanded proof-unit verification",
             )?;
-            if verification_regressed(
-                confirmed_original,
-                confirmed_expanded,
-                performance_slack,
-            ) {
+            if verification_regressed(confirmed_original, confirmed_expanded, performance_slack) {
                 let artifact = audit_artifact_path(&site.click_path);
                 return Err(format!(
                     "expanded proof-unit verification regressed in two serial comparisons: \
@@ -938,20 +940,18 @@ fn audit_artifact_path(source: &Path) -> PathBuf {
 fn expand_location(location: &str) -> Result<String, String> {
     let (click_path, line, column) = cli::parse_source_location(location)?;
     let source = load_audit_source(&click_path)?;
-    let click_line = line.checked_sub(source.line_offset).ok_or_else(|| {
-        format!("line {line} is before the mdtest's ```click block")
-    })?;
+    let click_line = line
+        .checked_sub(source.line_offset)
+        .ok_or_else(|| format!("line {line} is before the mdtest's ```click block"))?;
     if click_line == 0 || click_line > source.click_source.lines().count() {
-        return Err(format!("line {line} is outside the proof container's Click source"));
+        return Err(format!(
+            "line {line} is outside the proof container's Click source"
+        ));
     }
     let refs = source_refs(&source.c_sources);
-    let expanded_click = expand_c0_tactic_source_at(
-        &source.click_source,
-        &refs,
-        click_line,
-        column,
-    )
-    .map_err(|error| error.message().to_string())?;
+    let expanded_click =
+        expand_c0_tactic_source_at(&source.click_source, &refs, click_line, column)
+            .map_err(|error| error.message().to_string())?;
     if looks_like_mdtest(&click_path) {
         Ok(splice_click_source(&source, &expanded_click))
     } else {
@@ -1000,7 +1000,10 @@ fn verify_rewritten_from_stdin(
         .map_err(|error| error.message().to_string())
 }
 
-fn claim_source_position(source: &AuditSource, claim_label: &str) -> Result<SourcePosition, String> {
+fn claim_source_position(
+    source: &AuditSource,
+    claim_label: &str,
+) -> Result<SourcePosition, String> {
     let refs = source_refs(&source.c_sources);
     c0_tactic_source_position(&source.click_source, &refs, claim_label, 0).map_err(|error| {
         format!(
@@ -1460,7 +1463,7 @@ verifying "example.c";
 int32 example() {
     ensures result == 0;
 } by {
-    execute_rest();
+    execute();
     simp();
 }
 "#;
@@ -1476,7 +1479,7 @@ int32 example() {
                 ))
                 .collect::<Vec<_>>(),
             vec![
-                ("example.contract", 0, "execute_rest"),
+                ("example.contract", 0, "execute"),
                 ("example.contract", 1, "simp"),
             ]
         );
@@ -1499,7 +1502,7 @@ int32 example() {
 int32 example() {
     ensures result == 0;
 } by {
-    execute_rest();
+    execute();
     simp();
 }
 "#;
@@ -1575,7 +1578,8 @@ int32 count_to_one() {
         let targets = audit_targets(&root).expect("repository audit targets should resolve");
         assert!(
             targets.iter().any(|path| {
-                path.extension().is_some_and(|extension| extension == "click")
+                path.extension()
+                    .is_some_and(|extension| extension == "click")
             }),
             "example sidecars must be included"
         );

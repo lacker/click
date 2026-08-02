@@ -35,7 +35,7 @@ int32 set_owned_first(struct owner* owner) {
 
     ensures result == 1 by {
         unfold(owned_buffer(owner));
-        execute_rest();
+        execute();
         fold(owned_buffer(owner));
         simp();
     }

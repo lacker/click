@@ -556,6 +556,66 @@ pub(super) fn collect_invariant_check_obligations_without_search(
     )
 }
 
+fn verify_lowered_invariant_path(
+    check_index: usize,
+    facts: &[ExecutionPureFact],
+    obligations: &[ProofObligation],
+    path: SpecPropositionPath,
+    assumptions: &Assumptions,
+) -> Result<Option<(Vec<ExecutionPureFact>, Vec<ProofObligation>)>, String> {
+    let Some((mut merged_facts, merged_obligations)) = merge_execution_pure_facts_and_obligations(
+        facts,
+        obligations,
+        &path.facts,
+        &path.obligations,
+        assumptions,
+    ) else {
+        return Ok(None);
+    };
+    let local = assumptions_with_path_context(assumptions, &merged_facts, &merged_obligations);
+    for obligation in merged_obligations
+        .iter()
+        .filter(|obligation| !obligation.is_assumable())
+    {
+        let proposition = obligation.proposition();
+        let Some(derivation) = local
+            .derive_proposition_without_premise_minimization(proposition)
+            .or_else(|| local.derive_simp_proposition(proposition))
+        else {
+            return Err(format!(
+                "invariant {check_index} is missing path obligation: {proposition:?}"
+            ));
+        };
+        if !derivation.replay(&local) {
+            return Err(format!(
+                "invariant {check_index} path obligation derivation did not replay: {proposition:?}"
+            ));
+        }
+    }
+    let Some(derivation) = local
+        .derive_proposition_without_premise_minimization(&path.proposition)
+        .or_else(|| local.derive_simp_proposition(&path.proposition))
+    else {
+        return Err(format!(
+            "invariant {check_index} is missing path goal: {:?}",
+            path.proposition
+        ));
+    };
+    if !derivation.replay(&local) {
+        return Err(format!(
+            "invariant {check_index} path derivation did not replay: {:?}",
+            path.proposition
+        ));
+    }
+    if !merged_facts
+        .iter()
+        .any(|fact| fact.proposition() == &path.proposition)
+    {
+        merged_facts.push(ExecutionPureFact::new(path.proposition));
+    }
+    Ok(Some((merged_facts, merged_obligations)))
+}
+
 pub(super) fn verify_invariant_checks_at_back_edge_using(
     state: &CState,
     loop_entry_state: &CState,
@@ -579,62 +639,84 @@ pub(super) fn verify_invariant_checks_at_back_edge_using(
                 budget,
             )
             .map_err(|error| format!("could not lower invariant paths: {error:?}"))?;
-            for path in paths {
-                let Some((mut merged_facts, merged_obligations)) =
-                    merge_execution_pure_facts_and_obligations(
+            if paths.len() <= 1 {
+                for path in paths {
+                    if let Some(context) = verify_lowered_invariant_path(
+                        check_index,
                         &facts,
                         &obligations,
-                        &path.facts,
-                        &path.obligations,
+                        path,
                         assumptions,
-                    )
-                else {
-                    continue;
-                };
-                let local =
-                    assumptions_with_path_context(assumptions, &merged_facts, &merged_obligations);
-                for obligation in merged_obligations
-                    .iter()
-                    .filter(|obligation| !obligation.is_assumable())
-                {
-                    let proposition = obligation.proposition();
-                    let Some(derivation) = local
-                        .derive_proposition_without_premise_minimization(proposition)
-                        .or_else(|| local.derive_simp_proposition(proposition))
-                    else {
-                        return Err(format!(
-                            "invariant {check_index} is missing path obligation: {proposition:?}"
-                        ));
-                    };
-                    if !derivation.replay(&local) {
-                        return Err(format!(
-                            "invariant {check_index} path obligation derivation did not replay: {proposition:?}"
-                        ));
+                    )? {
+                        next_contexts.push(context);
                     }
                 }
-                let Some(derivation) = local
-                    .derive_proposition_without_premise_minimization(&path.proposition)
-                    .or_else(|| local.derive_simp_proposition(&path.proposition))
-                else {
-                    return Err(format!(
-                        "invariant {check_index} is missing path goal: {:?}",
-                        path.proposition
-                    ));
-                };
-                if !derivation.replay(&local) {
-                    return Err(format!(
-                        "invariant {check_index} path derivation did not replay: {:?}",
-                        path.proposition
-                    ));
-                }
-                if !merged_facts
-                    .iter()
-                    .any(|fact| fact.proposition() == &path.proposition)
-                {
-                    merged_facts.push(ExecutionPureFact::new(path.proposition));
-                }
-                next_contexts.push((merged_facts, merged_obligations));
+                continue;
             }
+            let worker_count = std::thread::available_parallelism()
+                .map(usize::from)
+                .unwrap_or(1)
+                .min(8)
+                .min(paths.len());
+            if worker_count == 1 {
+                for path in paths {
+                    if let Some(context) = verify_lowered_invariant_path(
+                        check_index,
+                        &facts,
+                        &obligations,
+                        path,
+                        assumptions,
+                    )? {
+                        next_contexts.push(context);
+                    }
+                }
+                continue;
+            }
+            let mut work = (0..worker_count).map(|_| Vec::new()).collect::<Vec<_>>();
+            for (index, path) in paths.into_iter().enumerate() {
+                work[index % worker_count].push((index, path));
+            }
+            let mut verified = std::thread::scope(|scope| {
+                let handles = work
+                    .into_iter()
+                    .map(|worker_paths| {
+                        let facts = &facts;
+                        let obligations = &obligations;
+                        std::thread::Builder::new()
+                            .name(format!("click-invariant-{check_index}"))
+                            .stack_size(8 * 1024 * 1024)
+                            .spawn_scoped(scope, move || {
+                                worker_paths
+                                    .into_iter()
+                                    .map(|(index, path)| {
+                                        Ok((
+                                            index,
+                                            verify_lowered_invariant_path(
+                                                check_index,
+                                                facts,
+                                                obligations,
+                                                path,
+                                                assumptions,
+                                            )?,
+                                        ))
+                                    })
+                                    .collect::<Result<Vec<_>, String>>()
+                            })
+                            .map_err(|error| format!("could not start invariant verifier: {error}"))
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                handles
+                    .into_iter()
+                    .map(|handle| {
+                        handle
+                            .join()
+                            .map_err(|_| "invariant verifier thread panicked".to_string())?
+                    })
+                    .collect::<Result<Vec<_>, String>>()
+            })?;
+            let mut verified = verified.drain(..).flatten().collect::<Vec<_>>();
+            verified.sort_by_key(|(index, _)| *index);
+            next_contexts.extend(verified.into_iter().filter_map(|(_, context)| context));
         }
         contexts = next_contexts;
     }

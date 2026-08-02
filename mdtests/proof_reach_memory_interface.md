@@ -1,4 +1,4 @@
-# advance exports a memory and resource interface
+# reach exports a memory and resource interface
 
 The common store is checked from the exported bounds and owned memory resource,
 not from either branch's concrete memory state.
@@ -23,7 +23,7 @@ int32 advance_memory_interface(int32* p, int32 x) {
     owns p[0..1];
 
     ensures result > 0 by {
-        advance(statement(0).exit)
+        reach(statement(0).exit)
         ensuring {
             fact p[0] >= 0;
             fact p[0] < 2147483647;
@@ -31,15 +31,15 @@ int32 advance_memory_interface(int32* p, int32 x) {
         }
         by {
             if x >= 0 {
-                execute_then_step();
-                execute_step();
+                step();
+                step();
             } else {
-                execute_else_step();
-                execute_step();
+                step();
+                step();
             }
         }
-        execute_step();
-        execute_step();
+        step();
+        step();
         simp();
     }
 }

@@ -44,7 +44,7 @@ int32 increment_unfold(int32 x) {
 
     ensures result == x + 1 by {
         unfold(incrementable);
-        execute_step();
+        step();
         simp();
     }
 }
@@ -54,7 +54,7 @@ int32 increment_apply(int32 x) {
 
     ensures result == x + 1 by {
         apply(incrementable_bound(x));
-        execute_step();
+        step();
         simp();
     }
 }
@@ -67,7 +67,7 @@ int32 increment_have(int32 x) {
             unfold(incrementable);
             simp();
         }
-        execute_step();
+        step();
         simp();
     }
 }

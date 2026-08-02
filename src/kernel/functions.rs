@@ -1283,10 +1283,7 @@ fn view_range_concretely_loadable(memory: &CMemory, range: &CMemoryRange) -> boo
             block: range.base().block.clone(),
             offset: PointerOffsetTerm::add(
                 range.base().offset.clone(),
-                PointerOffsetTerm::scale_int32(
-                    Bitvector32Term::Constant(index),
-                    i64::from(width),
-                ),
+                PointerOffsetTerm::scale_int32(Bitvector32Term::Constant(index), i64::from(width)),
             ),
         };
         memory.is_loadable_concretely(&pointer, width)

@@ -1,8 +1,7 @@
-# execute branch requires its condition
+# Smart step uses the proof case condition
 
-This checks that explicit branch execution verifies the requested C arm rather
-than trusting the proof script. The true proof case cannot execute the C else
-arm.
+This checks that smart `step()` uses the exact condition introduced by a
+proof-level `if` to enter the matching C arm.
 
 ```c filename=wrong_selected_branch.c
 int32 wrong_selected_branch(int32 x) {
@@ -20,10 +19,12 @@ verifying "wrong_selected_branch.c";
 int32 wrong_selected_branch(int32 x) {
     ensures result >= 0 by {
         if x >= 0 {
-            execute_else_step();
+            step();
+            step();
             simp();
         } else {
-            execute_else_step();
+            step();
+            step();
             simp();
         }
     }
@@ -31,5 +32,5 @@ int32 wrong_selected_branch(int32 x) {
 ```
 
 ```expect
-fail: requested the else branch, but current pure facts prove the then branch
+pass
 ```

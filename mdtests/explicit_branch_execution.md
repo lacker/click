@@ -25,24 +25,24 @@ int32 increment_nonnegative(int32 x) {
     requires x < 2147483647;
 
     ensures result > 0 by {
-        execute_step();
+        step();
         if x >= 0 {
-            execute_then_step();
-            execute_step();
+            step();
+            step();
             have y < 2147483647 by {
                 simp();
             }
-            execute_step();
-            execute_step();
+            step();
+            step();
             simp();
         } else {
-            execute_else_step();
-            execute_step();
+            step();
+            step();
             have y < 2147483647 by {
                 simp();
             }
-            execute_step();
-            execute_step();
+            step();
+            step();
             simp();
         }
     }

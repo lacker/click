@@ -40,7 +40,7 @@ int32 init_once(int32 flag[]) {
     consumes flag[0..1];
 
     produces uncalled(flag) by {
-        execute_rest();
+        execute();
         fold(uncalled(flag));
     }
 }
@@ -50,13 +50,13 @@ int32 complete_once(int32 flag[]) {
 
     produces called(flag) by {
         unfold(uncalled(flag));
-        execute_rest();
+        execute();
         fold(called(flag));
     }
 
     ensures result == 1 by {
         unfold(uncalled(flag));
-        execute_rest();
+        execute();
         fold(called(flag));
         simp();
     }

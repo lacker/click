@@ -27,25 +27,25 @@ int32 nested_branch_steps(int32 x) {
     requires x < 2147483647;
 
     ensures result >= 0 by {
-        execute_step();
+        step();
         if x >= 0 {
-            execute_then_step();
-            execute_step();
+            step();
+            step();
             if y > 0 {
-                execute_then_step();
-                execute_step();
-                execute_step();
+                step();
+                step();
+                step();
                 simp();
             } else {
-                execute_else_step();
-                execute_step();
-                execute_step();
+                step();
+                step();
+                step();
                 simp();
             }
         } else {
-            execute_else_step();
-            execute_step();
-            execute_step();
+            step();
+            step();
+            step();
             simp();
         }
     }

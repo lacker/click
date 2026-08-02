@@ -37,7 +37,7 @@ int32 buffer_clear(struct owner* owner) {
     ensures result == 0;
 } by {
     unfold(owned_buffer(owner));
-    execute_rest();
+    execute();
     have 0 <= owner->len by { simp(); }
     have owner->len <= owner->cap by { simp(); }
     have 0 <= owner->cap by { simp(); }

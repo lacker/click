@@ -77,7 +77,7 @@ int32 bubble_sort3_two_pass(int32 p[3]) {
         }
     }
     ensures sorted: sorted(p, 3) by {
-        execute_rest();
+        execute();
         unfold(sorted);
         unfold(sorted_range);
         unfold(all_le_range);

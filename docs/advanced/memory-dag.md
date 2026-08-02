@@ -110,10 +110,9 @@ canonicalizing arm it contained.
 
 ## Where the frontier is
 
-Current per-member diagnoses live in the repository's `issues/` directory;
-see `issues/README.md`. The remaining failures are certificate spelling,
-proof replay, or performance problems rather than reasons to extend the DAG
-globally.
+There are currently no quarantined per-member failures. Future certificate
+spelling, replay, or performance regressions should be diagnosed as focused
+issues rather than treated as reasons to extend the DAG globally.
 
 ## Landed 2026-07-31: fourth and fifth edge kinds, scoped consumers
 
@@ -207,9 +206,9 @@ prover, so neither situation changed.
 
 ## Further work
 
-The DAG arc itself is landed. Any remaining acceptance failures or performance
-work are tracked in `issues/`; do not treat this design record as a live status
-board.
+The DAG arc itself is landed. Any future acceptance failures or performance
+work should receive a focused file in `issues/`; do not treat this design
+record as a live status board.
 
 ## Repro
 

@@ -176,7 +176,11 @@ pub enum BoundedOutput {
 
 /// Runs a child process with a wall-clock limit, killing and reaping it on
 /// timeout and capturing its stdout and stderr either way.
-pub fn run_bounded(command: Command, limit: Duration, label: &str) -> Result<BoundedOutput, String> {
+pub fn run_bounded(
+    command: Command,
+    limit: Duration,
+    label: &str,
+) -> Result<BoundedOutput, String> {
     run_bounded_with_input(command, None, limit, label)
 }
 
@@ -343,9 +347,15 @@ pub const DISABLE_TACTIC_BUDGETS: &str = "CLICK_DISABLE_TACTIC_BUDGETS";
 
 fn tactic_budget(class: &str) -> Option<(Duration, &'static str)> {
     match class {
-        "simple" => Some((SIMPLE_TACTIC_BUDGET, "a slow simple tactic is a Click engine bug")),
+        "simple" => Some((
+            SIMPLE_TACTIC_BUDGET,
+            "a slow simple tactic is a Click engine bug",
+        )),
         "smart" => Some((SMART_TACTIC_BUDGET, "expand it with click-expand")),
-        "control" => Some((CONTROL_TACTIC_BUDGET, "a slow control tactic is a Click engine bug")),
+        "control" => Some((
+            CONTROL_TACTIC_BUDGET,
+            "a slow control tactic is a Click engine bug",
+        )),
         _ => None,
     }
 }
@@ -396,7 +406,9 @@ pub fn tactic_budget_violations(stderr: &str) -> Vec<String> {
                 .nth(1)
                 .and_then(|rest| rest.split_whitespace().next())
             else {
-                violations.push(format!("tactic finish line without a class field: `{line}`"));
+                violations.push(format!(
+                    "tactic finish line without a class field: `{line}`"
+                ));
                 continue;
             };
             let Some((budget, consequence)) = tactic_budget(class) else {
@@ -746,10 +758,7 @@ pub fn find_mdtests(path: &Path) -> Result<Vec<PathBuf>, String> {
     let mut paths = files_with_extension(path, "md")?;
     paths.sort();
     if paths.is_empty() {
-        return Err(format!(
-            "`{}` contains no markdown tests",
-            path.display()
-        ));
+        return Err(format!("`{}` contains no markdown tests", path.display()));
     }
     Ok(paths)
 }
@@ -837,7 +846,10 @@ click timing: tactic f.contract 1 simp class smart statement 1 source 1 1.900s
 ";
         let violations = super::tactic_budget_violations(stderr);
         assert_eq!(violations.len(), 1, "{violations:?}");
-        assert!(violations[0].contains("f.contract 0 step"), "{violations:?}");
+        assert!(
+            violations[0].contains("f.contract 0 step"),
+            "{violations:?}"
+        );
         assert!(violations[0].contains("simple budget"), "{violations:?}");
     }
 
@@ -853,7 +865,10 @@ click timing: tactic f.contract 0 cases class smart statement 0 source 0 2.500s
 ";
         let violations = super::tactic_budget_violations(stderr);
         assert_eq!(violations.len(), 1, "{violations:?}");
-        assert!(violations[0].contains("f.contract 1 step"), "{violations:?}");
+        assert!(
+            violations[0].contains("f.contract 1 step"),
+            "{violations:?}"
+        );
     }
 
     #[test]
@@ -865,7 +880,10 @@ click timing: started tactic f.contract 1 simp class smart statement 1 source 1
 click timing: tactic f.contract 1 simp class smart statement 1 source 1 0.500s
 click timing: contract execution f 0.100000s
 ";
-        assert_eq!(super::tactic_budget_violations(stderr), Vec::<String>::new());
+        assert_eq!(
+            super::tactic_budget_violations(stderr),
+            Vec::<String>::new()
+        );
     }
 
     #[test]
@@ -876,7 +894,10 @@ click timing: tactic f.contract 0 step class brandnew statement 0 source 0 9.000
 ";
         let violations = super::tactic_budget_violations(stderr);
         assert_eq!(violations.len(), 1, "{violations:?}");
-        assert!(violations[0].contains("unrecognized tactic class"), "{violations:?}");
+        assert!(
+            violations[0].contains("unrecognized tactic class"),
+            "{violations:?}"
+        );
     }
 
     use super::*;
@@ -896,7 +917,9 @@ click timing: tactic f.contract 0 step class brandnew statement 0 source 0 9.000
     #[test]
     fn recognizes_location_shaped_arguments() {
         assert!(looks_like_source_location("example.click:12:5"));
-        assert!(looks_like_source_location("dir:with:colon/example.click:0:5"));
+        assert!(looks_like_source_location(
+            "dir:with:colon/example.click:0:5"
+        ));
         assert!(!looks_like_source_location("example.click"));
         assert!(!looks_like_source_location("example.click:12"));
         assert!(!looks_like_source_location("example.click:12:abc"));
@@ -938,7 +961,10 @@ click timing: tactic f.contract 0 step class brandnew statement 0 source 0 9.000
             format_fractional_duration(Duration::from_millis(1_250)),
             "1.250s"
         );
-        assert_eq!(format_fractional_duration(Duration::from_millis(750)), "750ms");
+        assert_eq!(
+            format_fractional_duration(Duration::from_millis(750)),
+            "750ms"
+        );
     }
 
     #[test]
@@ -956,7 +982,10 @@ click timing: tactic f.contract 0 step class brandnew statement 0 source 0 9.000
         unsafe { std::env::set_var("CLICK_TEST_ENV_DURATION", "later") };
         let message = duration_from_env("CLICK_TEST_ENV_DURATION", Duration::from_secs(3))
             .expect_err("an unparseable duration should be rejected");
-        assert!(message.starts_with("CLICK_TEST_ENV_DURATION: "), "{message}");
+        assert!(
+            message.starts_with("CLICK_TEST_ENV_DURATION: "),
+            "{message}"
+        );
         unsafe { std::env::remove_var("CLICK_TEST_ENV_DURATION") };
     }
 
@@ -982,8 +1011,14 @@ click timing: tactic f.contract 0 step class brandnew statement 0 source 0 9.000
             },
         )
         .expect_err("the sleeper should exceed its limit");
-        assert!(message.contains("exceeded the test time limit of 10ms"), "{message}");
-        assert!(message.contains("set CLICK_TEST_LIMIT to override it"), "{message}");
+        assert!(
+            message.contains("exceeded the test time limit of 10ms"),
+            "{message}"
+        );
+        assert!(
+            message.contains("set CLICK_TEST_LIMIT to override it"),
+            "{message}"
+        );
 
         let mut failing = Command::new("sh");
         failing.arg("-c").arg("echo detail; exit 1");

@@ -53,7 +53,7 @@ for loop(0) {
 
     initialize by auto;
     preserve by {
-        execute_step();
+        step();
         simp();
     }
 }
@@ -100,9 +100,9 @@ memory the loop may write.
 
 An explicit preservation proof starts at an arbitrary loop-head visit and must
 traverse exactly one complete iteration. Straight-line bodies use one `step()`
-or `execute_step()` per statement. In a proof-level `if`, `step()` enters a C
-branch from an exact condition fact; `execute_step()`, `execute_then_step()`,
-and `execute_else_step()` provide contextual branch reasoning. Initialization
+or `step()` per statement. In a proof-level `if`, `step()` enters a C
+branch from an exact condition fact; `step()`, `step()`,
+and `step()` provide contextual branch reasoning. Initialization
 is non-executing because its execution point is already the first loop entry.
 
 A `preserve` script ends by discharging the whole invariant bundle at the loop's
@@ -113,7 +113,7 @@ once on a path.
 
 ```click
 preserve by {
-    execute_step();
+    step();
     close_invariants();
 }
 ```

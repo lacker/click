@@ -11,17 +11,16 @@ use crate::kernel::{
     Assumptions, Bitvector32Term, CComparisonOperator, CCompositeResourceDefinition,
     CConditionOutcome, CExecutionEnvironment, CExecutionSemantics, CExpression, CExpressionOutcome,
     CFunction, CFunctionContractClaim, CFunctionContractClaimKey, CFunctionContractClaimTarget,
-    CFunctionContractExecutionMode,
-    CFunctionExecutionCandidates, CFunctionOutcome, CFunctionSpecification, CLoopEffect,
-    CLoopEffectCheck, CLoopEffectSpan, CLoopInvariantCheck, CMemory, CMemoryRange, CMemorySegment,
-    CResource, CResourceAccessMode, CResourceFact, CResourceSpec, CState, CStatement,
-    CStatementOutcome, CType, CValue, CVerifiedLoopRule, ConditionTerm, ExecutionBudget,
-    ExecutionPureFact, Pointer, PointerOffsetTerm, ProofObligation, Proposition,
-    PropositionDerivation, ResourceContext, ResourceContextValidityError, Sort, SpecExpression,
-    SpecMemory, SpecPredicateArgument, SpecProposition, SpecResource, SymbolicCExecution, Term,
-    Theorem, Variable, abstract_c_state_for_join, c_condition_fact_has_memory,
-    c_condition_fact_memories, c_expression_definedness_proposition, c_function,
-    c_function_contract_entry_state, c_function_entry_state,
+    CFunctionContractExecutionMode, CFunctionExecutionCandidates, CFunctionOutcome,
+    CFunctionSpecification, CLoopEffect, CLoopEffectCheck, CLoopEffectSpan, CLoopInvariantCheck,
+    CMemory, CMemoryRange, CMemorySegment, CResource, CResourceAccessMode, CResourceFact,
+    CResourceSpec, CState, CStatement, CStatementOutcome, CType, CValue, CVerifiedLoopRule,
+    ConditionTerm, ExecutionBudget, ExecutionPureFact, Pointer, PointerOffsetTerm, ProofObligation,
+    Proposition, PropositionDerivation, ResourceContext, ResourceContextValidityError, Sort,
+    SpecExpression, SpecMemory, SpecPredicateArgument, SpecProposition, SpecResource,
+    SymbolicCExecution, Term, Theorem, Variable, abstract_c_state_for_join,
+    c_condition_fact_has_memory, c_condition_fact_memories, c_expression_definedness_proposition,
+    c_function, c_function_contract_entry_state, c_function_entry_state,
     c_function_execution_candidates_from_outcomes, c_function_outcome_from_statement_outcome,
     c_function_outcomes_definitionally_equal, c_function_specification, c_if, c_labeled_assert,
     c_loop_effects_hold_at_back_edge, c_loop_invariant_obligations_at_entry,
@@ -30,9 +29,8 @@ use crate::kernel::{
     c_resources_directly_match, c_seq, c_unverified_function_contract_claims,
     c_verified_function_contract_claims, c_verified_function_rule,
     c_while_with_invariant_and_effect_checks, canonical_c_memory_for_pointer_load,
-    conditions_equal_ignoring_memories,
-    certify_c_function_execution_path_resource_representation, int32,
-    prove_c_condition_fact_direct_transport, prove_c_condition_fact_transport,
+    certify_c_function_execution_path_resource_representation, conditions_equal_ignoring_memories,
+    int32, prove_c_condition_fact_direct_transport, prove_c_condition_fact_transport,
     prove_c_function_contract_execution_paths_with_environment,
     prove_c_function_satisfies_specification_from_symbolic_path,
     prove_symbolic_c_condition_evaluation,
@@ -776,6 +774,7 @@ pub enum ProofTactic {
         region: CodeRegionRef,
         premises: Vec<ClickProposition>,
     },
+    ContextualLoopSummary(CodeRegionRef),
     CertifiedStatementStep {
         prerequisite_derivations: Vec<PropositionDerivation>,
         exact_premises: Vec<Proposition>,
@@ -792,8 +791,12 @@ pub enum ProofTactic {
     ExecuteRest,
     ExecuteUntil(CodeRegionRef),
     BoundedExecute,
-    ContextualFrame,
+    ContextualFrame(Option<CodeRegionRef>),
     Frame(Option<CodeRegionRef>),
+    FrameUsing {
+        region: Option<CodeRegionRef>,
+        premises: Vec<ClickProposition>,
+    },
     UnfoldPredicate(String),
     UnfoldResource(ResourceClause),
     FoldResource(ResourceClause),
@@ -888,6 +891,7 @@ pub enum SimpleTactic {
 pub enum SmartTacticKind {
     Auto,
     ApplyTheorem,
+    LoopSummary,
     FactTransport,
     ExecuteStep,
     ExecuteThenStep,
@@ -1155,7 +1159,9 @@ impl SimpleTactic {
     fn is_surface_expressible(self) -> bool {
         !matches!(
             self,
-            Self::CertifiedStatementTransition
+            Self::DoubleNegation
+                | Self::Vacuous
+                | Self::CertifiedStatementTransition
                 | Self::CertifiedLoopSummaryTransition
                 | Self::ExactPropositionDerivation
                 | Self::CertifiedFactTransport
@@ -1174,6 +1180,7 @@ impl ProofTactic {
             Self::ApplyLoopSummary(_) | Self::ApplyLoopSummaryUsing { .. } => {
                 TacticClass::Simple(SimpleTactic::LoopSummaryTransition)
             }
+            Self::ContextualLoopSummary(_) => TacticClass::Smart(SmartTacticKind::LoopSummary),
             Self::CertifiedStatementStep { .. } => {
                 TacticClass::Simple(SimpleTactic::CertifiedStatementTransition)
             }
@@ -1222,14 +1229,14 @@ impl ProofTactic {
             }
             Self::CertifiedFrame(_) => TacticClass::Simple(SimpleTactic::CertifiedFrame),
             Self::FoldResource(_) => TacticClass::Simple(SimpleTactic::FoldResource),
-            Self::Frame(_) => TacticClass::Simple(SimpleTactic::Frame),
+            Self::Frame(_) | Self::FrameUsing { .. } => TacticClass::Simple(SimpleTactic::Frame),
             Self::ExecuteStep => TacticClass::Smart(SmartTacticKind::ExecuteStep),
             Self::ExecuteThenStep => TacticClass::Smart(SmartTacticKind::ExecuteThenStep),
             Self::ExecuteElseStep => TacticClass::Smart(SmartTacticKind::ExecuteElseStep),
             Self::ExecuteRest => TacticClass::Smart(SmartTacticKind::ExecuteRest),
             Self::ExecuteUntil(_) => TacticClass::Smart(SmartTacticKind::ExecuteUntil),
             Self::BoundedExecute => TacticClass::Smart(SmartTacticKind::BoundedExecute),
-            Self::ContextualFrame => TacticClass::Smart(SmartTacticKind::Frame),
+            Self::ContextualFrame(_) => TacticClass::Smart(SmartTacticKind::Frame),
             Self::Simp => TacticClass::Smart(SmartTacticKind::Simp),
             Self::Have(_) => TacticClass::ControlFlow(ControlFlowTactic::Have),
             Self::If(_) => TacticClass::ControlFlow(ControlFlowTactic::If),
@@ -2204,8 +2211,7 @@ fn verify_c0_sources_with_environment(
         let resource_definitions = combined_resource_definitions(&file)?;
         let theorem_definitions = combined_theorem_definitions(&file)?;
         let predicate_environment = PredicateEnvironment::new(&predicate_definitions);
-        let click_function_environment =
-            ClickFunctionEnvironment::new(&click_function_definitions);
+        let click_function_environment = ClickFunctionEnvironment::new(&click_function_definitions);
         let resource_environment = ResourceEnvironment::new(&resource_definitions);
         let built_function_environment = build_function_environment(
             &parsed_sources,
@@ -2529,10 +2535,15 @@ fn verify_c0_sources_with_environment(
                                             |ensure| format!("{key:?} = {ensure:?}"),
                                         ),
                                     Some(CFunctionContractClaimTarget::EnsureResource(index)) => {
-                                        contract_function.resource_ensures().get(*index).map_or_else(
-                                            || format!("{key:?}"),
-                                            |resource| format!("{key:?} = produces {resource:?}"),
-                                        )
+                                        contract_function
+                                            .resource_ensures()
+                                            .get(*index)
+                                            .map_or_else(
+                                                || format!("{key:?}"),
+                                                |resource| {
+                                                    format!("{key:?} = produces {resource:?}")
+                                                },
+                                            )
                                     }
                                     _ => format!("{key:?}"),
                                 }
@@ -2787,9 +2798,7 @@ fn parse_c_struct_layouts(
     let mut layouts = BTreeMap::new();
     for (source_path, c_source) in c_sources {
         let function = syntax::parse_function(c_source).map_err(|error| {
-            ClickError::new(format!(
-                "failed to parse C source `{source_path}`: {error}"
-            ))
+            ClickError::new(format!("failed to parse C source `{source_path}`: {error}"))
         })?;
         for (name, layout) in function.structs() {
             if let Some(previous) = layouts.insert(name.clone(), layout.clone())
@@ -2825,9 +2834,7 @@ fn parse_verified_sources(
             ))
         })?;
         let function = syntax::parse_function(c_source).map_err(|error| {
-            ClickError::new(format!(
-                "failed to parse C source `{source_path}`: {error}"
-            ))
+            ClickError::new(format!("failed to parse C source `{source_path}`: {error}"))
         })?;
         let function_name = function.name().to_string();
         let previous = parsed.insert(function_name.clone(), (source_path.clone(), function));

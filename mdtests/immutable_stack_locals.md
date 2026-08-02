@@ -16,7 +16,7 @@ int32 immutable_stack_locals() {
 verifying "immutable_stack_locals.c";
 
 int32 immutable_stack_locals() {
-    immutable by frame;
+    immutable by auto;
     ensures returns_one: result == 1 by auto;
 }
 ```

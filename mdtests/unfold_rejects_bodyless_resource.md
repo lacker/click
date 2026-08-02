@@ -20,7 +20,7 @@ int32 use_token(int32 fd) {
 
     produces socket_open(fd) by {
         unfold(socket_open(fd));
-        execute_rest();
+        execute();
     }
 }
 ```

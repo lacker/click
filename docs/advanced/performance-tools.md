@@ -55,7 +55,7 @@ The verifier, rather than the profiler, classifies tactics:
 
 - **SIMPLE** tactics perform deterministic replay operations;
 - **SMART** tactics perform contextual reasoning, search, or orchestration;
-- **CONTROL** tactics such as `have`, proof-level `if`, and `advance` contain
+- **CONTROL** tactics such as `have`, proof-level `if`, and `reach` contain
   nested scripts and bookkeeping.
 
 A successful smart tactic must replay through a `TacticCertificate` whose

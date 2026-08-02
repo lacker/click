@@ -694,18 +694,16 @@ impl Parser {
             let mut struct_alignment = 1u32;
             while self.peek() != Some(&Token::RBrace) {
                 if self.peek().is_none() {
-                    return Err(self.error_here(
-                        "expected struct field or `}`, got end of input",
-                    ));
+                    return Err(self.error_here("expected struct field or `}`, got end of input"));
                 }
                 let field_type = self.parse_type()?;
                 if !matches!(
                     field_type.c_type,
                     C0Type::Int32 | C0Type::Int32Pointer | C0Type::UInt8Pointer
                 ) {
-                    return Err(self.error_here(
-                        "struct fields currently support int32 and pointer fields",
-                    ));
+                    return Err(
+                        self.error_here("struct fields currently support int32 and pointer fields")
+                    );
                 }
                 let field_name = self.expect_ident("struct field name")?;
                 self.expect(Token::Semicolon)?;
@@ -724,9 +722,8 @@ impl Parser {
                     )
                     .is_some()
                 {
-                    return Err(self.error_here(format!(
-                        "duplicate field `{field_name}` in struct `{name}`"
-                    )));
+                    return Err(self
+                        .error_here(format!("duplicate field `{field_name}` in struct `{name}`")));
                 }
                 offset_bytes = offset_bytes.checked_add(field_size).ok_or_else(|| {
                     self.error_here(format!("struct `{name}` layout is too large"))
@@ -738,13 +735,10 @@ impl Parser {
             self.expect(Token::Semicolon)?;
 
             if fields.is_empty() {
-                return Err(self.error_here(
-                    "struct declarations must contain at least one field",
-                ));
+                return Err(self.error_here("struct declarations must contain at least one field"));
             }
-            let size_bytes = align_up(offset_bytes, struct_alignment).ok_or_else(|| {
-                self.error_here(format!("struct `{name}` layout is too large"))
-            })?;
+            let size_bytes = align_up(offset_bytes, struct_alignment)
+                .ok_or_else(|| self.error_here(format!("struct `{name}` layout is too large")))?;
             if self
                 .structs
                 .insert(
@@ -757,9 +751,7 @@ impl Parser {
                 )
                 .is_some()
             {
-                return Err(self.error_here(format!(
-                    "duplicate struct declaration `{name}`"
-                )));
+                return Err(self.error_here(format!("duplicate struct declaration `{name}`")));
             }
         }
 
@@ -779,9 +771,9 @@ impl Parser {
             let struct_name = parsed_type.struct_name;
             if struct_name.is_some() {
                 if c_type != parsed_type.c_type {
-                    return Err(self.error_here(
-                        "array parameters of struct type are not supported",
-                    ));
+                    return Err(
+                        self.error_here("array parameters of struct type are not supported")
+                    );
                 }
                 self.variable_structs.insert(
                     name.clone(),
@@ -816,9 +808,7 @@ impl Parser {
                         struct_name: Some(struct_name),
                     })
                 } else {
-                    Err(self.error_here(
-                        "only pointer-to-struct types are supported",
-                    ))
+                    Err(self.error_here("only pointer-to-struct types are supported"))
                 }
             }
             Some(Token::Ident(name)) if name == "int32" || name == "uint8" => {
@@ -848,9 +838,10 @@ impl Parser {
                 "expected type `int32`, `uint8`, or `struct`, got {}",
                 token.describe()
             ))),
-            None => Err(self.error_here(
-                "expected type `int32`, `uint8`, or `struct`, got end of input",
-            )),
+            None => {
+                Err(self
+                    .error_here("expected type `int32`, `uint8`, or `struct`, got end of input"))
+            }
         }
     }
 
@@ -862,16 +853,12 @@ impl Parser {
             C0Type::Int32 => C0Type::Int32Pointer,
             C0Type::UInt8 => C0Type::UInt8Pointer,
             _ => {
-                return Err(self.error_here(
-                    "only scalar array parameters are supported",
-                ));
+                return Err(self.error_here("only scalar array parameters are supported"));
             }
         };
 
         if !matches!(c_type, C0Type::Int32 | C0Type::UInt8) {
-            return Err(self.error_here(
-                "only scalar array parameters are supported",
-            ));
+            return Err(self.error_here("only scalar array parameters are supported"));
         }
 
         self.position += 1;
@@ -916,9 +903,7 @@ impl Parser {
                 )));
             }
             None => {
-                return Err(self.error_here(
-                    "expected local array length, got end of input",
-                ));
+                return Err(self.error_here("expected local array length, got end of input"));
             }
         };
         self.expect(Token::RBracket)?;
@@ -930,9 +915,7 @@ impl Parser {
         let mut statements = Vec::new();
         while self.peek() != Some(&Token::RBrace) {
             if self.peek().is_none() {
-                return Err(self.error_here(
-                    "expected statement or `}`, got end of input",
-                ));
+                return Err(self.error_here("expected statement or `}`, got end of input"));
             }
             statements.push(self.parse_statement()?);
         }
@@ -1000,9 +983,9 @@ impl Parser {
                 let c_type = self.parse_local_array_suffix(parsed_type.c_type)?;
                 if parsed_type.struct_name.is_some() {
                     if c_type != parsed_type.c_type {
-                        return Err(self.error_here(
-                            "local arrays of struct type are not supported",
-                        ));
+                        return Err(
+                            self.error_here("local arrays of struct type are not supported")
+                        );
                     }
                     self.variable_structs.insert(
                         name.clone(),
@@ -1015,9 +998,7 @@ impl Parser {
                 };
                 if self.peek() == Some(&Token::Equal) {
                     if matches!(c_type, C0Type::Int32Array(_) | C0Type::UInt8Array(_)) {
-                        return Err(self.error_here(
-                            "local array initializers are not supported",
-                        ));
+                        return Err(self.error_here("local array initializers are not supported"));
                     }
                     self.position += 1;
                     let expression = self.parse_expression()?;
@@ -1082,15 +1063,14 @@ impl Parser {
                         }),
                     ))
                 }
-                Some(other) => Err(self.error_here(format!(
-                    "expected statement, got identifier `{other}`"
-                ))),
+                Some(other) => {
+                    Err(self.error_here(format!("expected statement, got identifier `{other}`")))
+                }
                 None => unreachable!("identifier token should have identifier spelling"),
             },
-            Some(token) => Err(self.error_here(format!(
-                "expected statement, got {}",
-                token.describe()
-            ))),
+            Some(token) => {
+                Err(self.error_here(format!("expected statement, got {}", token.describe())))
+            }
             None => Err(self.error_here("expected statement, got end of input")),
         }
     }
@@ -1100,9 +1080,7 @@ impl Parser {
             let parsed_type = self.parse_type()?;
             let name = self.expect_ident("for-loop local name")?;
             if self.peek() != Some(&Token::Equal) {
-                return Err(self.error_here(
-                    "for-loop declarations require an initializer",
-                ));
+                return Err(self.error_here("for-loop declarations require an initializer"));
             }
             self.position += 1;
             let expression = self.parse_expression()?;
@@ -1115,9 +1093,9 @@ impl Parser {
             ));
         }
         let Some(Token::Ident(name)) = self.next() else {
-            return Err(self.error_here(
-                "expected assignment target in for-loop initializer".to_string(),
-            ));
+            return Err(
+                self.error_here("expected assignment target in for-loop initializer".to_string())
+            );
         };
         self.expect(Token::Equal)?;
         let expression = self.parse_expression()?;
@@ -1577,10 +1555,9 @@ impl Parser {
         let at = self.error_context();
         match self.next() {
             Some(Token::Ident(name)) if name == expected => Ok(()),
-            Some(token) => Err(at.error(format!(
-                "expected `{expected}`, got {}",
-                token.describe()
-            ))),
+            Some(token) => {
+                Err(at.error(format!("expected `{expected}`, got {}", token.describe())))
+            }
             None => Err(at.error(format!("expected `{expected}`, got end of input"))),
         }
     }

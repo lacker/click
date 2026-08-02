@@ -27,7 +27,7 @@ int32 bounded_increment(int32 x) {
 
     requires x < max;
     ensures result_value: result == expected by auto;
-    ensures function_value: result == inc_with_let(x) by simp;
+    ensures function_value: result == inc_with_let(x) by { execute(); simp(); }
 }
 
 int32 read_first(int32 p[]) {

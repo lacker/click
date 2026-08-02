@@ -5,7 +5,7 @@ C branch. The then arm advances across a verified loop and records its labeled
 exit snapshot; the else arm executes an ordinary assignment. Both continue at
 the common return.
 
-```c filename=execute_step_loop_inside_branch.c
+```c filename=step_loop_inside_branch.c
 int32 branch_count_to_one(int32 flag, int32 i) {
     if (flag) {
         while (i < 1) {
@@ -19,7 +19,7 @@ int32 branch_count_to_one(int32 flag, int32 i) {
 ```
 
 ```click
-verifying "execute_step_loop_inside_branch.c";
+verifying "step_loop_inside_branch.c";
 
 int32 branch_count_to_one(int32 flag, int32 i) {
     requires i == 1;
@@ -40,12 +40,12 @@ int32 branch_count_to_one(int32 flag, int32 i) {
     ensures result == 1
         and at(statement(1).exit, i) == 1
         and at(statement(4).entry, i) == 1 by {
-        execute_then_step();
-        execute_step();
+        step();
+        step();
         have at(count.exit, i) == 1 by {
             simp();
         }
-        execute_step();
+        step();
         simp();
     }
 }

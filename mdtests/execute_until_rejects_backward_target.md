@@ -13,9 +13,9 @@ verifying "execute_until_backward.c";
 
 int32 execute_until_backward(int32 x) {
     ensures result == x by {
-        execute_step();
+        step();
         execute_until(statement(0));
-        execute_rest();
+        execute();
         simp();
     }
 }

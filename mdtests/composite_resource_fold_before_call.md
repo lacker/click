@@ -39,10 +39,10 @@ int32 fold_then_call(int32 x) {
 
     produces bundle(x) by {
         unfold(bundle(x));
-        execute_step();
+        step();
         fold(bundle(x));
-        execute_step();
-        execute_step();
+        step();
+        step();
     }
 }
 ```

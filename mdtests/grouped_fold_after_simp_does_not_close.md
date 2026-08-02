@@ -21,7 +21,7 @@ int32 initialize(int32 p[]) {
     consumes p[0..1];
     produces initialized(p);
 } by {
-    execute_rest();
+    execute();
     simp();
     fold(initialized(p));
 }

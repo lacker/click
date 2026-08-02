@@ -1,6 +1,6 @@
-# advance joins branch proofs at a program point
+# reach joins branch proofs at a program point
 
-`advance` proves that every internal proof case reaches the declared target
+`reach` proves that every internal proof case reaches the declared target
 with the same asserted facts. The surrounding proof then writes the common
 suffix once.
 
@@ -25,8 +25,8 @@ int32 joined_increment(int32* p, int32 x) {
     owns p[0..1];
 
     ensures result > 0 by {
-        execute_step();
-        advance(statement(1).exit)
+        step();
+        reach(statement(1).exit)
         ensuring {
             fact y >= 0;
             fact y < 2147483647;
@@ -35,15 +35,15 @@ int32 joined_increment(int32* p, int32 x) {
         }
         by {
             if x >= 0 {
-                execute_then_step();
-                execute_step();
+                step();
+                step();
             } else {
-                execute_else_step();
-                execute_step();
+                step();
+                step();
             }
         }
-        execute_step();
-        execute_step();
+        step();
+        step();
         simp();
     }
 }

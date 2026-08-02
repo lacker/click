@@ -26,7 +26,7 @@ function sum_range_b(int32 lo, int32 hi) -> int32 {
 }
 
 int32 range_fold_alpha_equivalence(int32 lo, int32 hi) {
-    ensures renamed_fold_binders: sum_range_a(lo, hi) == sum_range_b(lo, hi) by simp;
+    ensures renamed_fold_binders: sum_range_a(lo, hi) == sum_range_b(lo, hi) by { execute(); simp(); }
 }
 ```
 
