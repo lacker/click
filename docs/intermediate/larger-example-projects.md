@@ -45,6 +45,19 @@ This fixture's proof scope is intentionally narrow:
 This gives Click a realistic shape to verify without pretending it already has
 heap allocation or ownership transfer.
 
+### Detachable Buffer
+
+```text
+examples/detachable-buffer/
+```
+
+This fixture separates one attached composite resource into independently
+owned metadata and backing-storage resources, uses the detached backing through
+an owner-independent helper, and then recombines both pieces. Attachedness is a
+proof state rather than a runtime flag. The example exercises ownership moving
+out of and back into a field-dependent composite resource through opaque call
+summaries, without requiring allocation or deallocation.
+
 ### Owned Vector
 
 ```text
@@ -61,6 +74,23 @@ The pipeline uses verified opaque call summaries for all operations, including
 calls that consume and produce memory-backed composite resources. The project
 uses one grouped execution proof per function so effects, produced resources,
 and pure postconditions are checked from one chronological proof state.
+
+### Owned String
+
+```text
+examples/owned-string/
+```
+
+This fixture defines an `owned_string(owner)` composite resource over string
+metadata and a field-dependent backing array. In addition to length and
+capacity bounds, the resource carries a `terminated_at(data, len)` predicate
+that records the trailing zero terminator. Its mutators change the logical end
+of the string while re-establishing that memory invariant, and their precise
+effects let modular callers prove that earlier characters are preserved.
+
+The example covers initialization, indexed reads and writes, push, pop, clear,
+and a multi-call pipeline. It is the main larger fixture for the interaction
+between a folded composite resource and a content invariant over owned memory.
 
 ### Owned Split Buffer
 
