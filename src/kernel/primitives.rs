@@ -2576,22 +2576,18 @@ impl CExecutionEnvironment {
                                     state.memory(),
                                     base,
                                     assumptions,
-                                ) && (bytes
-                                    .as_const()
-                                    .and_then(|bytes| u32::try_from(bytes).ok())
-                                    .is_some_and(|bytes| {
-                                        resource_context_has_read(
-                                            state.resources(),
-                                            base,
-                                            bytes,
-                                            assumptions,
-                                        )
-                                    })
-                                    || resource_context_has_symbolic_int32_range_read(
+                                ) && (bytes.as_const().is_some_and(|bytes| {
+                                    resource_context_has_read(
                                         state.resources(),
                                         base,
                                         bytes,
-                                    ))
+                                        assumptions,
+                                    )
+                                }) || resource_context_has_symbolic_int32_range_read(
+                                    state.resources(),
+                                    base,
+                                    bytes,
+                                ))
                             }
                             _ => false,
                         }
@@ -2995,6 +2991,10 @@ impl CState {
 
     pub fn locals(&self) -> &CLocalEnvironment {
         &self.locals
+    }
+
+    pub(crate) fn local_object_type(&self, name: &str) -> Option<CType> {
+        self.locals.object_type(name)
     }
 
     pub fn memory(&self) -> &CMemory {
@@ -3866,7 +3866,7 @@ fn split_memory_range(
         .element_index_from_base(available.base())
         .or_else(|| {
             pointer_bases_equal_with_load_bridging(required.base(), available.base(), assumptions)
-                .then(|| Bitvector32Term::Constant(0))
+                .then_some(Bitvector32Term::Constant(0))
         })?;
     let required_start = Bitvector32Term::add(base_delta.clone(), required.start().clone());
     let required_end = Bitvector32Term::add(base_delta, required.end().clone());

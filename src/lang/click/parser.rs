@@ -1734,7 +1734,7 @@ impl Parser {
             if self.peek() == Some(&Token::Semicolon) {
                 self.position += 1;
             }
-            return Ok(ProofTactic::Advance(ProofAdvance {
+            return Ok(ProofTactic::Reach(ProofReach {
                 target,
                 assertions,
                 tactics,
@@ -1771,7 +1771,7 @@ impl Parser {
                     }
                     return Ok(ProofTactic::StepUsing(premises));
                 }
-                ProofTactic::ExecuteStep
+                ProofTactic::SmartStep
             }
             "close_invariants" => {
                 self.expect_empty_tactic_args(&name)?;
@@ -1782,13 +1782,13 @@ impl Parser {
                 let region_ref = self.parse_code_region_ref()?;
                 self.expect(Token::RParen)?;
                 if self.peek_ident() != Some("using") {
-                    ProofTactic::ContextualLoopSummary(region_ref)
+                    ProofTactic::SmartSummarize(region_ref)
                 } else {
                     let premises = self.parse_exact_premises()?;
                     if self.peek() == Some(&Token::Semicolon) {
                         self.position += 1;
                     }
-                    return Ok(ProofTactic::ApplyLoopSummaryUsing {
+                    return Ok(ProofTactic::SummarizeUsing {
                         region: region_ref,
                         premises,
                     });
@@ -1796,7 +1796,7 @@ impl Parser {
             }
             "execute" => {
                 self.expect_empty_tactic_args(&name)?;
-                ProofTactic::ExecuteRest
+                ProofTactic::SmartExecute
             }
             "execute_until" => {
                 self.expect(Token::LParen)?;
@@ -1813,7 +1813,7 @@ impl Parser {
                 };
                 self.expect(Token::RParen)?;
                 if self.peek_ident() != Some("using") {
-                    ProofTactic::ContextualFrame(region_ref)
+                    ProofTactic::SmartFrame(region_ref)
                 } else {
                     let premises = self.parse_exact_premises()?;
                     if self.peek() == Some(&Token::Semicolon) {
@@ -1892,7 +1892,7 @@ impl Parser {
             }
             "split" => {
                 self.expect_empty_tactic_args(&name)?;
-                ProofTactic::Conjunction
+                ProofTactic::Split
             }
             "left" => {
                 self.expect_empty_tactic_args(&name)?;

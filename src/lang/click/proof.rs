@@ -40,7 +40,7 @@ fn apply_logical_goal_tactic(
                 "`intro` requires an implication, negation, or universal goal, got {goal:?}"
             )),
         },
-        ProofTactic::Conjunction => {
+        ProofTactic::Split => {
             let Proposition::And(left, right) = goal else {
                 return Err(format!("`split` requires a conjunction goal, got {goal:?}"));
             };
@@ -69,38 +69,6 @@ fn apply_logical_goal_tactic(
             if !available.contains(right.as_ref()) {
                 return Err(format!(
                     "`right` requires its selected disjunct as an exact fact: {right:?}"
-                ));
-            }
-            Ok(true)
-        }
-        ProofTactic::DoubleNegation => {
-            let Proposition::Not(outer) = goal else {
-                return Err(format!(
-                    "`double_negation` requires a double-negation goal, got {goal:?}"
-                ));
-            };
-            let Proposition::Not(inner) = outer.as_ref() else {
-                return Err(format!(
-                    "`double_negation` requires a double-negation goal, got {goal:?}"
-                ));
-            };
-            if !available.contains(inner.as_ref()) {
-                return Err(format!(
-                    "`double_negation` requires its inner proposition as an exact fact: {inner:?}"
-                ));
-            }
-            Ok(true)
-        }
-        ProofTactic::Vacuous => {
-            let Proposition::Implies(antecedent, _) = goal else {
-                return Err(format!(
-                    "`vacuous` requires an implication goal, got {goal:?}"
-                ));
-            };
-            let negated = Proposition::Not(Box::new(antecedent.as_ref().clone()));
-            if !available.contains(&negated) {
-                return Err(format!(
-                    "`vacuous` requires the negated antecedent as an exact fact: {negated:?}"
                 ));
             }
             Ok(true)
@@ -232,42 +200,43 @@ fn equal_by_premise_chain(
                 )))
     };
     let mut classes: Vec<Vec<Bitvector32Term>> = Vec::new();
-    let mut add_equality = |left: &Bitvector32Term, right: &Bitvector32Term| {
-        let left = left.clone();
-        let right = right.clone();
-        let left_class = classes.iter().position(|class| class.contains(&left));
-        let right_class = classes.iter().position(|class| class.contains(&right));
-        match (left_class, right_class) {
-            (Some(a), Some(b)) if a != b => {
-                let merged = classes.remove(a.max(b));
-                classes[a.min(b)].extend(merged);
+    {
+        let mut add_equality = |left: &Bitvector32Term, right: &Bitvector32Term| {
+            let left = left.clone();
+            let right = right.clone();
+            let left_class = classes.iter().position(|class| class.contains(&left));
+            let right_class = classes.iter().position(|class| class.contains(&right));
+            match (left_class, right_class) {
+                (Some(a), Some(b)) if a != b => {
+                    let merged = classes.remove(a.max(b));
+                    classes[a.min(b)].extend(merged);
+                }
+                (Some(_), Some(_)) => {}
+                (Some(a), None) => classes[a].push(right),
+                (None, Some(b)) => classes[b].push(left),
+                (None, None) => classes.push(vec![left, right]),
             }
-            (Some(_), Some(_)) => {}
-            (Some(a), None) => classes[a].push(right),
-            (None, Some(b)) => classes[b].push(left),
-            (None, None) => classes.push(vec![left, right]),
-        }
-    };
-    // Ambient equality facts are execution-certified (store equations,
-    // recorded aliases) and may link the listed premises, the same way
-    // frame facts justify load unification. Keep the raw edge as well as its
-    // canonical form: canonicalizing a store equation can reduce its written
-    // load to the stored value and erase the edge needed to reach a later
-    // snapshot spelling.
-    for premise in premises.iter().chain(available) {
-        if let Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), true) =
-            premise
-        {
-            add_equality(left, right);
-        }
-        let Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), true) =
-            crate::kernel::c_condition_fact_with_canonical_loads(premise)
-        else {
-            continue;
         };
-        add_equality(&left, &right);
+        // Ambient equality facts are execution-certified (store equations,
+        // recorded aliases) and may link the listed premises, the same way
+        // frame facts justify load unification. Keep the raw edge as well as its
+        // canonical form: canonicalizing a store equation can reduce its written
+        // load to the stored value and erase the edge needed to reach a later
+        // snapshot spelling.
+        for premise in premises.iter().chain(available) {
+            if let Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), true) =
+                premise
+            {
+                add_equality(left, right);
+            }
+            let Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), true) =
+                crate::kernel::c_condition_fact_with_canonical_loads(premise)
+            else {
+                continue;
+            };
+            add_equality(&left, &right);
+        }
     }
-    drop(add_equality);
     let target_left = *target_left;
     let target_right = *target_right;
     let terms_linked = |left: &Bitvector32Term, right: &Bitvector32Term| {
@@ -395,7 +364,6 @@ fn check_atomic_derivation_goal(
         ProofTactic::Derive(_) => premise_assumptions
             .derive_atomic_proposition(&target)
             .or_else(|| premise_assumptions.derive_simp_atomic_proposition(&target)),
-        ProofTactic::Calculate(_) => premise_assumptions.derive_simp_atomic_proposition(&target),
         _ => None,
     };
     if premise_only_derivation.is_some() {
@@ -470,16 +438,13 @@ fn check_atomic_derivation_goal(
                 .or_else(|| assumptions.derive_proposition(target))
                 .or_else(|| assumptions.derive_simp_atomic_proposition(target))
                 .or_else(|| assumptions.derive_simp_proposition(target)),
-            ProofTactic::Calculate(_) => assumptions
-                .derive_simp_atomic_proposition(target)
-                .or_else(|| assumptions.derive_simp_proposition(target)),
             _ => None,
         }
     };
     // Try the premises as spelled before normalizing: snapshot-bridging
     // derivations can depend on the recorded load spellings that
     // normalization rewrites.
-    if !matches!(tactic, ProofTactic::Derive(_) | ProofTactic::Calculate(_)) {
+    if !matches!(tactic, ProofTactic::Derive(_)) {
         return Err("not a derivation tactic".to_string());
     }
     let derivation = derive_from(&premises, &target)
@@ -703,18 +668,8 @@ fn lower_pure_simp_certificate(
             if premises.is_empty() {
                 ProofTactic::Normalize
             } else {
-                let exact_premises = derivation.context_premises();
-                let exact_assumptions = assumptions_from_propositions(&exact_premises);
-                let derive = exact_assumptions
-                    .derive_atomic_proposition(derivation.conclusion())
-                    .or_else(|| exact_assumptions.derive_proposition(derivation.conclusion()))
-                    .is_some();
                 let derivation = ProofDerive { premises };
-                if derive {
-                    ProofTactic::Derive(derivation)
-                } else {
-                    ProofTactic::Calculate(derivation)
-                }
+                ProofTactic::Derive(derivation)
             }
         }
         _ => return None,
@@ -1125,7 +1080,7 @@ fn prove_pure_theorem_script(
     context: &PureTheoremContext,
     tactics: &[ProofTactic],
 ) -> Result<(), ClickError> {
-    for proof_case in expand_proof_if_cases(tactics, claim_label)? {
+    for proof_case in expand_proof_if_cases(tactics)? {
         prove_pure_theorem_tactics(
             claim_label,
             requires,
@@ -1169,7 +1124,7 @@ mod certificate_tests {
                 coordinates.extend(linear_tactic_coordinates(continuation));
                 coordinates
             }
-            InternalProofNode::Advance {
+            InternalProofNode::Reach {
                 body, continuation, ..
             } => {
                 let mut coordinates = linear_tactic_coordinates(body);
@@ -1215,6 +1170,26 @@ mod certificate_tests {
         });
 
         assert_eq!(source_tactic_class(&have), SourceTacticClass::Simple);
+    }
+
+    #[test]
+    fn timing_classifies_smart_and_structural_have_sites_separately() {
+        let proposition = ClickProposition::Comparison {
+            left: ContractExpression::CFragment(CExpression::Value(int32(1))),
+            operator: ComparisonOperator::Equal,
+            right: ContractExpression::CFragment(CExpression::Value(int32(1))),
+        };
+        let smart = ProofTactic::Have(ProofHave {
+            proposition: proposition.clone(),
+            proof: Proof::Tactic(SmartTactic::Simp),
+        });
+        let structural = ProofTactic::Have(ProofHave {
+            proposition,
+            proof: Proof::Script(Vec::new()),
+        });
+
+        assert_eq!(source_tactic_class(&smart), SourceTacticClass::Smart);
+        assert_eq!(source_tactic_class(&structural), SourceTacticClass::Control);
     }
 
     #[test]
@@ -1398,7 +1373,7 @@ mod certificate_tests {
 struct ExpandedProofCase {
     tactics: Vec<ProofTactic>,
     assumptions: Vec<ProofCaseAssumption>,
-    advance_checks: Vec<ProofAdvanceCheck>,
+    advance_checks: Vec<ProofReachCheck>,
 }
 
 struct ProofCaseAssumption {
@@ -1407,7 +1382,7 @@ struct ProofCaseAssumption {
     value: bool,
 }
 
-struct ProofAdvanceCheck {
+struct ProofReachCheck {
     join_id: usize,
     tactic_index: usize,
     target: ProgramPointRef,
@@ -1416,23 +1391,19 @@ struct ProofAdvanceCheck {
 
 // Pure proofs and point-local `have` proofs use flat logical cases. Execution
 // proofs use `InternalProofNode`, where `reach` has region-join semantics.
-fn expand_proof_if_cases(
-    tactics: &[ProofTactic],
-    claim_label: &str,
-) -> Result<Vec<ExpandedProofCase>, ClickError> {
+fn expand_proof_if_cases(tactics: &[ProofTactic]) -> Result<Vec<ExpandedProofCase>, ClickError> {
     let mut next_join_id = 0;
-    expand_structured_proof_cases(tactics, claim_label, &mut next_join_id)
+    expand_structured_proof_cases(tactics, &mut next_join_id)
 }
 
 fn expand_structured_proof_cases(
     tactics: &[ProofTactic],
-    claim_label: &str,
     next_join_id: &mut usize,
 ) -> Result<Vec<ExpandedProofCase>, ClickError> {
     let Some((control_index, control_tactic)) = tactics
         .iter()
         .enumerate()
-        .find(|(_, tactic)| matches!(tactic, ProofTactic::If(_) | ProofTactic::Advance(_)))
+        .find(|(_, tactic)| matches!(tactic, ProofTactic::If(_) | ProofTactic::Reach(_)))
     else {
         return Ok(vec![ExpandedProofCase {
             tactics: tactics.to_vec(),
@@ -1443,19 +1414,14 @@ fn expand_structured_proof_cases(
     let prefix = &tactics[..control_index];
     match control_tactic {
         ProofTactic::If(proof_if) => {
-            let suffix_cases = expand_structured_proof_cases(
-                &tactics[control_index + 1..],
-                claim_label,
-                next_join_id,
-            )?;
+            let suffix_cases =
+                expand_structured_proof_cases(&tactics[control_index + 1..], next_join_id)?;
             let mut cases = Vec::new();
             for (value, branch_tactics) in [
                 (true, proof_if.then_tactics.as_slice()),
                 (false, proof_if.else_tactics.as_slice()),
             ] {
-                for branch in
-                    expand_structured_proof_cases(branch_tactics, claim_label, next_join_id)?
-                {
+                for branch in expand_structured_proof_cases(branch_tactics, next_join_id)? {
                     for suffix in &suffix_cases {
                         let boundary = prefix.len() + branch.tactics.len();
                         let mut linear = prefix.to_vec();
@@ -1483,7 +1449,7 @@ fn expand_structured_proof_cases(
                         let mut advance_checks = branch
                             .advance_checks
                             .iter()
-                            .map(|check| ProofAdvanceCheck {
+                            .map(|check| ProofReachCheck {
                                 join_id: check.join_id,
                                 tactic_index: prefix.len() + check.tactic_index,
                                 target: check.target.clone(),
@@ -1491,7 +1457,7 @@ fn expand_structured_proof_cases(
                             })
                             .collect::<Vec<_>>();
                         advance_checks.extend(suffix.advance_checks.iter().map(|check| {
-                            ProofAdvanceCheck {
+                            ProofReachCheck {
                                 join_id: check.join_id,
                                 tactic_index: boundary + check.tactic_index,
                                 target: check.target.clone(),
@@ -1508,16 +1474,12 @@ fn expand_structured_proof_cases(
             }
             Ok(cases)
         }
-        ProofTactic::Advance(advance) => {
+        ProofTactic::Reach(advance) => {
             let join_id = *next_join_id;
             *next_join_id += 1;
-            let body_cases =
-                expand_structured_proof_cases(&advance.tactics, claim_label, next_join_id)?;
-            let suffix_cases = expand_structured_proof_cases(
-                &tactics[control_index + 1..],
-                claim_label,
-                next_join_id,
-            )?;
+            let body_cases = expand_structured_proof_cases(&advance.tactics, next_join_id)?;
+            let suffix_cases =
+                expand_structured_proof_cases(&tactics[control_index + 1..], next_join_id)?;
             let mut cases = Vec::new();
             for body in &body_cases {
                 for suffix in &suffix_cases {
@@ -1544,21 +1506,21 @@ fn expand_structured_proof_cases(
                     let mut advance_checks = body
                         .advance_checks
                         .iter()
-                        .map(|check| ProofAdvanceCheck {
+                        .map(|check| ProofReachCheck {
                             join_id: check.join_id,
                             tactic_index: prefix.len() + check.tactic_index,
                             target: check.target.clone(),
                             assertions: check.assertions.clone(),
                         })
                         .collect::<Vec<_>>();
-                    advance_checks.push(ProofAdvanceCheck {
+                    advance_checks.push(ProofReachCheck {
                         join_id,
                         tactic_index: boundary,
                         target: advance.target.clone(),
                         assertions: advance.assertions.clone(),
                     });
                     advance_checks.extend(suffix.advance_checks.iter().map(|check| {
-                        ProofAdvanceCheck {
+                        ProofReachCheck {
                             join_id: check.join_id,
                             tactic_index: boundary + check.tactic_index,
                             target: check.target.clone(),
@@ -1598,7 +1560,7 @@ enum InternalProofNode {
         else_branch: Box<InternalProofNode>,
         continuation: Box<InternalProofNode>,
     },
-    Advance {
+    Reach {
         index: usize,
         _join_id: usize,
         target: ProgramPointRef,
@@ -1629,10 +1591,10 @@ fn build_internal_proof_with_source(
 
 fn build_internal_proof(
     tactics: &[ProofTactic],
-    claim_label: &str,
+    _claim_label: &str,
 ) -> Result<InternalProofNode, ClickError> {
     let mut next_join_id = 0;
-    build_internal_proof_at(tactics, claim_label, &mut next_join_id, 0, 0)
+    build_internal_proof_at(tactics, &mut next_join_id, 0, 0)
 }
 
 fn build_generated_certificate_proof(
@@ -1667,7 +1629,7 @@ fn set_generated_proof_source_index(node: &mut InternalProofNode, owning_source_
             set_generated_proof_source_index(else_branch, owning_source_index);
             set_generated_proof_source_index(continuation, owning_source_index);
         }
-        InternalProofNode::Advance {
+        InternalProofNode::Reach {
             body, continuation, ..
         } => {
             set_generated_proof_source_index(body, owning_source_index);
@@ -1678,7 +1640,6 @@ fn set_generated_proof_source_index(node: &mut InternalProofNode, owning_source_
 
 fn build_internal_proof_at(
     tactics: &[ProofTactic],
-    claim_label: &str,
     next_join_id: &mut usize,
     index_offset: usize,
     source_index_offset: usize,
@@ -1686,7 +1647,7 @@ fn build_internal_proof_at(
     let Some((control_index, control_tactic)) = tactics
         .iter()
         .enumerate()
-        .find(|(_, tactic)| matches!(tactic, ProofTactic::If(_) | ProofTactic::Advance(_)))
+        .find(|(_, tactic)| matches!(tactic, ProofTactic::If(_) | ProofTactic::Reach(_)))
     else {
         if tactics.is_empty() {
             return Ok(InternalProofNode::Done);
@@ -1716,45 +1677,40 @@ fn build_internal_proof_at(
                 condition: proof_if.condition.clone(),
                 then_branch: Box::new(build_internal_proof_at(
                     &proof_if.then_tactics,
-                    claim_label,
                     next_join_id,
                     index + 1,
                     source_index + 1,
                 )?),
                 else_branch: Box::new(build_internal_proof_at(
                     &proof_if.else_tactics,
-                    claim_label,
                     next_join_id,
                     index + 1,
                     source_index + 1 + then_width,
                 )?),
                 continuation: Box::new(build_internal_proof_at(
                     &tactics[control_index + 1..],
-                    claim_label,
                     next_join_id,
                     index + 1,
                     source_index + source_tactic_width(control_tactic),
                 )?),
             }
         }
-        ProofTactic::Advance(advance) => {
+        ProofTactic::Reach(advance) => {
             let join_id = *next_join_id;
             *next_join_id += 1;
-            InternalProofNode::Advance {
+            InternalProofNode::Reach {
                 index,
                 _join_id: join_id,
                 target: advance.target.clone(),
                 assertions: advance.assertions.clone(),
                 body: Box::new(build_internal_proof_at(
                     &advance.tactics,
-                    claim_label,
                     next_join_id,
                     index + 1,
                     source_index + 1,
                 )?),
                 continuation: Box::new(build_internal_proof_at(
                     &tactics[control_index + 1..],
-                    claim_label,
                     next_join_id,
                     index + 1,
                     source_index + source_tactic_width(control_tactic),
@@ -1793,7 +1749,7 @@ fn source_tactic_width(tactic: &ProofTactic) -> usize {
             1 + source_tactic_count(&proof_if.then_tactics)
                 + source_tactic_count(&proof_if.else_tactics)
         }
-        ProofTactic::Advance(advance) => 1 + source_tactic_count(&advance.tactics),
+        ProofTactic::Reach(advance) => 1 + source_tactic_count(&advance.tactics),
         _ => 1,
     }
 }
@@ -2076,11 +2032,9 @@ fn prove_pure_theorem_tactics(
                 closed = true;
             }
             ProofTactic::Intro
-            | ProofTactic::Conjunction
+            | ProofTactic::Split
             | ProofTactic::Left
             | ProofTactic::Right
-            | ProofTactic::DoubleNegation
-            | ProofTactic::Vacuous
             | ProofTactic::Contradiction(_) => {
                 let contradiction_fact = match tactic {
                     ProofTactic::Contradiction(surface_fact) => Some(
@@ -2111,7 +2065,7 @@ fn prove_pure_theorem_tactics(
                     ClickError::new(format!("`{claim_label}` tactic {tactic_index}: {message}"))
                 })?;
             }
-            ProofTactic::Derive(derive) | ProofTactic::Calculate(derive) => {
+            ProofTactic::Derive(derive) => {
                 let target = goal.clone();
                 let premises = derive
                     .premises
@@ -2884,7 +2838,7 @@ pub(super) fn prove_claim_by_frame(
         )));
     }
 
-    let tactics = [ProofTactic::ContextualFrame(None)];
+    let tactics = [ProofTactic::SmartFrame(None)];
     let mut theorems = prove_claim_by_tactics(
         source_path,
         function_block,
@@ -4839,19 +4793,23 @@ fn facts_for_direct_surface_lowering(propositions: &[Proposition]) -> Vec<Propos
     for proposition in propositions {
         let mut conjuncts = Vec::new();
         atomic_conjuncts(proposition, &mut conjuncts);
-        facts.extend(conjuncts.into_iter().filter_map(|proposition| {
-            matches!(
-                proposition,
-                Proposition::CMemoryLoadable { .. }
-                    | Proposition::CMemoryCanStore { .. }
-                    | Proposition::CMemoryDisjoint { .. }
-                    | Proposition::CResourceSeparate { .. }
-                    | Proposition::CResourceContains { .. }
-                    | Proposition::CMemoryMutatesOnly { .. }
-                    | Proposition::CMemoryEffectSummary { .. }
-            )
-            .then(|| proposition.clone())
-        }));
+        facts.extend(
+            conjuncts
+                .into_iter()
+                .filter(|&proposition| {
+                    matches!(
+                        proposition,
+                        Proposition::CMemoryLoadable { .. }
+                            | Proposition::CMemoryCanStore { .. }
+                            | Proposition::CMemoryDisjoint { .. }
+                            | Proposition::CResourceSeparate { .. }
+                            | Proposition::CResourceContains { .. }
+                            | Proposition::CMemoryMutatesOnly { .. }
+                            | Proposition::CMemoryEffectSummary { .. }
+                    )
+                })
+                .cloned(),
+        );
     }
     facts.sort();
     facts.dedup();
@@ -4985,9 +4943,10 @@ fn certified_condition_transitions(
     if matches!(prerequisite_policy, StatementPrerequisitePolicy::Exact) {
         assumptions = assumptions.defer_non_exact_loadability_obligations();
         assumptions = assumptions.defer_non_exact_condition_reasoning();
-    } else if matches!(prerequisite_policy, StatementPrerequisitePolicy::Certified) {
-        assumptions = assumptions.defer_non_exact_loadability_obligations();
-    } else if matches!(prerequisite_policy, StatementPrerequisitePolicy::Explicit) {
+    } else if matches!(
+        prerequisite_policy,
+        StatementPrerequisitePolicy::Certified | StatementPrerequisitePolicy::Explicit
+    ) {
         assumptions = assumptions.defer_non_exact_loadability_obligations();
     }
     let evaluation = prove_symbolic_c_condition_evaluation(
@@ -5177,13 +5136,7 @@ pub(super) fn certified_statement_transitions(
     certified_prerequisites: &[PropositionDerivation],
 ) -> Result<(Vec<CertifiedStatementTransition>, Option<CVerifiedLoopRule>), ClickError> {
     let mut transition_pure_facts = pure_facts.to_vec();
-    let mut assumptions = match prerequisite_policy {
-        StatementPrerequisitePolicy::Exact
-        | StatementPrerequisitePolicy::Explicit
-        | StatementPrerequisitePolicy::Certified
-        | StatementPrerequisitePolicy::Contextual
-        | StatementPrerequisitePolicy::Planning => assumptions_from_propositions(pure_facts),
-    };
+    let mut assumptions = assumptions_from_propositions(pure_facts);
     if matches!(prerequisite_policy, StatementPrerequisitePolicy::Certified) {
         for derivation in certified_prerequisites {
             if derivation_replays_with_materialized_context(derivation, pure_facts) {
@@ -5224,7 +5177,7 @@ pub(super) fn certified_statement_transitions(
     // transition: the undefined-behaviour path it ruled out is simply absent,
     // and the segment lookup it bounded simply succeeded.
     let consults_conditions = !matches!(prerequisite_policy, StatementPrerequisitePolicy::Planning)
-        || statement_consults_conditions(statement)
+        || statement_consults_conditions(state, statement)
         || context_reasons_about_memory(state, &transition_pure_facts);
     *next_opaque_call = budget.next_opaque_call();
     *next_verification_variable = budget.next_verification_variable();
@@ -5284,17 +5237,19 @@ fn ambient_condition_facts(available: &[Proposition]) -> Vec<Proposition> {
 /// operations that can be undefined, or that address memory, ever ask; reading a
 /// variable or a constant never does, so a certificate for such a statement owes
 /// the ambient conditions nothing and replays as a bare `step`.
-fn statement_consults_conditions(statement: &CStatement) -> bool {
+fn statement_consults_conditions(state: &CState, statement: &CStatement) -> bool {
     fn expression_consults(expression: &CExpression) -> bool {
         !matches!(expression, CExpression::Value(_) | CExpression::Variable(_))
     }
     match statement {
         CStatement::Skip | CStatement::Declare { .. } => false,
-        CStatement::Assign { expression, .. } | CStatement::Return(expression) => {
-            expression_consults(expression)
+        CStatement::Assign { name, expression } => {
+            state.local_object_type(name) == Some(CType::UInt8) || expression_consults(expression)
         }
+        CStatement::Return(expression) => expression_consults(expression),
         CStatement::Seq(first, second) => {
-            statement_consults_conditions(first) || statement_consults_conditions(second)
+            statement_consults_conditions(state, first)
+                || statement_consults_conditions(state, second)
         }
         CStatement::CallAssign { .. }
         | CStatement::Assert { .. }
@@ -6531,7 +6486,6 @@ fn plan_point_pure_goal_certificate(
 }
 
 #[allow(clippy::too_many_arguments)]
-#[allow(clippy::too_many_arguments)]
 fn certify_structural_assertions(
     region: CodeRegion,
     mut contexts: Vec<ExecutionProofContext>,
@@ -7236,11 +7190,11 @@ fn plan_automatic_loop_preservation_body(
             };
             vec![ProofTactic::If(ProofIf {
                 condition: surface_c_condition(&condition),
-                then_tactics: vec![ProofTactic::ExecuteThenStep],
-                else_tactics: vec![ProofTactic::ExecuteElseStep],
+                then_tactics: vec![ProofTactic::SmartStep],
+                else_tactics: vec![ProofTactic::SmartStep],
             })]
         } else {
-            vec![ProofTactic::ExecuteStep]
+            vec![ProofTactic::SmartStep]
         };
         let mut advanced = Vec::new();
         let mut errors = Vec::new();
@@ -7322,7 +7276,10 @@ fn verify_structural_effect_proof(
     let claim_label = site.description();
     let certificate = match item.proof() {
         Proof::Default | Proof::Tactic(SmartTactic::Auto) | Proof::Tactic(SmartTactic::Frame) => {
-            TacticCertificate::from_proof_tactics(&[ProofTactic::Frame(None)])
+            TacticCertificate::from_proof_tactics(&[ProofTactic::FrameUsing {
+                region: None,
+                premises: Vec::new(),
+            }])
         }
         Proof::Script(tactics) => TacticCertificate::from_proof_tactics(tactics),
         Proof::Tactic(SmartTactic::Simp) => {
@@ -7636,7 +7593,7 @@ fn verify_one_loop_preservation_proof(
                 "`{claim_label}` replayed certificate did not finish at the loop back edge"
             )));
         }
-        if context.replay.region_invariants_closed != !invariant_checks.is_empty() {
+        if context.replay.region_invariants_closed == invariant_checks.is_empty() {
             return Err(ClickError::new(format!(
                 "`{claim_label}` replayed the wrong number of invariant-bundle closers"
             )));
@@ -9050,15 +9007,14 @@ fn certified_fact_transport_reaches_through(
     if &rewritten == source {
         return false;
     }
-    let spelled = normalize_direct_atomic_memory_loads(&rewritten)
-        == normalize_direct_atomic_memory_loads(target)
+
+    normalize_direct_atomic_memory_loads(&rewritten) == normalize_direct_atomic_memory_loads(target)
         || crate::kernel::c_condition_facts_equivalent_for_memory_resolution(
             &rewritten,
             target,
             assumptions,
         )
-        || certified_fact_transport_reaches(&rewritten, target, after, assumptions);
-    spelled
+        || certified_fact_transport_reaches(&rewritten, target, after, assumptions)
 }
 
 fn certified_fact_transport_reaches(
@@ -9454,7 +9410,7 @@ fn prove_pure_proposition_at_point(
     path_index: Option<usize>,
 ) -> Result<Proposition, ClickError> {
     let (proof_cases, tactic_simp) = match proof {
-        Proof::Script(tactics) => (expand_proof_if_cases(tactics, claim_label)?, false),
+        Proof::Script(tactics) => (expand_proof_if_cases(tactics)?, false),
         Proof::Default | Proof::Tactic(SmartTactic::Auto | SmartTactic::Simp) => (
             vec![ExpandedProofCase {
                 tactics: Vec::new(),
@@ -9785,20 +9741,17 @@ fn prove_pure_proposition_case_at_point(
             ProofTactic::Assumption
             | ProofTactic::Normalize
             | ProofTactic::Intro
-            | ProofTactic::Conjunction
+            | ProofTactic::Split
             | ProofTactic::Left
             | ProofTactic::Right
-            | ProofTactic::DoubleNegation
-            | ProofTactic::Vacuous
             | ProofTactic::Contradiction(_)
             | ProofTactic::Derive(_)
-            | ProofTactic::Calculate(_)
             | ProofTactic::Rewrite(_) => {
                 let mut prepared_derivation_lowering_facts = None;
                 let direct_goal_lowering_facts =
                     matches!(tactic, ProofTactic::Assumption | ProofTactic::Normalize)
                         .then(|| facts_for_simple_goal_lowering(&available));
-                if let ProofTactic::Derive(derive) | ProofTactic::Calculate(derive) = tactic {
+                if let ProofTactic::Derive(derive) = tactic {
                     let mut lowering_facts = facts_for_direct_derivation_lowering(&available);
                     let mut unresolved = derive.premises.iter().collect::<Vec<_>>();
                     while !unresolved.is_empty() {
@@ -9943,11 +9896,9 @@ fn prove_pure_proposition_case_at_point(
                         goal_closed = true;
                     }
                     ProofTactic::Intro
-                    | ProofTactic::Conjunction
+                    | ProofTactic::Split
                     | ProofTactic::Left
                     | ProofTactic::Right
-                    | ProofTactic::DoubleNegation
-                    | ProofTactic::Vacuous
                     | ProofTactic::Contradiction(_) => {
                         let contradiction_fact = match tactic {
                             ProofTactic::Contradiction(surface_fact) => Some(
@@ -9985,7 +9936,7 @@ fn prove_pure_proposition_case_at_point(
                         })?;
                         goal = Some(logical_goal);
                     }
-                    ProofTactic::Derive(derive) | ProofTactic::Calculate(derive) => {
+                    ProofTactic::Derive(derive) => {
                         let derivation_lowering_facts = prepared_derivation_lowering_facts
                             .as_ref()
                             .expect("derive lowering facts should be prepared");
@@ -10003,7 +9954,7 @@ fn prove_pure_proposition_case_at_point(
                                 } else {
                                     lower_point_proposition_with_values(
                                         premise,
-                                        &derivation_lowering_facts,
+                                        derivation_lowering_facts,
                                         values.clone(),
                                         &array_refs,
                                         pre_state,
@@ -10467,17 +10418,23 @@ pub(super) fn prove_claims_by_grouped_auto(
     resource_environment: &ResourceEnvironment,
     theorem_environment: &TheoremEnvironment,
 ) -> Result<Vec<VerifiedCTheorem>, ClickError> {
-    let mut tactics = vec![ProofTactic::ExecuteRest];
+    let mut tactics = vec![ProofTactic::SmartExecute];
     tactics.extend(
         loop_effect_summary_regions(function_block)
             .into_iter()
-            .map(|loop_index| ProofTactic::Frame(Some(CodeRegionRef::Loop(loop_index)))),
+            .map(|loop_index| ProofTactic::FrameUsing {
+                region: Some(CodeRegionRef::Loop(loop_index)),
+                premises: Vec::new(),
+            }),
     );
     if claims
         .iter()
         .any(|claim| matches!(claim, FunctionClaimRef::Effect(_, _)))
     {
-        tactics.push(ProofTactic::Frame(None));
+        tactics.push(ProofTactic::FrameUsing {
+            region: None,
+            premises: Vec::new(),
+        });
     }
     if claims
         .iter()
@@ -11100,11 +11057,19 @@ fn finish_ordered_proof_replay(
             let mut path_grouped_surface_closers = Vec::new();
             let mut path_surface_post_tactics = Vec::new();
             let mut path_deferred_capture_tactics = Vec::new();
-            if !path.obligations().is_empty() {
+            let missing_obligations = path
+                .obligations()
+                .iter()
+                .filter(|obligation| {
+                    !exact_fact_is_available(obligation.proposition(), &pure_facts)
+                })
+                .cloned()
+                .collect::<Vec<_>>();
+            if !missing_obligations.is_empty() {
                 return Err(ClickError::new(format!(
                     "execution proof failed for `{proof_label}` path {path_index}: {}",
                     describe_missing_proof_obligations(
-                        path.obligations(),
+                        &missing_obligations,
                         &pure_facts,
                         pre_state.resources().facts(),
                         parsed_function.parameters(),
@@ -11459,9 +11424,9 @@ fn finish_ordered_proof_replay(
                             }
                         }
                         let exact_derivation_script = have.proof.tactics().is_some_and(|tactics| {
-                            tactics.iter().any(|tactic| {
-                                matches!(tactic, ProofTactic::Derive(_) | ProofTactic::Calculate(_))
-                            })
+                            tactics
+                                .iter()
+                                .any(|tactic| matches!(tactic, ProofTactic::Derive(_)))
                         });
                         if exact_derivation_script {
                             for fact in crate::kernel::certified_store_loadability_facts(
@@ -11567,7 +11532,7 @@ fn finish_ordered_proof_replay(
                             .expect("post-execution smart have must lower to a simple tactic");
                             let uses_store_spelling = matches!(
                                 &proof_tactic,
-                                ProofTactic::Derive(derive) | ProofTactic::Calculate(derive)
+                                ProofTactic::Derive(derive)
                                     if derive.premises.iter().any(|premise| matches!(
                                         premise,
                                         ClickProposition::Comparison {
@@ -13712,7 +13677,6 @@ fn lower_surface_atomic_derivation(
             index += 1;
         }
     }
-    let kind = replay_kind(&premise_pairs);
     let surface_premises = premise_pairs
         .into_iter()
         .map(|(_, surface)| surface)
@@ -13722,12 +13686,8 @@ fn lower_surface_atomic_derivation(
         SimpProposition::True
     ) {
         ProofTactic::Normalize
-    } else if kind == Some(false) {
-        ProofTactic::Derive(ProofDerive {
-            premises: surface_premises,
-        })
     } else {
-        ProofTactic::Calculate(ProofDerive {
+        ProofTactic::Derive(ProofDerive {
             premises: surface_premises,
         })
     };
@@ -13848,8 +13808,8 @@ fn lower_outcome_simp_tactic(
             .context_premises()
             .into_iter()
             .filter(|premise| {
-                !matches!(normalize_proposition(premise), SimpProposition::True)
-                    && !matches!(
+                !(matches!(normalize_proposition(premise), SimpProposition::True)
+                    || matches!(
                         premise,
                         Proposition::CMemoryMutatesOnly { .. }
                             | Proposition::CMemoryEffectSummary { .. }
@@ -13857,7 +13817,7 @@ fn lower_outcome_simp_tactic(
                     // A loadability premise the ambient context re-derives
                     // (for example from materialized memory) needs no
                     // surface spelling; replay re-derives it the same way.
-                    && !(matches!(premise, Proposition::CMemoryLoadable { .. })
+                    || matches!(premise, Proposition::CMemoryLoadable { .. })
                         && ambient.derive_atomic_proposition(premise).is_some())
             })
             .collect::<Vec<_>>();
@@ -13884,7 +13844,7 @@ fn lower_outcome_simp_tactic(
                 .map(|(kernel, _)| kernel.clone())
                 .collect::<Vec<_>>();
             if derivation.replay(&assumptions_from_propositions(&selected_kernel)) {
-                return Ok(ProofTactic::Calculate(ProofDerive {
+                return Ok(ProofTactic::Derive(ProofDerive {
                     premises: selected_premises
                         .into_iter()
                         .map(|(_, surface)| surface)
@@ -13948,7 +13908,7 @@ fn lower_outcome_simp_tactic(
                 })
                 .collect::<Result<Vec<_>, _>>();
             if let Ok(surface_premises) = surface_premises {
-                return Ok(ProofTactic::Calculate(ProofDerive {
+                return Ok(ProofTactic::Derive(ProofDerive {
                     premises: surface_premises,
                 }));
             }
@@ -13989,7 +13949,7 @@ fn lower_outcome_simp_tactic(
                 })
                 .collect::<Result<Vec<_>, _>>();
             if let Ok(surface_premises) = surface_premises {
-                return Ok(ProofTactic::Calculate(ProofDerive {
+                return Ok(ProofTactic::Derive(ProofDerive {
                     premises: surface_premises,
                 }));
             }
@@ -14014,7 +13974,7 @@ fn lower_outcome_simp_tactic(
             };
             let assumptions = assumptions_from_propositions(std::slice::from_ref(&available_fact));
             if assumptions.derive_simp_proposition(goal).is_some() {
-                return Ok(ProofTactic::Calculate(ProofDerive {
+                return Ok(ProofTactic::Derive(ProofDerive {
                     premises: vec![candidate],
                 }));
             }
@@ -14054,7 +14014,7 @@ fn lower_outcome_simp_tactic(
             .or_else(|| assumptions.derive_simp_proposition(goal))
             .is_some()
         {
-            return Ok(ProofTactic::Calculate(ProofDerive {
+            return Ok(ProofTactic::Derive(ProofDerive {
                 premises: vec![surface],
             }));
         }
@@ -14111,13 +14071,7 @@ fn lower_outcome_simp_tactic(
             kind: ProgramPointKind::Entry,
         };
         let synthesized = std::iter::once((&entry_point, pre_state))
-            .chain(
-                replay
-                    .program_point_states
-                    .iter()
-                    .rev()
-                    .map(|(point, state)| (point, state)),
-            )
+            .chain(replay.program_point_states.iter().rev())
             .find_map(|(point, state)| {
                 let core = synthesize_surface_proposition(fact, parameters, arguments, state)?;
                 let surface = ClickProposition::At {
@@ -14171,33 +14125,29 @@ fn lower_outcome_simp_tactic(
             .map(|(kernel, _)| kernel.clone())
             .collect::<Vec<_>>();
         if derivation.replay(&assumptions_from_propositions(&selected_kernel)) {
-            return Ok(ProofTactic::Calculate(ProofDerive {
+            return Ok(ProofTactic::Derive(ProofDerive {
                 premises: selected.into_iter().map(|(_, surface)| surface).collect(),
             }));
         }
     }
-    if exact_assumptions
+    if (exact_assumptions
         .derive_atomic_proposition(goal)
         .or_else(|| exact_assumptions.derive_proposition(goal))
         .is_some()
         && assumptions
             .derive_atomic_proposition(&normalized_goal)
             .or_else(|| assumptions.derive_proposition(&normalized_goal))
+            .is_some())
+        || (exact_assumptions
+            .derive_simp_atomic_proposition(goal)
+            .or_else(|| exact_assumptions.derive_simp_proposition(goal))
             .is_some()
+            && assumptions
+                .derive_simp_atomic_proposition(&normalized_goal)
+                .or_else(|| assumptions.derive_simp_proposition(&normalized_goal))
+                .is_some())
     {
         Ok(ProofTactic::Derive(ProofDerive {
-            premises: surface_premises,
-        }))
-    } else if exact_assumptions
-        .derive_simp_atomic_proposition(goal)
-        .or_else(|| exact_assumptions.derive_simp_proposition(goal))
-        .is_some()
-        && assumptions
-            .derive_simp_atomic_proposition(&normalized_goal)
-            .or_else(|| assumptions.derive_simp_proposition(&normalized_goal))
-            .is_some()
-    {
-        Ok(ProofTactic::Calculate(ProofDerive {
             premises: surface_premises,
         }))
     } else {
@@ -14215,7 +14165,7 @@ fn lower_outcome_simp_tactic(
         let certified_store_equations =
             crate::kernel::certified_store_equations(&replay.effect_facts);
         for equation in &certified_store_equations {
-            if !certified_context.contains(&equation) {
+            if !certified_context.contains(equation) {
                 certified_context.push(equation.clone());
             }
         }
@@ -14223,7 +14173,7 @@ fn lower_outcome_simp_tactic(
             ProofTactic::Derive(ProofDerive {
                 premises: surface_premises.clone(),
             }),
-            ProofTactic::Calculate(ProofDerive {
+            ProofTactic::Derive(ProofDerive {
                 premises: surface_premises.clone(),
             }),
         ] {
@@ -14277,7 +14227,7 @@ fn lower_outcome_simp_tactic(
                 ProofTactic::Derive(ProofDerive {
                     premises: surface_premises.clone(),
                 }),
-                ProofTactic::Calculate(ProofDerive {
+                ProofTactic::Derive(ProofDerive {
                     premises: surface_premises.clone(),
                 }),
             ] {
@@ -14294,11 +14244,7 @@ fn lower_outcome_simp_tactic(
             }
         }
         let minimized = minimal_proposition_derivation(goal, &certified_context)
-            .map(|derivation| (derivation, false))
-            .or_else(|| {
-                minimal_simp_proposition_derivation(goal, &certified_context)
-                    .map(|derivation| (derivation, true))
-            });
+            .or_else(|| minimal_simp_proposition_derivation(goal, &certified_context));
         if minimized.is_none()
             && let Ok(dir) = std::env::var("CLICK_DERIVE_DUMP_DIR")
         {
@@ -14312,7 +14258,7 @@ fn lower_outcome_simp_tactic(
                 format!("{certified_context:#?}"),
             );
         }
-        if let Some((derivation, for_simp)) = minimized {
+        if let Some(derivation) = minimized {
             let entry_point = ProgramPointRef {
                 region: CodeRegionRef::Function,
                 kind: ProgramPointKind::Entry,
@@ -14366,13 +14312,8 @@ fn lower_outcome_simp_tactic(
                     }
                     continue;
                 }
-                let candidate_states = std::iter::once((&entry_point, pre_state)).chain(
-                    replay
-                        .program_point_states
-                        .iter()
-                        .rev()
-                        .map(|(point, state)| (point, state)),
-                );
+                let candidate_states = std::iter::once((&entry_point, pre_state))
+                    .chain(replay.program_point_states.iter().rev());
                 for (point, point_state) in candidate_states {
                     let Some(core) = synthesize_surface_proposition(
                         &required,
@@ -14403,11 +14344,7 @@ fn lower_outcome_simp_tactic(
                 let derive = ProofDerive {
                     premises: spelled_premises,
                 };
-                let candidate = if for_simp {
-                    ProofTactic::Calculate(derive)
-                } else {
-                    ProofTactic::Derive(derive)
-                };
+                let candidate = ProofTactic::Derive(derive);
                 // Self-check with exactly the check the tactic replay runs,
                 // against the replay context (which carries the certified
                 // store equations).
@@ -14632,7 +14569,7 @@ fn lower_outcome_simp_proof_direct(
                 proposition: surface_right.as_ref().clone(),
                 proof: right_proof,
             }),
-            ProofTactic::Conjunction,
+            ProofTactic::Split,
         ]));
     }
     Ok(Proof::Script(vec![lower_outcome_simp_tactic(
@@ -14684,7 +14621,7 @@ fn certify_outcome_simp_have(
     )?;
     let mut goal_lowering_facts = available.to_vec();
     if let Proof::Script(tactics) = &initial_proof
-        && let Some(ProofTactic::Derive(derive) | ProofTactic::Calculate(derive)) = tactics.first()
+        && let Some(ProofTactic::Derive(derive)) = tactics.first()
     {
         goal_lowering_facts = facts_for_direct_derivation_lowering(available);
         for premise in &derive.premises {
@@ -15101,7 +15038,7 @@ fn certify_outcome_simp_have(
                     &transport_assumptions,
                 );
                 transportable_source_count += usize::from(reaches);
-                reaches.then(|| (source, surface_source, derivation, transition_facts))
+                reaches.then_some((source, surface_source, derivation, transition_facts))
             });
         let Some((source, surface_source, source_derivation, transition_facts)) = transported
         else {
@@ -15206,8 +15143,7 @@ fn certify_outcome_simp_have(
     )?;
     if !quantified_memory_premises.is_empty()
         && let Proof::Script(tactics) = &mut proof
-        && let Some(ProofTactic::Derive(derive) | ProofTactic::Calculate(derive)) =
-            tactics.first_mut()
+        && let Some(ProofTactic::Derive(derive)) = tactics.first_mut()
     {
         for (surface, _) in quantified_memory_premises {
             if !derive.premises.contains(&surface) {
@@ -15476,7 +15412,7 @@ fn certify_outcome_existential_simp(
     }
     if !derivation_premises.is_empty() {
         let calculate = |premises: &[ClickProposition]| {
-            ProofTactic::Calculate(ProofDerive {
+            ProofTactic::Derive(ProofDerive {
                 premises: premises.to_vec(),
             })
         };
@@ -15683,7 +15619,7 @@ fn comparison_program_point_variants(
             comparison_program_point_variants(body, points)?
                 .into_iter()
                 .map(|body| ClickProposition::ForAll {
-                    c_type: c_type.clone(),
+                    c_type: *c_type,
                     name: name.clone(),
                     body: Box::new(body),
                 })
@@ -15892,13 +15828,25 @@ fn record_surface_replay_tactic(
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
     tactic: &ProofTactic,
-    statement_uses_memory_context: Option<bool>,
+    _statement_uses_memory_context: Option<bool>,
 ) {
     if replay.surface_replay.blocker.is_some() {
         return;
     }
     match tactic {
         ProofTactic::CertifiedStatementReplay(evidence) => {
+            let mut exact_premises = if evidence.transition.consults_conditions {
+                ambient_condition_facts(available)
+            } else {
+                Vec::new()
+            };
+            for obligation in &evidence.transition.obligations {
+                if exact_fact_is_available(obligation.proposition(), available)
+                    && !exact_premises.contains(obligation.proposition())
+                {
+                    exact_premises.push(obligation.proposition().clone());
+                }
+            }
             record_surface_replay_tactic(
                 replay,
                 state,
@@ -15917,11 +15865,7 @@ fn record_surface_replay_tactic(
                     // them all; one that only moves a variable or a constant,
                     // in a context that cannot turn a condition into a memory
                     // conclusion, carries none.
-                    exact_premises: evidence
-                        .transition
-                        .consults_conditions
-                        .then(|| ambient_condition_facts(available))
-                        .unwrap_or_default(),
+                    exact_premises,
                 },
                 None,
             );
@@ -15991,7 +15935,7 @@ fn record_surface_replay_tactic(
                     prerequisite_derivations: evidence.transition.prerequisite_derivations.clone(),
                     exact_premises,
                 },
-                statement_uses_memory_context,
+                _statement_uses_memory_context,
             );
         }
         ProofTactic::CertifiedStatementStep {
@@ -16159,9 +16103,9 @@ fn record_surface_replay_tactic(
                 premises
             });
             match premises {
-                Ok(premises) if premises.is_empty() => {
-                    replay.surface_replay.push(ProofTactic::Step)
-                }
+                Ok(premises) if premises.is_empty() => replay
+                    .surface_replay
+                    .push(ProofTactic::StepUsing(Vec::new())),
                 Ok(premises) => replay.surface_replay.push(ProofTactic::StepUsing(premises)),
                 Err(error) => replay.surface_replay.block(format!(
                     "could not express a statement-step premise at the current proof point: {}",
@@ -16445,7 +16389,7 @@ fn record_surface_replay_tactic(
                 if surface_available.contains(derivation.conclusion()) {
                     continue;
                 }
-                match lower_surface_atomic_derivation(
+                if let Ok((conclusion, proof)) = lower_surface_atomic_derivation(
                     replay,
                     derivation,
                     None,
@@ -16456,14 +16400,11 @@ fn record_surface_replay_tactic(
                     predicate_environment,
                     click_function_environment,
                 ) {
-                    Ok((conclusion, proof)) => {
-                        replay.surface_replay.push(ProofTactic::Have(ProofHave {
-                            proposition: conclusion,
-                            proof,
-                        }));
-                        surface_available.push(derivation.conclusion().clone());
-                    }
-                    Err(_) => {}
+                    replay.surface_replay.push(ProofTactic::Have(ProofHave {
+                        proposition: conclusion,
+                        proof,
+                    }));
+                    surface_available.push(derivation.conclusion().clone());
                 }
             }
             let needed = exact_premises
@@ -16552,18 +16493,15 @@ fn record_surface_replay_tactic(
             });
             match premises {
                 Ok(premises) if premises.is_empty() => {
-                    replay
-                        .surface_replay
-                        .push(ProofTactic::ApplyLoopSummary(CodeRegionRef::Loop(
-                            loop_index,
-                        )))
-                }
-                Ok(premises) => replay
-                    .surface_replay
-                    .push(ProofTactic::ApplyLoopSummaryUsing {
+                    replay.surface_replay.push(ProofTactic::SummarizeUsing {
                         region: CodeRegionRef::Loop(loop_index),
-                        premises,
-                    }),
+                        premises: Vec::new(),
+                    })
+                }
+                Ok(premises) => replay.surface_replay.push(ProofTactic::SummarizeUsing {
+                    region: CodeRegionRef::Loop(loop_index),
+                    premises,
+                }),
                 Err(error) => replay.surface_replay.block(format!(
                     "could not express a loop-summary premise at the current proof point: {}",
                     error.message()
@@ -16692,8 +16630,8 @@ fn record_surface_replay_tactic(
                 .rev()
                 .find_map(|tactic| match tactic {
                     ProofTactic::StepUsing(premises)
-                    | ProofTactic::ApplyLoopSummaryUsing { premises, .. } => Some(Some(premises)),
-                    ProofTactic::Step | ProofTactic::ApplyLoopSummary(_) => Some(None),
+                    | ProofTactic::SummarizeUsing { premises, .. } => Some(Some(premises)),
+                    ProofTactic::Step => Some(None),
                     _ => None,
                 })
                 .flatten()
@@ -16740,7 +16678,6 @@ fn record_surface_replay_tactic(
                             error.message()
                         ));
                     }
-                    return;
                 }
                 (
                     Some((surface_source, lowered_surface_source)),
@@ -17353,7 +17290,6 @@ fn tactic_is_deferred_post_execution(tactic: &ProofTactic) -> bool {
             | ProofTactic::Normalize
             | ProofTactic::Rewrite(_)
             | ProofTactic::Simp
-            | ProofTactic::Frame(None | Some(CodeRegionRef::Function))
             | ProofTactic::FrameUsing {
                 region: None | Some(CodeRegionRef::Function),
                 ..
@@ -17544,8 +17480,8 @@ fn replay_linear_tactics(
                 None,
             );
         }
-        let _timing = (!deferred_post_execution
-            && !(replay.region_proof && matches!(tactic, ProofTactic::Simp)))
+        let _timing = (!(deferred_post_execution
+            || replay.region_proof && matches!(tactic, ProofTactic::Simp)))
         .then(|| {
             TacticTiming::new(
                 claim_label,
@@ -18046,8 +17982,7 @@ fn replay_linear_tactics(
                     assumptions = assumptions.assume_proposition(target);
                 }
             }
-            ProofTactic::StepUsing(premises)
-            | ProofTactic::ApplyLoopSummaryUsing { premises, .. } => {
+            ProofTactic::StepUsing(premises) | ProofTactic::SummarizeUsing { premises, .. } => {
                 let all_pure_facts = requirement_pure_facts.clone();
                 let (tactic_name, prerequisite_policy, loop_step_policy) = match tactic {
                     ProofTactic::StepUsing(_) => (
@@ -18055,7 +17990,7 @@ fn replay_linear_tactics(
                         StatementPrerequisitePolicy::Explicit,
                         LoopStepPolicy::EnterBody,
                     ),
-                    ProofTactic::ApplyLoopSummaryUsing { region, .. } => {
+                    ProofTactic::SummarizeUsing { region, .. } => {
                         let CodeRegion::Loop(expected_loop) = resolve_code_region_ref(
                             function_block,
                             region,
@@ -18207,7 +18142,7 @@ fn replay_linear_tactics(
                         explicit_premises.push(branch_fact);
                     }
                 }
-                if matches!(tactic, ProofTactic::ApplyLoopSummaryUsing { .. })
+                if matches!(tactic, ProofTactic::SummarizeUsing { .. })
                     && !replay.unfolded_predicates.is_empty()
                 {
                     for fact in &all_pure_facts {
@@ -18259,7 +18194,6 @@ fn replay_linear_tactics(
                 assumptions = assumptions_from_propositions(&requirement_pure_facts);
             }
             ProofTactic::Step
-            | ProofTactic::ApplyLoopSummary(_)
             | ProofTactic::CertifiedStatementStep { .. }
             | ProofTactic::CertifiedLoopSummaryStep { .. }
             | ProofTactic::CertifiedStatementReplay(_)
@@ -18276,38 +18210,6 @@ fn replay_linear_tactics(
                         None,
                         LoopStepPolicy::EnterBody,
                     ),
-                    ProofTactic::ApplyLoopSummary(region_ref) => {
-                        let CodeRegion::Loop(expected_loop) = resolve_code_region_ref(
-                            function_block,
-                            region_ref,
-                            claim_label,
-                            tactic_index,
-                        )?
-                        else {
-                            return Err(ClickError::new(format!(
-                                "`{claim_label}` tactic {tactic_index}: `summarize` expects a loop region"
-                            )));
-                        };
-                        let current_loop = replay
-                            .source_layout
-                            .statement(replay.frontier.next_statement_index)
-                            .and_then(|region| match region.kind {
-                                SourceStatementKind::Loop { loop_index } => Some(loop_index),
-                                SourceStatementKind::Plain | SourceStatementKind::If { .. } => None,
-                            });
-                        if current_loop != Some(expected_loop) {
-                            return Err(ClickError::new(format!(
-                                "`{claim_label}` tactic {tactic_index}: `summarize(loop({expected_loop}))` is not at that loop's entry; current statement is statement({})",
-                                replay.frontier.next_statement_index
-                            )));
-                        }
-                        (
-                            StatementPrerequisitePolicy::Exact,
-                            &[][..],
-                            None,
-                            LoopStepPolicy::ApplyVerifiedRule,
-                        )
-                    }
                     ProofTactic::CertifiedStatementStep {
                         prerequisite_derivations,
                         ..
@@ -18437,7 +18339,7 @@ fn replay_linear_tactics(
                 }
                 assumptions = assumptions_from_propositions(&requirement_pure_facts);
             }
-            ProofTactic::ContextualLoopSummary(region_ref) => {
+            ProofTactic::SmartSummarize(region_ref) => {
                 let CodeRegion::Loop(expected_loop) =
                     resolve_code_region_ref(function_block, region_ref, claim_label, tactic_index)?
                 else {
@@ -18517,7 +18419,7 @@ fn replay_linear_tactics(
                 branch_path = result.branch_path;
                 assumptions = assumptions_from_propositions(&requirement_pure_facts);
             }
-            ProofTactic::ExecuteStep => {
+            ProofTactic::SmartStep => {
                 let mut planning_replay = replay.clone();
                 planning_replay.planned_tactics.clear();
                 let mut planning_state = state.clone();
@@ -18577,142 +18479,27 @@ fn replay_linear_tactics(
                 branch_path = result.branch_path;
                 assumptions = assumptions_from_propositions(&requirement_pure_facts);
             }
-            ProofTactic::ExecuteThenStep => {
+            ProofTactic::SmartExecute | ProofTactic::SmartExecuteAllPaths => {
                 let mut planning_replay = replay.clone();
                 planning_replay.planned_tactics.clear();
                 let mut planning_state = state.clone();
                 let mut planning_facts = requirement_pure_facts.clone();
-                let entered = execute_branch_step_from_execution_point(
-                    &mut planning_replay,
-                    &mut planning_state,
-                    &mut planning_facts,
-                    function_block,
-                    function,
-                    parsed_function.parameters(),
-                    arguments,
-                    function_environment,
-                    claim_label,
-                    tactic_index,
-                    Some(true),
-                    &[],
-                    StatementPrerequisitePolicy::Planning,
-                    StatementFactTransportPolicy::Automatic,
-                    BranchStepPolicy::RequireProven,
-                )?;
-                debug_assert!(entered);
-                let certificate =
-                    ProofReplayPlan::from_planned_tactics(&planning_replay.planned_tactics)
-                        .map_err(|error| {
-                            ClickError::new(format!(
-                                "`{claim_label}` tactic {tactic_index}: `step` planned a non-certificate tactic {:?}",
-                                error.smart_tactic()
-                            ))
-                        })?;
-                let result = replay_smart_plan(
-                    ProofReplayContext {
-                        state,
-                        pure_facts: requirement_pure_facts,
-                        replay,
-                        branch_path,
-                    },
-                    function_block,
-                    parsed_function,
-                    claims,
-                    claim_label,
-                    function_environment,
-                    predicate_environment,
-                    click_function_environment,
-                    resource_environment,
-                    theorem_environment,
-                    function,
-                    arguments,
-                    tactic_index,
-                    source_index,
-                    &certificate,
-                )?;
-                state = result.state;
-                requirement_pure_facts = result.pure_facts;
-                replay = result.replay;
-                branch_path = result.branch_path;
-                assumptions = assumptions_from_propositions(&requirement_pure_facts);
-            }
-            ProofTactic::ExecuteElseStep => {
-                let mut planning_replay = replay.clone();
-                planning_replay.planned_tactics.clear();
-                let mut planning_state = state.clone();
-                let mut planning_facts = requirement_pure_facts.clone();
-                let entered = execute_branch_step_from_execution_point(
-                    &mut planning_replay,
-                    &mut planning_state,
-                    &mut planning_facts,
-                    function_block,
-                    function,
-                    parsed_function.parameters(),
-                    arguments,
-                    function_environment,
-                    claim_label,
-                    tactic_index,
-                    Some(false),
-                    &[],
-                    StatementPrerequisitePolicy::Planning,
-                    StatementFactTransportPolicy::Automatic,
-                    BranchStepPolicy::RequireProven,
-                )?;
-                debug_assert!(entered);
-                let certificate =
-                    ProofReplayPlan::from_planned_tactics(&planning_replay.planned_tactics)
-                        .map_err(|error| {
-                            ClickError::new(format!(
-                                "`{claim_label}` tactic {tactic_index}: `step` planned a non-certificate tactic {:?}",
-                                error.smart_tactic()
-                            ))
-                        })?;
-                let result = replay_smart_plan(
-                    ProofReplayContext {
-                        state,
-                        pure_facts: requirement_pure_facts,
-                        replay,
-                        branch_path,
-                    },
-                    function_block,
-                    parsed_function,
-                    claims,
-                    claim_label,
-                    function_environment,
-                    predicate_environment,
-                    click_function_environment,
-                    resource_environment,
-                    theorem_environment,
-                    function,
-                    arguments,
-                    tactic_index,
-                    source_index,
-                    &certificate,
-                )?;
-                state = result.state;
-                requirement_pure_facts = result.pure_facts;
-                replay = result.replay;
-                branch_path = result.branch_path;
-                assumptions = assumptions_from_propositions(&requirement_pure_facts);
-            }
-            ProofTactic::ExecuteRest => {
-                let mut planning_replay = replay.clone();
-                planning_replay.planned_tactics.clear();
-                let mut planning_state = state.clone();
-                let mut planning_facts = requirement_pure_facts.clone();
-                let direct_result = execute_rest_from_execution_point(
-                    &mut planning_replay,
-                    &mut planning_state,
-                    &mut planning_facts,
-                    function_block,
-                    function,
-                    parsed_function.parameters(),
-                    arguments,
-                    function_environment,
-                    claim_label,
-                    tactic_index,
-                );
-                if direct_result.is_err() {
+                let force_all_paths = matches!(tactic, ProofTactic::SmartExecuteAllPaths);
+                let direct_result = (!force_all_paths).then(|| {
+                    execute_rest_from_execution_point(
+                        &mut planning_replay,
+                        &mut planning_state,
+                        &mut planning_facts,
+                        function_block,
+                        function,
+                        parsed_function.parameters(),
+                        arguments,
+                        function_environment,
+                        claim_label,
+                        tactic_index,
+                    )
+                });
+                if direct_result.is_none_or(|result| result.is_err()) {
                     planning_replay = replay.clone();
                     planning_replay.planned_tactics.clear();
                     planning_state = state.clone();
@@ -18829,66 +18616,14 @@ fn replay_linear_tactics(
                 branch_path = result.branch_path;
                 assumptions = assumptions_from_propositions(&requirement_pure_facts);
             }
-            ProofTactic::BoundedExecute => {
-                let mut planning_replay = replay.clone();
-                planning_replay.planned_tactics.clear();
-                let mut planning_state = state.clone();
-                let mut planning_facts = requirement_pure_facts.clone();
-                bounded_execute_from_execution_point(
-                    &mut planning_replay,
-                    &mut planning_state,
-                    &mut planning_facts,
-                    function_block,
-                    function,
-                    parsed_function.parameters(),
-                    arguments,
-                    function_environment,
-                    claim_label,
-                    tactic_index,
-                    StatementPrerequisitePolicy::Planning,
-                )?;
-                let certificate =
-                    ProofReplayPlan::from_planned_tactics(&planning_replay.planned_tactics)
-                        .map_err(|error| {
-                            ClickError::new(format!(
-                                "`{claim_label}` tactic {tactic_index}: `execute` planned a non-certificate tactic {:?}",
-                                error.smart_tactic()
-                            ))
-                        })?;
-                let result = replay_smart_plan(
-                    ProofReplayContext {
-                        state,
-                        pure_facts: requirement_pure_facts,
-                        replay,
-                        branch_path,
-                    },
-                    function_block,
-                    parsed_function,
-                    claims,
-                    claim_label,
-                    function_environment,
-                    predicate_environment,
-                    click_function_environment,
-                    resource_environment,
-                    theorem_environment,
-                    function,
-                    arguments,
-                    tactic_index,
-                    source_index,
-                    &certificate,
-                )?;
-                state = result.state;
-                requirement_pure_facts = result.pure_facts;
-                replay = result.replay;
-                branch_path = result.branch_path;
-                assumptions = assumptions_from_propositions(&requirement_pure_facts);
-            }
-            ProofTactic::ContextualFrame(region_ref) => {
+            ProofTactic::SmartFrame(region_ref) => {
                 if region_ref.is_some() {
-                    let certificate = ProofReplayPlan::from_planned_tactics(&[ProofTactic::Frame(
-                        region_ref.clone(),
-                    )])
-                    .expect("exact frame is a simple tactic");
+                    let certificate =
+                        ProofReplayPlan::from_planned_tactics(&[ProofTactic::FrameUsing {
+                            region: region_ref.clone(),
+                            premises: Vec::new(),
+                        }])
+                        .expect("exact frame is a simple tactic");
                     let result = replay_smart_plan(
                         ProofReplayContext {
                             state,
@@ -18988,17 +18723,12 @@ fn replay_linear_tactics(
                 branch_path = result.branch_path;
                 assumptions = assumptions_from_propositions(&requirement_pure_facts);
             }
-            ProofTactic::Frame(region_ref)
-            | ProofTactic::FrameUsing {
-                region: region_ref, ..
+            ProofTactic::FrameUsing {
+                region: region_ref,
+                premises: surface_premises,
             } => {
-                let surface_premises = match tactic {
-                    ProofTactic::FrameUsing { premises, .. } => Some(premises),
-                    ProofTactic::Frame(_) => None,
-                    _ => unreachable!(),
-                };
                 let mut frame_facts = Vec::new();
-                if let Some(surface_premises) = surface_premises {
+                if !surface_premises.is_empty() {
                     let all_pure_facts = requirement_pure_facts.clone();
                     let pre_state = replay.old_reference_state(&state).clone();
                     for surface_premise in surface_premises {
@@ -19030,12 +18760,11 @@ fn replay_linear_tactics(
                         replay
                             .surface_propositions
                             .record_lowering(surface_premise, &premise)?;
-                        if !(replay.ordered_finalization && replay.is_at_function_exit())
-                            && !exact_fact_is_available_across_effects(
-                                &premise,
-                                &all_pure_facts,
-                                &replay.effect_facts,
-                            )
+                        if !(exact_fact_is_available_across_effects(
+                            &premise,
+                            &all_pure_facts,
+                            &replay.effect_facts,
+                        ) || replay.ordered_finalization && replay.is_at_function_exit())
                             && materialization_equivalent_available_fact(&premise, &all_pure_facts)
                                 .is_none()
                         {
@@ -19126,14 +18855,14 @@ fn replay_linear_tactics(
                         claim_label,
                         tactic_index,
                     )?;
-                    let deferred = if let Some(premises) = surface_premises {
+                    let deferred = if surface_premises.is_empty() {
+                        PostExecutionTactic::Frame
+                    } else {
                         PostExecutionTactic::FrameUsing {
                             region: region_ref.clone(),
-                            premises: premises.clone(),
+                            premises: surface_premises.clone(),
                             facts: frame_facts,
                         }
-                    } else {
-                        PostExecutionTactic::Frame
                     };
                     replay.defer_post_execution(tactic_index, source_index, deferred);
                     replay.frames.insert(region_ref.clone());
@@ -19600,7 +19329,7 @@ fn replay_linear_tactics(
                     assumptions = assumptions.assume_proposition(fact);
                 }
             }
-            ProofTactic::If(_) | ProofTactic::Advance(_) => {
+            ProofTactic::If(_) | ProofTactic::Reach(_) => {
                 unreachable!("structured tactics are represented by internal proof nodes")
             }
             ProofTactic::Witness(_) => {
@@ -19658,14 +19387,11 @@ fn replay_linear_tactics(
                 }
             }
             ProofTactic::Intro
-            | ProofTactic::Conjunction
+            | ProofTactic::Split
             | ProofTactic::Left
             | ProofTactic::Right
-            | ProofTactic::DoubleNegation
-            | ProofTactic::Vacuous
             | ProofTactic::Contradiction(_)
-            | ProofTactic::Derive(_)
-            | ProofTactic::Calculate(_) => {
+            | ProofTactic::Derive(_) => {
                 return Err(ClickError::new(format!(
                     "`{claim_label}` tactic {tactic_index}: `{}` is only available while proving a pure goal, such as inside `have ... by`",
                     tactic_name(tactic)
@@ -20249,7 +19975,7 @@ fn execute_internal_proof(
             }
             Ok(contexts)
         }
-        InternalProofNode::Advance {
+        InternalProofNode::Reach {
             index,
             _join_id: _,
             target,
@@ -20848,12 +20574,7 @@ fn execute_branch_step_from_execution_point(
     fact_transport_policy: StatementFactTransportPolicy,
     branch_step_policy: BranchStepPolicy,
 ) -> Result<bool, ClickError> {
-    let tactic_name = match requested_branch {
-        Some(true) => "step",
-        Some(false) => "step",
-        None if matches!(prerequisite_policy, StatementPrerequisitePolicy::Exact) => "step",
-        None => "step",
-    };
+    let tactic_name = "step";
     let statement_index = replay.frontier.next_statement_index;
     let source_region = replay.source_layout.statement(statement_index).ok_or_else(|| {
         ClickError::new(format!(
@@ -24408,11 +24129,11 @@ fn structural_unfold_tactic_names(function_block: &FunctionBlock) -> Vec<String>
 fn bounded_execution_tactic_candidates(claim: &FunctionClaimRef<'_>) -> Vec<Vec<ProofTactic>> {
     match claim {
         FunctionClaimRef::Ensure(_, _) => {
-            vec![vec![ProofTactic::BoundedExecute, ProofTactic::Simp]]
+            vec![vec![ProofTactic::SmartExecuteAllPaths, ProofTactic::Simp]]
         }
         FunctionClaimRef::Effect(_, _) => vec![vec![
-            ProofTactic::BoundedExecute,
-            ProofTactic::ContextualFrame(None),
+            ProofTactic::SmartExecuteAllPaths,
+            ProofTactic::SmartFrame(None),
         ]],
     }
 }
@@ -24421,11 +24142,14 @@ fn auto_loop_verification_tactic_candidates(
     function_block: &FunctionBlock,
     claim: &FunctionClaimRef<'_>,
 ) -> Vec<Vec<ProofTactic>> {
-    let mut base = vec![ProofTactic::ExecuteRest];
+    let mut base = vec![ProofTactic::SmartExecute];
     base.extend(
         loop_effect_summary_regions(function_block)
             .into_iter()
-            .map(|loop_index| ProofTactic::Frame(Some(CodeRegionRef::Loop(loop_index)))),
+            .map(|loop_index| ProofTactic::FrameUsing {
+                region: Some(CodeRegionRef::Loop(loop_index)),
+                premises: Vec::new(),
+            }),
     );
 
     match claim {
@@ -24435,7 +24159,7 @@ fn auto_loop_verification_tactic_candidates(
             vec![simp]
         }
         FunctionClaimRef::Effect(_, _) => {
-            base.push(ProofTactic::ContextualFrame(None));
+            base.push(ProofTactic::SmartFrame(None));
             vec![base]
         }
     }

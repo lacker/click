@@ -3,7 +3,7 @@
 This checks the first C0 `for` slice. A loop of the form
 `for (i = init; condition; step) { body }` is parser sugar for:
 
-```c
+```c-example
 i = init;
 while (condition) {
     body;

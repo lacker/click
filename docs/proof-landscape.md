@@ -18,7 +18,9 @@ will have exactly the names used here.
 - A **smart tactic** may search or orchestrate several rules. Logically it
   should be replaceable by a sequence of simple tactics.
 - A **control-flow tactic** creates proof scopes or subgoals in which other
-  tactics run. `have`, proof-level `if`, and `reach` are control-flow tactics.
+  tactics run. Structurally, this includes `have`, proof-level `if`, and
+  `reach`. Timing and expansion additionally give the selectable `have` source
+  occurrence the class of its supported body: SMART, SIMPLE, or CONTROL.
 - A **pure proof** derives a proposition from facts at one execution point. It
   has no execution frontier and cannot execute C or transform resources.
 - An **execution proof** establishes a pre/post relationship for a code region.

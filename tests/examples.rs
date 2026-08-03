@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use click::cli::{
     IsolatedRun, default_worker_count, duration_from_env, files_with_extension,
-    isolated_test_command, run_isolated, run_parallel, source_refs,
+    isolated_test_command, read_verifying_sources, run_isolated, run_parallel, source_refs,
 };
 use click::lang::click::verify_c0_sources;
 
@@ -123,8 +123,6 @@ fn run_example_with_timeout(project: &Path, time_limit: Duration) -> Result<(), 
 }
 
 fn run_example_project(project: &Path) {
-    let mut c_paths =
-        files_with_extension(project, "c").unwrap_or_else(|message| panic!("{message}"));
     let mut click_paths =
         files_with_extension(project, "click").unwrap_or_else(|message| panic!("{message}"));
 
@@ -134,28 +132,14 @@ fn run_example_project(project: &Path) {
         project.display()
     );
 
-    c_paths.sort();
     click_paths.sort();
-
-    let c_sources = c_paths
-        .iter()
-        .map(|path| {
-            let filename = path
-                .file_name()
-                .and_then(|name| name.to_str())
-                .unwrap_or_else(|| panic!("invalid UTF-8 path `{}`", path.display()))
-                .to_string();
-            let source = fs::read_to_string(path)
-                .unwrap_or_else(|error| panic!("failed to read `{}`: {error}", path.display()));
-            (filename, source)
-        })
-        .collect::<Vec<_>>();
-    let c_source_refs = source_refs(&c_sources);
 
     for click_path in click_paths {
         let click_source = fs::read_to_string(&click_path)
             .unwrap_or_else(|error| panic!("failed to read `{}`: {error}", click_path.display()));
-        verify_c0_sources(&click_source, &c_source_refs).unwrap_or_else(|error| {
+        let c_sources = read_verifying_sources(&click_path, &click_source)
+            .unwrap_or_else(|message| panic!("{message}"));
+        verify_c0_sources(&click_source, &source_refs(&c_sources)).unwrap_or_else(|error| {
             panic!(
                 "example sidecar `{}` failed: {}",
                 click_path.display(),

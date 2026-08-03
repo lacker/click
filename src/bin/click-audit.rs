@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 use click::cli::{
     self, BoundedOutput, ChildOutput, MdTestExpectation, files_with_extension, find_mdtests,
     find_projects, format_duration, looks_like_mdtest, parse_duration, read_verifying_sources,
-    run_bounded, run_bounded_with_input, source_refs,
+    run_bounded, run_bounded_with_input, shell_quote, source_refs,
 };
 use click::lang::click::{
     C0VerificationSession, SourcePosition, c0_smart_tactic_source_sites, c0_tactic_source_position,
@@ -24,8 +24,9 @@ const DEFAULT_VERIFICATION_LIMIT: Duration = Duration::from_secs(5 * 60);
 const DEFAULT_PERFORMANCE_SLACK: Duration = Duration::from_millis(500);
 const DEFAULT_TIME_LIMIT: Duration = Duration::from_secs(10 * 60);
 const MAX_DIAGNOSTIC_CHARS: usize = 2_000;
+const RUN_LIMIT_EXHAUSTED: &str = "whole-run time limit exhausted";
 const USAGE: &str = "\
-usage: click-audit [OPTIONS] <example-project|examples-directory|mdtest.md|mdtests-directory|repository-root>
+usage: click-audit [OPTIONS] <sidecar.click|example-project|examples-directory|mdtest.md|mdtests-directory|repository-root>
 
 The audit inventories smart tactics without executing proofs, then audits each
 selected site in source order: it expands the site, verifies the rewritten
@@ -245,8 +246,19 @@ fn parse_arguments(arguments: impl IntoIterator<Item = String>) -> Result<Argume
     let mut start_at = None;
     let mut keep_going = false;
     let mut max_sites = None;
+    let mut parse_options = true;
     let mut arguments = arguments.into_iter();
     while let Some(argument) = arguments.next() {
+        if parse_options && argument == "--" {
+            parse_options = false;
+            continue;
+        }
+        if !parse_options {
+            if path.replace(PathBuf::from(argument)).is_some() {
+                return Err(USAGE.to_string());
+            }
+            continue;
+        }
         match argument.as_str() {
             "--session-time-limit" | "--discovery-time-limit" => {
                 session_limit = parse_next_duration(&mut arguments, &argument)?;
@@ -355,6 +367,7 @@ fn run_audit(arguments: Arguments) -> Result<(), String> {
     let mut out_of_time = false;
     let mut cold_reverified_claims = std::collections::BTreeSet::new();
     let started = Instant::now();
+    let deadline = started + arguments.time_limit;
 
     println!(
         "\nClick expansion audit (session {}, expansion {}, verification {}, \
@@ -373,7 +386,7 @@ fn run_audit(arguments: Arguments) -> Result<(), String> {
         {
             break;
         }
-        if started.elapsed() >= arguments.time_limit {
+        if Instant::now() >= deadline {
             out_of_time = true;
             break;
         }
@@ -387,12 +400,26 @@ fn run_audit(arguments: Arguments) -> Result<(), String> {
             std::io::stdout()
                 .flush()
                 .map_err(|error| format!("failed to flush audit progress: {error}"))?;
-            match AuditSessionWorker::start(&site.click_path, arguments.session_limit) {
+            let session_limit = match remaining_phase_limit(deadline, arguments.session_limit) {
+                Ok(limit) => limit,
+                Err(_) => {
+                    println!("STOPPED ({RUN_LIMIT_EXHAUSTED})");
+                    out_of_time = true;
+                    break;
+                }
+            };
+            match AuditSessionWorker::start(&site.click_path, session_limit) {
                 Ok(new_worker) => {
                     println!("ready");
                     worker = Some((site.click_path.clone(), new_worker));
                 }
                 Err(message) => {
+                    if Instant::now() >= deadline {
+                        println!("STOPPED");
+                        println!("    {RUN_LIMIT_EXHAUSTED}");
+                        out_of_time = true;
+                        break;
+                    }
                     println!("FAIL");
                     println!("    {}", message.replace('\n', "\n    "));
                     print_resume(&arguments, site);
@@ -434,20 +461,20 @@ fn run_audit(arguments: Arguments) -> Result<(), String> {
             arguments.verification_limit,
             arguments.performance_slack,
             cold_reverify,
+            deadline,
         ) {
             Ok(timings) => {
                 audited_sites += 1;
-                println!(
-                    "ok (expand {}, verify {}, original {}, reverify {}, reexpand {})",
-                    format_duration(timings.expansion),
-                    format_duration(timings.session_verification),
-                    format_duration(timings.original_reverification),
-                    format_duration(timings.reverification),
-                    format_duration(timings.reexpansion),
-                );
+                println!("{}", render_site_timings(&timings));
                 cursor += 1;
             }
             Err(message) => {
+                if Instant::now() >= deadline || message == RUN_LIMIT_EXHAUSTED {
+                    println!("STOPPED");
+                    println!("    {RUN_LIMIT_EXHAUSTED}");
+                    out_of_time = true;
+                    break;
+                }
                 println!("FAIL");
                 println!("    {}", message.replace('\n', "\n    "));
                 print_resume(&arguments, site);
@@ -503,10 +530,9 @@ fn audit_targets(path: &Path) -> Result<Vec<PathBuf>, String> {
     if looks_like_mdtest(path) {
         return find_mdtests(path);
     }
-    if path.is_file()
-        && path
-            .extension()
-            .is_some_and(|extension| extension == "click")
+    if path
+        .extension()
+        .is_some_and(|extension| extension == "click")
     {
         return Ok(vec![fs::canonicalize(path).map_err(|error| {
             format!("failed to resolve `{}`: {error}", path.display())
@@ -552,6 +578,7 @@ struct AuditSource {
     click_source: String,
     c_sources: Vec<(String, String)>,
     line_offset: usize,
+    mdtest: Option<cli::MdTest>,
 }
 
 fn load_audit_source(path: &Path) -> Result<AuditSource, String> {
@@ -568,12 +595,14 @@ fn load_audit_source_from_text(
         let mdtest = cli::parse_mdtest(path, &container_source)?;
         let click_source = mdtest
             .click_source
+            .clone()
             .ok_or_else(|| format!("mdtest `{}` has no ```click block", path.display()))?;
         return Ok(AuditSource {
             container_source,
             click_source,
-            c_sources: mdtest.c_sources,
+            c_sources: mdtest.c_sources.clone(),
             line_offset: mdtest.click_start_line.saturating_sub(1),
+            mdtest: Some(mdtest),
         });
     }
     let c_sources = read_verifying_sources(path, &container_source)?;
@@ -582,6 +611,7 @@ fn load_audit_source_from_text(
         container_source,
         c_sources,
         line_offset: 0,
+        mdtest: None,
     })
 }
 
@@ -722,25 +752,40 @@ fn resume_command(arguments: &Arguments, location: &SourceLocation) -> String {
         .join(" ")
 }
 
-fn shell_quote(word: &str) -> String {
-    if !word.is_empty()
-        && word
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || b"/._:-".contains(&byte))
-    {
-        word.to_string()
-    } else {
-        format!("'{}'", word.replace('\'', "'\\''"))
-    }
-}
-
 /// Timings for the checks performed on one audited site.
 struct SiteTimings {
     expansion: Duration,
     session_verification: Duration,
-    original_reverification: Duration,
-    reverification: Duration,
+    cold_verification: Option<(Duration, Duration)>,
     reexpansion: Duration,
+}
+
+fn render_site_timings(timings: &SiteTimings) -> String {
+    if let Some((original, rewritten)) = timings.cold_verification {
+        format!(
+            "ok (expand {}, verify {}, cold original {}, cold rewritten {}, reexpand {})",
+            format_duration(timings.expansion),
+            format_duration(timings.session_verification),
+            format_duration(original),
+            format_duration(rewritten),
+            format_duration(timings.reexpansion),
+        )
+    } else {
+        format!(
+            "ok (expand {}, verify {}, cold comparison not run, reexpand {})",
+            format_duration(timings.expansion),
+            format_duration(timings.session_verification),
+            format_duration(timings.reexpansion),
+        )
+    }
+}
+
+fn remaining_phase_limit(deadline: Instant, configured: Duration) -> Result<Duration, String> {
+    let remaining = deadline
+        .checked_duration_since(Instant::now())
+        .filter(|remaining| !remaining.is_zero())
+        .ok_or_else(|| RUN_LIMIT_EXHAUSTED.to_string())?;
+    Ok(configured.min(remaining))
 }
 
 fn audit_site(
@@ -750,6 +795,7 @@ fn audit_site(
     verification_limit: Duration,
     performance_slack: Duration,
     cold_reverify: bool,
+    deadline: Instant,
 ) -> Result<SiteTimings, String> {
     let executable =
         env::current_exe().map_err(|error| format!("failed to locate click-audit: {error}"))?;
@@ -761,9 +807,10 @@ fn audit_site(
     );
     let mut expansion = Command::new(&executable);
     expansion.arg("--internal-expand").arg(&location);
+    let phase_limit = remaining_phase_limit(deadline, expansion_limit)?;
     let expansion = require_success(
-        run_bounded(expansion, expansion_limit, "expansion")?,
-        expansion_limit,
+        run_bounded(expansion, phase_limit, "expansion")?,
+        phase_limit,
         "expansion",
     )?;
     let expanded = String::from_utf8(expansion.stdout)
@@ -780,7 +827,11 @@ fn audit_site(
     // Expansion can insert or remove lines at the selected tactic.  Resolve
     // the proof unit again by claim instead of sending its now-stale source
     // coordinate to the retained verification session.
-    let verification_elapsed = worker.verify(&expanded, expanded_position, verification_limit)?;
+    let verification_elapsed = worker.verify(
+        &expanded,
+        expanded_position,
+        remaining_phase_limit(deadline, verification_limit)?,
+    )?;
 
     // Checklist step 6: reverify the rewritten proof unit from normal
     // inputs by running the targeted entry point in a fresh process under
@@ -792,19 +843,19 @@ fn audit_site(
     // session's cached environment masks, which one site per claim already
     // exercises — repeating it for every site of a many-site claim would
     // double the whole audit for no additional coverage.
-    let (original_reverification_elapsed, reverification_elapsed) = if cold_reverify {
+    let cold_verification = if cold_reverify {
         let original_elapsed = cold_verify(
             &executable,
             site,
             &original,
-            verification_limit,
+            remaining_phase_limit(deadline, verification_limit)?,
             "original proof-unit verification",
         )?;
         let expanded_elapsed = cold_verify(
             &executable,
             site,
             &expanded,
-            verification_limit,
+            remaining_phase_limit(deadline, verification_limit)?,
             "expanded proof-unit verification",
         )?;
         if verification_regressed(original_elapsed, expanded_elapsed, performance_slack) {
@@ -814,14 +865,14 @@ fn audit_site(
                 &executable,
                 site,
                 &original,
-                verification_limit,
+                remaining_phase_limit(deadline, verification_limit)?,
                 "confirmation original proof-unit verification",
             )?;
             let confirmed_expanded = cold_verify(
                 &executable,
                 site,
                 &expanded,
-                verification_limit,
+                remaining_phase_limit(deadline, verification_limit)?,
                 "confirmation expanded proof-unit verification",
             )?;
             if verification_regressed(confirmed_original, confirmed_expanded, performance_slack) {
@@ -838,15 +889,15 @@ fn audit_site(
                     format_duration(confirmed_expanded),
                     format_duration(performance_slack),
                     format_duration(expansion_limit),
-                    location,
-                    artifact.display(),
-                    artifact.display(),
+                    shell_quote(&location),
+                    shell_quote(&artifact.display().to_string()),
+                    shell_quote(&artifact.display().to_string()),
                 ));
             }
         }
-        (original_elapsed, expanded_elapsed)
+        Some((original_elapsed, expanded_elapsed))
     } else {
-        (Duration::ZERO, Duration::ZERO)
+        None
     };
 
     // Checklist step 7: re-expanding the same claim against the rewritten
@@ -857,14 +908,15 @@ fn audit_site(
         .arg("--internal-reexpand")
         .arg(&site.click_path)
         .arg(&site.claim);
+    let phase_limit = remaining_phase_limit(deadline, expansion_limit)?;
     let reexpansion = require_success(
         run_bounded_with_input(
             reexpansion,
             Some(expanded.clone().into_bytes()),
-            expansion_limit,
+            phase_limit,
             "re-expansion",
         )?,
-        expansion_limit,
+        phase_limit,
         "re-expansion",
     )?;
     let reexpanded = String::from_utf8(reexpansion.stdout)
@@ -886,8 +938,7 @@ fn audit_site(
     Ok(SiteTimings {
         expansion: expansion.elapsed,
         session_verification: verification_elapsed,
-        original_reverification: original_reverification_elapsed,
-        reverification: reverification_elapsed,
+        cold_verification,
         reexpansion: reexpansion.elapsed,
     })
 }
@@ -940,38 +991,28 @@ fn audit_artifact_path(source: &Path) -> PathBuf {
 fn expand_location(location: &str) -> Result<String, String> {
     let (click_path, line, column) = cli::parse_source_location(location)?;
     let source = load_audit_source(&click_path)?;
-    let click_line = line
-        .checked_sub(source.line_offset)
-        .ok_or_else(|| format!("line {line} is before the mdtest's ```click block"))?;
-    if click_line == 0 || click_line > source.click_source.lines().count() {
+    let click_line = if let Some(mdtest) = &source.mdtest {
+        mdtest.click_line(line)?
+    } else if line > 0 && line <= source.click_source.lines().count() {
+        line
+    } else {
         return Err(format!(
             "line {line} is outside the proof container's Click source"
         ));
-    }
+    };
     let refs = source_refs(&source.c_sources);
     let expanded_click =
         expand_c0_tactic_source_at(&source.click_source, &refs, click_line, column)
             .map_err(|error| error.message().to_string())?;
     if looks_like_mdtest(&click_path) {
-        Ok(splice_click_source(&source, &expanded_click))
+        source
+            .mdtest
+            .as_ref()
+            .expect("markdown audit sources retain their parsed container")
+            .replace_click_source(&source.container_source, &expanded_click)
     } else {
         Ok(expanded_click)
     }
-}
-
-fn splice_click_source(source: &AuditSource, expanded_click: &str) -> String {
-    let lines = source.container_source.lines().collect::<Vec<_>>();
-    let body_start = source.line_offset;
-    let body_len = source.click_source.lines().count();
-    let mut spliced = Vec::with_capacity(lines.len());
-    spliced.extend_from_slice(&lines[..body_start]);
-    spliced.extend(expanded_click.lines());
-    spliced.extend_from_slice(&lines[body_start + body_len..]);
-    let mut result = spliced.join("\n");
-    if source.container_source.ends_with('\n') {
-        result.push('\n');
-    }
-    result
 }
 
 fn read_stdin_source(label: &str) -> Result<String, String> {
@@ -1369,6 +1410,12 @@ mod tests {
     }
 
     #[test]
+    fn end_of_options_accepts_a_dash_prefixed_target() {
+        let arguments = parse_arguments(["--".to_string(), "-example.click".to_string()]).unwrap();
+        assert_eq!(arguments.path, PathBuf::from("-example.click"));
+    }
+
+    #[test]
     fn performance_comparison_requires_ratio_and_absolute_slack() {
         let slack = Duration::from_millis(500);
         assert!(!verification_regressed(
@@ -1386,6 +1433,42 @@ mod tests {
             Duration::from_millis(2_501),
             slack,
         ));
+    }
+
+    #[test]
+    fn whole_run_deadline_caps_each_phase() {
+        let deadline = Instant::now() + Duration::from_secs(1);
+        let limit = remaining_phase_limit(deadline, Duration::from_secs(30)).unwrap();
+        assert!(limit <= Duration::from_secs(1));
+        assert!(limit > Duration::ZERO);
+
+        let expired = Instant::now()
+            .checked_sub(Duration::from_millis(1))
+            .unwrap();
+        assert_eq!(
+            remaining_phase_limit(expired, Duration::from_secs(30)),
+            Err(RUN_LIMIT_EXHAUSTED.to_string())
+        );
+    }
+
+    #[test]
+    fn site_timing_output_distinguishes_measured_and_skipped_cold_work() {
+        let base = SiteTimings {
+            expansion: Duration::from_millis(1),
+            session_verification: Duration::from_millis(2),
+            cold_verification: None,
+            reexpansion: Duration::from_millis(5),
+        };
+        let skipped = render_site_timings(&base);
+        assert!(skipped.contains("cold comparison not run"), "{skipped}");
+        assert!(!skipped.contains("cold original 0"), "{skipped}");
+
+        let measured = render_site_timings(&SiteTimings {
+            cold_verification: Some((Duration::from_millis(3), Duration::from_millis(4))),
+            ..base
+        });
+        assert!(measured.contains("cold original 3ms"), "{measured}");
+        assert!(measured.contains("cold rewritten 4ms"), "{measured}");
     }
 
     #[test]
@@ -1519,6 +1602,7 @@ int32 example() {
             click_source: expanded,
             c_sources: vec![("example.c".to_string(), c_source.to_string())],
             line_offset: 0,
+            mdtest: None,
         };
         let relocated = claim_source_position(&source, "example.contract")
             .expect("the rewritten claim should have a fresh selector");

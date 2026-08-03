@@ -528,16 +528,16 @@ fn memory_dag_cell_source(
                 // budget so this advisory walk can never drain the
                 // enclosing query's fuel — fuel-coupled spellings elsewhere
                 // must replay byte-for-byte.
-                if !write.blocks_proven_distinct(pointer)
-                    && !pointer_offsets_with_common_base_proven_distinct(
+                if !(write.blocks_proven_distinct(pointer)
+                    || pointer_offsets_with_common_base_proven_distinct(
                         write,
                         pointer,
                         assumptions,
                     )
-                    && !(EXPLICIT_DAG_REPLAY.with(std::cell::Cell::get)
+                    || EXPLICIT_DAG_REPLAY.with(std::cell::Cell::get)
                         && assumptions
-                            .pointers_proven_disjoint_by_shallow_explicit_range(write, pointer))
-                    && !(extended_dag_bridging_active()
+                            .pointers_proven_disjoint_by_shallow_explicit_range(write, pointer)
+                    || extended_dag_bridging_active()
                         && super::reasoning::with_isolated_memory_resolution_fuel(
                             MEMORY_DAG_HOP_DISTINCTNESS_FUEL,
                             || {
@@ -3717,7 +3717,6 @@ pub fn loadable_covered_by_fact(assumptions: &Assumptions, goal: &Proposition) -
         assumptions
             .simplify_bitvector_under_assumptions(bytes)
             .as_const()
-            .and_then(|byte_width| u32::try_from(byte_width).ok())
             .is_some_and(|byte_width| {
                 assumptions
                     .proves_loadable_cell_from_region(fact_base, fact_bytes, base, byte_width)
@@ -4011,37 +4010,29 @@ fn c_function_contract_certification_assumptions(
     )
     .ok()
     .and_then(Result::ok);
-    let Some(required_resources) = required_resources else {
-        return None;
-    };
+    let required_resources = required_resources?;
     let expanded = expand_all_composite_resource_facts_and_propositions(
         &required_resources,
         function.composite_resource_definitions(),
         entry_state.memory(),
         &assumptions,
     );
-    let Some((_, resource_definition_facts)) = expanded else {
-        return None;
-    };
+    let (_, resource_definition_facts) = expanded?;
     for proposition in resource_definition_facts {
         assumptions = assumptions.assume_proposition(proposition);
     }
-    let Some(expanded_required_resources) = expand_all_composite_resource_facts(
+    let expanded_required_resources = expand_all_composite_resource_facts(
         &required_resources,
         function.composite_resource_definitions(),
         entry_state.memory(),
         &assumptions,
-    ) else {
-        return None;
-    };
-    let Some(entry_resources) = expand_all_composite_resource_facts(
+    )?;
+    let entry_resources = expand_all_composite_resource_facts(
         entry_state.resources(),
         function.composite_resource_definitions(),
         entry_state.memory(),
         &assumptions,
-    ) else {
-        return None;
-    };
+    )?;
     if !expanded_required_resources
         .facts()
         .iter()
@@ -4066,7 +4057,8 @@ fn c_function_contract_certification_assumptions(
         if obligation.is_assumable() {
             return true;
         }
-        let ok = certification_proves_proposition(&assumptions, obligation.proposition())
+
+        certification_proves_proposition(&assumptions, obligation.proposition())
             || resources_certify_loadability(
                 &entry_state,
                 &entry_resources,
@@ -4078,8 +4070,7 @@ fn c_function_contract_certification_assumptions(
             || certification_proves_exists_obligation_from_facts(
                 &assumptions,
                 obligation.proposition(),
-            );
-        ok
+            )
     }) {
         if std::env::var_os("CLICK_TIMINGS").is_some() {
             eprintln!("click timing: contract entry resources do not certify requirement safety");
@@ -4329,8 +4320,8 @@ fn resource_contexts_definitionally_equal(
     ) else {
         return false;
     };
-    let equal = directly_equal(&left, &right);
-    equal
+
+    directly_equal(&left, &right)
 }
 
 /// Extracts constant bounds `lo <= var < hi` from a universal premise made
@@ -5442,7 +5433,6 @@ fn resources_certify_loadability(
     memory_snapshots_proven_equal_at_pointer(memory, state.memory(), base, assumptions)
         && bytes
             .as_const()
-            .and_then(|bytes| u32::try_from(bytes).ok())
             .is_some_and(|bytes| resource_context_has_read(resources, base, bytes, assumptions))
 }
 
@@ -5886,9 +5876,9 @@ fn function_claim_holds_on_prepared_path(
             };
             let lowering_assumptions = assumptions.clone().allow_symbolic_contract_loads();
             let Ok(paths) = lower_spec_proposition_at_state_with_loop_entry(
-                &post_state,
+                post_state,
                 ensure,
-                Some(&entry_state),
+                Some(entry_state),
                 &lowering_assumptions,
                 &mut budget,
             ) else {
@@ -5897,22 +5887,22 @@ fn function_claim_holds_on_prepared_path(
             !paths.is_empty()
                 && paths.into_iter().all(|path| {
                     let obligations_hold = path.obligations.iter().all(|obligation| {
-                        certification_proves_proposition(&assumptions, obligation.proposition())
+                        certification_proves_proposition(assumptions, obligation.proposition())
                             || contract_endpoints_certify_loadability(
-                                &entry_state,
-                                &entry_resources,
-                                &post_state,
-                                &post_resources,
+                                entry_state,
+                                entry_resources,
+                                post_state,
+                                post_resources,
                                 obligation.proposition(),
-                                &assumptions,
+                                assumptions,
                             )
-                            || loadable_covered_by_fact(&assumptions, obligation.proposition())
+                            || loadable_covered_by_fact(assumptions, obligation.proposition())
                             || forall_loadable_covered_by_fact(
-                                &assumptions,
+                                assumptions,
                                 obligation.proposition(),
                             )
                             || certification_proves_exists_obligation_from_facts(
-                                &assumptions,
+                                assumptions,
                                 obligation.proposition(),
                             )
                     });
@@ -5927,7 +5917,7 @@ fn function_claim_holds_on_prepared_path(
                     path_propositions
                         .extend(finite_forall_instantiations(&path_propositions.clone()));
                     let path_assumptions =
-                        assumptions_with_propositions(&assumptions, &path_propositions);
+                        assumptions_with_propositions(assumptions, &path_propositions);
                     let proposition_holds = certification_proves_post_proposition(
                         &path_assumptions,
                         &path.proposition,
@@ -5942,9 +5932,9 @@ fn function_claim_holds_on_prepared_path(
                 return false;
             };
             let Ok(Ok(expected)) = evaluate_function_resource_context(
-                &post_state,
+                post_state,
                 std::slice::from_ref(resource),
-                &assumptions,
+                assumptions,
                 &mut budget,
             ) else {
                 return false;
@@ -5955,7 +5945,7 @@ fn function_claim_holds_on_prepared_path(
                     fact,
                     function.composite_resource_definitions(),
                     return_state.memory(),
-                    &assumptions,
+                    assumptions,
                 )
             })
         }
@@ -5963,7 +5953,7 @@ fn function_claim_holds_on_prepared_path(
             let mut mutable_ranges = Vec::new();
             for segment in function.contract_mutable() {
                 let Ok(Ok(segment)) =
-                    evaluate_loop_effect_segment(&entry_state, segment, &assumptions, &mut budget)
+                    evaluate_loop_effect_segment(entry_state, segment, assumptions, &mut budget)
                 else {
                     return false;
                 };
@@ -5979,11 +5969,11 @@ fn function_claim_holds_on_prepared_path(
                 } => {
                     let repeats_transition =
                         seen_transitions.iter().any(|(seen_before, seen_after)| {
-                            c_memories_definitionally_equal(seen_before, before, &assumptions)
-                                && c_memories_definitionally_equal(seen_after, after, &assumptions)
+                            c_memories_definitionally_equal(seen_before, before, assumptions)
+                                && c_memories_definitionally_equal(seen_after, after, assumptions)
                         });
                     if !repeats_transition
-                        && !c_memories_definitionally_equal(&effect_memory, before, &assumptions)
+                        && !c_memories_definitionally_equal(&effect_memory, before, assumptions)
                     {
                         return false;
                     }
@@ -6013,11 +6003,11 @@ fn function_claim_holds_on_prepared_path(
                 } => {
                     let repeats_transition =
                         seen_transitions.iter().any(|(seen_before, seen_after)| {
-                            c_memories_definitionally_equal(seen_before, before, &assumptions)
-                                && c_memories_definitionally_equal(seen_after, after, &assumptions)
+                            c_memories_definitionally_equal(seen_before, before, assumptions)
+                                && c_memories_definitionally_equal(seen_after, after, assumptions)
                         });
                     if !repeats_transition
-                        && !c_memories_definitionally_equal(&effect_memory, before, &assumptions)
+                        && !c_memories_definitionally_equal(&effect_memory, before, assumptions)
                     {
                         return false;
                     }
@@ -6028,16 +6018,13 @@ fn function_claim_holds_on_prepared_path(
                     nested_ranges.iter().all(|nested| {
                         mutable_ranges
                             .iter()
-                            .any(|allowed| memory_range_covers(allowed, nested, &assumptions))
+                            .any(|allowed| memory_range_covers(allowed, nested, assumptions))
                     })
                 }
                 _ => true,
             });
-            let endpoint_matches = c_memories_definitionally_equal(
-                &effect_memory,
-                return_state.memory(),
-                &assumptions,
-            );
+            let endpoint_matches =
+                c_memories_definitionally_equal(&effect_memory, return_state.memory(), assumptions);
             effects_are_bounded && endpoint_matches
         }
     }

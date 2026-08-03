@@ -7,17 +7,15 @@ use std::process::Command;
 use std::time::Duration;
 
 use click::cli::{
-    BoundedOutput, MdTestExpectation, files_with_extension, find_mdtests, find_projects,
-    format_duration, format_fractional_duration, looks_like_mdtest, parse_duration, read_mdtest,
-    run_bounded, source_refs,
+    BoundedOutput, DEFAULT_CONTROL_TACTIC_LIMIT, DEFAULT_EXPANSION_TIME_LIMIT,
+    DEFAULT_SIMPLE_TACTIC_LIMIT, DEFAULT_SMART_TACTIC_LIMIT, MdTestExpectation,
+    files_with_extension, find_mdtests, find_projects, format_duration, format_fractional_duration,
+    looks_like_mdtest, parse_duration, read_mdtest, read_verifying_sources, run_bounded,
+    shell_quote, source_refs,
 };
 use click::lang::click::{SourcePosition, c0_tactic_source_position, verify_c0_sources};
 
-const DEFAULT_SMART_THRESHOLD: Duration = Duration::from_secs(2);
-const DEFAULT_SIMPLE_THRESHOLD: Duration = Duration::from_millis(500);
-const DEFAULT_CONTROL_THRESHOLD: Duration = Duration::from_secs(2);
 const DEFAULT_TIME_LIMIT: Duration = Duration::from_secs(30);
-const EXPANSION_TIME_LIMIT: Duration = Duration::from_secs(60);
 const MATERIAL_UNATTRIBUTED_FLOOR: Duration = Duration::from_millis(250);
 const MATERIAL_UNATTRIBUTED_TIME: Duration = Duration::from_secs(1);
 const MATERIAL_UNATTRIBUTED_SHARE: f64 = 10.0;
@@ -28,7 +26,7 @@ const SETUP_PER_FILE_LIMIT: Duration = Duration::from_millis(250);
 const VOLUME_REPORT_THRESHOLD: Duration = Duration::from_secs(1);
 
 const USAGE: &str = "\
-usage: click-profile [OPTIONS] <example-project|examples-directory|mdtest.md|mdtests-directory>
+usage: click-profile [OPTIONS] <sidecar.click|example-project|examples-directory|mdtest.md|mdtests-directory>
 
 An mdtest is profiled from its embedded ```c and ```click blocks, using the
 same extraction the mdtests gate uses. Quarantine does not apply: any mdtest
@@ -72,9 +70,9 @@ struct Thresholds {
 impl Default for Thresholds {
     fn default() -> Self {
         Self {
-            smart: DEFAULT_SMART_THRESHOLD,
-            simple: DEFAULT_SIMPLE_THRESHOLD,
-            control: DEFAULT_CONTROL_THRESHOLD,
+            smart: DEFAULT_SMART_TACTIC_LIMIT,
+            simple: DEFAULT_SIMPLE_TACTIC_LIMIT,
+            control: DEFAULT_CONTROL_TACTIC_LIMIT,
         }
     }
 }
@@ -223,19 +221,25 @@ fn is_c_transition(tactic_name: &str) -> bool {
     matches!(tactic_name, "step" | "summarize")
 }
 
-fn canonical_tactic_name(name: &str) -> &str {
-    match name {
-        "execute_step" | "certified_statement_step" => "step",
-        "execute_rest" | "symbolic_execute" | "bounded_execute" => "execute",
-        "apply_loop_summary" | "certified_loop_summary_step" => "summarize",
-        "certified_fact_transport" | "finish_certified_fact_transports" => "transport",
-        "certified_path_assumption" => "if",
-        "certified_frame" => "frame",
-        "exact_proposition_derivation" | "calculate" => "derive",
-        "advance" => "reach",
-        "conjunction" => "split",
-        name => name,
-    }
+fn is_retired_internal_tactic_name(name: &str) -> bool {
+    matches!(
+        name,
+        "execute_step"
+            | "certified_statement_step"
+            | "execute_rest"
+            | "symbolic_execute"
+            | "bounded_execute"
+            | "apply_loop_summary"
+            | "certified_loop_summary_step"
+            | "certified_fact_transport"
+            | "finish_certified_fact_transports"
+            | "certified_path_assumption"
+            | "certified_frame"
+            | "exact_proposition_derivation"
+            | "calculate"
+            | "advance"
+            | "conjunction"
+    )
 }
 
 fn entry() -> Result<(), String> {
@@ -283,8 +287,19 @@ fn parse_arguments(arguments: impl IntoIterator<Item = String>) -> Result<Argume
     let mut class_threshold_supplied = false;
     let mut time_limit = DEFAULT_TIME_LIMIT;
     let mut child = false;
+    let mut parse_options = true;
     let mut arguments = arguments.into_iter();
     while let Some(argument) = arguments.next() {
+        if parse_options && argument == "--" {
+            parse_options = false;
+            continue;
+        }
+        if !parse_options {
+            if path.replace(PathBuf::from(argument)).is_some() {
+                return Err(USAGE.to_string());
+            }
+            continue;
+        }
         match argument.as_str() {
             "--threshold" => {
                 if common_threshold.is_some() {
@@ -359,10 +374,9 @@ fn profile_targets(path: &Path) -> Result<Vec<PathBuf>, String> {
     if looks_like_mdtest(path) {
         return find_mdtests(path);
     }
-    if path.is_file()
-        && path
-            .extension()
-            .is_some_and(|extension| extension == "click")
+    if path
+        .extension()
+        .is_some_and(|extension| extension == "click")
     {
         return Ok(vec![path.to_path_buf()]);
     }
@@ -504,17 +518,37 @@ impl TimeAccounting {
         }
     }
 
+    fn tactic_total(self) -> Duration {
+        self.simple + self.smart + self.control
+    }
+
+    /// Function time outside tactics and kernel certification. This is the
+    /// verifier's orchestration work: proof-unit setup, bookkeeping, and
+    /// other measured work inside the function boundary.
+    fn verifier_core(self) -> Duration {
+        self.total
+            .saturating_sub(self.tactic_total() + self.certification)
+    }
+
+    /// Parent-observed work outside the verifier's emitted phase boundaries,
+    /// principally process startup, source reads, and driver teardown.
+    fn process_driver(self) -> Duration {
+        self.wall_total
+            .saturating_sub(self.frontend + self.environment + self.total)
+    }
+
     fn attributed(self) -> Duration {
         self.frontend
             + self.environment
-            + self.simple
-            + self.smart
-            + self.control
+            + self.tactic_total()
             + self.certification
+            + self.verifier_core()
+            + self.process_driver()
     }
 
-    /// Time in the best available denominator that no non-overlapping phase or
-    /// tactic timing claims. A large share means the profile is incomplete.
+    /// Time in the best available denominator that no named, non-overlapping
+    /// bucket claims. This should only remain nonzero if the timing protocol
+    /// is internally inconsistent or a new event is not understood.
     fn unattributed(self) -> Duration {
         self.denominator().saturating_sub(self.attributed())
     }
@@ -805,7 +839,8 @@ fn parse_step_key(rest: &str, source_path: &Path) -> Option<StepKey> {
         source_path: source_path.to_path_buf(),
         claim: fields[0].to_string(),
         tactic_index: fields[1].parse().ok()?,
-        tactic_name: canonical_tactic_name(fields[2]).to_string(),
+        tactic_name: (!is_retired_internal_tactic_name(fields[2]))
+            .then(|| fields[2].to_string())?,
         category: TacticCategory::parse(fields[4])?,
         statement_index: fields[6].parse().ok()?,
         source_index: fields[8].parse().ok()?,
@@ -838,20 +873,7 @@ fn load_profiled_source(path: &Path) -> Result<ProfiledSource, String> {
     }
     let click_source = fs::read_to_string(path)
         .map_err(|error| format!("failed to read `{}`: {error}", path.display()))?;
-    let parent = path.parent().unwrap_or_else(|| Path::new("."));
-    let c_sources = files_with_extension(parent, "c")?
-        .into_iter()
-        .map(|path| {
-            let name = path
-                .file_name()
-                .and_then(|name| name.to_str())
-                .ok_or_else(|| format!("invalid UTF-8 path `{}`", path.display()))?
-                .to_string();
-            let source = fs::read_to_string(&path)
-                .map_err(|error| format!("failed to read `{}`: {error}", path.display()))?;
-            Ok((name, source))
-        })
-        .collect::<Result<Vec<_>, String>>()?;
+    let c_sources = read_verifying_sources(path, &click_source)?;
     Ok(ProfiledSource {
         click_source,
         c_sources,
@@ -1196,23 +1218,21 @@ fn render_profiles(
             "\nNEXT: nothing crossed the configured thresholds, but a material amount of wall time is UNATTRIBUTED. Instrument that machinery before reading this profile as clean."
         )
         .expect("writing a String cannot fail");
+    } else if profiles
+        .iter()
+        .any(|profile| profile.accounting.denominator() >= VOLUME_REPORT_THRESHOLD)
+    {
+        writeln!(
+            output,
+            "\nNEXT: measured cost is HEALTHY VOLUME at the current baselines; reduce proof volume or improve Click's aggregate throughput rather than expanding an arbitrary tactic."
+        )
+        .expect("writing a String cannot fail");
     } else {
-        if profiles
-            .iter()
-            .any(|profile| profile.accounting.denominator() >= VOLUME_REPORT_THRESHOLD)
-        {
-            writeln!(
-                output,
-                "\nNEXT: measured cost is HEALTHY VOLUME at the current baselines; reduce proof volume or improve Click's aggregate throughput rather than expanding an arbitrary tactic."
-            )
-            .expect("writing a String cannot fail");
-        } else {
-            writeln!(
-                output,
-                "\nNEXT: the measured run is within the current baselines."
-            )
-            .expect("writing a String cannot fail");
-        }
+        writeln!(
+            output,
+            "\nNEXT: the measured run is within the current baselines."
+        )
+        .expect("writing a String cannot fail");
     }
 
     output
@@ -1234,7 +1254,7 @@ fn render_accounting(output: &mut String, profiles: &[ProjectProfile]) {
     writeln!(output, "\nTIME ACCOUNTING").expect("writing a String cannot fail");
     writeln!(
         output,
-        "  The total is child-process wall time when available. Tactic time is exclusive, and every row is non-overlapping. UNATTRIBUTED includes source I/O, process overhead, and verifier machinery with no recognized phase timing."
+        "  The total is child-process wall time when available. Tactic time is exclusive, and every row is non-overlapping. VERIFIER CORE is measured function time outside tactics and certification; PROCESS/DRIVER is parent-observed time outside emitted verifier phases."
     )
     .expect("writing a String cannot fail");
     for profile in measured {
@@ -1258,6 +1278,8 @@ fn render_accounting(output: &mut String, profiles: &[ProjectProfile]) {
             ("SMART", accounting.smart),
             ("CONTROL", accounting.control),
             ("CERTIFICATION", accounting.certification),
+            ("VERIFIER CORE", accounting.verifier_core()),
+            ("PROCESS/DRIVER", accounting.process_driver()),
             ("UNATTRIBUTED", accounting.unattributed()),
         ] {
             writeln!(
@@ -1626,21 +1648,25 @@ fn render_expansion_command(
     time_limit: Duration,
 ) {
     let artifact = expanded_artifact_path(&key.source_path);
-    writeln!(
-        output,
-        "              expand: cargo run --quiet --bin click-expand -- --time-limit {} {}:{}:{} > {}",
-        format_duration(EXPANSION_TIME_LIMIT),
+    let location = format!(
+        "{}:{}:{}",
         key.source_path.display(),
         position.line,
-        position.column,
-        artifact.display(),
+        position.column
+    );
+    writeln!(
+        output,
+        "              expand: cargo run --quiet --bin click-expand -- --time-limit {} {} > {}",
+        format_duration(DEFAULT_EXPANSION_TIME_LIMIT),
+        shell_quote(&location),
+        shell_quote(&artifact.display().to_string()),
     )
     .expect("writing a String cannot fail");
     if !looks_like_mdtest(&artifact) {
         writeln!(
             output,
             "              verify: cargo run --quiet --bin click-verify -- {}",
-            artifact.display(),
+            shell_quote(&artifact.display().to_string()),
         )
         .expect("writing a String cannot fail");
     }
@@ -1651,7 +1677,7 @@ fn render_expansion_command(
         format_duration(thresholds.simple),
         format_duration(thresholds.control),
         format_duration(time_limit),
-        artifact.display(),
+        shell_quote(&artifact.display().to_string()),
     )
     .expect("writing a String cannot fail");
 }
@@ -1710,20 +1736,15 @@ fn verify_mdtest(path: &Path) -> Result<(), String> {
 }
 
 fn verify_project(project: &Path) -> Result<(), String> {
-    let (root, mut click_paths) = if project.is_file()
+    let mut click_paths = if project.is_file()
         && project
             .extension()
             .is_some_and(|extension| extension == "click")
     {
-        (
-            project.parent().unwrap_or_else(|| Path::new(".")),
-            vec![project.to_path_buf()],
-        )
+        vec![project.to_path_buf()]
     } else {
-        (project, files_with_extension(project, "click")?)
+        files_with_extension(project, "click")?
     };
-    let mut c_paths = files_with_extension(root, "c")?;
-    c_paths.sort();
     click_paths.sort();
     if click_paths.is_empty() {
         return Err(format!(
@@ -1731,30 +1752,14 @@ fn verify_project(project: &Path) -> Result<(), String> {
             project.display()
         ));
     }
-    let c_sources = c_paths
-        .iter()
-        .map(|path| {
-            let filename = path
-                .file_name()
-                .and_then(|name| name.to_str())
-                .ok_or_else(|| format!("invalid UTF-8 path `{}`", path.display()))?
-                .to_string();
-            let source = fs::read_to_string(path)
-                .map_err(|error| format!("failed to read `{}`: {error}", path.display()))?;
-            Ok((filename, source))
-        })
-        .collect::<Result<Vec<_>, String>>()?;
-    let source_refs = c_sources
-        .iter()
-        .map(|(name, source)| (name.as_str(), source.as_str()))
-        .collect::<Vec<_>>();
     for click_path in click_paths {
         let click_source = fs::read_to_string(&click_path)
             .map_err(|error| format!("failed to read `{}`: {error}", click_path.display()))?;
+        let c_sources = read_verifying_sources(&click_path, &click_source)?;
         if env::var_os("CLICK_TIMINGS").is_some() {
             eprintln!("click timing: source {}", click_path.display());
         }
-        verify_c0_sources(&click_source, &source_refs).map_err(|error| {
+        verify_c0_sources(&click_source, &source_refs(&c_sources)).map_err(|error| {
             format!(
                 "example sidecar `{}` failed: {}",
                 click_path.display(),
@@ -1773,9 +1778,9 @@ mod tests {
     fn parses_timing_events_and_keeps_the_active_stack() {
         let output = r#"
 click timing: source examples/sample.click
-click timing: started tactic example.contract 2 execute_step class smart statement 4 source 5
-click timing: started tactic example.contract 2 certified_statement_step class simple statement 4 source 5
-click timing: tactic example.contract 2 certified_statement_step class simple statement 4 source 5 1.250000s
+click timing: started tactic example.contract 2 execute class smart statement 4 source 5
+click timing: started tactic example.contract 2 step class simple statement 4 source 5
+click timing: tactic example.contract 2 step class simple statement 4 source 5 1.250000s
 "#;
         let profile = parse_profile("sample", output, Thresholds::default(), true)
             .expect("the current timing format should parse");
@@ -1783,7 +1788,7 @@ click timing: tactic example.contract 2 certified_statement_step class simple st
         assert_eq!(profile.slow_steps[0].key.tactic_name, "step");
         assert_eq!(profile.slow_steps[0].key.category, TacticCategory::Simple);
         assert_eq!(profile.active.len(), 1);
-        assert_eq!(profile.active[0].tactic_name, "step");
+        assert_eq!(profile.active[0].tactic_name, "execute");
         assert_eq!(profile.active[0].category, TacticCategory::Smart);
         assert!(profile.unknown_timing.is_empty());
     }
@@ -1802,13 +1807,13 @@ click timing: contract entry resources do not satisfy requirements
 click timing: contract entry resources do not certify requirement safety
 click timing: claim paths example_function prepared 12 in 0.030000s
 click timing: claim example_function Ensure(4) 0.012000s
-click timing: tactic example.contract 0 execute_step class smart statement 1 source 2 3.000000s
+click timing: tactic example.contract 0 execute class smart statement 1 source 2 3.000000s
 "#;
         let profile = parse_profile("sample", output, Thresholds::default(), false)
             .expect("the current timing format should parse");
 
         assert_eq!(profile.slow_steps.len(), 1);
-        assert_eq!(profile.slow_steps[0].key.tactic_name, "step");
+        assert_eq!(profile.slow_steps[0].key.tactic_name, "execute");
         assert_eq!(profile.work.source_files, 1);
         assert_eq!(profile.work.functions, 1);
         assert_eq!(profile.work.claims, 1);
@@ -1856,9 +1861,10 @@ click timing: function example_function 12.000s
             Duration::from_millis(1_500)
         );
         assert_eq!(
-            profile.accounting.unattributed(),
+            profile.accounting.verifier_core(),
             Duration::from_millis(2_500)
         );
+        assert_eq!(profile.accounting.unattributed(), Duration::ZERO);
         assert!(profile.active.is_empty());
         assert_eq!(profile.slow_steps.len(), 2);
         assert!(profile.slow_steps.iter().any(|step| {
@@ -1880,11 +1886,10 @@ click timing: function example_function 12.000s
         assert!(report.contains("12.000s total"), "{report}");
     }
 
-    /// The hole this profiler had was a report that read clean while most of
-    /// the run was invisible to it. A run whose unattributed time outweighs
-    /// everything it can name must not read as clean.
+    /// Function-total time outside tactics is named verifier orchestration,
+    /// not a mysterious residual.
     #[test]
-    fn a_mostly_unattributed_run_does_not_read_as_clean() {
+    fn function_residual_is_reported_as_verifier_core() {
         let output = r#"
 click timing: source examples/sample.click
 click timing: tactic example.contract 0 simp class smart statement 1 source 0 1.000000s
@@ -1896,14 +1901,12 @@ click timing: function example_function 20.000s
             profile.slow_steps.is_empty(),
             "nothing here crosses a threshold; that is the point"
         );
-        assert_eq!(profile.accounting.unattributed(), Duration::from_secs(19));
+        assert_eq!(profile.accounting.verifier_core(), Duration::from_secs(19));
+        assert_eq!(profile.accounting.unattributed(), Duration::ZERO);
 
         let report = render_profiles(&[profile], Thresholds::default(), DEFAULT_TIME_LIMIT);
 
-        assert!(report.contains("UNEXPLAINED"), "{report}");
-        assert!(!report.contains(
-            "NEXT: no completed smart expansion candidates or simple engine bottlenecks"
-        ));
+        assert!(report.contains("VERIFIER CORE"), "{report}");
     }
 
     /// A proof that fails never reports a function total, and a failing proof
@@ -1953,9 +1956,10 @@ click timing: function example_function 2.200s
         assert_eq!(profile.accounting.simple, Duration::from_millis(200));
         assert_eq!(profile.accounting.certification, Duration::from_secs(2));
         assert_eq!(
-            profile.accounting.unattributed(),
+            profile.accounting.process_driver(),
             Duration::from_millis(300)
         );
+        assert_eq!(profile.accounting.unattributed(), Duration::ZERO);
         assert_eq!(profile.work.source_files, 1);
         assert_eq!(profile.work.functions, 1);
         assert_eq!(profile.work.c_transitions.count, 1);
@@ -1973,7 +1977,7 @@ click timing: function example_function 2.200s
     }
 
     #[test]
-    fn small_fractional_unattributed_time_is_process_noise() {
+    fn small_wall_residual_is_named_process_driver_time() {
         let output = r#"
 click timing: source examples/sample.click
 click timing: phase frontend 0.080000s
@@ -1981,14 +1985,18 @@ click timing: function example_function 0.080s
 "#;
         let mut profile = parse_profile("sample", output, Thresholds::default(), false)
             .expect("the current timing format should parse");
-        profile.accounting.wall_total = Duration::from_millis(100);
+        profile.accounting.wall_total = Duration::from_millis(180);
 
-        assert_eq!(profile.accounting.unattributed(), Duration::from_millis(20));
+        assert_eq!(
+            profile.accounting.process_driver(),
+            Duration::from_millis(20)
+        );
+        assert_eq!(profile.accounting.unattributed(), Duration::ZERO);
         assert!(!profile.accounting.materially_unattributed());
     }
 
     #[test]
-    fn fractional_unattributed_time_is_material_above_the_noise_floor() {
+    fn material_wall_residual_is_still_named_process_driver_time() {
         let output = r#"
 click timing: source examples/sample.click
 click timing: phase frontend 0.700000s
@@ -1996,17 +2004,18 @@ click timing: function example_function 0.700s
 "#;
         let mut profile = parse_profile("sample", output, Thresholds::default(), false)
             .expect("the current timing format should parse");
-        profile.accounting.wall_total = Duration::from_secs(1);
+        profile.accounting.wall_total = Duration::from_millis(1_700);
 
         assert_eq!(
-            profile.accounting.unattributed(),
+            profile.accounting.process_driver(),
             Duration::from_millis(300)
         );
-        assert!(profile.accounting.materially_unattributed());
+        assert_eq!(profile.accounting.unattributed(), Duration::ZERO);
+        assert!(!profile.accounting.materially_unattributed());
     }
 
     #[test]
-    fn one_second_unattributed_is_material_at_a_small_share() {
+    fn one_second_wall_residual_is_named_process_driver_time() {
         let output = r#"
 click timing: source examples/sample.click
 click timing: phase frontend 99.000000s
@@ -2014,10 +2023,11 @@ click timing: function example_function 99.000s
 "#;
         let mut profile = parse_profile("sample", output, Thresholds::default(), false)
             .expect("the current timing format should parse");
-        profile.accounting.wall_total = Duration::from_secs(100);
+        profile.accounting.wall_total = Duration::from_secs(199);
 
-        assert_eq!(profile.accounting.unattributed(), Duration::from_secs(1));
-        assert!(profile.accounting.materially_unattributed());
+        assert_eq!(profile.accounting.process_driver(), Duration::from_secs(1));
+        assert_eq!(profile.accounting.unattributed(), Duration::ZERO);
+        assert!(!profile.accounting.materially_unattributed());
     }
 
     /// The kinds the accounting consumes are load-bearing now, so a drifted
@@ -2035,6 +2045,14 @@ click timing: function example_function 99.000s
                 .expect_err(&format!("drifted line should be loud: {drifted}"));
             assert!(message.contains("has drifted"), "{message}");
         }
+    }
+
+    #[test]
+    fn retired_internal_tactic_names_are_timing_protocol_drift() {
+        let output = "click timing: source examples/sample.click\n\
+click timing: tactic example.contract 0 execute_step class smart statement 1 source 0 3.000000s\n";
+        let message = parse_profile("sample", output, Thresholds::default(), false).unwrap_err();
+        assert!(message.contains("timing format"), "{message}");
     }
 
     /// A step the verifier planned itself can name a tactic index the surface
@@ -2208,11 +2226,47 @@ click timing: widget 0.5s
                 thresholds: Thresholds {
                     smart: Duration::from_secs(3),
                     simple: Duration::from_millis(250),
-                    control: DEFAULT_CONTROL_THRESHOLD,
+                    control: DEFAULT_CONTROL_TACTIC_LIMIT,
                 },
                 time_limit: Duration::from_secs(120),
                 child: false,
             })
+        );
+    }
+
+    #[test]
+    fn end_of_options_accepts_a_dash_prefixed_target() {
+        let arguments = parse_arguments(["--".to_string(), "-example.click".to_string()]).unwrap();
+        assert_eq!(arguments.path, PathBuf::from("-example.click"));
+    }
+
+    #[test]
+    fn generated_commands_quote_locations_and_artifacts() {
+        let key = StepKey {
+            source_path: PathBuf::from("examples/it's spaced.click"),
+            claim: "claim".to_string(),
+            tactic_index: 0,
+            source_index: 0,
+            tactic_name: "simp".to_string(),
+            category: TacticCategory::Smart,
+            statement_index: 0,
+            position: None,
+        };
+        let mut output = String::new();
+        render_expansion_command(
+            &mut output,
+            &key,
+            SourcePosition { line: 2, column: 3 },
+            Thresholds::default(),
+            DEFAULT_TIME_LIMIT,
+        );
+        assert!(
+            output.contains("'examples/it'\\''s spaced.click:2:3'"),
+            "{output}"
+        );
+        assert!(
+            output.contains("'examples/it'\\''s spaced.expanded.click'"),
+            "{output}"
         );
     }
 
@@ -2240,8 +2294,8 @@ click timing: widget 0.5s
     fn report_separates_actions_and_only_suggests_expanding_smart_tactics() {
         let output = r#"
 click timing: source examples/sample.click
-click timing: tactic example.contract 0 certified_statement_step class simple statement 1 source 10 0.750000s
-click timing: tactic example.contract 1 execute_step class smart statement 2 source 20 2.500000s
+click timing: tactic example.contract 0 step class simple statement 1 source 10 0.750000s
+click timing: tactic example.contract 1 execute class smart statement 2 source 20 2.500000s
 click timing: tactic example.contract 2 have class control statement 3 source 30 2.100000s
 "#;
         let mut profile = parse_profile("sample", output, Thresholds::default(), false)
@@ -2275,7 +2329,7 @@ click timing: tactic example.contract 2 have class control statement 3 source 30
     }
 
     #[test]
-    fn diagnoses_mixed_engine_search_certification_setup_and_residual_findings() {
+    fn diagnoses_mixed_engine_search_certification_and_setup_findings() {
         let output = r#"
 click timing: source examples/sample.click
 click timing: phase frontend 0.300000s
@@ -2300,10 +2354,11 @@ click timing: function example_function 5.300s
             "SMART HOTSPOT",
             "CERTIFICATION BOTTLENECK",
             "SETUP BOTTLENECK",
-            "UNEXPLAINED",
         ] {
             assert!(report.contains(diagnosis), "missing {diagnosis}:\n{report}");
         }
+        assert!(report.contains("PROCESS/DRIVER"), "{report}");
+        assert!(!report.contains("UNEXPLAINED"), "{report}");
     }
 
     #[test]
@@ -2377,7 +2432,7 @@ click timing: tactic example.contract 0 have class control statement 1 source 10
             "successful",
             r#"
 click timing: source examples/successful.click
-click timing: tactic example.contract 0 execute_step class smart statement 1 source 10 2.500000s
+click timing: tactic example.contract 0 execute class smart statement 1 source 10 2.500000s
 "#,
             Thresholds::default(),
             false,

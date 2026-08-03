@@ -100,9 +100,9 @@ pub fn parse_duration(source: &str) -> Result<Duration, String> {
 /// anything else as `Nms`.
 pub fn format_duration(duration: Duration) -> String {
     let milliseconds = duration.as_millis();
-    if milliseconds % 60_000 == 0 && milliseconds != 0 {
+    if milliseconds.is_multiple_of(60_000) && milliseconds != 0 {
         format!("{}m", milliseconds / 60_000)
-    } else if milliseconds % 1_000 == 0 {
+    } else if milliseconds.is_multiple_of(1_000) {
         format!("{}s", milliseconds / 1_000)
     } else {
         format!("{milliseconds}ms")
@@ -127,7 +127,16 @@ pub fn format_fractional_duration(duration: Duration) -> String {
 /// The variable is parsed by [`parse_duration`], so every caller accepts the
 /// same spellings the binaries accept on the command line.
 pub fn duration_from_env(variable: &str, default: Duration) -> Result<Duration, String> {
-    let Some(source) = std::env::var_os(variable) else {
+    let source = std::env::var_os(variable);
+    duration_from_optional_os(variable, source.as_deref(), default)
+}
+
+fn duration_from_optional_os(
+    variable: &str,
+    source: Option<&std::ffi::OsStr>,
+    default: Duration,
+) -> Result<Duration, String> {
+    let Some(source) = source else {
         return Ok(default);
     };
     let source = source
@@ -337,9 +346,10 @@ fn without_timing_lines(output: &str) -> String {
 /// Per-class tactic time budgets (owner ruling 2026-07-31): a slow SIMPLE
 /// tactic is an engine bug, a slow SMART tactic is an expansion obligation.
 /// These match click-profile's default thresholds.
-const SIMPLE_TACTIC_BUDGET: Duration = Duration::from_millis(500);
-const SMART_TACTIC_BUDGET: Duration = Duration::from_secs(2);
-const CONTROL_TACTIC_BUDGET: Duration = Duration::from_secs(2);
+pub const DEFAULT_SIMPLE_TACTIC_LIMIT: Duration = Duration::from_millis(500);
+pub const DEFAULT_SMART_TACTIC_LIMIT: Duration = Duration::from_secs(2);
+pub const DEFAULT_CONTROL_TACTIC_LIMIT: Duration = Duration::from_secs(2);
+pub const DEFAULT_EXPANSION_TIME_LIMIT: Duration = Duration::from_secs(60);
 
 /// Disables tactic budget enforcement in the fixture harnesses, for A/B runs
 /// and archaeology on old trees.
@@ -348,12 +358,12 @@ pub const DISABLE_TACTIC_BUDGETS: &str = "CLICK_DISABLE_TACTIC_BUDGETS";
 fn tactic_budget(class: &str) -> Option<(Duration, &'static str)> {
     match class {
         "simple" => Some((
-            SIMPLE_TACTIC_BUDGET,
+            DEFAULT_SIMPLE_TACTIC_LIMIT,
             "a slow simple tactic is a Click engine bug",
         )),
-        "smart" => Some((SMART_TACTIC_BUDGET, "expand it with click-expand")),
+        "smart" => Some((DEFAULT_SMART_TACTIC_LIMIT, "expand it with click-expand")),
         "control" => Some((
-            CONTROL_TACTIC_BUDGET,
+            DEFAULT_CONTROL_TACTIC_LIMIT,
             "a slow control tactic is a Click engine bug",
         )),
         _ => None,
@@ -554,6 +564,36 @@ pub fn source_refs(sources: &[(String, String)]) -> Vec<(&str, &str)> {
         .collect()
 }
 
+/// Quotes one argument for a POSIX-shell command printed for the user.
+///
+/// Shell operators such as redirection are not arguments and should be
+/// written separately by the caller.
+pub fn shell_quote(word: &str) -> String {
+    if !word.is_empty()
+        && word
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"/._:-".contains(&byte))
+    {
+        word.to_string()
+    } else {
+        format!("'{}'", word.replace('\'', "'\\''"))
+    }
+}
+
+fn directory_entries(directory: &Path) -> Result<Vec<fs::DirEntry>, String> {
+    fs::read_dir(directory)
+        .map_err(|error| format!("failed to read `{}`: {error}", directory.display()))?
+        .map(|entry| {
+            entry.map_err(|error| {
+                format!(
+                    "failed to read an entry in `{}`: {error}",
+                    directory.display()
+                )
+            })
+        })
+        .collect()
+}
+
 /// Finds example projects under `path`: either `path` itself when it directly
 /// contains a `.click` sidecar, or its immediate subdirectories that do.
 /// Returned paths are canonicalized and sorted.
@@ -566,20 +606,15 @@ pub fn find_projects(path: &Path) -> Result<Vec<PathBuf>, String> {
             format!("failed to resolve `{}`: {error}", path.display())
         })?]);
     }
-    let mut projects =
-        fs::read_dir(path)
-            .map_err(|error| format!("failed to read `{}`: {error}", path.display()))?
-            .filter_map(Result::ok)
-            .map(|entry| entry.path())
-            .filter(|candidate| candidate.is_dir())
-            .filter_map(|candidate| match contains_click_file(&candidate) {
-                Ok(true) => Some(fs::canonicalize(&candidate).map_err(|error| {
-                    format!("failed to resolve `{}`: {error}", candidate.display())
-                })),
-                Ok(false) => None,
-                Err(error) => Some(Err(error)),
-            })
-            .collect::<Result<Vec<_>, _>>()?;
+    let mut projects = Vec::new();
+    for entry in directory_entries(path)? {
+        let candidate = entry.path();
+        if candidate.is_dir() && contains_click_file(&candidate)? {
+            projects.push(fs::canonicalize(&candidate).map_err(|error| {
+                format!("failed to resolve `{}`: {error}", candidate.display())
+            })?);
+        }
+    }
     projects.sort();
     if projects.is_empty() {
         return Err(format!(
@@ -592,25 +627,23 @@ pub fn find_projects(path: &Path) -> Result<Vec<PathBuf>, String> {
 
 /// Returns true when the directory directly contains a `.click` sidecar.
 pub fn contains_click_file(path: &Path) -> Result<bool, String> {
-    Ok(fs::read_dir(path)
-        .map_err(|error| format!("failed to read `{}`: {error}", path.display()))?
-        .filter_map(Result::ok)
-        .any(|entry| {
-            entry
-                .path()
-                .extension()
-                .is_some_and(|extension| extension == "click")
-        }))
+    Ok(directory_entries(path)?.into_iter().any(|entry| {
+        entry
+            .path()
+            .extension()
+            .is_some_and(|extension| extension == "click")
+    }))
 }
 
 /// Lists the files in `directory` (non-recursively) with the extension.
 pub fn files_with_extension(directory: &Path, extension: &str) -> Result<Vec<PathBuf>, String> {
-    Ok(fs::read_dir(directory)
-        .map_err(|error| format!("failed to read `{}`: {error}", directory.display()))?
-        .filter_map(Result::ok)
+    let mut paths = directory_entries(directory)?
+        .into_iter()
         .map(|entry| entry.path())
         .filter(|path| path.extension().is_some_and(|actual| actual == extension))
-        .collect())
+        .collect::<Vec<_>>();
+    paths.sort();
+    Ok(paths)
 }
 
 /// One markdown test: the C translation units, the Click sidecar, and the
@@ -631,6 +664,61 @@ pub struct MdTest {
     pub click_start_line: usize,
     /// The ```expect block, if the file has one.
     pub expectation: Option<MdTestExpectation>,
+}
+
+impl MdTest {
+    /// Translates a one-based container line into a one-based line inside the
+    /// Click block, rejecting locations outside that block.
+    pub fn click_line(&self, container_line: usize) -> Result<usize, String> {
+        let click_source = self
+            .click_source
+            .as_deref()
+            .ok_or_else(|| "mdtest has no ```click block".to_string())?;
+        let first = self.click_start_line;
+        let last = first + click_source.lines().count().saturating_sub(1);
+        if container_line < first || container_line > last {
+            return Err(format!(
+                "line {container_line} is not inside the ```click block (lines {first}..{last})"
+            ));
+        }
+        Ok(container_line - first + 1)
+    }
+
+    /// Replaces the Click block body in the original markdown container.
+    /// The body is checked against the parsed source before splicing so stale
+    /// coordinates cannot silently edit the wrong lines.
+    pub fn replace_click_source(
+        &self,
+        container_source: &str,
+        replacement: &str,
+    ) -> Result<String, String> {
+        let click_source = self
+            .click_source
+            .as_deref()
+            .ok_or_else(|| "mdtest has no ```click block".to_string())?;
+        let lines = container_source.lines().collect::<Vec<_>>();
+        let body_start = self
+            .click_start_line
+            .checked_sub(1)
+            .ok_or_else(|| "mdtest Click block has an invalid start line".to_string())?;
+        let body_len = click_source.lines().count();
+        let body_end = body_start
+            .checked_add(body_len)
+            .filter(|end| *end <= lines.len())
+            .ok_or_else(|| "mdtest Click block extends past the container".to_string())?;
+        if lines[body_start..body_end] != click_source.lines().collect::<Vec<_>>() {
+            return Err("mdtest Click block no longer matches the parsed container".to_string());
+        }
+        let mut spliced = Vec::with_capacity(lines.len());
+        spliced.extend_from_slice(&lines[..body_start]);
+        spliced.extend(replacement.lines());
+        spliced.extend_from_slice(&lines[body_end..]);
+        let mut result = spliced.join("\n");
+        if container_source.ends_with('\n') {
+            result.push('\n');
+        }
+        Ok(result)
+    }
 }
 
 /// What an mdtest expects verification to do.
@@ -660,6 +748,7 @@ pub fn parse_mdtest(path: &Path, source: &str) -> Result<MdTest, String> {
             continue;
         }
 
+        let fence_line = index + 1;
         let info = line.trim_start_matches("```").trim();
         index += 1;
         let start_line = index + 1;
@@ -677,8 +766,20 @@ pub fn parse_mdtest(path: &Path, source: &str) -> Result<MdTest, String> {
         index += 1;
 
         let body = body.join("\n");
-        match block_kind(info) {
-            Some(BlockKind::C { filename }) => mdtest.c_sources.push((filename, body)),
+        match block_kind(path, fence_line, info)? {
+            Some(BlockKind::C { filename }) => {
+                if mdtest
+                    .c_sources
+                    .iter()
+                    .any(|(existing, _)| existing == &filename)
+                {
+                    return Err(format!(
+                        "`{}` has duplicate C filename `{filename}` at line {fence_line}",
+                        path.display()
+                    ));
+                }
+                mdtest.c_sources.push((filename, body));
+            }
             Some(BlockKind::Click) => {
                 if mdtest.click_source.replace(body).is_some() {
                     return Err(format!(
@@ -717,18 +818,50 @@ enum BlockKind {
     Expect,
 }
 
-fn block_kind(info: &str) -> Option<BlockKind> {
+fn block_kind(path: &Path, line: usize, info: &str) -> Result<Option<BlockKind>, String> {
     let mut parts = info.split_whitespace();
-    match parts.next()? {
+    let Some(kind) = parts.next() else {
+        return Ok(None);
+    };
+    match kind {
         "c" => {
-            let filename = parts.find_map(|part| part.strip_prefix("filename="))?;
-            Some(BlockKind::C {
+            let attributes = parts.collect::<Vec<_>>();
+            let [attribute] = attributes.as_slice() else {
+                return Err(format!(
+                    "`{}` has invalid C fence at line {line}: expected exactly `c filename=NAME`",
+                    path.display()
+                ));
+            };
+            let Some(filename) = attribute.strip_prefix("filename=") else {
+                return Err(format!(
+                    "`{}` has invalid C fence at line {line}: expected `filename=NAME`, got `{attribute}`",
+                    path.display()
+                ));
+            };
+            if filename.is_empty() {
+                return Err(format!(
+                    "`{}` has empty C filename at line {line}",
+                    path.display()
+                ));
+            }
+            Ok(Some(BlockKind::C {
                 filename: filename.to_string(),
-            })
+            }))
         }
-        "click" => Some(BlockKind::Click),
-        "expect" => Some(BlockKind::Expect),
-        _ => None,
+        "click" | "expect" => {
+            if let Some(extra) = parts.next() {
+                return Err(format!(
+                    "`{}` has unexpected `{extra}` metadata on the `{kind}` fence at line {line}",
+                    path.display()
+                ));
+            }
+            Ok(Some(if kind == "click" {
+                BlockKind::Click
+            } else {
+                BlockKind::Expect
+            }))
+        }
+        _ => Ok(None),
     }
 }
 
@@ -750,6 +883,9 @@ fn parse_expectation(path: &Path, line: usize, body: &str) -> Result<MdTestExpec
 /// markdown files directly inside it. Returned paths are sorted.
 pub fn find_mdtests(path: &Path) -> Result<Vec<PathBuf>, String> {
     if path.is_file() {
+        if !looks_like_mdtest(path) {
+            return Err(format!("`{}` is not a markdown test", path.display()));
+        }
         return Ok(vec![path.to_path_buf()]);
     }
     if !path.is_dir() {
@@ -968,25 +1104,113 @@ click timing: tactic f.contract 0 step class brandnew statement 0 source 0 9.000
     }
 
     #[test]
-    fn environment_durations_fall_back_and_report_their_variable() {
-        // A name no test sets, so the fallback branch is deterministic.
+    fn shell_words_are_quoted_for_copy_paste_commands() {
+        assert_eq!(shell_quote("plain/path.click:2:3"), "plain/path.click:2:3");
+        assert_eq!(shell_quote("a path/file.click"), "'a path/file.click'");
+        assert_eq!(shell_quote("it's.click"), "'it'\\''s.click'");
+        assert_eq!(shell_quote(""), "''");
+    }
+
+    #[test]
+    fn mdtest_recognized_fences_reject_malformed_metadata() {
+        let path = Path::new("bad.md");
+        for source in [
+            "```c\nint main() {}\n```\n",
+            "```c filename=\nint main() {}\n```\n",
+            "```c filename=a.c extra\nint main() {}\n```\n",
+            "```click extra\nverifying a.c;\n```\n",
+            "```expect extra\npass\n```\n",
+        ] {
+            assert!(parse_mdtest(path, source).is_err(), "{source}");
+        }
+    }
+
+    #[test]
+    fn mdtest_rejects_duplicate_c_filenames_but_ignores_unrelated_fences() {
+        let duplicate = "```c filename=a.c\nint a;\n```\n```c filename=a.c\nint b;\n```\n";
+        assert!(parse_mdtest(Path::new("duplicate.md"), duplicate).is_err());
+
+        let source = "```rust ignore\nfn main() {}\n```\n```c filename=a.c\nint a;\n```\n";
+        let mdtest = parse_mdtest(Path::new("mixed.md"), source).unwrap();
         assert_eq!(
-            duration_from_env("CLICK_TEST_UNSET_TIME_LIMIT", Duration::from_secs(3)),
+            mdtest.c_sources,
+            vec![("a.c".to_string(), "int a;".to_string())]
+        );
+    }
+
+    #[test]
+    fn mdtest_coordinates_and_replacement_preserve_the_container() {
+        let markdown = "before\n```click\nstep();\n```\nafter\n";
+        let mdtest = parse_mdtest(Path::new("container.md"), markdown).unwrap();
+        assert!(mdtest.click_line(2).is_err());
+        assert_eq!(mdtest.click_line(3), Ok(1));
+        assert!(mdtest.click_line(4).is_err());
+        assert_eq!(
+            mdtest
+                .replace_click_source(markdown, "step() using {\n}\n")
+                .unwrap(),
+            "before\n```click\nstep() using {\n}\n```\nafter\n"
+        );
+
+        let no_trailing_newline = markdown.trim_end();
+        let mdtest = parse_mdtest(Path::new("container.md"), no_trailing_newline).unwrap();
+        let replaced = mdtest
+            .replace_click_source(no_trailing_newline, "assumption();")
+            .unwrap();
+        assert!(!replaced.ends_with('\n'));
+        assert!(
+            mdtest
+                .replace_click_source(&markdown.replace("step();", "simp();"), "assumption();")
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn sidecars_load_only_declared_sources_and_resolve_relative_paths() {
+        let root = std::env::temp_dir().join(format!(
+            "click-source-loading-{}-{}",
+            std::process::id(),
+            std::thread::current().name().unwrap_or("test")
+        ));
+        let project = root.join("project");
+        fs::create_dir_all(&project).unwrap();
+        fs::write(root.join("actual.c"), "int32 actual() { return 1; }").unwrap();
+        fs::write(project.join("unrelated.c"), "this is not C0").unwrap();
+        let click_path = project.join("proof.click");
+        let click_source = "verifying \"../actual.c\";\n";
+
+        let sources = read_verifying_sources(&click_path, click_source).unwrap();
+        assert_eq!(
+            sources,
+            vec![(
+                "../actual.c".to_string(),
+                "int32 actual() { return 1; }".to_string()
+            )]
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn environment_durations_fall_back_and_report_their_variable() {
+        assert_eq!(
+            duration_from_optional_os("LIMIT", None, Duration::from_secs(3)),
             Ok(Duration::from_secs(3))
         );
-        unsafe { std::env::set_var("CLICK_TEST_ENV_DURATION", "250ms") };
         assert_eq!(
-            duration_from_env("CLICK_TEST_ENV_DURATION", Duration::from_secs(3)),
+            duration_from_optional_os(
+                "LIMIT",
+                Some(std::ffi::OsStr::new("250ms")),
+                Duration::from_secs(3),
+            ),
             Ok(Duration::from_millis(250))
         );
-        unsafe { std::env::set_var("CLICK_TEST_ENV_DURATION", "later") };
-        let message = duration_from_env("CLICK_TEST_ENV_DURATION", Duration::from_secs(3))
-            .expect_err("an unparseable duration should be rejected");
-        assert!(
-            message.starts_with("CLICK_TEST_ENV_DURATION: "),
-            "{message}"
-        );
-        unsafe { std::env::remove_var("CLICK_TEST_ENV_DURATION") };
+        let message = duration_from_optional_os(
+            "LIMIT",
+            Some(std::ffi::OsStr::new("later")),
+            Duration::from_secs(3),
+        )
+        .expect_err("an unparseable duration should be rejected");
+        assert!(message.starts_with("LIMIT: "), "{message}");
     }
 
     #[test]

@@ -37,8 +37,11 @@ threshold as a bug: split it, or fix the prover slowdown it is exposing. The
 mdtest and example-project harnesses are exempted up to 20 minutes because
 each is a single test function that already bounds its own child processes.
 
-Plain `cargo test` still works and applies no time limits; use it as the
-escape hatch while fixing a slow test.
+Plain `cargo test` does not apply nextest's outer Rust-test deadline, but the
+fixture harnesses still bound their isolated children: each mdtest gets 30
+seconds by default (`MDTEST_TIME_LIMIT`), and each example project gets 10
+minutes (`CLICK_EXAMPLE_TIME_LIMIT`). Override those variables while reducing
+a slow fixture; neither disables tactic budgets.
 
 ## Quarantine
 
@@ -172,6 +175,11 @@ that class to prescribe the next action:
 - `CONTROL` steps are proof containers. Inspect their nested smart and simple
   timings rather than optimizing the container row by itself.
 
+`have` is structurally a proof container, but the complete selectable source
+occurrence inherits SMART from a supported smart body and SIMPLE from a
+nonempty all-simple body. Other `have` forms remain CONTROL. Timing, inventory,
+and expansion use that same source-site classification.
+
 If a project reaches its limit, the report classifies every active step and
 applies the same advice. This prevents a slow internal certificate replay from
 being mistaken for smart search merely because it is nested inside a smart
@@ -179,10 +187,9 @@ tactic.
 
 The category sections list only steps that crossed a tail threshold. `TIME
 ACCOUNTING` reconciles bounded child-process wall time across frontend,
-environment, exclusive tactic classes, kernel certification, and an
-`UNATTRIBUTED` residual. A residual is an incomplete-profile finding when it
-reaches one second, or when it is both at least 250 ms and at least 10% of the
-run. Smaller fractional residuals are normal process-startup noise.
+environment, exclusive tactic classes, kernel certification, measured
+`VERIFIER CORE` orchestration, and parent-observed `PROCESS/DRIVER` overhead.
+`UNATTRIBUTED` is only the remaining inconsistent or unknown portion.
 
 `WORK AND THROUGHPUT` counts completed simple leaves by kind, C transitions,
 smart attempts and outcomes, functions, claims, and certification paths. It
@@ -246,9 +253,9 @@ audit handles that file. Each site gets these checks:
    entry point additionally requires the location to resolve to the same proof
    unit as the baseline and the Click source to be identical outside that unit;
    it then reverifies just that proof unit while reusing certified dependencies;
-3. **original/reverify** — on the first site of each claim, cold-verify the
+3. **cold original/rewritten** — on the first site of each claim, cold-verify the
    original and expanded versions of the same targeted proof unit in fresh
-   processes. Later sites of the claim report both as `0s`;
+   processes. Later sites explicitly report `cold comparison not run`;
 4. **reexpand** — check that the rewrite is an expansion fixed point. The check
    is claim-based, because the rewrite moves and replaces tactics so the site
    cannot be re-found by its original position: the audited smart tactic must be
@@ -260,7 +267,7 @@ audit handles that file. Each site gets these checks:
 A passing site prints all phase timings:
 
 ```text
-[1/26] examples/input-cursor/input_cursor.click:8:9  incremented_zero_is_one.ensures_0 (simp) ... ok (expand 22ms, verify 29ms, original 37ms, reverify 35ms, reexpand 23ms)
+[1/26] examples/input-cursor/input_cursor.click:8:9  incremented_zero_is_one.ensures_0 (simp) ... ok (expand 22ms, verify 29ms, cold original 37ms, cold rewritten 35ms, reexpand 23ms)
 ```
 
 ### Rate-aware performance comparison
@@ -272,9 +279,11 @@ slow and more than `--performance-slack` slower (default 500 ms), then repeat
 that regression in a second serial comparison, to fail. The failure prints
 commands that materialize and profile the exact expanded artifact.
 
-The whole run is also bounded by `--time-limit` (default 10 minutes). Reaching
-it stops the audit, prints the resume cursor, and exits unsuccessfully, so an
-audit can never quietly run for an hour.
+The whole run is also bounded by `--time-limit` (default 10 minutes). Every
+blocking phase is capped by the time remaining in that deadline, including
+session initialization and cold verification. Reaching it stops at the current
+inclusive cursor, prints one resume command, and exits unsuccessfully without
+counting deadline exhaustion as a Click check failure.
 
 ### Time limits and resuming
 

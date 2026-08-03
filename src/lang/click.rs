@@ -768,12 +768,11 @@ pub struct CertifiedStatementReplay {
 pub enum ProofTactic {
     Step,
     StepUsing(Vec<ClickProposition>),
-    ApplyLoopSummary(CodeRegionRef),
-    ApplyLoopSummaryUsing {
+    SummarizeUsing {
         region: CodeRegionRef,
         premises: Vec<ClickProposition>,
     },
-    ContextualLoopSummary(CodeRegionRef),
+    SmartSummarize(CodeRegionRef),
     CertifiedStatementStep {
         prerequisite_derivations: Vec<PropositionDerivation>,
         exact_premises: Vec<Proposition>,
@@ -784,14 +783,11 @@ pub enum ProofTactic {
     },
     CertifiedStatementReplay(Box<CertifiedStatementReplay>),
     CertifiedLoopSummaryReplay(Box<CertifiedStatementReplay>),
-    ExecuteStep,
-    ExecuteThenStep,
-    ExecuteElseStep,
-    ExecuteRest,
+    SmartStep,
+    SmartExecute,
+    SmartExecuteAllPaths,
     ExecuteUntil(CodeRegionRef),
-    BoundedExecute,
-    ContextualFrame(Option<CodeRegionRef>),
-    Frame(Option<CodeRegionRef>),
+    SmartFrame(Option<CodeRegionRef>),
     FrameUsing {
         region: Option<CodeRegionRef>,
         premises: Vec<ClickProposition>,
@@ -806,21 +802,18 @@ pub enum ProofTactic {
     },
     Have(ProofHave),
     If(ProofIf),
-    Advance(ProofAdvance),
+    Reach(ProofReach),
     ObserveResource(ResourceClause),
     Witness(ProofWitness),
     Choose(ProofChoice),
     Assumption,
     Normalize,
     Intro,
-    Conjunction,
+    Split,
     Left,
     Right,
-    DoubleNegation,
-    Vacuous,
     Contradiction(ClickProposition),
     Derive(ProofDerive),
-    Calculate(ProofDerive),
     CloseInvariants,
     Rewrite(ClickProposition),
     Transport {
@@ -866,14 +859,11 @@ pub enum SimpleTactic {
     Assumption,
     Normalize,
     Intro,
-    Conjunction,
+    Split,
     Left,
     Right,
-    DoubleNegation,
-    Vacuous,
     Contradiction,
     Derive,
-    Calculate,
     CloseInvariants,
     Rewrite,
     FactTransport,
@@ -892,12 +882,9 @@ pub enum SmartTacticKind {
     ApplyTheorem,
     LoopSummary,
     FactTransport,
-    ExecuteStep,
-    ExecuteThenStep,
-    ExecuteElseStep,
-    ExecuteRest,
+    SmartStep,
+    SmartExecute,
     ExecuteUntil,
-    BoundedExecute,
     Frame,
     Simp,
 }
@@ -906,7 +893,7 @@ pub enum SmartTacticKind {
 pub enum ControlFlowTactic {
     Have,
     If,
-    Advance,
+    Reach,
     CertifiedAlternatives,
 }
 
@@ -940,7 +927,7 @@ pub enum CertificatePathSegment {
     HaveBody,
     ThenBranch,
     ElseBranch,
-    AdvanceBody,
+    ReachBody,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1042,11 +1029,11 @@ fn validate_certificate_tactics(
                     else_result
                 }
             }
-            TacticClass::ControlFlow(ControlFlowTactic::Advance) => {
-                let ProofTactic::Advance(proof_advance) = tactic else {
+            TacticClass::ControlFlow(ControlFlowTactic::Reach) => {
+                let ProofTactic::Reach(proof_advance) = tactic else {
                     unreachable!("tactic class and variant must agree")
                 };
-                path.push(CertificatePathSegment::AdvanceBody);
+                path.push(CertificatePathSegment::ReachBody);
                 let result = validate_certificate_tactics(&proof_advance.tactics, path);
                 path.pop();
                 result
@@ -1095,11 +1082,11 @@ fn validate_replay_plan_tactics(
                     else_result
                 }
             }
-            TacticClass::ControlFlow(ControlFlowTactic::Advance) => {
-                let ProofTactic::Advance(proof_advance) = tactic else {
+            TacticClass::ControlFlow(ControlFlowTactic::Reach) => {
+                let ProofTactic::Reach(proof_advance) = tactic else {
                     unreachable!("tactic class and variant must agree")
                 };
-                path.push(CertificatePathSegment::AdvanceBody);
+                path.push(CertificatePathSegment::ReachBody);
                 let result = validate_replay_plan_tactics(&proof_advance.tactics, path);
                 path.pop();
                 result
@@ -1158,9 +1145,7 @@ impl SimpleTactic {
     fn is_surface_expressible(self) -> bool {
         !matches!(
             self,
-            Self::DoubleNegation
-                | Self::Vacuous
-                | Self::CertifiedStatementTransition
+            Self::CertifiedStatementTransition
                 | Self::CertifiedLoopSummaryTransition
                 | Self::ExactPropositionDerivation
                 | Self::CertifiedFactTransport
@@ -1176,10 +1161,8 @@ impl ProofTactic {
         match self {
             Self::Step => TacticClass::Simple(SimpleTactic::StatementTransition),
             Self::StepUsing(_) => TacticClass::Simple(SimpleTactic::StatementTransition),
-            Self::ApplyLoopSummary(_) | Self::ApplyLoopSummaryUsing { .. } => {
-                TacticClass::Simple(SimpleTactic::LoopSummaryTransition)
-            }
-            Self::ContextualLoopSummary(_) => TacticClass::Smart(SmartTacticKind::LoopSummary),
+            Self::SummarizeUsing { .. } => TacticClass::Simple(SimpleTactic::LoopSummaryTransition),
+            Self::SmartSummarize(_) => TacticClass::Smart(SmartTacticKind::LoopSummary),
             Self::CertifiedStatementStep { .. } => {
                 TacticClass::Simple(SimpleTactic::CertifiedStatementTransition)
             }
@@ -1202,14 +1185,11 @@ impl ProofTactic {
             Self::Assumption => TacticClass::Simple(SimpleTactic::Assumption),
             Self::Normalize => TacticClass::Simple(SimpleTactic::Normalize),
             Self::Intro => TacticClass::Simple(SimpleTactic::Intro),
-            Self::Conjunction => TacticClass::Simple(SimpleTactic::Conjunction),
+            Self::Split => TacticClass::Simple(SimpleTactic::Split),
             Self::Left => TacticClass::Simple(SimpleTactic::Left),
             Self::Right => TacticClass::Simple(SimpleTactic::Right),
-            Self::DoubleNegation => TacticClass::Simple(SimpleTactic::DoubleNegation),
-            Self::Vacuous => TacticClass::Simple(SimpleTactic::Vacuous),
             Self::Contradiction(_) => TacticClass::Simple(SimpleTactic::Contradiction),
             Self::Derive(_) => TacticClass::Simple(SimpleTactic::Derive),
-            Self::Calculate(_) => TacticClass::Simple(SimpleTactic::Calculate),
             Self::CloseInvariants => TacticClass::Simple(SimpleTactic::CloseInvariants),
             Self::Rewrite(_) => TacticClass::Simple(SimpleTactic::Rewrite),
             Self::Transport { .. } => TacticClass::Smart(SmartTacticKind::FactTransport),
@@ -1228,18 +1208,17 @@ impl ProofTactic {
             }
             Self::CertifiedFrame(_) => TacticClass::Simple(SimpleTactic::CertifiedFrame),
             Self::FoldResource(_) => TacticClass::Simple(SimpleTactic::FoldResource),
-            Self::Frame(_) | Self::FrameUsing { .. } => TacticClass::Simple(SimpleTactic::Frame),
-            Self::ExecuteStep => TacticClass::Smart(SmartTacticKind::ExecuteStep),
-            Self::ExecuteThenStep => TacticClass::Smart(SmartTacticKind::ExecuteThenStep),
-            Self::ExecuteElseStep => TacticClass::Smart(SmartTacticKind::ExecuteElseStep),
-            Self::ExecuteRest => TacticClass::Smart(SmartTacticKind::ExecuteRest),
+            Self::FrameUsing { .. } => TacticClass::Simple(SimpleTactic::Frame),
+            Self::SmartStep => TacticClass::Smart(SmartTacticKind::SmartStep),
+            Self::SmartExecute | Self::SmartExecuteAllPaths => {
+                TacticClass::Smart(SmartTacticKind::SmartExecute)
+            }
             Self::ExecuteUntil(_) => TacticClass::Smart(SmartTacticKind::ExecuteUntil),
-            Self::BoundedExecute => TacticClass::Smart(SmartTacticKind::BoundedExecute),
-            Self::ContextualFrame(_) => TacticClass::Smart(SmartTacticKind::Frame),
+            Self::SmartFrame(_) => TacticClass::Smart(SmartTacticKind::Frame),
             Self::Simp => TacticClass::Smart(SmartTacticKind::Simp),
             Self::Have(_) => TacticClass::ControlFlow(ControlFlowTactic::Have),
             Self::If(_) => TacticClass::ControlFlow(ControlFlowTactic::If),
-            Self::Advance(_) => TacticClass::ControlFlow(ControlFlowTactic::Advance),
+            Self::Reach(_) => TacticClass::ControlFlow(ControlFlowTactic::Reach),
             Self::CertifiedAlternatives(_) => {
                 TacticClass::ControlFlow(ControlFlowTactic::CertifiedAlternatives)
             }
@@ -1271,7 +1250,7 @@ pub struct ProofIf {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ProofAdvance {
+pub struct ProofReach {
     target: ProgramPointRef,
     assertions: Vec<ProofAssertion>,
     tactics: Vec<ProofTactic>,
@@ -1974,10 +1953,10 @@ pub fn verify_click_theorems(click_source: &str) -> Result<Vec<VerifiedPureTheor
 }
 
 fn verify_click_file_theorems(file: &ClickFile) -> Result<Vec<VerifiedPureTheorem>, ClickError> {
-    let predicate_definitions = combined_predicate_definitions(&file)?;
-    let click_function_definitions = combined_click_function_definitions(&file)?;
+    let predicate_definitions = combined_predicate_definitions(file)?;
+    let click_function_definitions = combined_click_function_definitions(file)?;
     let (theorem_definitions, stdlib_theorem_ensure_count) =
-        combined_theorem_definitions_with_stdlib_ensure_count(&file)?;
+        combined_theorem_definitions_with_stdlib_ensure_count(file)?;
     let predicate_environment = PredicateEnvironment::new(&predicate_definitions);
     let click_function_environment = ClickFunctionEnvironment::new(&click_function_definitions);
     let verified = verify_theorem_definitions(
@@ -2706,17 +2685,15 @@ fn proof_statement_prefix_end(
     };
     for tactic in prefix {
         match tactic {
-            ProofTactic::Step | ProofTactic::StepUsing(_) | ProofTactic::ExecuteStep => {
-                cursor = cursor.saturating_add(1)
-            }
+            ProofTactic::StepUsing(_) | ProofTactic::SmartStep => cursor = cursor.saturating_add(1),
             ProofTactic::ExecuteUntil(CodeRegionRef::Statement(target)) => {
                 cursor = target.saturating_add(1)
             }
-            ProofTactic::ExecuteRest | ProofTactic::BoundedExecute => cursor = statement_count,
-            ProofTactic::ExecuteThenStep
-            | ProofTactic::ExecuteElseStep
-            | ProofTactic::If(_)
-            | ProofTactic::Advance(_)
+            ProofTactic::SmartExecute | ProofTactic::SmartExecuteAllPaths => {
+                cursor = statement_count
+            }
+            ProofTactic::If(_)
+            | ProofTactic::Reach(_)
             | ProofTactic::ExecuteUntil(CodeRegionRef::Function | CodeRegionRef::Loop(_))
             | ProofTactic::ExecuteUntil(CodeRegionRef::Label(_)) => return statement_count,
             _ => {}

@@ -55,8 +55,14 @@ The verifier, rather than the profiler, classifies tactics:
 
 - **SIMPLE** tactics perform deterministic replay operations;
 - **SMART** tactics perform contextual reasoning, search, or orchestration;
-- **CONTROL** tactics such as `have`, proof-level `if`, and `reach` contain
-  nested scripts and bookkeeping.
+- **CONTROL** tactics contain nested scripts and bookkeeping.
+
+This is the class of the selectable source occurrence, not just its Rust AST
+shape. Proof-level `if` and `reach` are CONTROL. A `have` is structurally a
+control node, but its source site is SMART when its supported body is smart,
+SIMPLE when its nonempty body is entirely simple, and otherwise CONTROL. That
+inherited source-site class is shared by timing, smart-site inventory, and
+expansion, so a profile can legitimately list `have` under SMART or SIMPLE.
 
 A successful smart tactic must replay through a `TacticCertificate` whose
 leaves are surface-expressible simple tactics. Certificates may retain the
@@ -84,13 +90,14 @@ These are per-operation tail guards. They are not an aggregate throughput
 promise.
 
 `click-profile` reconciles child-process wall time across frontend,
-environment, exclusive SIMPLE/SMART/CONTROL time, kernel certification, and an
-`UNATTRIBUTED` residual. A residual is an explicit `UNEXPLAINED` diagnosis when
-it reaches one second, or when it is both at least 250 ms and at least 10% of
-the run. The floor keeps ordinary process-startup noise from making a small,
-healthy profile look incomplete. Work counts and conservative development
-baselines then distinguish smart hotspots, simple engine bugs, healthy volume,
-certification bottlenecks, setup bottlenecks, and incomplete attribution.
+environment, exclusive SIMPLE/SMART/CONTROL time, kernel certification,
+measured function work outside those operations (`VERIFIER CORE`), and
+parent-observed process/source-I/O/driver time (`PROCESS/DRIVER`).
+`UNATTRIBUTED` is reserved for an inconsistent or unknown remainder rather
+than being a catch-all for known overhead. Work counts and conservative
+development baselines then distinguish smart hotspots, simple engine bugs,
+healthy volume, certification bottlenecks, setup bottlenecks, and incomplete
+evidence.
 Wall-clock baselines are deliberately conservative and are not a
 machine-independent SLA.
 
@@ -111,7 +118,7 @@ manual release/certificate-boundary gate, not part of ordinary `cargo test`.
 - `click-expand <sidecar.click|mdtest.md>:<line>:<column>` writes rewritten
   source to stdout. It does not modify or reverify the source. Its default
   limit is 60 seconds; `--time-limit` overrides it.
-- `click-audit <example|mdtest|directory|repository-root>` expands,
+- `click-audit <sidecar.click|example|mdtest|directory|repository-root>` expands,
   retained-session verifies, compares original and expanded cold verification,
   and checks the claim's smart-site multiset strictly shrinks without
   introducing a new smart tactic. One path-aligned expansion may remove
@@ -143,12 +150,14 @@ rewritten artifact before deciding that expansion improved performance.
 
 - `CLICK_TIMINGS=1` — per-tactic and certification-phase timing lines.
 - `MDTEST_FILTER=<name>`, `CLICK_RUN_QUARANTINED=1`, and
-  `MDTEST_TIME_LIMIT=<duration>` — mdtest harness controls.
+  `MDTEST_TIME_LIMIT=<duration>` (default 30 s) — mdtest harness controls.
+- `CLICK_EXAMPLE=<name>` and `CLICK_EXAMPLE_TIME_LIMIT=<duration>` (default
+  10 minutes) — example-project harness controls.
 - `CLICK_DISABLE_TACTIC_BUDGETS`, `CLICK_DISABLE_DECIDE_MEMO`,
   `CLICK_DISABLE_CERT_ARMS`, `CLICK_DISABLE_MEMORY_DAG`, and
   `CLICK_DISABLE_CLOSER_REUSE` — A/B handles; each restores its pre-feature
   path.
 
-The `UNATTRIBUTED` row remains intentional: new uninstrumented work is reported
-as incomplete evidence instead of being silently forced into the nearest
-tactic or setup bucket.
+The `UNATTRIBUTED` row remains intentional: a new unknown timing event or
+accounting inconsistency is incomplete evidence instead of being silently
+forced into the nearest named bucket.

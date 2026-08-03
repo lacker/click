@@ -227,7 +227,7 @@ fn collect_smart_script_sites(
                     sites,
                 );
             }
-            ProofTactic::Advance(advance) => {
+            ProofTactic::Reach(advance) => {
                 collect_smart_script_sites(claim_label, &advance.tactics, source_index + 1, sites)
             }
             _ => {}
@@ -429,17 +429,17 @@ fn select_expansion_theorem<'a>(
         |theorem: &&VerifiedCTheorem| theorem.function_block.signature().name() == function_name;
     let selected = match claim {
         CProofClaim::Ensure(index) => verified.iter().find(|theorem| {
-            matches_function(&theorem)
+            matches_function(theorem)
                 && matches!(theorem.claim, VerifiedClaim::Ensure { index: found, .. } if found == index)
         }),
         CProofClaim::Effect(index) => verified.iter().find(|theorem| {
-            matches_function(&theorem)
+            matches_function(theorem)
                 && matches!(theorem.claim, VerifiedClaim::Effect { index: found, .. } if found == index)
         }),
         CProofClaim::Grouped => verified
             .iter()
             .find(|theorem| {
-                matches_function(&theorem)
+                matches_function(theorem)
                     && matches!(theorem.claim, VerifiedClaim::Ensure { .. })
             })
             .or_else(|| verified.iter().find(matches_function)),
@@ -1122,32 +1122,30 @@ pub fn c0_tactic_source_position(
         if let Some(rest) = claim_label
             .strip_prefix(function_name)
             .and_then(|rest| rest.strip_prefix(".loop("))
+            && let Some((loop_index, phase)) = rest.split_once(").")
+            && matches!(phase, "initialize" | "preserve")
+            && let Ok(loop_index) = loop_index.parse::<usize>()
+            && let Some(clause) = function_block
+                .structural_clauses()
+                .iter()
+                .find(|clause| clause.region() == &CodeRegion::Loop(loop_index))
         {
-            if let Some((loop_index, phase)) = rest.split_once(").")
-                && matches!(phase, "initialize" | "preserve")
-                && let Ok(loop_index) = loop_index.parse::<usize>()
-                && let Some(clause) = function_block
-                    .structural_clauses()
-                    .iter()
-                    .find(|clause| clause.region() == &CodeRegion::Loop(loop_index))
-            {
-                let proof = if phase == "initialize" {
-                    clause.initialize_proof()
-                } else {
-                    clause.preserve_proof()
-                };
-                let (fallback, proof_span, _) =
-                    find_loop_phase_proof_span(&tokens, &function, loop_index, phase)?;
-                return proof_source_position(
-                    click_source,
-                    &tokens,
-                    proof_span.as_ref(),
-                    proof,
-                    fallback,
-                    claim_label,
-                    source_index,
-                );
-            }
+            let proof = if phase == "initialize" {
+                clause.initialize_proof()
+            } else {
+                clause.preserve_proof()
+            };
+            let (fallback, proof_span, _) =
+                find_loop_phase_proof_span(&tokens, &function, loop_index, phase)?;
+            return proof_source_position(
+                click_source,
+                &tokens,
+                proof_span.as_ref(),
+                proof,
+                fallback,
+                claim_label,
+                source_index,
+            );
         }
         let selected = if claim_label == format!("{function_name}.contract") {
             function_block
@@ -1582,7 +1580,7 @@ fn collect_tactic_block_spans(
                     spans,
                 )?;
             }
-            ProofTactic::Advance(advance) => {
+            ProofTactic::Reach(advance) => {
                 let (body_open, body_close) = find_advance_body(tokens, &token_range)?;
                 collect_tactic_block_spans(tokens, body_open, body_close, &advance.tactics, spans)?;
             }

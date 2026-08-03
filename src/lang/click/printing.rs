@@ -111,24 +111,13 @@ fn write_tactics(output: &mut String, tactics: &[ProofTactic], indent: usize) {
 fn write_tactic(output: &mut String, tactic: &ProofTactic, indent: usize) {
     let prefix = "    ".repeat(indent);
     match tactic {
-        ProofTactic::Step => {
-            line(output, &prefix, "step() using {");
-            line(output, &prefix, "}");
-        }
+        ProofTactic::Step => line(output, &prefix, "step();"),
         ProofTactic::StepUsing(premises) => {
             line(output, &prefix, "step() using {");
             write_premise_list(output, premises, indent + 1);
             line(output, &prefix, "}");
         }
-        ProofTactic::ApplyLoopSummary(region) => {
-            line(
-                output,
-                &prefix,
-                &format!("summarize({}) using {{", describe_code_region_ref(region)),
-            );
-            line(output, &prefix, "}");
-        }
-        ProofTactic::ApplyLoopSummaryUsing { region, premises } => {
+        ProofTactic::SummarizeUsing { region, premises } => {
             line(
                 output,
                 &prefix,
@@ -174,7 +163,7 @@ fn write_tactic(output: &mut String, tactic: &ProofTactic, indent: usize) {
             output.push_str(&prefix);
             output.push_str("have ");
             output.push_str(&source_click_proposition(&have.proposition));
-            output.push_str(" ");
+            output.push(' ');
             write_proof(output, &have.proof, indent);
             output.push('\n');
         }
@@ -188,7 +177,7 @@ fn write_tactic(output: &mut String, tactic: &ProofTactic, indent: usize) {
             write_tactics(output, &proof_if.else_tactics, indent + 1);
             line(output, &prefix, "}");
         }
-        ProofTactic::Advance(advance) => {
+        ProofTactic::Reach(advance) => {
             line(
                 output,
                 &prefix,
@@ -243,11 +232,9 @@ fn write_tactic(output: &mut String, tactic: &ProofTactic, indent: usize) {
         ProofTactic::Assumption => line(output, &prefix, "assumption();"),
         ProofTactic::Normalize => line(output, &prefix, "normalize();"),
         ProofTactic::Intro => line(output, &prefix, "intro();"),
-        ProofTactic::Conjunction => line(output, &prefix, "split();"),
+        ProofTactic::Split => line(output, &prefix, "split();"),
         ProofTactic::Left => line(output, &prefix, "left();"),
         ProofTactic::Right => line(output, &prefix, "right();"),
-        ProofTactic::DoubleNegation => line(output, &prefix, "double_negation();"),
-        ProofTactic::Vacuous => line(output, &prefix, "vacuous();"),
         ProofTactic::Contradiction(fact) => line(
             output,
             &prefix,
@@ -257,10 +244,6 @@ fn write_tactic(output: &mut String, tactic: &ProofTactic, indent: usize) {
             line(output, &prefix, "normalize();")
         }
         ProofTactic::Derive(derive) => write_derivation(output, "derive", derive, indent),
-        ProofTactic::Calculate(derive) if derive.premises.is_empty() => {
-            line(output, &prefix, "normalize();")
-        }
-        ProofTactic::Calculate(derive) => write_derivation(output, "derive", derive, indent),
         ProofTactic::CloseInvariants => line(output, &prefix, "close_invariants();"),
         ProofTactic::Rewrite(equality) => line(
             output,
@@ -293,20 +276,6 @@ fn write_tactic(output: &mut String, tactic: &ProofTactic, indent: usize) {
             write_premise_list(output, premises, indent + 1);
             line(output, &prefix, "}");
         }
-        ProofTactic::Frame(region) => {
-            line(
-                output,
-                &prefix,
-                &format!(
-                    "frame({}) using {{",
-                    region
-                        .as_ref()
-                        .map(describe_code_region_ref)
-                        .unwrap_or_default()
-                ),
-            );
-            line(output, &prefix, "}");
-        }
         ProofTactic::FrameUsing { region, premises } => {
             line(
                 output,
@@ -322,18 +291,16 @@ fn write_tactic(output: &mut String, tactic: &ProofTactic, indent: usize) {
             write_premise_list(output, premises, indent + 1);
             line(output, &prefix, "}");
         }
-        ProofTactic::ExecuteStep => line(output, &prefix, "step();"),
+        ProofTactic::SmartStep => line(output, &prefix, "step();"),
         ProofTactic::CertifiedStatementStep { .. }
         | ProofTactic::CertifiedLoopSummaryStep { .. }
         | ProofTactic::CertifiedStatementReplay(_)
         | ProofTactic::CertifiedLoopSummaryReplay(_)
-        | ProofTactic::ContextualLoopSummary(_)
-        | ProofTactic::ExecuteThenStep
-        | ProofTactic::ExecuteElseStep
-        | ProofTactic::ExecuteRest
+        | ProofTactic::SmartSummarize(_)
+        | ProofTactic::SmartExecute
+        | ProofTactic::SmartExecuteAllPaths
         | ProofTactic::ExecuteUntil(_)
-        | ProofTactic::BoundedExecute
-        | ProofTactic::ContextualFrame(_)
+        | ProofTactic::SmartFrame(_)
         | ProofTactic::ExactPropositionDerivation(_)
         | ProofTactic::CertifiedFactTransport { .. }
         | ProofTactic::FinishCertifiedFactTransports(_)

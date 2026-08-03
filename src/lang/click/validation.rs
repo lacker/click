@@ -274,17 +274,13 @@ fn expand_declared_resource_tactic(
                 .map(|premise| expand_declared_resource_proposition(premise, resource_definitions))
                 .collect::<Result<Vec<_>, _>>()?,
         )),
-        ProofTactic::ApplyLoopSummaryUsing { region, premises } => {
-            Ok(ProofTactic::ApplyLoopSummaryUsing {
-                region,
-                premises: premises
-                    .into_iter()
-                    .map(|premise| {
-                        expand_declared_resource_proposition(premise, resource_definitions)
-                    })
-                    .collect::<Result<Vec<_>, _>>()?,
-            })
-        }
+        ProofTactic::SummarizeUsing { region, premises } => Ok(ProofTactic::SummarizeUsing {
+            region,
+            premises: premises
+                .into_iter()
+                .map(|premise| expand_declared_resource_proposition(premise, resource_definitions))
+                .collect::<Result<Vec<_>, _>>()?,
+        }),
         ProofTactic::FrameUsing { region, premises } => Ok(ProofTactic::FrameUsing {
             region,
             premises: premises
@@ -321,13 +317,6 @@ fn expand_declared_resource_tactic(
                 .map(|premise| expand_declared_resource_proposition(premise, resource_definitions))
                 .collect::<Result<Vec<_>, _>>()?,
         })),
-        ProofTactic::Calculate(derive) => Ok(ProofTactic::Calculate(ProofDerive {
-            premises: derive
-                .premises
-                .into_iter()
-                .map(|premise| expand_declared_resource_proposition(premise, resource_definitions))
-                .collect::<Result<Vec<_>, _>>()?,
-        })),
         ProofTactic::Have(have) => Ok(ProofTactic::Have(ProofHave {
             proposition: expand_declared_resource_proposition(
                 have.proposition,
@@ -351,7 +340,7 @@ fn expand_declared_resource_tactic(
                 .map(|tactic| expand_declared_resource_tactic(tactic, resource_definitions))
                 .collect::<Result<Vec<_>, _>>()?,
         })),
-        ProofTactic::Advance(advance) => Ok(ProofTactic::Advance(ProofAdvance {
+        ProofTactic::Reach(advance) => Ok(ProofTactic::Reach(ProofReach {
             target: advance.target,
             assertions: advance
                 .assertions
@@ -2295,14 +2284,11 @@ fn validate_pure_theorem_tactics(
             | ProofTactic::Assumption
             | ProofTactic::Normalize
             | ProofTactic::Intro
-            | ProofTactic::Conjunction
+            | ProofTactic::Split
             | ProofTactic::Left
             | ProofTactic::Right
-            | ProofTactic::DoubleNegation
-            | ProofTactic::Vacuous
             | ProofTactic::Contradiction(_)
             | ProofTactic::Derive(_)
-            | ProofTactic::Calculate(_)
             | ProofTactic::Rewrite(_)
             | ProofTactic::ExactPropositionDerivation(_)
             | ProofTactic::Simp => {}
@@ -2310,17 +2296,16 @@ fn validate_pure_theorem_tactics(
                 validate_pure_theorem_tactics(theorem_name, &proof_if.then_tactics)?;
                 validate_pure_theorem_tactics(theorem_name, &proof_if.else_tactics)?;
             }
-            ProofTactic::Advance(_) => {
+            ProofTactic::Reach(_) => {
                 return Err(ClickError::new(format!(
                     "execution tactic `reach` is not available in the pure proof for theorem `{theorem_name}`"
                 )));
             }
-            ProofTactic::Step
-            | ProofTactic::CloseInvariants
+            ProofTactic::CloseInvariants
+            | ProofTactic::Step
             | ProofTactic::StepUsing(_)
-            | ProofTactic::ApplyLoopSummary(_)
-            | ProofTactic::ApplyLoopSummaryUsing { .. }
-            | ProofTactic::ContextualLoopSummary(_)
+            | ProofTactic::SummarizeUsing { .. }
+            | ProofTactic::SmartSummarize(_)
             | ProofTactic::CertifiedStatementStep { .. }
             | ProofTactic::CertifiedLoopSummaryStep { .. }
             | ProofTactic::CertifiedStatementReplay(_)
@@ -2330,14 +2315,11 @@ fn validate_pure_theorem_tactics(
             | ProofTactic::CertifiedPathAssumption { .. }
             | ProofTactic::CertifiedFrame(_)
             | ProofTactic::CertifiedAlternatives(_)
-            | ProofTactic::ExecuteStep
-            | ProofTactic::ExecuteThenStep
-            | ProofTactic::ExecuteElseStep
-            | ProofTactic::ExecuteRest
+            | ProofTactic::SmartStep
+            | ProofTactic::SmartExecute
+            | ProofTactic::SmartExecuteAllPaths
             | ProofTactic::ExecuteUntil(_)
-            | ProofTactic::BoundedExecute
-            | ProofTactic::ContextualFrame(_)
-            | ProofTactic::Frame(_)
+            | ProofTactic::SmartFrame(_)
             | ProofTactic::FrameUsing { .. }
             | ProofTactic::ObserveResource(_)
             | ProofTactic::Transport { .. }
@@ -2359,43 +2341,35 @@ fn validate_pure_theorem_tactics(
 
 pub(super) fn tactic_name(tactic: &ProofTactic) -> &'static str {
     match tactic {
-        ProofTactic::Step => "step",
-        ProofTactic::StepUsing(_) => "step",
-        ProofTactic::ApplyLoopSummary(_)
-        | ProofTactic::ApplyLoopSummaryUsing { .. }
-        | ProofTactic::ContextualLoopSummary(_) => "summarize",
+        ProofTactic::Step | ProofTactic::StepUsing(_) => "step",
+        ProofTactic::SummarizeUsing { .. } | ProofTactic::SmartSummarize(_) => "summarize",
         ProofTactic::CertifiedStatementStep { .. } => "step",
         ProofTactic::CertifiedLoopSummaryStep { .. } => "summarize",
         ProofTactic::CertifiedStatementReplay(_) => "step",
         ProofTactic::CertifiedLoopSummaryReplay(_) => "summarize",
-        ProofTactic::ExecuteStep => "step",
-        ProofTactic::ExecuteThenStep => "step",
-        ProofTactic::ExecuteElseStep => "step",
-        ProofTactic::ExecuteRest => "execute",
+        ProofTactic::SmartStep => "step",
+        ProofTactic::SmartExecute => "execute",
+        ProofTactic::SmartExecuteAllPaths => "execute",
         ProofTactic::ExecuteUntil(_) => "execute_until",
-        ProofTactic::BoundedExecute => "execute",
-        ProofTactic::ContextualFrame(_) => "frame",
-        ProofTactic::Frame(_) | ProofTactic::FrameUsing { .. } => "frame",
+        ProofTactic::SmartFrame(_) => "frame",
+        ProofTactic::FrameUsing { .. } => "frame",
         ProofTactic::UnfoldPredicate(_) | ProofTactic::UnfoldResource(_) => "unfold",
         ProofTactic::FoldResource(_) => "fold",
         ProofTactic::ApplyTheorem(_) | ProofTactic::ApplyTheoremUsing { .. } => "apply",
         ProofTactic::Have(_) => "have",
         ProofTactic::If(_) => "if",
-        ProofTactic::Advance(_) => "reach",
+        ProofTactic::Reach(_) => "reach",
         ProofTactic::ObserveResource(_) => "observe",
         ProofTactic::Witness(_) => "witness",
         ProofTactic::Choose(_) => "choose",
         ProofTactic::Assumption => "assumption",
         ProofTactic::Normalize => "normalize",
         ProofTactic::Intro => "intro",
-        ProofTactic::Conjunction => "split",
+        ProofTactic::Split => "split",
         ProofTactic::Left => "left",
         ProofTactic::Right => "right",
-        ProofTactic::DoubleNegation => "intro",
-        ProofTactic::Vacuous => "intro",
         ProofTactic::Contradiction(_) => "contradiction",
         ProofTactic::Derive(_) => "derive",
-        ProofTactic::Calculate(_) => "derive",
         ProofTactic::CloseInvariants => "close_invariants",
         ProofTactic::Rewrite(_) => "rewrite",
         ProofTactic::Transport { .. } | ProofTactic::TransportUsing { .. } => "transport",

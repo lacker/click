@@ -1024,11 +1024,8 @@ pub(crate) fn memory_effect_write_pointers(facts: &[ExecutionPureFact]) -> BTree
     // memories would mistake join abstraction and call havoc for writes.
     let mut writes = BTreeSet::new();
     for fact in facts {
-        match fact.proposition() {
-            Proposition::CMemoryMutatesOnly { pointers, .. } => {
-                writes.extend(pointers.iter().cloned());
-            }
-            _ => {}
+        if let Proposition::CMemoryMutatesOnly { pointers, .. } = fact.proposition() {
+            writes.extend(pointers.iter().cloned());
         }
     }
 

@@ -556,13 +556,15 @@ pub(super) fn collect_invariant_check_obligations_without_search(
     )
 }
 
+type VerifiedInvariantPath = (Vec<ExecutionPureFact>, Vec<ProofObligation>);
+
 fn verify_lowered_invariant_path(
     check_index: usize,
     facts: &[ExecutionPureFact],
     obligations: &[ProofObligation],
     path: SpecPropositionPath,
     assumptions: &Assumptions,
-) -> Result<Option<(Vec<ExecutionPureFact>, Vec<ProofObligation>)>, String> {
+) -> Result<Option<VerifiedInvariantPath>, String> {
     let Some((mut merged_facts, merged_obligations)) = merge_execution_pure_facts_and_obligations(
         facts,
         obligations,

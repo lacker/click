@@ -1195,8 +1195,8 @@ fn parses_grouped_function_proof() {
         function.grouped_proof().and_then(Proof::tactics),
         Some(
             [
-                ProofTactic::ExecuteRest,
-                ProofTactic::ContextualFrame(None),
+                ProofTactic::SmartExecute,
+                ProofTactic::SmartFrame(None),
                 ProofTactic::Simp
             ]
             .as_slice()
@@ -1319,8 +1319,11 @@ fn grouped_auto_uses_one_deterministic_execution_proof() {
     let verified = verify_c0_sources(click_source, &[("set.c", c_source)])
         .expect("grouped auto proof should verify");
     let expected_tactics = [
-        ProofTactic::ExecuteRest,
-        ProofTactic::Frame(None),
+        ProofTactic::SmartExecute,
+        ProofTactic::FrameUsing {
+            region: None,
+            premises: Vec::new(),
+        },
         ProofTactic::Simp,
     ];
 
@@ -1369,8 +1372,8 @@ fn parses_proof_tactic_script() {
         ensure.proof().tactics(),
         Some(
             [
-                ProofTactic::ExecuteRest,
-                ProofTactic::ContextualFrame(Some(CodeRegionRef::Loop(0))),
+                ProofTactic::SmartExecute,
+                ProofTactic::SmartFrame(Some(CodeRegionRef::Loop(0))),
                 ProofTactic::Simp,
             ]
             .as_slice()
@@ -1469,7 +1472,7 @@ fn parses_resource_observe_unfold_and_fold_tactics() {
                     arguments: vec![current_var("flag")],
                     parameter_types: vec![C0Type::Int32Pointer],
                 }),
-                ProofTactic::ExecuteRest,
+                ProofTactic::SmartExecute,
                 ProofTactic::FoldResource(ResourceClause::Declared {
                     access: ResourceAccessMode::Own,
                     kind: ResourceKind::Composite,
@@ -1571,7 +1574,7 @@ fn parses_execute_proof_tactic() {
 
     assert_eq!(
         ensure.proof().tactics(),
-        Some([ProofTactic::ExecuteRest].as_slice())
+        Some([ProofTactic::SmartExecute].as_slice())
     );
 }
 
@@ -1583,7 +1586,7 @@ fn parses_execute_and_simp_proof_tactics() {
 
     assert_eq!(
         ensure.proof().tactics(),
-        Some([ProofTactic::ExecuteRest, ProofTactic::Simp].as_slice())
+        Some([ProofTactic::SmartExecute, ProofTactic::Simp].as_slice())
     );
 }
 
@@ -1682,8 +1685,8 @@ fn parses_smart_step_proof_tactic() {
         ensure.proof().tactics(),
         Some(
             [
-                ProofTactic::ExecuteStep,
-                ProofTactic::ExecuteRest,
+                ProofTactic::SmartStep,
+                ProofTactic::SmartExecute,
                 ProofTactic::Simp,
             ]
             .as_slice()
@@ -1898,7 +1901,7 @@ fn simple_statement_transition_does_not_transport_facts_automatically() {
         "simple transition test",
         &mut next_opaque_call,
         &mut next_verification_variable,
-        StatementPrerequisitePolicy::Exact,
+        StatementPrerequisitePolicy::Explicit,
         StatementFactTransportPolicy::None,
         &[],
     )
@@ -2064,7 +2067,7 @@ fn execute_rest_return_certificate_omits_unused_ambient_facts() {
     let expanded = verified[0]
         .expanded_proof_tactics()
         .expect("the return proof should have a surface expansion");
-    assert_eq!(expanded[0], ProofTactic::Step);
+    assert_eq!(expanded[0], ProofTactic::StepUsing(Vec::new()));
     assert!(matches!(expanded[1], ProofTactic::Have(_)));
     assert_eq!(expanded[2], ProofTactic::Assumption);
 
@@ -2513,8 +2516,8 @@ fn parses_explicit_branch_execution_tactics() {
             then_tactics,
             else_tactics,
             ..
-        }) if then_tactics.first() == Some(&ProofTactic::ExecuteStep)
-            && else_tactics.first() == Some(&ProofTactic::ExecuteStep)
+        }) if then_tactics.first() == Some(&ProofTactic::SmartStep)
+            && else_tactics.first() == Some(&ProofTactic::SmartStep)
     ));
 }
 
@@ -2578,7 +2581,7 @@ fn parses_advance_with_fact_and_resource_assertions() {
 
     assert!(matches!(
         &tactics[0],
-        ProofTactic::Advance(ProofAdvance {
+        ProofTactic::Reach(ProofReach {
             target: ProgramPointRef {
                 region: CodeRegionRef::Statement(1),
                 kind: ProgramPointKind::Exit,
@@ -2589,9 +2592,9 @@ fn parses_advance_with_fact_and_resource_assertions() {
             ProofAssertion::Fact(_),
             ProofAssertion::Resource(ResourceClause::Write(_)),
             ProofAssertion::Resource(ResourceClause::Read(_)),
-        ]) && tactics == &[ProofTactic::ExecuteStep]
+        ]) && tactics == &[ProofTactic::SmartStep]
     ));
-    assert_eq!(tactics[1..], [ProofTactic::ExecuteRest, ProofTactic::Simp]);
+    assert_eq!(tactics[1..], [ProofTactic::SmartExecute, ProofTactic::Simp]);
 }
 
 #[test]
@@ -2608,7 +2611,7 @@ fn parses_execute_until_proof_tactic() {
         Some(
             [
                 ProofTactic::ExecuteUntil(CodeRegionRef::Statement(1)),
-                ProofTactic::ExecuteRest,
+                ProofTactic::SmartExecute,
                 ProofTactic::Simp,
             ]
             .as_slice()
@@ -2626,7 +2629,7 @@ fn parses_unfold_proof_tactic() {
         ensure.proof().tactics(),
         Some(
             [
-                ProofTactic::ExecuteRest,
+                ProofTactic::SmartExecute,
                 ProofTactic::UnfoldPredicate("sorted".to_string()),
                 ProofTactic::Simp,
             ]
@@ -2648,7 +2651,7 @@ fn parses_apply_theorem_proof_tactic() {
         ensure.proof().tactics(),
         Some(
             [
-                ProofTactic::ExecuteRest,
+                ProofTactic::SmartExecute,
                 ProofTactic::ApplyTheorem(TheoremApplication {
                     name: "nonnegative".to_string(),
                     arguments: vec![current_var("result")],
@@ -2733,8 +2736,8 @@ fn parses_and_classifies_simple_and_smart_tactics() {
         TacticClass::Smart(SmartTacticKind::Simp)
     ));
     assert!(matches!(
-        ProofTactic::ExecuteStep.class(),
-        TacticClass::Smart(SmartTacticKind::ExecuteStep)
+        ProofTactic::SmartStep.class(),
+        TacticClass::Smart(SmartTacticKind::SmartStep)
     ));
     let application = TheoremApplication {
         name: "rewritten".to_string(),
@@ -2778,7 +2781,7 @@ fn parses_and_classifies_simple_and_smart_tactics() {
         TacticClass::Simple(SimpleTactic::FactTransport)
     ));
     assert!(matches!(
-        ProofTactic::Step.class(),
+        ProofTactic::StepUsing(Vec::new()).class(),
         TacticClass::Simple(SimpleTactic::StatementTransition)
     ));
     assert!(matches!(
@@ -2789,11 +2792,15 @@ fn parses_and_classifies_simple_and_smart_tactics() {
         TacticClass::Simple(SimpleTactic::StatementTransition)
     ));
     assert!(matches!(
-        ProofTactic::ApplyLoopSummary(CodeRegionRef::Loop(0)).class(),
+        ProofTactic::SummarizeUsing {
+            region: CodeRegionRef::Loop(0),
+            premises: Vec::new(),
+        }
+        .class(),
         TacticClass::Simple(SimpleTactic::LoopSummaryTransition)
     ));
     assert!(matches!(
-        ProofTactic::ContextualLoopSummary(CodeRegionRef::Loop(0)).class(),
+        ProofTactic::SmartSummarize(CodeRegionRef::Loop(0)).class(),
         TacticClass::Smart(SmartTacticKind::LoopSummary)
     ));
     assert!(matches!(
@@ -2828,7 +2835,11 @@ fn parses_and_classifies_simple_and_smart_tactics() {
         TacticClass::Simple(SimpleTactic::FoldResource)
     ));
     assert!(matches!(
-        ProofTactic::Frame(None).class(),
+        ProofTactic::FrameUsing {
+            region: None,
+            premises: Vec::new(),
+        }
+        .class(),
         TacticClass::Simple(SimpleTactic::Frame)
     ));
     assert!(matches!(
@@ -2844,7 +2855,7 @@ fn parses_and_classifies_simple_and_smart_tactics() {
         TacticClass::Simple(SimpleTactic::CloseInvariants)
     ));
     assert!(matches!(
-        ProofTactic::ContextualFrame(None).class(),
+        ProofTactic::SmartFrame(None).class(),
         TacticClass::Smart(SmartTacticKind::Frame)
     ));
     assert!(matches!(
@@ -2852,16 +2863,16 @@ fn parses_and_classifies_simple_and_smart_tactics() {
         TacticClass::Simple(SimpleTactic::CertifiedFrame)
     ));
     assert!(matches!(
-        ProofTactic::ExecuteThenStep.class(),
-        TacticClass::Smart(SmartTacticKind::ExecuteThenStep)
+        ProofTactic::SmartStep.class(),
+        TacticClass::Smart(SmartTacticKind::SmartStep)
     ));
     assert!(matches!(
-        ProofTactic::ExecuteElseStep.class(),
-        TacticClass::Smart(SmartTacticKind::ExecuteElseStep)
+        ProofTactic::SmartStep.class(),
+        TacticClass::Smart(SmartTacticKind::SmartStep)
     ));
     assert!(matches!(
-        ProofTactic::ExecuteRest.class(),
-        TacticClass::Smart(SmartTacticKind::ExecuteRest)
+        ProofTactic::SmartExecute.class(),
+        TacticClass::Smart(SmartTacticKind::SmartExecute)
     ));
     assert!(matches!(
         ProofTactic::ExecuteUntil(CodeRegionRef::Statement(1)).class(),
@@ -2959,7 +2970,7 @@ fn tactic_certificate_rejects_smart_tactics_in_nested_control_flow() {
         operator: ComparisonOperator::Equal,
         right: current_var("x"),
     };
-    let tactics = [ProofTactic::Advance(ProofAdvance {
+    let tactics = [ProofTactic::Reach(ProofReach {
         target: ProgramPointRef {
             region: CodeRegionRef::Function,
             kind: ProgramPointKind::Exit,
@@ -2990,7 +3001,7 @@ fn tactic_certificate_rejects_smart_tactics_in_nested_control_flow() {
         error.path(),
         &[
             CertificatePathSegment::Tactic(0),
-            CertificatePathSegment::AdvanceBody,
+            CertificatePathSegment::ReachBody,
             CertificatePathSegment::Tactic(0),
             CertificatePathSegment::ThenBranch,
             CertificatePathSegment::Tactic(0),
@@ -3221,7 +3232,7 @@ fn parses_local_have_proof_tactic() {
     ));
     assert_eq!(
         &tactics[1..],
-        &[ProofTactic::ExecuteRest, ProofTactic::Simp]
+        &[ProofTactic::SmartExecute, ProofTactic::Simp]
     );
 }
 
@@ -3243,8 +3254,8 @@ fn parses_proof_if_tactic() {
             then_tactics,
             else_tactics,
             ..
-        }) if then_tactics == &[ProofTactic::ExecuteRest, ProofTactic::Simp]
-            && else_tactics == &[ProofTactic::ExecuteRest, ProofTactic::Simp]
+        }) if then_tactics == &[ProofTactic::SmartExecute, ProofTactic::Simp]
+            && else_tactics == &[ProofTactic::SmartExecute, ProofTactic::Simp]
     ));
 }
 
@@ -3261,7 +3272,7 @@ fn parses_existential_proof_tactics() {
         ensure.proof().tactics(),
         Some(
             [
-                ProofTactic::ExecuteRest,
+                ProofTactic::SmartExecute,
                 ProofTactic::Choose(ProofChoice {
                     name: "k".to_string(),
                     source: ProofFactSource::RequirementLabel("has_k".to_string()),
@@ -3851,7 +3862,7 @@ fn unfolds_predicate_requirement_to_prove_consequence() {
         verified[0].proof_tactics(),
         Some(
             [
-                ProofTactic::ExecuteRest,
+                ProofTactic::SmartExecute,
                 ProofTactic::UnfoldPredicate("sorted_pair".to_string()),
                 ProofTactic::Simp,
             ]
@@ -5668,7 +5679,7 @@ fn verifies_mutable_effect_with_bounded_frame_tactics() {
 
     let verified = verify_c0_sources(click_source, &[("write_second.c", c_source)])
         .expect("bounded frame tactics should prove mutable effect");
-    let expected_tactics = [ProofTactic::ExecuteRest, ProofTactic::ContextualFrame(None)];
+    let expected_tactics = [ProofTactic::SmartExecute, ProofTactic::SmartFrame(None)];
 
     assert_eq!(verified.len(), 1);
     assert_eq!(verified[0].proof_kind(), ProofKind::TacticScript);
@@ -5737,7 +5748,7 @@ fn auto_certificate_replays_for_bounded_execution() {
 
     let auto_verified = verify_c0_sources(auto_click_source, &[("fill3_array_loop.c", c_source)])
         .expect("bounded auto proof should verify");
-    let expected_tactics = [ProofTactic::BoundedExecute, ProofTactic::Simp];
+    let expected_tactics = [ProofTactic::SmartExecuteAllPaths, ProofTactic::Simp];
 
     assert_eq!(auto_verified.len(), 1);
     assert_eq!(auto_verified[0].proof_kind(), ProofKind::TacticScript);
@@ -7428,8 +7439,11 @@ fn auto_certificate_replays_for_loop_frame_claim() {
         })
         .expect("source_unchanged theorem should be present");
     let expected_tactics = [
-        ProofTactic::ExecuteRest,
-        ProofTactic::Frame(Some(CodeRegionRef::Loop(0))),
+        ProofTactic::SmartExecute,
+        ProofTactic::FrameUsing {
+            region: Some(CodeRegionRef::Loop(0)),
+            premises: Vec::new(),
+        },
         ProofTactic::Simp,
     ];
 
@@ -7474,8 +7488,8 @@ fn auto_certificate_replays_for_loop_frame_claim() {
     assert_eq!(explicit_verified.len(), 1);
     assert_eq!(explicit_verified[0].proof_kind(), ProofKind::TacticScript);
     let explicit_expected = [
-        ProofTactic::ExecuteRest,
-        ProofTactic::ContextualFrame(Some(CodeRegionRef::Loop(0))),
+        ProofTactic::SmartExecute,
+        ProofTactic::SmartFrame(Some(CodeRegionRef::Loop(0))),
         ProofTactic::Simp,
     ];
     assert_eq!(

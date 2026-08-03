@@ -1242,12 +1242,9 @@ fn evaluate_composite_resource_fact_propositions(
                     memory,
                     base,
                     &fact_assumptions,
-                ) && bytes
-                    .as_const()
-                    .and_then(|bytes| u32::try_from(bytes).ok())
-                    .is_some_and(|bytes| {
-                        resource_context_has_read(resources, base, bytes, &fact_assumptions)
-                    })
+                ) && bytes.as_const().is_some_and(|bytes| {
+                    resource_context_has_read(resources, base, bytes, &fact_assumptions)
+                })
             }) {
                 next_pending.push(fact);
                 continue;

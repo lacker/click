@@ -57,7 +57,7 @@ and certificate-oriented execution names are not part of the surface language.
 | `derive using { Q; ... }` | simple | Establish the current atomic proposition goal from exactly the listed premises using Click's deterministic atomic theories. |
 | `apply(theorem(args))` | smart | Apply a theorem while selecting its premises from context. |
 | `apply(theorem(args)) using { P; ... }` | simple | Apply a theorem using exactly the listed premises. |
-| `have P by { ... }` | control | Prove `P` in a nested proof and add it to the surrounding context. |
+| `have P by { ... }` | structural control; source class inherited | Prove `P` in a nested proof and add it to the surrounding context. |
 | `if P { ... } else { ... }` | control | Split the proof on the exact condition `P`. This does not execute a C `if`. |
 | `witness ...` / `choose ...` | control | Introduce or select existential evidence in the supported proposition contexts. |
 
@@ -70,6 +70,12 @@ alias. Its target is always the current pure goal; repeating that proposition
 inside the tactic is intentionally not accepted. The former `double_negation`
 and `vacuous` leaves are ordinary
 compositions: use `intro(); contradiction(P);`.
+
+`have` has two classifications for two different questions. Its AST shape is
+always control flow because it owns a nested goal. Its selectable source site
+inherits SMART from a supported smart body, SIMPLE from a nonempty entirely
+simple body, and is CONTROL otherwise. Profiling, smart-site discovery, and
+expansion all use this source-site class.
 
 ## Effects, resources, and snapshots
 

@@ -2109,9 +2109,9 @@ impl Assumptions {
                 }
             }
             ConditionTerm::Bitvector32Equal(left, right) => {
-                if bitvector_terms_proven_equal_for_memory_resolution(left, right, self) {
-                    Some(true)
-                } else if self.proves_condition_from_facts_for_simp(condition, true) {
+                if bitvector_terms_proven_equal_for_memory_resolution(left, right, self)
+                    || self.proves_condition_from_facts_for_simp(condition, true)
+                {
                     Some(true)
                 } else if bitvector_same_base_nonzero_const_offset(left, right) {
                     Some(false)
@@ -3092,7 +3092,7 @@ impl Assumptions {
     /// differ only in the memory snapshots their load atoms carry.
     ///
     /// Sound because it is exact everywhere except at load atoms, and a pair
-    /// of load atoms is accepted only when [`Self::memory_loads_proven_equal`]
+    /// of load atoms is accepted only when `memory_loads_proven_equal`
     /// proves the two loads denote the same value under these assumptions —
     /// which for differing snapshots means proving the snapshots agree at the
     /// loaded pointer. Structurally different conditions never match.
@@ -7413,7 +7413,7 @@ fn bitvector_index_in_range_shallow(
         return true;
     }
 
-    let Some(offset) = affine_bitvector_difference_constant(&index, start) else {
+    let Some(offset) = affine_bitvector_difference_constant(index, start) else {
         return false;
     };
     if offset < 0 {

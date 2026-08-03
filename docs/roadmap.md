@@ -78,9 +78,10 @@ Likely additions:
 - `char` and string literal support:
   null-terminated byte arrays, read-only static storage, and byte/string
   predicates in the standard library.
-- Structs and field access:
-  Click-side layout helpers, field frames, and ABI layout details for common
-  library state objects.
+- Broader structs and field access: the current LP64 slice has multi-field
+  declarations, alignment/tail padding, chained pointer-field loads/stores,
+  and field resource places. Remaining work includes struct values, embedded
+  structs, arrays of structs, unions/bitfields, and broader address-taking.
 - Enums and named constants:
   needed for real error codes and option flags.
 - Globals:
@@ -174,8 +175,10 @@ Likely additions:
   theorems; next slices should cover better diagnostics, named conclusion
   selection, and eventually separate reusable resource-rule forms if repeated
   unfold/fold patterns justify them.
-- Explicit rewrite/calc steps:
-  better than hiding all proof search inside `simp`.
+- More reusable rewrite support: `rewrite(P)` and deterministic `derive using`
+  already provide explicit certificate steps; remaining work is better
+  theorem selection and reusable algebraic lemmas rather than another calc
+  vocabulary.
 - Predicate/function namespaces that scale with modules.
 - A richer standard library:
   integer ranges, more byte-slice predicates, null-terminated strings,
@@ -205,8 +208,12 @@ A real library cannot be verified as one giant symbolic execution.
 
 Likely additions:
 
-- Separate function summaries that can be checked once and reused.
-- Verified external function specifications for libc and library-local helpers.
+- Broader modular summaries: verified Click function contracts are already
+  checked once and used at calls, with dependency-ordered targeted
+  verification. Remaining work is persistence/import across modules and richer
+  invalidation boundaries.
+- Verified external function specifications for libc and library-local helpers
+  beyond the current same-project contract model.
 - Module/import support for Click specs and stdlib files.
 - Stable naming for proof artifacts and generated obligations.
 - Incremental verification:
@@ -294,8 +301,10 @@ Done means:
 
 Good next tasks from the current state:
 
-1. Choose the first spec/model-state design before adding permission logic,
-   allocation, final release, or double-release checks.
+1. Choose the next spec/model-state boundary before adding fractional or
+   persistent permissions, allocation, final release, or double-release
+   checks. Mandatory viewed/owned range resources and composite resource
+   wrappers already exist.
 2. Broaden the struct/field memory model beyond compact C0 field lowering:
    whole-object resources, field-dependent composite resources, field
    frames, and eventually ABI layout details.
