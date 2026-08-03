@@ -2346,6 +2346,7 @@ pub(super) fn collect_c_state_bitvector_variables(
             CLocalBinding::Object { value, .. } => {
                 collect_c_value_bitvector_variables(value, variables)
             }
+            CLocalBinding::UninitializedObject { .. } => {}
             CLocalBinding::ArrayObject { .. } => {}
         }
     }
@@ -3600,6 +3601,9 @@ pub(super) fn substitute_bitvector_variable_in_c_state(
                     value: substitute_bitvector_variable_in_c_value(value, from, to),
                     c_type: *c_type,
                 },
+                CLocalBinding::UninitializedObject { c_type } => {
+                    CLocalBinding::UninitializedObject { c_type: *c_type }
+                }
                 CLocalBinding::ArrayObject {
                     element_type,
                     length,

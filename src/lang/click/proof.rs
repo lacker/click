@@ -621,7 +621,7 @@ pub(super) fn pure_theorem_parameter_values(
                 C0Type::Int32 => CValue::Int32(Bitvector32Term::Variable(Variable(index as u64))),
                 C0Type::UInt8 => CValue::UInt8(Bitvector32Term::Variable(Variable(index as u64))),
                 C0Type::Int32Pointer | C0Type::Int32Array(_) => CValue::Pointer(Pointer {
-                    block: EXTERNAL_ARGUMENT_MEMORY_BLOCK.into(),
+                    block: PointerBlock::ExternalArgument,
                     offset: scale_int32_offset(
                         Bitvector32Term::Variable(Variable(
                             POINTER_ARGUMENT_VARIABLE_BASE + index as u64,
@@ -630,7 +630,7 @@ pub(super) fn pure_theorem_parameter_values(
                     ),
                 }),
                 C0Type::UInt8Pointer | C0Type::UInt8Array(_) => CValue::Pointer(Pointer {
-                    block: EXTERNAL_ARGUMENT_MEMORY_BLOCK.into(),
+                    block: PointerBlock::ExternalArgument,
                     offset: scale_int32_offset(
                         Bitvector32Term::Variable(Variable(
                             POINTER_ARGUMENT_VARIABLE_BASE + index as u64,

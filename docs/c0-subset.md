@@ -79,6 +79,11 @@ Out-of-bounds memory accesses become proof obligations or undefined behavior
 depending on the symbolic execution path. Prove access safety with viewed or
 owned memory resources, `loadable(...)`, index bounds, and loop invariants.
 
+Automatic scalar, pointer, and array declarations do not zero-initialize their
+storage. Reading a local before a value has been written is undefined behavior.
+Declaration initializers such as `int32 i = 0;` are lowered as a declaration
+followed by the initializing assignment.
+
 ## Local Arrays
 
 Local arrays allocate stack memory blocks:

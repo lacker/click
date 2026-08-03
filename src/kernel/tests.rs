@@ -3508,6 +3508,32 @@ fn interval_arithmetic_uses_lower_bound_for_incremented_values() {
 }
 
 #[test]
+fn nonnegative_successor_requires_no_overflow_evidence() {
+    let x = Bitvector32Term::Variable(Variable(74_001));
+    let successor = Bitvector32Term::add(x.clone(), Bitvector32Term::Constant(1));
+    let assumptions = Assumptions::new().assume_condition(
+        ConditionTerm::signed_greater_equal(x.clone(), Bitvector32Term::Constant(0)),
+        true,
+    );
+
+    assert_eq!(
+        assumptions.decide(&ConditionTerm::signed_greater_equal(
+            successor.clone(),
+            Bitvector32Term::Constant(0),
+        )),
+        None,
+    );
+    assert!(
+        assumptions
+            .derive_simp_proposition(&Proposition::ConditionIs(
+                ConditionTerm::signed_greater_equal(successor, Bitvector32Term::Constant(0),),
+                true,
+            ))
+            .is_none()
+    );
+}
+
+#[test]
 fn additive_upper_bound_covers_incremented_pointer_access() {
     let j = Variable(74);
     let j_bits = Bitvector32Term::Variable(j);
@@ -6667,6 +6693,66 @@ fn missing_memory_load_is_native_undefined_behavior() {
 }
 
 #[test]
+fn contract_certification_checks_every_spec_lowering_path() {
+    let base = Pointer {
+        block: "local:contract-path-probe".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let queried = Pointer {
+        block: base.block.clone(),
+        offset: PointerOffsetTerm::Variable(Variable(900_001)),
+    };
+    let memory = CMemory::new()
+        .with_block(base.block.clone(), 8)
+        .store(base, int32(0));
+    let state = CState::new().with_memory(memory);
+    let q = SpecExpression::CExpression(c_variable("q"));
+    let function = c_function(
+        CType::Int32,
+        "contract_path_probe",
+        vec![c_parameter("q", CType::Int32Pointer)],
+        c_return(c_int32_literal(0)),
+    )
+    .with_contract(
+        vec![SpecProposition::MemoryLoadable {
+            memory: SpecMemory::Current,
+            base: q.clone(),
+            start: SpecExpression::Value(int32(0)),
+            end: SpecExpression::Value(int32(1)),
+            element_width: 4,
+        }],
+        vec![SpecProposition::Comparison {
+            left: SpecExpression::MemoryLoad {
+                memory: SpecMemory::Current,
+                pointer: Box::new(q),
+                value_type: CType::Int32,
+            },
+            operator: CComparisonOperator::Equal,
+            right: SpecExpression::Value(int32(0)),
+        }],
+        vec![],
+        vec![
+            CFunctionContractClaim::body_safety(),
+            CFunctionContractClaim::ensure_proposition(0, 0),
+        ],
+        true,
+    );
+    let execution = prove_c_function_contract_execution_paths_with_environment(
+        state,
+        function.clone(),
+        vec![c_pointer_value(queried)],
+        vec![],
+        CExecutionEnvironment::new(),
+        CExecutionSemantics::APPLY_CALL_RULES_AND_VERIFY_LOOPS,
+        CFunctionContractExecutionMode::VerifyLoops,
+    );
+    let unverified = c_unverified_function_contract_claims(&function, &execution)
+        .expect("the complete frontier should remain checkable");
+
+    assert_eq!(unverified, vec![CFunctionContractClaimKey::Ensure(0)]);
+}
+
+#[test]
 fn function_execution_theorem_retains_non_assumable_verification_conditions() {
     let verification_condition = Proposition::ConditionIs(ConditionTerm::Constant(false), true);
     let conclusion = Proposition::ConditionIs(ConditionTerm::Constant(true), true);
@@ -6808,6 +6894,75 @@ fn verified_function_rule_applies_contract_without_executing_body() {
             ..
         } if *value == int32(99)
     ));
+}
+
+#[test]
+fn verified_function_rule_does_not_publish_one_spec_alias_path() {
+    let stored = Pointer {
+        block: "heap".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let queried = Pointer {
+        block: stored.block.clone(),
+        offset: PointerOffsetTerm::Variable(Variable(900_002)),
+    };
+    let q = SpecExpression::CExpression(c_variable("q"));
+    let reflexive_load = SpecProposition::Comparison {
+        left: SpecExpression::MemoryLoad {
+            memory: SpecMemory::Current,
+            pointer: Box::new(q.clone()),
+            value_type: CType::Int32,
+        },
+        operator: CComparisonOperator::Equal,
+        right: SpecExpression::MemoryLoad {
+            memory: SpecMemory::Current,
+            pointer: Box::new(q),
+            value_type: CType::Int32,
+        },
+    };
+    let helper = c_function(
+        CType::Int32,
+        "opaque_alias_probe",
+        vec![c_parameter("q", CType::Int32Pointer)],
+        c_return(c_int32_literal(0)),
+    )
+    .with_contract(
+        Vec::new(),
+        vec![reflexive_load],
+        Vec::new(),
+        vec![
+            CFunctionContractClaim::body_safety(),
+            CFunctionContractClaim::ensure_proposition(0, 0),
+        ],
+        true,
+    );
+    let environment = CExecutionEnvironment::new()
+        .with_function(helper.clone())
+        .with_verified_function_rule(CVerifiedFunctionRule { function: helper });
+    let execution = prove_symbolic_c_execution_paths_with_environment(
+        CState::new().with_memory(CMemory::new().with_block("heap", 8).store(stored, int32(0))),
+        c_call_assign(
+            "result",
+            "opaque_alias_probe",
+            vec![c_pointer_value(queried)],
+        ),
+        Assumptions::new(),
+        environment,
+        CExecutionSemantics::APPLY_VERIFIED_RULES,
+    );
+    let path = execution.paths().first().expect("opaque call path");
+
+    assert!(
+        path.obligations().is_empty(),
+        "unexpected obligations: {:#?}",
+        path.obligations()
+    );
+    assert!(!path.facts().iter().any(|fact| {
+        matches!(
+            fact.proposition(),
+            Proposition::ConditionIs(ConditionTerm::PointerOffsetEqual(_, _), _)
+        )
+    }));
 }
 
 #[test]

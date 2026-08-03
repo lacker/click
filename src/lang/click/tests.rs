@@ -7605,6 +7605,78 @@ fn symbolic_increment_without_numeric_requirement_fails() {
 }
 
 #[test]
+fn uninitialized_scalar_read_fails_verification() {
+    let c_source = r#"
+            int32 read_uninitialized() {
+                int32 x;
+                return x;
+            }
+        "#;
+    let click_source = r#"
+            verifying "read_uninitialized.c";
+
+            int32 read_uninitialized() {
+                ensures result == 0 by auto;
+            }
+        "#;
+
+    let error = verify_c0_sources(click_source, &[("read_uninitialized.c", c_source)])
+        .expect_err("an uninitialized scalar read must not verify");
+    assert!(
+        error.message().contains("read of uninitialized storage"),
+        "{}",
+        error.message()
+    );
+}
+
+#[test]
+fn uninitialized_local_array_read_fails_verification() {
+    let c_source = r#"
+            int32 read_uninitialized_array() {
+                int32 data[1];
+                return data[0];
+            }
+        "#;
+    let click_source = r#"
+            verifying "read_uninitialized_array.c";
+
+            int32 read_uninitialized_array() {
+                ensures result == 0 by auto;
+            }
+        "#;
+
+    let error = verify_c0_sources(click_source, &[("read_uninitialized_array.c", c_source)])
+        .expect_err("an uninitialized local array read must not verify");
+    assert!(
+        error.message().contains("read of uninitialized storage"),
+        "{}",
+        error.message()
+    );
+}
+
+#[test]
+fn pointer_argument_keeps_its_null_execution_path() {
+    let c_source = r#"
+            int32 pointer_is_null(int32* p) {
+                if (p == 0) {
+                    return 1;
+                }
+                return 0;
+            }
+        "#;
+    let click_source = r#"
+            verifying "pointer_is_null.c";
+
+            int32 pointer_is_null(int32* p) {
+                ensures result == 0 by auto;
+            }
+        "#;
+
+    verify_c0_sources(click_source, &[("pointer_is_null.c", c_source)])
+        .expect_err("an unconstrained pointer parameter may be null");
+}
+
+#[test]
 fn step_and_execute_step_advance_one_concrete_loop_transition() {
     let c_source = r#"
             int32 count_two() {
@@ -7818,7 +7890,7 @@ fn verifies_fill3_c0_source_with_sidecar_specification() {
     assert_eq!(verified.len(), 1);
     let verified = &verified[0];
     let base = Pointer {
-        block: EXTERNAL_ARGUMENT_MEMORY_BLOCK.into(),
+        block: PointerBlock::ExternalArgument,
         offset: scale_int32_offset(
             Bitvector32Term::Variable(Variable(POINTER_ARGUMENT_VARIABLE_BASE)),
             4,

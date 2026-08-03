@@ -98,6 +98,7 @@ pub struct Pointer {
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum PointerBlock {
     Concrete(String),
+    ExternalArgument,
     Symbolic(Variable),
 }
 
@@ -109,7 +110,7 @@ impl PointerBlock {
     pub(crate) fn strip_prefix<'a>(&'a self, prefix: &str) -> Option<&'a str> {
         match self {
             Self::Concrete(name) => name.strip_prefix(prefix),
-            Self::Symbolic(_) => None,
+            Self::ExternalArgument | Self::Symbolic(_) => None,
         }
     }
 }
@@ -130,6 +131,7 @@ impl std::fmt::Display for PointerBlock {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Concrete(name) => formatter.write_str(name),
+            Self::ExternalArgument => formatter.write_str("arg-memory"),
             Self::Symbolic(variable) => write!(formatter, "symbolic-pointer:{}", variable.0),
         }
     }
@@ -552,6 +554,7 @@ pub enum CUndefinedBehavior {
     DivisionByZero,
     InvalidShift,
     InvalidMemory,
+    UninitializedRead,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -644,6 +647,7 @@ pub struct CLocalEnvironment {
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub(super) enum CLocalBinding {
     Object { value: CValue, c_type: CType },
+    UninitializedObject { c_type: CType },
     ArrayObject { element_type: CType, length: u32 },
 }
 
@@ -2109,7 +2113,7 @@ impl CLValue {
 }
 
 impl Pointer {
-    pub(super) fn symbolic(variable: Variable) -> Self {
+    pub(crate) fn symbolic(variable: Variable) -> Self {
         Self {
             block: PointerBlock::Symbolic(variable),
             offset: PointerOffsetTerm::Constant(0),
@@ -2118,7 +2122,10 @@ impl Pointer {
 
     #[cfg_attr(not(test), allow(dead_code))]
     pub(super) fn has_symbolic_block(&self) -> bool {
-        matches!(self.block, PointerBlock::Symbolic(_))
+        matches!(
+            self.block,
+            PointerBlock::ExternalArgument | PointerBlock::Symbolic(_)
+        )
     }
 
     pub(super) fn blocks_proven_distinct(&self, other: &Self) -> bool {
@@ -2642,6 +2649,11 @@ impl CLocalEnvironment {
             .insert(name.into(), CLocalBinding::Object { value, c_type });
     }
 
+    pub(super) fn set_uninitialized(&mut self, name: impl Into<String>, c_type: CType) {
+        self.bindings
+            .insert(name.into(), CLocalBinding::UninitializedObject { c_type });
+    }
+
     pub fn set_int32_array(&mut self, name: impl Into<String>, length: u32) {
         self.set_array_object(name, CType::Int32, length);
     }
@@ -2668,7 +2680,9 @@ impl CLocalEnvironment {
     pub fn get(&self, name: &str) -> Option<&CValue> {
         match self.bindings.get(name) {
             Some(CLocalBinding::Object { value, .. }) => Some(value),
-            Some(CLocalBinding::ArrayObject { .. }) | None => None,
+            Some(CLocalBinding::UninitializedObject { .. })
+            | Some(CLocalBinding::ArrayObject { .. })
+            | None => None,
         }
     }
 
@@ -2677,7 +2691,9 @@ impl CLocalEnvironment {
             .iter()
             .filter_map(|(name, binding)| match binding {
                 CLocalBinding::Object { value, .. } => Some((name.as_str(), value)),
-                CLocalBinding::ArrayObject { .. } => None,
+                CLocalBinding::UninitializedObject { .. } | CLocalBinding::ArrayObject { .. } => {
+                    None
+                }
             })
     }
 
@@ -2690,13 +2706,14 @@ impl CLocalEnvironment {
                     CValue::Pointer(CMemory::local_pointer(name)),
                     *element_type,
                 )),
-                CLocalBinding::Object { .. } => None,
+                CLocalBinding::Object { .. } | CLocalBinding::UninitializedObject { .. } => None,
             })
     }
 
     pub(super) fn object_type(&self, name: &str) -> Option<CType> {
         match self.binding(name) {
             Some(CLocalBinding::Object { c_type, .. }) => Some(*c_type),
+            Some(CLocalBinding::UninitializedObject { c_type }) => Some(*c_type),
             Some(CLocalBinding::ArrayObject { element_type, .. }) => Some(*element_type),
             None => None,
         }
@@ -2705,6 +2722,7 @@ impl CLocalEnvironment {
     pub(super) fn scalar_object_type(&self, name: &str) -> Option<CType> {
         match self.binding(name) {
             Some(CLocalBinding::Object { c_type, .. }) => Some(*c_type),
+            Some(CLocalBinding::UninitializedObject { c_type }) => Some(*c_type),
             Some(CLocalBinding::ArrayObject { .. }) | None => None,
         }
     }
@@ -2894,7 +2912,9 @@ impl CMemory {
     }
 
     pub(super) fn is_loadable_concretely(&self, pointer: &Pointer, byte_width: u32) -> bool {
-        self.cells.contains_key(pointer) || self.access_in_bounds(pointer, byte_width)
+        self.cells
+            .get(pointer)
+            .is_some_and(|value| value.byte_width() == byte_width)
     }
 
     pub(super) fn can_store_concretely(&self, pointer: &Pointer, value: &CValue) -> bool {

@@ -374,7 +374,8 @@ pub(super) fn evaluate_c_lvalue_paths(
     let paths = match expression {
         CExpression::Variable(name) => vec![CLValuePath {
             outcome: match state.locals.binding(name) {
-                Some(CLocalBinding::Object { c_type, .. }) => {
+                Some(CLocalBinding::Object { c_type, .. })
+                | Some(CLocalBinding::UninitializedObject { c_type }) => {
                     CLValueOutcome::LValue(CLValue::local(name.clone(), *c_type))
                 }
                 Some(CLocalBinding::ArrayObject { .. }) => {
@@ -535,6 +536,13 @@ pub(super) fn read_c_lvalue_paths(
                         CExpressionOutcome::Value(value.clone())
                     }
                     Some(_) => CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+                    None if matches!(
+                        state.locals.binding(name),
+                        Some(CLocalBinding::UninitializedObject { .. })
+                    ) =>
+                    {
+                        CExpressionOutcome::UndefinedBehavior(CUndefinedBehavior::UninitializedRead)
+                    }
                     None => CExpressionOutcome::RuntimeError(CRuntimeError::UnboundVariable(
                         name.clone(),
                     )),
@@ -634,6 +642,7 @@ pub(super) fn c_expression_pointee_type(state: &CState, expression: &CExpression
     match expression {
         CExpression::Variable(name) => match state.locals.binding(name) {
             Some(CLocalBinding::Object { c_type, .. }) => c_type.pointee_type(),
+            Some(CLocalBinding::UninitializedObject { c_type }) => c_type.pointee_type(),
             Some(CLocalBinding::ArrayObject { element_type, .. }) => Some(*element_type),
             None => None,
         },
@@ -1161,6 +1170,20 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
         }];
     }
 
+    // Automatic storage is allocated by a declaration, but allocation alone
+    // does not initialize it. Once all possibly-aliasing stored cells have
+    // been considered above, an in-bounds local load with no matching cell is
+    // an uninitialized read rather than an unconstrained value.
+    if pointer.block.starts_with("local:")
+        && memory.access_in_bounds(&pointer, value_type.byte_width())
+    {
+        return vec![CExpressionPath {
+            outcome: CExpressionOutcome::UndefinedBehavior(CUndefinedBehavior::UninitializedRead),
+            facts,
+            obligations,
+        }];
+    }
+
     if !has_external_read_resource {
         let proposition = Proposition::CMemoryLoadable {
             memory: memory.clone(),
@@ -1199,7 +1222,7 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
     }]
 }
 
-fn symbolic_pointer_value_from_int_cell(
+pub(super) fn symbolic_pointer_value_from_int_cell(
     pointer: &Pointer,
     value: &CValue,
     value_type: CType,
@@ -3184,23 +3207,10 @@ pub(super) fn execute_c_while_body_paths(
 
 pub(super) fn declare_local(state: &CState, name: &str, c_type: CType) -> CState {
     let mut state = state.clone();
-    let (initial_value, byte_width) = match c_type {
-        CType::Int32 => (int32(0), 4),
-        CType::UInt8 => (uint8(0), 1),
-        CType::Int32Pointer => (
-            CValue::Pointer(Pointer {
-                block: "null".into(),
-                offset: PointerOffsetTerm::Constant(0),
-            }),
-            C_POINTER_BYTE_WIDTH,
-        ),
-        CType::UInt8Pointer => (
-            CValue::Pointer(Pointer {
-                block: "null".into(),
-                offset: PointerOffsetTerm::Constant(0),
-            }),
-            C_POINTER_BYTE_WIDTH,
-        ),
+    let byte_width = match c_type {
+        CType::Int32 => 4,
+        CType::UInt8 => 1,
+        CType::Int32Pointer | CType::UInt8Pointer => C_POINTER_BYTE_WIDTH,
         CType::Int32Array(length) => {
             let pointer = CMemory::local_pointer(name);
             state.memory = state
@@ -3221,13 +3231,8 @@ pub(super) fn declare_local(state: &CState, name: &str, c_type: CType) -> CState
         }
     };
     let pointer = CMemory::local_pointer(name);
-    state.memory = state
-        .memory
-        .with_block(pointer.block.clone(), byte_width)
-        .store(pointer, initial_value.clone());
-    state
-        .locals
-        .set_typed(name.to_string(), initial_value, c_type);
+    state.memory = state.memory.with_block(pointer.block, byte_width);
+    state.locals.set_uninitialized(name.to_string(), c_type);
     state
 }
 

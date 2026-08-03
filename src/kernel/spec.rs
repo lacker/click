@@ -987,19 +987,32 @@ pub(super) fn evaluate_spec_expression_paths_with_loop_entry(
                     },
                     SpecMemory::Fixed(memory) => memory,
                 };
-                paths.extend(
-                    evaluate_c_memory_load_paths(
-                        memory,
-                        pointer,
-                        *value_type,
-                        pointer_path.facts,
-                        pointer_path.obligations,
-                        assumptions,
-                        false,
-                    )
-                    .into_iter()
-                    .filter_map(c_expression_path_value),
-                );
+                let value = memory
+                    .known_value(&pointer)
+                    .and_then(|stored| {
+                        symbolic_pointer_value_from_int_cell(&pointer, &stored, *value_type)
+                            .or_else(|| value_type.accepts(&stored).then_some(stored))
+                    })
+                    .or_else(|| symbolic_load_value(memory, &pointer, *value_type));
+                let Some(value) = value else {
+                    continue;
+                };
+                let mut obligations = pointer_path.obligations;
+                if !memory.is_loadable_concretely(&pointer, value_type.byte_width()) {
+                    let loadable = Proposition::CMemoryLoadable {
+                        memory: memory.clone(),
+                        base: pointer,
+                        bytes: Bitvector32Term::Constant(value_type.byte_width()),
+                    };
+                    if add_proof_obligation(&mut obligations, assumptions, loadable).is_none() {
+                        continue;
+                    }
+                }
+                paths.push(SpecExpressionPath {
+                    value,
+                    facts: pointer_path.facts,
+                    obligations,
+                });
             }
             paths
         }

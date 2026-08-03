@@ -157,32 +157,11 @@ int32 buffer_push_preserves_first(
 } by {
     execute();
     frame();
-    have data[0] == old(data[0]) by {
-        derive using {
-            at(statement(1).entry, 1) <= at(statement(1).entry, owner->len);
-            at(statement(1).entry, (owner->len + 1)) < at(statement(1).entry, owner->cap);
-            at(statement(1).entry, owner->data) == at(statement(1).entry, data);
-            at(statement(2).entry, separate(memory(owner->len), memory(owner->cap)));
-            at(statement(2).entry, separate(memory(owner->len), memory(owner->data)));
-            at(statement(2).entry, separate(memory(owner->cap), memory(owner->data)));
-            at(statement(2).entry, loadable(old(owner->len)));
-            at(statement(2).entry, loadable(old(owner->cap)));
-            at(statement(2).entry, loadable(old(owner->data)));
-            at(statement(2).entry, loadable(old(owner->data[0..owner->cap])));
-            at(statement(1).entry, 0) <= at(statement(1).entry, owner->len);
-            at(statement(1).entry, owner->len) < at(statement(1).entry, owner->cap);
-            at(statement(2).exit, ignored) == old((owner->len + 1));
-            owner->cap == at(statement(0).entry, owner->cap);
-            owner->data == at(statement(0).entry, owner->data);
-            at(statement(1).entry, separate(memory(owner[0..4]), memory(owner->data[0..owner->cap])));
-            contains(owned_buffer(owner), memory(owner->len));
-            contains(owned_buffer(owner), memory(owner->cap));
-            contains(owned_buffer(owner), memory(owner->data));
-            owner->cap == owner->cap;
-            owner->data == owner->data;
-            0 <= owner->len;
-        }
+    have at(statement(1).entry, data[0]) == old(data[0]) by {
+        normalize();
     }
+    have data[0] == at(statement(1).entry, data[0]) by simp;
+    have data[0] == old(data[0]) by simp;
     assumption();
     assumption();
 }

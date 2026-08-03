@@ -1991,11 +1991,11 @@ int32 caller() {
     ensures result == 0;
 } by {
     execute();
-    have at(statement(1).entry, c(result)) == 0 by {
-        normalize();
-    }
-    have result == at(statement(1).entry, c(result)) by {
+    have at(statement(2).entry, c(result)) == 0 by {
         assumption();
+    }
+    have result == at(statement(2).entry, c(result)) by {
+        normalize();
     }
     assumption();
 }

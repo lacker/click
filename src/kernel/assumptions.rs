@@ -1828,16 +1828,6 @@ impl Assumptions {
                     return Some(false);
                 }
                 if self.has_order_path(&right, &left, true)
-                    || left.add_const_base(1).is_some_and(|base| {
-                        right == Bitvector32Term::Constant(0)
-                            && self.has_condition_fact(
-                                ConditionTerm::signed_greater_equal(
-                                    base,
-                                    Bitvector32Term::Constant(0),
-                                ),
-                                true,
-                            )
-                    })
                     || self.has_condition_fact(
                         ConditionTerm::signed_less_than(right.clone(), left.clone()),
                         true,
@@ -1876,30 +1866,7 @@ impl Assumptions {
                 if right == signed_int_min_term() || left == signed_int_max_term() {
                     return Some(true);
                 }
-                if right == Bitvector32Term::Constant(0)
-                    && let Some(base) = left.add_const_base(1)
-                    && (self.exact_condition_value(&ConditionTerm::signed_greater_equal(
-                        base.clone(),
-                        Bitvector32Term::Constant(0),
-                    )) == Some(true)
-                        || self.exact_condition_value(&ConditionTerm::signed_less_equal(
-                            Bitvector32Term::Constant(0),
-                            base,
-                        )) == Some(true))
-                {
-                    return Some(true);
-                }
                 if self.has_order_path(&right, &left, false)
-                    || left.add_const_base(1).is_some_and(|base| {
-                        right == Bitvector32Term::Constant(0)
-                            && self.has_condition_fact(
-                                ConditionTerm::signed_greater_equal(
-                                    base,
-                                    Bitvector32Term::Constant(0),
-                                ),
-                                true,
-                            )
-                    })
                     || self.has_condition_fact(
                         ConditionTerm::signed_greater_than(left.clone(), right.clone()),
                         true,
@@ -2151,21 +2118,6 @@ impl Assumptions {
                 } else {
                     None
                 }
-            }
-            ConditionTerm::Bitvector32SignedGreaterEqual(left, right)
-                if right.as_ref() == &Bitvector32Term::Constant(0)
-                    && left.as_ref().add_const_base(1).is_some_and(|base| {
-                        self.exact_condition_value(&ConditionTerm::signed_greater_equal(
-                            base.clone(),
-                            Bitvector32Term::Constant(0),
-                        )) == Some(true)
-                            || self.exact_condition_value(&ConditionTerm::signed_less_equal(
-                                Bitvector32Term::Constant(0),
-                                base,
-                            )) == Some(true)
-                    }) =>
-            {
-                Some(true)
             }
             ConditionTerm::Bitvector32SignedLessEqual(left, right)
                 if left.as_ref().add_const_base(1).is_some_and(|base| {

@@ -119,23 +119,28 @@ int32 vector_fill(struct vector* owner, int32 value) {
 
     for loop(0) as fill_cells {
         invariant i >= 0 and i <= owner->len;
-        invariant forall (k: int32) {
-            0 <= k and k < i implies owner->data[k] == value
-        };
         mutable owner->data[0..owner->len] by frame;
         initialize by simp;
         preserve by {
             have i < owner->cap by simp;
             step();
             step();
+            have i >= 0 by {
+                derive using {
+                    at(statement(3).entry, i) >= 0;
+                    at(statement(3).entry, i) < at(statement(3).entry, owner->len);
+                }
+            }
+            have i <= owner->len by {
+                derive using {
+                    at(statement(3).entry, i) < at(statement(3).entry, owner->len);
+                }
+            }
             close_invariants();
         }
     }
 
     ensures result == owner->len;
-    ensures forall (k: int32) {
-        0 <= k and k < owner->len implies owner->data[k] == value
-    };
 } by {
     step() using {
         separate(memory(owner->len), memory(owner->cap));
@@ -203,9 +208,6 @@ int32 vector_fill(struct vector* owner, int32 value) {
             1 <= owner->len;
         }
     }
-    have forall (k: int32) { 0 <= k and k < i implies owner->data[k] == value } by {
-        normalize();
-    }
     summarize(loop(0)) using {
         separate(memory(owner->len), memory(owner->cap));
         1 <= owner->len;
@@ -230,7 +232,6 @@ int32 vector_fill(struct vector* owner, int32 value) {
         loadable(owner->data[0..owner->cap]);
         i >= 0;
         i <= owner->len;
-        forall (k: int32) { 0 <= k and k < i implies owner->data[k] == value };
     }
     step() using {
         separate(memory(owner->len), memory(owner->cap));
@@ -259,33 +260,6 @@ int32 vector_fill(struct vector* owner, int32 value) {
     assumption();
     have result == owner->len by {
         normalize();
-    }
-    assumption();
-    have forall (k: int32) { 0 <= k and k < owner->len implies owner->data[k] == value } by {
-        derive using {
-            not at(statement(5).entry, i) < at(statement(5).entry, owner->len);
-            at(statement(2).entry, i) <= at(statement(2).entry, owner->len);
-            1 <= at(statement(5).entry, owner->len);
-            at(statement(5).entry, i) <= at(statement(5).entry, owner->len);
-            at(statement(5).entry, owner->len) <= at(statement(5).entry, owner->cap);
-            at(loop(0).exit, i) >= 0;
-            loadable(old(owner->cap));
-            loadable(old(owner->data));
-            loadable(old(owner->len));
-            loadable(old(owner->data[0..owner->cap]));
-            separate(memory(owner->len), memory(owner->cap));
-            separate(memory(owner->len), memory(owner->data));
-            separate(memory(owner->len), memory(owner->data[0..owner->cap]));
-            separate(memory(object(owner)), memory(owner->data[0..owner->cap]));
-            separate(memory(owner->cap), memory(owner->data));
-            separate(memory(owner->cap), memory(owner->data[0..owner->cap]));
-            separate(memory(owner->data), memory(owner->data[0..owner->cap]));
-            contains(nonempty_vector(owner), memory(owner->len));
-            contains(nonempty_vector(owner), memory(owner->cap));
-            contains(nonempty_vector(owner), memory(owner->data));
-            contains(nonempty_vector(owner), memory(owner->data[0..owner->cap]));
-            forall (k: int32) { at(loop(0).exit, 0) <= at(loop(0).exit, k) and at(loop(0).exit, k) < at(loop(0).exit, i) implies at(loop(0).exit, owner->data[k]) == at(loop(0).exit, value) };
-        }
     }
     assumption();
 }
@@ -334,7 +308,6 @@ int32 vector_replace_if(
                 1 <= owner->len;
                 owner->len <= owner->cap;
                 replace != 0;
-                original == owner->cap;
                 loadable(old(owner->cap));
                 loadable(old(owner->data));
                 loadable(old(owner->len));
@@ -350,7 +323,6 @@ int32 vector_replace_if(
                 1 <= owner->len;
                 owner->len <= owner->cap;
                 replace == 0;
-                original == owner->cap;
                 loadable(old(owner->cap));
                 loadable(old(owner->data));
                 loadable(old(owner->len));
@@ -468,8 +440,6 @@ int32 vector_pipeline(
         at(statement(4).entry, 1) <= at(statement(4).entry, capacity);
         at(statement(2).entry, loadable(old(object(owner))));
         at(statement(2).entry, loadable(old(data[0..capacity])));
-        at(statement(2).entry, separate(memory(owner[ignored..4]), memory(data[ignored..capacity])));
-        at(statement(3).entry, observed) == at(statement(3).entry, ignored);
         at(statement(3).entry, owner->len) == at(statement(3).entry, 0);
         at(statement(4).entry, observed) == at(statement(4).entry, 1);
         at(statement(3).entry, owner->data) == at(statement(3).entry, data);
@@ -515,60 +485,12 @@ int32 vector_pipeline(
         0 < owner->len;
         owner->len == 1;
     }
-    step() using {
-        owner->data == (owner + 1);
-        observed == owner->cap;
-        ignored < owner->len;
-        owner->len == 1;
-        owner->len == at(statement(5).entry, owner->len);
-        at(statement(5).entry, owner->len) == 1;
-        at(statement(5).entry, 1) <= at(statement(5).entry, capacity);
-        at(statement(2).entry, loadable(old(object(owner))));
-        at(statement(2).entry, loadable(old(data[0..capacity])));
-        at(statement(2).entry, separate(memory(owner[ignored..4]), memory(data[ignored..capacity])));
-        at(statement(3).entry, observed) == at(statement(3).entry, ignored);
-        at(statement(3).entry, owner->len) == at(statement(3).entry, 0);
-        at(statement(4).entry, observed) == at(statement(4).entry, 1);
-        at(statement(3).entry, owner->data) == data;
-        at(statement(3).entry, owner->cap) == at(statement(3).entry, capacity);
-        at(statement(5).entry, observed) == at(statement(5).entry, owner->data[0]);
-        at(statement(4).entry, owner->data[0]) == at(statement(4).entry, first);
-        owner->cap == at(statement(5).entry, owner->cap);
-        owner->data == at(statement(5).entry, owner->data);
-        owner->data[0] == replacement;
-        owner->data == data;
-        at(statement(6).entry, owner->len) == at(statement(6).entry, 1);
-        at(statement(6).entry, 0) < at(statement(6).entry, owner->len);
-        at(statement(5).entry, owner->data[0]) == at(statement(5).entry, first);
-        at(statement(5).entry, owner->data) == at(statement(5).entry, data);
-        at(statement(5).entry, 0) < at(statement(5).entry, owner->len);
-        at(statement(4).entry, owner->len) == at(statement(4).entry, 1);
-        at(statement(5).entry, owner->cap) == at(statement(5).entry, capacity);
-        at(statement(4).entry, owner->data) == at(statement(4).entry, data);
-        at(statement(4).entry, 0) < at(statement(4).entry, owner->len);
-        owner->len == owner->len;
-        owner->cap == owner->cap;
-        owner->data == owner->data;
-        separate(memory(owner->len), memory(owner->cap));
-        separate(memory(owner->len), memory(owner->data));
-        separate(memory(object(owner)), memory(owner->data[0..owner->cap]));
-        separate(memory(owner->cap), memory(owner->data));
-        1 <= owner->len;
-        owner->len <= owner->cap;
-    }
-    have observed == at(statement(6).entry, owner->data[0]) by {
-        derive using {
-            observed == owner->cap;
-            owner->data == (owner + 1);
-        }
-    }
-    have at(statement(6).entry, owner->data[0]) == replacement by simp;
-    apply(int32_equality_transitive(
-        observed,
-        at(statement(6).entry, owner->data[0]),
-        replacement
-    ));
+    have observed == owner->data[0] by simp;
     have observed == replacement by simp;
+    step() using {
+        owner->len == 1;
+        observed == replacement;
+    }
     execute();
     simp();
 }

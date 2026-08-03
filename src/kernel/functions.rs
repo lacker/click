@@ -460,45 +460,74 @@ fn execute_verified_function_rule(
                 assumptions_with_path_context(&path_assumptions, &facts, &obligations);
             let requirement_assumptions =
                 assumptions_with_propositions(&requirement_assumptions, &established_requirements);
+            let lowering_assumptions = requirement_assumptions
+                .clone()
+                .allow_symbolic_contract_loads();
             let requirement_paths = lower_spec_proposition_at_state_with_loop_entry(
                 &entry_contract_state,
                 requirement,
                 Some(&entry_contract_state),
-                &requirement_assumptions,
+                &lowering_assumptions,
                 budget,
             )?;
-            let Some(requirement_path) = requirement_paths.into_iter().next() else {
+            if requirement_paths.is_empty() {
                 obligations.push(
                     ProofObligation::verification_condition(false_equals_true_proposition())
                         .with_context(format!("{} precondition", function.name())),
                 );
                 continue;
-            };
-            obligations.extend(requirement_path.obligations);
-            established_requirements.push(requirement_path.proposition.clone());
-            let requirement_is_proven = match &requirement_path.proposition {
-                Proposition::ConditionIs(condition, value) => {
-                    requirement_assumptions.proves_exact(&requirement_path.proposition)
-                        || requirement_assumptions
-                            .has_matching_condition_fact_for_memory_resolution(condition, *value)
-                }
-                Proposition::CResourceSeparate {
-                    left: CResource::Memory(left),
-                    right: CResource::Memory(right),
-                } => requirement_assumptions.proves_exact(&requirement_path.proposition)
-                    || requirement_assumptions
-                        .memory_ranges_proven_disjoint_by_explicit_separation_for_memory_resolution(
-                            left, right,
-                        ),
-                proposition => requirement_assumptions.proves_exact(proposition),
-            };
-            if !requirement_is_proven {
-                obligations.push(
-                    ProofObligation::verification_condition(requirement_path.proposition)
-                        .with_context(format!("{} precondition", function.name())),
-                );
             }
-            facts.extend(requirement_path.facts);
+            for requirement_path in requirement_paths {
+                let path_assumptions = assumptions_with_path_context(
+                    &requirement_assumptions,
+                    &requirement_path.facts,
+                    &requirement_path.obligations,
+                );
+                for path_obligation in &requirement_path.obligations {
+                    let guarded = wrap_path_context(
+                        path_obligation.proposition().clone(),
+                        &requirement_path.facts,
+                        &[],
+                    );
+                    if !requirement_assumptions.proves(&guarded) {
+                        obligations.push(
+                            ProofObligation::verification_condition(guarded.clone())
+                                .with_context(format!("{} precondition", function.name())),
+                        );
+                    }
+                    established_requirements.push(guarded);
+                }
+                let requirement_is_proven = match &requirement_path.proposition {
+                    Proposition::ConditionIs(condition, value) => {
+                        path_assumptions.proves_exact(&requirement_path.proposition)
+                            || path_assumptions
+                                .has_matching_condition_fact_for_memory_resolution(
+                                    condition, *value,
+                                )
+                    }
+                    Proposition::CResourceSeparate {
+                        left: CResource::Memory(left),
+                        right: CResource::Memory(right),
+                    } => path_assumptions.proves_exact(&requirement_path.proposition)
+                        || path_assumptions
+                            .memory_ranges_proven_disjoint_by_explicit_separation_for_memory_resolution(
+                                left, right,
+                            ),
+                    proposition => path_assumptions.proves_exact(proposition),
+                };
+                let guarded_requirement = wrap_path_context(
+                    requirement_path.proposition,
+                    &requirement_path.facts,
+                    &requirement_path.obligations,
+                );
+                if !requirement_is_proven && !requirement_assumptions.proves(&guarded_requirement) {
+                    obligations.push(
+                        ProofObligation::verification_condition(guarded_requirement.clone())
+                            .with_context(format!("{} precondition", function.name())),
+                    );
+                }
+                established_requirements.push(guarded_requirement);
+            }
         }
 
         let effective_assumptions =
@@ -624,16 +653,29 @@ fn execute_verified_function_rule(
         let post_contract_state = with_contract_argument_views(&post_state, &arguments_path.values);
 
         for ensure in function.contract_ensures() {
+            let ensure_assumptions =
+                assumptions_with_path_context(&effective_assumptions, &facts, &obligations);
+            let lowering_assumptions = ensure_assumptions.clone().allow_symbolic_contract_loads();
             let ensure_paths = lower_spec_proposition_at_state_with_loop_entry(
                 &post_contract_state,
                 ensure,
                 Some(&entry_contract_state),
-                &effective_assumptions,
+                &lowering_assumptions,
                 budget,
             )?;
-            for ensure_path in ensure_paths.into_iter().take(1) {
-                facts.extend(ensure_path.facts);
-                facts.push(ExecutionPureFact::certified(ensure_path.proposition));
+            for ensure_path in ensure_paths {
+                for path_obligation in &ensure_path.obligations {
+                    facts.push(ExecutionPureFact::certified(wrap_path_context(
+                        path_obligation.proposition().clone(),
+                        &ensure_path.facts,
+                        &[],
+                    )));
+                }
+                facts.push(ExecutionPureFact::certified(wrap_path_context(
+                    ensure_path.proposition,
+                    &ensure_path.facts,
+                    &[],
+                )));
             }
         }
 

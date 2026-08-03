@@ -84,7 +84,10 @@ In `src/kernel/`:
 - `CExpression`, `CStatement`, `CFunction`: lowered C0 syntax.
 - `SpecExpression`, `SpecProposition`: Kernel Click forms used for
   state-parametric loop invariants. They can include current-state C fragments,
-  fixed-memory loads, pure `if`, `let`, and `RangeFold`.
+  fixed-memory loads, pure `if`, `let`, and `RangeFold`. Specification memory
+  loads lower deterministically: an exact stored cell reduces to its value;
+  otherwise lowering produces a symbolic load term and a loadability
+  obligation, rather than selecting an operational alias-resolution path.
 - `Proposition`: proof propositions, including `ForAll` and `Exists`, C
   semantic judgments, memory facts, and loop invariant rules.
 - `Assumptions`: known condition/proposition facts plus deterministic reasoning.

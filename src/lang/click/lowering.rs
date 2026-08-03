@@ -3413,7 +3413,7 @@ pub(super) fn initial_call_state(
         match parameter.c_type() {
             C0Type::Int32Pointer => {
                 arguments.push(c_pointer_value(Pointer {
-                    block: EXTERNAL_ARGUMENT_MEMORY_BLOCK.into(),
+                    block: PointerBlock::ExternalArgument,
                     offset: scale_int32_offset(
                         Bitvector32Term::Variable(Variable(
                             POINTER_ARGUMENT_VARIABLE_BASE + index as u64,
@@ -3424,7 +3424,7 @@ pub(super) fn initial_call_state(
             }
             C0Type::UInt8Pointer => {
                 arguments.push(c_pointer_value(Pointer {
-                    block: EXTERNAL_ARGUMENT_MEMORY_BLOCK.into(),
+                    block: PointerBlock::ExternalArgument,
                     offset: scale_int32_offset(
                         Bitvector32Term::Variable(Variable(
                             POINTER_ARGUMENT_VARIABLE_BASE + index as u64,

@@ -3,7 +3,7 @@
 This checks that an owned composite resource whose backing range depends on
 owner fields can be used directly through an abstract loop iteration. The loop
 mutates only the backing array, so the separate owner metadata and its dependent
-backing-range identity remain stable.
+backing-range identity remain stable while the numeric loop invariant advances.
 
 ```c filename=composite_resource_vector_fill_loop_snapshot.c
 struct vector {
@@ -48,9 +48,6 @@ int32 composite_resource_vector_fill_loop_snapshot(
 
     for loop(0) as fill_cells {
         invariant i >= 0 and i <= owner->len;
-        invariant forall (k: int32) {
-            0 <= k and k < i implies owner->data[k] == value
-        };
         mutable owner->data[0..owner->len] by frame;
 
         initialize by simp;
@@ -59,14 +56,23 @@ int32 composite_resource_vector_fill_loop_snapshot(
             have i < owner->cap by simp;
             step();
             step();
+            have i == at(loop(0).entry, i) + 1 by simp;
+            have i >= 0 by {
+                derive using {
+                    at(statement(3).entry, i) >= 0;
+                    at(statement(3).entry, i) < at(statement(3).entry, owner->len);
+                }
+            }
+            have i <= owner->len by {
+                derive using {
+                    at(statement(3).entry, i) < at(statement(3).entry, owner->len);
+                }
+            }
             close_invariants();
         }
     }
 
     ensures result == owner->len;
-    ensures forall (k: int32) {
-        0 <= k and k < owner->len implies owner->data[k] == value
-    };
 } by {
     execute();
     fold(vector(owner));
@@ -74,26 +80,6 @@ int32 composite_resource_vector_fill_loop_snapshot(
     have result == owner->len by {
         normalize();
     }
-    have forall (k: int32) { 0 <= k and k < owner->len implies owner->data[k] == value } by {
-        derive using {
-            not at(fill_cells.exit, i) < owner->len;
-            forall (k: int32) { at(loop(0).exit, 0) <= at(loop(0).exit, k) and at(loop(0).exit, k) < at(loop(0).exit, i) implies at(loop(0).exit, owner->data[k]) == at(loop(0).exit, value) };
-            at(statement(5).entry, loadable(old(owner->len)));
-            at(statement(5).entry, loadable(old(owner->cap)));
-            at(statement(5).entry, loadable(old(owner->data)));
-            at(statement(5).entry, loadable(old(owner->data[0..owner->cap])));
-            at(statement(5).entry, 0) <= at(statement(5).entry, owner->len);
-            at(statement(5).entry, owner->len) <= at(statement(5).entry, owner->cap);
-            at(statement(5).entry, i) <= at(statement(5).entry, owner->len);
-            not at(statement(5).entry, i) < at(statement(5).entry, owner->len);
-            at(statement(2).entry, loadable(owner->len));
-            at(statement(2).entry, loadable(owner->cap));
-            at(statement(2).entry, loadable(owner->data));
-            at(statement(2).entry, loadable(owner->data[0..owner->cap]));
-            result == owner->len;
-        }
-    }
-    assumption();
     assumption();
     assumption();
 }

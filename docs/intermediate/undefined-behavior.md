@@ -35,7 +35,8 @@ Click currently models obligations for cases such as:
 - `INT_MIN / -1` and `INT_MIN % -1`,
 - invalid shift counts,
 - invalid signed left shifts,
-- out-of-bounds memory access.
+- out-of-bounds memory access,
+- reads of uninitialized automatic storage.
 
 The C0 subset reference has the full current list.
 
@@ -61,6 +62,7 @@ needs a safety fact:
 - division needs nonzero divisors,
 - shifts need valid counts and representable results,
 - memory access needs loadable ranges and index bounds.
+- local reads need an assignment on every path that reaches them.
 
 The right fix is usually a requirement, a loop invariant, or a narrower
 contract. Do not hide the obligation in the postcondition; Click needs the fact

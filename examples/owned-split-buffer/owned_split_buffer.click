@@ -181,29 +181,19 @@ int32 owned_split_buffer_pipeline(
     ensures data[1] == right_value;
     ensures result == right_value;
 } by {
+    step();
+    step();
     step() using {
         2 <= length;
-        loadable(object(owner));
-        loadable(data[0..length]);
-        separate(memory(object(owner)), memory(data[0..length]));
+        loadable(old(object(owner)));
+        loadable(old(data[0..length]));
+        separate(memory(owner[0..4]), memory(data[0..length]));
     }
     step() using {
         2 <= length;
         loadable(old(object(owner)));
         loadable(old(data[0..length]));
-        separate(memory(owner[ignored..4]), memory(data[ignored..length]));
-    }
-    step() using {
-        2 <= length;
-        loadable(old(object(owner)));
-        loadable(old(data[0..length]));
-        separate(memory(owner[ignored..4]), memory(data[ignored..length]));
-    }
-    step() using {
-        2 <= length;
-        loadable(old(object(owner)));
-        loadable(old(data[0..length]));
-        separate(memory(owner[read_value..4]), memory(data[read_value..length]));
+        separate(memory(owner[0..4]), memory(data[0..length]));
         ignored == 1;
         owner->split == 1;
         owner->len == length;

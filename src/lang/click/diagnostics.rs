@@ -226,6 +226,9 @@ pub(super) fn describe_function_outcome(
             crate::kernel::CUndefinedBehavior::InvalidMemory => {
                 "undefined behavior: invalid memory access".to_string()
             }
+            crate::kernel::CUndefinedBehavior::UninitializedRead => {
+                "undefined behavior: read of uninitialized storage".to_string()
+            }
         },
         CFunctionOutcome::RuntimeError(error) => {
             format!(

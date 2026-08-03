@@ -5884,51 +5884,58 @@ fn function_claim_holds_on_prepared_path(
             let Some(ensure) = function.contract_ensures().get(*index) else {
                 return false;
             };
+            let lowering_assumptions = assumptions.clone().allow_symbolic_contract_loads();
             let Ok(paths) = lower_spec_proposition_at_state_with_loop_entry(
                 &post_state,
                 ensure,
                 Some(&entry_state),
-                &assumptions,
+                &lowering_assumptions,
                 &mut budget,
             ) else {
                 return false;
             };
-            paths.into_iter().any(|path| {
-                let obligations_hold = path.obligations.iter().all(|obligation| {
-                    certification_proves_proposition(&assumptions, obligation.proposition())
-                        || contract_endpoints_certify_loadability(
-                            &entry_state,
-                            &entry_resources,
-                            &post_state,
-                            &post_resources,
-                            obligation.proposition(),
-                            &assumptions,
-                        )
-                        || loadable_covered_by_fact(&assumptions, obligation.proposition())
-                        || forall_loadable_covered_by_fact(&assumptions, obligation.proposition())
-                        || certification_proves_exists_obligation_from_facts(
-                            &assumptions,
-                            obligation.proposition(),
-                        )
-                });
-                let mut path_propositions = path
-                    .facts
-                    .iter()
-                    .map(|fact| fact.proposition().clone())
-                    .collect::<Vec<_>>();
-                let assumption_facts = assumptions.prop_facts.iter().cloned().collect::<Vec<_>>();
-                path_propositions.extend(finite_forall_instantiations(&assumption_facts));
-                path_propositions.extend(finite_forall_instantiations(&path_propositions.clone()));
-                let path_assumptions =
-                    assumptions_with_propositions(&assumptions, &path_propositions);
-                let proposition_holds = certification_proves_post_proposition(
-                    &path_assumptions,
-                    &path.proposition,
-                    return_state.memory(),
-                    execution_facts,
-                );
-                obligations_hold && proposition_holds
-            })
+            !paths.is_empty()
+                && paths.into_iter().all(|path| {
+                    let obligations_hold = path.obligations.iter().all(|obligation| {
+                        certification_proves_proposition(&assumptions, obligation.proposition())
+                            || contract_endpoints_certify_loadability(
+                                &entry_state,
+                                &entry_resources,
+                                &post_state,
+                                &post_resources,
+                                obligation.proposition(),
+                                &assumptions,
+                            )
+                            || loadable_covered_by_fact(&assumptions, obligation.proposition())
+                            || forall_loadable_covered_by_fact(
+                                &assumptions,
+                                obligation.proposition(),
+                            )
+                            || certification_proves_exists_obligation_from_facts(
+                                &assumptions,
+                                obligation.proposition(),
+                            )
+                    });
+                    let mut path_propositions = path
+                        .facts
+                        .iter()
+                        .map(|fact| fact.proposition().clone())
+                        .collect::<Vec<_>>();
+                    let assumption_facts =
+                        assumptions.prop_facts.iter().cloned().collect::<Vec<_>>();
+                    path_propositions.extend(finite_forall_instantiations(&assumption_facts));
+                    path_propositions
+                        .extend(finite_forall_instantiations(&path_propositions.clone()));
+                    let path_assumptions =
+                        assumptions_with_propositions(&assumptions, &path_propositions);
+                    let proposition_holds = certification_proves_post_proposition(
+                        &path_assumptions,
+                        &path.proposition,
+                        return_state.memory(),
+                        execution_facts,
+                    );
+                    obligations_hold && proposition_holds
+                })
         }
         CFunctionContractClaimTarget::EnsureResource(index) => {
             let Some(resource) = function.resource_ensures().get(*index) else {

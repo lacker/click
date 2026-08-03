@@ -719,8 +719,6 @@ int32 owned_string_pop_preserves_first(struct owned_string* owner) {
         loadable(owner->cap);
         loadable(owner->data);
         loadable(owner->len);
-        at(statement(0).entry, (load_int32_pointer(byte_offset(owner, 8)) + (load_int32(owner) - 1))) == at(statement(0).entry, (owner + 1));
-        at(statement(0).entry, c(result)) == at(statement(0).entry, owner->cap);
         owner->cap == at(statement(0).entry, owner->cap);
         owner->data == at(statement(0).entry, owner->data);
         owner->len == at(statement(0).entry, (owner->len - 1));
@@ -783,114 +781,6 @@ int32 owned_string_pipeline(
     ensures owner->len == 0;
     ensures result == first;
 } by {
-    execute_until(statement(3));
-    have owner->len == 0 by simp;
-    have owner->cap == capacity by simp;
-    have owner->len + 1 < owner->cap by simp;
-    step() using {
-        (owner->len + 1) < owner->cap;
-        2 <= capacity;
-        ignored == observed;
-        owner->cap == capacity;
-        owner->len == 0;
-        *data == observed;
-        loadable(old(object(owner)));
-    }
-    have at(statement(3).entry, owner->len) == 0 by simp;
-    have at(statement(3).exit, owner->len) ==
-        at(statement(3).entry, owner->len) + 1 by {
-        simp();
-    }
-    apply(incremented_zero_is_one(at(statement(3).entry, owner->len), at(statement(3).exit, owner->len))) using {
-        at(statement(3).entry, owner->len) == 0;
-        at(statement(3).exit, owner->len) == (at(statement(3).entry, owner->len) + 1);
-    }
-    have owner->len == at(statement(3).exit, owner->len) by simp;
-    have owner->len == 1 by simp;
-    have owner->data == at(statement(3).entry, owner->data) by simp;
-    have at(statement(3).entry, owner->data) == data by simp;
-    apply(pointer_equality_transitive(owner->data, at(statement(3).entry, owner->data), data)) using {
-        loadable(old(object(owner)));
-        owner->data == at(statement(3).entry, owner->data);
-        at(statement(3).entry, owner->data) == data;
-    }
-    apply(pointer_add_zero_equals(owner->data, at(statement(3).entry, owner->len), data)) using {
-        loadable(old(object(owner)));
-        owner->data == data;
-        at(statement(3).entry, owner->len) == 0;
-    }
-    have at(statement(3).exit, owner->data[at(statement(3).entry, owner->len)]) == first by {
-        assumption();
-    }
-    have data[0] == first by {
-        derive using {
-            at(statement(3).exit, owner->data[at(statement(3).entry, owner->len)]) == first;
-            owner->data + at(statement(3).entry, owner->len) == data;
-        }
-    }
-    have 0 < owner->len by simp;
-    step() using {
-        loadable(old(object(owner)));
-        owner->data == data;
-        at(statement(3).entry, owner->len) == 0;
-        owner->data == at(statement(3).entry, owner->data);
-        at(statement(3).entry, owner->data) == data;
-        at(statement(3).exit, owner->len) == (at(statement(3).entry, owner->len) + 1);
-        owner->len == 1;
-        at(statement(3).entry, (owner->len + 1)) < at(statement(3).entry, owner->cap);
-        2 <= capacity;
-        at(statement(3).entry, ignored) == observed;
-        at(statement(3).entry, owner->cap) == at(statement(3).entry, capacity);
-        at(statement(3).entry, *data) == at(statement(3).entry, observed);
-        ignored == at(statement(3).entry, (owner->len + 1));
-        owner->cap == at(statement(3).entry, owner->cap);
-        owner->len == at(statement(3).entry, (owner->len + 1));
-        loadable(old(data[0..capacity]));
-        separate(memory(owner[observed..4]), memory(data[observed..capacity]));
-        owner->len == at(statement(3).exit, owner->len);
-        data[0] == first;
-        0 < owner->len;
-    }
-    have owner->len == 1 by simp;
-    have owner->data == data by simp;
-    apply(pointer_add_zero_equals(owner->data, 0, data)) using {
-        loadable(old(object(owner)));
-        owner->data == data;
-    }
-    have observed == data[0] by simp;
-    apply(int32_equality_transitive(observed, data[0], first)) using {
-        observed == *data;
-        *data == first;
-    }
-    have 1 <= owner->len by simp;
-    step() using {
-        owner->len == 1;
-        2 <= capacity;
-        observed == first;
-        observed == data[0];
-        *data == first;
-        owner->data == data;
-        at(statement(3).entry, owner->data) == data;
-        loadable(old(object(owner)));
-        owner->len == owner->len;
-        0 < owner->len;
-        1 <= owner->len;
-    }
-    have at(statement(5).entry, owner->len) == 1 by simp;
-    have at(statement(5).exit, owner->len) ==
-        at(statement(5).entry, owner->len) - 1 by {
-        simp();
-    }
-    apply(decremented_one_is_zero(at(statement(5).entry, owner->len), at(statement(5).exit, owner->len))) using {
-        at(statement(5).entry, owner->len) == 1;
-        owner->len == at(statement(5).entry, (owner->len - 1));
-    }
-    have owner->len == at(statement(5).exit, owner->len) by simp;
-    have owner->len == 0 by simp;
-    have observed == first by simp;
-    step() using {
-        owner->len == 0;
-        observed == first;
-    }
+    execute();
     simp();
 }

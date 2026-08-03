@@ -316,14 +316,14 @@ int32 input_cursor_shared_pipeline(
             separate(memory(object(right)), memory(data[0..length]));
         }
     }
+    have left->pos == 0 by simp;
     have left->pos < left->len by {
         derive using {
             1 <= length;
             left->len == length;
-            left->pos == left_value;
+            left->pos == 0;
         }
     }
-    have left->pos == 0 by simp;
     have left->data == data by simp;
     step() using {
         left->pos < left->len;
@@ -349,7 +349,7 @@ int32 input_cursor_shared_pipeline(
     }
     have right->pos == 0 by {
         derive using {
-            left->pos == left_value;
+            left->pos == 0;
             right->pos == left->pos;
         }
     }
@@ -369,10 +369,10 @@ int32 input_cursor_shared_pipeline(
         right->pos == left->pos;
         right->len == left->len;
         left->pos < left->len;
-        left->pos == left_value;
+        left->pos == 0;
         left->len == length;
         separate(memory(object(right)), memory(data[0..length]));
-        separate(memory(left[left_value..4]), memory(right[left_value..4]));
+        separate(memory(left[0..4]), memory(right[0..4]));
         loadable(old(data[0..length]));
         0 <= length;
         at(statement(4).entry, left->pos) == at(statement(4).entry, 0);
@@ -427,13 +427,11 @@ int32 input_cursor_shared_pipeline(
         right->len == left->len;
         left->pos == 1;
         left->pos == (at(statement(5).entry, left->pos) + 1);
-        right->pos == right_value;
         at(statement(5).entry, left->pos) == 0;
         loadable(old(object(left)));
         loadable(old(object(right)));
         separate(memory(object(left)), memory(data[0..length]));
         separate(memory(object(right)), memory(data[0..length]));
-        right_value <= length;
         left->len == left->len;
     }
     have right->pos == 0 by simp;
@@ -460,7 +458,6 @@ int32 input_cursor_shared_pipeline(
         at(statement(6).entry, loadable(old(object(left))));
         at(statement(6).entry, separate(memory(object(left)), memory(data[0..length])));
         at(statement(6).entry, separate(memory(object(right)), memory(data[0..length])));
-        at(statement(6).entry, right_value) <= at(statement(6).entry, length);
         right->pos < right->len;
         right->len == left->len;
         left->pos == 1;
@@ -468,7 +465,7 @@ int32 input_cursor_shared_pipeline(
         right->pos == 0;
         left->len == left->len;
         at(statement(6).entry, left->pos) == at(statement(6).entry, (at(statement(5).entry, left->pos) + 1));
-        at(statement(5).entry, separate(memory(left[left_value..4]), memory(right[left_value..4])));
+        at(statement(5).entry, separate(memory(left[0..4]), memory(right[0..4])));
         at(statement(5).entry, ignored) == at(statement(5).entry, left->pos);
         at(statement(4).entry, left->len) == at(statement(4).entry, length);
         at(statement(5).entry, loadable(old(data[0..length])));
@@ -485,7 +482,6 @@ int32 input_cursor_shared_pipeline(
         at(statement(6).entry, right->len) == at(statement(6).entry, left->len);
         at(statement(5).entry, left->pos) < left->len;
         at(statement(6).entry, right->pos) < at(statement(6).entry, right->len);
-        at(statement(6).entry, right->pos) == at(statement(6).entry, right_value);
         at(statement(5).entry, right->data) == at(statement(5).entry, left->data);
         at(statement(5).entry, left->data) == data;
         at(statement(5).entry, right->data) == data;
@@ -506,7 +502,6 @@ int32 input_cursor_shared_pipeline(
         right->data[right->pos] == data[0];
         right_value == *data;
         1 <= length;
-        left->pos == left_value;
         loadable(left[0..4]);
         separate(memory(object(left)), memory(data[0..length]));
         separate(memory(object(right)), memory(data[0..length]));
@@ -529,7 +524,6 @@ int32 input_cursor_shared_pipeline(
         at(statement(6).entry, right->len) == at(statement(6).entry, left->len);
         at(statement(5).entry, left->pos) < left->len;
         at(statement(6).entry, right->pos) < at(statement(6).entry, right->len);
-        right->pos == right_value;
         at(statement(5).entry, right->data) == at(statement(5).entry, left->data);
         at(statement(5).entry, left->data) == data;
         at(statement(5).entry, right->data) == at(statement(5).entry, data);

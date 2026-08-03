@@ -19,7 +19,9 @@ adds four bytes per element, while `uint8*` adds one byte per element.
 ## Argument Memory And Aliasing
 
 Function pointer parameters are modeled as symbolic offsets into one shared
-external argument-memory block. Distinct pointer parameter names do not imply
+external argument-memory block. The identity of that external block is not
+assumed distinct from null, so an unconstrained pointer parameter retains both
+its null and non-null executions. Distinct pointer parameter names do not imply
 non-aliasing.
 
 If a proof relies on non-overlap, state it:
@@ -133,6 +135,12 @@ one loop body iteration and may use iteration locals.
 Local scalar address-of and local arrays allocate stack memory blocks named like
 `local:x`. Local stack bookkeeping is not externally visible for function-level
 effect checks.
+
+Automatic storage is not initialized by declaration. A scalar declaration such
+as `int32 x;`, a pointer declaration such as `int32* p;`, and the cells of a
+local array have no readable value until the program writes them. Reading one
+first is modeled as undefined behavior; taking its address or assigning to it
+is allowed.
 
 Example:
 
