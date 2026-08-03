@@ -19,6 +19,12 @@ Pointers are semantic objects with provenance blocks and pointer-offset terms.
 They are not modeled as `int32` values. The current target layout assumes
 8-byte pointer objects.
 
+The integer constant `0` is the supported null pointer constant. C0 converts
+it to the canonical null pointer when returning or initializing a pointer,
+assigning a pointer local or field, passing a pointer argument, and comparing
+a pointer with zero. Nonzero integers do not implicitly convert to pointers;
+this is not a general integer-to-pointer conversion or cast facility.
+
 ## Supported Expressions And Statements
 
 Supported C0 surface includes:
@@ -164,7 +170,8 @@ These are not general C features yet:
 - full structs, unions, enums
 - unsigned integers other than the narrow `uint8` byte type
 - integer widths other than `int32`
-- casts beyond the current checked `int32`-to-`uint8` narrowing conversion
+- casts beyond the current checked `int32`-to-`uint8` narrowing conversion;
+  the contextual null-pointer conversion for integer constant `0` is supported
 - mixed-width integer conversions beyond `uint8` promotion to `int32`
 - pointer comparisons beyond the supported equality/range patterns
 - heap allocation

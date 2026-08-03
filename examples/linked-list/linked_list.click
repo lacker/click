@@ -12,14 +12,13 @@ verifying "list_push_front.c";
 verifying "list_pop_front.c";
 verifying "list_roundtrip.c";
 
-int32 list_empty(struct node* empty) {
-    requires empty == 0;
-    produces list(empty);
+struct node* list_empty() {
+    produces list(result);
 
     ensures result == 0;
 } by {
     execute();
-    fold(list(empty));
+    fold(list(result));
     simp();
 }
 

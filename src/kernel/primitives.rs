@@ -2115,6 +2115,13 @@ impl CLValue {
 }
 
 impl Pointer {
+    pub(crate) fn null() -> Self {
+        Self {
+            block: "null".into(),
+            offset: PointerOffsetTerm::Constant(0),
+        }
+    }
+
     pub(crate) fn symbolic(variable: Variable) -> Self {
         Self {
             block: PointerBlock::Symbolic(variable),

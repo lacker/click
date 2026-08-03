@@ -132,7 +132,8 @@ pub(super) fn prove_ensure_resource(
     outcome: &CFunctionOutcome,
 ) -> Result<(), ClickError> {
     let CFunctionOutcome::Return {
-        state: post_state, ..
+        value: result,
+        state: post_state,
     } = outcome
     else {
         return Err(ClickError::new(format!(
@@ -147,7 +148,9 @@ pub(super) fn prove_ensure_resource(
             )
         )));
     };
-    let expected = lower_resource_clause(resource, parameters, arguments, pre_state.memory())?;
+    let expected = lower_resource_clause_at_state_with_result(
+        resource, parameters, arguments, post_state, result,
+    )?;
     let assumptions = assumptions_from_propositions(available_pure_facts);
     if post_state
         .resources()

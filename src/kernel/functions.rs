@@ -4,7 +4,6 @@ use super::prelude::*;
 struct CFunctionResourceTransfer {
     callee_resources: ResourceContext,
     caller_resources_after_requirements: ResourceContext,
-    return_resources: ResourceContext,
 }
 
 pub(super) fn execute_c_function_paths(
@@ -361,14 +360,16 @@ pub(super) fn execute_c_function_call_paths(
             };
             let return_assumptions =
                 assumptions_with_path_context(assumptions, &facts, &obligations);
-            let (outcome, obligations) = function_outcome_from_body(
+            let (outcome, obligations) = function_outcome_from_body_with_resource_transfer(
                 caller_state,
                 function,
                 body_path.outcome,
                 obligations,
                 &return_assumptions,
-                Some(&resource_transfer.return_resources),
-            );
+                &resource_transfer,
+                &arguments_path.values,
+                budget,
+            )?;
 
             paths.push(CFunctionPath {
                 outcome,
@@ -587,13 +588,14 @@ fn execute_verified_function_rule(
         post_state
             .locals
             .set_typed("result".to_string(), result.clone(), function.return_type());
-        post_state.resources = transfer.return_resources.clone();
+        post_state.resources = transfer.caller_resources_after_requirements.clone();
         let output_resource_state =
             with_contract_argument_views(&post_state, &arguments_path.values);
 
-        let ensured_resources = match evaluate_function_resource_context(
+        let return_resources = match evaluate_function_return_resources(
+            &transfer.caller_resources_after_requirements,
             &output_resource_state,
-            function.resource_ensures(),
+            function,
             &effective_assumptions,
             budget,
         )? {
@@ -607,48 +609,6 @@ fn execute_verified_function_rule(
                 continue;
             }
         };
-        let return_resources = match transfer
-            .caller_resources_after_requirements
-            .try_compose_with_facts_delaying_normalization(
-                ensured_resources.facts().iter().cloned(),
-                &effective_assumptions,
-            ) {
-            Ok(resources) => resources,
-            Err(error) => {
-                paths.push(CFunctionPath {
-                    outcome: CFunctionOutcome::RuntimeError(resource_context_runtime_error(error)),
-                    facts,
-                    obligations,
-                });
-                continue;
-            }
-        };
-        let Some(expanded_ensured_resources) = expand_all_composite_resource_facts(
-            &ensured_resources,
-            function.composite_resource_definitions(),
-            post_state.memory(),
-            &effective_assumptions,
-        ) else {
-            paths.push(CFunctionPath {
-                outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(format!(
-                    "could not expand ensured composite resources after call: {ensured_resources:?}"
-                ))),
-                facts,
-                obligations,
-            });
-            continue;
-        };
-        let projected_cores = expanded_ensured_resources
-            .facts()
-            .iter()
-            .filter_map(CResourceFact::core)
-            .filter(|core| !return_resources.facts().contains(core))
-            .collect::<Vec<_>>();
-        // The callee has already certified every ensured composite and its
-        // instantiated body. Its duplicable cores are therefore observations
-        // of certified ownership, not newly composed ownership that needs
-        // another global validity/normalization pass.
-        let return_resources = return_resources.unchecked_with_facts(projected_cores);
         post_state.resources = return_resources.clone();
         let post_contract_state = with_contract_argument_views(&post_state, &arguments_path.values);
 
@@ -826,14 +786,10 @@ pub(super) fn bind_c_function_arguments(
         .with_memory(caller_state.memory.clone())
         .with_resource_context(caller_state.resources.clone());
     for (parameter, value) in function.parameters().iter().zip(values) {
-        if !parameter.c_type().accepts(value) {
-            return None;
-        }
-        callee_state.locals.set_typed(
-            parameter.name().to_string(),
-            value.clone(),
-            parameter.c_type(),
-        );
+        let value = coerce_c_null_pointer_constant(value.clone(), parameter.c_type())?;
+        callee_state
+            .locals
+            .set_typed(parameter.name().to_string(), value, parameter.c_type());
     }
     Some(callee_state)
 }
@@ -854,16 +810,6 @@ fn prepare_function_resource_transfer(
         Ok(resources) => resources,
         Err(error) => return Ok(Err(error)),
     };
-    let ensured_resources = match evaluate_function_resource_context(
-        callee_state,
-        function.resource_ensures(),
-        assumptions,
-        budget,
-    )? {
-        Ok(resources) => resources,
-        Err(error) => return Ok(Err(error)),
-    };
-
     let Some(callee_resources) = expand_all_composite_resource_facts(
         &required_resources,
         function.composite_resource_definitions(),
@@ -920,20 +866,58 @@ fn prepare_function_resource_transfer(
         };
         return_resources = resources;
     }
-    let caller_resources_after_requirements = return_resources.clone();
-    return_resources = match return_resources.try_compose_with_facts_delaying_normalization(
-        ensured_resources.facts().iter().cloned(),
+    Ok(Ok(CFunctionResourceTransfer {
+        callee_resources,
+        caller_resources_after_requirements: return_resources,
+    }))
+}
+
+fn evaluate_function_return_resources(
+    caller_resources_after_requirements: &ResourceContext,
+    post_state: &CState,
+    function: &CFunction,
+    assumptions: &Assumptions,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Result<ResourceContext, CRuntimeError>> {
+    let ensured_resources = match evaluate_function_resource_context(
+        post_state,
+        function.resource_ensures(),
         assumptions,
-    ) {
+        budget,
+    )? {
+        Ok(resources) => resources,
+        Err(error) => return Ok(Err(error)),
+    };
+    let return_resources = match caller_resources_after_requirements
+        .clone()
+        .try_compose_with_facts_delaying_normalization(
+            ensured_resources.facts().iter().cloned(),
+            assumptions,
+        ) {
         Ok(resources) => resources,
         Err(error) => return Ok(Err(resource_context_runtime_error(error))),
     };
-
-    Ok(Ok(CFunctionResourceTransfer {
-        callee_resources,
-        caller_resources_after_requirements,
-        return_resources,
-    }))
+    let Some(expanded_ensured_resources) = expand_all_composite_resource_facts(
+        &ensured_resources,
+        function.composite_resource_definitions(),
+        post_state.memory(),
+        assumptions,
+    ) else {
+        return Ok(Err(CRuntimeError::FunctionContract(format!(
+            "could not expand ensured composite resources after call: {ensured_resources:?}"
+        ))));
+    };
+    let projected_cores = expanded_ensured_resources
+        .facts()
+        .iter()
+        .filter_map(CResourceFact::core)
+        .filter(|core| !return_resources.facts().contains(core))
+        .collect::<Vec<_>>();
+    // The callee has already certified every ensured composite and its
+    // instantiated body. Its duplicable cores are therefore observations of
+    // certified ownership, not newly composed ownership that needs another
+    // global validity/normalization pass.
+    Ok(Ok(return_resources.unchecked_with_facts(projected_cores)))
 }
 
 pub(super) fn prepare_function_contract_entry_state_with_values(
@@ -1721,6 +1705,63 @@ fn resource_fact_transfer_priority(resource: &CResourceFact) -> u8 {
         CResourceFact::Own(CResource::Memory(_)) => 1,
         CResourceFact::Own(CResource::Composite { .. } | CResource::Token { .. }) => 2,
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn function_outcome_from_body_with_resource_transfer(
+    caller_state: &CState,
+    function: &CFunction,
+    outcome: CStatementOutcome,
+    mut obligations: Vec<ProofObligation>,
+    assumptions: &Assumptions,
+    transfer: &CFunctionResourceTransfer,
+    argument_values: &[CValue],
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<(CFunctionOutcome, Vec<ProofObligation>)> {
+    let CStatementOutcome::Return { value, mut state } = outcome else {
+        return Ok(function_outcome_from_body(
+            caller_state,
+            function,
+            outcome,
+            obligations,
+            assumptions,
+            None,
+        ));
+    };
+    let Some(value) =
+        coerce_c_value_to_type(value, function.return_type(), &mut obligations, assumptions)
+    else {
+        return Ok((
+            CFunctionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+            obligations,
+        ));
+    };
+
+    state
+        .locals
+        .set_typed("result".to_string(), value.clone(), function.return_type());
+    let output_resource_state = with_contract_argument_views(&state, argument_values);
+    let return_resources = match evaluate_function_return_resources(
+        &transfer.caller_resources_after_requirements,
+        &output_resource_state,
+        function,
+        assumptions,
+        budget,
+    )? {
+        Ok(resources) => resources,
+        Err(error) => return Ok((CFunctionOutcome::RuntimeError(error), obligations)),
+    };
+
+    let mut return_state = caller_state.clone();
+    return_state.memory = state.memory;
+    return_state.resources = return_resources;
+    Ok((
+        CFunctionOutcome::Return {
+            value,
+            state: return_state,
+        },
+        obligations,
+    ))
 }
 
 pub(super) fn function_outcome_from_body(

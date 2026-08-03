@@ -404,6 +404,9 @@ sequence:
   nested full-backing ownership behind an owner-only API.
 - `examples/linked-list/`: a guarded recursive resource over preallocated
   singly linked nodes, with one-layer push/pop proofs and a modular round trip.
+- `examples/binary-tree/`: a guarded recursive resource with two owned child
+  trees, including empty construction, root construction, child swapping, and
+  a modular leaf pipeline that composes two empty children.
 - `examples/owned-vector/`: composite-resource example over vector metadata and
   dependent backing storage, including viewed reads and resource-state
   transitions.

@@ -645,6 +645,11 @@ The prelude currently provides byte-slice helpers over `uint8[]`: `byte_count`,
 `cstr_prefix`, `cstr_len`, `cstr`, and `cstr_bounded`. These are ordinary Click
 functions and predicates, not built-in kernel concepts.
 
+In pointer-valued C0 contexts, the integer constant `0` is the null pointer
+constant. It may initialize or assign a pointer, be returned from a pointer
+function, be passed to a pointer parameter, or be compared with a pointer.
+Nonzero integers do not implicitly convert to pointers.
+
 C0 accepts a small multi-field struct slice with `int32` and pointer-valued
 fields. The C side lowers chained `obj->child->field` loads and stores at
 LP64-aligned byte offsets while retaining intermediate struct-pointer types.

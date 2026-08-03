@@ -3,6 +3,6 @@ struct node {
     struct node* next;
 };
 
-int32 list_empty(struct node* empty) {
+struct node* list_empty() {
     return 0;
 }

@@ -23906,8 +23906,13 @@ fn fold_composite_resources_on_outcome(
                         describe_resource_clause(resource)
                     ))
                 })?;
-            let lowered =
-                lower_resource_clause(&contained, parameters, arguments, post_state.memory())?;
+            let lowered = lower_resource_clause_at_state_with_result(
+                &contained,
+                parameters,
+                arguments,
+                &post_state,
+                &value,
+            )?;
             lowered_contained.push(lowered);
         }
         let mut resources = post_state.resources().clone();
@@ -23952,8 +23957,13 @@ fn fold_composite_resources_on_outcome(
         }
         post_state = post_state.with_resource_context(resources);
 
-        let abstract_resource =
-            lower_resource_clause(resource, parameters, arguments, post_state.memory())?;
+        let abstract_resource = lower_resource_clause_at_state_with_result(
+            resource,
+            parameters,
+            arguments,
+            &post_state,
+            &value,
+        )?;
         let resources = post_state
             .resources()
             .clone()

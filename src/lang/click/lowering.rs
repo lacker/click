@@ -3728,7 +3728,7 @@ pub(super) fn lower_resource_clause(
     let values =
         parameter_values(parameters, arguments).map_err(|error| ClickError::new(error.message))?;
     let state = CState::new().with_memory(memory.clone());
-    lower_resource_clause_with_values(resource, &values, &state)
+    lower_resource_clause_with_values(resource, &values, &state, None)
 }
 
 pub(super) fn lower_resource_clause_at_state(
@@ -3745,21 +3745,41 @@ pub(super) fn lower_resource_clause_at_state(
             .object_values()
             .map(|(name, value)| (name.to_string(), value.clone())),
     );
-    lower_resource_clause_with_values(resource, &values, state)
+    lower_resource_clause_with_values(resource, &values, state, None)
+}
+
+pub(super) fn lower_resource_clause_at_state_with_result(
+    resource: &ResourceClause,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    state: &CState,
+    result: &CValue,
+) -> Result<CResourceFact, ClickError> {
+    let mut values =
+        parameter_values(parameters, arguments).map_err(|error| ClickError::new(error.message))?;
+    values.extend(
+        state
+            .locals()
+            .object_values()
+            .map(|(name, value)| (name.to_string(), value.clone())),
+    );
+    lower_resource_clause_with_values(resource, &values, state, Some(result))
 }
 
 fn lower_resource_clause_with_values(
     resource: &ResourceClause,
     values: &BTreeMap<String, CValue>,
     state: &CState,
+    result: Option<&CValue>,
 ) -> Result<CResourceFact, ClickError> {
     match resource {
         ResourceClause::Read(segment) => {
-            let range = lower_resource_segment_with_values("read", segment, values, state)?;
+            let range = lower_resource_segment_with_values("read", segment, values, state, result)?;
             Ok(CResourceFact::view_memory(range))
         }
         ResourceClause::Write(segment) => {
-            let range = lower_resource_segment_with_values("write", segment, values, state)?;
+            let range =
+                lower_resource_segment_with_values("write", segment, values, state, result)?;
             Ok(CResourceFact::own_memory(range))
         }
         ResourceClause::Declared {
@@ -3781,7 +3801,7 @@ fn lower_resource_clause_with_values(
             {
                 let argument = resource_argument_to_c_expression(argument)?;
                 let value =
-                    evaluate_c_contract_expression(values, state, None, &assumptions, &argument)
+                    evaluate_c_contract_expression(values, state, result, &assumptions, &argument)
                         .map_err(|message| {
                             ClickError::new(format!(
                                 "could not lower resource `{name}` argument {index}: {message}"
@@ -3883,6 +3903,7 @@ fn lower_resource_segment_with_values(
     segment: &ContractSegment,
     values: &BTreeMap<String, CValue>,
     state: &CState,
+    result: Option<&CValue>,
 ) -> Result<CMemoryRange, ClickError> {
     if segment.state != ContractSegmentState::Current {
         return Err(ClickError::new(format!(
@@ -3895,29 +3916,29 @@ fn lower_resource_segment_with_values(
     let assumptions = Assumptions::new()
         .allow_symbolic_contract_loads()
         .prefer_symbolic_external_loads();
-    let base = evaluate_c_contract_expression(values, state, None, &assumptions, &segment.base)
-        .map_err(|message| {
-            ClickError::new(format!(
-                "could not lower `{resource_name}` resource: {message}"
-            ))
-        })?;
-    let CValue::Pointer(base) = base else {
-        return Err(ClickError::new(format!(
-            "could not lower `{resource_name}` resource: segment base did not evaluate to a pointer"
-        )));
-    };
-    let start = evaluate_c_contract_expression(values, state, None, &assumptions, &segment.start)
+    let base = evaluate_c_contract_expression(values, state, result, &assumptions, &segment.base)
         .map_err(|message| {
         ClickError::new(format!(
             "could not lower `{resource_name}` resource: {message}"
         ))
     })?;
+    let CValue::Pointer(base) = base else {
+        return Err(ClickError::new(format!(
+            "could not lower `{resource_name}` resource: segment base did not evaluate to a pointer"
+        )));
+    };
+    let start = evaluate_c_contract_expression(values, state, result, &assumptions, &segment.start)
+        .map_err(|message| {
+            ClickError::new(format!(
+                "could not lower `{resource_name}` resource: {message}"
+            ))
+        })?;
     let CValue::Int32(start) = start else {
         return Err(ClickError::new(format!(
             "could not lower `{resource_name}` resource: segment start did not evaluate to int32"
         )));
     };
-    let end = evaluate_c_contract_expression(values, state, None, &assumptions, &segment.end)
+    let end = evaluate_c_contract_expression(values, state, result, &assumptions, &segment.end)
         .map_err(|message| {
             ClickError::new(format!(
                 "could not lower `{resource_name}` resource: {message}"
@@ -4925,16 +4946,12 @@ pub(super) fn comparison_proposition(
     operator: ComparisonOperator,
     right: CValue,
 ) -> Result<Proposition, ClickError> {
-    let null_pointer = || Pointer {
-        block: "null".into(),
-        offset: PointerOffsetTerm::Constant(0),
-    };
     let pointer_and_null = match (&left, &right) {
         (CValue::Pointer(pointer), CValue::Int32(Bitvector32Term::Constant(0))) => {
-            Some((pointer.clone(), null_pointer()))
+            Some((pointer.clone(), Pointer::null()))
         }
         (CValue::Int32(Bitvector32Term::Constant(0)), CValue::Pointer(pointer)) => {
-            Some((null_pointer(), pointer.clone()))
+            Some((Pointer::null(), pointer.clone()))
         }
         _ => None,
     };

@@ -16,6 +16,11 @@ The pointer block carries provenance. Pointer offsets are separate terms, not
 raw integers. C0 pointer arithmetic is scaled by the pointee type: `int32*`
 adds four bytes per element, while `uint8*` adds one byte per element.
 
+C0's integer constant `0` converts to a single canonical null pointer in
+pointer-valued return, initialization, assignment, argument, and comparison
+contexts. This narrow conversion does not identify pointers with integers:
+nonzero integers still cannot be used as pointers.
+
 ## Argument Memory And Aliasing
 
 Function pointer parameters are modeled as symbolic offsets into one shared

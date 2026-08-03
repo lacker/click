@@ -94,11 +94,25 @@ examples/linked-list/
 
 This fixture defines a guarded recursive `list(node)` resource. Null is the
 empty list; a nonnull node owns its value and next fields and contains a folded
-resource for its tail. The project verifies empty construction from a typed
-null pointer, head access, preallocated push and pop ownership transfers, and a
-multi-call round trip. Each proof unfolds at most one node. Allocation,
-deallocation, traversal loops, shared tails, and cyclic lists remain outside
-the example.
+resource for its tail. The project verifies empty construction by returning
+C's null pointer constant, head access, preallocated push and pop ownership
+transfers, and a multi-call round trip. Each proof unfolds at most one node.
+Allocation, deallocation, traversal loops, shared tails, and cyclic lists
+remain outside the example.
+
+### Binary Tree
+
+```text
+examples/binary-tree/
+```
+
+This fixture branches the same guarded-recursion model into two child trees. A
+nonnull node owns its value, left, and right fields and contains folded
+resources for both children. It verifies empty and root construction, a viewed
+root read, child swapping, and a modular leaf pipeline whose two independently
+returned null children act as empty resource identities. Allocation,
+deallocation, traversal, balancing, sharing, and cycles remain outside the
+example.
 
 ### Owned Vector
 

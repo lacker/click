@@ -63,7 +63,7 @@ pub(super) fn coerce_c_value_to_type(
     obligations: &mut Vec<ProofObligation>,
     assumptions: &Assumptions,
 ) -> Option<CValue> {
-    if target_type.accepts(&value) {
+    if let Some(value) = coerce_c_null_pointer_constant(value.clone(), target_type) {
         return Some(value);
     }
 
@@ -92,6 +92,19 @@ pub(super) fn coerce_c_value_to_type(
             )?;
             Some(CValue::UInt8(value))
         }
+        _ => None,
+    }
+}
+
+pub(super) fn coerce_c_null_pointer_constant(value: CValue, target_type: CType) -> Option<CValue> {
+    if target_type.accepts(&value) {
+        return Some(value);
+    }
+    match (target_type, value) {
+        (
+            CType::Int32Pointer | CType::UInt8Pointer,
+            CValue::Int32(Bitvector32Term::Constant(0)),
+        ) => Some(CValue::Pointer(Pointer::null())),
         _ => None,
     }
 }
@@ -2423,13 +2436,7 @@ pub(super) fn pointer_equality_condition(left: Pointer, right: Pointer) -> Condi
 }
 
 pub(super) fn pointer_is_null_condition(pointer: Pointer) -> ConditionTerm {
-    pointer_equality_condition(
-        pointer,
-        Pointer {
-            block: "null".into(),
-            offset: PointerOffsetTerm::Constant(0),
-        },
-    )
+    pointer_equality_condition(pointer, Pointer::null())
 }
 
 pub(super) fn evaluate_c_int32_binary_paths(
