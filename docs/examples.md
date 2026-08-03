@@ -383,6 +383,13 @@ sequence:
 - `examples/jsonc-refcount/`: first library-shaped example project. It has
   ordinary C files and sidecar specs for a getter, setter, and increment helper
   over a one-field json-c-shaped object.
+- `examples/detachable-buffer/`: attached metadata and storage split into two
+  independently owned resources and later recombined.
+- `examples/borrowed-slice/`: a symbolic middle range leaves its owner as an
+  independent resource while metadata, prefix, and suffix remain owned by the
+  enclosing buffer state.
+- `examples/ring-buffer/`: linear and wrapped logical states retain the same
+  nested full-backing ownership behind an owner-only API.
 - `examples/owned-vector/`: composite-resource example over vector metadata and
   dependent backing storage, including viewed reads and resource-state
   transitions.

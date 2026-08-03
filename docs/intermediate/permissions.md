@@ -371,6 +371,33 @@ stronger pre-state resource, such as `owned_buffer_with_room(owner)`, with
 facts like `owner->len < owner->cap`; after the mutation, the proof can fold
 back to the ordinary `owned_buffer(owner)` shape.
 
+### Choosing Resource Boundaries
+
+Composite resources should describe ownership, not every logical role that
+owned memory happens to play.
+
+Keep backing storage inside an owner-keyed resource when it stays encapsulated.
+For example, the linear and wrapped states of a ring buffer can both contain
+the same full-backing resource. Head and tail facts distinguish the states;
+wrapping does not change which allocation the ring owns. This keeps the C API
+owner-oriented and makes opaque state transitions compose naturally.
+
+Name a backing pointer and its bounds explicitly when ownership actually
+leaves the enclosing resource. A borrowed-slice operation needs stable names
+for the retained prefix and suffix and for the independently owned middle
+slice. Those names let owner-independent helpers use the extracted resource
+and let the return operation identify the pieces it must recombine.
+
+As a rule of thumb:
+
+- use `fact` clauses for logical states over unchanged ownership;
+- use nested resources for independently useful ownership components;
+- add explicit pointer and bound parameters when a component can escape,
+  split, or outlive the folded owner resource.
+
+See `examples/ring-buffer/` for encapsulated storage and
+`examples/borrowed-slice/` for extracted storage.
+
 ## Split And Rejoin
 
 A caller can pass a subrange of a larger owned memory resource:

@@ -4367,6 +4367,16 @@ pub(super) fn add_path_fact_with_visibility(
     proposition: Proposition,
     public: bool,
 ) -> Option<()> {
+    add_path_fact_with_visibility_after_effect(facts, assumptions, proposition, public, false)
+}
+
+fn add_path_fact_with_visibility_after_effect(
+    facts: &mut Vec<ExecutionPureFact>,
+    assumptions: &Assumptions,
+    proposition: Proposition,
+    public: bool,
+    certified_after_effect: bool,
+) -> Option<()> {
     if let Proposition::ConditionIs(condition, value) = proposition {
         return add_condition_path_fact_with_visibility(
             facts,
@@ -4374,6 +4384,7 @@ pub(super) fn add_path_fact_with_visibility(
             condition,
             value,
             public,
+            certified_after_effect,
         );
     }
 
@@ -4396,7 +4407,7 @@ pub(super) fn add_condition_path_fact(
     condition: ConditionTerm,
     value: bool,
 ) -> Option<()> {
-    add_condition_path_fact_with_visibility(facts, assumptions, condition, value, true)
+    add_condition_path_fact_with_visibility(facts, assumptions, condition, value, true, false)
 }
 
 pub(super) fn add_internal_condition_path_fact(
@@ -4405,7 +4416,7 @@ pub(super) fn add_internal_condition_path_fact(
     condition: ConditionTerm,
     value: bool,
 ) -> Option<()> {
-    add_condition_path_fact_with_visibility(facts, assumptions, condition, value, false)
+    add_condition_path_fact_with_visibility(facts, assumptions, condition, value, false, false)
 }
 
 fn add_condition_path_fact_with_visibility(
@@ -4414,9 +4425,15 @@ fn add_condition_path_fact_with_visibility(
     condition: ConditionTerm,
     value: bool,
     public: bool,
+    certified_after_effect: bool,
 ) -> Option<()> {
     if let Some(known) = assumptions.exact_condition_value(&condition) {
-        return (known == value).then_some(());
+        if known == value {
+            return Some(());
+        }
+        if !certified_after_effect {
+            return None;
+        }
     }
     if let Some(known) = Assumptions::decide_intrinsically(&condition) {
         return (known == value).then_some(());
@@ -4424,7 +4441,12 @@ fn add_condition_path_fact_with_visibility(
     if !assumptions.should_defer_non_exact_condition_reasoning()
         && let Some(known) = assumptions.decide(&condition)
     {
-        return (known == value).then_some(());
+        if known == value {
+            return Some(());
+        }
+        if !certified_after_effect {
+            return None;
+        }
     }
 
     if let Some(existing) = facts
@@ -4682,12 +4704,14 @@ pub(super) fn merge_facts(
     assumptions: &Assumptions,
 ) -> Option<Vec<ExecutionPureFact>> {
     let mut facts = left.to_vec();
+    let mut saw_memory_effect = false;
     for fact in right {
-        add_path_fact_with_visibility(
+        add_path_fact_with_visibility_after_effect(
             &mut facts,
             assumptions,
             fact.proposition().clone(),
             fact.is_public(),
+            saw_memory_effect && fact.is_certified(),
         )?;
         if fact.is_certified()
             && let Some(existing) = facts
@@ -4695,6 +4719,16 @@ pub(super) fn merge_facts(
                 .find(|existing| existing.proposition() == fact.proposition())
         {
             *existing = fact.clone();
+        }
+        // A verified call emits its effect before its certified
+        // postconditions. Entry-state condition facts cannot reject those
+        // theorem-backed postconditions after memory has changed, although
+        // agreeing entry facts can still make a postcondition redundant.
+        if matches!(
+            fact.proposition(),
+            Proposition::CMemoryMutatesOnly { .. } | Proposition::CMemoryEffectSummary { .. }
+        ) {
+            saw_memory_effect = true;
         }
     }
     Some(facts)

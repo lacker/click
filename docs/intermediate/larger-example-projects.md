@@ -58,6 +58,34 @@ proof state rather than a runtime flag. The example exercises ownership moving
 out of and back into a field-dependent composite resource through opaque call
 summaries, without requiring allocation or deallocation.
 
+### Borrowed Slice
+
+```text
+examples/borrowed-slice/
+```
+
+This fixture temporarily splits a complete buffer into one resource holding
+the metadata and outer ranges, plus an independently owned, nonempty middle
+slice. A helper mutates the slice without access to its owner, after which a
+return operation recombines the prefix, slice, and suffix into the original
+buffer resource.
+The explicit backing pointer and length arguments preserve the allocation's
+identity while its ownership is divided across opaque calls.
+
+### Ring Buffer
+
+```text
+examples/ring-buffer/
+```
+
+This fixture models a fixed-capacity ring in linear and wrapped logical states.
+Both outer states contain the same nested full-backing resource; wrapping
+changes metadata and stored content, not ownership of the allocation. The
+backing therefore stays encapsulated behind a natural owner-only resource and
+API. The example covers construction, a linear-to-wrapped push, a viewed read
+through both composite layers, a wrapped-to-linear pop, and a modular round
+trip.
+
 ### Owned Vector
 
 ```text

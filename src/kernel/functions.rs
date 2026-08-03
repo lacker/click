@@ -630,9 +630,9 @@ fn execute_verified_function_rule(
             &effective_assumptions,
         ) else {
             paths.push(CFunctionPath {
-                outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(
-                    "could not project ensured composite resource cores".to_string(),
-                )),
+                outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(format!(
+                    "could not expand ensured composite resources after call: {ensured_resources:?}"
+                ))),
                 facts,
                 obligations,
             });
@@ -871,8 +871,7 @@ fn prepare_function_resource_transfer(
         assumptions,
     ) else {
         return Ok(Err(CRuntimeError::FunctionContract(format!(
-            "invalid or recursive composite resource definition while expanding {required_resources:?}; definitions: {:?}",
-            function.composite_resource_definitions()
+            "could not expand required composite resources before call: {required_resources:?}"
         ))));
     };
     let mut required_resource_list = required_resources.facts().to_vec();
@@ -897,7 +896,7 @@ fn prepare_function_resource_transfer(
                 assumptions,
             ) else {
                 return Ok(Err(CRuntimeError::FunctionContract(format!(
-                    "invalid composite resource while consuming {resource:?}"
+                    "could not expand owned composite resource before consuming it: {resource:?}"
                 ))));
             };
             for core in expanded.facts().iter().filter_map(CResourceFact::core) {
