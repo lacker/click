@@ -2600,6 +2600,8 @@ pub(super) fn initial_claim_context(
         &requirement_pure_facts,
         claim_label,
         include_owned_composite_cores,
+        predicate_environment,
+        click_function_environment,
     )?;
     requirement_pure_facts = project_initial_resource_facts(
         resource_environment,
@@ -20522,6 +20524,12 @@ fn resource_is_direct_observed_core(
         let Some(body) = definition.composite_body() else {
             continue;
         };
+        // A guarded composite only exposes its children after the guard has
+        // been selected. `reach` does not carry enough state into this
+        // syntactic shortcut, so keep guarded children explicit.
+        if body.condition().is_some() {
+            continue;
+        }
         let substitutions =
             resource_argument_substitutions(definition, parent, claim_label, tactic_index)?;
         for child in body.contains() {
@@ -22423,6 +22431,9 @@ fn materialize_folded_composite_resource_memory(
         let Some(composite_body) = definition.composite_body() else {
             continue;
         };
+        if composite_body.condition().is_some() {
+            continue;
+        }
         let substitutions =
             resource_value_substitutions(definition, resource_arguments).map_err(|message| {
                 format!("could not instantiate composite resource `{name}` body: {message}")
@@ -22447,14 +22458,16 @@ fn project_initial_composite_resource_cores(
     available_pure_facts: &[Proposition],
     claim_label: &str,
     include_owned: bool,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<CState, ClickError> {
     let assumptions = assumptions_from_propositions(available_pure_facts);
     for resource in state.resources().facts().to_vec() {
-        let (name, resource_arguments) = match resource {
-            CResourceFact::View(CResource::Composite { name, arguments }) => (name, arguments),
-            CResourceFact::Own(CResource::Composite { name, arguments }) if include_owned => {
-                (name, arguments)
+        let (name, resource_arguments, is_owned) = match resource {
+            CResourceFact::View(CResource::Composite { name, arguments }) => {
+                (name, arguments, false)
             }
+            CResourceFact::Own(CResource::Composite { name, arguments }) => (name, arguments, true),
             _ => continue,
         };
         let Some(definition) = resource_environment.get(&name) else {
@@ -22463,12 +22476,38 @@ fn project_initial_composite_resource_cores(
         let Some(composite_body) = definition.composite_body() else {
             continue;
         };
+        if is_owned && !include_owned && composite_body.condition().is_none() {
+            continue;
+        }
         let substitutions =
             resource_value_substitutions(definition, &resource_arguments).map_err(|message| {
                 ClickError::new(format!(
                     "`{claim_label}` setup failed: could not project composite resource core `{name}`: {message}"
                 ))
             })?;
+        let Some(body_active) = try_select_composite_resource_body(
+            definition,
+            &substitutions,
+            parameters,
+            arguments,
+            &state,
+            &state,
+            &CValue::Int32(Bitvector32Term::Constant(0)),
+            available_pure_facts,
+            predicate_environment,
+            click_function_environment,
+        )
+        .map_err(|message| {
+            ClickError::new(format!(
+                "`{claim_label}` setup failed: could not select composite resource core `{name}`: {message}"
+            ))
+        })?
+        else {
+            continue;
+        };
+        if !body_active {
+            continue;
+        }
         let (memory, contained_resources) = instantiate_composite_resource_body_resources(
             &name,
             composite_body,
@@ -22763,6 +22802,24 @@ fn record_observed_composite_surface_facts(
     let composite_body = definition
         .composite_body()
         .expect("observing a composite resource requires a composite body");
+    let Some(active) = try_select_composite_resource_body(
+        definition,
+        substitutions,
+        parameters,
+        arguments,
+        pre_state,
+        fact_state,
+        &CValue::Int32(Bitvector32Term::Constant(0)),
+        available_pure_facts,
+        predicate_environment,
+        click_function_environment,
+    )?
+    else {
+        return Ok(());
+    };
+    if !active {
+        return Ok(());
+    }
     let parent = lower_resource_clause(resource, parameters, arguments, fact_state.memory())
         .map_err(|error| error.message().to_string())?;
     let parent_subject = resource_clause_subject(resource);
@@ -22908,6 +22965,21 @@ fn record_initial_composite_surface_facts(
         let substitutions =
             resource_argument_substitutions(definition, resource, "initial resource projection", 0)
                 .map_err(|error| error.message().to_string())?;
+        let Some(active) = try_select_composite_resource_body(
+            definition,
+            &substitutions,
+            parameters,
+            arguments,
+            state,
+            state,
+            &CValue::Int32(Bitvector32Term::Constant(0)),
+            available_pure_facts,
+            predicate_environment,
+            click_function_environment,
+        )?
+        else {
+            return Ok(());
+        };
         record_observed_composite_surface_facts(
             definition,
             resource,
@@ -22921,6 +22993,9 @@ fn record_initial_composite_surface_facts(
             predicate_environment,
             click_function_environment,
         )?;
+        if !active {
+            return Ok(());
+        }
         for contained in composite_body.contains() {
             let contained =
                 instantiate_resource_clause(contained, &substitutions).map_err(|message| {
@@ -22984,6 +23059,92 @@ fn project_held_resource_observable_facts(
     .map(|(memory, _)| memory)
 }
 
+#[allow(clippy::too_many_arguments)]
+fn try_select_composite_resource_body(
+    definition: &ResourceDefinition,
+    substitutions: &BTreeMap<String, ContractExpression>,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    pre_state: &CState,
+    state: &CState,
+    result: &CValue,
+    available_pure_facts: &[Proposition],
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+) -> Result<Option<bool>, String> {
+    let Some(condition) = definition
+        .composite_body()
+        .and_then(CompositeResourceBody::condition)
+    else {
+        return Ok(Some(true));
+    };
+    let condition = substitute_click_proposition(condition, substitutions).map_err(|message| {
+        format!(
+            "could not instantiate resource `{}` condition: {message}",
+            definition.name()
+        )
+    })?;
+    let lowered = lower_outcome_proposition(
+        parameters,
+        arguments,
+        pre_state,
+        state,
+        result,
+        available_pure_facts,
+        &condition,
+        predicate_environment,
+        click_function_environment,
+    )
+    .map_err(|message| {
+        format!(
+            "could not lower resource `{}` condition `{}`: {message}",
+            definition.name(),
+            describe_click_proposition(&condition)
+        )
+    })?;
+    let assumptions = assumptions_from_propositions(available_pure_facts);
+    if assumptions.proves(&lowered) {
+        return Ok(Some(true));
+    }
+    if fact_conflicts_with_assumptions(&lowered, &assumptions) {
+        return Ok(Some(false));
+    }
+    Ok(None)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn composite_resource_body_is_active(
+    definition: &ResourceDefinition,
+    substitutions: &BTreeMap<String, ContractExpression>,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    pre_state: &CState,
+    state: &CState,
+    result: &CValue,
+    available_pure_facts: &[Proposition],
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+) -> Result<bool, String> {
+    try_select_composite_resource_body(
+        definition,
+        substitutions,
+        parameters,
+        arguments,
+        pre_state,
+        state,
+        result,
+        available_pure_facts,
+        predicate_environment,
+        click_function_environment,
+    )?
+    .ok_or_else(|| {
+        format!(
+            "resource `{}` condition is undecided: prove it or its negation before using its body",
+            definition.name()
+        )
+    })
+}
+
 /// Applies the non-consuming observation law declared by a composite body.
 /// The kernel algebra handles the folded resource fact itself; Click owns this
 /// definitional layer because it requires source-level substitution and fact
@@ -23011,6 +23172,24 @@ fn apply_composite_observation_law(
                 definition.name()
             )
         })?;
+    let Some(body_active) = try_select_composite_resource_body(
+        definition,
+        &substitutions,
+        parameters,
+        arguments,
+        pre_state,
+        &pre_state.clone().with_memory(memory.clone()),
+        result,
+        available_pure_facts,
+        predicate_environment,
+        click_function_environment,
+    )?
+    else {
+        return Ok((memory, ResourceContext::new()));
+    };
+    if !body_active {
+        return Ok((memory, ResourceContext::new()));
+    }
     let (memory, contained_resources) = instantiate_composite_resource_body_resources(
         definition.name(),
         composite_body,
@@ -23388,6 +23567,34 @@ fn unfold_composite_resource(
         .expect("composite_resource_law_definition should require a composite body");
     let substitutions =
         resource_argument_substitutions(definition, resource, claim_label, tactic_index)?;
+    let body_active = composite_resource_body_is_active(
+        definition,
+        &substitutions,
+        parameters,
+        arguments,
+        &state,
+        &state,
+        &CValue::Int32(Bitvector32Term::Constant(0)),
+        available_pure_facts,
+        predicate_environment,
+        click_function_environment,
+    )
+    .map_err(|message| {
+        ClickError::new(format!(
+            "`{claim_label}` tactic {tactic_index}: could not select `unfold({})` body: {message}",
+            describe_resource_clause(resource)
+        ))
+    })?;
+    let contained_clauses = if body_active {
+        composite_body.contains()
+    } else {
+        &[]
+    };
+    let body_facts = if body_active {
+        composite_body.facts()
+    } else {
+        &[]
+    };
     let abstract_resource = lower_resource_clause(resource, parameters, arguments, state.memory())?;
     let assumptions = assumptions_from_propositions(available_pure_facts);
     let folded_resources = state
@@ -23399,7 +23606,7 @@ fn unfold_composite_resource(
         resources
     } else {
         let mut remaining = state.resources().clone();
-        for contained in composite_body.contains() {
+        for contained in contained_clauses {
             let contained =
                 instantiate_resource_clause(contained, &substitutions).map_err(|message| {
                     ClickError::new(format!(
@@ -23428,7 +23635,7 @@ fn unfold_composite_resource(
     };
     state = state.with_resource_context(resources);
 
-    if already_unfolded && composite_body.contains().is_empty() {
+    if already_unfolded && contained_clauses.is_empty() {
         return Err(ClickError::new(format!(
             "`{claim_label}` tactic {tactic_index}: `unfold({})` failed: {}",
             describe_resource_clause(resource),
@@ -23444,7 +23651,7 @@ fn unfold_composite_resource(
     }
 
     let mut unfolded_facts = Vec::new();
-    for contained in composite_body.contains() {
+    for contained in contained_clauses {
         let contained = instantiate_resource_clause(contained, &substitutions).map_err(|message| {
             ClickError::new(format!(
                 "`{claim_label}` tactic {tactic_index}: could not instantiate `unfold({})`: {message}",
@@ -23498,7 +23705,7 @@ fn unfold_composite_resource(
         available_pure_facts,
     );
 
-    for fact in composite_body.facts() {
+    for fact in body_facts {
         let fact = substitute_click_proposition(fact, &substitutions).map_err(|message| {
                 ClickError::new(format!(
                     "`{claim_label}` tactic {tactic_index}: could not instantiate `unfold({})` fact: {message}",
@@ -23578,8 +23785,46 @@ fn fold_composite_resources_on_outcome(
             .expect("composite_resource_law_definition should require a composite body");
         let substitutions =
             resource_argument_substitutions(definition, resource, claim_label, path_index)?;
+        let (guard_result, guard_state) = match &outcome {
+            CFunctionOutcome::Return { value, state } => (value, state),
+            _ => {
+                return Err(ClickError::new(format!(
+                    "`{claim_label}` path {path_index}: `fold({})` requires a return outcome, got {}",
+                    describe_resource_clause(resource),
+                    describe_function_outcome(&outcome, parameters, arguments)
+                )));
+            }
+        };
+        let body_active = composite_resource_body_is_active(
+            definition,
+            &substitutions,
+            parameters,
+            arguments,
+            pre_state,
+            guard_state,
+            guard_result,
+            available_pure_facts,
+            predicate_environment,
+            click_function_environment,
+        )
+        .map_err(|message| {
+            ClickError::new(format!(
+                "`{claim_label}` path {path_index}: could not select `fold({})` body: {message}",
+                describe_resource_clause(resource)
+            ))
+        })?;
+        let body_facts = if body_active {
+            composite_body.facts()
+        } else {
+            &[]
+        };
+        let contained_clauses = if body_active {
+            composite_body.contains()
+        } else {
+            &[]
+        };
 
-        for fact in composite_body.facts() {
+        for fact in body_facts {
             let fact = substitute_click_proposition(fact, &substitutions).map_err(|message| {
                     ClickError::new(format!(
                         "`{claim_label}` path {path_index}: could not instantiate `fold({})` fact: {message}",
@@ -23653,7 +23898,7 @@ fn fold_composite_resources_on_outcome(
         let assumptions = assumptions_from_propositions(&fold_facts);
         let _assumptions_id_scope = crate::kernel::AssumptionsIdScope::enter(&assumptions);
         let mut lowered_contained = Vec::new();
-        for contained in composite_body.contains() {
+        for contained in contained_clauses {
             let contained =
                 instantiate_resource_clause(contained, &substitutions).map_err(|message| {
                     ClickError::new(format!(

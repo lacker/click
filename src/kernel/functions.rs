@@ -969,6 +969,23 @@ pub(super) fn expand_composite_resource_fact(
     memory: &CMemory,
     assumptions: &Assumptions,
 ) -> Option<ResourceContext> {
+    expand_composite_resource_fact_with_children(
+        context,
+        composite,
+        definitions,
+        memory,
+        assumptions,
+    )
+    .map(|(expanded, _)| expanded)
+}
+
+fn expand_composite_resource_fact_with_children(
+    context: &ResourceContext,
+    composite: &CResourceFact,
+    definitions: &[CCompositeResourceDefinition],
+    memory: &CMemory,
+    assumptions: &Assumptions,
+) -> Option<(ResourceContext, Vec<CResourceFact>)> {
     let CResource::Composite { name, arguments } = composite.resource() else {
         return None;
     };
@@ -997,7 +1014,21 @@ pub(super) fn expand_composite_resource_fact(
         .allow_symbolic_contract_loads()
         .prefer_symbolic_external_loads();
     let mut child_facts = Vec::new();
-    for contained in definition.contains() {
+    let Some(body_active) = evaluate_composite_resource_body_condition(
+        definition,
+        &state,
+        &evaluation_assumptions,
+        &mut budget,
+    ) else {
+        // A guarded folded resource remains opaque until the current path
+        // decides its condition.
+        return Some((context.clone(), Vec::new()));
+    };
+    for contained in if body_active {
+        definition.contains()
+    } else {
+        &[]
+    } {
         let Ok(Ok(child)) = evaluate_function_resource_spec(
             &state,
             contained,
@@ -1023,13 +1054,54 @@ pub(super) fn expand_composite_resource_fact(
     };
     let mut expanded = context.clone().without_exact_representation(composite)?;
     let missing = children
-        .into_iter()
+        .iter()
         .filter(|child| !expanded.facts().contains(child))
+        .cloned()
         .collect::<Vec<_>>();
     expanded = expanded
         .try_compose_into_valid_context_delaying_normalization(missing, assumptions)
         .ok()?;
-    Some(expanded)
+    Some((expanded, children))
+}
+
+fn evaluate_composite_resource_body_condition(
+    definition: &CCompositeResourceDefinition,
+    state: &CState,
+    assumptions: &Assumptions,
+    budget: &mut ExecutionBudget,
+) -> Option<bool> {
+    let Some(condition) = definition.condition() else {
+        return Some(true);
+    };
+    let paths = lower_spec_proposition_at_state_with_loop_entry(
+        state,
+        condition,
+        None,
+        assumptions,
+        budget,
+    )
+    .ok()?;
+    let [path] = paths.as_slice() else {
+        return None;
+    };
+    if !path
+        .obligations
+        .iter()
+        .all(|obligation| assumptions.proves(obligation.proposition()))
+    {
+        return None;
+    }
+    if assumptions.proves(&path.proposition) {
+        return Some(true);
+    }
+    let false_proposition = match &path.proposition {
+        Proposition::ConditionIs(condition, value) => {
+            Proposition::ConditionIs(condition.clone(), !value)
+        }
+        Proposition::Not(body) => body.as_ref().clone(),
+        proposition => Proposition::Not(Box::new(proposition.clone())),
+    };
+    assumptions.proves(&false_proposition).then_some(false)
 }
 
 pub(super) fn expand_all_composite_resource_facts(
@@ -1049,29 +1121,75 @@ fn expand_composite_resource_context(
     assumptions: &Assumptions,
 ) -> Option<(ResourceContext, Vec<CResourceFact>)> {
     let mut expanded = context.clone();
-    let mut seen = BTreeSet::new();
     let mut composites = Vec::new();
-    loop {
-        if !seen.insert(expanded.clone()) {
-            return None;
-        }
-        let Some(composite) = expanded
-            .facts()
-            .iter()
-            .find(|fact| matches!(fact.resource(), CResource::Composite { .. }))
-            .cloned()
-        else {
-            return Some((expanded, composites));
-        };
-        composites.push(composite.clone());
-        expanded = expand_composite_resource_fact(
+    let roots = context
+        .facts()
+        .iter()
+        .filter(|fact| matches!(fact.resource(), CResource::Composite { .. }))
+        .cloned()
+        .collect::<Vec<_>>();
+    for root in roots {
+        expanded = expand_composite_resource_tree(
             &expanded,
-            &composite,
+            &root,
             definitions,
             memory,
             assumptions,
+            &[],
+            &mut composites,
         )?;
     }
+    Some((expanded, composites))
+}
+
+fn expand_composite_resource_tree(
+    context: &ResourceContext,
+    composite: &CResourceFact,
+    definitions: &[CCompositeResourceDefinition],
+    memory: &CMemory,
+    assumptions: &Assumptions,
+    ancestors: &[String],
+    composites: &mut Vec<CResourceFact>,
+) -> Option<ResourceContext> {
+    if !context.facts().contains(composite) {
+        return Some(context.clone());
+    }
+    let CResource::Composite { name, .. } = composite.resource() else {
+        return Some(context.clone());
+    };
+    let definition = definitions
+        .iter()
+        .find(|definition| definition.name() == name)?;
+    if definition.is_recursive() && ancestors.iter().any(|ancestor| ancestor == name) {
+        return Some(context.clone());
+    }
+    let (mut expanded, children) = expand_composite_resource_fact_with_children(
+        context,
+        composite,
+        definitions,
+        memory,
+        assumptions,
+    )?;
+    if expanded.facts().contains(composite) {
+        return Some(expanded);
+    }
+    composites.push(composite.clone());
+    let mut child_ancestors = ancestors.to_vec();
+    child_ancestors.push(name.clone());
+    for child in children {
+        if matches!(child.resource(), CResource::Composite { .. }) {
+            expanded = expand_composite_resource_tree(
+                &expanded,
+                &child,
+                definitions,
+                memory,
+                assumptions,
+                &child_ancestors,
+                composites,
+            )?;
+        }
+    }
+    Some(expanded)
 }
 
 pub(super) fn expand_all_composite_resource_facts_and_propositions(
@@ -1136,7 +1254,17 @@ fn evaluate_composite_resource_relation_propositions(
         .allow_symbolic_contract_loads()
         .prefer_symbolic_external_loads();
     let mut children = Vec::new();
-    for contained in definition.contains() {
+    let body_active = evaluate_composite_resource_body_condition(
+        definition,
+        &state,
+        &evaluation_assumptions,
+        &mut budget,
+    )?;
+    for contained in if body_active {
+        definition.contains()
+    } else {
+        &[]
+    } {
         let Ok(Ok(child)) = evaluate_function_resource_spec(
             &state,
             contained,
@@ -1202,6 +1330,18 @@ fn evaluate_composite_resource_fact_propositions(
     let mut result = Vec::new();
     let mut budget = ExecutionBudget::default();
     let mut fact_assumptions = assumptions.clone();
+    let evaluation_assumptions = assumptions
+        .clone()
+        .allow_symbolic_contract_loads()
+        .prefer_symbolic_external_loads();
+    if !evaluate_composite_resource_body_condition(
+        definition,
+        &state,
+        &evaluation_assumptions,
+        &mut budget,
+    )? {
+        return Some(result);
+    }
     let mut pending = definition.facts().iter().collect::<Vec<_>>();
     while !pending.is_empty() {
         let mut next_pending = Vec::new();
@@ -1429,8 +1569,18 @@ pub(super) fn evaluate_function_resource_context(
 ) -> ExecutionResult<Result<ResourceContext, CRuntimeError>> {
     let mut context = ResourceContext::new();
     for resource in resources {
-        let resource = match evaluate_function_resource_spec(state, resource, assumptions, budget)?
-        {
+        let evaluation_state = state.clone().with_resource_context(
+            state
+                .resources()
+                .clone()
+                .unchecked_with_facts(context.facts().iter().cloned()),
+        );
+        let resource = match evaluate_function_resource_spec(
+            &evaluation_state,
+            resource,
+            assumptions,
+            budget,
+        )? {
             Ok(resource) => resource,
             Err(error) => return Ok(Err(error)),
         };

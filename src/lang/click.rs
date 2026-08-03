@@ -139,6 +139,7 @@ pub struct ResourceDefinition {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CompositeResourceBody {
+    condition: Option<ClickProposition>,
     contains: Vec<ResourceClause>,
     facts: Vec<ClickProposition>,
 }
@@ -1572,6 +1573,10 @@ impl ResourceDefinition {
 }
 
 impl CompositeResourceBody {
+    pub fn condition(&self) -> Option<&ClickProposition> {
+        self.condition.as_ref()
+    }
+
     pub fn contains(&self) -> &[ResourceClause] {
         &self.contains
     }
@@ -2912,6 +2917,16 @@ fn composite_resource_definitions(
             .iter()
             .map(resource_clause_to_resource_spec)
             .collect::<Result<Vec<_>, _>>()?;
+        let recursive = body.contains().iter().any(|resource| {
+            matches!(
+                resource,
+                ResourceClause::Declared {
+                    kind: ResourceKind::Composite,
+                    name,
+                    ..
+                } if name == definition.name()
+            )
+        });
         definitions.push(CCompositeResourceDefinition::new(
             definition.name(),
             definition
@@ -2924,6 +2939,12 @@ fn composite_resource_definitions(
                     )
                 })
                 .collect(),
+            lower_composite_resource_condition(
+                definition,
+                predicate_environment,
+                click_function_environment,
+            )?,
+            recursive,
             contains,
             lower_composite_resource_facts(
                 definition,

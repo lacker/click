@@ -1,10 +1,10 @@
 use super::api::{int32, normalize_exact_memory_loads_in_pointer_offset, uint8};
 use super::reasoning::{
-    bitvector_terms_proven_equal_for_memory_resolution, collect_or_cases,
-    instantiate_range_fold_step, int32_element_index_from_offset,
-    memory_snapshots_proven_equal_at_pointer, pointers_proven_distinct_for_memory_resolution,
-    pointers_proven_equal_for_memory_resolution, resource_context_has_read,
-    signed_bitvector_constant, signed_i64_bitvector_constant,
+    bitvector_terms_proven_equal_for_memory_resolution,
+    c_values_proven_equal_for_memory_resolution, collect_or_cases, instantiate_range_fold_step,
+    int32_element_index_from_offset, memory_snapshots_proven_equal_at_pointer,
+    pointers_proven_distinct_for_memory_resolution, pointers_proven_equal_for_memory_resolution,
+    resource_context_has_read, signed_bitvector_constant, signed_i64_bitvector_constant,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -448,6 +448,8 @@ pub struct CFunction {
 pub struct CCompositeResourceDefinition {
     pub(super) name: String,
     pub(super) parameters: Vec<CParameter>,
+    pub(super) condition: Option<SpecProposition>,
+    pub(super) recursive: bool,
     pub(super) contains: Vec<CResourceSpec>,
     pub(super) facts: Vec<SpecProposition>,
 }
@@ -2331,12 +2333,16 @@ impl CCompositeResourceDefinition {
     pub fn new(
         name: impl Into<String>,
         parameters: Vec<CParameter>,
+        condition: Option<SpecProposition>,
+        recursive: bool,
         contains: Vec<CResourceSpec>,
         facts: Vec<SpecProposition>,
     ) -> Self {
         Self {
             name: name.into(),
             parameters,
+            condition,
+            recursive,
             contains,
             facts,
         }
@@ -2348,6 +2354,14 @@ impl CCompositeResourceDefinition {
 
     pub fn parameters(&self) -> &[CParameter] {
         &self.parameters
+    }
+
+    pub fn condition(&self) -> Option<&SpecProposition> {
+        self.condition.as_ref()
+    }
+
+    pub fn is_recursive(&self) -> bool {
+        self.recursive
     }
 
     pub fn contains(&self) -> &[CResourceSpec] {
@@ -3396,13 +3410,61 @@ fn consume_memory_resource_fact(
     unreachable!("non-memory resource sent to memory resource consumer")
 }
 
-fn exact_resource_fact_entails(available: &CResourceFact, required: &CResourceFact) -> bool {
+fn exact_resources_proven_equal(
+    left: &CResource,
+    right: &CResource,
+    assumptions: &Assumptions,
+) -> bool {
+    if left == right {
+        return true;
+    }
+    match (left, right) {
+        (
+            CResource::Composite {
+                name: left_name,
+                arguments: left_arguments,
+            },
+            CResource::Composite {
+                name: right_name,
+                arguments: right_arguments,
+            },
+        )
+        | (
+            CResource::Token {
+                name: left_name,
+                arguments: left_arguments,
+            },
+            CResource::Token {
+                name: right_name,
+                arguments: right_arguments,
+            },
+        ) => {
+            left_name == right_name
+                && left_arguments.len() == right_arguments.len()
+                && left_arguments
+                    .iter()
+                    .zip(right_arguments)
+                    .all(|(left, right)| {
+                        c_values_proven_equal_for_memory_resolution(left, right, assumptions)
+                    })
+        }
+        _ => false,
+    }
+}
+
+fn exact_resource_fact_entails(
+    available: &CResourceFact,
+    required: &CResourceFact,
+    assumptions: &Assumptions,
+) -> bool {
     match (available, required) {
-        (CResourceFact::Own(available), CResourceFact::Own(required)) => available == required,
+        (CResourceFact::Own(available), CResourceFact::Own(required)) => {
+            exact_resources_proven_equal(available, required, assumptions)
+        }
         (
             CResourceFact::Own(available) | CResourceFact::View(available),
             CResourceFact::View(required),
-        ) => available == required,
+        ) => exact_resources_proven_equal(available, required, assumptions),
         _ => false,
     }
 }
@@ -3410,9 +3472,9 @@ fn exact_resource_fact_entails(available: &CResourceFact, required: &CResourceFa
 fn consume_exact_resource_fact(
     available: &CResourceFact,
     required: &CResourceFact,
-    _assumptions: &Assumptions,
+    assumptions: &Assumptions,
 ) -> Option<ResourceFactConsumption> {
-    if !exact_resource_fact_entails(available, required) {
+    if !exact_resource_fact_entails(available, required, assumptions) {
         return None;
     }
     Some(if required.is_view() {
@@ -3425,15 +3487,18 @@ fn consume_exact_resource_fact(
 fn combine_exact_resource_facts(
     left: &CResourceFact,
     right: &CResourceFact,
+    assumptions: &Assumptions,
 ) -> Option<CResourceFact> {
     match (left, right) {
         (CResourceFact::Own(left), CResourceFact::View(right))
         | (CResourceFact::View(right), CResourceFact::Own(left))
-            if left == right =>
+            if exact_resources_proven_equal(left, right, assumptions) =>
         {
             Some(CResourceFact::Own(left.clone()))
         }
-        (CResourceFact::View(left), CResourceFact::View(right)) if left == right => {
+        (CResourceFact::View(left), CResourceFact::View(right))
+            if exact_resources_proven_equal(left, right, assumptions) =>
+        {
             Some(CResourceFact::View(left.clone()))
         }
         _ => None,
@@ -3451,9 +3516,18 @@ fn access_mode_core(resource: &CResourceFact) -> Option<CResourceFact> {
 fn exact_resource_pair_validity_error(
     left: &CResourceFact,
     right: &CResourceFact,
+    assumptions: &Assumptions,
 ) -> Option<ResourceContextValidityError> {
-    (left.is_own() && left == right)
-        .then(|| ResourceContextValidityError::DuplicateOwnedResourceFact(left.clone()))
+    match (left, right) {
+        (CResourceFact::Own(left), CResourceFact::Own(right))
+            if exact_resources_proven_equal(left, right, assumptions) =>
+        {
+            Some(ResourceContextValidityError::DuplicateOwnedResourceFact(
+                CResourceFact::Own(left.clone()),
+            ))
+        }
+        _ => None,
+    }
 }
 
 fn same_family_separate_facts(facts: &[&CResourceFact]) -> Vec<Proposition> {
@@ -3546,18 +3620,18 @@ macro_rules! impl_exact_resource_algebra {
                 &self,
                 left: &CResourceFact,
                 right: &CResourceFact,
-                _assumptions: &Assumptions,
+                assumptions: &Assumptions,
             ) -> Option<ResourceContextValidityError> {
-                exact_resource_pair_validity_error(left, right)
+                exact_resource_pair_validity_error(left, right, assumptions)
             }
 
             fn entails(
                 &self,
                 available: &CResourceFact,
                 required: &CResourceFact,
-                _assumptions: &Assumptions,
+                assumptions: &Assumptions,
             ) -> bool {
-                exact_resource_fact_entails(available, required)
+                exact_resource_fact_entails(available, required, assumptions)
             }
 
             fn consume(
@@ -3573,9 +3647,9 @@ macro_rules! impl_exact_resource_algebra {
                 &self,
                 left: &CResourceFact,
                 right: &CResourceFact,
-                _assumptions: &Assumptions,
+                assumptions: &Assumptions,
             ) -> Option<CResourceFact> {
-                combine_exact_resource_facts(left, right)
+                combine_exact_resource_facts(left, right, assumptions)
             }
 
             fn core(&self, fact: &CResourceFact) -> Option<CResourceFact> {

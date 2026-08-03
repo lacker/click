@@ -329,6 +329,14 @@ impl Parser {
 
     fn parse_composite_resource_body(&mut self) -> Result<CompositeResourceBody, ClickError> {
         self.expect(Token::LBrace)?;
+        let condition = if self.peek_ident() == Some("if") {
+            self.position += 1;
+            let condition = self.parse_proposition()?;
+            self.expect(Token::LBrace)?;
+            Some(condition)
+        } else {
+            None
+        };
         let mut contains = Vec::new();
         let mut facts = Vec::new();
         while self.peek() != Some(&Token::RBrace) {
@@ -366,7 +374,14 @@ impl Parser {
             }
         }
         self.expect(Token::RBrace)?;
-        Ok(CompositeResourceBody { contains, facts })
+        if condition.is_some() {
+            self.expect(Token::RBrace)?;
+        }
+        Ok(CompositeResourceBody {
+            condition,
+            contains,
+            facts,
+        })
     }
 
     fn parse_composite_resource_contains_clause(&mut self) -> Result<ResourceClause, ClickError> {

@@ -312,6 +312,18 @@ sequence:
   visible owned-memory resources are rejected.
 - `mdtests/composite_resource_rejects_cycle.md`: composite-resource
   definitions reject containment cycles.
+- `mdtests/conditional_resource_body.md`: a load-free condition selects either
+  one composite body or the empty body.
+- `mdtests/conditional_resource_guard_must_be_load_free.md`: resource guards
+  cannot read memory.
+- `mdtests/conditional_resource_unfold_requires_decided_guard.md`: explicit
+  unfolding rejects an unknown guard instead of guessing a body.
+- `mdtests/recursive_conditional_resource.md`: guarded direct self-recursion
+  unfolds one node while leaving the recursive tail folded.
+- `mdtests/recursive_resource_requires_guard.md`: unguarded direct recursion
+  remains rejected.
+- `mdtests/recursive_resource_rejects_mutual_cycle.md`: guarded mutual
+  recursion remains rejected.
 - `mdtests/composite_resource_pure_fact.md`: composite resources can carry
   scalar facts that do not read memory.
 - `mdtests/composite_resource_symbolic_fact_coverage.md`: scalar fact bounds
@@ -390,6 +402,8 @@ sequence:
   enclosing buffer state.
 - `examples/ring-buffer/`: linear and wrapped logical states retain the same
   nested full-backing ownership behind an owner-only API.
+- `examples/linked-list/`: a guarded recursive resource over preallocated
+  singly linked nodes, with one-layer push/pop proofs and a modular round trip.
 - `examples/owned-vector/`: composite-resource example over vector metadata and
   dependent backing storage, including viewed reads and resource-state
   transitions.

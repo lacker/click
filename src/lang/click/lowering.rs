@@ -8,6 +8,59 @@ type FunctionContractSummary = (
     bool,
 );
 
+pub(super) fn lower_composite_resource_condition(
+    definition: &ResourceDefinition,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+) -> Result<Option<SpecProposition>, ClickError> {
+    let Some(condition) = definition
+        .composite_body()
+        .expect("only composite definitions have conditions")
+        .condition()
+    else {
+        return Ok(None);
+    };
+    let entry_state = CState::new();
+    let mut lowerer = AnnotationLowerer {
+        structural_clauses: &[],
+        function_effects: &[],
+        predicate_environment,
+        click_function_environment,
+        entry_state: &entry_state,
+        entry_values: BTreeMap::new(),
+        parameter_array_element_types: definition
+            .parameters()
+            .iter()
+            .filter_map(|parameter| {
+                Some((
+                    parameter.name().to_string(),
+                    click_array_element_type(parameter.c_type())?,
+                ))
+            })
+            .collect(),
+        quantified_values: BTreeMap::new(),
+        loop_index: 0,
+        statement_index: 0,
+        next_quantifier_variable: 3_200_000,
+    };
+    let all_predicates = predicate_environment
+        .definitions
+        .keys()
+        .cloned()
+        .collect::<Vec<_>>();
+    let condition = unfold_click_predicates_in_proposition_with_active(
+        predicate_environment,
+        &all_predicates,
+        condition,
+        &mut BTreeSet::new(),
+    )
+    .map_err(ClickError::new)?;
+    lowerer
+        .click_proposition_to_spec_proposition(&condition, &SpecElaborationContext::default())
+        .map(Some)
+        .map_err(ClickError::new)
+}
+
 pub(super) fn lower_composite_resource_facts(
     definition: &ResourceDefinition,
     predicate_environment: &PredicateEnvironment,
@@ -321,6 +374,20 @@ fn collect_owned_resource_memory_segments(
     resource_environment: &ResourceEnvironment,
     output: &mut Vec<CMemorySegment>,
 ) -> Result<(), ClickError> {
+    collect_owned_resource_memory_segments_inner(
+        resource,
+        resource_environment,
+        output,
+        &mut BTreeSet::new(),
+    )
+}
+
+fn collect_owned_resource_memory_segments_inner(
+    resource: &ResourceClause,
+    resource_environment: &ResourceEnvironment,
+    output: &mut Vec<CMemorySegment>,
+    active_resources: &mut BTreeSet<String>,
+) -> Result<(), ClickError> {
     match resource {
         ResourceClause::Read(_) => Ok(()),
         ResourceClause::Write(segment) => {
@@ -347,19 +414,33 @@ fn collect_owned_resource_memory_segments(
             arguments,
             ..
         } => {
-            let definition = resource_environment
-                .get(name)
-                .ok_or_else(|| ClickError::new(format!("unknown composite resource `{name}`")))?;
-            let Some(body) = definition.composite_body() else {
+            if !active_resources.insert(name.clone()) {
                 return Ok(());
-            };
-            let substitutions = resource_argument_contract_substitutions(definition, arguments)?;
-            for contained in body.contains() {
-                let contained = substitute_resource_clause_for_summary(contained, &substitutions)
-                    .map_err(ClickError::new)?;
-                collect_owned_resource_memory_segments(&contained, resource_environment, output)?;
             }
-            Ok(())
+            let result = (|| {
+                let definition = resource_environment.get(name).ok_or_else(|| {
+                    ClickError::new(format!("unknown composite resource `{name}`"))
+                })?;
+                let Some(body) = definition.composite_body() else {
+                    return Ok(());
+                };
+                let substitutions =
+                    resource_argument_contract_substitutions(definition, arguments)?;
+                for contained in body.contains() {
+                    let contained =
+                        substitute_resource_clause_for_summary(contained, &substitutions)
+                            .map_err(ClickError::new)?;
+                    collect_owned_resource_memory_segments_inner(
+                        &contained,
+                        resource_environment,
+                        output,
+                        active_resources,
+                    )?;
+                }
+                Ok(())
+            })();
+            active_resources.remove(name);
+            result
         }
     }
 }
@@ -4844,6 +4925,34 @@ pub(super) fn comparison_proposition(
     operator: ComparisonOperator,
     right: CValue,
 ) -> Result<Proposition, ClickError> {
+    let null_pointer = || Pointer {
+        block: "null".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let pointer_and_null = match (&left, &right) {
+        (CValue::Pointer(pointer), CValue::Int32(Bitvector32Term::Constant(0))) => {
+            Some((pointer.clone(), null_pointer()))
+        }
+        (CValue::Int32(Bitvector32Term::Constant(0)), CValue::Pointer(pointer)) => {
+            Some((null_pointer(), pointer.clone()))
+        }
+        _ => None,
+    };
+    if let Some((left, right)) = pointer_and_null {
+        let value = match operator {
+            ComparisonOperator::Equal => true,
+            ComparisonOperator::NotEqual => false,
+            _ => {
+                return Err(ClickError::new(
+                    "pointer propositions support only `==` and `!=`",
+                ));
+            }
+        };
+        return Ok(Proposition::ConditionIs(
+            ConditionTerm::pointer_equal(left, right),
+            value,
+        ));
+    }
     if let (CValue::Pointer(left), CValue::Pointer(right)) = (&left, &right) {
         let value = match operator {
             ComparisonOperator::Equal => true,

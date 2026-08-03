@@ -532,6 +532,43 @@ fn resource_context_observes_same_and_cross_family_separation() {
 }
 
 #[test]
+fn composite_resource_arguments_respect_proven_pointer_equality() {
+    let left_pointer = Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(40_000)), 4),
+    };
+    let right_pointer = Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(40_001)), 4),
+    };
+    let left = CResourceFact::Own(CResource::Composite {
+        name: "list".to_string(),
+        arguments: vec![CValue::Pointer(left_pointer.clone())],
+    });
+    let right = CResourceFact::Own(CResource::Composite {
+        name: "list".to_string(),
+        arguments: vec![CValue::Pointer(right_pointer.clone())],
+    });
+    let assumptions = Assumptions::new().assume_condition(
+        ConditionTerm::pointer_equal(left_pointer, right_pointer),
+        true,
+    );
+
+    let remaining = ResourceContext::new()
+        .unchecked_with_fact(left.clone())
+        .without_fact(&right, &assumptions)
+        .expect("equal resource arguments should identify the same owned fact");
+    assert!(remaining.is_empty());
+
+    assert!(matches!(
+        ResourceContext::new()
+            .unchecked_with_fact(left)
+            .try_compose_with_fact(right, &assumptions),
+        Err(ResourceContextValidityError::DuplicateOwnedResourceFact(_))
+    ));
+}
+
+#[test]
 fn resource_separation_proves_memory_disjointness() {
     let base = Pointer {
         block: "p".into(),

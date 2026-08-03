@@ -329,6 +329,30 @@ resource uncalled(flag: int32*) {
 }
 ```
 
+A composite body may instead have one top-level guard:
+
+```click
+resource list(node: struct node*) {
+    if node != 0 {
+        owns node->value;
+        owns node->next;
+        contains list(node->next);
+    }
+}
+```
+
+There is no `else`: when the guard is false, the body is empty. The guard must
+be load-free, because it decides which memory permissions exist and therefore
+cannot depend on reading that same memory. A guarded body may directly contain
+the resource being defined. This direct self-recursion is the supported
+recursive form; unguarded recursion and mutual resource cycles are rejected.
+
+`observe` keeps a guarded resource opaque when neither the guard nor its
+negation is known. Explicit `fold` and `unfold` require the guard to be decided.
+When active, they expose or consume exactly one body layer, leaving a recursive
+child such as `list(node->next)` folded. This makes proof cost depend on the
+number of explicit list operations, not the unknown length of the list.
+
 Holding the folded abstract token exposes its immediate pure facts and viewed
 resource facts, but not its owned contained permissions. Hidden contained
 owned resources also expose direct `contains(...)` and `separate(...)` pure
@@ -387,6 +411,11 @@ using `views` does not consume the caller's viewed or owned element. Owned
 elements are transferred by `owns`, `consumes`, and `produces`. Allocation
 lifecycle and deallocation authority are intentionally outside this first-layer
 resource surface.
+
+Composite and token arguments are compared using proved scalar and pointer
+equalities. Thus a held `list(node->next)` can satisfy `list(tail)` after the
+proof establishes `node->next == tail`; the resource does not depend on one
+particular syntactic spelling of that pointer.
 
 A call can pass a covered subrange, such as consuming `p[0..1]` from a caller
 that owns `p[0..2]`; Click keeps the residue and rejoins adjacent returned

@@ -320,6 +320,36 @@ These steps are bounded by design. A proof that needs facts inside a nested
 composite resource should name the path with repeated `observe(...)` steps
 instead of relying on `auto` to search through every possible nested body.
 
+### Conditional And Recursive Bodies
+
+A composite resource may put its entire body under one load-free `if`:
+
+```click
+resource list(node: struct node*) {
+    if node != 0 {
+        owns node->value;
+        owns node->next;
+        contains list(node->next);
+    }
+}
+```
+
+The false case is an empty body; conditional resource bodies have no `else`.
+The condition must not read memory. This avoids circular reasoning in which a
+load is used to decide whether the permission authorizing that load exists.
+
+A guarded body may contain itself directly. `unfold(list(node))` exposes one
+nonnull node and the still-folded `list(node->next)` tail; `fold` performs the
+reverse step. Unknown guards remain opaque to observation and automatic
+resource expansion, while explicit `fold` and `unfold` report that the guard
+must first be proved true or false. Unguarded self-recursion and mutual
+resource cycles remain rejected.
+
+Declared resource identity respects proved equality of its arguments. This is
+important after reading a next pointer: if the context proves
+`node->next == tail`, ownership of `list(node->next)` is ownership of
+`list(tail)` as well.
+
 If a fact reads mutable memory, the composite body must contain write
 permission covering that memory. This is what makes the fact stable while
 the resource is folded:
@@ -352,10 +382,12 @@ This is resource-context reasoning, not theorem application. Theorems stay
 pure; `apply(theorem(...))` can add proposition facts, but it does not consume
 or return resources.
 
-This first slice supports viewed and owned memory elements plus exact-match
-token resources inside composite bodies. Duplicate contained resource
-tokens are rejected, and composite-resource cycles are rejected. Resource
-unfolding is explicit; `auto` does not yet choose unfold/fold steps on its own.
+This slice supports viewed and owned memory elements plus declared token and
+composite resources inside composite bodies. Duplicate contained owned
+resources are rejected, including resources whose arguments are provably
+equal. General composite-resource cycles are rejected; guarded direct
+self-recursion is the deliberate exception. Resource unfolding is explicit;
+`auto` does not yet choose unfold/fold steps on its own.
 
 The smallest ownership-shaped pattern is a composite resource that bundles
 several concrete permissions. For example, `first_cell_copy_access(dst, src)`

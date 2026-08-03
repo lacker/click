@@ -86,6 +86,20 @@ API. The example covers construction, a linear-to-wrapped push, a viewed read
 through both composite layers, a wrapped-to-linear pop, and a modular round
 trip.
 
+### Preallocated Linked List
+
+```text
+examples/linked-list/
+```
+
+This fixture defines a guarded recursive `list(node)` resource. Null is the
+empty list; a nonnull node owns its value and next fields and contains a folded
+resource for its tail. The project verifies empty construction from a typed
+null pointer, head access, preallocated push and pop ownership transfers, and a
+multi-call round trip. Each proof unfolds at most one node. Allocation,
+deallocation, traversal loops, shared tails, and cyclic lists remain outside
+the example.
+
 ### Owned Vector
 
 ```text

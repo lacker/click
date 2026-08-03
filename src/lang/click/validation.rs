@@ -135,6 +135,10 @@ fn expand_declared_composite_resource_body(
     resource_definitions: &BTreeMap<String, DeclaredResourceInfo>,
 ) -> Result<CompositeResourceBody, ClickError> {
     Ok(CompositeResourceBody {
+        condition: composite_body
+            .condition
+            .map(|condition| expand_declared_resource_proposition(condition, resource_definitions))
+            .transpose()?,
         contains: composite_body
             .contains
             .into_iter()
@@ -956,6 +960,49 @@ fn validate_resource_definition(
         .iter()
         .map(|parameter| (parameter.name().to_string(), parameter.c_type()))
         .collect::<BTreeMap<_, _>>();
+    if let Some(condition) = composite_body.condition() {
+        if proposition_contains_old_expression(condition) {
+            return Err(ClickError::new(format!(
+                "`old(...)` is not available inside resource `{}` condition",
+                definition.name()
+            )));
+        }
+        if proposition_contains_at_expression(condition) {
+            return Err(ClickError::new(format!(
+                "`at(...)` is not available inside resource `{}` condition",
+                definition.name()
+            )));
+        }
+        validate_predicate_calls_in_proposition(
+            condition,
+            predicates,
+            click_functions,
+            &format!("resource `{}` condition", definition.name()),
+        )?;
+        validate_proposition_expression_types(
+            condition,
+            &variables,
+            click_function_types,
+            &format!("resource `{}` condition", definition.name()),
+        )?;
+        let mut reads = Vec::new();
+        collect_resource_fact_reads_from_proposition(
+            condition,
+            predicate_definitions,
+            click_function_definitions,
+            &mut Vec::new(),
+            &mut Vec::new(),
+            &mut reads,
+            definition.name(),
+        )?;
+        if let Some(read) = reads.first() {
+            return Err(ClickError::new(format!(
+                "resource `{}` condition must be load-free; `{}` reads memory",
+                definition.name(),
+                read.expression
+            )));
+        }
+    }
     reject_duplicate_owned_declared_resource_clauses(
         composite_body.contains(),
         &format!("composite resource `{}` body", definition.name()),
@@ -2096,6 +2143,12 @@ fn reject_composite_resource_cycles(definitions: &[ResourceDefinition]) -> Resul
                     } => Some(name.clone()),
                     ResourceClause::Read(_) | ResourceClause::Write(_) => None,
                     ResourceClause::Declared { .. } => None,
+                })
+                .filter(|dependency| {
+                    dependency != definition.name()
+                        || definition
+                            .composite_body()
+                            .is_none_or(|body| body.condition().is_none())
                 })
                 .collect::<Vec<_>>();
             (definition.name().to_string(), dependencies)

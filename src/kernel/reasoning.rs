@@ -3726,6 +3726,10 @@ pub(super) fn substitute_bitvector_variable_in_c_function(
             .map(|definition| CCompositeResourceDefinition {
                 name: definition.name.clone(),
                 parameters: definition.parameters.clone(),
+                condition: definition.condition.as_ref().map(|condition| {
+                    substitute_bitvector_variable_in_spec_proposition(condition, from, to)
+                }),
+                recursive: definition.recursive,
                 contains: definition
                     .contains
                     .iter()
