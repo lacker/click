@@ -2204,6 +2204,13 @@ impl Parser {
             self.position += 1;
             let field_name = self.expect_ident("field name")?;
             if !matches!(self.peek(), Some(Token::Arrow | Token::LBracket)) {
+                if let Some(base_struct_name) = &struct_name
+                    && self.struct_layouts.contains_key(base_struct_name)
+                {
+                    let field =
+                        self.resolve_struct_field_metadata(base_struct_name, &field_name)?;
+                    return Ok(Self::field_segment_from_metadata(base, &field_name, &field));
+                }
                 return self.resolve_field_segment(base, &field_name);
             }
             let (lowered, next_struct_name) = if let Some(base_struct_name) = &struct_name
@@ -2265,13 +2272,21 @@ impl Parser {
                 surface: ContractSegmentSurface::Field(field_name.to_string()),
             });
         };
-        Ok(ContractSegment {
+        Ok(Self::field_segment_from_metadata(base, field_name, &field))
+    }
+
+    fn field_segment_from_metadata(
+        base: CExpression,
+        field_name: &str,
+        field: &ResolvedField,
+    ) -> ContractSegment {
+        ContractSegment {
             state: ContractSegmentState::Current,
             base,
             start: CExpression::Value(int32(field.offset_bytes / 4)),
             end: CExpression::Value(int32(field.slot_end_bytes / 4)),
             surface: ContractSegmentSurface::Field(field_name.to_string()),
-        })
+        }
     }
 
     fn resolve_field_load(

@@ -1042,6 +1042,64 @@ fn parses_chained_struct_fields_with_imported_pointee_types() {
 }
 
 #[test]
+fn nested_field_segments_keep_the_terminal_field_offset() {
+    let c_source = r#"
+        struct leaf {
+            int32 padding;
+            int32 value;
+        };
+        struct node {
+            int32 tag;
+            struct leaf* child;
+        };
+
+        int32 write_nested(struct node* root) {
+            root->child->value = 7;
+            return 7;
+        }
+    "#;
+    let click_source = r#"
+        verifying "write_nested.c";
+
+        int32 write_nested(struct node* root) {
+            views root->child;
+            consumes root->child->value;
+            mutable root->child->value;
+            ensures result == 7;
+        } by {
+            execute();
+            frame();
+            simp();
+        }
+    "#;
+    let file = parse_c0_click_file(click_source, &[("write_nested.c", c_source)])
+        .expect("nested field segments should retain imported terminal field metadata");
+    let Requirement::Resource(ResourceClause::Write(required)) =
+        &file.function_blocks()[0].requires()[1]
+    else {
+        panic!("expected a nested owned field requirement")
+    };
+    let Effect::Mutable(segments) = file.function_blocks()[0].effects()[0].effect() else {
+        panic!("expected a nested mutable field effect")
+    };
+
+    for segment in [required, &segments[0]] {
+        assert_eq!(segment.start, CExpression::Value(int32(1)));
+        assert_eq!(segment.end, CExpression::Value(int32(2)));
+        assert!(matches!(
+            segment.base,
+            CExpression::TypedLoad {
+                value_type: CType::Int32Pointer,
+                ..
+            }
+        ));
+    }
+
+    verify_c0_sources(click_source, &[("write_nested.c", c_source)])
+        .expect("the corrected nested segment should verify the write");
+}
+
+#[test]
 fn parses_struct_object_segments_without_exposing_layout_cells() {
     let c_source = r#"
         struct vector {
