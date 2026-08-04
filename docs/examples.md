@@ -407,6 +407,9 @@ sequence:
 - `examples/binary-tree/`: a guarded recursive resource with two owned child
   trees, including empty construction, root construction, child swapping, and
   a modular leaf pipeline that composes two empty children.
+- `examples/recursive-zero-list/`: read-only recursive C traversal over a
+  guarded list resource, shown both as ordinary partial correctness and with a
+  separate numeric `decreases` proof.
 - `examples/owned-vector/`: composite-resource example over vector metadata and
   dependent backing storage, including viewed reads and resource-state
   transitions.
