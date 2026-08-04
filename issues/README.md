@@ -8,8 +8,8 @@ pathologically slow cases belong in explicit quarantine lists in
 
 Click's C contracts now use partial correctness consistently: concrete
 execution is separate from modular verification, and safe functions need not
-have a return frontier. The remaining illustrative work is [a
-perpetual-service example](perpetual-service-example.md).
+have a return frontier. The `perpetual-service` example demonstrates that
+boundary with an opaque step call and composite ownership.
 
 Recursive C contracts are partial by default, while recursive pure Click
 functions now require a checked `decreases` measure because they must produce a
@@ -19,8 +19,8 @@ evidence and does not block ordinary recursive verification.
 A true input-stream example remains a later design problem. Click can presently
 prove safety invariants for an indefinitely running loop, but it has no event
 trace, external-input, fairness, or productivity semantics with which to state
-the interesting stream-processing guarantee. The perpetual-service example is
-intentionally smaller and honest about that boundary.
+the interesting stream-processing guarantee. A true stream example is
+intentionally deferred until those semantics exist.
 
 ## Independent cleanup
 

@@ -31,6 +31,10 @@ separate termination evidence; it does not change what an invariant or a
 postcondition means. Loops without `decreases` remain valid partial-correctness
 proofs.
 
+The [`perpetual-service`](../../examples/perpetual-service/README.md) example
+combines this partial-correctness boundary with an opaque verified call and a
+composite resource transferred through every iteration.
+
 In Click terms, `loop(N)` names a loop code region. The invariant is checked at
 program points associated with that region. Since a loop head can be reached
 more than once, those program points can have many runtime visits.

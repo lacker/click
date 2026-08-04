@@ -131,6 +131,20 @@ calls that consume and produce memory-backed composite resources. The project
 uses one grouped execution proof per function so effects, produced resources,
 and pure postconditions are checked from one chronological proof state.
 
+### Perpetual Service
+
+```text
+examples/perpetual-service/
+```
+
+This fixture owns protocol metadata and a separate backing cell as one
+composite `service(owner)` resource. A verified opaque step toggles between two
+legal states and returns the folded resource. `service_run` repeats that call
+inside a constant-true loop, proving safety and invariant preservation for
+every finite prefix without inventing a return frontier. Its README draws the
+boundary explicitly: Click proves neither scheduler fairness nor productive
+external I/O traces.
+
 ### Owned String
 
 ```text
