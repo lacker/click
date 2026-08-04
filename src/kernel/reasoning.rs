@@ -2495,6 +2495,15 @@ pub(super) fn resource_context_has_read(
     resources.permits_memory_read(pointer, byte_width, assumptions)
 }
 
+pub(super) fn resource_context_has_structural_read(
+    resources: &ResourceContext,
+    pointer: &Pointer,
+    byte_width: u32,
+    assumptions: &Assumptions,
+) -> bool {
+    resources.permits_memory_read_structurally(pointer, byte_width, assumptions)
+}
+
 pub(super) fn collect_condition_bitvector_variables(
     condition: &ConditionTerm,
     variables: &mut BTreeSet<Variable>,

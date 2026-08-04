@@ -14,6 +14,8 @@ verifying "tree_make_root.c";
 verifying "tree_swap_children.c";
 verifying "tree_leaf_pipeline.c";
 verifying "tree_is_leaf.c";
+verifying "tree_sum_root_and_children.c";
+verifying "tree_rotate_left.c";
 
 struct node* tree_empty() {
     produces tree(result);
@@ -113,6 +115,65 @@ int32 tree_is_leaf(struct node* node) {
 } by {
     observe(tree(node));
     execute();
+    frame();
+    simp();
+}
+
+int32 tree_sum_root_and_children(struct node* node) {
+    requires node != 0;
+    requires node->left != 0;
+    requires node->right != 0;
+    requires 0 <= node->value;
+    requires node->value <= 715827882;
+    requires 0 <= node->left->value;
+    requires node->left->value <= 715827882;
+    requires 0 <= node->right->value;
+    requires node->right->value <= 715827882;
+    views tree(node);
+    immutable;
+
+    ensures result == node->value + node->left->value + node->right->value;
+} by {
+    observe(tree(node));
+    observe(tree(node->left));
+    observe(tree(node->right));
+    step() using {}
+    step() using {
+        0 <= node->value;
+        node->value <= 715827882;
+        0 <= node->left->value;
+        node->left->value <= 715827882;
+        loadable(node->value);
+        loadable(node->left->value);
+    }
+    step() using {
+        0 <= node->value;
+        node->value <= 715827882;
+        0 <= node->left->value;
+        node->left->value <= 715827882;
+        0 <= node->right->value;
+        node->right->value <= 715827882;
+        loadable(node->right->value);
+    }
+    frame();
+    simp();
+}
+
+struct node* tree_rotate_left(struct node* node) {
+    requires node != 0;
+    requires node->right != 0;
+    consumes tree(node);
+    mutable node->right, node->right->left;
+    produces tree(result);
+
+    ensures result == old(node->right);
+    ensures result->left == node;
+} by {
+    unfold(tree(node));
+    unfold(tree(node->right));
+    execute();
+    fold(tree(node));
+    fold(tree(result));
     frame();
     simp();
 }

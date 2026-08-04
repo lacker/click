@@ -23172,8 +23172,44 @@ fn try_select_composite_resource_body(
         )
     })?;
     let assumptions = assumptions_from_propositions(available_pure_facts);
-    if assumptions.proves(&lowered) {
+    let proves_condition = |proposition: &Proposition| match proposition {
+        Proposition::ConditionIs(condition, value) => {
+            assumptions.proves_condition_exact_or_snapshot(condition, *value)
+                || assumptions.decide(condition) == Some(*value)
+        }
+        Proposition::Not(body) => match body.as_ref() {
+            Proposition::ConditionIs(condition, value) => {
+                assumptions.proves_condition_exact_or_snapshot(condition, !*value)
+                    || assumptions.decide(condition) == Some(!*value)
+            }
+            _ => false,
+        },
+        _ => assumptions.proves_exact(proposition) || assumptions.proves(proposition),
+    };
+    if proves_condition(&lowered) {
         return Ok(Some(true));
+    }
+    let negated = match &lowered {
+        Proposition::ConditionIs(condition, value) => {
+            Proposition::ConditionIs(condition.clone(), !value)
+        }
+        Proposition::Not(body) => body.as_ref().clone(),
+        proposition => Proposition::Not(Box::new(proposition.clone())),
+    };
+    if proves_condition(&negated) {
+        return Ok(Some(false));
+    }
+    let is_atomic_condition = matches!(&lowered, Proposition::ConditionIs(_, _))
+        || matches!(
+            &lowered,
+            Proposition::Not(body)
+                if matches!(body.as_ref(), Proposition::ConditionIs(_, _))
+        );
+    if is_atomic_condition {
+        // Conditional resource bodies are intentionally opaque while their
+        // guard is undecided. A general contradiction search here can recurse
+        // through every materialized heap snapshot in a recursive resource.
+        return Ok(None);
     }
     if fact_conflicts_with_assumptions(&lowered, &assumptions) {
         return Ok(Some(false));

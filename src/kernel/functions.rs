@@ -1,5 +1,5 @@
 use super::prelude::*;
-
+use std::collections::VecDeque;
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct CFunctionResourceTransfer {
     callee_resources: ResourceContext,
@@ -75,13 +75,14 @@ pub(super) fn execute_c_function_paths_with_contract_resources(
             &arguments_path.facts,
             &arguments_path.obligations,
         );
-        let callee_state = if prepare_contract_resources {
+        let (callee_state, resource_transfer) = if prepare_contract_resources {
             let resource_transfer = match prepare_function_resource_transfer(
                 state,
                 &callee_state,
                 function,
                 &body_assumptions,
                 budget,
+                true,
             )? {
                 Ok(resource_transfer) => resource_transfer,
                 Err(error) => {
@@ -93,9 +94,12 @@ pub(super) fn execute_c_function_paths_with_contract_resources(
                     continue;
                 }
             };
-            callee_state.with_resource_context(resource_transfer.callee_resources)
+            (
+                callee_state.with_resource_context(resource_transfer.callee_resources.clone()),
+                Some(resource_transfer),
+            )
         } else {
-            callee_state
+            (callee_state, None)
         };
         for body_path in execute_c_statement_paths(
             &callee_state,
@@ -116,14 +120,32 @@ pub(super) fn execute_c_function_paths_with_contract_resources(
             };
             let return_assumptions =
                 assumptions_with_path_context(assumptions, &facts, &obligations);
-            let (outcome, obligations) = function_outcome_from_body(
-                state,
-                function,
-                body_path.outcome,
-                obligations,
-                &return_assumptions,
-                None,
-            );
+            let (outcome, obligations) = if let Some(resource_transfer) = &resource_transfer
+                && function
+                    .composite_resource_definitions()
+                    .iter()
+                    .any(CCompositeResourceDefinition::is_recursive)
+            {
+                function_outcome_from_body_with_resource_transfer(
+                    state,
+                    function,
+                    body_path.outcome,
+                    obligations,
+                    &return_assumptions,
+                    resource_transfer,
+                    &arguments_path.values,
+                    budget,
+                )?
+            } else {
+                function_outcome_from_body(
+                    state,
+                    function,
+                    body_path.outcome,
+                    obligations,
+                    &return_assumptions,
+                    None,
+                )
+            };
 
             paths.push(CFunctionPath {
                 outcome,
@@ -186,13 +208,14 @@ pub(super) fn execute_c_function_verification_paths(
             &arguments_path.facts,
             &arguments_path.obligations,
         );
-        let callee_state = if prepare_contract_resources {
+        let (callee_state, resource_transfer) = if prepare_contract_resources {
             let resource_transfer = match prepare_function_resource_transfer(
                 state,
                 &callee_state,
                 function,
                 &body_assumptions,
                 budget,
+                true,
             )? {
                 Ok(resource_transfer) => resource_transfer,
                 Err(error) => {
@@ -204,9 +227,12 @@ pub(super) fn execute_c_function_verification_paths(
                     continue;
                 }
             };
-            callee_state.with_resource_context(resource_transfer.callee_resources)
+            (
+                callee_state.with_resource_context(resource_transfer.callee_resources.clone()),
+                Some(resource_transfer),
+            )
         } else {
-            callee_state
+            (callee_state, None)
         };
         for body_path in execute_c_statement_verification_paths(
             &callee_state,
@@ -228,14 +254,32 @@ pub(super) fn execute_c_function_verification_paths(
             };
             let return_assumptions =
                 assumptions_with_path_context(assumptions, &facts, &obligations);
-            let (outcome, obligations) = function_outcome_from_body(
-                state,
-                function,
-                body_path.outcome,
-                obligations,
-                &return_assumptions,
-                None,
-            );
+            let (outcome, obligations) = if let Some(resource_transfer) = &resource_transfer
+                && function
+                    .composite_resource_definitions()
+                    .iter()
+                    .any(CCompositeResourceDefinition::is_recursive)
+            {
+                function_outcome_from_body_with_resource_transfer(
+                    state,
+                    function,
+                    body_path.outcome,
+                    obligations,
+                    &return_assumptions,
+                    resource_transfer,
+                    &arguments_path.values,
+                    budget,
+                )?
+            } else {
+                function_outcome_from_body(
+                    state,
+                    function,
+                    body_path.outcome,
+                    obligations,
+                    &return_assumptions,
+                    None,
+                )
+            };
 
             paths.push(CFunctionPath {
                 outcome,
@@ -328,6 +372,7 @@ pub(super) fn execute_c_function_call_paths(
             function,
             &body_assumptions,
             budget,
+            false,
         )? {
             Ok(resource_transfer) => resource_transfer,
             Err(error) => {
@@ -438,6 +483,7 @@ fn execute_verified_function_rule(
             function,
             &path_assumptions,
             budget,
+            false,
         )? {
             Ok(transfer) => transfer,
             Err(error) => {
@@ -800,7 +846,13 @@ fn prepare_function_resource_transfer(
     function: &CFunction,
     assumptions: &Assumptions,
     budget: &mut ExecutionBudget,
+    preserve_explicit_representation: bool,
 ) -> ExecutionResult<Result<CFunctionResourceTransfer, CRuntimeError>> {
+    let preserve_explicit_representation = preserve_explicit_representation
+        && function
+            .composite_resource_definitions()
+            .iter()
+            .any(CCompositeResourceDefinition::is_recursive);
     let required_resources = match evaluate_function_resource_context(
         callee_state,
         function.resource_requires(),
@@ -810,7 +862,7 @@ fn prepare_function_resource_transfer(
         Ok(resources) => resources,
         Err(error) => return Ok(Err(error)),
     };
-    let Some(callee_resources) = expand_all_composite_resource_facts(
+    let Some(canonical_resources) = expand_all_composite_resource_facts(
         &required_resources,
         function.composite_resource_definitions(),
         callee_state.memory(),
@@ -820,6 +872,59 @@ fn prepare_function_resource_transfer(
             "could not expand required composite resources before call: {required_resources:?}"
         ))));
     };
+    let canonical_resources = expand_decidable_composite_resource_frontier(
+        &canonical_resources,
+        function.composite_resource_definitions(),
+        callee_state.memory(),
+        assumptions,
+    );
+    let required_composite_heads = required_resources
+        .facts()
+        .iter()
+        .filter_map(resource_fact_composite_head)
+        .collect::<Vec<_>>();
+    let caller_composite_heads = caller_state
+        .resources()
+        .facts()
+        .iter()
+        .filter_map(resource_fact_composite_head)
+        .collect::<Vec<_>>();
+    let has_explicit_representation = caller_state.resources().facts().len()
+        != required_resources.facts().len()
+        || caller_composite_heads != required_composite_heads;
+    let mut callee_resources = if preserve_explicit_representation && has_explicit_representation {
+        // Proof replay may have opened exactly the recursive branches needed
+        // by the body with `observe` or `unfold`. Independent certification
+        // must execute from that same definitionally equivalent spelling.
+        // The transfer checks below still consume every declared requirement,
+        // so this cannot weaken the function contract or affect ordinary
+        // calls, which always use the canonical boundary.
+        caller_state.resources().clone()
+    } else {
+        canonical_resources
+    };
+    if preserve_explicit_representation && has_explicit_representation {
+        let viewed_composites = caller_state
+            .resources()
+            .facts()
+            .iter()
+            .filter(|fact| matches!(fact, CResourceFact::View(CResource::Composite { .. })))
+            .cloned()
+            .collect::<Vec<_>>();
+        for composite in viewed_composites {
+            let singleton = ResourceContext::new().unchecked_with_fact(composite.clone());
+            if let Some(expanded) = expand_composite_resource_fact(
+                &singleton,
+                &composite,
+                function.composite_resource_definitions(),
+                callee_state.memory(),
+                assumptions,
+            ) {
+                callee_resources =
+                    callee_resources.unchecked_with_facts(expanded.facts().iter().cloned());
+            }
+        }
+    }
     let mut required_resource_list = required_resources.facts().to_vec();
     required_resource_list.sort_by_key(resource_fact_transfer_priority);
 
@@ -907,17 +1012,36 @@ fn evaluate_function_return_resources(
             "could not expand ensured composite resources after call: {ensured_resources:?}"
         ))));
     };
-    let projected_cores = expanded_ensured_resources
+    let mut projected_cores = expanded_ensured_resources
         .facts()
         .iter()
         .filter_map(CResourceFact::core)
         .filter(|core| !return_resources.facts().contains(core))
         .collect::<Vec<_>>();
+    if !function.resource_ensures().is_empty() {
+        for core in post_state
+            .resources()
+            .facts()
+            .iter()
+            .filter_map(CResourceFact::core)
+        {
+            if !projected_cores.contains(&core) && !return_resources.facts().contains(&core) {
+                projected_cores.push(core);
+            }
+        }
+    }
     // The callee has already certified every ensured composite and its
     // instantiated body. Its duplicable cores are therefore observations of
     // certified ownership, not newly composed ownership that needs another
     // global validity/normalization pass.
     Ok(Ok(return_resources.unchecked_with_facts(projected_cores)))
+}
+
+fn resource_fact_composite_head(fact: &CResourceFact) -> Option<(bool, &str)> {
+    let CResource::Composite { name, .. } = fact.resource() else {
+        return None;
+    };
+    Some((fact.is_own(), name))
 }
 
 pub(super) fn prepare_function_contract_entry_state_with_values(
@@ -937,6 +1061,7 @@ pub(super) fn prepare_function_contract_entry_state_with_values(
         function,
         assumptions,
         budget,
+        true,
     )? {
         Ok(transfer) => transfer,
         Err(error) => return Ok(Err(error)),
@@ -1075,7 +1200,21 @@ fn evaluate_composite_resource_body_condition(
     {
         return None;
     }
-    if assumptions.proves(&path.proposition) {
+    let proves_body_condition = |proposition: &Proposition| match proposition {
+        Proposition::ConditionIs(condition, value) => {
+            assumptions.proves_condition_exact_or_snapshot(condition, *value)
+                || assumptions.decide(condition) == Some(*value)
+        }
+        Proposition::Not(body) => match body.as_ref() {
+            Proposition::ConditionIs(condition, value) => {
+                assumptions.proves_condition_exact_or_snapshot(condition, !*value)
+                    || assumptions.decide(condition) == Some(!*value)
+            }
+            _ => false,
+        },
+        _ => assumptions.proves_exact(proposition) || assumptions.proves(proposition),
+    };
+    if proves_body_condition(&path.proposition) {
         return Some(true);
     }
     let false_proposition = match &path.proposition {
@@ -1085,7 +1224,7 @@ fn evaluate_composite_resource_body_condition(
         Proposition::Not(body) => body.as_ref().clone(),
         proposition => Proposition::Not(Box::new(proposition.clone())),
     };
-    assumptions.proves(&false_proposition).then_some(false)
+    proves_body_condition(&false_proposition).then_some(false)
 }
 
 pub(super) fn expand_all_composite_resource_facts(
@@ -1096,6 +1235,106 @@ pub(super) fn expand_all_composite_resource_facts(
 ) -> Option<ResourceContext> {
     expand_composite_resource_context(context, definitions, memory, assumptions)
         .map(|(resources, _)| resources)
+}
+
+/// Continues through recursive composites only while their guards are
+/// decidable in the current contract path. Unknown branches remain folded.
+fn expand_decidable_composite_resource_frontier(
+    context: &ResourceContext,
+    definitions: &[CCompositeResourceDefinition],
+    memory: &CMemory,
+    assumptions: &Assumptions,
+) -> ResourceContext {
+    let mut expanded = context.clone();
+    let mut seen = BTreeSet::new();
+    let mut pending = VecDeque::from(
+        context
+            .facts()
+            .iter()
+            .filter(|fact| matches!(fact.resource(), CResource::Composite { .. }))
+            .cloned()
+            .collect::<Vec<_>>(),
+    );
+    while let Some(composite) = pending.pop_front() {
+        if !seen.insert(composite.clone()) || !expanded.facts().contains(&composite) {
+            continue;
+        }
+        let Some(next) =
+            expand_composite_resource_fact(&expanded, &composite, definitions, memory, assumptions)
+        else {
+            continue;
+        };
+        if next == expanded {
+            continue;
+        }
+        for child in next.facts().iter().filter(|fact| {
+            matches!(fact.resource(), CResource::Composite { .. }) && !seen.contains(*fact)
+        }) {
+            pending.push_back(child.clone());
+        }
+        expanded = next;
+    }
+    expanded
+}
+
+/// Expands only the folded branches needed to expose `target`, leaving
+/// unrelated and deeper recursive resources folded.
+pub(super) fn expose_composite_resource_fact(
+    context: &ResourceContext,
+    target: &CResourceFact,
+    definitions: &[CCompositeResourceDefinition],
+    memory: &CMemory,
+    assumptions: &Assumptions,
+) -> Option<ResourceContext> {
+    let target_is_available = |context: &ResourceContext| {
+        context.facts().iter().any(|available| {
+            let access_compatible = matches!(
+                (available, target),
+                (CResourceFact::Own(_), CResourceFact::Own(_))
+                    | (CResourceFact::Own(_), CResourceFact::View(_))
+                    | (CResourceFact::View(_), CResourceFact::View(_))
+            );
+            access_compatible
+                && super::assumptions::resources_equal_ignoring_memories(
+                    available.resource(),
+                    target.resource(),
+                )
+        })
+    };
+    if target_is_available(context) {
+        return Some(context.clone());
+    }
+
+    let mut seen = BTreeSet::new();
+    let mut pending = VecDeque::from([context.clone()]);
+    while let Some(context) = pending.pop_front() {
+        if !seen.insert(context.clone()) {
+            continue;
+        }
+        let composites = context
+            .facts()
+            .iter()
+            .filter(|fact| matches!(fact.resource(), CResource::Composite { .. }))
+            .cloned()
+            .collect::<Vec<_>>();
+        for composite in composites {
+            let expanded = expand_composite_resource_fact(
+                &context,
+                &composite,
+                definitions,
+                memory,
+                assumptions,
+            )?;
+            if expanded == context {
+                continue;
+            }
+            if target_is_available(&expanded) {
+                return Some(expanded);
+            }
+            pending.push_back(expanded);
+        }
+    }
+    None
 }
 
 fn expand_composite_resource_context(
@@ -1543,6 +1782,42 @@ fn consume_resource_fact_definitionally(
         assumptions,
         &mut BTreeSet::new(),
     )
+}
+
+pub(super) fn resource_context_definitionally_contains(
+    available: &ResourceContext,
+    required: &ResourceContext,
+    definitions: &[CCompositeResourceDefinition],
+    memory: &CMemory,
+    assumptions: &Assumptions,
+) -> bool {
+    let mut remaining = available.clone();
+    let mut required = required.facts().to_vec();
+    required.sort_by_key(resource_fact_transfer_priority);
+    for fact in &required {
+        let Some(next) = consume_resource_fact_definitionally(
+            &remaining,
+            fact,
+            definitions,
+            memory,
+            assumptions,
+        ) else {
+            return false;
+        };
+        remaining = next;
+    }
+    true
+}
+
+pub(super) fn resource_contexts_definitionally_equivalent_by_consumption(
+    left: &ResourceContext,
+    right: &ResourceContext,
+    definitions: &[CCompositeResourceDefinition],
+    memory: &CMemory,
+    assumptions: &Assumptions,
+) -> bool {
+    resource_context_definitionally_contains(left, right, definitions, memory, assumptions)
+        && resource_context_definitionally_contains(right, left, definitions, memory, assumptions)
 }
 
 pub(super) fn evaluate_function_resource_context(

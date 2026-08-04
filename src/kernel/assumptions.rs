@@ -180,7 +180,7 @@ fn load_atoms_equal_ignoring_memories(left: &Bitvector32Term, right: &Bitvector3
 /// Structural pointer equality that treats two loads of one location as
 /// equal regardless of which memory snapshot each spelling carries. Cheap:
 /// no proving, no canonicalization.
-fn pointers_equal_ignoring_memories(left: &Pointer, right: &Pointer) -> bool {
+pub(crate) fn pointers_equal_ignoring_memories(left: &Pointer, right: &Pointer) -> bool {
     pointers_equal_with_load_atoms(left, right, &load_atoms_equal_ignoring_memories)
 }
 
@@ -193,6 +193,60 @@ fn pointers_equal_ignoring_memories(left: &Pointer, right: &Pointer) -> bool {
 /// proving comparison runs.
 pub fn conditions_equal_ignoring_memories(left: &ConditionTerm, right: &ConditionTerm) -> bool {
     conditions_equal_with_load_atoms(left, right, &load_atoms_equal_ignoring_memories)
+}
+
+pub(super) fn resources_equal_ignoring_memories(left: &CResource, right: &CResource) -> bool {
+    let values_match = |left: &CValue, right: &CValue| match (left, right) {
+        (CValue::Int32(left), CValue::Int32(right))
+        | (CValue::UInt8(left), CValue::UInt8(right)) => {
+            terms_equal_with_load_atoms(left, right, &load_atoms_equal_ignoring_memories)
+        }
+        (CValue::Pointer(left), CValue::Pointer(right)) => {
+            pointers_equal_ignoring_memories(left, right)
+        }
+        _ => false,
+    };
+    match (left, right) {
+        (CResource::Memory(left), CResource::Memory(right)) => {
+            terms_equal_with_load_atoms(
+                left.start(),
+                right.start(),
+                &load_atoms_equal_ignoring_memories,
+            ) && terms_equal_with_load_atoms(
+                left.end(),
+                right.end(),
+                &load_atoms_equal_ignoring_memories,
+            ) && pointers_equal_ignoring_memories(left.base(), right.base())
+        }
+        (
+            CResource::Composite {
+                name: left_name,
+                arguments: left_arguments,
+            },
+            CResource::Composite {
+                name: right_name,
+                arguments: right_arguments,
+            },
+        )
+        | (
+            CResource::Token {
+                name: left_name,
+                arguments: left_arguments,
+            },
+            CResource::Token {
+                name: right_name,
+                arguments: right_arguments,
+            },
+        ) => {
+            left_name == right_name
+                && left_arguments.len() == right_arguments.len()
+                && left_arguments
+                    .iter()
+                    .zip(right_arguments)
+                    .all(|(left, right)| values_match(left, right))
+        }
+        _ => false,
+    }
 }
 
 fn equality_graph_terms_match(left: &Bitvector32Term, right: &Bitvector32Term) -> bool {
@@ -626,7 +680,7 @@ impl Assumptions {
         self.prefer_symbolic_external_loads
     }
 
-    pub(super) fn proves_exact(&self, proposition: &Proposition) -> bool {
+    pub(crate) fn proves_exact(&self, proposition: &Proposition) -> bool {
         if solve_builtin_prop(proposition) {
             return true;
         }
@@ -728,7 +782,7 @@ impl Assumptions {
     /// matter how the search was pruned. A `None` computed under an ambient
     /// truncation (fuel, depth guards, cycle cuts — see
     /// [`note_search_truncation`]) is path-dependent and is not cached.
-    pub(super) fn decide(&self, condition: &ConditionTerm) -> Option<bool> {
+    pub(crate) fn decide(&self, condition: &ConditionTerm) -> Option<bool> {
         // Fuel is consumed before the memo so a fueled search keeps its
         // step budget: memoization makes each step cheaper, not the search
         // wider.
@@ -3107,6 +3161,19 @@ impl Assumptions {
         })
     }
 
+    pub(crate) fn proves_condition_exact_or_snapshot(
+        &self,
+        condition: &ConditionTerm,
+        value: bool,
+    ) -> bool {
+        self.condition_facts.iter().any(|(fact, fact_value)| {
+            *fact_value == value
+                && (fact == condition
+                    || conditions_equal_ignoring_memories(fact, condition)
+                        && self.conditions_equal_modulo_proven_snapshots(fact, condition))
+        })
+    }
+
     pub(super) fn memory_loads_proven_equal(
         &self,
         left: &Bitvector32Term,
@@ -3263,14 +3330,51 @@ impl Assumptions {
                     ) || self.has_lower_bound_above(&left, &zero));
                 (ordered_nonnegative || positive_minus_one).then_some(false)
             }
-            ConditionTerm::Bitvector32SignedAddOverflows(left, right) => self
-                .signed_interval(left, SIGNED_INTERVAL_DEPTH_LIMIT)
-                .zip(self.signed_interval(right, SIGNED_INTERVAL_DEPTH_LIMIT))
-                .and_then(|((left_lower, left_upper), (right_lower, right_upper))| {
-                    let lower = left_lower.checked_add(right_lower)?;
-                    let upper = left_upper.checked_add(right_upper)?;
-                    (lower >= i64::from(i32::MIN) && upper <= i64::from(i32::MAX)).then_some(false)
-                }),
+            ConditionTerm::Bitvector32SignedAddOverflows(left, right) => {
+                if right.as_ref() == &Bitvector32Term::Constant(1) {
+                    let int_max = Bitvector32Term::Constant(i32::MAX as u32);
+                    let left = left.as_ref().clone();
+                    // Keep the direct increment certificate ahead of general
+                    // interval reconstruction. Loop execution commonly has
+                    // an exact strict bound on a materialized local even when
+                    // that bound is awkward to transport into a full range.
+                    let has_strict_upper_bound =
+                        self.condition_facts.iter().any(|(condition, value)| {
+                            match (condition, value) {
+                                (ConditionTerm::Bitvector32SignedLessThan(fact_left, _), true) => {
+                                    fact_left.as_ref() == &left
+                                }
+                                (
+                                    ConditionTerm::Bitvector32SignedGreaterThan(_, fact_left),
+                                    true,
+                                ) => fact_left.as_ref() == &left,
+                                _ => false,
+                            }
+                        });
+                    return (has_strict_upper_bound
+                        || self.has_condition_fact(
+                            ConditionTerm::signed_less_than(left.clone(), int_max.clone()),
+                            true,
+                        )
+                        || self.has_upper_bound_below(&left, &int_max))
+                    .then_some(false);
+                }
+                self.signed_interval(left, SIGNED_INTERVAL_DEPTH_LIMIT)
+                    .zip(self.signed_interval(right, SIGNED_INTERVAL_DEPTH_LIMIT))
+                    .and_then(|((left_lower, left_upper), (right_lower, right_upper))| {
+                        if left_lower == left_upper && right_lower == right_upper {
+                            // Exact-value arithmetic is handled by the
+                            // existing simplification/equality path. Leaving
+                            // it there preserves the symbolic execution shape
+                            // used when replaying abstract loop rules.
+                            return None;
+                        }
+                        let lower = left_lower.checked_add(right_lower)?;
+                        let upper = left_upper.checked_add(right_upper)?;
+                        (lower >= i64::from(i32::MIN) && upper <= i64::from(i32::MAX))
+                            .then_some(false)
+                    })
+            }
             ConditionTerm::Bitvector32SignedMultiplyOverflows(left, right)
                 if right.as_ref() == &Bitvector32Term::Constant(0)
                     || left.as_ref() == &Bitvector32Term::Constant(0)
@@ -3430,7 +3534,15 @@ impl Assumptions {
         target: &Bitvector32Term,
         endpoint: &Bitvector32Term,
     ) -> bool {
-        target == endpoint || self.bitvector_terms_equal_for_fact_transport(target, endpoint)
+        let resolved_matches = |left: &Bitvector32Term, right: &Bitvector32Term| {
+            self.resolve_memory_load_term(left).is_some_and(|resolved| {
+                &resolved == right || self.bitvector_terms_snapshot_equivalent(&resolved, right)
+            })
+        };
+        target == endpoint
+            || self.bitvector_terms_snapshot_equivalent(target, endpoint)
+            || resolved_matches(target, endpoint)
+            || resolved_matches(endpoint, target)
     }
 
     pub fn proves(&self, proposition: &Proposition) -> bool {

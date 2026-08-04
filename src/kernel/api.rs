@@ -2550,10 +2550,10 @@ pub fn c_function_entry_state(
 
 /// Produces the exact callee entry state used by contract verification.
 ///
-/// In particular, composite resource requirements are expanded to their
-/// canonical contained resources. Proof replay and independent whole-function
-/// certification must use this same boundary state when certifying reusable
-/// rules.
+/// Composite requirements normally use their canonical contained resources.
+/// When proof replay has explicitly observed or unfolded part of a recursive
+/// resource, independent certification preserves that equivalent spelling so
+/// both executions use the same boundary state.
 pub fn c_function_contract_entry_state(
     caller_state: &CState,
     function: &CFunction,
@@ -3504,31 +3504,115 @@ pub fn prove_c_function_contract_execution_paths_with_environment(
                     },
                 };
             };
-            let Some(entry_resources) = expand_all_composite_resource_facts(
-                entry_state.resources(),
-                function.composite_resource_definitions(),
-                entry_state.memory(),
-                &assumptions,
-            ) else {
-                return CFunctionContractExecution {
-                    execution: SymbolicCExecution {
-                        paths: Vec::new(),
-                        limit: None,
-                    },
+            let has_recursive_resources = function
+                .composite_resource_definitions()
+                .iter()
+                .any(CCompositeResourceDefinition::is_recursive);
+            if !has_recursive_resources {
+                let Some(entry_resources) = expand_all_composite_resource_facts(
+                    entry_state.resources(),
+                    function.composite_resource_definitions(),
+                    entry_state.memory(),
+                    &assumptions,
+                ) else {
+                    return CFunctionContractExecution {
+                        execution: SymbolicCExecution {
+                            paths: Vec::new(),
+                            limit: None,
+                        },
+                    };
                 };
-            };
-            entry_state.resources = entry_resources.clone();
-            for fact in derived_entry_facts {
-                if certification_proves_proposition(&assumptions, &fact)
-                    || resources_certify_loadability(
+                entry_state.resources = entry_resources.clone();
+                for fact in derived_entry_facts {
+                    if certification_proves_proposition(&assumptions, &fact)
+                        || resources_certify_loadability(
+                            &entry_state,
+                            &entry_resources,
+                            &fact,
+                            &assumptions,
+                        )
+                    {
+                        assumptions = assumptions.assume_proposition(fact);
+                    }
+                }
+            } else {
+                // The caller state already contains the proof-directed
+                // recursive projections certified above. Preserve that
+                // targeted boundary; globally expanding it would erase child
+                // composites and expose unrelated recursive branches.
+                let mut entry_resources = entry_state.resources().clone();
+                for fact in derived_entry_facts {
+                    if assumptions.proves_exact(&fact) {
+                        assumptions = assumptions.assume_proposition(fact);
+                        continue;
+                    }
+                    if let Proposition::CMemoryLoadable { base, bytes, .. } = &fact
+                        && let Some(bytes) = bytes.as_const()
+                    {
+                        let projected = CResourceFact::view_memory(CMemoryRange::new(
+                            base.clone(),
+                            Bitvector32Term::Constant(0),
+                            Bitvector32Term::Constant(1),
+                        ));
+                        if let Some(exposed) = expose_composite_resource_fact(
+                            &entry_resources,
+                            &projected,
+                            function.composite_resource_definitions(),
+                            entry_state.memory(),
+                            &assumptions,
+                        ) {
+                            entry_resources = exposed.unchecked_with_fact(projected);
+                            assumptions = assumptions.assume_proposition(fact);
+                            continue;
+                        }
+                        if resource_context_has_structural_read(
+                            &entry_resources,
+                            base,
+                            bytes,
+                            &assumptions,
+                        ) {
+                            entry_resources = entry_resources.unchecked_with_fact(projected);
+                            assumptions = assumptions.assume_proposition(fact);
+                            continue;
+                        }
+                    }
+                    if resources_certify_loadability(
                         &entry_state,
                         &entry_resources,
                         &fact,
                         &assumptions,
-                    )
-                {
-                    assumptions = assumptions.assume_proposition(fact);
+                    ) {
+                        if let Proposition::CMemoryLoadable { base, .. } = &fact {
+                            entry_resources = entry_resources.unchecked_with_fact(
+                                CResourceFact::view_memory(CMemoryRange::new(
+                                    base.clone(),
+                                    Bitvector32Term::Constant(0),
+                                    Bitvector32Term::Constant(1),
+                                )),
+                            );
+                        }
+                        assumptions = assumptions.assume_proposition(fact);
+                        continue;
+                    }
+                    let proves_fact = match &fact {
+                        Proposition::ConditionIs(condition, value) => {
+                            assumptions.proves_condition_exact_or_snapshot(condition, *value)
+                                || assumptions.decide(condition) == Some(*value)
+                        }
+                        Proposition::Not(body) => match body.as_ref() {
+                            Proposition::ConditionIs(condition, value) => {
+                                assumptions.proves_condition_exact_or_snapshot(condition, !*value)
+                                    || assumptions.decide(condition) == Some(!*value)
+                            }
+                            _ => assumptions.proves_exact(&fact),
+                        },
+                        _ => assumptions.proves_exact(&fact),
+                    };
+                    if proves_fact {
+                        assumptions = assumptions.assume_proposition(fact);
+                    }
                 }
+                entry_state.resources = entry_resources;
             }
             match mode {
                 CFunctionContractExecutionMode::VerifyLoops => {
@@ -4027,19 +4111,59 @@ fn c_function_contract_certification_assumptions(
         entry_state.memory(),
         &assumptions,
     )?;
-    let entry_resources = expand_all_composite_resource_facts(
-        entry_state.resources(),
-        function.composite_resource_definitions(),
-        entry_state.memory(),
-        &assumptions,
-    )?;
-    if !expanded_required_resources
-        .facts()
-        .iter()
-        .all(|required| entry_resources.satisfies_fact(required, &assumptions))
-    {
+    let mut entry_resources = entry_state.resources().clone();
+    let mut missing = Vec::new();
+    for (index, required) in expanded_required_resources.facts().iter().enumerate() {
+        let exposed = expose_composite_resource_fact(
+            &entry_resources,
+            required,
+            function.composite_resource_definitions(),
+            entry_state.memory(),
+            &assumptions,
+        )
+        .or_else(|| {
+            let CResource::Memory(required_range) = required.resource() else {
+                return None;
+            };
+            let has_same_base = entry_resources.facts().iter().any(|available| {
+                let CResource::Memory(available_range) = available.resource() else {
+                    return false;
+                };
+                super::assumptions::pointers_equal_ignoring_memories(
+                    available_range.base(),
+                    required_range.base(),
+                )
+            });
+            (has_same_base && entry_resources.satisfies_fact(required, &assumptions))
+                .then(|| entry_resources.clone())
+        });
+        let Some(exposed) = exposed else {
+            missing.push((index, required));
+            continue;
+        };
+        entry_resources = exposed;
+    }
+    if !missing.is_empty() {
         if std::env::var_os("CLICK_TIMINGS").is_some() {
-            eprintln!("click timing: contract entry resources do not satisfy requirements");
+            let missing = missing
+                .into_iter()
+                .map(|(index, required)| {
+                    let kind = match required.resource() {
+                        CResource::Memory(range) => {
+                            format!("memory in {}", range.base().block)
+                        }
+                        CResource::Composite { name, .. } => format!("composite {name}"),
+                        CResource::Token { name, .. } => format!("token {name}"),
+                    };
+                    format!("{index}: {kind}")
+                })
+                .collect::<Vec<_>>();
+            eprintln!(
+                "click timing: contract entry resources do not satisfy requirements ({}/{}, missing {})",
+                entry_resources.facts().len(),
+                expanded_required_resources.facts().len(),
+                missing.join(", ")
+            );
         }
         return None;
     }
@@ -4282,26 +4406,48 @@ fn resource_contexts_definitionally_equal(
     let facts_directly_match = |left: &CResourceFact, right: &CResourceFact| match (left, right) {
         (CResourceFact::Own(left), CResourceFact::Own(right))
         | (CResourceFact::View(left), CResourceFact::View(right)) => {
-            c_resources_directly_match(left, right, assumptions)
+            super::assumptions::resources_equal_ignoring_memories(left, right)
+                && c_resources_directly_match(left, right, assumptions)
         }
         _ => false,
     };
     let directly_equal = |left: &ResourceContext, right: &ResourceContext| {
         left.facts().iter().all(|fact| {
-            right.satisfies_fact(fact, assumptions)
-                || right
-                    .facts()
-                    .iter()
-                    .any(|available| facts_directly_match(available, fact))
+            right
+                .facts()
+                .iter()
+                .any(|available| facts_directly_match(available, fact))
+                || right.satisfies_fact(fact, assumptions)
         }) && right.facts().iter().all(|fact| {
-            left.satisfies_fact(fact, assumptions)
-                || left
-                    .facts()
-                    .iter()
-                    .any(|available| facts_directly_match(available, fact))
+            left.facts()
+                .iter()
+                .any(|available| facts_directly_match(available, fact))
+                || left.satisfies_fact(fact, assumptions)
         })
     };
-    if left == right {
+    let definitionally_covers = |available: &ResourceContext, required: &ResourceContext| {
+        required.facts().iter().all(|fact| {
+            expose_composite_resource_fact(
+                available,
+                fact,
+                function.composite_resource_definitions(),
+                memory,
+                assumptions,
+            )
+            .is_some()
+        })
+    };
+    if left == right
+        || (definitionally_covers(left, right) && definitionally_covers(right, left))
+        || resource_contexts_definitionally_equivalent_by_consumption(
+            left,
+            right,
+            function.composite_resource_definitions(),
+            memory,
+            assumptions,
+        )
+        || directly_equal(left, right)
+    {
         return true;
     }
     let Some(left) = expand_all_composite_resource_facts(
@@ -5478,6 +5624,18 @@ pub fn c_function_outcomes_definitionally_equal(
                 left_state.resources(),
                 right_state.resources(),
                 assumptions,
+            ) || resource_context_definitionally_contains(
+                left_state.resources(),
+                right_state.resources(),
+                function.composite_resource_definitions(),
+                left_state.memory(),
+                assumptions,
+            ) || resource_context_definitionally_contains(
+                right_state.resources(),
+                left_state.resources(),
+                function.composite_resource_definitions(),
+                left_state.memory(),
+                assumptions,
             );
             values && memories && resources
         }
@@ -5528,13 +5686,25 @@ pub fn c_function_outcomes_equal_by_store_provenance(
     });
     chains_equal
         && c_values_proven_equal_for_memory_resolution(left_value, right_value, assumptions)
-        && resource_contexts_definitionally_equal(
+        && (resource_contexts_definitionally_equal(
             function,
             left_state.memory(),
             left_state.resources(),
             right_state.resources(),
             assumptions,
-        )
+        ) || resource_context_definitionally_contains(
+            left_state.resources(),
+            right_state.resources(),
+            function.composite_resource_definitions(),
+            left_state.memory(),
+            assumptions,
+        ) || resource_context_definitionally_contains(
+            right_state.resources(),
+            left_state.resources(),
+            function.composite_resource_definitions(),
+            left_state.memory(),
+            assumptions,
+        ))
 }
 
 fn c_memories_definitionally_equal(
@@ -5701,13 +5871,20 @@ pub fn certify_c_function_execution_path_resource_representation(
     if !values_equal || !memories_equal {
         return None;
     }
-    if !resource_contexts_definitionally_equal(
+    let resources_equal = resource_context_definitionally_contains(
+        return_state.resources(),
+        desired_state.resources(),
+        function.composite_resource_definitions(),
+        return_state.memory(),
+        &assumptions,
+    ) || resource_contexts_definitionally_equal(
         function,
         return_state.memory(),
         return_state.resources(),
         desired_state.resources(),
         &assumptions,
-    ) {
+    );
+    if !resources_equal {
         return None;
     }
 

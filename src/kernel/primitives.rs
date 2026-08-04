@@ -3221,9 +3221,31 @@ impl ResourceContext {
         byte_width: u32,
         assumptions: &Assumptions,
     ) -> bool {
+        if self.permits_memory_read_structurally(pointer, byte_width, assumptions) {
+            return true;
+        }
         self.facts.iter().any(|resource| {
             memory_resource_fact_permits_read(resource, pointer, byte_width, assumptions)
         })
+    }
+
+    pub(super) fn permits_memory_read_structurally(
+        &self,
+        pointer: &Pointer,
+        byte_width: u32,
+        assumptions: &Assumptions,
+    ) -> bool {
+        for resource in &self.facts {
+            let Some(range) = resource_fact_read_core_range(resource) else {
+                continue;
+            };
+            if pointer_has_structural_range_base(pointer, range.base())
+                && memory_resource_fact_permits_read(resource, pointer, byte_width, assumptions)
+            {
+                return true;
+            }
+        }
+        false
     }
 
     pub(super) fn memory_write_range(
@@ -3725,13 +3747,25 @@ fn pointer_has_structural_range_base(pointer: &Pointer, base: &Pointer) -> bool 
     if pointer.block != base.block {
         return false;
     }
-    if pointer.offset == base.offset {
+    if super::assumptions::pointers_equal_ignoring_memories(pointer, base) {
         return true;
     }
     matches!(
         &pointer.offset,
         PointerOffsetTerm::Add(left, right)
-            if left.as_ref() == &base.offset || right.as_ref() == &base.offset
+            if super::assumptions::pointers_equal_ignoring_memories(
+                &Pointer {
+                    block: pointer.block.clone(),
+                    offset: left.as_ref().clone(),
+                },
+                base,
+            ) || super::assumptions::pointers_equal_ignoring_memories(
+                &Pointer {
+                    block: pointer.block.clone(),
+                    offset: right.as_ref().clone(),
+                },
+                base,
+            )
     )
 }
 

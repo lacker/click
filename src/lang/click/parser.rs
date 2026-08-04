@@ -145,6 +145,13 @@ struct ParsedParameters {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+struct ParsedFunctionSignature {
+    signature: FunctionSignature,
+    struct_params: BTreeMap<String, String>,
+    return_struct_name: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 struct ResolvedField {
     c_type: C0Type,
     struct_name: Option<String>,
@@ -590,7 +597,14 @@ impl Parser {
     }
 
     fn parse_function_block(&mut self) -> Result<FunctionBlock, ClickError> {
-        let (signature, struct_params) = self.parse_function_signature()?;
+        let ParsedFunctionSignature {
+            signature,
+            mut struct_params,
+            return_struct_name,
+        } = self.parse_function_signature()?;
+        if let Some(struct_name) = return_struct_name {
+            struct_params.insert("result".to_string(), struct_name);
+        }
         self.expect(Token::LBrace)?;
 
         let parameter_names = signature
@@ -810,25 +824,25 @@ impl Parser {
         Ok(ContractLetBinding { name, c_type, kind })
     }
 
-    fn parse_function_signature(
-        &mut self,
-    ) -> Result<(FunctionSignature, BTreeMap<String, String>), ClickError> {
-        let return_type = self.parse_type()?.c_type;
+    fn parse_function_signature(&mut self) -> Result<ParsedFunctionSignature, ClickError> {
+        let parsed_return_type = self.parse_type()?;
+        let return_type = parsed_return_type.c_type;
         let name = self.expect_ident("function name")?;
         self.expect(Token::LParen)?;
         let parsed_parameters = self.parse_parameters()?;
         self.expect(Token::RParen)?;
         let struct_params = parsed_parameters.struct_params;
 
-        Ok((
-            FunctionSignature {
+        Ok(ParsedFunctionSignature {
+            signature: FunctionSignature {
                 return_type,
                 name,
                 parameters: parsed_parameters.parameters,
                 declared_loadable_bytes: parsed_parameters.declared_loadable_bytes,
             },
             struct_params,
-        ))
+            return_struct_name: parsed_return_type.struct_name,
+        })
     }
 
     fn parse_parameters(&mut self) -> Result<ParsedParameters, ClickError> {
