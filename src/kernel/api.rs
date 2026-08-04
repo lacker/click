@@ -6418,6 +6418,20 @@ pub fn c_verified_function_rule(
     Some(CVerifiedFunctionRule { function })
 }
 
+/// Creates a scoped hypothesis used only while the language layer verifies one
+/// closed set of mutually dependent C contracts. The verification transaction
+/// returns no rules if any hypothesized contract fails independent kernel
+/// certification, which is the standard partial-correctness recursion rule.
+///
+/// This is crate-private so an external caller cannot install an unverified
+/// recursive contract into a kernel execution environment.
+pub(crate) fn c_recursive_function_contract_hypothesis(
+    function: CFunction,
+) -> Option<CVerifiedFunctionRule> {
+    (function.opaque_contract_supported() && !function.contract_claims().is_empty())
+        .then_some(CVerifiedFunctionRule { function })
+}
+
 pub fn prove_c_function_satisfies_specification(
     function: CFunction,
     specification: CFunctionSpecification,

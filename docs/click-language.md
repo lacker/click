@@ -52,6 +52,15 @@ Checked undefined behavior, resource authority, and declared write footprints
 remain safety properties of every finite execution prefix, including prefixes
 of an execution that never returns.
 
+C functions may call themselves or participate in mutual recursion without a
+special Click keyword. Their ordinary contracts are the modular interfaces for
+recursive calls. Click checks all functions in the selected call-graph
+transaction before returning any verified rules, so declaration order does not
+control whether a callee contract is available. This remains partial
+correctness: `ensures` applies if a recursive call returns and the contract by
+itself is not a termination proof. Pure Click functions follow a different
+rule and remain non-recursive.
+
 A function with several effect and postcondition clauses may instead use one
 grouped execution proof after the contract block:
 

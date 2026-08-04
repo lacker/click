@@ -65,6 +65,23 @@ If exact certification cannot reproduce a complete claim set, Click installs
 no opaque rule for that function. It does not fall back to a weaker identity
 check or to the proof replay's ambient assumptions.
 
+Recursive C contracts use the standard partial-correctness recursion rule.
+While one closed call-graph transaction is being checked, the kernel permits
+crate-private provisional rules for the exact functions in that transaction.
+Every body is then independently certified with the same safety, effect,
+resource, and postcondition checks as an ordinary opaque function. The
+language layer returns the completed environment only if every contract
+certifies; a failure returns no rules from the transaction. Provisional rules
+cannot be constructed through the public kernel API.
+
+The apparently circular rule is justified by finite call depth, not by an
+assumption that recursion terminates. Any returning execution has a finite
+recursive call tree, so induction on its maximum depth validates each contract
+use. An infinite recursive execution owes no return postcondition, while any
+undefined behavior or footprint violation still occurs in some finite prefix
+and is rejected. Consequently recursive C verification needs no mandatory
+decrease annotation and does not create termination evidence.
+
 Composite resource unfolding is also checked at this boundary. Resource
 definitions carry their logical facts into the kernel, and fold/unfold,
 loadability, separation, and post-resource checks are performed against the
@@ -190,6 +207,12 @@ verification propositions. It records a checked path with no finite successor,
 so enclosing sequences do not resume and return claims are vacuous. Concrete
 execution propositions never contain this marker: divergence has no outcome
 in the finite operational relation.
+
+The same distinction governs recursive calls. A recursive contract summarizes
+the hypothetical return branch and finite-prefix safety; it never proves that
+the call returns. Direct recursion, mutual recursion, and source-order-forward
+calls are certified as one closed transaction before any resulting rules are
+made available outside it.
 
 An opaque pointer return is a symbolic pointer block that may alias any
 existing block. Only a certified postcondition or resource fact can establish

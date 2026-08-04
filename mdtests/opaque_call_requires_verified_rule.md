@@ -1,7 +1,8 @@
-# opaque calls require an already verified rule
+# opaque calls may use a later contract in the same verification transaction
 
-The caller is deliberately listed before its callee. Click must report the
-missing verified rule instead of silently stepping into the callee body.
+The caller is deliberately listed before its callee. Click verifies the closed
+call-graph transaction atomically, so source order does not determine whether
+the callee contract is available.
 
 ```c filename=caller.c
 int32 caller(int32 x) {
@@ -36,5 +37,5 @@ int32 helper(int32 x) {
 ```
 
 ```expect
-fail: cannot execute call to `helper` opaquely: its contract has not been verified yet
+pass
 ```

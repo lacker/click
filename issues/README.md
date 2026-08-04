@@ -10,15 +10,14 @@ Click's C contracts now use partial correctness consistently: concrete
 execution is separate from modular verification, and safe functions need not
 have a return frontier. The remaining recursion work is:
 
-1. [Verify recursive C functions by contract](recursive-c-function-contracts.md).
-2. [Add well-founded recursion to pure Click functions](well-founded-pure-click-recursion.md).
-3. [Add optional C termination certificates](optional-c-termination-certificates.md)
+1. [Add well-founded recursion to pure Click functions](well-founded-pure-click-recursion.md).
+2. [Add optional C termination certificates](optional-c-termination-certificates.md)
    only after partial C recursion is sound.
-4. [Add a perpetual-service example](perpetual-service-example.md).
+3. [Add a perpetual-service example](perpetual-service-example.md).
 
-The first and second deliberately use different proof models: C contracts are
-partial by default, while a pure Click function must produce a value. Optional
-C termination is useful but must not block ordinary recursive verification.
+Recursive C contracts are now partial by default, while a pure Click function
+must produce a value. Optional C termination is useful but must not block
+ordinary recursive verification.
 
 A true input-stream example remains a later design problem. Click can presently
 prove safety invariants for an indefinitely running loop, but it has no event

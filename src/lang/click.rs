@@ -2202,8 +2202,31 @@ fn verify_c0_sources_with_environment(
             &click_function_environment,
             &resource_environment,
         )?;
-        let function_environment =
+        let mut function_environment =
             initial_function_environment.unwrap_or(built_function_environment);
+        // Verify the selected call-graph closure as one transaction. These
+        // crate-private rules are partial-contract hypotheses, not published
+        // results: every selected function below must still pass exact kernel
+        // certification before this function can return an environment.
+        for function_block in file.function_blocks() {
+            if selected_functions
+                .as_ref()
+                .is_some_and(|selected| !selected.contains(function_block.signature().name()))
+            {
+                continue;
+            }
+            let Some(function) = function_environment
+                .get_function(function_block.signature().name())
+                .cloned()
+            else {
+                continue;
+            };
+            if let Some(hypothesis) =
+                crate::kernel::c_recursive_function_contract_hypothesis(function)
+            {
+                function_environment = function_environment.with_verified_function_rule(hypothesis);
+            }
+        }
         let verified_theorems = verify_theorem_definitions(
             &theorem_definitions,
             &predicate_environment,

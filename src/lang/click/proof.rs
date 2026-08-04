@@ -11072,6 +11072,29 @@ fn finish_ordered_proof_replay(
                 .into_iter()
                 .map(|fact| fact.proposition().clone())
                 .collect::<Vec<_>>();
+            let replayed_facts = replayed
+                .execution_facts()
+                .into_iter()
+                .map(|fact| fact.proposition().clone())
+                .collect::<Vec<_>>();
+            // Do not make two different branch paths appear equal by first
+            // assuming their contradictory guards. In an inconsistent
+            // context every outcome is provably equal, which used to pair a
+            // recursive branch with an unrelated base-case certificate.
+            if certified_facts.iter().any(|certified_fact| {
+                replayed_facts.iter().any(|replayed_fact| {
+                    matches!(
+                        (certified_fact, replayed_fact),
+                        (
+                            Proposition::ConditionIs(certified_condition, certified_value),
+                            Proposition::ConditionIs(replayed_condition, replayed_value),
+                        ) if certified_condition == replayed_condition
+                            && certified_value != replayed_value
+                    )
+                })
+            }) {
+                return false;
+            }
             let mut path_assumptions = certified_path.assumptions().clone();
             for fact in certification_facts.iter().chain(&certified_facts) {
                 path_assumptions = path_assumptions.assume_proposition(fact.clone());
@@ -11079,8 +11102,8 @@ fn finish_ordered_proof_replay(
             for fact in &pure_facts {
                 path_assumptions = path_assumptions.assume_proposition(fact.clone());
             }
-            for fact in replayed.execution_facts() {
-                path_assumptions = path_assumptions.assume_proposition(fact.proposition().clone());
+            for fact in replayed_facts {
+                path_assumptions = path_assumptions.assume_proposition(fact);
             }
             if let CFunctionOutcome::Return { state, .. } = certified
                 && let Ok(resource_facts) = state.resources().observable_facts(&path_assumptions)
