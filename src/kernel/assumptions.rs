@@ -5,6 +5,7 @@ use std::cell::{Cell, RefCell};
 // facts. Two levels retain the framed symbolic-load cases while making failed
 // searches terminate conservatively instead of overflowing the stack.
 const MEMORY_LOAD_EQUALITY_DEPTH_LIMIT: usize = 2;
+const SIGNED_INTERVAL_DEPTH_LIMIT: usize = 32;
 
 thread_local! {
     static MEMORY_LOAD_EQUALITY_DEPTH: Cell<usize> = const { Cell::new(0) };
@@ -3262,35 +3263,14 @@ impl Assumptions {
                     ) || self.has_lower_bound_above(&left, &zero));
                 (ordered_nonnegative || positive_minus_one).then_some(false)
             }
-            ConditionTerm::Bitvector32SignedAddOverflows(left, right)
-                if right.as_ref() == &Bitvector32Term::Constant(1) =>
-            {
-                let int_max = Bitvector32Term::Constant(i32::MAX as u32);
-                let left = left.as_ref().clone();
-                // Any exact strict upper bound on an int32 proves that `left`
-                // is not INT_MAX. Check this common increment certificate
-                // syntactically before invoking transported order reasoning;
-                // the latter may compare large symbolic memory terms.
-                let has_strict_upper_bound =
-                    self.condition_facts.iter().any(|(condition, value)| {
-                        match (condition, value) {
-                            (ConditionTerm::Bitvector32SignedLessThan(fact_left, _), true) => {
-                                fact_left.as_ref() == &left
-                            }
-                            (ConditionTerm::Bitvector32SignedGreaterThan(_, fact_left), true) => {
-                                fact_left.as_ref() == &left
-                            }
-                            _ => false,
-                        }
-                    });
-                (has_strict_upper_bound
-                    || self.has_condition_fact(
-                        ConditionTerm::signed_less_than(left.clone(), int_max.clone()),
-                        true,
-                    )
-                    || self.has_upper_bound_below(&left, &int_max))
-                .then_some(false)
-            }
+            ConditionTerm::Bitvector32SignedAddOverflows(left, right) => self
+                .signed_interval(left, SIGNED_INTERVAL_DEPTH_LIMIT)
+                .zip(self.signed_interval(right, SIGNED_INTERVAL_DEPTH_LIMIT))
+                .and_then(|((left_lower, left_upper), (right_lower, right_upper))| {
+                    let lower = left_lower.checked_add(right_lower)?;
+                    let upper = left_upper.checked_add(right_upper)?;
+                    (lower >= i64::from(i32::MIN) && upper <= i64::from(i32::MAX)).then_some(false)
+                }),
             ConditionTerm::Bitvector32SignedMultiplyOverflows(left, right)
                 if right.as_ref() == &Bitvector32Term::Constant(0)
                     || left.as_ref() == &Bitvector32Term::Constant(0)
@@ -3378,6 +3358,79 @@ impl Assumptions {
             }
             _ => None,
         }
+    }
+
+    /// Returns a conservative signed range for `term`. Unknown endpoints use
+    /// the full int32 range, so callers can still prove identities such as
+    /// `x + 0`. Additions are ranged only when their own signed evaluation is
+    /// known not to overflow; this makes nested-addition bounds safe to reuse.
+    fn signed_interval(&self, term: &Bitvector32Term, depth: usize) -> Option<(i64, i64)> {
+        if depth == 0 {
+            note_search_truncation();
+            return None;
+        }
+        if let Some(value) = self.bitvector_constant_from_direct_equalities(term) {
+            let value = i64::from(value as i32);
+            return Some((value, value));
+        }
+        if let Bitvector32Term::Add(left, right) = term {
+            let (left_lower, left_upper) = self.signed_interval(left, depth - 1)?;
+            let (right_lower, right_upper) = self.signed_interval(right, depth - 1)?;
+            let lower = left_lower.checked_add(right_lower)?;
+            let upper = left_upper.checked_add(right_upper)?;
+            if lower < i64::from(i32::MIN) || upper > i64::from(i32::MAX) {
+                return None;
+            }
+            return Some((lower, upper));
+        }
+
+        let mut lower = i64::from(i32::MIN);
+        let mut upper = i64::from(i32::MAX);
+        for (condition, value) in &self.condition_facts {
+            let Some((fact_left, fact_right, strict)) = condition_as_order_fact(condition, *value)
+            else {
+                continue;
+            };
+            if self.interval_endpoint_matches(term, &fact_left) {
+                if let Some(bound) = signed_bitvector_constant(&fact_right) {
+                    let Some(bound) = (if strict {
+                        bound.checked_sub(1)
+                    } else {
+                        Some(bound)
+                    }) else {
+                        continue;
+                    };
+                    upper = upper.min(bound);
+                } else if strict {
+                    // Every signed int32 right endpoint is at most INT_MAX.
+                    upper = upper.min(i64::from(i32::MAX) - 1);
+                }
+            }
+            if self.interval_endpoint_matches(term, &fact_right) {
+                if let Some(bound) = signed_bitvector_constant(&fact_left) {
+                    let Some(bound) = (if strict {
+                        bound.checked_add(1)
+                    } else {
+                        Some(bound)
+                    }) else {
+                        continue;
+                    };
+                    lower = lower.max(bound);
+                } else if strict {
+                    // Every signed int32 left endpoint is at least INT_MIN.
+                    lower = lower.max(i64::from(i32::MIN) + 1);
+                }
+            }
+        }
+        (lower <= upper).then_some((lower, upper))
+    }
+
+    fn interval_endpoint_matches(
+        &self,
+        target: &Bitvector32Term,
+        endpoint: &Bitvector32Term,
+    ) -> bool {
+        target == endpoint || self.bitvector_terms_equal_for_fact_transport(target, endpoint)
     }
 
     pub fn proves(&self, proposition: &Proposition) -> bool {

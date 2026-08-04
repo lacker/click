@@ -6629,6 +6629,128 @@ fn symbolic_increment_uses_any_strict_upper_bound_to_rule_out_overflow() {
 }
 
 #[test]
+fn signed_addition_uses_both_operand_intervals_to_rule_out_overflow() {
+    let left = Bitvector32Term::Variable(Variable(653));
+    let right = Bitvector32Term::Variable(Variable(654));
+    let million = Bitvector32Term::Constant(1_000_000);
+    let assumptions = Assumptions::new()
+        .assume_condition(
+            ConditionTerm::signed_less_equal(Bitvector32Term::Constant(0), left.clone()),
+            true,
+        )
+        .assume_condition(
+            ConditionTerm::signed_less_equal(left.clone(), million.clone()),
+            true,
+        )
+        .assume_condition(
+            ConditionTerm::signed_less_equal(Bitvector32Term::Constant(0), right.clone()),
+            true,
+        )
+        .assume_condition(
+            ConditionTerm::signed_less_equal(right.clone(), million),
+            true,
+        );
+
+    assert_eq!(
+        assumptions.decide(&ConditionTerm::signed_add_overflows(left, right)),
+        Some(false)
+    );
+}
+
+#[test]
+fn signed_addition_uses_negative_operand_intervals_to_rule_out_overflow() {
+    let left = Bitvector32Term::Variable(Variable(655));
+    let right = Bitvector32Term::Variable(Variable(656));
+    let negative_million = Bitvector32Term::Constant((-1_000_000i32) as u32);
+    let zero = Bitvector32Term::Constant(0);
+    let assumptions = Assumptions::new()
+        .assume_condition(
+            ConditionTerm::signed_less_equal(negative_million.clone(), left.clone()),
+            true,
+        )
+        .assume_condition(
+            ConditionTerm::signed_less_equal(left.clone(), zero.clone()),
+            true,
+        )
+        .assume_condition(
+            ConditionTerm::signed_less_equal(negative_million, right.clone()),
+            true,
+        )
+        .assume_condition(ConditionTerm::signed_less_equal(right.clone(), zero), true);
+
+    assert_eq!(
+        assumptions.decide(&ConditionTerm::signed_add_overflows(left, right)),
+        Some(false)
+    );
+}
+
+#[test]
+fn signed_addition_ranges_nested_additions_only_when_each_level_is_safe() {
+    let left = Bitvector32Term::Variable(Variable(657));
+    let middle = Bitvector32Term::Variable(Variable(658));
+    let right = Bitvector32Term::Variable(Variable(659));
+    let upper = Bitvector32Term::Constant(700_000_000);
+    let mut assumptions = Assumptions::new();
+    for term in [&left, &middle, &right] {
+        assumptions = assumptions
+            .assume_condition(
+                ConditionTerm::signed_less_equal(Bitvector32Term::Constant(0), term.clone()),
+                true,
+            )
+            .assume_condition(
+                ConditionTerm::signed_less_equal(term.clone(), upper.clone()),
+                true,
+            );
+    }
+    let partial = Bitvector32Term::add(left, middle);
+
+    assert_eq!(
+        assumptions.decide(&ConditionTerm::signed_add_overflows(partial.clone(), right)),
+        Some(false)
+    );
+    assert_eq!(
+        assumptions.decide(&ConditionTerm::signed_add_overflows(
+            partial,
+            Bitvector32Term::Constant(800_000_000),
+        )),
+        None
+    );
+}
+
+#[test]
+fn signed_addition_matches_interval_facts_across_unchanged_snapshots() {
+    let cell = Pointer {
+        block: "arg-memory".into(),
+        offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(660)), 4),
+    };
+    let before = CMemory::new();
+    let after = before.clone().with_block("local:temporary", 4);
+    let before_load = Bitvector32Term::MemoryLoad(
+        crate::kernel::intern_c_memory(before),
+        Box::new(cell.clone()),
+    );
+    let after_load =
+        Bitvector32Term::MemoryLoad(crate::kernel::intern_c_memory(after), Box::new(cell));
+    let assumptions = Assumptions::new()
+        .assume_condition(
+            ConditionTerm::signed_less_equal(Bitvector32Term::Constant(0), before_load.clone()),
+            true,
+        )
+        .assume_condition(
+            ConditionTerm::signed_less_equal(before_load, Bitvector32Term::Constant(1_000_000)),
+            true,
+        );
+
+    assert_eq!(
+        assumptions.decide(&ConditionTerm::signed_add_overflows(
+            after_load.clone(),
+            after_load,
+        )),
+        Some(false)
+    );
+}
+
+#[test]
 fn pointer_store_through_local_address_updates_named_lvalue() {
     let local_pointer = Pointer {
         block: "local:x".into(),
