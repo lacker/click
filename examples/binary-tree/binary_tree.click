@@ -16,6 +16,7 @@ verifying "tree_leaf_pipeline.c";
 verifying "tree_is_leaf.c";
 verifying "tree_sum_root_and_children.c";
 verifying "tree_rotate_left.c";
+verifying "tree_walk.c";
 
 struct node* tree_empty() {
     produces tree(result);
@@ -205,4 +206,36 @@ struct node* tree_rotate_left(struct node* node) {
     fold(tree(result));
     frame();
     simp();
+}
+
+int32 tree_walk(struct node* node) {
+    decreases resource tree(node);
+    requires node != 0;
+    views tree(node);
+    immutable;
+
+    ensures result == node->value;
+} by {
+    observe(tree(node));
+    if node->left == 0 {
+        if node->right == 0 {
+            execute();
+            frame();
+            simp();
+        } else {
+            execute();
+            frame();
+            simp();
+        }
+    } else {
+        if node->right == 0 {
+            execute();
+            frame();
+            simp();
+        } else {
+            execute();
+            frame();
+            simp();
+        }
+    }
 }

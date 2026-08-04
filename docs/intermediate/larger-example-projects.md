@@ -110,9 +110,11 @@ This fixture branches the same guarded-recursion model into two child trees. A
 nonnull node owns its value, left, and right fields and contains folded
 resources for both children. It verifies empty and root construction, a viewed
 root read, child swapping, and a modular leaf pipeline whose two independently
-returned null children act as empty resource identities. Allocation,
-deallocation, traversal, balancing, sharing, and cycles remain outside the
-example.
+returned null children act as empty resource identities. Its recursive walk
+visits both nonnull children sequentially, checking that the first opaque call
+preserves the sibling resource and parent fields needed afterward. Allocation,
+deallocation, mutating traversal, balancing, sharing, and cycles remain outside
+the example.
 
 ### Recursive Zero List
 

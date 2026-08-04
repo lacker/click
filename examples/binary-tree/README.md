@@ -13,11 +13,15 @@ checks that repeated empty recursive resources behave as the identity rather
 than conflicting ownership.
 
 The example is intentionally about branching resource composition. It does
-not cover allocation, deallocation, traversal, balancing, parent pointers,
-shared subtrees, or cycles.
+not cover allocation, deallocation, mutating traversal, balancing, parent
+pointers, shared subtrees, or cycles.
 
-The project also verifies three small algorithms over the recursive shape.
+The project also verifies four small algorithms over the recursive shape.
 `tree_is_leaf` observes both child links, `tree_sum_root_and_children` opens two
 non-null children read-only and uses bounded signed addition, and
 `tree_rotate_left` unfolds exactly the pivot subtree it rewires before folding
-the new root.
+the new root. `tree_walk` recursively visits both non-null subtrees before
+returning the original root value. It is the full branching-recursion case:
+the first opaque child call must preserve the sibling subtree, the parent
+fields, and the saved root value so that the second child call and final
+postcondition remain valid.

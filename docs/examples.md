@@ -405,8 +405,8 @@ sequence:
 - `examples/linked-list/`: a guarded recursive resource over preallocated
   singly linked nodes, with one-layer push/pop proofs and a modular round trip.
 - `examples/binary-tree/`: a guarded recursive resource with two owned child
-  trees, including empty construction, root construction, child swapping, and
-  a modular leaf pipeline that composes two empty children.
+  trees, including construction, child swapping, a modular leaf pipeline, and
+  an immutable recursive walk that visits both sibling subtrees.
 - `examples/recursive-zero-list/`: read-only recursive C traversal over a
   guarded list resource, with both structural-resource and numeric termination
   proofs kept separate from its ordinary partial contract.
