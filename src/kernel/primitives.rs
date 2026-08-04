@@ -497,6 +497,8 @@ pub struct CFunctionSpecification {
 pub struct CExecutionEnvironment {
     pub(super) functions: BTreeMap<String, CFunction>,
     pub(super) verified_function_rules: BTreeMap<String, CVerifiedFunctionRule>,
+    pub(super) verified_function_termination_rules:
+        BTreeMap<String, CVerifiedFunctionTerminationRule>,
     pub(super) verified_loop_rules: Vec<CVerifiedLoopRule>,
 }
 
@@ -538,6 +540,36 @@ impl CExecutionSemantics {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CVerifiedFunctionRule {
     pub(super) function: CFunction,
+}
+
+/// Kernel evidence that a partially-correct C function also returns.
+///
+/// Construction is deliberately separate from [`CVerifiedFunctionRule`], so
+/// ordinary opaque calls never acquire a total-correctness assumption.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CVerifiedFunctionTerminationRule {
+    pub(super) function: CFunction,
+}
+
+/// An untrusted surface-language proposal for ranking the cycles in one C
+/// function. The kernel checks every supplied index and variable against the
+/// exact body before producing termination evidence.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CFunctionTerminationPlan {
+    pub(super) function_name: String,
+    pub(super) recursive_parameter: Option<usize>,
+    pub(super) loop_measures: BTreeMap<usize, String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CTerminationError {
+    pub(super) message: String,
+}
+
+impl CVerifiedFunctionTerminationRule {
+    pub fn function_name(&self) -> &str {
+        self.function.name()
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -2600,6 +2632,21 @@ impl CExecutionEnvironment {
         self
     }
 
+    pub fn with_verified_function_termination_rules(
+        mut self,
+        rules: impl IntoIterator<Item = CVerifiedFunctionTerminationRule>,
+    ) -> Self {
+        for rule in rules {
+            self.verified_function_termination_rules
+                .insert(rule.function.name().to_string(), rule);
+        }
+        self
+    }
+
+    pub fn has_verified_function_termination(&self, name: &str) -> bool {
+        self.verified_function_termination_rules.contains_key(name)
+    }
+
     pub fn without_verified_function_rule(mut self, name: &str) -> Self {
         self.verified_function_rules.remove(name);
         self
@@ -2607,6 +2654,10 @@ impl CExecutionEnvironment {
 
     pub(super) fn get_verified_function_rule(&self, name: &str) -> Option<&CVerifiedFunctionRule> {
         self.verified_function_rules.get(name)
+    }
+
+    pub(crate) fn verified_function_rules(&self) -> Vec<CVerifiedFunctionRule> {
+        self.verified_function_rules.values().cloned().collect()
     }
 
     pub fn with_verified_loop_rules(
@@ -2663,6 +2714,20 @@ impl CExecutionEnvironment {
         })
     }
 }
+
+impl CTerminationError {
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+}
+
+impl std::fmt::Display for CTerminationError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.message.fmt(formatter)
+    }
+}
+
+impl std::error::Error for CTerminationError {}
 
 fn resource_context_has_symbolic_int32_range_read(
     resources: &ResourceContext,

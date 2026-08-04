@@ -23,12 +23,13 @@ use crate::kernel::{
     c_expression_definedness_proposition, c_function, c_function_contract_entry_state,
     c_function_entry_state, c_function_execution_candidates_from_outcomes,
     c_function_outcome_from_statement_outcome, c_function_outcomes_definitionally_equal,
-    c_function_specification, c_if, c_labeled_assert, c_loop_effects_hold_at_back_edge,
-    c_loop_invariant_obligations_at_entry, c_loop_invariants_hold_at_back_edge_using,
-    c_loop_invariants_hold_at_entry, c_loop_preservation_contexts,
-    c_pointer_offsets_proven_equal_for_effect, c_pointer_value, c_resources_directly_match, c_seq,
-    c_unverified_function_contract_claims, c_verified_function_contract_claims,
-    c_verified_function_rule, c_while_with_invariant_and_effect_checks,
+    c_function_specification, c_function_termination_plan, c_if, c_labeled_assert,
+    c_loop_effects_hold_at_back_edge, c_loop_invariant_obligations_at_entry,
+    c_loop_invariants_hold_at_back_edge_using, c_loop_invariants_hold_at_entry,
+    c_loop_preservation_contexts, c_pointer_offsets_proven_equal_for_effect, c_pointer_value,
+    c_resources_directly_match, c_seq, c_unverified_function_contract_claims,
+    c_verified_function_contract_claims, c_verified_function_rule,
+    c_verified_function_termination_rules, c_while_with_invariant_and_effect_checks,
     canonical_c_memory_for_pointer_load, certify_c_function_execution_path_resource_representation,
     conditions_equal_ignoring_memories, int32, prove_c_condition_fact_direct_transport,
     prove_c_condition_fact_transport, prove_c_function_contract_execution_paths_with_environment,
@@ -163,6 +164,7 @@ struct ClickFunctionType {
 pub struct FunctionBlock {
     signature: FunctionSignature,
     requires: Vec<Requirement>,
+    decreases: Option<ContractExpression>,
     structural_clauses: Vec<StructuralClause>,
     effects: Vec<EffectClause>,
     ensures: Vec<EnsureClause>,
@@ -216,6 +218,7 @@ pub struct EffectClause {
 pub struct StructuralClause {
     region: CodeRegion,
     label: Option<String>,
+    decreases: Option<ContractExpression>,
     items: Vec<StructuralItem>,
     initialize_proof: Option<Proof>,
     preserve_proof: Option<Proof>,
@@ -1618,6 +1621,10 @@ impl FunctionBlock {
         &self.requires
     }
 
+    pub fn decreases(&self) -> Option<&ContractExpression> {
+        self.decreases.as_ref()
+    }
+
     pub fn structural_clauses(&self) -> &[StructuralClause] {
         &self.structural_clauses
     }
@@ -1740,6 +1747,10 @@ impl StructuralClause {
 
     pub fn label(&self) -> Option<&str> {
         self.label.as_deref()
+    }
+
+    pub fn decreases(&self) -> Option<&ContractExpression> {
+        self.decreases.as_ref()
     }
 
     pub fn items(&self) -> &[StructuralItem] {
@@ -2072,6 +2083,14 @@ impl C0VerificationSession {
         ))
     }
 
+    /// Reports whether the kernel produced separate termination evidence for
+    /// this function. Ordinary partial-contract verification does not consult
+    /// this stronger result.
+    pub fn function_termination_is_verified(&self, name: &str) -> bool {
+        self.verified_function_environment
+            .has_verified_function_termination(name)
+    }
+
     pub fn verify_at(
         &self,
         click_source: &str,
@@ -2184,6 +2203,8 @@ fn verify_c0_sources_with_environment(
         };
         (file, parsed_sources, selected_functions)
     };
+    let (termination_plans, requested_termination) =
+        c_function_termination_plans(&file, selected_functions.as_ref())?;
     let (
         predicate_environment,
         click_function_environment,
@@ -2616,6 +2637,24 @@ fn verify_c0_sources_with_environment(
         }
     }
 
+    let partial_rules = function_environment.verified_function_rules();
+    let termination_rules =
+        c_verified_function_termination_rules(&partial_rules, &termination_plans).map_err(
+            |error| ClickError::new(format!("could not certify C termination: {error}")),
+        )?;
+    for name in &requested_termination {
+        if !termination_rules
+            .iter()
+            .any(|rule| rule.function_name() == name)
+        {
+            return Err(ClickError::new(format!(
+                "could not certify termination for `{name}`: every reachable loop, recursive cycle, and callee must have a checked ranking proof"
+            )));
+        }
+    }
+    function_environment =
+        function_environment.with_verified_function_termination_rules(termination_rules);
+
     Ok((verified, function_environment))
 }
 
@@ -2798,6 +2837,101 @@ fn c0_statement_calls(statement: &syntax::C0Statement) -> Vec<BTreeSet<String>> 
     let mut calls = Vec::new();
     visit(statement, &mut calls);
     calls
+}
+
+fn termination_measure_name(
+    expression: &ContractExpression,
+    context: &str,
+) -> Result<String, ClickError> {
+    match expression {
+        ContractExpression::CFragment(CExpression::Variable(name))
+        | ContractExpression::CBinding(name) => Ok(name.clone()),
+        _ => Err(ClickError::new(format!(
+            "{context} must name one int32 C variable; compound ranking expressions are not yet supported"
+        ))),
+    }
+}
+
+fn c_function_termination_plans(
+    file: &ClickFile,
+    selected_functions: Option<&BTreeSet<String>>,
+) -> Result<
+    (
+        Vec<crate::kernel::CFunctionTerminationPlan>,
+        BTreeSet<String>,
+    ),
+    ClickError,
+> {
+    let mut plans = Vec::new();
+    let mut requested = BTreeSet::new();
+    for function in file.function_blocks() {
+        let selected = selected_functions
+            .is_none_or(|selected| selected.contains(function.signature().name()));
+        let recursive_parameter = function
+            .decreases()
+            .map(|measure| {
+                let name = termination_measure_name(
+                    measure,
+                    &format!("function-level `decreases` in `{}`", function.signature().name()),
+                )?;
+                let index = function
+                    .signature()
+                    .parameters()
+                    .iter()
+                    .position(|parameter| parameter.name() == name)
+                    .ok_or_else(|| {
+                        ClickError::new(format!(
+                            "function-level `decreases` in `{}` must name an int32 parameter, not `{name}`",
+                            function.signature().name()
+                        ))
+                    })?;
+                if function.signature().parameters()[index].c_type() != C0Type::Int32 {
+                    return Err(ClickError::new(format!(
+                        "function-level `decreases` parameter `{name}` in `{}` must have type int32",
+                        function.signature().name()
+                    )));
+                }
+                Ok(index)
+            })
+            .transpose()?;
+        let mut loop_measures = BTreeMap::new();
+        for clause in function.structural_clauses() {
+            let Some(measure) = clause.decreases() else {
+                continue;
+            };
+            let CodeRegion::Loop(index) = clause.region() else {
+                return Err(ClickError::new(format!(
+                    "`decreases` is supported only for loop regions, not {:?} in `{}`",
+                    clause.region(),
+                    function.signature().name()
+                )));
+            };
+            let name = termination_measure_name(
+                measure,
+                &format!(
+                    "loop {index} `decreases` in `{}`",
+                    function.signature().name()
+                ),
+            )?;
+            if loop_measures.insert(*index, name).is_some() {
+                return Err(ClickError::new(format!(
+                    "duplicate `decreases` measure for loop {index} in `{}`",
+                    function.signature().name()
+                )));
+            }
+        }
+        if recursive_parameter.is_some() || !loop_measures.is_empty() {
+            if selected {
+                requested.insert(function.signature().name().to_string());
+            }
+            plans.push(c_function_termination_plan(
+                function.signature().name(),
+                recursive_parameter,
+                loop_measures,
+            ));
+        }
+    }
+    Ok((plans, requested))
 }
 
 fn parse_c_struct_layouts(

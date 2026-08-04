@@ -82,6 +82,20 @@ undefined behavior or footprint violation still occurs in some finite prefix
 and is rejected. Consequently recursive C verification needs no mandatory
 decrease annotation and does not create termination evidence.
 
+Optional C termination is a second judgment. Surface `decreases` clauses are
+lowered to an untrusted `CFunctionTerminationPlan`; the kernel checks the exact
+partially verified function bodies, call-graph components, loop indices,
+integer types, guards, and decreasing edges before constructing
+`CVerifiedFunctionTerminationRule`. A recursive component is accepted only
+when every member has a compatible measure. Whole-function evidence is
+withheld if any reachable loop, recursive component, or callee lacks evidence.
+
+Termination rules live in their own execution-environment map. Constructing or
+applying `CVerifiedFunctionRule` does not consult that map, so a termination
+feature cannot accidentally turn ordinary `ensures` into total correctness.
+The public verification session exposes an explicit query for tools that need
+to distinguish the stronger result.
+
 Composite resource unfolding is also checked at this boundary. Resource
 definitions carry their logical facts into the kernel, and fold/unfold,
 loadability, separation, and post-resource checks are performed against the
@@ -115,6 +129,9 @@ In `src/kernel/`:
   used only for exact opaque-contract certification.
 - `CVerifiedFunctionContractClaim`, `CVerifiedFunctionRule`: unforgeable
   evidence for one exact claim and for a complete exact opaque contract.
+- `CFunctionTerminationPlan`, `CVerifiedFunctionTerminationRule`: respectively
+  an untrusted ranking proposal and separate kernel-checked evidence that the
+  exact partially-correct function returns.
 
 The current integer conversion slice is deliberately small. `eval.rs` promotes
 `uint8` rvalues to `int32` terms for arithmetic, ordered comparisons, shifts,

@@ -622,6 +622,7 @@ impl Parser {
         let mut contract_lets = Vec::new();
         let mut contract_let_names = BTreeSet::new();
         let mut requires = Vec::new();
+        let mut decreases = None;
         let mut structural_clauses = Vec::new();
         let mut structural_labels = BTreeSet::new();
         let mut effects = Vec::new();
@@ -663,6 +664,24 @@ impl Parser {
                     requires.push(
                         apply_contract_lets_to_requirement(requirement, &contract_lets)
                             .map_err(|message| self.error(message))?,
+                    );
+                }
+                Some("decreases") => {
+                    self.position += 1;
+                    if decreases.is_some() {
+                        return Err(self.error(format!(
+                            "duplicate `decreases` clause in `{}`",
+                            signature.name()
+                        )));
+                    }
+                    let measure = self.parse_contract_expression()?;
+                    self.expect(Token::Semicolon)?;
+                    decreases = Some(
+                        substitute_contract_expression(
+                            &measure,
+                            &contract_let_substitutions(&contract_lets),
+                        )
+                        .map_err(|message| self.error(message))?,
                     );
                 }
                 Some("owns") => {
@@ -764,13 +783,13 @@ impl Parser {
                 }
                 Some(keyword) => {
                     return Err(self.error(format!(
-                        "expected `let`, `requires`, `owns`, `views`, `consumes`, `produces`, `immutable`, `mutable`, `for`, `ensures`, or `}}` in `{}`, got `{keyword}`",
+                        "expected `let`, `requires`, `decreases`, `owns`, `views`, `consumes`, `produces`, `immutable`, `mutable`, `for`, `ensures`, or `}}` in `{}`, got `{keyword}`",
                         signature.name()
                     )));
                 }
                 None => {
                     return Err(self.error(format!(
-                        "expected `let`, `requires`, `owns`, `views`, `consumes`, `produces`, `immutable`, `mutable`, `for`, `ensures`, or `}}` in `{}`",
+                        "expected `let`, `requires`, `decreases`, `owns`, `views`, `consumes`, `produces`, `immutable`, `mutable`, `for`, `ensures`, or `}}` in `{}`",
                         signature.name()
                     )));
                 }
@@ -799,6 +818,7 @@ impl Parser {
         Ok(FunctionBlock {
             signature,
             requires,
+            decreases,
             structural_clauses,
             effects,
             ensures,
@@ -1111,9 +1131,19 @@ impl Parser {
         };
         self.expect(Token::LBrace)?;
         let mut items = Vec::new();
+        let mut decreases = None;
         let mut initialize_proof = None;
         let mut preserve_proof = None;
         while self.peek() != Some(&Token::RBrace) {
+            if self.peek_ident() == Some("decreases") {
+                self.position += 1;
+                if decreases.is_some() {
+                    return Err(self.error("duplicate loop `decreases` clause"));
+                }
+                decreases = Some(self.parse_contract_expression()?);
+                self.expect(Token::Semicolon)?;
+                continue;
+            }
             if self.peek_ident() == Some("initialize") {
                 self.position += 1;
                 if initialize_proof.is_some() {
@@ -1133,12 +1163,15 @@ impl Parser {
             items.extend(self.parse_region_proof_items()?);
         }
         self.expect(Token::RBrace)?;
-        if items.is_empty() {
-            return Err(self.error("region proof block must contain at least one item"));
+        if items.is_empty() && decreases.is_none() {
+            return Err(self.error(
+                "region proof block must contain at least one item or a `decreases` clause",
+            ));
         }
         Ok(StructuralClause {
             region,
             label,
+            decreases,
             items,
             initialize_proof,
             preserve_proof,

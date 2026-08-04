@@ -58,8 +58,45 @@ recursive calls. Click checks all functions in the selected call-graph
 transaction before returning any verified rules, so declaration order does not
 control whether a callee contract is available. This remains partial
 correctness: `ensures` applies if a recursive call returns and the contract by
-itself is not a termination proof. Pure Click functions follow a different
-rule and remain non-recursive.
+itself is not a termination proof. Recursive pure Click functions follow a
+different rule: because a pure call must produce a value, every recursive
+component requires a checked `decreases` measure.
+
+### Optional C termination
+
+Use `decreases` only when a caller needs separate evidence that a C function
+returns. A function-level measure ranks recursive calls:
+
+```click
+int32 countdown(int32 n) {
+    decreases n;
+    ensures result == 0;
+}
+```
+
+A loop measure belongs to that loop's region:
+
+```click
+for loop(0) {
+    decreases n;
+    invariant n >= 0;
+}
+```
+
+The initial supported proof shape is deliberately small. The measure must be
+one `int32` variable. A recursive edge passes `measure - K`, and a loop back
+edge updates `measure = measure - K`, for a positive constant `K`; the path
+guard must make the resulting value nonnegative. Mutually recursive functions
+all declare their corresponding parameter. Nested ranking arguments and
+compound expressions are rejected rather than guessed.
+
+Supplying any C `decreases` clause asks Click to certify termination of the
+whole function, so every reachable loop and recursive component must be ranked
+and every callee must itself have termination evidence. The kernel records
+that evidence separately from `CVerifiedFunctionRule`. Ordinary calls and
+ordinary `ensures` continue to use partial correctness and do not silently
+depend on it. A perpetual service loop should therefore have an invariant but
+no `decreases` clause.
 
 A function with several effect and postcondition clauses may instead use one
 grouped execution proof after the contract block:

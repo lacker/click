@@ -216,6 +216,13 @@ abstract result and memory havoc, including immutable calls. Rules accumulate
 in verification order, so an unresolved callee is a direct error rather than
 an invitation to inline its body.
 
+Termination evidence is intentionally not part of this opaque call rule. A
+checked `decreases` plan can additionally produce a
+`CVerifiedFunctionTerminationRule`, but partial contract application remains
+valid without it and never manufactures a return frontier for a diverging
+callee. Clients that need a total-correctness or reachability fact must request
+the separate evidence explicitly.
+
 This is an explicit execution mode, not behavior inferred from which entries
 happen to be present in the execution environment. Click selects
 `CExecutionSemantics::APPLY_VERIFIED_RULES`, so a missing function or loop rule

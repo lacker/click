@@ -13,11 +13,13 @@ mod loops;
 mod primitives;
 mod reasoning;
 mod spec;
+mod termination;
 
 pub use api::*;
 pub(crate) use assumptions::{AssumptionsIdScope, conditions_equal_ignoring_memories};
 pub use primitives::*;
 pub(crate) use reasoning::memory_effect_write_pointers;
+pub use termination::c_verified_function_termination_rules;
 
 mod prelude {
     pub(super) use super::api::*;

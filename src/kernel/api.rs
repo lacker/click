@@ -6455,6 +6455,21 @@ pub fn c_verified_function_rule(
     Some(CVerifiedFunctionRule { function })
 }
 
+/// Builds an untrusted ranking plan. Supplying a plan is not evidence; the
+/// kernel validates it together with the exact verified C functions in
+/// [`c_verified_function_termination_rules`].
+pub fn c_function_termination_plan(
+    function_name: impl Into<String>,
+    recursive_parameter: Option<usize>,
+    loop_measures: impl IntoIterator<Item = (usize, String)>,
+) -> CFunctionTerminationPlan {
+    CFunctionTerminationPlan {
+        function_name: function_name.into(),
+        recursive_parameter,
+        loop_measures: loop_measures.into_iter().collect(),
+    }
+}
+
 /// Creates a scoped hypothesis used only while the language layer verifies one
 /// closed set of mutually dependent C contracts. The verification transaction
 /// returns no rules if any hypothesized contract fails independent kernel

@@ -8727,6 +8727,43 @@ int32 count(int32 n) {
         .expect("inserted loop-phase proof is inside the selected proof unit");
 }
 
+#[test]
+fn verification_session_keeps_partial_and_termination_rules_separate() {
+    let good_c = r#"int32 countdown(int32 n) {
+    int32 result;
+    if (n > 0) {
+        result = countdown(n - 1);
+        return result;
+    }
+    return 0;
+}"#;
+    let partial_c = r#"int32 stuck(int32 n) {
+    int32 result;
+    if (n > 0) {
+        result = stuck(n);
+        return result;
+    }
+    return 0;
+}"#;
+    let click_source = r#"verifying "countdown.c";
+verifying "stuck.c";
+
+int32 countdown(int32 n) {
+    decreases n;
+    ensures result == 0 by auto;
+}
+
+int32 stuck(int32 n) {
+    ensures result == 0 by auto;
+}"#;
+    let sources = [("countdown.c", good_c), ("stuck.c", partial_c)];
+    let (session, _) =
+        C0VerificationSession::new(click_source, &sources).expect("both contracts should verify");
+
+    assert!(session.function_termination_is_verified("countdown"));
+    assert!(!session.function_termination_is_verified("stuck"));
+}
+
 /// `condition_polarity_equivalent` used to answer through
 /// `canonical_order_condition(left) == canonical_order_condition(right)`.
 /// Only comparisons have a canonical order form, so every pair of

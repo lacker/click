@@ -2249,10 +2249,14 @@ pub(super) fn apply_contract_lets_to_structural_clause(
     let StructuralClause {
         region,
         label,
+        decreases,
         items,
         initialize_proof,
         preserve_proof,
     } = clause;
+    let decreases = decreases
+        .map(|measure| apply_contract_lets_to_expression(measure, bindings))
+        .transpose()?;
     let items = items
         .into_iter()
         .map(|item| apply_contract_lets_to_structural_item(item, bindings))
@@ -2260,6 +2264,7 @@ pub(super) fn apply_contract_lets_to_structural_clause(
     Ok(StructuralClause {
         region,
         label,
+        decreases,
         items,
         initialize_proof,
         preserve_proof,

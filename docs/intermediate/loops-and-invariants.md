@@ -14,6 +14,23 @@ every finite iteration prefix is safe and that the invariant is available if
 the loop exits. A constant-true service loop can therefore have a useful
 invariant even though it has no exit state.
 
+When termination itself matters, a loop region may additionally declare a
+single-variable ranking proof:
+
+```click
+for loop(0) {
+    decreases remaining;
+    invariant remaining >= 0;
+}
+```
+
+In the current first slice, the C loop must guard the back edge so
+`remaining > 0` is known and every continuing body path must execute
+`remaining = remaining - K` for a positive constant `K`. This produces
+separate termination evidence; it does not change what an invariant or a
+postcondition means. Loops without `decreases` remain valid partial-correctness
+proofs.
+
 In Click terms, `loop(N)` names a loop code region. The invariant is checked at
 program points associated with that region. Since a loop head can be reached
 more than once, those program points can have many runtime visits.

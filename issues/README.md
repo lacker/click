@@ -8,16 +8,13 @@ pathologically slow cases belong in explicit quarantine lists in
 
 Click's C contracts now use partial correctness consistently: concrete
 execution is separate from modular verification, and safe functions need not
-have a return frontier. The remaining recursion work is:
-
-1. [Add optional C termination certificates](optional-c-termination-certificates.md)
-   only after partial C recursion is sound.
-2. [Add a perpetual-service example](perpetual-service-example.md).
+have a return frontier. The remaining illustrative work is [a
+perpetual-service example](perpetual-service-example.md).
 
 Recursive C contracts are partial by default, while recursive pure Click
 functions now require a checked `decreases` measure because they must produce a
-value. Optional C termination is useful but must not block ordinary recursive
-verification.
+value. Optional C termination now uses separate kernel-checked `decreases`
+evidence and does not block ordinary recursive verification.
 
 A true input-stream example remains a later design problem. Click can presently
 prove safety invariants for an indefinitely running loop, but it has no event
