@@ -22,8 +22,14 @@ and proof layer beside it.
 A Click proof says:
 
 - if the function is called in a state satisfying its `requires` clauses,
-- then every modeled execution path avoids the checked C undefined behavior,
-- and every path satisfies the stated `ensures` clauses.
+- no finite modeled execution reaches checked C undefined behavior, and
+- if the function returns, its return state satisfies every stated `ensures`
+  clause.
+
+This is a partial-correctness guarantee. A C function may intentionally run
+forever; an ordinary Click contract does not claim that it terminates. Loop
+invariants prove safety across every finite number of iterations and describe
+any exit that does occur.
 
 For example, a Click contract can say that a function returns a particular
 value, preserves part of memory, writes only a stated range, or maintains an

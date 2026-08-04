@@ -175,6 +175,22 @@ whether or not a matching rule is present. `CExecutionSemantics` also exposes
 `APPLY_CALL_RULES_AND_VERIFY_LOOPS` for the certificate-construction phase,
 where calls remain modular while the current loop body is verified directly.
 
+Concrete execution judgments and modular verification transitions are
+deliberately different propositions. `CStatementExecutes` and
+`CFunctionExecutes` describe outcomes produced by direct operational
+execution. `CStatementVerifies` and `CFunctionVerifies` describe abstract
+branches admitted while checking partial correctness with loop or function
+summaries. A verification return branch means “if this computation returns,
+this is an allowed post-state”; it is not evidence that the return is
+reachable. Verified contract and loop rules cannot be converted into concrete
+execution or termination theorems.
+
+`VerificationDiverges` is an internal outcome marker accepted only inside the
+verification propositions. It records a checked path with no finite successor,
+so enclosing sequences do not resume and return claims are vacuous. Concrete
+execution propositions never contain this marker: divergence has no outcome
+in the finite operational relation.
+
 An opaque pointer return is a symbolic pointer block that may alias any
 existing block. Only a certified postcondition or resource fact can establish
 that it equals an argument or is distinct from existing storage; an opaque

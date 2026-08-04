@@ -46,6 +46,12 @@ the current pure facts must prove `0 <= value <= 255`.
 Each `ensures` clause is a separate guarantee. A guarantee may be labeled with
 `label:`. Omitting a proof clause uses the default prover, currently `auto`.
 
+An `ensures` clause describes every return state; it does not assert that a
+return state exists. C contracts are partial-correctness contracts by default.
+Checked undefined behavior, resource authority, and declared write footprints
+remain safety properties of every finite execution prefix, including prefixes
+of an execution that never returns.
+
 A function with several effect and postcondition clauses may instead use one
 grouped execution proof after the contract block:
 

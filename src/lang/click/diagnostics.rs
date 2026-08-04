@@ -213,6 +213,7 @@ pub(super) fn describe_function_outcome(
                 describe_c_value(value, parameters, arguments)
             )
         }
+        CFunctionOutcome::VerificationDiverges => "has no verified return frontier".to_string(),
         CFunctionOutcome::UndefinedBehavior(kind) => match kind {
             crate::kernel::CUndefinedBehavior::SignedOverflow => {
                 "undefined behavior: signed overflow".to_string()

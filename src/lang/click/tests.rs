@@ -8018,7 +8018,7 @@ fn verifies_fill3_c0_source_with_sidecar_specification() {
     );
     assert_eq!(
         implication_body(verified.theorem.proposition()),
-        &Proposition::CFunctionSatisfiesSpecification {
+        &Proposition::CFunctionPartiallySatisfiesSpecification {
             function: syntax::parse_function(FILL3_C)
                 .expect("fill3 should parse")
                 .to_kernel_function()

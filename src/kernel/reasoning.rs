@@ -1190,8 +1190,11 @@ pub(super) fn collect_implication_antecedent_order_facts(
         | Proposition::CExpressionEvaluates { .. }
         | Proposition::CConditionEvaluates { .. }
         | Proposition::CStatementExecutes { .. }
+        | Proposition::CStatementVerifies { .. }
         | Proposition::CFunctionExecutes { .. }
+        | Proposition::CFunctionVerifies { .. }
         | Proposition::CFunctionSatisfiesSpecification { .. }
+        | Proposition::CFunctionPartiallySatisfiesSpecification { .. }
         | Proposition::CMemoryLoads { .. }
         | Proposition::CMemoryLoadable { .. }
         | Proposition::CMemoryCanStore { .. }
@@ -1867,6 +1870,15 @@ pub(super) fn collect_proposition_bitvector_variables(
             collect_c_statement_bitvector_variables(statement, variables);
             collect_c_statement_outcome_bitvector_variables(outcome, variables);
         }
+        Proposition::CStatementVerifies {
+            state,
+            statement,
+            outcome,
+        } => {
+            collect_c_state_bitvector_variables(state, variables);
+            collect_c_statement_bitvector_variables(statement, variables);
+            collect_c_statement_outcome_bitvector_variables(outcome, variables);
+        }
         Proposition::CFunctionExecutes {
             state,
             arguments,
@@ -1880,7 +1892,27 @@ pub(super) fn collect_proposition_bitvector_variables(
             collect_c_function_bitvector_variables(function, variables);
             collect_c_function_outcome_bitvector_variables(outcome, variables);
         }
+        Proposition::CFunctionVerifies {
+            state,
+            arguments,
+            function,
+            outcome,
+        } => {
+            collect_c_state_bitvector_variables(state, variables);
+            for argument in arguments {
+                collect_c_expression_bitvector_variables(argument, variables);
+            }
+            collect_c_function_bitvector_variables(function, variables);
+            collect_c_function_outcome_bitvector_variables(outcome, variables);
+        }
         Proposition::CFunctionSatisfiesSpecification {
+            function,
+            specification,
+        } => {
+            collect_c_function_bitvector_variables(function, variables);
+            collect_c_function_specification_bitvector_variables(specification, variables);
+        }
+        Proposition::CFunctionPartiallySatisfiesSpecification {
             function,
             specification,
         } => {
@@ -2317,7 +2349,9 @@ pub(super) fn collect_c_statement_outcome_bitvector_variables(
             collect_c_value_bitvector_variables(value, variables);
             collect_c_state_bitvector_variables(state, variables);
         }
-        CStatementOutcome::UndefinedBehavior(_) | CStatementOutcome::RuntimeError(_) => {}
+        CStatementOutcome::VerificationDiverges
+        | CStatementOutcome::UndefinedBehavior(_)
+        | CStatementOutcome::RuntimeError(_) => {}
     }
 }
 
@@ -2330,7 +2364,9 @@ pub(super) fn collect_c_function_outcome_bitvector_variables(
             collect_c_value_bitvector_variables(value, variables);
             collect_c_state_bitvector_variables(state, variables);
         }
-        CFunctionOutcome::UndefinedBehavior(_) | CFunctionOutcome::RuntimeError(_) => {}
+        CFunctionOutcome::VerificationDiverges
+        | CFunctionOutcome::UndefinedBehavior(_)
+        | CFunctionOutcome::RuntimeError(_) => {}
     }
 }
 
@@ -2680,6 +2716,15 @@ pub(super) fn substitute_bitvector_variable_in_proposition(
             statement: substitute_bitvector_variable_in_c_statement(statement, from, to),
             outcome: substitute_bitvector_variable_in_c_statement_outcome(outcome, from, to),
         },
+        Proposition::CStatementVerifies {
+            state,
+            statement,
+            outcome,
+        } => Proposition::CStatementVerifies {
+            state: substitute_bitvector_variable_in_c_state(state, from, to),
+            statement: substitute_bitvector_variable_in_c_statement(statement, from, to),
+            outcome: substitute_bitvector_variable_in_c_statement_outcome(outcome, from, to),
+        },
         Proposition::CFunctionExecutes {
             state,
             function,
@@ -2694,10 +2739,35 @@ pub(super) fn substitute_bitvector_variable_in_proposition(
                 .collect(),
             outcome: substitute_bitvector_variable_in_c_function_outcome(outcome, from, to),
         },
+        Proposition::CFunctionVerifies {
+            state,
+            function,
+            arguments,
+            outcome,
+        } => Proposition::CFunctionVerifies {
+            state: substitute_bitvector_variable_in_c_state(state, from, to),
+            function: substitute_bitvector_variable_in_c_function(function, from, to),
+            arguments: arguments
+                .iter()
+                .map(|argument| substitute_bitvector_variable_in_c_expression(argument, from, to))
+                .collect(),
+            outcome: substitute_bitvector_variable_in_c_function_outcome(outcome, from, to),
+        },
         Proposition::CFunctionSatisfiesSpecification {
             function,
             specification,
         } => Proposition::CFunctionSatisfiesSpecification {
+            function: substitute_bitvector_variable_in_c_function(function, from, to),
+            specification: substitute_bitvector_variable_in_c_function_specification(
+                specification,
+                from,
+                to,
+            ),
+        },
+        Proposition::CFunctionPartiallySatisfiesSpecification {
+            function,
+            specification,
+        } => Proposition::CFunctionPartiallySatisfiesSpecification {
             function: substitute_bitvector_variable_in_c_function(function, from, to),
             specification: substitute_bitvector_variable_in_c_function_specification(
                 specification,
@@ -3568,6 +3638,7 @@ pub(super) fn substitute_bitvector_variable_in_c_statement_outcome(
             value: substitute_bitvector_variable_in_c_value(value, from, to),
             state: substitute_bitvector_variable_in_c_state(state, from, to),
         },
+        CStatementOutcome::VerificationDiverges => CStatementOutcome::VerificationDiverges,
         CStatementOutcome::UndefinedBehavior(kind) => {
             CStatementOutcome::UndefinedBehavior(kind.clone())
         }
@@ -3585,6 +3656,7 @@ pub(super) fn substitute_bitvector_variable_in_c_function_outcome(
             value: substitute_bitvector_variable_in_c_value(value, from, to),
             state: substitute_bitvector_variable_in_c_state(state, from, to),
         },
+        CFunctionOutcome::VerificationDiverges => CFunctionOutcome::VerificationDiverges,
         CFunctionOutcome::UndefinedBehavior(kind) => {
             CFunctionOutcome::UndefinedBehavior(kind.clone())
         }

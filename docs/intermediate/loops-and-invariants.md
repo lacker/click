@@ -9,6 +9,11 @@ A loop invariant is a fact that must hold:
 - at the start of every iteration,
 - and after one iteration preserves it.
 
+These checks establish partial correctness, not termination. They prove that
+every finite iteration prefix is safe and that the invariant is available if
+the loop exits. A constant-true service loop can therefore have a useful
+invariant even though it has no exit state.
+
 In Click terms, `loop(N)` names a loop code region. The invariant is checked at
 program points associated with that region. Since a loop head can be reached
 more than once, those program points can have many runtime visits.
@@ -76,6 +81,11 @@ to combine:
 - the invariant facts,
 - the failed loop condition,
 - and the function requirements.
+
+The failed condition describes an exit *if one occurs*. Invariant preservation
+does not prove that such an iteration is eventually reached. Termination needs
+a separate well-founded argument; ordinary C verification does not require
+one.
 
 ## Memory Loops
 

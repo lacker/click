@@ -1223,6 +1223,13 @@ fn loop_semantics_explicitly_select_verification_or_verified_rules() {
             CExecutionSemantics::EXECUTE_BODIES,
         );
     let loop_rule = loop_rule.expect("loop verification should produce a rule");
+    assert!(certified.paths().iter().all(|path| {
+        let mut proposition = path.theorem().proposition();
+        while let Proposition::Implies(_, body) = proposition {
+            proposition = body;
+        }
+        matches!(proposition, Proposition::CStatementVerifies { .. })
+    }));
 
     let missing = prove_symbolic_c_statement_verification_paths_with_environment(
         state.clone(),
@@ -1254,6 +1261,13 @@ fn loop_semantics_explicitly_select_verification_or_verified_rules() {
         CExecutionSemantics::APPLY_VERIFIED_RULES,
     );
     assert_eq!(reused.paths().len(), certified.paths().len());
+    assert!(reused.paths().iter().all(|path| {
+        let mut proposition = path.theorem().proposition();
+        while let Proposition::Implies(_, body) = proposition {
+            proposition = body;
+        }
+        matches!(proposition, Proposition::CStatementVerifies { .. })
+    }));
 
     let mismatched = prove_symbolic_c_statement_verification_paths_with_environment(
         state.with_local("unrelated", int32(0)),
@@ -1263,6 +1277,50 @@ fn loop_semantics_explicitly_select_verification_or_verified_rules() {
         CExecutionSemantics::APPLY_VERIFIED_RULES,
     );
     assert!(mismatched.paths().is_empty());
+}
+
+#[test]
+fn perpetual_loop_verifies_safety_without_minting_a_concrete_exit() {
+    let state = CState::new();
+    let statement = c_while_with_invariant_checks(
+        c_int32_literal(1),
+        Vec::new(),
+        vec![CLoopInvariantCheck::new(
+            SpecProposition::Comparison {
+                left: SpecExpression::Value(int32(0)),
+                operator: CComparisonOperator::Equal,
+                right: SpecExpression::Value(int32(0)),
+            },
+            Some("perpetual loop entry".to_string()),
+            Some("perpetual loop preservation".to_string()),
+        )],
+        c_skip(),
+    );
+    let (verification, rule) =
+        prove_symbolic_c_statement_verification_paths_with_environment_and_loop_rule(
+            state.clone(),
+            statement.clone(),
+            Assumptions::new(),
+            CExecutionEnvironment::new(),
+            CExecutionSemantics::EXECUTE_BODIES,
+        );
+    assert!(rule.is_some());
+    assert_eq!(verification.paths().len(), 1);
+    let mut proposition = verification.paths()[0].theorem().proposition();
+    while let Proposition::Implies(_, body) = proposition {
+        proposition = body;
+    }
+    assert!(matches!(
+        proposition,
+        Proposition::CStatementVerifies {
+            outcome: CStatementOutcome::VerificationDiverges,
+            ..
+        }
+    ));
+
+    let concrete = prove_symbolic_c_execution_paths(state, statement, Assumptions::new());
+    assert!(concrete.paths().is_empty());
+    assert!(concrete.limit().is_some());
 }
 
 #[test]
@@ -7006,12 +7064,12 @@ fn verified_function_rule_applies_contract_without_executing_body() {
     while let Proposition::Implies(_, body) = proposition {
         proposition = body;
     }
-    let Proposition::CStatementExecutes {
+    let Proposition::CStatementVerifies {
         outcome: CStatementOutcome::Return { value, .. },
         ..
     } = proposition
     else {
-        panic!("opaque call should return normally")
+        panic!("opaque call should produce an abstract return branch")
     };
     assert!(*value != int32(99));
     let propositions = path
@@ -7166,7 +7224,7 @@ fn opaque_pointer_result_can_alias_its_argument() {
     while let Proposition::Implies(_, body) = proposition {
         proposition = body;
     }
-    let Proposition::CStatementExecutes {
+    let Proposition::CStatementVerifies {
         outcome: CStatementOutcome::Normal(state),
         ..
     } = proposition
@@ -7234,7 +7292,7 @@ fn verified_immutable_calls_allocate_distinct_results() {
     while let Proposition::Implies(_, body) = proposition {
         proposition = body;
     }
-    let Proposition::CStatementExecutes {
+    let Proposition::CStatementVerifies {
         outcome: CStatementOutcome::Return { value, state },
         ..
     } = proposition
@@ -7287,7 +7345,7 @@ fn separate_statement_verification_calls_preserve_fresh_identity_progress() {
     while let Proposition::Implies(_, body) = first_proposition {
         first_proposition = body;
     }
-    let Proposition::CStatementExecutes {
+    let Proposition::CStatementVerifies {
         outcome: CStatementOutcome::Normal(first_state),
         ..
     } = first_proposition
@@ -7310,7 +7368,7 @@ fn separate_statement_verification_calls_preserve_fresh_identity_progress() {
     while let Proposition::Implies(_, body) = second_proposition {
         second_proposition = body;
     }
-    let Proposition::CStatementExecutes {
+    let Proposition::CStatementVerifies {
         outcome: CStatementOutcome::Normal(second_state),
         ..
     } = second_proposition

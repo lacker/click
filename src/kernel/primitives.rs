@@ -629,14 +629,26 @@ pub(super) enum CLValueOutcome {
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum CStatementOutcome {
     Normal(CState),
-    Return { value: CValue, state: CState },
+    Return {
+        value: CValue,
+        state: CState,
+    },
+    /// Internal to `CStatementVerifies`: the statement has no finite
+    /// successor, but all of its finite prefixes have been checked.
+    VerificationDiverges,
     UndefinedBehavior(CUndefinedBehavior),
     RuntimeError(CRuntimeError),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum CFunctionOutcome {
-    Return { value: CValue, state: CState },
+    Return {
+        value: CValue,
+        state: CState,
+    },
+    /// Internal to `CFunctionVerifies`: no return frontier exists, but the
+    /// function's finite prefixes satisfy its safety proof.
+    VerificationDiverges,
     UndefinedBehavior(CUndefinedBehavior),
     RuntimeError(CRuntimeError),
 }
@@ -1165,13 +1177,35 @@ pub enum Proposition {
         statement: CStatement,
         outcome: CStatementOutcome,
     },
+    /// An abstract verification transition. Unlike `CStatementExecutes`, this
+    /// does not assert that the represented outcome is concretely reachable.
+    CStatementVerifies {
+        state: CState,
+        statement: CStatement,
+        outcome: CStatementOutcome,
+    },
     CFunctionExecutes {
         state: CState,
         function: CFunction,
         arguments: Vec<CExpression>,
         outcome: CFunctionOutcome,
     },
+    /// A return branch admitted by modular verification. This is conditional
+    /// on the function returning and is not a termination or reachability
+    /// theorem.
+    CFunctionVerifies {
+        state: CState,
+        function: CFunction,
+        arguments: Vec<CExpression>,
+        outcome: CFunctionOutcome,
+    },
     CFunctionSatisfiesSpecification {
+        function: CFunction,
+        specification: CFunctionSpecification,
+    },
+    /// The specification describes one allowed return branch and makes no
+    /// claim that the branch is reachable or that the function terminates.
+    CFunctionPartiallySatisfiesSpecification {
         function: CFunction,
         specification: CFunctionSpecification,
     },

@@ -96,6 +96,12 @@ ensures result > x by auto;
 Each `ensures` clause is proved separately. A function can have several
 guarantees, and each guarantee can use a different proof clause.
 
+Postconditions are conditional on return. A function that runs forever has no
+return state at which an `ensures` clause could fail. This does not make its
+body unchecked: every finite execution prefix must still avoid checked
+undefined behavior, respect resource authority, and write only within its
+declared effect footprint.
+
 The name `result` means the function's return value.
 
 Guarantees can also be labeled:
@@ -116,7 +122,9 @@ mutable dst[0..n] by frame;
 ```
 
 These say which parts of memory are preserved or may be written. They are
-introduced later, after pointer loadability and aliasing.
+introduced later, after pointer loadability and aliasing. Unlike a return
+postcondition, a write footprint constrains finite writes even on an execution
+that later runs forever.
 
 ## Proof Clauses
 

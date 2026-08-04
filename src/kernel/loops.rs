@@ -48,6 +48,7 @@ pub(super) fn execute_c_call_assign_paths(
                 state.locals.set_typed(target.to_string(), value, c_type);
                 CStatementOutcome::Normal(state)
             }
+            CFunctionOutcome::VerificationDiverges => CStatementOutcome::VerificationDiverges,
             CFunctionOutcome::UndefinedBehavior(undefined_behavior) => {
                 CStatementOutcome::UndefinedBehavior(undefined_behavior)
             }
@@ -172,6 +173,7 @@ pub(super) fn execute_c_statement_verification_paths(
                         )?);
                     }
                     outcome @ (CStatementOutcome::Return { .. }
+                    | CStatementOutcome::VerificationDiverges
                     | CStatementOutcome::UndefinedBehavior(_)
                     | CStatementOutcome::RuntimeError(_)) => paths.push(CStatementExecutionPath {
                         outcome,
@@ -462,6 +464,23 @@ fn execute_c_while_exit_paths(
         &base_obligations,
         budget,
     )?;
+    let mut has_live_iteration = false;
+    for (invariant_facts, invariant_obligations) in &invariant_contexts {
+        if !assume_condition_truthiness(
+            &top_state,
+            condition,
+            assumptions,
+            invariant_facts,
+            invariant_obligations,
+            true,
+            budget,
+        )?
+        .is_empty()
+        {
+            has_live_iteration = true;
+            break;
+        }
+    }
     for (invariant_facts, invariant_obligations) in invariant_contexts {
         let condition_contexts = assume_condition_truthiness(
             &top_state,
@@ -488,13 +507,15 @@ fn execute_c_while_exit_paths(
     if paths.is_empty() {
         let mut obligations = base_obligations;
         append_required_proof_obligations(&mut obligations, assumptions, &loop_check_obligations);
-        obligations.push(
-            ProofObligation::verification_condition(false_equals_true_proposition())
-                .with_context("loop exit reachability"),
-        );
+        if !has_live_iteration {
+            obligations.push(
+                ProofObligation::verification_condition(false_equals_true_proposition())
+                    .with_context("loop has neither a safe exit nor a safe iteration"),
+            );
+        }
         paths.push(CStatementExecutionPath {
-            outcome: CStatementOutcome::Normal(top_state.clone()),
-            facts: Vec::new(),
+            outcome: CStatementOutcome::VerificationDiverges,
+            facts: whole_loop_effect_facts,
             obligations,
         });
     }
@@ -905,6 +926,7 @@ pub(super) fn collect_loop_preservation_summary(
                         );
                     }
                     CStatementOutcome::Return { .. }
+                    | CStatementOutcome::VerificationDiverges
                     | CStatementOutcome::UndefinedBehavior(_)
                     | CStatementOutcome::RuntimeError(_) => {
                         let mut path_obligations = body_path.obligations;

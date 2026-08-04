@@ -2076,6 +2076,9 @@ pub(super) fn function_outcome_from_body(
             CFunctionOutcome::RuntimeError(CRuntimeError::MissingReturn),
             obligations,
         ),
+        CStatementOutcome::VerificationDiverges => {
+            (CFunctionOutcome::VerificationDiverges, obligations)
+        }
         CStatementOutcome::UndefinedBehavior(undefined_behavior) => (
             CFunctionOutcome::UndefinedBehavior(undefined_behavior),
             obligations,

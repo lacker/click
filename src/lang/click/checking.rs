@@ -25,6 +25,9 @@ pub(super) fn check_function_claim(
     program_point_states: &ProgramPointStates,
     unfolded_predicates: &[String],
 ) -> Result<(), ClickError> {
+    if matches!(outcome, CFunctionOutcome::VerificationDiverges) {
+        return Ok(());
+    }
     match claim {
         FunctionClaimRef::Ensure(_, ensure_clause) => match ensure_clause.ensure() {
             Ensure::Proposition(proposition) => prove_ensure_proposition(
@@ -85,6 +88,9 @@ pub(super) fn check_function_claim_by_simp(
     program_point_states: &ProgramPointStates,
     unfolded_predicates: &[String],
 ) -> Result<(), ClickError> {
+    if matches!(outcome, CFunctionOutcome::VerificationDiverges) {
+        return Ok(());
+    }
     match claim {
         FunctionClaimRef::Ensure(_, ensure_clause) => match ensure_clause.ensure() {
             Ensure::Proposition(proposition) => prove_ensure_proposition_by_simp(
@@ -131,6 +137,9 @@ pub(super) fn prove_ensure_resource(
     pre_state: &CState,
     outcome: &CFunctionOutcome,
 ) -> Result<(), ClickError> {
+    if matches!(outcome, CFunctionOutcome::VerificationDiverges) {
+        return Ok(());
+    }
     let CFunctionOutcome::Return {
         value: result,
         state: post_state,
@@ -189,6 +198,9 @@ pub(super) fn check_function_claim_with_existence_tactics(
     program_point_states: &ProgramPointStates,
     use_simp: bool,
 ) -> Result<(), ClickError> {
+    if matches!(outcome, CFunctionOutcome::VerificationDiverges) {
+        return Ok(());
+    }
     let FunctionClaimRef::Ensure(_, ensure_clause) = claim else {
         return Err(ClickError::new(format!(
             "`witness` and `choose` tactics currently prove proposition `ensures` clauses for `{claim_label}`; use `frame` for effect clauses"
@@ -2648,8 +2660,11 @@ pub(super) fn simp_proposition(
         | Proposition::CExpressionEvaluates { .. }
         | Proposition::CConditionEvaluates { .. }
         | Proposition::CStatementExecutes { .. }
+        | Proposition::CStatementVerifies { .. }
         | Proposition::CFunctionExecutes { .. }
+        | Proposition::CFunctionVerifies { .. }
         | Proposition::CFunctionSatisfiesSpecification { .. }
+        | Proposition::CFunctionPartiallySatisfiesSpecification { .. }
         | Proposition::CMemoryLoads { .. }
         | Proposition::CMemoryLoadable { .. }
         | Proposition::CMemoryCanStore { .. }

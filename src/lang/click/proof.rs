@@ -5444,7 +5444,7 @@ fn certified_transitions_from_execution(
     let has_failure_path = execution.paths().iter().any(|path| {
         matches!(
             implication_body(path.theorem().proposition()),
-            Proposition::CStatementExecutes {
+            Proposition::CStatementVerifies {
                 outcome: CStatementOutcome::UndefinedBehavior(_)
                     | CStatementOutcome::RuntimeError(_),
                 ..
@@ -5715,7 +5715,7 @@ fn certified_transitions_from_execution(
                 execution_facts
                     .retain(|fact| !is_derived_prerequisite(fact.proposition()));
             }
-            let Proposition::CStatementExecutes {
+            let Proposition::CStatementVerifies {
                 state: statement_pre_state,
                 outcome,
                 ..
@@ -6870,6 +6870,7 @@ fn advance_execution_proof_statement(
                     next_verification_variable: context.next_verification_variable,
                 }),
                 CStatementOutcome::Return { .. } => {}
+                CStatementOutcome::VerificationDiverges => {}
                 CStatementOutcome::UndefinedBehavior(kind) => {
                     return Err(ClickError::new(format!(
                         "execution proof traversal produced undefined behavior: {kind:?}"
@@ -10825,6 +10826,9 @@ mod exit_claim {
         frame_certified_goal: Option<&Proposition>,
     ) -> Result<ExitSimpClosure, ClickError> {
         let outcome = context.outcome;
+        if matches!(outcome, CFunctionOutcome::VerificationDiverges) {
+            return Ok(ExitSimpClosure::Closed(ClaimClosure::by_exact_check()));
+        }
         if !context.existence_tactics.is_empty() {
             let certificate = match (rewritten_goal, ensure, outcome) {
                 (
@@ -11038,7 +11042,7 @@ fn finish_ordered_proof_replay(
             .paths()
             .iter()
             .map(|path| match implication_body(path.theorem().proposition()) {
-                Proposition::CFunctionExecutes {
+                Proposition::CFunctionVerifies {
                     state,
                     function: proved_function,
                     arguments: proved_arguments,
@@ -15947,6 +15951,7 @@ fn record_surface_replay_tactic(
                 CStatementOutcome::UndefinedBehavior(_) | CStatementOutcome::RuntimeError(_) => {
                     None
                 }
+                CStatementOutcome::VerificationDiverges => None,
             };
             for transport in &evidence.transition.fact_transports {
                 if !transport.statement_local
@@ -21246,7 +21251,7 @@ fn replay_certified_statement_transition(
         }
         proposition = body;
     }
-    let Proposition::CStatementExecutes {
+    let Proposition::CStatementVerifies {
         state: theorem_state,
         statement: theorem_statement,
         outcome,
@@ -21790,6 +21795,7 @@ fn execute_step_from_execution_point(
             Some(state.clone())
         }
         CStatementOutcome::UndefinedBehavior(_) | CStatementOutcome::RuntimeError(_) => None,
+        CStatementOutcome::VerificationDiverges => None,
     } {
         record_statement_program_point_state(
             replay,
@@ -21809,7 +21815,8 @@ fn execute_step_from_execution_point(
                         state.clone()
                     }
                     CStatementOutcome::UndefinedBehavior(_)
-                    | CStatementOutcome::RuntimeError(_) => unreachable!(),
+                    | CStatementOutcome::RuntimeError(_)
+                    | CStatementOutcome::VerificationDiverges => unreachable!(),
                 },
             );
         }
@@ -21864,6 +21871,31 @@ fn execute_step_from_execution_point(
                 function.clone(),
                 arguments.to_vec(),
                 vec![(outcome, completed_execution_facts, obligations)],
+            );
+            let replay_state = execution_start_state.clone();
+            set_replay_execution(
+                replay,
+                claim_label,
+                tactic_index,
+                tactic_name,
+                execution_start_state,
+                completed,
+            )?;
+            replay.frontier.next_statement_index = source_region.continuation_node;
+            *state = replay_state;
+        }
+        CStatementOutcome::VerificationDiverges => {
+            let mut completed_execution_facts = execution_pure_facts;
+            append_execution_effect_facts(&mut completed_execution_facts, &replay.effect_facts);
+            let completed = c_function_execution_candidates_from_outcomes(
+                execution_start_state.clone(),
+                function.clone(),
+                arguments.to_vec(),
+                vec![(
+                    CFunctionOutcome::VerificationDiverges,
+                    completed_execution_facts,
+                    transition_obligations,
+                )],
             );
             let replay_state = execution_start_state.clone();
             set_replay_execution(

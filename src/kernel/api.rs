@@ -2948,10 +2948,18 @@ pub fn prove_symbolic_c_execution_paths_with_environment_and_budget(
         .map(|path| {
             let effect_facts = memory_effect_execution_facts(&path.facts);
             let facts = public_execution_pure_facts(&path.facts);
-            let proposition = Proposition::CStatementExecutes {
-                state: state.clone(),
-                statement: statement.clone(),
-                outcome: path.outcome,
+            let proposition = if execution_semantics == CExecutionSemantics::EXECUTE_BODIES {
+                Proposition::CStatementExecutes {
+                    state: state.clone(),
+                    statement: statement.clone(),
+                    outcome: path.outcome,
+                }
+            } else {
+                Proposition::CStatementVerifies {
+                    state: state.clone(),
+                    statement: statement.clone(),
+                    outcome: path.outcome,
+                }
             };
             let theorem = Theorem::new(wrap_proof_facts(
                 proposition,
@@ -3154,8 +3162,10 @@ fn symbolic_c_statement_execution_with_loop_rule(
 ) -> (SymbolicCExecution, Option<CVerifiedLoopRule>) {
     let loop_rule = (matches!(statement, CStatement::While { .. })
         && paths.iter().all(|path| {
-            matches!(path.outcome, CStatementOutcome::Normal(_))
-                && path.obligations.iter().all(ProofObligation::is_assumable)
+            matches!(
+                path.outcome,
+                CStatementOutcome::Normal(_) | CStatementOutcome::VerificationDiverges
+            ) && path.obligations.iter().all(ProofObligation::is_assumable)
         }))
     .then(|| CVerifiedLoopRule {
         symbolic_entry_state: state.clone(),
@@ -3168,7 +3178,7 @@ fn symbolic_c_statement_execution_with_loop_rule(
         .map(|path| {
             let effect_facts = memory_effect_execution_facts(&path.facts);
             let facts = public_execution_pure_facts(&path.facts);
-            let proposition = Proposition::CStatementExecutes {
+            let proposition = Proposition::CStatementVerifies {
                 state: state.clone(),
                 statement: statement.clone(),
                 outcome: path.outcome,
@@ -3380,11 +3390,20 @@ fn prove_symbolic_c_function_execution_paths_with_environment_and_budget_mode(
         .map(|path| {
             let effect_facts = memory_effect_execution_facts(&path.facts);
             let facts = public_execution_pure_facts(&path.facts);
-            let proposition = Proposition::CFunctionExecutes {
-                state: state.clone(),
-                function: function.clone(),
-                arguments: arguments.clone(),
-                outcome: path.outcome,
+            let proposition = if execution_semantics == CExecutionSemantics::EXECUTE_BODIES {
+                Proposition::CFunctionExecutes {
+                    state: state.clone(),
+                    function: function.clone(),
+                    arguments: arguments.clone(),
+                    outcome: path.outcome,
+                }
+            } else {
+                Proposition::CFunctionVerifies {
+                    state: state.clone(),
+                    function: function.clone(),
+                    arguments: arguments.clone(),
+                    outcome: path.outcome,
+                }
             };
             let theorem = Theorem::new(wrap_proof_facts(
                 proposition,
@@ -4256,7 +4275,7 @@ fn prove_symbolic_c_function_verification_paths_with_environment_and_budget_mode
         .map(|path| {
             let effect_facts = memory_effect_execution_facts(&path.facts);
             let facts = public_execution_pure_facts(&path.facts);
-            let proposition = Proposition::CFunctionExecutes {
+            let proposition = Proposition::CFunctionVerifies {
                 state: state.clone(),
                 function: function.clone(),
                 arguments: arguments.clone(),
@@ -4324,14 +4343,20 @@ pub fn prove_c_function_satisfies_specification_from_symbolic_path(
         premises.push(premise.as_ref().clone());
         proved = body;
     }
-    let Proposition::CFunctionExecutes {
-        state,
-        function: proved_function,
-        arguments,
-        outcome,
-    } = proved
-    else {
-        return None;
+    let (state, proved_function, arguments, outcome, verifies) = match proved {
+        Proposition::CFunctionExecutes {
+            state,
+            function,
+            arguments,
+            outcome,
+        } => (state, function, arguments, outcome, false),
+        Proposition::CFunctionVerifies {
+            state,
+            function,
+            arguments,
+            outcome,
+        } => (state, function, arguments, outcome, true),
+        _ => return None,
     };
     if state != specification.state()
         || proved_function != &function
@@ -4342,13 +4367,23 @@ pub fn prove_c_function_satisfies_specification_from_symbolic_path(
     }
 
     let requires = specification.requires().to_vec();
-    let proposition = requires.into_iter().rev().fold(
+    let conclusion = if verifies {
+        Proposition::CFunctionPartiallySatisfiesSpecification {
+            function,
+            specification,
+        }
+    } else {
         Proposition::CFunctionSatisfiesSpecification {
             function,
             specification,
-        },
-        |body, requirement| Proposition::Implies(Box::new(requirement), Box::new(body)),
-    );
+        }
+    };
+    let proposition = requires
+        .into_iter()
+        .rev()
+        .fold(conclusion, |body, requirement| {
+            Proposition::Implies(Box::new(requirement), Box::new(body))
+        });
     Some(Theorem::new(
         premises
             .into_iter()
@@ -4372,14 +4407,20 @@ fn certified_function_path_parts<'a>(
     while let Proposition::Implies(_, body) = proposition {
         proposition = body;
     }
-    let Proposition::CFunctionExecutes {
-        state,
-        function: proved_function,
-        arguments,
-        outcome,
-    } = proposition
-    else {
-        return None;
+    let (state, proved_function, arguments, outcome) = match proposition {
+        Proposition::CFunctionExecutes {
+            state,
+            function,
+            arguments,
+            outcome,
+        }
+        | Proposition::CFunctionVerifies {
+            state,
+            function,
+            arguments,
+            outcome,
+        } => (state, function, arguments, outcome),
+        _ => return None,
     };
     if proved_function != function {
         return None;
@@ -5789,14 +5830,20 @@ pub fn certify_c_function_execution_path_resource_representation(
         premises.push(premise.as_ref().clone());
         proposition = body;
     }
-    let Proposition::CFunctionExecutes {
-        state,
-        function,
-        arguments,
-        outcome,
-    } = proposition
-    else {
-        return None;
+    let (state, function, arguments, outcome, verifies) = match proposition {
+        Proposition::CFunctionExecutes {
+            state,
+            function,
+            arguments,
+            outcome,
+        } => (state, function, arguments, outcome, false),
+        Proposition::CFunctionVerifies {
+            state,
+            function,
+            arguments,
+            outcome,
+        } => (state, function, arguments, outcome, true),
+        _ => return None,
     };
     let (
         CFunctionOutcome::Return {
@@ -5888,11 +5935,20 @@ pub fn certify_c_function_execution_path_resource_representation(
         return None;
     }
 
-    let conclusion = Proposition::CFunctionExecutes {
-        state: state.clone(),
-        function: function.clone(),
-        arguments: arguments.clone(),
-        outcome: desired_outcome,
+    let conclusion = if verifies {
+        Proposition::CFunctionVerifies {
+            state: state.clone(),
+            function: function.clone(),
+            arguments: arguments.clone(),
+            outcome: desired_outcome,
+        }
+    } else {
+        Proposition::CFunctionExecutes {
+            state: state.clone(),
+            function: function.clone(),
+            arguments: arguments.clone(),
+            outcome: desired_outcome,
+        }
     };
     let theorem = Theorem::new(
         premises
@@ -5913,11 +5969,11 @@ pub fn certify_c_function_execution_path_resource_representation(
 
 struct CertifiedFunctionClaimPath {
     caller_state: CState,
-    return_state: CState,
+    return_state: Option<CState>,
     entry_state: CState,
     entry_resources: ResourceContext,
-    post_state: CState,
-    post_resources: ResourceContext,
+    post_state: Option<CState>,
+    post_resources: Option<ResourceContext>,
     assumptions: Assumptions,
     execution_facts: Vec<ExecutionPureFact>,
     effect_facts: Vec<ExecutionPureFact>,
@@ -5931,13 +5987,6 @@ fn prepare_function_claim_path(
         certified_function_path_parts(function, path)
     else {
         return Err("the certified path does not belong to the exact function".to_string());
-    };
-    let CFunctionOutcome::Return {
-        value,
-        state: return_state,
-    } = outcome
-    else {
-        return Err(format!("the certified path does not return: {outcome:?}"));
     };
     let Some(mut entry_state) = c_function_entry_state(caller_state, function, arguments) else {
         return Err("the function entry state cannot be reconstructed".to_string());
@@ -5973,6 +6022,39 @@ fn prepare_function_claim_path(
     };
     entry_state.resources = entry_resources.clone();
     let assumptions = assumptions_with_propositions(&assumptions, &resource_facts);
+    let execution_facts = path.execution_facts();
+    let effect_facts = path.effect_facts.clone();
+    if matches!(outcome, CFunctionOutcome::VerificationDiverges) {
+        if let Some(obligation) = path.obligations().iter().find(|obligation| {
+            !certification_proves_proposition(&assumptions, obligation.proposition())
+                && !loadable_covered_by_fact(&assumptions, obligation.proposition())
+                && !forall_loadable_covered_by_fact(&assumptions, obligation.proposition())
+        }) {
+            return Err(format!(
+                "the divergent verification path has an unproved condition: {:?} ({})",
+                obligation.proposition(),
+                obligation.context().unwrap_or("no context")
+            ));
+        }
+        return Ok(CertifiedFunctionClaimPath {
+            caller_state: caller_state.clone(),
+            return_state: None,
+            entry_state,
+            entry_resources,
+            post_state: None,
+            post_resources: None,
+            assumptions,
+            execution_facts,
+            effect_facts,
+        });
+    }
+    let CFunctionOutcome::Return {
+        value,
+        state: return_state,
+    } = outcome
+    else {
+        return Err(format!("the certified path is not safe: {outcome:?}"));
+    };
     let Some(post_resources) = expand_all_composite_resource_facts(
         return_state.resources(),
         function.composite_resource_definitions(),
@@ -5985,8 +6067,6 @@ fn prepare_function_claim_path(
         return Err("the returned resource context is not observable".to_string());
     };
     let assumptions = assumptions_with_propositions(&assumptions, &post_resource_facts);
-    let execution_facts = path.execution_facts();
-    let effect_facts = path.effect_facts.clone();
     let mut post_state = entry_state
         .clone()
         .with_memory(return_state.memory().clone());
@@ -6017,11 +6097,11 @@ fn prepare_function_claim_path(
 
     Ok(CertifiedFunctionClaimPath {
         caller_state: caller_state.clone(),
-        return_state: return_state.clone(),
+        return_state: Some(return_state.clone()),
         entry_state,
         entry_resources,
-        post_state,
-        post_resources,
+        post_state: Some(post_state),
+        post_resources: Some(post_resources),
         assumptions,
         execution_facts,
         effect_facts,
@@ -6048,6 +6128,11 @@ fn function_claim_holds_on_prepared_path(
     match claim.target() {
         CFunctionContractClaimTarget::BodySafety => true,
         CFunctionContractClaimTarget::EnsureProposition(index) => {
+            let (Some(return_state), Some(post_state), Some(post_resources)) =
+                (return_state, post_state, post_resources)
+            else {
+                return true;
+            };
             let Some(ensure) = function.contract_ensures().get(*index) else {
                 return false;
             };
@@ -6105,6 +6190,9 @@ fn function_claim_holds_on_prepared_path(
                 })
         }
         CFunctionContractClaimTarget::EnsureResource(index) => {
+            let (Some(return_state), Some(post_state)) = (return_state, post_state) else {
+                return true;
+            };
             let Some(resource) = function.resource_ensures().get(*index) else {
                 return false;
             };
@@ -6200,8 +6288,9 @@ fn function_claim_holds_on_prepared_path(
                 }
                 _ => true,
             });
-            let endpoint_matches =
-                c_memories_definitionally_equal(&effect_memory, return_state.memory(), assumptions);
+            let endpoint_matches = return_state.as_ref().is_none_or(|return_state| {
+                c_memories_definitionally_equal(&effect_memory, return_state.memory(), assumptions)
+            });
             effects_are_bounded && endpoint_matches
         }
     }

@@ -2868,6 +2868,7 @@ pub(super) fn execute_c_statement_paths(
                         )?);
                     }
                     outcome @ (CStatementOutcome::Return { .. }
+                    | CStatementOutcome::VerificationDiverges
                     | CStatementOutcome::UndefinedBehavior(_)
                     | CStatementOutcome::RuntimeError(_)) => paths.push(CStatementExecutionPath {
                         outcome,
@@ -3200,6 +3201,7 @@ pub(super) fn execute_c_while_body_paths(
                 }
             }
             outcome @ (CStatementOutcome::Return { .. }
+            | CStatementOutcome::VerificationDiverges
             | CStatementOutcome::UndefinedBehavior(_)
             | CStatementOutcome::RuntimeError(_)) => paths.push(CStatementExecutionPath {
                 outcome,
