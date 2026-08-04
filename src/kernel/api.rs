@@ -1673,14 +1673,23 @@ fn transport_framed_atomic_condition(
             transport_framed_atomic_pointer_offset(left, after, assumptions)?,
             transport_framed_atomic_pointer_offset(right, after, assumptions)?,
         ),
+        ConditionTerm::PointerEqual(left, right) => ConditionTerm::pointer_equal(
+            Pointer {
+                block: left.block.clone(),
+                offset: transport_framed_atomic_pointer_offset(&left.offset, after, assumptions)?,
+            },
+            Pointer {
+                block: right.block.clone(),
+                offset: transport_framed_atomic_pointer_offset(&right.offset, after, assumptions)?,
+            },
+        ),
         ConditionTerm::Constant(_)
         | ConditionTerm::Variable(_)
         | ConditionTerm::Bitvector32SignedAddOverflows(_, _)
         | ConditionTerm::Bitvector32SignedSubtractOverflows(_, _)
         | ConditionTerm::Bitvector32SignedMultiplyOverflows(_, _)
         | ConditionTerm::Bitvector32SignedDivideOverflows(_, _)
-        | ConditionTerm::Bitvector32SignedShiftLeftOverflows(_, _)
-        | ConditionTerm::PointerEqual(_, _) => return None,
+        | ConditionTerm::Bitvector32SignedShiftLeftOverflows(_, _) => return None,
     })
 }
 
@@ -5384,6 +5393,7 @@ fn certification_proves_proposition(assumptions: &Assumptions, proposition: &Pro
         }
         Proposition::ConditionIs(ConditionTerm::PointerEqual(left, right), true) => {
             pointers_proven_equal_for_memory_resolution(left, right, assumptions)
+                || assumptions.has_pointer_equality_path(left, right)
         }
         Proposition::ConditionIs(ConditionTerm::PointerOffsetEqual(left, right), true) => {
             pointer_offsets_proven_equal_for_memory_resolution(left, right, assumptions)
@@ -5514,6 +5524,28 @@ fn certification_proves_post_proposition(
     execution_facts: &[ExecutionPureFact],
 ) -> bool {
     if certification_proves_proposition(assumptions, proposition) {
+        return true;
+    }
+    // Verified calls contribute independently certified public
+    // postconditions. Keep their explicit snapshots and reason from the
+    // complete set: a later call may relate the final state to an earlier
+    // snapshot while another postcondition relates that snapshot to a local
+    // result. Checking one call fact at a time loses exactly that valid
+    // composition.
+    let public_condition_facts = execution_facts
+        .iter()
+        .filter(|fact| fact.is_public() && fact.is_certified())
+        .filter_map(|fact| match fact.proposition() {
+            proposition @ Proposition::ConditionIs(_, _) => Some(proposition.clone()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    if !public_condition_facts.is_empty()
+        && certification_proves_proposition(
+            &assumptions_with_propositions(assumptions, &public_condition_facts),
+            proposition,
+        )
+    {
         return true;
     }
     if execution_facts

@@ -151,6 +151,13 @@ need that fact. A true implementation detail that is absent from the contract
 is deliberately unavailable. `old(...)` in a callee postcondition refers to
 the state at that call's entry.
 
+Public postconditions remain usable when a call result is assigned to a C
+local and that local is passed to later verified calls. Click can compose the
+result equality with those later calls' postconditions, including across
+explicit program-point snapshots. Expansion spells the chain with source C
+locals and fields; symbolic call identities, havoc markers, and other
+execution-only facts remain kernel details rather than Surface Click premises.
+
 An opaque call first creates proof obligations for the callee's `requires`
 clauses. Those requirements are then available as established assumptions while
 Click evaluates the remaining resource, effect, and postcondition clauses of

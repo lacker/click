@@ -1619,7 +1619,11 @@ impl Assumptions {
         match condition {
             ConditionTerm::PointerEqual(left, right) if left == right => Some(true),
             ConditionTerm::PointerEqual(left, right) => {
-                left.blocks_proven_distinct(right).then_some(false)
+                if self.has_pointer_equality_path(left, right) {
+                    Some(true)
+                } else {
+                    left.blocks_proven_distinct(right).then_some(false)
+                }
             }
             ConditionTerm::PointerOffsetEqual(left, right) if left == right => Some(true),
             ConditionTerm::PointerOffsetEqual(left, right) => {
@@ -1964,6 +1968,71 @@ impl Assumptions {
         }
     }
 
+    pub(super) fn has_pointer_equality_path(&self, left: &Pointer, right: &Pointer) -> bool {
+        let canonical_pointer =
+            |pointer: &Pointer| super::api::canonicalize_pointer_loads(pointer, 0);
+        let matches = |candidate: &Pointer, expected: &Pointer| {
+            candidate == expected
+                || candidate.block == expected.block
+                    && canonical_pointer(candidate) == canonical_pointer(expected)
+        };
+        let offsets_match = |left: &PointerOffsetTerm, right: &PointerOffsetTerm| {
+            canonical_pointer(&Pointer {
+                block: PointerBlock::ExternalArgument,
+                offset: left.clone(),
+            }) == canonical_pointer(&Pointer {
+                block: PointerBlock::ExternalArgument,
+                offset: right.clone(),
+            })
+        };
+        let mut seen = BTreeSet::from([left.clone()]);
+        let mut frontier = vec![left.clone()];
+        while let Some(current) = frontier.pop() {
+            for (condition, value) in &self.condition_facts {
+                if !*value {
+                    continue;
+                }
+                let next = match condition {
+                    ConditionTerm::PointerEqual(edge_left, edge_right) => {
+                        if matches(edge_left, &current) {
+                            Some(edge_right.as_ref().clone())
+                        } else if matches(edge_right, &current) {
+                            Some(edge_left.as_ref().clone())
+                        } else {
+                            None
+                        }
+                    }
+                    ConditionTerm::PointerOffsetEqual(edge_left, edge_right) => {
+                        if offsets_match(edge_left, &current.offset) {
+                            Some(Pointer {
+                                block: current.block.clone(),
+                                offset: edge_right.as_ref().clone(),
+                            })
+                        } else if offsets_match(edge_right, &current.offset) {
+                            Some(Pointer {
+                                block: current.block.clone(),
+                                offset: edge_left.as_ref().clone(),
+                            })
+                        } else {
+                            None
+                        }
+                    }
+                    _ => None,
+                };
+                let Some(next) = next else {
+                    continue;
+                };
+                if matches(&next, right) {
+                    return true;
+                }
+                if seen.insert(next.clone()) {
+                    frontier.push(next);
+                }
+            }
+        }
+        false
+    }
+
     /// True when some exact order fact strictly bounds `term` above
     /// (`term < y` for any `y`). A strict signed bound pins
     /// `term < INT_MAX`, which is what discharges `term + 1` overflow
@@ -2159,6 +2228,11 @@ impl Assumptions {
         match condition {
             ConditionTerm::Constant(value) => Some(*value),
             ConditionTerm::PointerEqual(left, right) if left == right => Some(true),
+            ConditionTerm::PointerEqual(left, right)
+                if self.has_pointer_equality_path(left, right) =>
+            {
+                Some(true)
+            }
             ConditionTerm::PointerEqual(left, right) if left.blocks_proven_distinct(right) => {
                 Some(false)
             }
@@ -7864,7 +7938,7 @@ impl ExecutionPureFact {
         &self.proposition
     }
 
-    pub(super) fn is_public(&self) -> bool {
+    pub(crate) fn is_public(&self) -> bool {
         self.public
     }
 

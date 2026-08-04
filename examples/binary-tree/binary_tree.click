@@ -95,10 +95,39 @@ int32 tree_leaf_pipeline(struct node* node, int32 value) {
 
     ensures result == value;
     ensures node->value == value;
+    ensures node->left == 0;
+    ensures node->right == 0;
 } by {
     execute();
     frame();
-    simp();
+    have result == value by {
+        derive using {
+            at(statement(10).entry, observed) == at(statement(10).entry, node->value);
+            at(statement(10).entry, node->value) == at(statement(10).entry, value);
+        }
+    }
+    have node->value == value by {
+        assumption();
+    }
+    have node->left == 0 by {
+        derive using {
+            node->left == at(statement(8).entry, node->right);
+            at(statement(8).entry, node->right) == at(statement(8).entry, right);
+            at(statement(10).entry, right) == at(statement(10).entry, 0);
+        }
+    }
+    have node->right == 0 by {
+        derive using {
+            node->right == at(statement(8).entry, node->left);
+            at(statement(8).entry, node->left) == at(statement(8).entry, left);
+            at(statement(10).entry, left) == at(statement(10).entry, 0);
+        }
+    }
+    assumption();
+    assumption();
+    assumption();
+    assumption();
+    assumption();
 }
 
 int32 tree_is_leaf(struct node* node) {

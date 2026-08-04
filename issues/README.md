@@ -22,10 +22,6 @@ trace, external-input, fairness, or productivity semantics with which to state
 the interesting stream-processing guarantee. A true stream example is
 intentionally deferred until those semantics exist.
 
-## Independent cleanup
-
-- [Compose pure facts through opaque-call local results](opaque-call-local-result-fact-composition.md).
-
 Keep one file per independent open problem. Put durable implementation design
 in `docs/`, and delete an issue when its fix, regression coverage, and
 documentation land.

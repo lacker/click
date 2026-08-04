@@ -4488,6 +4488,98 @@ fn direct_transport_composes_framed_loads_inside_an_indexed_address() {
 }
 
 #[test]
+fn direct_transport_rewrites_loads_inside_pointer_equality() {
+    let before = CMemory::new();
+    let field_cell = Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::Constant(8),
+    };
+    let field_value = Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::scale_int32(
+            Bitvector32Term::MemoryLoad(
+                crate::kernel::intern_c_memory(before.clone()),
+                Box::new(field_cell.clone()),
+            ),
+            4,
+        ),
+    };
+    let local_value = Pointer {
+        block: PointerBlock::Symbolic(Variable(110)),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let fact = Proposition::ConditionIs(
+        ConditionTerm::pointer_equal(field_value, local_value.clone()),
+        true,
+    );
+    let after = before.clone().with_block("local:result", 8);
+
+    let theorem = prove_c_condition_fact_direct_transport(&fact, &after, &Assumptions::new())
+        .expect("an unrelated local-memory change should transport a pointer-valued field load");
+    let Proposition::Implies(source, target) = theorem.proposition() else {
+        panic!("transport theorem must be an implication");
+    };
+    assert_eq!(source.as_ref(), &fact);
+    let transported_field_value = Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::scale_int32(
+            Bitvector32Term::MemoryLoad(
+                crate::kernel::intern_c_memory(after),
+                Box::new(field_cell),
+            ),
+            4,
+        ),
+    };
+    assert_eq!(
+        target.as_ref(),
+        &Proposition::ConditionIs(
+            ConditionTerm::pointer_equal(transported_field_value, local_value),
+            true,
+        )
+    );
+}
+
+#[test]
+fn pointer_equality_composes_across_same_block_offset_equalities() {
+    let final_pointer = Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::Variable(Variable(120)),
+    };
+    let snapshot_pointer = Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::Variable(Variable(121)),
+    };
+    let local_pointer = Pointer {
+        block: PointerBlock::Symbolic(Variable(122)),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let assumptions = Assumptions::new()
+        .assume_condition(
+            ConditionTerm::pointer_offset_equal(
+                final_pointer.offset.clone(),
+                snapshot_pointer.offset.clone(),
+            ),
+            true,
+        )
+        .assume_condition(
+            ConditionTerm::pointer_equal(snapshot_pointer, local_pointer.clone()),
+            true,
+        )
+        .assume_condition(
+            ConditionTerm::pointer_equal(local_pointer, Pointer::null()),
+            true,
+        );
+
+    assert_eq!(
+        assumptions.decide(&ConditionTerm::pointer_equal(
+            final_pointer,
+            Pointer::null()
+        )),
+        Some(true)
+    );
+}
+
+#[test]
 fn explicit_separation_contains_one_element_under_a_positive_length() {
     let owner = Pointer {
         block: "arg-memory".into(),

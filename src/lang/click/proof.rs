@@ -13249,17 +13249,13 @@ pub(super) fn synthesize_surface_proposition(
     }
     if let ConditionTerm::PointerEqual(left, right) = condition {
         return Some(ClickProposition::Comparison {
-            left: ContractExpression::CFragment(synthesize_surface_pointer(
-                left, parameters, arguments, state,
-            )?),
+            left: synthesize_surface_pointer_expression(left, parameters, arguments, state)?,
             operator: if *value {
                 ComparisonOperator::Equal
             } else {
                 ComparisonOperator::NotEqual
             },
-            right: ContractExpression::CFragment(synthesize_surface_pointer(
-                right, parameters, arguments, state,
-            )?),
+            right: synthesize_surface_pointer_expression(right, parameters, arguments, state)?,
         });
     }
     let (left, operator, right) = match condition {
@@ -13649,6 +13645,9 @@ fn synthesize_surface_pointer(
     arguments: &[CExpression],
     state: &CState,
 ) -> Option<CExpression> {
+    if pointer == &Pointer::null() {
+        return Some(CExpression::Value(int32(0)));
+    }
     if let Some(expression) = parameters
         .iter()
         .zip(arguments)
@@ -13689,6 +13688,26 @@ fn synthesize_surface_pointer(
         return None;
     };
     Some(expression)
+}
+
+fn synthesize_surface_pointer_expression(
+    pointer: &Pointer,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    state: &CState,
+) -> Option<ContractExpression> {
+    if let Some(pointer) = synthesize_surface_pointer(pointer, parameters, arguments, state) {
+        return Some(ContractExpression::CFragment(pointer));
+    }
+    if !arguments.iter().any(|argument| {
+        matches!(
+            argument,
+            CExpression::Value(CValue::Pointer(base)) if base.block == pointer.block
+        )
+    }) {
+        return None;
+    }
+    synthesize_surface_pointer_offset(&pointer.offset, parameters, arguments, state)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -14151,6 +14170,53 @@ fn lower_outcome_simp_tactic(
         {
             premise_pairs.push((fact.clone(), surface));
         }
+    }
+    // Public call postconditions whose symbolic result has since been stored
+    // in a C local are deliberately retained as certified effect facts. Give
+    // those facts their stable local spelling so ordinary equality reasoning
+    // can compose them with later call postconditions. Execution-only call
+    // identities remain private because they are neither public nor
+    // source-spellable through a local.
+    for fact in replay
+        .effect_facts
+        .iter()
+        .filter(|fact| {
+            fact.is_public()
+                && fact.is_certified()
+                && matches!(fact.proposition(), Proposition::ConditionIs(_, _))
+        })
+        .map(ExecutionPureFact::proposition)
+    {
+        if premise_pairs.iter().any(|(kernel, _)| kernel == fact) {
+            continue;
+        }
+        let selected = std::iter::once((None, post_state))
+            .chain(
+                replay
+                    .program_point_states
+                    .iter()
+                    .rev()
+                    .map(|(point, state)| (Some(point), state)),
+            )
+            .find_map(|(point, state)| {
+                let core = synthesize_surface_proposition(fact, parameters, arguments, state)?;
+                if !public_local_result_surface(&core, parameters) {
+                    return None;
+                }
+                let surface = match point {
+                    None => core,
+                    Some(point) => ClickProposition::At {
+                        selector: VisitSelector::ProgramPoint(point.clone()),
+                        proposition: Box::new(core),
+                    },
+                };
+                let lowered = check(&surface).ok()?;
+                condition_polarity_equivalent(&lowered, fact).then_some((surface, lowered))
+            });
+        let Some((surface, lowered)) = selected else {
+            continue;
+        };
+        premise_pairs.push((lowered, surface));
     }
     // Alias branches created while executing a call are certified execution
     // facts, not source assertions. When a branch condition is needed to
@@ -15925,6 +15991,84 @@ fn lower_surface_candidate_at_point(
     .map_err(ClickError::new)
 }
 
+fn contract_expression_mentions_c_local(
+    expression: &ContractExpression,
+    parameter_names: &BTreeSet<&str>,
+) -> bool {
+    match expression {
+        ContractExpression::CBinding(_) => false,
+        ContractExpression::CFragment(CExpression::Variable(name)) => {
+            !parameter_names.contains(name.as_str())
+        }
+        ContractExpression::CFragment(_) => false,
+        ContractExpression::Field { base, .. }
+        | ContractExpression::Old(base)
+        | ContractExpression::At {
+            expression: base, ..
+        }
+        | ContractExpression::BitwiseNot(base) => {
+            contract_expression_mentions_c_local(base, parameter_names)
+        }
+        ContractExpression::Add(left, right)
+        | ContractExpression::Subtract(left, right)
+        | ContractExpression::Multiply(left, right)
+        | ContractExpression::Divide(left, right)
+        | ContractExpression::Remainder(left, right)
+        | ContractExpression::ShiftLeft(left, right)
+        | ContractExpression::ShiftRight(left, right)
+        | ContractExpression::BitwiseAnd(left, right)
+        | ContractExpression::BitwiseOr(left, right)
+        | ContractExpression::BitwiseXor(left, right)
+        | ContractExpression::Index(left, right) => {
+            contract_expression_mentions_c_local(left, parameter_names)
+                || contract_expression_mentions_c_local(right, parameter_names)
+        }
+        ContractExpression::If {
+            then_branch,
+            else_branch,
+            ..
+        } => {
+            contract_expression_mentions_c_local(then_branch, parameter_names)
+                || contract_expression_mentions_c_local(else_branch, parameter_names)
+        }
+        ContractExpression::RangeFold {
+            start,
+            end,
+            initial,
+            body,
+            ..
+        } => {
+            contract_expression_mentions_c_local(start, parameter_names)
+                || contract_expression_mentions_c_local(end, parameter_names)
+                || contract_expression_mentions_c_local(initial, parameter_names)
+                || contract_expression_mentions_c_local(body, parameter_names)
+        }
+        ContractExpression::Let { value, body, .. } => {
+            contract_expression_mentions_c_local(value, parameter_names)
+                || contract_expression_mentions_c_local(body, parameter_names)
+        }
+        ContractExpression::Call { arguments, .. } => arguments
+            .iter()
+            .any(|argument| contract_expression_mentions_c_local(argument, parameter_names)),
+    }
+}
+
+fn public_local_result_surface(
+    proposition: &ClickProposition,
+    parameters: &[syntax::C0Parameter],
+) -> bool {
+    let parameter_names = parameters
+        .iter()
+        .map(syntax::C0Parameter::name)
+        .collect::<BTreeSet<_>>();
+    matches!(
+        proposition,
+        ClickProposition::Comparison { left, right, .. }
+            if contract_expression_mentions_c_local(left, &parameter_names)
+                || contract_expression_mentions_c_local(right, &parameter_names)
+    )
+}
+
 #[allow(clippy::too_many_arguments)]
 fn record_surface_replay_tactic(
     replay: &mut TacticReplayState,
@@ -16018,6 +16162,65 @@ fn record_surface_replay_tactic(
                     proposition: surface,
                     proof: Proof::Script(vec![ProofTactic::Normalize]),
                 }));
+            }
+            // A verified call's postconditions are public, but CallAssign's
+            // result identity is only useful to Surface Click after the value
+            // has been stored in its C local. Publish exactly those
+            // postconditions that synthesize through `c(local)`. Internal
+            // havoc identities and intermediate-memory facts remain hidden.
+            if let Some(post_state) = post_state {
+                let mut emitted = Vec::new();
+                for fact in evidence
+                    .transition
+                    .execution_facts
+                    .iter()
+                    .rev()
+                    .filter(|fact| fact.is_public() && fact.is_certified())
+                {
+                    let Some(surface) = synthesize_surface_proposition(
+                        fact.proposition(),
+                        parameters,
+                        arguments,
+                        post_state,
+                    ) else {
+                        continue;
+                    };
+                    if !public_local_result_surface(&surface, parameters)
+                        || emitted.contains(&surface)
+                    {
+                        continue;
+                    }
+                    let Ok(lowered) = lower_surface_candidate_at_point(
+                        replay,
+                        &surface,
+                        &evidence.transition.pure_facts,
+                        parameters,
+                        arguments,
+                        post_state,
+                        predicate_environment,
+                        click_function_environment,
+                    ) else {
+                        continue;
+                    };
+                    if !exact_fact_is_available(&lowered, &evidence.transition.pure_facts) {
+                        continue;
+                    }
+                    if let Err(error) = replay
+                        .surface_propositions
+                        .record_lowering(&surface, &lowered)
+                    {
+                        replay.surface_replay.block(format!(
+                            "public opaque-call result fact has no stable Surface Click spelling: {}",
+                            error.message()
+                        ));
+                        continue;
+                    }
+                    emitted.push(surface.clone());
+                    replay.surface_replay.push(ProofTactic::Have(ProofHave {
+                        proposition: surface,
+                        proof: Proof::Script(vec![ProofTactic::Assumption]),
+                    }));
+                }
             }
         }
         ProofTactic::CertifiedLoopSummaryReplay(evidence) => {

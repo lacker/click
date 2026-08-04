@@ -1940,6 +1940,65 @@ int32 caller() {
     }
 
     #[test]
+    fn expands_public_opaque_call_results_through_later_call_arguments() {
+        let zero_c = "int32 zero() { return 0; }";
+        let passthrough_c = "int32 passthrough(int32 x) { return x; }";
+        let caller_c = r#"int32 caller() {
+    int32 first;
+    int32 second;
+    first = zero();
+    second = passthrough(first);
+    return second;
+}"#;
+        let click_source = r#"
+verifying "zero.c";
+verifying "passthrough.c";
+verifying "caller.c";
+
+int32 zero() {
+    ensures result == 0;
+} by {
+    execute();
+    simp();
+}
+
+int32 passthrough(int32 x) {
+    ensures result == x;
+} by {
+    execute();
+    simp();
+}
+
+int32 caller() {
+    ensures result == 0;
+} by {
+    execute();
+    simp();
+}
+"#;
+        let sources = [
+            ("zero.c", zero_c),
+            ("passthrough.c", passthrough_c),
+            ("caller.c", caller_c),
+        ];
+        let final_simp = click_source
+            .rfind("simp();")
+            .expect("caller final simp should exist");
+        let position = position_at_offset(click_source, final_simp);
+
+        let expanded =
+            expand_c0_tactic_source_at(click_source, &sources, position.line, position.column)
+                .expect("public call facts should compose through their receiving locals");
+
+        assert!(expanded.contains("first"), "{expanded}");
+        assert!(expanded.contains("second"), "{expanded}");
+        assert!(!expanded.contains("call-havoc"), "{expanded}");
+        assert!(!expanded.contains("symbolic-pointer"), "{expanded}");
+        verify_c0_sources(&expanded, &sources)
+            .expect("the expanded public fact chain should independently re-verify");
+    }
+
+    #[test]
     fn grouped_simp_distinguishes_c_local_result_from_contract_result() {
         let zero_c = "int32 zero() { return 0; }";
         let caller_c = "int32 caller() { int32 result; result = zero(); return result; }";
