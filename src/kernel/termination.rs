@@ -177,32 +177,99 @@ fn instantiate_structural_guard(
     })
 }
 
+#[derive(Clone)]
+struct StructuralRecursionPath {
+    aliases: BTreeMap<String, CExpression>,
+    conditions: Vec<(CExpression, bool)>,
+}
+
+struct StructuralResourceMeasure {
+    arguments: Vec<CExpression>,
+    children: Vec<Vec<CExpression>>,
+    guard: CExpression,
+    guard_is_precondition: bool,
+}
+
+fn structural_guard_expression(proposition: &SpecProposition) -> Option<CExpression> {
+    let SpecProposition::Comparison {
+        left,
+        operator,
+        right,
+    } = proposition
+    else {
+        return None;
+    };
+    let expression = |expression: &SpecExpression| match expression {
+        SpecExpression::Value(value) => Some(CExpression::Value(value.clone())),
+        SpecExpression::CExpression(expression) => Some(expression.clone()),
+        _ => None,
+    };
+    let left = Box::new(expression(left)?);
+    let right = Box::new(expression(right)?);
+    Some(match operator {
+        CComparisonOperator::Equal => CExpression::Equal(left, right),
+        CComparisonOperator::NotEqual => CExpression::NotEqual(left, right),
+        CComparisonOperator::LessThan => CExpression::LessThan(left, right),
+        CComparisonOperator::LessEqual => CExpression::LessEqual(left, right),
+        CComparisonOperator::GreaterThan => CExpression::GreaterThan(left, right),
+        CComparisonOperator::GreaterEqual => CExpression::GreaterEqual(left, right),
+    })
+}
+
+fn branch_establishes_structural_guard(
+    branch_condition: &CExpression,
+    branch_value: bool,
+    guard: &CExpression,
+) -> bool {
+    if branch_condition == guard {
+        return branch_value;
+    }
+    match (branch_condition, guard) {
+        (CExpression::Equal(left, right), CExpression::NotEqual(guard_left, guard_right))
+        | (CExpression::NotEqual(left, right), CExpression::Equal(guard_left, guard_right)) => {
+            !branch_value
+                && ((left == guard_left && right == guard_right)
+                    || (left == guard_right && right == guard_left))
+        }
+        _ => false,
+    }
+}
+
 fn structural_recursion_paths(
     statement: &CStatement,
     function: &CFunction,
     measure_arguments: &[CExpression],
     child_arguments: &[Vec<CExpression>],
-    aliases: Vec<BTreeMap<String, CExpression>>,
-) -> Result<Vec<BTreeMap<String, CExpression>>, CTerminationError> {
+    guard: &CExpression,
+    paths: Vec<StructuralRecursionPath>,
+) -> Result<Vec<StructuralRecursionPath>, CTerminationError> {
     match statement {
         CStatement::Skip
         | CStatement::Assert { .. }
+        | CStatement::HeapFree { .. }
         | CStatement::Store { .. }
-        | CStatement::TypedStore { .. } => Ok(aliases),
+        | CStatement::TypedStore { .. } => Ok(paths),
         CStatement::Return(_) => Ok(Vec::new()),
-        CStatement::Declare { name, .. } => Ok(aliases
+        CStatement::Declare { name, .. } => Ok(paths
             .into_iter()
-            .map(|mut aliases| {
-                aliases.remove(name);
-                aliases
+            .map(|mut path| {
+                path.aliases.remove(name);
+                path
             })
             .collect()),
-        CStatement::Assign { name, expression } => Ok(aliases
+        CStatement::Assign { name, expression } => Ok(paths
             .into_iter()
-            .map(|mut aliases| {
-                let expression = resolve_c_expression_aliases(expression, &aliases);
-                aliases.insert(name.clone(), expression);
-                aliases
+            .map(|mut path| {
+                let expression = resolve_c_expression_aliases(expression, &path.aliases);
+                path.aliases.insert(name.clone(), expression);
+                path
+            })
+            .collect()),
+        CStatement::HeapAllocate { target, .. } => Ok(paths
+            .into_iter()
+            .map(|mut path| {
+                path.aliases.remove(target);
+                path
             })
             .collect()),
         CStatement::CallAssign {
@@ -211,8 +278,15 @@ fn structural_recursion_paths(
             arguments,
         } => {
             let mut next_paths = Vec::new();
-            for mut aliases in aliases {
+            for mut path in paths {
                 if function_name == function.name() {
+                    if !path.conditions.iter().any(|(condition, value)| {
+                        branch_establishes_structural_guard(condition, *value, guard)
+                    }) {
+                        return Err(error(format!(
+                            "recursive call to `{function_name}` is reachable without establishing the active structural resource guard"
+                        )));
+                    }
                     let parameter_substitutions = function
                         .parameters()
                         .iter()
@@ -220,7 +294,7 @@ fn structural_recursion_paths(
                         .map(|(parameter, argument)| {
                             (
                                 parameter.name().to_string(),
-                                resolve_c_expression_aliases(argument, &aliases),
+                                resolve_c_expression_aliases(argument, &path.aliases),
                             )
                         })
                         .collect::<BTreeMap<_, _>>();
@@ -236,8 +310,8 @@ fn structural_recursion_paths(
                         )));
                     }
                 }
-                aliases.remove(target);
-                next_paths.push(aliases);
+                path.aliases.remove(target);
+                next_paths.push(path);
             }
             Ok(next_paths)
         }
@@ -246,32 +320,47 @@ fn structural_recursion_paths(
             function,
             measure_arguments,
             child_arguments,
+            guard,
             structural_recursion_paths(
                 first,
                 function,
                 measure_arguments,
                 child_arguments,
-                aliases,
+                guard,
+                paths,
             )?,
         ),
         CStatement::If {
+            condition,
             then_branch,
             else_branch,
-            ..
         } => {
+            let mut then_paths = Vec::new();
+            let mut else_paths = Vec::new();
+            for path in paths {
+                let condition = resolve_c_expression_aliases(condition, &path.aliases);
+                let mut then_path = path.clone();
+                then_path.conditions.push((condition.clone(), true));
+                then_paths.push(then_path);
+                let mut else_path = path;
+                else_path.conditions.push((condition, false));
+                else_paths.push(else_path);
+            }
             let mut paths = structural_recursion_paths(
                 then_branch,
                 function,
                 measure_arguments,
                 child_arguments,
-                aliases.clone(),
+                guard,
+                then_paths,
             )?;
             paths.extend(structural_recursion_paths(
                 else_branch,
                 function,
                 measure_arguments,
                 child_arguments,
-                aliases,
+                guard,
+                else_paths,
             )?);
             Ok(paths)
         }
@@ -283,7 +372,7 @@ fn structural_recursion_paths(
                     "recursive calls inside a loop require a lexicographic measure and are not yet supported",
                 ));
             }
-            Ok(aliases)
+            Ok(paths)
         }
     }
 }
@@ -291,18 +380,7 @@ fn structural_recursion_paths(
 fn structural_resource_children(
     function: &CFunction,
     requirement_index: usize,
-) -> Result<(Vec<CExpression>, Vec<Vec<CExpression>>), CTerminationError> {
-    if !function.contract_mutable().is_empty()
-        || !function
-            .contract_claims()
-            .iter()
-            .any(|claim| matches!(claim.target, CFunctionContractClaimTarget::Effect))
-    {
-        return Err(error(format!(
-            "structural resource termination for `{}` currently requires an `immutable` contract",
-            function.name()
-        )));
-    }
+) -> Result<StructuralResourceMeasure, CTerminationError> {
     let Some(CResourceSpec::Composite {
         name, arguments, ..
     }) = function.resource_requires().get(requirement_index)
@@ -341,12 +419,12 @@ fn structural_resource_children(
                 "resource measure `{name}` currently requires a simple comparison guard"
             ))
         })?;
-    if !function.contract_requires().contains(&guard) {
-        return Err(error(format!(
-            "structural resource termination for `{}` requires the instantiated `{name}` guard as an exact function precondition",
-            function.name()
-        )));
-    }
+    let guard_is_precondition = function.contract_requires().contains(&guard);
+    let guard = structural_guard_expression(&guard).ok_or_else(|| {
+        error(format!(
+            "resource measure `{name}` currently requires a simple comparison guard"
+        ))
+    })?;
     let children = definition
         .contains()
         .iter()
@@ -369,7 +447,12 @@ fn structural_resource_children(
             "resource measure `{name}` has no direct recursive child"
         )));
     }
-    Ok((arguments.clone(), children))
+    Ok(StructuralResourceMeasure {
+        arguments: arguments.clone(),
+        children,
+        guard,
+        guard_is_precondition,
+    })
 }
 
 fn refined_lower_bound(condition: &CExpression, variable: &str, branch: bool, current: i64) -> i64 {
@@ -438,6 +521,8 @@ fn statement_calls(statement: &CStatement, calls: &mut BTreeSet<String>) {
         CStatement::Skip
         | CStatement::Declare { .. }
         | CStatement::Assign { .. }
+        | CStatement::HeapAllocate { .. }
+        | CStatement::HeapFree { .. }
         | CStatement::Assert { .. }
         | CStatement::Return(_)
         | CStatement::Store { .. }
@@ -456,6 +541,7 @@ fn recursion_paths(
         CStatement::Skip
         | CStatement::Declare { .. }
         | CStatement::Assert { .. }
+        | CStatement::HeapFree { .. }
         | CStatement::Store { .. }
         | CStatement::TypedStore { .. } => Ok(lower_bounds),
         CStatement::Return(_) => Ok(Vec::new()),
@@ -463,6 +549,10 @@ fn recursion_paths(
             "termination measure `{measure}` is reassigned; this first implementation requires an unchanged function parameter"
         ))),
         CStatement::Assign { .. } => Ok(lower_bounds),
+        CStatement::HeapAllocate { target, .. } if target == measure => Err(error(format!(
+            "recursive termination measure `{measure}` is overwritten by an allocation result"
+        ))),
+        CStatement::HeapAllocate { .. } => Ok(lower_bounds),
         CStatement::CallAssign {
             target,
             function_name,
@@ -546,6 +636,7 @@ fn loop_paths(
         CStatement::Skip
         | CStatement::Declare { .. }
         | CStatement::Assert { .. }
+        | CStatement::HeapFree { .. }
         | CStatement::Store { .. }
         | CStatement::TypedStore { .. } => Ok(offsets),
         CStatement::Return(_) => Ok(Vec::new()),
@@ -558,6 +649,10 @@ fn loop_paths(
             Ok(offsets.into_iter().map(|offset| offset - step).collect())
         }
         CStatement::Assign { .. } => Ok(offsets),
+        CStatement::HeapAllocate { target, .. } if target == measure => Err(error(format!(
+            "loop measure `{measure}` is overwritten by an allocation result"
+        ))),
+        CStatement::HeapAllocate { .. } => Ok(offsets),
         CStatement::CallAssign { target, .. } if target == measure => Err(error(format!(
             "loop measure `{measure}` is overwritten by a call result"
         ))),
@@ -624,6 +719,8 @@ fn check_loops(
         | CStatement::Declare { .. }
         | CStatement::Assign { .. }
         | CStatement::CallAssign { .. }
+        | CStatement::HeapAllocate { .. }
+        | CStatement::HeapFree { .. }
         | CStatement::Assert { .. }
         | CStatement::Return(_)
         | CStatement::Store { .. }
@@ -776,14 +873,22 @@ pub fn c_verified_function_termination_rules(
             }
             if recursive {
                 if let Some(requirement_index) = structural_requirement {
-                    let (measure_arguments, children) =
-                        structural_resource_children(function, requirement_index)?;
+                    let measure = structural_resource_children(function, requirement_index)?;
+                    let conditions = if measure.guard_is_precondition {
+                        vec![(measure.guard.clone(), true)]
+                    } else {
+                        Vec::new()
+                    };
                     structural_recursion_paths(
                         &function.source_body,
                         function,
-                        &measure_arguments,
-                        &children,
-                        vec![BTreeMap::new()],
+                        &measure.arguments,
+                        &measure.children,
+                        &measure.guard,
+                        vec![StructuralRecursionPath {
+                            aliases: BTreeMap::new(),
+                            conditions,
+                        }],
                     )?;
                 } else {
                     let index = parameter_indices[name];

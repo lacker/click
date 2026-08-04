@@ -564,6 +564,15 @@ pub(super) fn read_c_lvalue_paths(
                 obligations,
             }],
             CLValueStorage::Memory { pointer } => {
+                if state.memory.is_retired_heap_address(pointer) {
+                    return vec![CExpressionPath {
+                        outcome: CExpressionOutcome::UndefinedBehavior(
+                            CUndefinedBehavior::InvalidMemory,
+                        ),
+                        facts,
+                        obligations,
+                    }];
+                }
                 let effective_assumptions =
                     assumptions_with_path_context(assumptions, &facts, &obligations);
                 let is_external = is_external_memory_pointer(pointer);
@@ -1043,6 +1052,25 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
                 obligations,
             }];
         }
+    }
+
+    // Unlike external argument memory, a fresh heap block has a known
+    // initialization history. Permission authorizes a read but cannot turn a
+    // never-written heap cell into an unconstrained initialized value.
+    if memory.is_uninitialized_heap_address(&pointer) {
+        return vec![CExpressionPath {
+            outcome: CExpressionOutcome::UndefinedBehavior(CUndefinedBehavior::UninitializedRead),
+            facts,
+            obligations,
+        }];
+    }
+
+    if memory.is_retired_heap_address(&pointer) {
+        return vec![CExpressionPath {
+            outcome: CExpressionOutcome::UndefinedBehavior(CUndefinedBehavior::InvalidMemory),
+            facts,
+            obligations,
+        }];
     }
 
     if has_external_read_resource && assumptions.should_prefer_symbolic_external_loads() {
@@ -2722,6 +2750,15 @@ pub(super) fn write_c_lvalue_paths(
             }]
         }
         CLValueStorage::Memory { pointer } => {
+            if state.memory.is_retired_heap_address(&pointer) {
+                return vec![CStatementExecutionPath {
+                    outcome: CStatementOutcome::UndefinedBehavior(
+                        CUndefinedBehavior::InvalidMemory,
+                    ),
+                    facts,
+                    obligations,
+                }];
+            }
             let is_external = is_external_memory_pointer(&pointer);
             let authorized_range = is_external
                 .then(|| {
@@ -2800,6 +2837,269 @@ pub(super) fn local_name_from_pointer(pointer: &Pointer) -> Option<&str> {
     pointer.block.strip_prefix("local:")
 }
 
+fn execute_c_heap_allocate_paths(
+    state: &CState,
+    target: &str,
+    bytes: u32,
+    assumptions: &Assumptions,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<CStatementExecutionPath>> {
+    if bytes == 0
+        || !bytes.is_multiple_of(CType::Int32.byte_width())
+        || state.local_object_type(target) != Some(CType::Int32Pointer)
+    {
+        return Ok(vec![CStatementExecutionPath {
+            outcome: CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+            facts: Vec::new(),
+            obligations: Vec::new(),
+        }]);
+    }
+
+    while state
+        .memory
+        .heap_identity_in_use(budget.next_verification_variable)
+    {
+        budget.next_verification_variable += 1;
+    }
+    let pointer = Pointer::symbolic(Variable(budget.next_verification_variable));
+    budget.next_verification_variable += 1;
+    let success_state = state.clone().with_memory(
+        state
+            .memory
+            .clone()
+            .with_pending_heap_allocation(pointer.clone(), bytes),
+    );
+    let paths = execute_c_lvalue_assignment_paths(
+        &success_state,
+        &c_variable(target.to_string()),
+        &CExpression::Value(CValue::Pointer(pointer)),
+        assumptions,
+        budget,
+    )?;
+    budget.consume_paths(paths.len())?;
+    Ok(paths)
+}
+
+fn execute_c_heap_free_paths(
+    state: &CState,
+    expression: &CExpression,
+    assumptions: &Assumptions,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<CStatementExecutionPath>> {
+    let mut paths = Vec::new();
+    for path in evaluate_c_expression_paths(state, expression, assumptions, budget)? {
+        let CExpressionPath {
+            outcome,
+            facts,
+            obligations,
+        } = path;
+        let outcome = match outcome {
+            CExpressionOutcome::Value(CValue::Int32(bits)) if bits.as_const() == Some(0) => {
+                CExpressionOutcome::Value(CValue::Pointer(Pointer::null()))
+            }
+            outcome => outcome,
+        };
+        let CExpressionOutcome::Value(CValue::Pointer(pointer)) = outcome else {
+            let outcome = match outcome {
+                CExpressionOutcome::UndefinedBehavior(error) => {
+                    CStatementOutcome::UndefinedBehavior(error)
+                }
+                CExpressionOutcome::RuntimeError(error) => CStatementOutcome::RuntimeError(error),
+                CExpressionOutcome::Value(_) => {
+                    CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch)
+                }
+            };
+            paths.push(CStatementExecutionPath {
+                outcome,
+                facts,
+                obligations,
+            });
+            continue;
+        };
+
+        let effective_assumptions =
+            assumptions_with_path_context(assumptions, &facts, &obligations);
+        if pointer == Pointer::null()
+            || effective_assumptions.decide(&pointer_is_null_condition(pointer.clone()))
+                == Some(true)
+        {
+            paths.push(CStatementExecutionPath {
+                outcome: CStatementOutcome::Normal(state.clone()),
+                facts,
+                obligations,
+            });
+            continue;
+        }
+
+        let declared_allocation = state
+            .resources
+            .facts()
+            .iter()
+            .find_map(|fact| fact.allocation())
+            .filter(|(base, _)| **base == pointer)
+            .map(|(_, bytes)| bytes);
+        let mut working_memory = state.memory.clone();
+        let bytes = if let Some(bytes) = working_memory.live_heap_block_size(&pointer) {
+            bytes
+        } else if working_memory.is_retired_heap_address(&pointer) {
+            let error = CInvalidFree::DoubleFree;
+            paths.push(CStatementExecutionPath {
+                outcome: CStatementOutcome::RuntimeError(CRuntimeError::InvalidFree(error)),
+                facts,
+                obligations,
+            });
+            continue;
+        } else if working_memory.is_live_heap_address(&pointer) {
+            let error = CInvalidFree::InteriorPointer;
+            paths.push(CStatementExecutionPath {
+                outcome: CStatementOutcome::RuntimeError(CRuntimeError::InvalidFree(error)),
+                facts,
+                obligations,
+            });
+            continue;
+        } else if let Some(bytes) = declared_allocation {
+            let Some(memory) = working_memory.with_heap_allocation_claim(pointer.clone(), bytes)
+            else {
+                paths.push(CStatementExecutionPath {
+                    outcome: CStatementOutcome::RuntimeError(CRuntimeError::InvalidFree(
+                        CInvalidFree::NonHeapPointer,
+                    )),
+                    facts,
+                    obligations,
+                });
+                continue;
+            };
+            working_memory = memory;
+            bytes
+        } else {
+            paths.push(CStatementExecutionPath {
+                outcome: CStatementOutcome::RuntimeError(CRuntimeError::InvalidFree(
+                    CInvalidFree::NonHeapPointer,
+                )),
+                facts,
+                obligations,
+            });
+            continue;
+        };
+        let allocation = CResourceFact::own_allocation(pointer.clone(), bytes);
+        let Some(resources) = state
+            .resources
+            .clone()
+            .without_fact(&allocation, &effective_assumptions)
+        else {
+            paths.push(CStatementExecutionPath {
+                outcome: CStatementOutcome::RuntimeError(CRuntimeError::MissingResource {
+                    resource: allocation,
+                }),
+                facts,
+                obligations,
+            });
+            continue;
+        };
+        let complete_access = CResourceFact::own_memory(CMemoryRange::new(
+            pointer.clone(),
+            Bitvector32Term::Constant(0),
+            Bitvector32Term::Constant(bytes / CType::Int32.byte_width()),
+        ));
+        let Some(resources) = resources.without_fact(&complete_access, &effective_assumptions)
+        else {
+            paths.push(CStatementExecutionPath {
+                outcome: CStatementOutcome::RuntimeError(CRuntimeError::MissingResource {
+                    resource: complete_access,
+                }),
+                facts,
+                obligations,
+            });
+            continue;
+        };
+        let resource_assumptions = state
+            .resources()
+            .observable_facts_assuming_valid(&effective_assumptions)
+            .into_iter()
+            .fold(effective_assumptions.clone(), |assumptions, fact| {
+                assumptions.assume_proposition(fact)
+            });
+        if let Some(stale) = resources.facts().iter().find(|resource| {
+            resource.may_refer_to_memory_block(&pointer.block)
+                && !resource.is_proven_separate_from_allocation(
+                    &pointer,
+                    bytes,
+                    &resource_assumptions,
+                )
+        }) {
+            paths.push(CStatementExecutionPath {
+                outcome: CStatementOutcome::RuntimeError(CRuntimeError::StaleResourceAfterFree {
+                    resource: stale.clone(),
+                }),
+                facts,
+                obligations,
+            });
+            continue;
+        }
+        let memory = working_memory
+            .free_heap_block(&pointer)
+            .expect("validated live heap base should free");
+        paths.push(CStatementExecutionPath {
+            outcome: CStatementOutcome::Normal(
+                state
+                    .clone()
+                    .with_memory(memory)
+                    .with_resource_context(resources),
+            ),
+            facts,
+            obligations,
+        });
+    }
+    budget.consume_paths(paths.len())?;
+    Ok(paths)
+}
+
+pub(crate) fn resolve_pending_heap_allocations(
+    state: &CState,
+    assumptions: &Assumptions,
+) -> CState {
+    let pending = state
+        .memory
+        .heap
+        .pending_allocations
+        .iter()
+        .map(|(base, bytes)| (base.clone(), *bytes))
+        .collect::<Vec<_>>();
+    let mut state = state.clone();
+    for (base, _) in pending {
+        let Some(is_null) = assumptions.decide(&pointer_is_null_condition(base.clone())) else {
+            continue;
+        };
+        let (memory, bytes, resolved_base) = state
+            .memory
+            .clone()
+            .resolve_pending_heap_allocation(&base, !is_null)
+            .expect("collected pending allocation should still exist");
+        state.memory = memory;
+        for binding in state.locals.bindings.values_mut() {
+            if let CLocalBinding::Object {
+                value: CValue::Pointer(pointer),
+                ..
+            } = binding
+                && pointer == &base
+            {
+                *pointer = resolved_base.clone();
+            }
+        }
+        if !is_null {
+            state.resources = state
+                .resources
+                .unchecked_with_fact(CResourceFact::own_allocation(resolved_base.clone(), bytes))
+                .unchecked_with_fact(CResourceFact::own_memory(CMemoryRange::new(
+                    resolved_base,
+                    Bitvector32Term::Constant(0),
+                    Bitvector32Term::Constant(bytes / CType::Int32.byte_width()),
+                )));
+        }
+    }
+    state
+}
+
 pub(super) fn execute_c_statement_paths(
     state: &CState,
     statement: &CStatement,
@@ -2841,6 +3141,12 @@ pub(super) fn execute_c_statement_paths(
             execution_semantics,
             budget,
         )?,
+        CStatement::HeapAllocate { target, bytes } => {
+            execute_c_heap_allocate_paths(state, target, *bytes, assumptions, budget)?
+        }
+        CStatement::HeapFree { pointer } => {
+            execute_c_heap_free_paths(state, pointer, assumptions, budget)?
+        }
         CStatement::Assert { condition, label } => {
             execute_c_assert_paths(state, condition, label.as_deref(), assumptions, budget)?
         }
@@ -2884,6 +3190,13 @@ pub(super) fn execute_c_statement_paths(
                 .into_iter()
                 .map(|path| CStatementExecutionPath {
                     outcome: match path.outcome {
+                        CExpressionOutcome::Value(_)
+                            if state.memory.has_pending_heap_allocation() =>
+                        {
+                            CStatementOutcome::RuntimeError(
+                                CRuntimeError::UnresolvedAllocationOutcome,
+                            )
+                        }
                         CExpressionOutcome::Value(value) => CStatementOutcome::Return {
                             value,
                             state: state.clone(),
@@ -2945,8 +3258,15 @@ pub(super) fn execute_c_statement_paths(
                             } else {
                                 else_branch
                             };
+                            let path_assumptions = assumptions_with_path_context(
+                                assumptions,
+                                &truthiness_path.facts,
+                                &truthiness_path.obligations,
+                            );
+                            let branch_state =
+                                resolve_pending_heap_allocations(state, &path_assumptions);
                             paths.extend(execute_c_statement_paths_with_prefix(
-                                state,
+                                &branch_state,
                                 branch,
                                 assumptions,
                                 environment,

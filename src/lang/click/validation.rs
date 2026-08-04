@@ -36,7 +36,7 @@ fn standard_library_definitions() -> Result<StandardLibraryDefinitions, ClickErr
 pub(super) fn expand_declared_resource_clauses(
     mut file: ClickFile,
 ) -> Result<ClickFile, ClickError> {
-    let resource_definitions = file
+    let mut resource_definitions = file
         .resource_definitions()
         .iter()
         .map(|definition| {
@@ -57,6 +57,12 @@ pub(super) fn expand_declared_resource_clauses(
             )
         })
         .collect::<BTreeMap<_, _>>();
+    resource_definitions
+        .entry(CResourceFact::ALLOCATION_RESOURCE_NAME.to_string())
+        .or_insert_with(|| DeclaredResourceInfo {
+            parameter_types: vec![C0Type::Int32Pointer, C0Type::Int32],
+            kind: ResourceKind::Token,
+        });
 
     file.resource_definitions = file
         .resource_definitions
@@ -393,6 +399,12 @@ fn expand_declared_resource_clause(
             parameter_types,
         } if parameter_types.is_empty() => {
             let info = declared_resource_info(&name, arguments.len(), resource_definitions)?;
+            if name == CResourceFact::ALLOCATION_RESOURCE_NAME && access == ResourceAccessMode::View
+            {
+                return Err(ClickError::new(
+                    "allocation authority is owned and cannot be viewed or duplicated",
+                ));
+            }
             Ok(ResourceClause::Declared {
                 access,
                 kind: info.kind,

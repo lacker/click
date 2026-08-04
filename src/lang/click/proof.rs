@@ -4000,6 +4000,117 @@ fn append_surface_tactics_by_leaf(
     }
 }
 
+fn append_surface_tactics_at_branch_path(
+    tactics: &mut Vec<ProofTactic>,
+    branch_path: &[bool],
+    suffix: &[ProofTactic],
+) -> Result<(), String> {
+    fn append(
+        tactics: &mut Vec<ProofTactic>,
+        branch_path: &[bool],
+        next_branch: usize,
+        suffix: &[ProofTactic],
+    ) -> Result<(), String> {
+        if let Some(ProofTactic::If(proof_if)) = tactics.last_mut() {
+            let selected_then = *branch_path.get(next_branch).ok_or_else(|| {
+                "surface branch skeleton has more branches than its execution path".to_string()
+            })?;
+            return append(
+                if selected_then {
+                    &mut proof_if.then_tactics
+                } else {
+                    &mut proof_if.else_tactics
+                },
+                branch_path,
+                next_branch + 1,
+                suffix,
+            );
+        }
+        if next_branch != branch_path.len() {
+            return Err(format!(
+                "execution path has {} branches but the surface skeleton has {next_branch}",
+                branch_path.len()
+            ));
+        }
+        if tactics.is_empty() {
+            tactics.extend(suffix.iter().cloned());
+        } else if tactics != suffix {
+            return Err(
+                "two execution paths require different tactic expansions at one surface leaf"
+                    .to_string(),
+            );
+        }
+        Ok(())
+    }
+
+    append(tactics, branch_path, 0, suffix)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn surface_branch_path_for_outcome(
+    tactics: &[ProofTactic],
+    available: &[Proposition],
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    pre_state: &CState,
+    post_state: &CState,
+    result: &CValue,
+    program_point_states: &ProgramPointStates,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+) -> Result<Vec<bool>, String> {
+    let mut branch_path = Vec::new();
+    let mut current = tactics;
+    loop {
+        let Some(proof_if) = current.iter().rev().find_map(|tactic| match tactic {
+            ProofTactic::If(proof_if) => Some(proof_if),
+            _ => None,
+        }) else {
+            return Ok(branch_path);
+        };
+        let lowered = lower_outcome_proposition_with_program_points(
+            parameters,
+            arguments,
+            pre_state,
+            post_state,
+            result,
+            available,
+            &proof_if.condition,
+            predicate_environment,
+            click_function_environment,
+            program_point_states,
+        )?;
+        let assumptions = assumptions_from_propositions(available);
+        let is_true = exact_fact_is_available(&lowered, available) || assumptions.proves(&lowered);
+        let is_false = available
+            .iter()
+            .any(|fact| propositions_are_exact_negations(fact, &lowered))
+            || fact_conflicts_with_assumptions(&lowered, &assumptions);
+        let selected_then = match (is_true, is_false) {
+            (true, false) => true,
+            (false, true) => false,
+            (false, false) => {
+                return Err(format!(
+                    "execution path does not decide surface branch `{}`",
+                    describe_click_proposition(&proof_if.condition)
+                ));
+            }
+            (true, true) => {
+                return Err(format!(
+                    "execution path proves both sides of surface branch `{}`",
+                    describe_click_proposition(&proof_if.condition)
+                ));
+            }
+        };
+        branch_path.push(selected_then);
+        current = if selected_then {
+            &proof_if.then_tactics
+        } else {
+            &proof_if.else_tactics
+        };
+    }
+}
+
 fn surface_branch_skeleton(tactics: &[ProofTactic]) -> Vec<ProofTactic> {
     let Some(proof_if) = tactics.iter().rev().find_map(|tactic| match tactic {
         ProofTactic::If(proof_if) => Some(proof_if),
@@ -5906,6 +6017,8 @@ fn statement_consults_conditions(state: &CState, statement: &CStatement) -> bool
                 || statement_consults_conditions(state, second)
         }
         CStatement::CallAssign { .. }
+        | CStatement::HeapAllocate { .. }
+        | CStatement::HeapFree { .. }
         | CStatement::Assert { .. }
         | CStatement::Store { .. }
         | CStatement::TypedStore { .. }
@@ -5974,6 +6087,7 @@ fn statement_contains_call_assign(statement: &CStatement) -> bool {
         | CStatement::Return(_)
         | CStatement::Store { .. }
         | CStatement::TypedStore { .. } => false,
+        CStatement::HeapAllocate { .. } | CStatement::HeapFree { .. } => false,
     }
 }
 
@@ -6832,6 +6946,8 @@ fn kernel_statement_contains_loop(statement: &CStatement) -> bool {
         | CStatement::Declare { .. }
         | CStatement::Assign { .. }
         | CStatement::CallAssign { .. }
+        | CStatement::HeapAllocate { .. }
+        | CStatement::HeapFree { .. }
         | CStatement::Return(_)
         | CStatement::Store { .. }
         | CStatement::TypedStore { .. }
@@ -11731,6 +11847,7 @@ fn finish_ordered_proof_replay(
         let mut surface_grouped_closers_by_path = Vec::with_capacity(execution.paths().len());
         let mut surface_post_tactics_by_path = Vec::with_capacity(execution.paths().len());
         let mut deferred_capture_tactics_by_path = Vec::with_capacity(execution.paths().len());
+        let mut deferred_capture_branches_by_path = Vec::with_capacity(execution.paths().len());
 
         'execution_path: for (path_index, path) in execution.paths().iter().enumerate() {
             let certified_path =
@@ -11825,6 +11942,38 @@ fn finish_ordered_proof_replay(
                     path_requirements.push(fact);
                 }
             }
+            let deferred_capture_branch_path = if let Some(deferred) =
+                replay.deferred_tactic_capture.as_ref()
+            {
+                let CFunctionOutcome::Return {
+                    value: result,
+                    state: post_state,
+                } = &outcome
+                else {
+                    return Err(ClickError::new(format!(
+                        "execution proof failed for `{proof_label}` path {path_index}: selected post-execution tactic has no return outcome"
+                    )));
+                };
+                surface_branch_path_for_outcome(
+                    &deferred.branch_skeleton,
+                    &path_requirements,
+                    parsed_function.parameters(),
+                    arguments,
+                    pre_state,
+                    post_state,
+                    result,
+                    &replay.program_point_states,
+                    predicate_environment,
+                    click_function_environment,
+                )
+                .map_err(|message| {
+                    ClickError::new(format!(
+                        "execution proof failed for `{proof_label}` path {path_index}: could not align selected tactic with its execution branch: {message}"
+                    ))
+                })?
+            } else {
+                Vec::new()
+            };
             let mut unfolded_predicates = replay.unfolded_predicates.clone();
             path_requirements = unfold_available_predicate_facts(
                 predicate_environment,
@@ -13069,6 +13218,55 @@ fn finish_ordered_proof_replay(
                 }
             }
 
+            if let CFunctionOutcome::Return {
+                value,
+                state: post_state,
+            } = &outcome
+            {
+                let mut lifetime_facts = path_requirements.clone();
+                lifetime_facts.extend(
+                    path.execution_facts()
+                        .iter()
+                        .map(|fact| fact.proposition().clone()),
+                );
+                let lifetime_assumptions = assumptions_from_propositions(&lifetime_facts);
+                let mut lifetime_budget = ExecutionBudget::default();
+                match crate::kernel::unreturned_allocation_at_function_exit(
+                    post_state,
+                    value,
+                    function,
+                    &lifetime_assumptions,
+                    &mut lifetime_budget,
+                )
+                .map_err(|limit| {
+                    ClickError::new(format!(
+                        "`{proof_label}` path {path_index}: allocation-lifetime check exceeded its execution budget: {limit:?}"
+                    ))
+                })? {
+                    Ok(Some(allocation)) => {
+                        return Err(ClickError::new(format!(
+                            "`{proof_label}` path {path_index}: runtime error: {}",
+                            describe_runtime_error(
+                                &crate::kernel::CRuntimeError::LiveAllocationLeak { allocation },
+                                parsed_function.parameters(),
+                                arguments,
+                            )
+                        )));
+                    }
+                    Err(error) => {
+                        return Err(ClickError::new(format!(
+                            "`{proof_label}` path {path_index}: runtime error: {}",
+                            describe_runtime_error(
+                                &error,
+                                parsed_function.parameters(),
+                                arguments,
+                            )
+                        )));
+                    }
+                    Ok(None) => {}
+                }
+            }
+
             if !require_explicit_closers {
                 for (claim_index, claim) in claims.iter().enumerate() {
                     if closures[claim_index].is_closed() {
@@ -13214,6 +13412,7 @@ fn finish_ordered_proof_replay(
             surface_grouped_closers_by_path.push(path_grouped_surface_closers);
             surface_post_tactics_by_path.push(path_surface_post_tactics);
             deferred_capture_tactics_by_path.push(path_deferred_capture_tactics);
+            deferred_capture_branches_by_path.push(deferred_capture_branch_path);
         }
         if replay.grouped_contract {
             let mut expanded = replay.surface_replay.clone();
@@ -13301,11 +13500,18 @@ fn finish_ordered_proof_replay(
             let mut capture = SurfaceReplay::default();
             if !contributes_no_tactics {
                 capture.tactics = deferred.branch_skeleton.clone();
-                if let Err(message) = append_surface_tactics_by_leaf(
-                    &mut capture.tactics,
-                    &deferred_capture_tactics_by_path,
-                ) {
-                    capture.block(message);
+                for (branch_path, path_tactics) in deferred_capture_branches_by_path
+                    .iter()
+                    .zip(&deferred_capture_tactics_by_path)
+                {
+                    if let Err(message) = append_surface_tactics_at_branch_path(
+                        &mut capture.tactics,
+                        branch_path,
+                        path_tactics,
+                    ) {
+                        capture.block(message);
+                        break;
+                    }
                 }
             }
             return Err(finish_tactic_expansion_capture(
@@ -21687,6 +21893,10 @@ fn execute_branch_step_from_execution_point(
         );
     }
     *available_pure_facts = condition_transition.pure_facts;
+    current_state = crate::kernel::resolve_pending_heap_allocations(
+        &current_state,
+        &assumptions_from_propositions(available_pure_facts),
+    );
     let selected_branch = if selected_then {
         *then_branch
     } else {

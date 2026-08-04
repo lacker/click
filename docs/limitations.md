@@ -6,7 +6,13 @@ This page lists boundaries that agents should not silently assume away.
 
 Click does not parse general C. See [c0-subset.md](c0-subset.md). Missing
 features include full structs, unsigned integers beyond the narrow `uint8` byte
-type, casts, globals, heap allocation, `switch`, and many operators.
+type, casts, globals, general heap allocation, `switch`, and many operators.
+
+C0 does support one fixed-size heap-object slice:
+`malloc(sizeof(struct T))` into a matching `struct T*`, ordinary null checking,
+and `free`. It does not yet support runtime or zero sizes, `size_t`, general
+`void *` conversions, allocator declarations, custom allocators, `calloc`,
+`realloc`, or arrays allocated on the heap.
 
 Struct support is partial. C0 accepts LP64-layout multi-field struct
 declarations with `int32` and pointer-valued fields, plus chained

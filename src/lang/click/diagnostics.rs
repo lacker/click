@@ -273,6 +273,28 @@ pub(super) fn describe_runtime_error(
         crate::kernel::CRuntimeError::FunctionContract(message) => {
             format!("function contract could not be applied: {message}")
         }
+        crate::kernel::CRuntimeError::InvalidFree(reason) => match reason {
+            crate::kernel::CInvalidFree::InteriorPointer => {
+                "cannot free an interior pointer; free requires the allocation base".to_string()
+            }
+            crate::kernel::CInvalidFree::NonHeapPointer => {
+                "cannot free a pointer that is not a live heap allocation".to_string()
+            }
+            crate::kernel::CInvalidFree::DoubleFree => {
+                "cannot free an allocation whose lifetime has already ended".to_string()
+            }
+        },
+        crate::kernel::CRuntimeError::UnresolvedAllocationOutcome => {
+            "malloc result was not refined by a null check before returning".to_string()
+        }
+        crate::kernel::CRuntimeError::LiveAllocationLeak { allocation } => format!(
+            "live allocation obligation was neither returned nor freed: `{}`",
+            describe_resource_fact(allocation, parameters, arguments)
+        ),
+        crate::kernel::CRuntimeError::StaleResourceAfterFree { resource } => format!(
+            "resource would remain usable after its allocation is freed: `{}`",
+            describe_resource_fact(resource, parameters, arguments)
+        ),
         crate::kernel::CRuntimeError::DuplicateResource { resource } => format!(
             "duplicate resource fact `{}`",
             describe_resource_fact(resource, parameters, arguments)

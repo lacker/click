@@ -17,6 +17,8 @@ mod termination;
 
 pub use api::*;
 pub(crate) use assumptions::{AssumptionsIdScope, conditions_equal_ignoring_memories};
+pub(crate) use eval::resolve_pending_heap_allocations;
+pub(crate) use functions::unreturned_allocation_at_function_exit;
 pub use primitives::*;
 pub(crate) use reasoning::memory_effect_write_pointers;
 pub use termination::c_verified_function_termination_rules;

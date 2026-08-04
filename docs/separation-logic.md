@@ -33,6 +33,12 @@ view(composite(name, arguments))
 own(composite(name, arguments))
 ```
 
+`allocation(base, bytes)` uses the token representation internally but has a
+kernel-known stronger law: only its owned form exists at the surface, it is an
+exclusive lifetime obligation, and it can be discharged only by the trusted
+heap-free transition. It deliberately grants no memory access; an owning
+wrapper normally contains both allocation authority and `object(base)`.
+
 Bodyless declarations are token resources. Declarations with a body are
 composite resources:
 
@@ -423,6 +429,7 @@ materialization. `observe`, `unfold`, and `fold` are the explicit operations
 that apply those laws.
 
 New primitive resource families should implement this interface rather than add
-dispatch to `ResourceContext`. Features such as fractional ownership,
-authoritative ghost state, allocation authority, and invariants are not yet
-implemented.
+dispatch to `ResourceContext`. Allocation authority is the one current
+kernel-known token specialization because it is coupled to concrete heap
+lifetime transitions. Fractional ownership, general authoritative ghost state,
+and invariants are not yet implemented.

@@ -55,6 +55,8 @@ Supported C0 surface includes:
 - a small struct slice: `struct name { ... };`, `struct name*` pointers, and
   chained `p->child->field` loads/stores for `int32` and pointer fields
 - known function calls through the current function environment
+- fixed-size `malloc(sizeof(struct T))` assigned to a matching `struct T*`
+  local, and standalone `free(pointer);`
 - local scalar, pointer, and fixed-size array declarations for `int32` and
   `uint8`
 
@@ -145,6 +147,34 @@ available when a contract needs to describe a broader footprint. Field places
 also work in `loadable(p->field)`, and `mutable p->field` describes a
 field-sized effect.
 
+## Fixed-Size Heap Objects
+
+C0 recognizes one deliberately small allocation pattern:
+
+```c
+struct item *item = malloc(sizeof(struct item));
+if (item == 0) {
+    return 0;
+}
+item->value = 1;
+free(item);
+```
+
+The assignment target supplies the pointee type. The size must be exactly
+`sizeof(struct T)` for that same complete, imported struct, using the same LP64
+layout calculation as field access and Click's `object(item)` resource. The
+assignment form `item = malloc(sizeof(struct item));` is supported too.
+
+`malloc` returns either null or a fresh base pointer. A normal null check must
+refine that outcome before the function returns. Successful storage is
+uninitialized: every field must be stored before it is read. `free(NULL)` is a
+no-op; nonnull `free` requires the allocation base, complete owned access, and
+the matching Click allocation authority.
+
+This is a modeled C0 builtin, not general libc compatibility. Runtime sizes,
+zero-size allocation, incomplete types, `void *` conversions, allocator
+prototypes, casts, `calloc`, and `realloc` remain unsupported.
+
 ## Loops
 
 `while` loops can be handled in two ways:
@@ -174,7 +204,7 @@ These are not general C features yet:
   the contextual null-pointer conversion for integer constant `0` is supported
 - mixed-width integer conversions beyond `uint8` promotion to `int32`
 - pointer comparisons beyond the supported equality/range patterns
-- heap allocation
+- general heap allocation beyond the fixed-size struct-object slice
 - function pointers
 - global variables
 - `do while`, `switch`, `break`, `continue`

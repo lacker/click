@@ -106,6 +106,9 @@ pub enum PointerBlock {
     Concrete(String),
     ExternalArgument,
     Symbolic(Variable),
+    /// A trusted allocation identity. Unlike a symbolic/opaque block, this is
+    /// fresh and distinct from every other block identity.
+    Heap(u64),
 }
 
 impl PointerBlock {
@@ -116,7 +119,7 @@ impl PointerBlock {
     pub(crate) fn strip_prefix<'a>(&'a self, prefix: &str) -> Option<&'a str> {
         match self {
             Self::Concrete(name) => name.strip_prefix(prefix),
-            Self::ExternalArgument | Self::Symbolic(_) => None,
+            Self::ExternalArgument | Self::Symbolic(_) | Self::Heap(_) => None,
         }
     }
 }
@@ -139,6 +142,7 @@ impl std::fmt::Display for PointerBlock {
             Self::Concrete(name) => formatter.write_str(name),
             Self::ExternalArgument => formatter.write_str("arg-memory"),
             Self::Symbolic(variable) => write!(formatter, "symbolic-pointer:{}", variable.0),
+            Self::Heap(identity) => write!(formatter, "heap-allocation:{identity}"),
         }
     }
 }
@@ -361,6 +365,16 @@ pub enum CStatement {
         target: String,
         function_name: String,
         arguments: Vec<CExpression>,
+    },
+    /// Allocate one fixed-size heap object and assign either null or its fresh
+    /// base pointer to `target`.
+    HeapAllocate {
+        target: String,
+        bytes: u32,
+    },
+    /// End the heap allocation named by `pointer`. Null is a no-op.
+    HeapFree {
+        pointer: CExpression,
     },
     Assert {
         condition: CExpression,
@@ -611,6 +625,13 @@ pub enum CUndefinedBehavior {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub enum CInvalidFree {
+    InteriorPointer,
+    NonHeapPointer,
+    DoubleFree,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum CRuntimeError {
     UnboundVariable(String),
     UnknownFunction(String),
@@ -627,6 +648,14 @@ pub enum CRuntimeError {
     MissingVerifiedFunctionRule(String),
     UnsupportedOpaqueFunctionContract(String),
     FunctionContract(String),
+    InvalidFree(CInvalidFree),
+    UnresolvedAllocationOutcome,
+    LiveAllocationLeak {
+        allocation: CResourceFact,
+    },
+    StaleResourceAfterFree {
+        resource: CResourceFact,
+    },
     DuplicateResource {
         resource: CResourceFact,
     },
@@ -720,6 +749,23 @@ pub(super) enum CLocalBinding {
 pub struct CMemory {
     pub(super) blocks: BTreeMap<PointerBlock, CBlock>,
     pub(super) cells: BTreeMap<Pointer, CValue>,
+    pub(super) heap: Box<CHeapMemory>,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub(super) struct CHeapMemory {
+    /// Live heap blocks are also present in `blocks`; this set distinguishes
+    /// them from automatic storage and memory-havoc markers.
+    pub(super) live_allocations: BTreeMap<Pointer, u32>,
+    /// Heap identities are never reused within a proof. Keeping retired
+    /// identities makes double-free and stale-pointer checks explicit.
+    pub(super) retired_allocations: BTreeMap<Pointer, u32>,
+    /// A malloc result whose null/success outcome has not yet been refined by
+    /// control flow. Pending allocations carry no authority until resolved.
+    pub(super) pending_allocations: BTreeMap<Pointer, u32>,
+    /// Successful malloc storage remains uninitialized until individual
+    /// cells are written. Contract-imported allocations are not placed here.
+    pub(super) uninitialized_allocations: BTreeSet<Pointer>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -878,6 +924,18 @@ pub enum CMemoryDerivation {
         base: SharedCMemory,
         block: PointerBlock,
     },
+    /// `base` with one fresh, uninitialized heap block made live.
+    HeapAllocated {
+        base: SharedCMemory,
+        block: PointerBlock,
+        bytes: u32,
+    },
+    /// `base` with one complete heap-block lifetime ended.
+    HeapFreed {
+        base: SharedCMemory,
+        block: PointerBlock,
+        bytes: u32,
+    },
     /// `base` with some cached cell values forgotten at one program point:
     /// the write path narrows the cell map before storing
     /// (`without_possible_aliasing_cells`), which changes the spelling but
@@ -908,6 +966,8 @@ impl CMemoryDerivation {
         match self {
             Self::Store { base, .. }
             | Self::BlockDeclared { base, .. }
+            | Self::HeapAllocated { base, .. }
+            | Self::HeapFreed { base, .. }
             | Self::CellsForgotten { base }
             | Self::LoopHavoc { base, .. }
             | Self::CallHavoc { base, .. } => base,
@@ -2225,10 +2285,13 @@ impl Pointer {
     }
 
     pub(super) fn blocks_proven_distinct(&self, other: &Self) -> bool {
-        matches!(
-            (&self.block, &other.block),
-            (PointerBlock::Concrete(left), PointerBlock::Concrete(right)) if left != right
-        )
+        self.block != other.block
+            && (matches!(self.block, PointerBlock::Heap(_))
+                || matches!(other.block, PointerBlock::Heap(_))
+                || matches!(
+                    (&self.block, &other.block),
+                    (PointerBlock::Concrete(left), PointerBlock::Concrete(right)) if left != right
+                ))
     }
 
     #[cfg_attr(not(test), allow(dead_code))]
@@ -2889,7 +2952,7 @@ impl CMemory {
     }
 
     pub(crate) fn has_same_snapshot_markers(&self, other: &Self) -> bool {
-        self.blocks == other.blocks
+        self.blocks == other.blocks && self.heap == other.heap
     }
 
     pub fn with_block(mut self, block: impl Into<PointerBlock>, size: u32) -> Self {
@@ -2910,6 +2973,149 @@ impl CMemory {
         self.blocks.insert(block.clone(), CBlock::new(size));
         record_c_memory_derivation(&self, CMemoryDerivation::BlockDeclared { base, block });
         self
+    }
+
+    pub(super) fn free_heap_block(mut self, pointer: &Pointer) -> Result<Self, CInvalidFree> {
+        if self.heap.retired_allocations.contains_key(pointer) {
+            return Err(CInvalidFree::DoubleFree);
+        }
+        let Some(bytes) = self.heap.live_allocations.remove(pointer) else {
+            return Err(
+                if self
+                    .heap
+                    .live_allocations
+                    .keys()
+                    .any(|base| base.block == pointer.block)
+                {
+                    CInvalidFree::InteriorPointer
+                } else {
+                    CInvalidFree::NonHeapPointer
+                },
+            );
+        };
+        let base = (!memory_dag_disabled()).then(|| intern_c_memory_ref(&self));
+        self.blocks.remove(&pointer.block);
+        self.heap.retired_allocations.insert(pointer.clone(), bytes);
+        self.heap.uninitialized_allocations.remove(pointer);
+        self.cells.retain(|cell, _| cell.block != pointer.block);
+        if let Some(base) = base {
+            record_c_memory_derivation(
+                &self,
+                CMemoryDerivation::HeapFreed {
+                    base,
+                    block: pointer.block.clone(),
+                    bytes,
+                },
+            );
+        }
+        Ok(self)
+    }
+
+    pub(super) fn live_heap_block_size(&self, pointer: &Pointer) -> Option<u32> {
+        self.heap.live_allocations.get(pointer).copied()
+    }
+
+    pub(super) fn is_live_heap_address(&self, pointer: &Pointer) -> bool {
+        self.heap
+            .live_allocations
+            .keys()
+            .any(|base| base.block == pointer.block)
+    }
+
+    pub(super) fn is_uninitialized_heap_address(&self, pointer: &Pointer) -> bool {
+        self.heap
+            .uninitialized_allocations
+            .iter()
+            .any(|base| base.block == pointer.block)
+    }
+
+    pub(super) fn is_retired_heap_address(&self, pointer: &Pointer) -> bool {
+        self.heap
+            .retired_allocations
+            .keys()
+            .any(|base| base.block == pointer.block)
+    }
+
+    /// Registers the exact base named by an allocation contract. Unlike a
+    /// fresh `malloc`, this does not create a concrete block or imply that its
+    /// existing bytes are uninitialized; access remains governed by the
+    /// accompanying memory resources.
+    pub(super) fn with_heap_allocation_claim(mut self, base: Pointer, bytes: u32) -> Option<Self> {
+        if bytes == 0 || self.heap.retired_allocations.contains_key(&base) {
+            return None;
+        }
+        match self.heap.live_allocations.get(&base) {
+            Some(existing) if *existing != bytes => None,
+            Some(_) => Some(self),
+            None => {
+                self.heap.live_allocations.insert(base, bytes);
+                Some(self)
+            }
+        }
+    }
+
+    pub(super) fn with_pending_heap_allocation(mut self, base: Pointer, bytes: u32) -> Self {
+        self.heap.pending_allocations.insert(base, bytes);
+        self
+    }
+
+    pub(super) fn has_pending_heap_allocation(&self) -> bool {
+        !self.heap.pending_allocations.is_empty()
+    }
+
+    pub(super) fn heap_identity_in_use(&self, identity: u64) -> bool {
+        self.blocks.contains_key(&PointerBlock::Heap(identity))
+            || self
+                .heap
+                .retired_allocations
+                .keys()
+                .any(|base| base.block == PointerBlock::Heap(identity))
+            || self
+                .heap
+                .pending_allocations
+                .keys()
+                .any(|base| base.block == PointerBlock::Symbolic(Variable(identity)))
+    }
+
+    pub(super) fn resolve_pending_heap_allocation(
+        mut self,
+        base: &Pointer,
+        succeeds: bool,
+    ) -> Option<(Self, u32, Pointer)> {
+        let bytes = self.heap.pending_allocations.remove(base)?;
+        let resolved_base = if succeeds {
+            let PointerBlock::Symbolic(Variable(identity)) = base.block else {
+                return None;
+            };
+            Pointer {
+                block: PointerBlock::Heap(identity),
+                offset: PointerOffsetTerm::Constant(0),
+            }
+        } else {
+            Pointer::null()
+        };
+        if succeeds {
+            let prior = (!memory_dag_disabled()).then(|| intern_c_memory_ref(&self));
+            self.blocks
+                .insert(resolved_base.block.clone(), CBlock::new(bytes));
+            self.heap
+                .live_allocations
+                .insert(resolved_base.clone(), bytes);
+            self.heap
+                .uninitialized_allocations
+                .insert(resolved_base.clone());
+            if let Some(prior) = prior {
+                record_c_memory_derivation(
+                    &self,
+                    CMemoryDerivation::HeapAllocated {
+                        base: prior,
+                        block: resolved_base.block.clone(),
+                        bytes,
+                    },
+                );
+            }
+        }
+        Some((self, bytes, resolved_base))
     }
 
     pub(super) fn with_loop_memory_havoc(
@@ -4167,6 +4373,8 @@ impl CResource {
 }
 
 impl CResourceFact {
+    pub const ALLOCATION_RESOURCE_NAME: &'static str = "allocation";
+
     pub fn own_memory(range: CMemoryRange) -> Self {
         Self::Own(CResource::Memory(range))
     }
@@ -4185,6 +4393,53 @@ impl CResourceFact {
 
     pub fn own_token(name: String, arguments: Vec<CValue>) -> Self {
         Self::Own(CResource::Token { name, arguments })
+    }
+
+    pub fn own_allocation(base: Pointer, bytes: u32) -> Self {
+        Self::own_token(
+            Self::ALLOCATION_RESOURCE_NAME.to_string(),
+            vec![CValue::Pointer(base), int32(bytes)],
+        )
+    }
+
+    pub fn allocation(&self) -> Option<(&Pointer, u32)> {
+        let Self::Own(CResource::Token { name, arguments }) = self else {
+            return None;
+        };
+        if name != Self::ALLOCATION_RESOURCE_NAME {
+            return None;
+        }
+        let [CValue::Pointer(base), CValue::Int32(bytes)] = arguments.as_slice() else {
+            return None;
+        };
+        Some((base, bytes.as_const()?))
+    }
+
+    pub(super) fn may_refer_to_memory_block(&self, block: &PointerBlock) -> bool {
+        match self.resource() {
+            CResource::Memory(range) => &range.base().block == block,
+            CResource::Composite { arguments, .. } => arguments.iter().any(
+                |argument| matches!(argument, CValue::Pointer(pointer) if &pointer.block == block),
+            ),
+            CResource::Token { .. } => false,
+        }
+    }
+
+    pub(super) fn is_proven_separate_from_allocation(
+        &self,
+        base: &Pointer,
+        bytes: u32,
+        assumptions: &Assumptions,
+    ) -> bool {
+        let allocation_memory = CResource::Memory(CMemoryRange::new(
+            base.clone(),
+            Bitvector32Term::Constant(0),
+            Bitvector32Term::Constant(bytes / CType::Int32.byte_width()),
+        ));
+        assumptions.proves(&Proposition::CResourceSeparate {
+            left: allocation_memory,
+            right: self.resource().clone(),
+        })
     }
 
     pub fn view_token(name: String, arguments: Vec<CValue>) -> Self {

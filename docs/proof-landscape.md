@@ -92,7 +92,8 @@ propositions and loop `invariant` clauses, including memory-changing invariants
 and invariants that unfold stdlib definitions such as `permutation`.
 
 It is not yet enough for the full real-library proof story. The main missing
-pieces are full struct values and aggregate types, heap allocation and ownership, broader integer
+pieces are full struct values and aggregate types, heap allocation beyond the
+fixed-size object slice, richer shared-ownership models, broader integer
 types/conversions, theorem libraries beyond the first `apply(...)` slice,
 richer intermediate fact
 management, module/import support, and a real-C or pilot-driven frontend

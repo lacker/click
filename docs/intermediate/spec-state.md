@@ -57,6 +57,8 @@ Click already has a few spec-only mechanisms:
 - `witness` supplies proof-local values for existential goals.
 - `views p[lo..hi]` and `owns p[lo..hi]` introduce resource facts for external
   memory accesses.
+- `allocation(base, bytes)` records exclusive responsibility for a supported
+  live heap allocation until it is returned or discharged by `free`.
 
 These are useful, but they are not the same as first-class mutable spec state.
 

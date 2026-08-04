@@ -201,6 +201,8 @@ fn c0_syntax_models_missing_else_and_empty_statements_as_skip() {
             syntax::C0Statement::Declare { .. }
             | syntax::C0Statement::Assign { .. }
             | syntax::C0Statement::CallAssign { .. }
+            | syntax::C0Statement::HeapAllocate { .. }
+            | syntax::C0Statement::HeapFree { .. }
             | syntax::C0Statement::Return(_)
             | syntax::C0Statement::Store { .. } => false,
         }
@@ -355,6 +357,98 @@ fn c0_syntax_retains_struct_pointee_types_across_chained_fields() {
             ..
         } if name == "leaf"
     ));
+}
+
+#[test]
+fn c0_syntax_lowers_struct_malloc_sizeof_and_free() {
+    fn contains_heap_operations(statement: &syntax::C0Statement) -> (bool, bool) {
+        match statement {
+            syntax::C0Statement::HeapAllocate { target, bytes } => {
+                assert_eq!(target, "item");
+                assert_eq!(*bytes, 16);
+                (true, false)
+            }
+            syntax::C0Statement::HeapFree { pointer } => {
+                assert_eq!(pointer, &syntax::C0Expression::Variable("item".to_string()));
+                (false, true)
+            }
+            syntax::C0Statement::Seq(first, second) => {
+                let first = contains_heap_operations(first);
+                let second = contains_heap_operations(second);
+                (first.0 || second.0, first.1 || second.1)
+            }
+            _ => (false, false),
+        }
+    }
+
+    let function = syntax::parse_function(
+        r#"
+        struct item {
+            int32 value;
+            struct item* next;
+        };
+
+        int32 allocate_then_free() {
+            struct item* item = malloc(sizeof(struct item));
+            free(item);
+            return 0;
+        }
+        "#,
+    )
+    .expect("the supported malloc/free slice should parse");
+
+    assert_eq!(contains_heap_operations(function.body()), (true, true));
+}
+
+#[test]
+fn c0_syntax_rejects_malloc_size_that_does_not_match_its_target() {
+    let error = syntax::parse_function(
+        r#"
+        struct left { int32 value; };
+        struct right { int32 value; };
+        struct left* wrong() {
+            struct left* value = malloc(sizeof(struct right));
+            return value;
+        }
+        "#,
+    )
+    .expect_err("malloc must use the target pointee's exact layout");
+
+    assert!(error.message().contains("does not match target type"));
+}
+
+#[test]
+fn c0_syntax_rejects_dynamic_malloc_sizes_and_wrong_free_arity() {
+    let malloc_error = syntax::parse_function(
+        r#"
+        struct item { int32 value; };
+        struct item* dynamic(int32 bytes) {
+            struct item* item = malloc(bytes);
+            return item;
+        }
+        "#,
+    )
+    .expect_err("this slice should reject dynamic allocation sizes");
+    assert!(
+        malloc_error
+            .message()
+            .contains("requires exactly `sizeof(struct T)`")
+    );
+
+    let free_error = syntax::parse_function(
+        r#"
+        int32 bad_free(int32* value) {
+            free(value, value);
+            return 0;
+        }
+        "#,
+    )
+    .expect_err("free must have one argument");
+    assert!(
+        free_error
+            .message()
+            .contains("expects one pointer argument")
+    );
 }
 
 #[test]

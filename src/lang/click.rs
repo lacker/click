@@ -2850,6 +2850,8 @@ fn c0_statement_calls(statement: &syntax::C0Statement) -> Vec<BTreeSet<String>> 
             }
             syntax::C0Statement::Declare { .. }
             | syntax::C0Statement::Assign { .. }
+            | syntax::C0Statement::HeapAllocate { .. }
+            | syntax::C0Statement::HeapFree { .. }
             | syntax::C0Statement::Return(_)
             | syntax::C0Statement::Store { .. } => calls.push(BTreeSet::new()),
         }

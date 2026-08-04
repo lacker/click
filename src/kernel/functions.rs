@@ -495,7 +495,7 @@ fn execute_verified_function_rule(
                 continue;
             }
         };
-        entry_state.resources = transfer.callee_resources;
+        entry_state.resources = transfer.callee_resources.clone();
         let entry_contract_state =
             with_contract_argument_views(&entry_state, &arguments_path.values);
 
@@ -641,6 +641,7 @@ fn execute_verified_function_rule(
         let return_resources = match evaluate_function_return_resources(
             &transfer.caller_resources_after_requirements,
             &output_resource_state,
+            post_state.resources(),
             function,
             &effective_assumptions,
             budget,
@@ -655,6 +656,24 @@ fn execute_verified_function_rule(
                 continue;
             }
         };
+        let memory = match apply_verified_allocation_lifetime_effects(
+            post_state.memory.clone(),
+            &transfer.callee_resources,
+            &return_resources,
+            function,
+            &effective_assumptions,
+        ) {
+            Ok(memory) => memory,
+            Err(error) => {
+                paths.push(CFunctionPath {
+                    outcome: CFunctionOutcome::RuntimeError(error),
+                    facts,
+                    obligations,
+                });
+                continue;
+            }
+        };
+        post_state.memory = memory;
         post_state.resources = return_resources.clone();
         let post_contract_state = with_contract_argument_views(&post_state, &arguments_path.values);
 
@@ -699,6 +718,96 @@ fn execute_verified_function_rule(
     }
     budget.consume_paths(paths.len())?;
     Ok(paths)
+}
+
+fn apply_verified_allocation_lifetime_effects(
+    mut memory: CMemory,
+    input_resources: &ResourceContext,
+    output_resources: &ResourceContext,
+    function: &CFunction,
+    assumptions: &Assumptions,
+) -> Result<CMemory, CRuntimeError> {
+    let input = expand_all_composite_resource_facts(
+        input_resources,
+        function.composite_resource_definitions(),
+        &memory,
+        assumptions,
+    )
+    .ok_or_else(|| {
+        CRuntimeError::FunctionContract(
+            "could not inspect input allocation effects at call".to_string(),
+        )
+    })?;
+    let output = expand_all_composite_resource_facts(
+        output_resources,
+        function.composite_resource_definitions(),
+        &memory,
+        assumptions,
+    )
+    .ok_or_else(|| {
+        CRuntimeError::FunctionContract(
+            "could not inspect output allocation effects at call".to_string(),
+        )
+    })?;
+    let lifetime_assumptions = input
+        .observable_facts_assuming_valid(assumptions)
+        .into_iter()
+        .fold(assumptions.clone(), |assumptions, fact| {
+            assumptions.assume_proposition(fact)
+        });
+
+    for allocation in input.facts().iter().filter_map(|fact| {
+        fact.allocation()
+            .map(|(base, bytes)| (fact, base.clone(), bytes))
+    }) {
+        let (fact, base, bytes) = allocation;
+        if expose_composite_resource_fact(
+            &output,
+            fact,
+            function.composite_resource_definitions(),
+            &memory,
+            &lifetime_assumptions,
+        )
+        .is_some()
+        {
+            continue;
+        }
+        if let Some(stale) = output.facts().iter().find(|resource| {
+            resource.may_refer_to_memory_block(&base.block)
+                && !resource.is_proven_separate_from_allocation(&base, bytes, &lifetime_assumptions)
+        }) {
+            return Err(CRuntimeError::StaleResourceAfterFree {
+                resource: stale.clone(),
+            });
+        }
+        if memory.live_heap_block_size(&base).is_none() {
+            memory = memory
+                .with_heap_allocation_claim(base.clone(), bytes)
+                .ok_or(CRuntimeError::InvalidFree(CInvalidFree::NonHeapPointer))?;
+        }
+        memory = memory
+            .free_heap_block(&base)
+            .map_err(CRuntimeError::InvalidFree)?;
+    }
+
+    for (base, bytes) in output.facts().iter().filter_map(CResourceFact::allocation) {
+        if input.facts().iter().any(|fact| {
+            fact.allocation()
+                .is_some_and(|(input_base, input_bytes)| input_base == base && input_bytes == bytes)
+        }) || memory.live_heap_block_size(base).is_some()
+        {
+            continue;
+        }
+        memory = memory
+            .with_heap_allocation_claim(base.clone(), bytes)
+            .ok_or_else(|| {
+                CRuntimeError::FunctionContract(
+                    "returned allocation conflicts with an existing or retired lifetime"
+                        .to_string(),
+                )
+            })?;
+    }
+    Ok(memory)
 }
 
 fn with_contract_argument_views(state: &CState, values: &[CValue]) -> CState {
@@ -980,6 +1089,7 @@ fn prepare_function_resource_transfer(
 fn evaluate_function_return_resources(
     caller_resources_after_requirements: &ResourceContext,
     post_state: &CState,
+    post_resources: &ResourceContext,
     function: &CFunction,
     assumptions: &Assumptions,
     budget: &mut ExecutionBudget,
@@ -993,10 +1103,17 @@ fn evaluate_function_return_resources(
         Ok(resources) => resources,
         Err(error) => return Ok(Err(error)),
     };
+    // A view returned to a caller that already owns the same resource does
+    // not create another persistent capability. Keeping both spellings would
+    // make a later valid mutation or free look as though a stale borrow were
+    // still live.
+    let newly_ensured_resources = ensured_resources.facts().iter().filter(|fact| {
+        !fact.is_view() || !caller_resources_after_requirements.satisfies_fact(fact, assumptions)
+    });
     let return_resources = match caller_resources_after_requirements
         .clone()
         .try_compose_with_facts_delaying_normalization(
-            ensured_resources.facts().iter().cloned(),
+            newly_ensured_resources.cloned(),
             assumptions,
         ) {
         Ok(resources) => resources,
@@ -1016,16 +1133,17 @@ fn evaluate_function_return_resources(
         .facts()
         .iter()
         .filter_map(CResourceFact::core)
-        .filter(|core| !return_resources.facts().contains(core))
+        .filter(|core| !return_resources.satisfies_fact(core, assumptions))
         .collect::<Vec<_>>();
     if !function.resource_ensures().is_empty() {
-        for core in post_state
-            .resources()
+        for core in post_resources
             .facts()
             .iter()
             .filter_map(CResourceFact::core)
         {
-            if !projected_cores.contains(&core) && !return_resources.facts().contains(&core) {
+            if !projected_cores.contains(&core)
+                && !return_resources.satisfies_fact(&core, assumptions)
+            {
                 projected_cores.push(core);
             }
         }
@@ -1982,6 +2100,106 @@ fn resource_fact_transfer_priority(resource: &CResourceFact) -> u8 {
     }
 }
 
+fn unreturned_allocation_obligation(
+    actual_state: &CState,
+    returned_resources: &ResourceContext,
+    function: &CFunction,
+    assumptions: &Assumptions,
+) -> Result<Option<CResourceFact>, CRuntimeError> {
+    let Some(actual) = expand_all_composite_resource_facts(
+        actual_state.resources(),
+        function.composite_resource_definitions(),
+        actual_state.memory(),
+        assumptions,
+    ) else {
+        return Err(CRuntimeError::FunctionContract(
+            "could not inspect allocation obligations at function return".to_string(),
+        ));
+    };
+    Ok(actual
+        .facts()
+        .iter()
+        .filter(|fact| fact.allocation().is_some())
+        .find(|allocation| {
+            expose_composite_resource_fact(
+                returned_resources,
+                allocation,
+                function.composite_resource_definitions(),
+                actual_state.memory(),
+                assumptions,
+            )
+            .is_none()
+        })
+        .cloned())
+}
+
+pub(crate) fn unreturned_allocation_at_function_exit(
+    state: &CState,
+    value: &CValue,
+    function: &CFunction,
+    assumptions: &Assumptions,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Result<Option<CResourceFact>, CRuntimeError>> {
+    let function_can_package_allocation =
+        function
+            .composite_resource_definitions()
+            .iter()
+            .any(|definition| {
+                definition.contains().iter().any(|resource| {
+                    matches!(
+                        resource,
+                        CResourceSpec::Token { name, .. }
+                            if name == CResourceFact::ALLOCATION_RESOURCE_NAME
+                    )
+                })
+            });
+    if !function_can_package_allocation
+        && !state
+            .resources()
+            .facts()
+            .iter()
+            .any(|fact| fact.allocation().is_some())
+    {
+        return Ok(Ok(None));
+    }
+    let Some(actual_resources) = expand_all_composite_resource_facts(
+        state.resources(),
+        function.composite_resource_definitions(),
+        state.memory(),
+        assumptions,
+    ) else {
+        return Ok(Err(CRuntimeError::FunctionContract(
+            "could not inspect allocation obligations at function exit".to_string(),
+        )));
+    };
+    if !actual_resources
+        .facts()
+        .iter()
+        .any(|fact| fact.allocation().is_some())
+    {
+        return Ok(Ok(None));
+    }
+    let mut output_state = state.clone();
+    output_state
+        .locals
+        .set_typed("result".to_string(), value.clone(), function.return_type());
+    let returned_resources = match evaluate_function_resource_context(
+        &output_state,
+        function.resource_ensures(),
+        assumptions,
+        budget,
+    )? {
+        Ok(resources) => resources,
+        Err(error) => return Ok(Err(error)),
+    };
+    Ok(unreturned_allocation_obligation(
+        &output_state,
+        &returned_resources,
+        function,
+        assumptions,
+    ))
+}
+
 #[allow(clippy::too_many_arguments)]
 fn function_outcome_from_body_with_resource_transfer(
     caller_state: &CState,
@@ -2019,6 +2237,7 @@ fn function_outcome_from_body_with_resource_transfer(
     let return_resources = match evaluate_function_return_resources(
         &transfer.caller_resources_after_requirements,
         &output_resource_state,
+        state.resources(),
         function,
         assumptions,
         budget,
@@ -2026,6 +2245,16 @@ fn function_outcome_from_body_with_resource_transfer(
         Ok(resources) => resources,
         Err(error) => return Ok((CFunctionOutcome::RuntimeError(error), obligations)),
     };
+    match unreturned_allocation_obligation(&state, &return_resources, function, assumptions) {
+        Ok(Some(allocation)) => {
+            return Ok((
+                CFunctionOutcome::RuntimeError(CRuntimeError::LiveAllocationLeak { allocation }),
+                obligations,
+            ));
+        }
+        Err(error) => return Ok((CFunctionOutcome::RuntimeError(error), obligations)),
+        Ok(None) => {}
+    }
 
     let mut return_state = caller_state.clone();
     return_state.memory = state.memory;

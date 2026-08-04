@@ -93,12 +93,15 @@ withheld if any reachable loop, recursive component, or callee lacks evidence.
 For `decreases resource`, the plan contains only an index into the exact entry
 resource requirements. The kernel resolves that requirement and the exact
 composite definition again, instantiates its guard and direct recursive
-children, requires the guard as an exact contract precondition, checks the
-function's certified immutable effect, and compares every direct self-call's
-instantiated measure with a direct child. C-local aliases are normalized from
-the source body. Thus the surface plan cannot assert ancestry, and an
-unrelated or same-parent resource does not become decreasing merely because it
-has the same resource name.
+children, checks that control flow establishes the active guard before every
+recursive edge, and compares every direct self-call's instantiated measure
+with a direct child. C-local aliases and branch polarity are normalized from
+the source body. The already certified partial contract remains responsible
+for the actual resource transfer and memory safety, so a structurally ranked
+function may consume or mutate its witness, including freeing a parent after
+destroying its child. Thus the surface plan cannot assert ancestry, and an
+inactive, unrelated, or same-parent resource does not become decreasing merely
+because it has the same resource name.
 
 Termination rules live in their own execution-environment map. Constructing or
 applying `CVerifiedFunctionRule` does not consult that map, so a termination
@@ -245,6 +248,28 @@ An opaque pointer return is a symbolic pointer block that may alias any
 existing block. Only a certified postcondition or resource fact can establish
 that it equals an argument or is distinct from existing storage; an opaque
 return is not treated as an allocation.
+
+Modeled heap allocation is a different kernel transition. A pending symbolic
+`malloc` result is refined by ordinary pointer-null control flow. Its null arm
+leaves memory unchanged; its success arm creates a fresh exact-size heap block,
+marks its cells uninitialized, and produces complete owned memory plus the
+exclusive `allocation(base, bytes)` lifetime resource. Returning before that
+outcome is refined is rejected.
+
+Nonnull `free` requires the exact live base, allocation authority, and complete
+owned access. It retires the block identity, clears its cells, consumes those
+resources, and rejects surviving resource aliases. Retired identities make
+use-after-free and double-free explicit. `HeapAllocated` and `HeapFreed` memory
+DAG edges preserve these transitions for replay; an allocation resource that
+crosses a verified call is also interpreted as a lifetime effect, not as an
+untrusted ordinary token.
+
+If a directly required composite resource has an undecided conditional body,
+opaque-contract certification derives both guard cases from the kernel
+resource definition and executes the function in each case. This permits a
+proof-only case split to justify branchless C such as unconditional
+`free(nullable_pointer)`. Both cases are mandatory; a safe empty/null case
+cannot hide an unsafe active-resource case.
 
 ## Assumption Reasoning
 

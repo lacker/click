@@ -380,6 +380,10 @@ fn memory_derivations_reach(
             CMemoryDerivation::BlockDeclared { .. } | CMemoryDerivation::CellsForgotten { .. } => {
                 extended_dag_bridging_active()
             }
+            CMemoryDerivation::HeapAllocated { block, .. }
+            | CMemoryDerivation::HeapFreed { block, .. } => {
+                pointer.block != *block && extended_dag_bridging_active()
+            }
             CMemoryDerivation::CallHavoc { mutable_ranges, .. } => {
                 assumptions.ranges_proven_disjoint_from_pointer(mutable_ranges, pointer)
             }
@@ -558,6 +562,12 @@ fn memory_dag_cell_source(
             // the pre-arc absence of an edge.
             CMemoryDerivation::BlockDeclared { .. } | CMemoryDerivation::CellsForgotten { .. } => {
                 if !extended_dag_bridging_active() {
+                    return MemoryDagCell::Unwritten { node: current };
+                }
+            }
+            CMemoryDerivation::HeapAllocated { block, .. }
+            | CMemoryDerivation::HeapFreed { block, .. } => {
+                if pointer.block == *block || !extended_dag_bridging_active() {
                     return MemoryDagCell::Unwritten { node: current };
                 }
             }
@@ -2506,6 +2516,17 @@ pub fn c_call_assign(
     }
 }
 
+pub fn c_heap_allocate(target: impl Into<String>, bytes: u32) -> CStatement {
+    CStatement::HeapAllocate {
+        target: target.into(),
+        bytes,
+    }
+}
+
+pub fn c_heap_free(pointer: CExpression) -> CStatement {
+    CStatement::HeapFree { pointer }
+}
+
 pub fn c_declare(name: impl Into<String>, c_type: CType) -> CStatement {
     CStatement::Declare {
         name: name.into(),
@@ -3599,16 +3620,66 @@ pub fn prove_c_function_contract_execution_paths_with_environment(
 ) -> CFunctionContractExecution {
     let selection_assumptions =
         assumptions_with_propositions(&Assumptions::new(), &derived_entry_facts);
-    let execution = match c_function_contract_certification_assumptions(
+    let Some(base_assumptions) = c_function_contract_certification_assumptions(
         &state,
         &function,
         &arguments,
         Assumptions::new(),
         &selection_assumptions,
-    ) {
-        Some(mut assumptions) => {
-            let Some(mut entry_state) = c_function_entry_state(&state, &function, &arguments)
-            else {
+    ) else {
+        return CFunctionContractExecution {
+            execution: SymbolicCExecution {
+                paths: Vec::new(),
+                limit: None,
+            },
+        };
+    };
+    let Some(resource_condition_cases) =
+        contract_resource_condition_cases(&state, &function, &arguments, &base_assumptions)
+    else {
+        return CFunctionContractExecution {
+            execution: SymbolicCExecution {
+                paths: Vec::new(),
+                limit: None,
+            },
+        };
+    };
+    let mut combined_paths = Vec::new();
+    for case_facts in resource_condition_cases {
+        let case_seed = assumptions_with_propositions(&Assumptions::new(), &case_facts);
+        let Some(mut assumptions) = c_function_contract_certification_assumptions(
+            &state,
+            &function,
+            &arguments,
+            case_seed,
+            &selection_assumptions,
+        ) else {
+            return CFunctionContractExecution {
+                execution: SymbolicCExecution {
+                    paths: Vec::new(),
+                    limit: None,
+                },
+            };
+        };
+        let Some(mut entry_state) = c_function_entry_state(&state, &function, &arguments) else {
+            return CFunctionContractExecution {
+                execution: SymbolicCExecution {
+                    paths: Vec::new(),
+                    limit: None,
+                },
+            };
+        };
+        let has_recursive_resources = function
+            .composite_resource_definitions()
+            .iter()
+            .any(CCompositeResourceDefinition::is_recursive);
+        if !has_recursive_resources {
+            let Some(entry_resources) = expand_all_composite_resource_facts(
+                entry_state.resources(),
+                function.composite_resource_definitions(),
+                entry_state.memory(),
+                &assumptions,
+            ) else {
                 return CFunctionContractExecution {
                     execution: SymbolicCExecution {
                         paths: Vec::new(),
@@ -3616,149 +3687,252 @@ pub fn prove_c_function_contract_execution_paths_with_environment(
                     },
                 };
             };
-            let has_recursive_resources = function
-                .composite_resource_definitions()
-                .iter()
-                .any(CCompositeResourceDefinition::is_recursive);
-            if !has_recursive_resources {
-                let Some(entry_resources) = expand_all_composite_resource_facts(
-                    entry_state.resources(),
-                    function.composite_resource_definitions(),
-                    entry_state.memory(),
-                    &assumptions,
-                ) else {
-                    return CFunctionContractExecution {
-                        execution: SymbolicCExecution {
-                            paths: Vec::new(),
-                            limit: None,
-                        },
-                    };
-                };
-                entry_state.resources = entry_resources.clone();
-                for fact in derived_entry_facts {
-                    if certification_proves_proposition(&assumptions, &fact)
-                        || resources_certify_loadability(
-                            &entry_state,
-                            &entry_resources,
-                            &fact,
-                            &assumptions,
-                        )
-                    {
-                        assumptions = assumptions.assume_proposition(fact);
-                    }
-                }
-            } else {
-                // The caller state already contains the proof-directed
-                // recursive projections certified above. Preserve that
-                // targeted boundary; globally expanding it would erase child
-                // composites and expose unrelated recursive branches.
-                let mut entry_resources = entry_state.resources().clone();
-                for fact in derived_entry_facts {
-                    if assumptions.proves_exact(&fact) {
-                        assumptions = assumptions.assume_proposition(fact);
-                        continue;
-                    }
-                    if let Proposition::CMemoryLoadable { base, bytes, .. } = &fact
-                        && let Some(bytes) = bytes.as_const()
-                    {
-                        let projected = CResourceFact::view_memory(CMemoryRange::new(
-                            base.clone(),
-                            Bitvector32Term::Constant(0),
-                            Bitvector32Term::Constant(1),
-                        ));
-                        if let Some(exposed) = expose_composite_resource_fact(
-                            &entry_resources,
-                            &projected,
-                            function.composite_resource_definitions(),
-                            entry_state.memory(),
-                            &assumptions,
-                        ) {
-                            entry_resources = exposed.unchecked_with_fact(projected);
-                            assumptions = assumptions.assume_proposition(fact);
-                            continue;
-                        }
-                        if resource_context_has_structural_read(
-                            &entry_resources,
-                            base,
-                            bytes,
-                            &assumptions,
-                        ) {
-                            entry_resources = entry_resources.unchecked_with_fact(projected);
-                            assumptions = assumptions.assume_proposition(fact);
-                            continue;
-                        }
-                    }
-                    if resources_certify_loadability(
+            entry_state.resources = entry_resources.clone();
+            for fact in &derived_entry_facts {
+                if certification_proves_proposition(&assumptions, fact)
+                    || resources_certify_loadability(
                         &entry_state,
                         &entry_resources,
-                        &fact,
+                        fact,
+                        &assumptions,
+                    )
+                {
+                    assumptions = assumptions.assume_proposition(fact.clone());
+                }
+            }
+        } else {
+            // The caller state already contains the proof-directed
+            // recursive projections certified above. Preserve that
+            // targeted boundary; globally expanding it would erase child
+            // composites and expose unrelated recursive branches.
+            let mut entry_resources = entry_state.resources().clone();
+            for fact in &derived_entry_facts {
+                if assumptions.proves_exact(fact) {
+                    assumptions = assumptions.assume_proposition(fact.clone());
+                    continue;
+                }
+                if let Proposition::CMemoryLoadable { base, bytes, .. } = &fact
+                    && let Some(bytes) = bytes.as_const()
+                {
+                    let projected = CResourceFact::view_memory(CMemoryRange::new(
+                        base.clone(),
+                        Bitvector32Term::Constant(0),
+                        Bitvector32Term::Constant(1),
+                    ));
+                    if let Some(exposed) = expose_composite_resource_fact(
+                        &entry_resources,
+                        &projected,
+                        function.composite_resource_definitions(),
+                        entry_state.memory(),
                         &assumptions,
                     ) {
-                        if let Proposition::CMemoryLoadable { base, .. } = &fact {
-                            entry_resources = entry_resources.unchecked_with_fact(
-                                CResourceFact::view_memory(CMemoryRange::new(
-                                    base.clone(),
-                                    Bitvector32Term::Constant(0),
-                                    Bitvector32Term::Constant(1),
-                                )),
-                            );
-                        }
-                        assumptions = assumptions.assume_proposition(fact);
+                        entry_resources = exposed.unchecked_with_fact(projected);
+                        assumptions = assumptions.assume_proposition(fact.clone());
                         continue;
                     }
-                    let proves_fact = match &fact {
-                        Proposition::ConditionIs(condition, value) => {
-                            assumptions.proves_condition_exact_or_snapshot(condition, *value)
-                                || assumptions.decide(condition) == Some(*value)
-                        }
-                        Proposition::Not(body) => match body.as_ref() {
-                            Proposition::ConditionIs(condition, value) => {
-                                assumptions.proves_condition_exact_or_snapshot(condition, !*value)
-                                    || assumptions.decide(condition) == Some(!*value)
-                            }
-                            _ => assumptions.proves_exact(&fact),
-                        },
-                        _ => assumptions.proves_exact(&fact),
-                    };
-                    if proves_fact {
-                        assumptions = assumptions.assume_proposition(fact);
+                    if resource_context_has_structural_read(
+                        &entry_resources,
+                        base,
+                        bytes,
+                        &assumptions,
+                    ) {
+                        entry_resources = entry_resources.unchecked_with_fact(projected);
+                        assumptions = assumptions.assume_proposition(fact.clone());
+                        continue;
                     }
                 }
-                entry_state.resources = entry_resources;
-            }
-            match mode {
-                CFunctionContractExecutionMode::VerifyLoops => {
-                    prove_symbolic_c_function_verification_paths_with_environment_and_budget_mode(
-                        state,
-                        function,
-                        arguments,
-                        assumptions,
-                        environment,
-                        execution_semantics,
-                        ExecutionBudget::default(),
-                        true,
-                    )
+                if resources_certify_loadability(&entry_state, &entry_resources, fact, &assumptions)
+                {
+                    if let Proposition::CMemoryLoadable { base, .. } = &fact {
+                        entry_resources = entry_resources.unchecked_with_fact(
+                            CResourceFact::view_memory(CMemoryRange::new(
+                                base.clone(),
+                                Bitvector32Term::Constant(0),
+                                Bitvector32Term::Constant(1),
+                            )),
+                        );
+                    }
+                    assumptions = assumptions.assume_proposition(fact.clone());
+                    continue;
                 }
-                CFunctionContractExecutionMode::ExecuteLoops => {
-                    prove_symbolic_c_function_execution_paths_with_environment_and_budget_mode(
-                        state,
-                        function,
-                        arguments,
-                        assumptions,
-                        environment,
-                        execution_semantics,
-                        ExecutionBudget::default(),
-                        true,
-                    )
+                let proves_fact = match &fact {
+                    Proposition::ConditionIs(condition, value) => {
+                        assumptions.proves_condition_exact_or_snapshot(condition, *value)
+                            || assumptions.decide(condition) == Some(*value)
+                    }
+                    Proposition::Not(body) => match body.as_ref() {
+                        Proposition::ConditionIs(condition, value) => {
+                            assumptions.proves_condition_exact_or_snapshot(condition, !*value)
+                                || assumptions.decide(condition) == Some(!*value)
+                        }
+                        _ => assumptions.proves_exact(fact),
+                    },
+                    _ => assumptions.proves_exact(fact),
+                };
+                if proves_fact {
+                    assumptions = assumptions.assume_proposition(fact.clone());
                 }
             }
+            entry_state.resources = entry_resources;
         }
-        None => SymbolicCExecution {
-            paths: Vec::new(),
+        let execution = match mode {
+            CFunctionContractExecutionMode::VerifyLoops => {
+                prove_symbolic_c_function_verification_paths_with_environment_and_budget_mode(
+                    state.clone(),
+                    function.clone(),
+                    arguments.clone(),
+                    assumptions,
+                    environment.clone(),
+                    execution_semantics,
+                    ExecutionBudget::default(),
+                    true,
+                )
+            }
+            CFunctionContractExecutionMode::ExecuteLoops => {
+                prove_symbolic_c_function_execution_paths_with_environment_and_budget_mode(
+                    state.clone(),
+                    function.clone(),
+                    arguments.clone(),
+                    assumptions,
+                    environment.clone(),
+                    execution_semantics,
+                    ExecutionBudget::default(),
+                    true,
+                )
+            }
+        };
+        if let Some(limit) = execution.limit {
+            return CFunctionContractExecution {
+                execution: SymbolicCExecution {
+                    paths: Vec::new(),
+                    limit: Some(limit),
+                },
+            };
+        }
+        combined_paths.extend(execution.paths);
+    }
+    CFunctionContractExecution {
+        execution: SymbolicCExecution {
+            paths: combined_paths,
             limit: None,
         },
-    };
-    CFunctionContractExecution { execution }
+    }
+}
+
+/// Returns an exhaustive set of proof-only cases for undecided guards on
+/// composite resources required directly at function entry.
+///
+/// A contract such as `owns nullable(p)` denotes either an empty resource or
+/// its guarded body. Exact certification must check both meanings when the
+/// caller leaves the guard symbolic, even if the C body contains no matching
+/// `if`. The cases below are generated wholly from the kernel contract and
+/// always include both truth values, so they add no trusted hypothesis.
+fn contract_resource_condition_cases(
+    caller_state: &CState,
+    function: &CFunction,
+    arguments: &[CExpression],
+    assumptions: &Assumptions,
+) -> Option<Vec<Vec<Proposition>>> {
+    let entry_state = c_function_entry_state(caller_state, function, arguments)?;
+    let mut budget = ExecutionBudget::default();
+    let required_resources = evaluate_function_resource_context(
+        &entry_state,
+        function.resource_requires(),
+        assumptions,
+        &mut budget,
+    )
+    .ok()?
+    .ok()?;
+    let mut guards = Vec::new();
+    for resource in required_resources.facts() {
+        let CResource::Composite {
+            name,
+            arguments: resource_arguments,
+        } = resource.resource()
+        else {
+            continue;
+        };
+        let definition = function
+            .composite_resource_definitions()
+            .iter()
+            .find(|definition| definition.name() == name)?;
+        let Some(condition) = definition.condition() else {
+            continue;
+        };
+        if definition.parameters().len() != resource_arguments.len() {
+            return None;
+        }
+        let mut condition_state = CState::new()
+            .with_memory(entry_state.memory().clone())
+            .with_resource_context(required_resources.clone());
+        for (parameter, value) in definition.parameters().iter().zip(resource_arguments) {
+            if parameter.c_type() != value.c_type() {
+                return None;
+            }
+            condition_state.locals.set_typed(
+                parameter.name().to_string(),
+                value.clone(),
+                parameter.c_type(),
+            );
+        }
+        let lowering_assumptions = assumptions
+            .clone()
+            .allow_symbolic_contract_loads()
+            .prefer_symbolic_external_loads();
+        let paths = lower_spec_proposition_at_state_with_loop_entry(
+            &condition_state,
+            condition,
+            None,
+            &lowering_assumptions,
+            &mut budget,
+        )
+        .ok()?;
+        let [path] = paths.as_slice() else {
+            return None;
+        };
+        if !path.obligations.iter().all(|obligation| {
+            certification_proves_proposition(assumptions, obligation.proposition())
+        }) {
+            return None;
+        }
+        if !guards.contains(&path.proposition) {
+            guards.push(path.proposition.clone());
+        }
+    }
+
+    let mut cases = vec![Vec::new()];
+    for guard in guards {
+        let negated = negate_contract_case_proposition(&guard);
+        let mut next = Vec::new();
+        for facts in cases {
+            let case_assumptions = assumptions_with_propositions(assumptions, &facts);
+            if certification_proves_proposition(&case_assumptions, &guard)
+                || certification_proves_proposition(&case_assumptions, &negated)
+            {
+                next.push(facts);
+                continue;
+            }
+            let mut when_true = facts.clone();
+            when_true.push(guard.clone());
+            next.push(when_true);
+            let mut when_false = facts;
+            when_false.push(negated.clone());
+            next.push(when_false);
+        }
+        budget.consume_paths(next.len()).ok()?;
+        cases = next;
+    }
+    Some(cases)
+}
+
+fn negate_contract_case_proposition(proposition: &Proposition) -> Proposition {
+    match proposition {
+        Proposition::ConditionIs(condition, value) => {
+            Proposition::ConditionIs(condition.clone(), !*value)
+        }
+        Proposition::Not(body) => body.as_ref().clone(),
+        proposition => Proposition::Not(Box::new(proposition.clone())),
+    }
 }
 
 /// Splits a proposition into its conjunct leaves.

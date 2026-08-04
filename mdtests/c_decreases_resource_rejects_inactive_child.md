@@ -1,8 +1,10 @@
 # an inactive resource body has no structural child
 
 The empty witness may still satisfy an ordinary recursive partial contract.
-It cannot be treated as containing the guarded child merely because that child
-appears syntactically in the resource definition.
+It cannot be treated as containing a strictly smaller guarded child merely
+because that child appears syntactically in the resource definition. A
+structural recursive call must be reachable only after control flow establishes
+that the parent resource body is active.
 
 ```c filename=c_decreases_resource_rejects_inactive_child.c
 int32 empty_repeat(int32 active) {
@@ -35,5 +37,5 @@ int32 empty_repeat(int32 active) {
 ```
 
 ```expect
-fail: requires the instantiated `guarded` guard as an exact function precondition
+fail: is reachable without establishing the active structural resource guard
 ```

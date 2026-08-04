@@ -86,6 +86,13 @@ pub enum C0Statement {
         function_name: String,
         arguments: Vec<C0Expression>,
     },
+    HeapAllocate {
+        target: String,
+        bytes: u32,
+    },
+    HeapFree {
+        pointer: C0Expression,
+    },
     Seq(Box<C0Statement>, Box<C0Statement>),
     Return(C0Expression),
     Store {
@@ -114,6 +121,10 @@ pub enum C0Expression {
     },
     Int32Literal(u32),
     UInt8Literal(u8),
+    SizeOfStruct {
+        name: String,
+        bytes: u32,
+    },
     LessThan(Box<C0Expression>, Box<C0Expression>),
     LessEqual(Box<C0Expression>, Box<C0Expression>),
     GreaterThan(Box<C0Expression>, Box<C0Expression>),
@@ -289,6 +300,12 @@ impl C0Statement {
                     .map(C0Expression::to_kernel_expression)
                     .collect(),
             ),
+            Self::HeapAllocate { target, bytes } => {
+                crate::kernel::c_heap_allocate(target.clone(), *bytes)
+            }
+            Self::HeapFree { pointer } => {
+                crate::kernel::c_heap_free(pointer.to_kernel_expression())
+            }
             Self::Seq(first, second) => {
                 crate::kernel::c_seq(first.to_kernel_statement(), second.to_kernel_statement())
             }
@@ -338,6 +355,7 @@ impl C0Expression {
             }
             Self::Int32Literal(value) => crate::kernel::c_int32_literal(*value),
             Self::UInt8Literal(value) => crate::kernel::c_uint8_literal(*value),
+            Self::SizeOfStruct { bytes, .. } => crate::kernel::c_int32_literal(*bytes),
             Self::LessThan(left, right) => crate::kernel::c_less_than(
                 left.to_kernel_expression(),
                 right.to_kernel_expression(),
@@ -1001,6 +1019,16 @@ impl Parser {
                         return Err(self.error_here("local array initializers are not supported"));
                     }
                     self.position += 1;
+                    if matches!(self.peek(), Some(Token::Ident(_)))
+                        && self.peek_next() == Some(&Token::LParen)
+                    {
+                        let function_name = self.expect_ident("function name")?;
+                        let arguments = self.parse_call_arguments()?;
+                        let call =
+                            self.call_assignment_statement(name.clone(), function_name, arguments)?;
+                        self.expect(Token::Semicolon)?;
+                        return Ok(C0Statement::Seq(Box::new(declaration), Box::new(call)));
+                    }
                     let expression = self.parse_expression()?;
                     self.expect(Token::Semicolon)?;
                     return Ok(C0Statement::Seq(
@@ -1064,7 +1092,23 @@ impl Parser {
                     ))
                 }
                 Some(other) => {
-                    Err(self.error_here(format!("expected statement, got identifier `{other}`")))
+                    if other == "free" && self.peek_next() == Some(&Token::LParen) {
+                        self.position += 1;
+                        let arguments = self.parse_call_arguments()?;
+                        self.expect(Token::Semicolon)?;
+                        let [pointer] = arguments.as_slice() else {
+                            return Err(self.error_here(format!(
+                                "`free` expects one pointer argument, got {}",
+                                arguments.len()
+                            )));
+                        };
+                        Ok(C0Statement::HeapFree {
+                            pointer: pointer.clone(),
+                        })
+                    } else {
+                        Err(self
+                            .error_here(format!("expected statement, got identifier `{other}`")))
+                    }
                 }
                 None => unreachable!("identifier token should have identifier spelling"),
             },
@@ -1137,11 +1181,7 @@ impl Parser {
                 {
                     let function_name = self.expect_ident("function name")?;
                     let arguments = self.parse_call_arguments()?;
-                    return Ok(C0Statement::CallAssign {
-                        target: name,
-                        function_name,
-                        arguments,
-                    });
+                    return self.call_assignment_statement(name, function_name, arguments);
                 }
                 self.parse_expression()?
             }
@@ -1177,6 +1217,38 @@ impl Parser {
             }
         };
         Ok(C0Statement::Assign { name, expression })
+    }
+
+    fn call_assignment_statement(
+        &self,
+        target: String,
+        function_name: String,
+        arguments: Vec<C0Expression>,
+    ) -> Result<C0Statement, C0SyntaxError> {
+        if function_name != "malloc" {
+            return Ok(C0Statement::CallAssign {
+                target,
+                function_name,
+                arguments,
+            });
+        }
+        let Some(target_struct) = self.variable_structs.get(&target) else {
+            return Err(self.error_here(
+                "this first `malloc` slice requires a pointer-to-struct assignment target",
+            ));
+        };
+        let [C0Expression::SizeOfStruct { name, bytes }] = arguments.as_slice() else {
+            return Err(self.error_here("`malloc` currently requires exactly `sizeof(struct T)`"));
+        };
+        if name != target_struct {
+            return Err(self.error_here(format!(
+                "`malloc(sizeof(struct {name}))` does not match target type `struct {target_struct} *`"
+            )));
+        }
+        Ok(C0Statement::HeapAllocate {
+            target,
+            bytes: *bytes,
+        })
     }
 
     fn parse_expression(&mut self) -> Result<C0Expression, C0SyntaxError> {
@@ -1503,6 +1575,18 @@ impl Parser {
     }
 
     fn parse_primary(&mut self) -> Result<C0Expression, C0SyntaxError> {
+        if self.peek_ident() == Some("sizeof") && self.peek_next() == Some(&Token::LParen) {
+            self.position += 2;
+            self.expect_ident_spelling("struct")?;
+            let name = self.expect_ident("struct name")?;
+            self.expect(Token::RParen)?;
+            let bytes = self
+                .structs
+                .get(&name)
+                .ok_or_else(|| self.error_here(format!("unknown struct declaration `{name}`")))?
+                .size_bytes;
+            return Ok(C0Expression::SizeOfStruct { name, bytes });
+        }
         let at = self.error_context();
         match self.next() {
             Some(Token::Ident(name)) => Ok(C0Expression::Variable(name)),

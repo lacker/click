@@ -2106,6 +2106,10 @@ pub(super) fn collect_c_statement_bitvector_variables(
                 collect_c_expression_bitvector_variables(argument, variables);
             }
         }
+        CStatement::HeapAllocate { .. } => {}
+        CStatement::HeapFree { pointer } => {
+            collect_c_expression_bitvector_variables(pointer, variables);
+        }
         CStatement::Seq(first, second) => {
             collect_c_statement_bitvector_variables(first, variables);
             collect_c_statement_bitvector_variables(second, variables);
@@ -3250,6 +3254,13 @@ pub(super) fn substitute_bitvector_variable_in_c_statement(
                 .map(|argument| substitute_bitvector_variable_in_c_expression(argument, from, to))
                 .collect(),
         },
+        CStatement::HeapAllocate { target, bytes } => CStatement::HeapAllocate {
+            target: target.clone(),
+            bytes: *bytes,
+        },
+        CStatement::HeapFree { pointer } => CStatement::HeapFree {
+            pointer: substitute_bitvector_variable_in_c_expression(pointer, from, to),
+        },
         CStatement::Assert { condition, label } => CStatement::Assert {
             condition: substitute_bitvector_variable_in_c_expression(condition, from, to),
             label: label.clone(),
@@ -4225,6 +4236,47 @@ pub(super) fn substitute_bitvector_variable_in_memory(
     CMemory {
         blocks: memory.blocks.clone(),
         cells,
+        heap: Box::new(CHeapMemory {
+            live_allocations: memory
+                .heap
+                .live_allocations
+                .iter()
+                .map(|(base, bytes)| {
+                    (
+                        substitute_bitvector_variable_in_pointer(base, from, to),
+                        *bytes,
+                    )
+                })
+                .collect(),
+            retired_allocations: memory
+                .heap
+                .retired_allocations
+                .iter()
+                .map(|(base, bytes)| {
+                    (
+                        substitute_bitvector_variable_in_pointer(base, from, to),
+                        *bytes,
+                    )
+                })
+                .collect(),
+            pending_allocations: memory
+                .heap
+                .pending_allocations
+                .iter()
+                .map(|(base, bytes)| {
+                    (
+                        substitute_bitvector_variable_in_pointer(base, from, to),
+                        *bytes,
+                    )
+                })
+                .collect(),
+            uninitialized_allocations: memory
+                .heap
+                .uninitialized_allocations
+                .iter()
+                .map(|base| substitute_bitvector_variable_in_pointer(base, from, to))
+                .collect(),
+        }),
     }
 }
 

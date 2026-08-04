@@ -41,7 +41,7 @@ Current status: mostly done, but this remains a maintenance milestone.
 What exists today:
 
 - C0 symbolic execution for `int32`, `uint8`, pointers, local arrays, memory,
-  function calls, and annotated loops.
+  function calls, annotated loops, and fixed-size struct allocation lifetimes.
 - Surface Click contracts, loop invariants, memory effects, predicates, pure
   functions, `if`, `let`, `.fold`, `forall`, and selected range combinators.
 - A small standard library with `count`, `permutation`, and initial byte-slice
@@ -120,18 +120,18 @@ Likely additions:
   `unfold(resource)` and `fold(resource)` operations for wrappers over built-in
   resources, other declared resources, and resource facts. Fractions, persistent
   token resources, implicit unfold/fold search, custom resource-family algebra,
-  free/deallocation authority, full heap deallocation semantics, and abstract
-  ownership predicates are still future work.
+  abstract ownership predicates are still future work. The fixed-size
+  heap-object slice now adds exclusive allocation authority, complete-access
+  checks for `free`, retired lifetimes, and leak checks at verified exits.
 - First-class spec/model state:
   proof-only state that can be mentioned across program points if examples need
   arbitrary model variables beyond resources.
-- Heap allocation and deallocation in the C semantics.
-- Allocation predicates:
-  allocated object, loadable byte range, initialized range, nullness, and
-  borrowed/shared/owned access built on the permission layer.
-- Free/lifetime obligations:
-  no use-after-free, no double-free, and no leaks for functions whose contracts
-  promise ownership transfer.
+- Broader allocation beyond the current fixed-size
+  `malloc(sizeof(struct T))`/`free` slice: runtime-sized buffers, compatible
+  external allocator declarations, and eventually `calloc`/`realloc`.
+- Richer initialization predicates when examples need to package partially
+  initialized heap storage instead of storing every field before folding an
+  object resource.
 - Struct-field frames:
   preserve fields or ranges not written by a function.
 - Separation-style predicates:
@@ -302,9 +302,8 @@ Done means:
 Good next tasks from the current state:
 
 1. Choose the next spec/model-state boundary before adding fractional or
-   persistent permissions, allocation, final release, or double-release
-   checks. Mandatory viewed/owned range resources and composite resource
-   wrappers already exist.
+   persistent permissions. Mandatory viewed/owned range resources, composite
+   wrappers, and fixed-size allocation lifetimes already exist.
 2. Broaden the struct/field memory model beyond compact C0 field lowering:
    whole-object resources, field-dependent composite resources, field
    frames, and eventually ABI layout details.
@@ -320,8 +319,10 @@ Good next tasks from the current state:
    rvalue promotion and checked `int32`-to-`uint8` narrowing rules. The open
    design question is how much of C's usual arithmetic conversions Click should
    model next versus reject in C0 until the integer story is broader.
-6. Model a tiny heap API or externally specified `malloc`/allocation-sized
-   `free` when the pilot needs allocation or ownership transfer.
+6. Use the allocated-linked-list results to guide the next heap slice before
+   adding runtime-sized buffers or allocator calls: retain definitional
+   lifetime matching, separated survivors across `free`, and proof-local
+   branching as explicit design requirements.
 7. Improve failure output for missing loop invariants and alias/frame facts.
 
 Use the feature playbook for each item: start with a failing mdtest or pilot

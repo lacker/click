@@ -4197,6 +4197,70 @@ fn selected_post_execution_simp_waits_for_its_surface_closer() {
 }
 
 #[test]
+fn selected_post_execution_simp_keeps_the_surviving_execution_branch() {
+    let c_source = r#"
+            struct node {
+                int32 value;
+                struct node* next;
+            };
+
+            struct node* prepend(int32 value, struct node* tail) {
+                struct node* node = malloc(sizeof(struct node));
+                if (node == 0) {
+                    return tail;
+                }
+                node->value = value;
+                node->next = tail;
+                return node;
+            }
+        "#;
+    let click_source = r#"
+            resource allocated_list(node: struct node*) {
+                if node != 0 {
+                    contains allocation(node, sizeof(struct node));
+                    owns object(node);
+                    contains allocated_list(node->next);
+                }
+            }
+
+            verifying "prepend.c";
+
+            struct node* prepend(int32 value, struct node* tail) {
+                consumes allocated_list(tail);
+                produces allocated_list(result);
+                ensures result == tail or result != 0;
+                ensures result != tail implies result->value == value;
+                ensures result != tail implies result->next == tail;
+            } by {
+                execute();
+                if result == tail {
+                    simp();
+                } else {
+                    fold(allocated_list(result));
+                    simp();
+                }
+            }
+        "#;
+    let selected_simp = click_source
+        .rfind("simp();")
+        .expect("success branch should contain a simp");
+    let position = expansion::position_at_offset(click_source, selected_simp);
+    let expanded = expand_c0_tactic_source_at(
+        click_source,
+        &[("prepend.c", c_source)],
+        position.line,
+        position.column,
+    )
+    .expect("the selected success-branch simp should expand");
+    verify_c0_sources(&expanded, &[("prepend.c", c_source)]).unwrap_or_else(|error| {
+        panic!(
+            "the selected success-branch simp expansion should replay: {}\n{expanded}",
+            error.message()
+        )
+    });
+}
+
+#[test]
 fn selected_post_execution_smart_have_uses_its_path_certificate() {
     let c_source = r#"
             int32 identity(int32 x) {

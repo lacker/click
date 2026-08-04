@@ -21,6 +21,31 @@ pointer-valued return, initialization, assignment, argument, and comparison
 contexts. This narrow conversion does not identify pointers with integers:
 nonzero integers still cannot be used as pointers.
 
+## Heap Blocks And Lifetimes
+
+The supported `malloc(sizeof(struct T))` operation has a null outcome and a
+successful outcome. Success creates a fresh block identity with the exact LP64
+size of `struct T`, at offset zero. Heap identities are not reused within a
+proof. Fresh bytes are live but uninitialized, so ownership permits stores but
+does not make an unstored field readable.
+
+Click tracks two different facts on the successful branch:
+
+- owned memory for the complete object permits reads and writes;
+- `allocation(p, sizeof(struct T))` is the exclusive authority and obligation
+  to end that block's lifetime.
+
+`free(p)` requires both facts for the complete allocation and consumes them.
+`free(NULL)` changes nothing. An interior, stack, opaque, or retired pointer is
+not a valid free target. A successful free retires the whole block identity;
+all aliases and derived addresses then reject loads and stores, and a second
+free is diagnosed separately. Verified function exits also check that live
+allocation authority was returned through the contract or actually freed.
+
+The allocation/null refinement and allocation/free transitions are recorded
+as memory-snapshot edges, so replay and modular call verification use the same
+lifetime model as direct execution.
+
 ## Argument Memory And Aliasing
 
 Function pointer parameters are modeled as symbolic offsets into one shared

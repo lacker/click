@@ -87,23 +87,25 @@ Recursive traversal of an inductive resource may instead use its hidden
 structural rank:
 
 ```click
-int32 zero_walk(struct node* node) {
-    decreases resource zero_list(node);
-    requires node != 0;
-    views zero_list(node);
-    immutable;
+int32 list_destroy(struct node* node) {
+    decreases resource list(node);
+    consumes list(node);
     ensures result == 0;
 }
 ```
 
 The declaration must exactly name an owned or viewed entry resource. The
-current structural slice supports direct recursion, an immutable function, a
-guarded directly recursive composite definition, and a simple resource guard
-that is also an exact function precondition. Every recursive call must pass one
-of the definition's direct `contains` children; Click follows ordinary C-local
-aliases but does not accept pointer inequality, a same-named unrelated
-resource, or a newly folded resource as ancestry evidence. This proves descent
-of the finite resource witness, not descent of a pointer value.
+current structural slice supports direct recursion, a guarded directly
+recursive composite definition, and a simple resource guard. Every recursive
+call path must establish that guard, either from a function precondition or
+ordinary C control flow, and must pass one of the definition's direct
+`contains` children. Click follows ordinary C-local aliases but does not accept
+pointer inequality, a same-named unrelated resource, or a newly folded
+resource as ancestry evidence. Because the separately certified partial
+contract checks the actual resource transfer at each call, the traversal may
+consume or mutate resources; postorder recursive deallocation is supported.
+This proves descent of the finite resource witness, not descent of a pointer
+value.
 
 The numeric proof shape is also deliberately small. A function measure must be
 one `int32` variable. A recursive edge passes `measure - K`, and a loop back
@@ -507,9 +509,37 @@ transfers and resource transformations.
 An owned memory resource implies its viewed core: ownership permits both loads
 and stores, while a view permits loads and is copyable across calls. A callee
 using `views` does not consume the caller's viewed or owned element. Owned
-elements are transferred by `owns`, `consumes`, and `produces`. Allocation
-lifecycle and deallocation authority are intentionally outside this first-layer
-resource surface.
+elements are transferred by `owns`, `consumes`, and `produces`.
+
+Fixed-size heap objects add the built-in owned resource
+`allocation(base, bytes)`. It is exclusive authority and responsibility for
+one live heap lifetime; it does not authorize memory access. Complete access is
+spelled separately with `object(base)`. Allocation authority cannot be
+`views`-ed or duplicated, and a verified function may not silently drop it:
+the authority must be returned (possibly inside a composite resource) or
+consumed by an actual `free`.
+
+```click
+resource owned_item(item: struct item*) {
+    if item != 0 {
+        contains allocation(item, sizeof(struct item));
+        owns object(item);
+    }
+}
+```
+
+The conditional body gives a nullable factory one uniform result resource.
+On the null branch the body is empty. On the success branch it packages both
+access and lifetime authority. A read-only helper can `views owned_item(item)`
+without gaining the ability to free it; a destructor must consume and unfold
+the owned wrapper before calling `free`.
+
+When the guard is not known at function entry, a proof-level `if` can split on
+it even if the C body is branchless. Each proof case unfolds the matching
+resource body: the empty branch certifies operations such as `free(NULL)`, and
+the active branch exposes the resources those operations consume. Exact
+contract certification checks both cases independently, so this does not add
+a precondition or require rewriting the C control flow.
 
 Composite and token arguments are compared using proved scalar and pointer
 equalities. Thus a held `list(node->next)` can satisfy `list(tail)` after the
@@ -524,10 +554,10 @@ range loadable for symbolic execution, so ordinary external reads and writes
 do not need a separate `loadable(...)` requirement for the same range.
 
 This is intentionally not the full permission system. There are no fractions,
-ownership predicates, explicit resource algebra tactics, C heap allocation,
-or allocation-sized deallocation semantics yet. `loadable`, `mutable`, and
-`immutable` remain separate concepts from permission: loadability proves an
-access is in bounds, while resources authorize the access.
+general ownership predicates, runtime-sized allocation, or user-defined
+resource algebras. `loadable`, `mutable`, and `immutable` remain separate
+concepts from permission: loadability proves an access is in bounds, while
+resources authorize the access.
 
 ## Propositions
 

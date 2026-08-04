@@ -3416,6 +3416,10 @@ pub(super) fn collect_c0_loop_modified_locals(
         syntax::C0Statement::CallAssign { target, .. } => {
             names.insert(target.clone());
         }
+        syntax::C0Statement::HeapAllocate { target, .. } => {
+            names.insert(target.clone());
+        }
+        syntax::C0Statement::HeapFree { .. } => {}
         syntax::C0Statement::Seq(first, second) => {
             collect_c0_loop_modified_locals(first, names);
             collect_c0_loop_modified_locals(second, names);

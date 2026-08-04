@@ -7,6 +7,12 @@ mdtest instead of inventing syntax from memory.
 Larger example projects live directly under `examples/`. They contain ordinary
 `.c` files and `.click` sidecars, and are verified by `tests/examples.rs`.
 
+`examples/heap-object/` is the focused allocation-lifetime project. It shows a
+nullable factory, full initialization, a read-only borrower, ownership transfer
+across calls, and destruction. The neighboring `heap_*` mdtests pin the main
+negative cases: unresolved allocation outcome, uninitialized read, leak,
+interior free, and double free.
+
 ## Basic Function Contracts
 
 - `mdtests/scalar.md`: simplest scalar postcondition.
@@ -404,6 +410,9 @@ sequence:
   nested full-backing ownership behind an owner-only API.
 - `examples/linked-list/`: a guarded recursive resource over preallocated
   singly linked nodes, with one-layer push/pop proofs and a modular round trip.
+- `examples/allocated-linked-list/`: fixed-size heap allocation packaged in a
+  recursive list resource, including allocation-failure preservation,
+  one-layer free, and a terminating recursive destructor.
 - `examples/binary-tree/`: a guarded recursive resource with two owned child
   trees, including construction, child swapping, a modular leaf pipeline, and
   an immutable recursive walk that visits both sibling subtrees.

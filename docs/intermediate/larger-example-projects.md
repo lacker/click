@@ -10,6 +10,18 @@ C files, sidecar specs, and local documentation explaining the proof boundary.
 
 The current project fixtures are:
 
+### Heap Object
+
+```text
+examples/heap-object/
+```
+
+This fixture follows one fixed-size `struct item` through allocation failure,
+successful initialization, folding into a nullable owning resource, read-only
+borrowing, modular ownership transfer, and destruction. It is the reference
+example for the distinction between complete memory access and exclusive
+allocation authority.
+
 ### Input Cursor
 
 ```text
@@ -42,8 +54,8 @@ This fixture's proof scope is intentionally narrow:
 - `views obj->ref_count` for field reads,
 - `owns obj->ref_count` for field writes.
 
-This gives Click a realistic shape to verify without pretending it already has
-heap allocation or ownership transfer.
+This gives Click a realistic preallocated shape alongside the separate
+heap-object fixture.
 
 ### Detachable Buffer
 
@@ -99,6 +111,22 @@ C's null pointer constant, head access, preallocated push and pop ownership
 transfers, and a multi-call round trip. Each proof unfolds at most one node.
 Allocation, deallocation, traversal loops, shared tails, and cyclic lists
 remain outside the example.
+
+### Allocated Linked List
+
+```text
+examples/allocated-linked-list/
+```
+
+This fixture extends the recursive list with one allocation authority per
+nonnull node. It verifies a prepend operation that returns the original tail
+on allocation failure, borrowed head access, a one-node drop that returns the
+live tail, and a recursive postorder destructor. The destructor accepts null,
+consumes the full list, recursively transfers the direct child resource, and
+then frees the parent; its structural resource measure proves termination even
+though the witness is deallocated during the traversal. A modular pipeline
+combines two independent allocation attempts with borrow, drop, and complete
+cleanup.
 
 ### Binary Tree
 

@@ -208,8 +208,15 @@ pub(super) fn execute_c_statement_verification_paths(
                             } else {
                                 else_branch
                             };
+                            let branch_assumptions = assumptions_with_path_context(
+                                assumptions,
+                                &truthiness_path.facts,
+                                &truthiness_path.obligations,
+                            );
+                            let branch_state =
+                                resolve_pending_heap_allocations(state, &branch_assumptions);
                             paths.extend(execute_c_statement_verification_paths_with_prefix(
-                                state,
+                                &branch_state,
                                 branch,
                                 assumptions,
                                 environment,
@@ -1485,6 +1492,8 @@ pub(super) fn statement_may_write_memory(statement: &CStatement) -> bool {
         | CStatement::Assert { .. }
         | CStatement::Return(_) => false,
         CStatement::CallAssign { .. }
+        | CStatement::HeapAllocate { .. }
+        | CStatement::HeapFree { .. }
         | CStatement::Store { .. }
         | CStatement::TypedStore { .. } => true,
         CStatement::Seq(first, second) => {
@@ -1513,6 +1522,10 @@ pub(super) fn collect_loop_modified_locals(statement: &CStatement, names: &mut B
         CStatement::CallAssign { target, .. } => {
             names.insert(target.clone());
         }
+        CStatement::HeapAllocate { target, .. } => {
+            names.insert(target.clone());
+        }
+        CStatement::HeapFree { .. } => {}
         CStatement::Seq(first, second) => {
             collect_loop_modified_locals(first, names);
             collect_loop_modified_locals(second, names);
@@ -1568,6 +1581,10 @@ pub(super) fn collect_address_taken_locals(statement: &CStatement, names: &mut B
             for argument in arguments {
                 collect_address_taken_in_expression(argument, names);
             }
+        }
+        CStatement::HeapAllocate { .. } => {}
+        CStatement::HeapFree { pointer } => {
+            collect_address_taken_in_expression(pointer, names);
         }
         CStatement::Assert { condition, .. } => {
             collect_address_taken_in_expression(condition, names)

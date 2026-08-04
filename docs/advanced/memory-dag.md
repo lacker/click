@@ -28,7 +28,8 @@ execution already knew.
 - The `SharedCMemory` arena (dense `u32` ids, already the `Eq`/`Hash`
   identity) *is* the name supply.
 - Alongside each id we record how the snapshot was produced:
-  `CMemoryDerivation::{Store, LoopHavoc, CallHavoc}`, each naming its
+  `CMemoryDerivation` edge such as `Store`, `LoopHavoc`, `CallHavoc`,
+  `BlockDeclared`, `HeapAllocated`, or `HeapFreed`, each naming its
   base by `SharedCMemory`. Entry states have no derivation. That is the
   DAG, materialised. The `CMemory` value stays; readers retire one at a
   time.
@@ -113,6 +114,12 @@ canonicalizing arm it contained.
 There are currently no quarantined per-member failures. Future certificate
 spelling, replay, or performance regressions should be diagnosed as focused
 issues rather than treated as reasons to extend the DAG globally.
+
+The fixed-size heap slice adds `HeapAllocated` and `HeapFreed` edges. They
+record the fresh/retired block identity and exact extent. Consumers treat both
+as lifetime-changing boundaries: they may preserve unrelated snapshots, but
+must never transport a load through the affected heap block as though
+allocation or deallocation were an ordinary store.
 
 ## Landed 2026-07-31: fourth and fifth edge kinds, scoped consumers
 
