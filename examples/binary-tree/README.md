@@ -15,3 +15,9 @@ than conflicting ownership.
 The example is intentionally about branching resource composition. It does
 not cover allocation, deallocation, traversal, balancing, parent pointers,
 shared subtrees, or cycles.
+
+The project also includes a verified `tree_is_leaf` algorithm, which observes
+both child links without consuming the tree. A one-level sum and a left
+rotation were also implemented in C. They remain small motivating cases for
+the symbolic-addition, nested-resource certification, and nested mutable-path
+gaps recorded in `issues/`; they are deliberately not listed as verified.

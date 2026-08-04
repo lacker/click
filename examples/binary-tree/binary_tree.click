@@ -13,6 +13,7 @@ verifying "tree_root.c";
 verifying "tree_make_root.c";
 verifying "tree_swap_children.c";
 verifying "tree_leaf_pipeline.c";
+verifying "tree_is_leaf.c";
 
 struct node* tree_empty() {
     produces tree(result);
@@ -93,6 +94,24 @@ int32 tree_leaf_pipeline(struct node* node, int32 value) {
     ensures result == value;
     ensures node->value == value;
 } by {
+    execute();
+    frame();
+    simp();
+}
+
+int32 tree_is_leaf(struct node* node) {
+    requires node != 0;
+    views tree(node);
+    immutable;
+
+    ensures result == 1 implies node->left == 0;
+    ensures result == 1 implies node->right == 0;
+    ensures node->left != 0 implies result == 0;
+    ensures node->left == 0 implies (node->right != 0 implies result == 0);
+    ensures node->left == 0 implies (node->right == 0 implies result == 1);
+    ensures result == 0 or result == 1;
+} by {
+    observe(tree(node));
     execute();
     frame();
     simp();

@@ -2549,6 +2549,50 @@ pub(super) fn initial_claim_context(
         state,
         claim_label,
     )?;
+    let include_owned_composite_cores = function_block
+        .structural_clauses()
+        .iter()
+        .any(|clause| matches!(clause.region(), CodeRegion::Loop(_)));
+    let mut projection_state = state.clone();
+    for iteration in 0..=function_block.requires().len() {
+        if iteration > 0
+            && requirement_propositions(
+                function_block.requires(),
+                parsed_function.parameters(),
+                &arguments,
+                projection_state.memory(),
+                predicate_environment,
+                click_function_environment,
+            )
+            .is_ok()
+        {
+            break;
+        }
+        let available_pure_facts = available_initial_requirement_propositions(
+            function_block.requires(),
+            parsed_function.parameters(),
+            &arguments,
+            projection_state.memory(),
+            predicate_environment,
+            click_function_environment,
+        );
+        let projected = project_initial_composite_resource_cores(
+            resource_environment,
+            parsed_function.parameters(),
+            &arguments,
+            projection_state.clone(),
+            &available_pure_facts,
+            claim_label,
+            true,
+            predicate_environment,
+            click_function_environment,
+        )?;
+        if projected == projection_state {
+            break;
+        }
+        projection_state = projected;
+    }
+    state = state.with_memory(projection_state.memory().clone());
     let mut requirement_pure_facts = requirement_propositions(
         function_block.requires(),
         parsed_function.parameters(),
@@ -2588,10 +2632,6 @@ pub(super) fn initial_claim_context(
         &requirement_pure_facts,
     )
     .map_err(|message| ClickError::new(format!("`{claim_label}` setup failed: {message}")))?;
-    let include_owned_composite_cores = function_block
-        .structural_clauses()
-        .iter()
-        .any(|clause| matches!(clause.region(), CodeRegion::Loop(_)));
     state = project_initial_composite_resource_cores(
         resource_environment,
         parsed_function.parameters(),
@@ -2641,6 +2681,35 @@ pub(super) fn initial_claim_context(
         requirement_pure_facts,
         surface_propositions,
     ))
+}
+
+fn available_initial_requirement_propositions(
+    requires: &[Requirement],
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    memory: &CMemory,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+) -> Vec<Proposition> {
+    let mut propositions = Vec::new();
+    for requirement in requires {
+        let Ok(lowered) = requirement_propositions(
+            std::slice::from_ref(requirement),
+            parameters,
+            arguments,
+            memory,
+            predicate_environment,
+            click_function_environment,
+        ) else {
+            continue;
+        };
+        for proposition in lowered {
+            if !propositions.contains(&proposition) {
+                propositions.push(proposition);
+            }
+        }
+    }
+    propositions
 }
 
 fn canonical_claim_caller_state(
@@ -22476,7 +22545,7 @@ fn project_initial_composite_resource_cores(
         let Some(composite_body) = definition.composite_body() else {
             continue;
         };
-        if is_owned && !include_owned && composite_body.condition().is_none() {
+        if is_owned && !include_owned {
             continue;
         }
         let substitutions =
