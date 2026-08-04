@@ -33,7 +33,7 @@ use crate::kernel::{
     canonical_c_memory_for_pointer_load, certify_c_function_execution_path_resource_representation,
     conditions_equal_ignoring_memories, int32, prove_c_condition_fact_direct_transport,
     prove_c_condition_fact_transport, prove_c_function_contract_execution_paths_with_environment,
-    prove_c_function_satisfies_specification_from_symbolic_path,
+    prove_c_function_satisfies_specification_from_symbolic_path, prove_forall_int32_application,
     prove_symbolic_c_condition_evaluation,
     prove_symbolic_c_function_contract_verification_paths_with_environment,
     prove_symbolic_c_function_execution_paths_with_environment,
@@ -164,11 +164,17 @@ struct ClickFunctionType {
 pub struct FunctionBlock {
     signature: FunctionSignature,
     requires: Vec<Requirement>,
-    decreases: Option<ContractExpression>,
+    decreases: Option<CFunctionDecrease>,
     structural_clauses: Vec<StructuralClause>,
     effects: Vec<EffectClause>,
     ensures: Vec<EnsureClause>,
     grouped_proof: Option<Proof>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum CFunctionDecrease {
+    Numeric(ContractExpression),
+    Resource(ResourceClause),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -800,6 +806,15 @@ pub enum ProofTactic {
     UnfoldPredicate(String),
     UnfoldResource(ResourceClause),
     FoldResource(ResourceClause),
+    Induct {
+        parameter: String,
+        hypothesis: String,
+    },
+    ApplyInduction {
+        hypothesis: String,
+        argument: ContractExpression,
+    },
+    CloseInduction,
     ApplyTheorem(TheoremApplication),
     ApplyTheoremUsing {
         application: TheoremApplication,
@@ -858,6 +873,9 @@ pub enum SimpleTactic {
     UnfoldPredicate,
     UnfoldResource,
     ObserveResource,
+    Induct,
+    ApplyInduction,
+    CloseInduction,
     ApplyTheorem,
     Witness,
     Choose,
@@ -1183,6 +1201,9 @@ impl ProofTactic {
             Self::UnfoldPredicate(_) => TacticClass::Simple(SimpleTactic::UnfoldPredicate),
             Self::UnfoldResource(_) => TacticClass::Simple(SimpleTactic::UnfoldResource),
             Self::ObserveResource(_) => TacticClass::Simple(SimpleTactic::ObserveResource),
+            Self::Induct { .. } => TacticClass::Simple(SimpleTactic::Induct),
+            Self::ApplyInduction { .. } => TacticClass::Simple(SimpleTactic::ApplyInduction),
+            Self::CloseInduction => TacticClass::Simple(SimpleTactic::CloseInduction),
             Self::ApplyTheorem(_) => TacticClass::Smart(SmartTacticKind::ApplyTheorem),
             Self::ApplyTheoremUsing { .. } => TacticClass::Simple(SimpleTactic::ApplyTheorem),
             Self::Witness(_) => TacticClass::Simple(SimpleTactic::Witness),
@@ -1621,7 +1642,7 @@ impl FunctionBlock {
         &self.requires
     }
 
-    pub fn decreases(&self) -> Option<&ContractExpression> {
+    pub fn decreases(&self) -> Option<&CFunctionDecrease> {
         self.decreases.as_ref()
     }
 
@@ -2867,31 +2888,77 @@ fn c_function_termination_plans(
     for function in file.function_blocks() {
         let selected = selected_functions
             .is_none_or(|selected| selected.contains(function.signature().name()));
-        let recursive_parameter = function
+        let recursive_measure = function
             .decreases()
-            .map(|measure| {
-                let name = termination_measure_name(
-                    measure,
-                    &format!("function-level `decreases` in `{}`", function.signature().name()),
-                )?;
-                let index = function
-                    .signature()
-                    .parameters()
-                    .iter()
-                    .position(|parameter| parameter.name() == name)
-                    .ok_or_else(|| {
+            .map(|measure| match measure {
+                CFunctionDecrease::Numeric(measure) => {
+                    let name = termination_measure_name(
+                        measure,
+                        &format!(
+                            "function-level `decreases` in `{}`",
+                            function.signature().name()
+                        ),
+                    )?;
+                    let index = function
+                        .signature()
+                        .parameters()
+                        .iter()
+                        .position(|parameter| parameter.name() == name)
+                        .ok_or_else(|| {
+                            ClickError::new(format!(
+                                "function-level `decreases` in `{}` must name an int32 parameter, not `{name}`",
+                                function.signature().name()
+                            ))
+                        })?;
+                    if function.signature().parameters()[index].c_type() != C0Type::Int32 {
+                        return Err(ClickError::new(format!(
+                            "function-level `decreases` parameter `{name}` in `{}` must have type int32",
+                            function.signature().name()
+                        )));
+                    }
+                    Ok(crate::kernel::CFunctionTerminationMeasure::NumericParameter(index))
+                }
+                CFunctionDecrease::Resource(measure) => {
+                    let ResourceClause::Declared {
+                        kind: ResourceKind::Composite,
+                        name: measure_name,
+                        arguments: measure_arguments,
+                        ..
+                    } = measure
+                    else {
+                        return Err(ClickError::new(format!(
+                            "function-level `decreases resource` in `{}` must name one composite resource",
+                            function.signature().name()
+                        )));
+                    };
+                    let mut resource_index = 0;
+                    let mut matched = None;
+                    for requirement in function.requires() {
+                        let Requirement::Resource(required) = requirement.inner() else {
+                            continue;
+                        };
+                        if matches!(
+                            required,
+                            ResourceClause::Declared {
+                                kind: ResourceKind::Composite,
+                                name,
+                                arguments,
+                                ..
+                            } if name == measure_name && arguments == measure_arguments
+                        ) {
+                            matched = Some(resource_index);
+                            break;
+                        }
+                        resource_index += 1;
+                    }
+                    let index = matched.ok_or_else(|| {
                         ClickError::new(format!(
-                            "function-level `decreases` in `{}` must name an int32 parameter, not `{name}`",
+                            "function-level `decreases resource {measure_name}(...)` in `{}` must exactly match an owned or viewed entry resource",
                             function.signature().name()
                         ))
                     })?;
-                if function.signature().parameters()[index].c_type() != C0Type::Int32 {
-                    return Err(ClickError::new(format!(
-                        "function-level `decreases` parameter `{name}` in `{}` must have type int32",
-                        function.signature().name()
-                    )));
+                    Ok(crate::kernel::CFunctionTerminationMeasure::ResourceRequirement(index))
                 }
-                Ok(index)
             })
             .transpose()?;
         let mut loop_measures = BTreeMap::new();
@@ -2920,13 +2987,13 @@ fn c_function_termination_plans(
                 )));
             }
         }
-        if recursive_parameter.is_some() || !loop_measures.is_empty() {
+        if recursive_measure.is_some() || !loop_measures.is_empty() {
             if selected {
                 requested.insert(function.signature().name().to_string());
             }
             plans.push(c_function_termination_plan(
                 function.signature().name(),
-                recursive_parameter,
+                recursive_measure,
                 loop_measures,
             ));
         }

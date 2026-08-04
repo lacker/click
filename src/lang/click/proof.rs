@@ -1,6 +1,7 @@
 use super::diagnostics::*;
 use super::validation::tactic_name;
 use super::*;
+use crate::kernel::fresh_int32_variable_for_propositions;
 
 type NextTopLevelStatement = (
     CState,
@@ -532,6 +533,172 @@ struct PureTheoremContext {
     requires: Vec<Proposition>,
 }
 
+#[derive(Clone, Debug)]
+struct PureInductionSetup {
+    parameter: String,
+    hypothesis: String,
+    surface_requires: Vec<ClickProposition>,
+    surface_goal: ClickProposition,
+}
+
+fn pure_induction_hypothesis(
+    setup: &PureInductionSetup,
+    context: &PureTheoremContext,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+) -> Result<Proposition, ClickError> {
+    let Some(CValue::Int32(Bitvector32Term::Variable(current_variable))) =
+        context.values.get(&setup.parameter)
+    else {
+        return Err(ClickError::new("invalid int32 induction parameter"));
+    };
+    let opaque_goal = lower_pure_theorem_proposition_opaque(
+        &setup.hypothesis,
+        &setup.surface_goal,
+        &context.values,
+        &context.array_refs,
+        &context.memory,
+        predicate_environment,
+        click_function_environment,
+    )
+    .map_err(ClickError::new)?;
+    let opaque_requirements = setup
+        .surface_requires
+        .iter()
+        .map(|requirement| {
+            lower_pure_theorem_proposition_opaque(
+                &setup.hypothesis,
+                requirement,
+                &context.values,
+                &context.array_refs,
+                &context.memory,
+                predicate_environment,
+                click_function_environment,
+            )
+            .map_err(ClickError::new)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut propositions = opaque_requirements.clone();
+    propositions.push(opaque_goal.clone());
+    let variable = fresh_int32_variable_for_propositions(&propositions);
+    let value = Bitvector32Term::Variable(variable);
+    let substitute = |proposition: &Proposition| {
+        substitute_int32_variable_in_proposition(proposition, *current_variable, value.clone())
+    };
+    let mut body = substitute(&opaque_goal);
+    for requirement in opaque_requirements.iter().rev() {
+        let requirement = substitute(requirement);
+        body = Proposition::Implies(Box::new(requirement), Box::new(body));
+    }
+    let smaller = Proposition::ConditionIs(
+        ConditionTerm::Bitvector32SignedLessThan(
+            Box::new(value.clone()),
+            Box::new(Bitvector32Term::Variable(*current_variable)),
+        ),
+        true,
+    );
+    body = Proposition::Implies(Box::new(smaller), Box::new(body));
+    let nonnegative = Proposition::ConditionIs(
+        ConditionTerm::Bitvector32SignedGreaterEqual(
+            Box::new(value),
+            Box::new(Bitvector32Term::Constant(0)),
+        ),
+        true,
+    );
+    body = Proposition::Implies(Box::new(nonnegative), Box::new(body));
+    Ok(Proposition::ForAll {
+        var: variable,
+        sort: Sort::CInt32,
+        body: Box::new(body),
+    })
+}
+
+fn prepare_pure_induction_tactics(
+    theorem: &TheoremDefinition,
+    goal: &ClickProposition,
+    tactics: &[ProofTactic],
+) -> Result<(Vec<ProofTactic>, Option<PureInductionSetup>), ClickError> {
+    let Some(ProofTactic::Induct {
+        parameter,
+        hypothesis,
+    }) = tactics.first()
+    else {
+        if tactics
+            .iter()
+            .any(|tactic| matches!(tactic, ProofTactic::Induct { .. }))
+        {
+            return Err(ClickError::new(
+                "`induct` must be the first tactic in a pure theorem proof",
+            ));
+        }
+        return Ok((tactics.to_vec(), None));
+    };
+    if !theorem
+        .parameters()
+        .iter()
+        .any(|candidate| candidate.name() == parameter && candidate.c_type() == C0Type::Int32)
+    {
+        return Err(ClickError::new(format!(
+            "`induct({parameter})` requires an int32 theorem parameter with that name"
+        )));
+    }
+    let surface_requires = theorem
+        .requires()
+        .iter()
+        .map(|requirement| {
+            requirement.proposition().cloned().ok_or_else(|| {
+                ClickError::new("pure induction supports proposition requirements only")
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    fn transform(
+        tactics: &[ProofTactic],
+        hypothesis: &str,
+    ) -> Result<Vec<ProofTactic>, ClickError> {
+        tactics
+            .iter()
+            .map(|tactic| match tactic {
+                ProofTactic::Induct { .. } => Err(ClickError::new(
+                    "a pure theorem proof may contain only one top-level `induct` tactic",
+                )),
+                ProofTactic::ApplyTheorem(application) if application.name == hypothesis => {
+                    let [argument] = application.arguments.as_slice() else {
+                        return Err(ClickError::new(format!(
+                            "induction hypothesis `{hypothesis}` expects one argument"
+                        )));
+                    };
+                    Ok(ProofTactic::ApplyInduction {
+                        hypothesis: hypothesis.to_string(),
+                        argument: argument.clone(),
+                    })
+                }
+                ProofTactic::If(proof_if) => Ok(ProofTactic::If(ProofIf {
+                    condition: proof_if.condition.clone(),
+                    then_tactics: transform(&proof_if.then_tactics, hypothesis)?,
+                    else_tactics: transform(&proof_if.else_tactics, hypothesis)?,
+                })),
+                ProofTactic::ApplyInduction { .. } => Err(ClickError::new(
+                    "internal induction-application syntax is not accepted directly",
+                )),
+                tactic => Ok(tactic.clone()),
+            })
+            .collect()
+    }
+
+    let mut prepared = vec![tactics[0].clone()];
+    prepared.extend(transform(&tactics[1..], hypothesis)?);
+    Ok((
+        prepared,
+        Some(PureInductionSetup {
+            parameter: parameter.clone(),
+            hypothesis: hypothesis.clone(),
+            surface_requires,
+            surface_goal: goal.clone(),
+        }),
+    ))
+}
+
 fn pure_theorem_context(
     theorem: &TheoremDefinition,
     predicate_environment: &PredicateEnvironment,
@@ -709,7 +876,7 @@ fn verify_theorem_ensure(
         ))
     })?;
 
-    let (proof_kind, source_tactics) = match ensure_clause.proof() {
+    let (proof_kind, source_tactics, induction_setup) = match ensure_clause.proof() {
         Proof::Default | Proof::Tactic(SmartTactic::Auto) => {
             prove_pure_theorem_goal(
                 claim_label,
@@ -724,7 +891,7 @@ fn verify_theorem_ensure(
                 &[],
                 true,
             )?;
-            (ProofKind::Pure, None)
+            (ProofKind::Pure, None, None)
         }
         Proof::Tactic(SmartTactic::Simp) => {
             prove_pure_theorem_goal(
@@ -740,7 +907,7 @@ fn verify_theorem_ensure(
                 &[],
                 true,
             )?;
-            (ProofKind::Simp, None)
+            (ProofKind::Simp, None, None)
         }
         Proof::Tactic(SmartTactic::Frame) => {
             return Err(ClickError::new(format!(
@@ -753,6 +920,8 @@ fn verify_theorem_ensure(
                     "`{claim_label}` has an empty explicit proof script"
                 )));
             }
+            let (tactics, induction_setup) =
+                prepare_pure_induction_tactics(theorem, surface_goal, tactics)?;
             prove_pure_theorem_script(
                 claim_label,
                 &context.requires,
@@ -761,9 +930,10 @@ fn verify_theorem_ensure(
                 click_function_environment,
                 theorem_environment,
                 context,
-                tactics,
+                &tactics,
+                induction_setup.as_ref(),
             )?;
-            (ProofKind::TacticScript, Some(tactics.as_slice()))
+            (ProofKind::TacticScript, Some(tactics), induction_setup)
         }
     };
 
@@ -775,8 +945,9 @@ fn verify_theorem_ensure(
                 claim_label,
                 context,
                 &goal,
-                source_tactics,
+                source_tactics.as_deref(),
                 predicate_environment,
+                induction_setup.as_ref(),
             )
         },
         |certificate| {
@@ -789,6 +960,7 @@ fn verify_theorem_ensure(
                 theorem_environment,
                 context,
                 certificate,
+                induction_setup.as_ref(),
             )
         },
     )?;
@@ -831,7 +1003,16 @@ fn pure_theorem_surface_certificate(
     goal: &Proposition,
     source_tactics: Option<&[ProofTactic]>,
     predicate_environment: &PredicateEnvironment,
+    induction_setup: Option<&PureInductionSetup>,
 ) -> Result<TacticCertificate, ClickError> {
+    if let (Some(tactics), Some(setup)) = (source_tactics, induction_setup) {
+        let lowered = lower_pure_induction_tactics(&setup.surface_requires, tactics, setup)?;
+        return TacticCertificate::from_proof_tactics(&lowered).map_err(|error| {
+            ClickError::new(format!(
+                "induction proof for `{claim_label}` produced an invalid surface certificate: {error:?}"
+            ))
+        });
+    }
     if let Some(tactics) = source_tactics
         && let Ok(certificate) = TacticCertificate::from_proof_tactics(tactics)
     {
@@ -1045,6 +1226,66 @@ fn lower_pure_branching_tactics(
     Some(lowered)
 }
 
+fn lower_pure_induction_tactics(
+    premise_pool: &[ClickProposition],
+    tactics: &[ProofTactic],
+    setup: &PureInductionSetup,
+) -> Result<Vec<ProofTactic>, ClickError> {
+    let mut lowered = Vec::new();
+    let mut current_pool = premise_pool.to_vec();
+    for tactic in tactics {
+        match tactic {
+            ProofTactic::If(proof_if) => {
+                let mut then_pool = current_pool.clone();
+                then_pool.push(proof_if.condition.clone());
+                let mut else_pool = current_pool.clone();
+                else_pool.push(ClickProposition::Not(Box::new(proof_if.condition.clone())));
+                lowered.push(ProofTactic::If(ProofIf {
+                    condition: proof_if.condition.clone(),
+                    then_tactics: lower_pure_induction_tactics(
+                        &then_pool,
+                        &proof_if.then_tactics,
+                        setup,
+                    )?,
+                    else_tactics: lower_pure_induction_tactics(
+                        &else_pool,
+                        &proof_if.else_tactics,
+                        setup,
+                    )?,
+                }));
+            }
+            ProofTactic::ApplyInduction {
+                hypothesis,
+                argument,
+            } => {
+                let substituted = substitute_click_proposition(
+                    &setup.surface_goal,
+                    &BTreeMap::from([(setup.parameter.clone(), argument.clone())]),
+                )
+                .map_err(ClickError::new)?;
+                lowered.push(ProofTactic::ApplyInduction {
+                    hypothesis: hypothesis.clone(),
+                    argument: argument.clone(),
+                });
+                if !current_pool.contains(&substituted) {
+                    current_pool.push(substituted);
+                }
+            }
+            ProofTactic::Simp => lowered.push(ProofTactic::CloseInduction),
+            tactic if matches!(tactic.class(), TacticClass::Simple(_)) => {
+                lowered.push(tactic.clone());
+            }
+            _ => {
+                return Err(ClickError::new(format!(
+                    "pure induction currently cannot lower smart tactic `{}`; keep the step proof explicit",
+                    tactic_name(tactic)
+                )));
+            }
+        }
+    }
+    Ok(lowered)
+}
+
 /// Replay a validated certificate through the ordinary pure-tactic executor.
 #[allow(clippy::too_many_arguments)]
 fn replay_pure_theorem_certificate(
@@ -1056,6 +1297,7 @@ fn replay_pure_theorem_certificate(
     theorem_environment: &TheoremEnvironment,
     context: &PureTheoremContext,
     certificate: &TacticCertificate,
+    induction_setup: Option<&PureInductionSetup>,
 ) -> Result<(), ClickError> {
     prove_pure_theorem_script(
         claim_label,
@@ -1066,6 +1308,7 @@ fn replay_pure_theorem_certificate(
         theorem_environment,
         context,
         certificate.tactics(),
+        induction_setup,
     )
 }
 
@@ -1079,6 +1322,7 @@ fn prove_pure_theorem_script(
     theorem_environment: &TheoremEnvironment,
     context: &PureTheoremContext,
     tactics: &[ProofTactic],
+    induction_setup: Option<&PureInductionSetup>,
 ) -> Result<(), ClickError> {
     for proof_case in expand_proof_if_cases(tactics)? {
         prove_pure_theorem_tactics(
@@ -1090,6 +1334,7 @@ fn prove_pure_theorem_script(
             theorem_environment,
             context,
             &proof_case,
+            induction_setup,
         )?;
     }
     Ok(())
@@ -1271,6 +1516,7 @@ mod certificate_tests {
                 &theorem_environment,
                 &context,
                 &failing,
+                None,
             )
             .is_err()
         );
@@ -1283,6 +1529,7 @@ mod certificate_tests {
             &theorem_environment,
             &context,
             &succeeding,
+            None,
         )
         .expect("failed replay must not mutate the shared proof inputs");
     }
@@ -1779,6 +2026,258 @@ fn lower_pure_theorem_proposition(
         })
 }
 
+fn lower_pure_theorem_proposition_opaque(
+    theorem_name: &str,
+    proposition: &ClickProposition,
+    values: &BTreeMap<String, CValue>,
+    array_refs: &ClickArrayRefs,
+    memory: &CMemory,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+) -> Result<Proposition, String> {
+    let active = click_function_environment
+        .definitions
+        .keys()
+        .cloned()
+        .collect::<Vec<_>>();
+    let mut lowerer = KernelPropositionLowerer::new(
+        values.clone(),
+        array_refs.clone(),
+        memory.clone(),
+        predicate_environment,
+        click_function_environment,
+    )
+    .with_active_functions(active);
+    lowerer
+        .lower_requirement_proposition(proposition)
+        .map_err(|error| {
+            error
+                .message()
+                .replace("`requires`", &format!("pure theorem `{theorem_name}`"))
+        })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn apply_pure_induction_hypothesis(
+    setup: &PureInductionSetup,
+    hypothesis: &str,
+    argument: &ContractExpression,
+    claim_label: &str,
+    tactic_index: usize,
+    available: &mut Vec<Proposition>,
+    context: &PureTheoremContext,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+) -> Result<(), ClickError> {
+    if hypothesis != setup.hypothesis {
+        return Err(ClickError::new(format!(
+            "`{claim_label}` tactic {tactic_index}: unknown induction hypothesis `{hypothesis}`"
+        )));
+    }
+    let state = CState::new().with_memory(context.memory.clone());
+    let assumptions = assumptions_from_propositions(available);
+    let mut active_functions = BTreeSet::new();
+    let value = evaluate_contract_expression_with_environment(
+        &context.values,
+        &context.array_refs,
+        &state,
+        &state,
+        None,
+        &assumptions,
+        argument,
+        predicate_environment,
+        click_function_environment,
+        &ProgramPointStates::new(),
+        &mut active_functions,
+    )
+    .map_err(|message| {
+        ClickError::new(format!(
+            "`{claim_label}` tactic {tactic_index}: could not evaluate induction argument: {message}"
+        ))
+    })?;
+    let CValue::Int32(argument_term) = value else {
+        return Err(ClickError::new(format!(
+            "`{claim_label}` tactic {tactic_index}: induction argument must have type int32"
+        )));
+    };
+    let Some(CValue::Int32(current_term)) = context.values.get(&setup.parameter) else {
+        return Err(ClickError::new("invalid induction parameter binding"));
+    };
+    let nonnegative = Proposition::ConditionIs(
+        ConditionTerm::Bitvector32SignedGreaterEqual(
+            Box::new(argument_term.clone()),
+            Box::new(Bitvector32Term::Constant(0)),
+        ),
+        true,
+    );
+    let smaller = Proposition::ConditionIs(
+        ConditionTerm::Bitvector32SignedLessThan(
+            Box::new(argument_term.clone()),
+            Box::new(current_term.clone()),
+        ),
+        true,
+    );
+    let proves = |fact: &Proposition| {
+        available.contains(fact)
+            || assumptions.derive_proposition(fact).is_some()
+            || matches!(
+                fact,
+                Proposition::ConditionIs(condition, value)
+                    if assumptions.decide(condition) == Some(*value)
+            )
+            || matches!(simp_proposition(fact, &assumptions), SimpProposition::True)
+    };
+    fn positive_subtraction_step(term: &Bitvector32Term, current: &Bitvector32Term) -> Option<u32> {
+        let Bitvector32Term::Subtract(left, right) = term else {
+            return None;
+        };
+        let step = right.as_const()?;
+        if step == 0 {
+            return None;
+        }
+        let prior = if left.as_ref() == current {
+            0
+        } else {
+            positive_subtraction_step(left, current)?
+        };
+        prior
+            .checked_add(step)
+            .filter(|total| *total <= i32::MAX as u32)
+    }
+    let positive_subtraction = match positive_subtraction_step(&argument_term, current_term) {
+        Some(step) => {
+            let enough = Proposition::ConditionIs(
+                ConditionTerm::Bitvector32SignedGreaterEqual(
+                    Box::new(current_term.clone()),
+                    Box::new(Bitvector32Term::Constant(step)),
+                ),
+                true,
+            );
+            proves(&nonnegative)
+                || proves(&enough)
+                || assumptions.decide(&ConditionTerm::Bitvector32SignedLessEqual(
+                    Box::new(current_term.clone()),
+                    Box::new(Bitvector32Term::Constant(step - 1)),
+                )) == Some(false)
+        }
+        None => false,
+    };
+    if !proves(&smaller) && !positive_subtraction {
+        return Err(ClickError::new(format!(
+            "`{claim_label}` tactic {tactic_index}: induction hypothesis argument is not proved smaller than `{}`",
+            setup.parameter
+        )));
+    }
+    if !proves(&nonnegative) && !positive_subtraction {
+        return Err(ClickError::new(format!(
+            "`{claim_label}` tactic {tactic_index}: induction hypothesis argument is not proved nonnegative: {nonnegative:?}\n  available: {available:#?}"
+        )));
+    }
+    if !available.contains(&nonnegative) {
+        available.push(nonnegative.clone());
+    }
+    if !available.contains(&smaller) {
+        available.push(smaller.clone());
+    }
+    let assumptions = assumptions_from_propositions(available);
+    let proves = |fact: &Proposition| {
+        available.contains(fact)
+            || assumptions.derive_proposition(fact).is_some()
+            || matches!(
+                fact,
+                Proposition::ConditionIs(condition, value)
+                    if assumptions.decide(condition) == Some(*value)
+            )
+            || matches!(simp_proposition(fact, &assumptions), SimpProposition::True)
+    };
+    let mut values = context.values.clone();
+    values.insert(
+        setup.parameter.clone(),
+        CValue::Int32(argument_term.clone()),
+    );
+    let mut application_premises = vec![nonnegative.clone(), smaller.clone()];
+    for requirement in &setup.surface_requires {
+        let requirement = lower_pure_theorem_proposition_opaque(
+            claim_label,
+            requirement,
+            &values,
+            &context.array_refs,
+            &context.memory,
+            predicate_environment,
+            click_function_environment,
+        )
+        .map_err(|message| ClickError::new(format!("`{claim_label}`: {message}")))?;
+        if requirement != nonnegative && !proves(&requirement) {
+            return Err(ClickError::new(format!(
+                "`{claim_label}` tactic {tactic_index}: induction hypothesis requirement is unavailable: {requirement:?}"
+            )));
+        }
+        application_premises.push(requirement);
+    }
+    let conclusion = lower_pure_theorem_proposition_opaque(
+        claim_label,
+        &setup.surface_goal,
+        &values,
+        &context.array_refs,
+        &context.memory,
+        predicate_environment,
+        click_function_environment,
+    )
+    .map_err(|message| ClickError::new(format!("`{claim_label}`: {message}")))?;
+    let quantified = pure_induction_hypothesis(
+        setup,
+        context,
+        predicate_environment,
+        click_function_environment,
+    )?;
+    if !available.contains(&quantified) {
+        return Err(ClickError::new(format!(
+            "`{claim_label}` tactic {tactic_index}: induction hypothesis is not active"
+        )));
+    }
+    let theorem = prove_forall_int32_application(
+        &quantified,
+        argument_term,
+        &application_premises,
+    )
+    .ok_or_else(|| {
+        ClickError::new(format!(
+            "`{claim_label}` tactic {tactic_index}: kernel rejected induction hypothesis instantiation"
+        ))
+    })?;
+    let Proposition::Implies(theorem_quantified, mut theorem_body) = theorem.proposition().clone()
+    else {
+        return Err(ClickError::new("invalid induction application theorem"));
+    };
+    if theorem_quantified.as_ref() != &quantified {
+        return Err(ClickError::new(
+            "induction theorem changed its quantified premise",
+        ));
+    }
+    for premise in &application_premises {
+        let Proposition::Implies(theorem_premise, body) = theorem_body.as_ref() else {
+            return Err(ClickError::new(
+                "induction theorem omitted an application premise",
+            ));
+        };
+        if theorem_premise.as_ref() != premise {
+            return Err(ClickError::new(
+                "induction theorem changed an application premise",
+            ));
+        }
+        theorem_body = body.clone();
+    }
+    if theorem_body.as_ref() != &conclusion {
+        return Err(ClickError::new(format!(
+            "`{claim_label}` tactic {tactic_index}: kernel induction conclusion does not match `{hypothesis}`"
+        )));
+    }
+    if !available.contains(&conclusion) {
+        available.push(conclusion);
+    }
+    Ok(())
+}
+
 fn prove_pure_theorem_goal(
     claim_label: &str,
     proof_name: &str,
@@ -1860,6 +2359,7 @@ fn prove_pure_theorem_tactics(
     theorem_environment: &TheoremEnvironment,
     context: &PureTheoremContext,
     proof_case: &ExpandedProofCase,
+    induction_setup: Option<&PureInductionSetup>,
 ) -> Result<(), ClickError> {
     let state = CState::new().with_memory(context.memory.clone());
     let program_point_states = ProgramPointStates::new();
@@ -1875,6 +2375,7 @@ fn prove_pure_theorem_tactics(
     let mut unfolded_predicates = Vec::new();
     let mut goal = original_goal.clone();
     let mut closed = false;
+    let mut induction_active = false;
 
     for (tactic_index, tactic) in proof_case.tactics.iter().enumerate() {
         for assumption in proof_case
@@ -1910,6 +2411,79 @@ fn prove_pure_theorem_tactics(
         }
 
         match tactic {
+            ProofTactic::Induct {
+                parameter,
+                hypothesis,
+            } => {
+                let Some(setup) = induction_setup else {
+                    return Err(ClickError::new(format!(
+                        "`{claim_label}` tactic {tactic_index}: unexpected induction certificate"
+                    )));
+                };
+                if induction_active
+                    || parameter != &setup.parameter
+                    || hypothesis != &setup.hypothesis
+                {
+                    return Err(ClickError::new(format!(
+                        "`{claim_label}` tactic {tactic_index}: induction certificate does not match its theorem setup"
+                    )));
+                }
+                let Some(CValue::Int32(term)) = context.values.get(parameter) else {
+                    return Err(ClickError::new(format!(
+                        "`{claim_label}` tactic {tactic_index}: induction parameter must have type int32"
+                    )));
+                };
+                let nonnegative = Proposition::ConditionIs(
+                    ConditionTerm::Bitvector32SignedGreaterEqual(
+                        Box::new(term.clone()),
+                        Box::new(Bitvector32Term::Constant(0)),
+                    ),
+                    true,
+                );
+                let assumptions = assumptions_from_propositions(&available);
+                if !available.contains(&nonnegative)
+                    && assumptions.derive_proposition(&nonnegative).is_none()
+                    && !matches!(
+                        simp_proposition(&nonnegative, &assumptions),
+                        SimpProposition::True
+                    )
+                {
+                    return Err(ClickError::new(format!(
+                        "`{claim_label}` tactic {tactic_index}: `induct({parameter})` requires a proof that `{parameter}` is nonnegative"
+                    )));
+                }
+                induction_active = true;
+                let hypothesis = pure_induction_hypothesis(
+                    setup,
+                    context,
+                    predicate_environment,
+                    click_function_environment,
+                )?;
+                if !available.contains(&hypothesis) {
+                    available.push(hypothesis);
+                }
+            }
+            ProofTactic::ApplyInduction {
+                hypothesis,
+                argument,
+            } => {
+                if !induction_active {
+                    return Err(ClickError::new(format!(
+                        "`{claim_label}` tactic {tactic_index}: induction hypothesis used before `induct`"
+                    )));
+                }
+                apply_pure_induction_hypothesis(
+                    induction_setup.expect("active induction has a setup"),
+                    hypothesis,
+                    argument,
+                    claim_label,
+                    tactic_index,
+                    &mut available,
+                    context,
+                    predicate_environment,
+                    click_function_environment,
+                )?;
+            }
             ProofTactic::UnfoldPredicate(name) => {
                 if predicate_environment.get(name).is_none() {
                     return Err(ClickError::new(format!(
@@ -2126,8 +2700,17 @@ fn prove_pure_theorem_tactics(
                         ClickError::new(format!("`rewrite` failed for `{claim_label}`: {message}"))
                     })?;
             }
-            ProofTactic::Simp => {
+            ProofTactic::Simp | ProofTactic::CloseInduction => {
+                if matches!(tactic, ProofTactic::CloseInduction) && !induction_active {
+                    return Err(ClickError::new(format!(
+                        "`{claim_label}` tactic {tactic_index}: induction closer used outside `induct`"
+                    )));
+                }
                 let assumptions = assumptions_from_propositions(&available);
+                if assumptions.derive_proposition(&goal).is_some() {
+                    closed = true;
+                    continue;
+                }
                 match simp_proposition(&goal, &assumptions) {
                     SimpProposition::True => closed = true,
                     simplified => {
@@ -19773,6 +20356,14 @@ fn replay_linear_tactics(
                     source_index,
                     statement_index: replay.frontier.next_statement_index,
                 });
+            }
+            ProofTactic::Induct { .. }
+            | ProofTactic::ApplyInduction { .. }
+            | ProofTactic::CloseInduction => {
+                return Err(ClickError::new(format!(
+                    "`{claim_label}` tactic {tactic_index}: `{}` is available only in a pure theorem proof",
+                    tactic_name(tactic)
+                )));
             }
             ProofTactic::Simp => {
                 if !replay.region_proof {

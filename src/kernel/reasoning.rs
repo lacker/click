@@ -2909,23 +2909,91 @@ pub(super) fn substitute_bitvector_variable_in_proposition(
                 right, from, to,
             )),
         ),
-        Proposition::ForAll { var, sort, body } if *var != from => Proposition::ForAll {
-            var: *var,
-            sort: sort.clone(),
-            body: Box::new(substitute_bitvector_variable_in_proposition(body, from, to)),
-        },
+        Proposition::ForAll { var, sort, body } if *var != from => {
+            let (var, body) = capture_avoiding_quantifier_body(*var, body, from, to);
+            Proposition::ForAll {
+                var,
+                sort: sort.clone(),
+                body: Box::new(substitute_bitvector_variable_in_proposition(
+                    &body, from, to,
+                )),
+            }
+        }
         Proposition::Exists {
             name,
             var,
             sort,
             body,
-        } if *var != from => Proposition::Exists {
-            name: name.clone(),
-            var: *var,
-            sort: sort.clone(),
-            body: Box::new(substitute_bitvector_variable_in_proposition(body, from, to)),
-        },
+        } if *var != from => {
+            let (var, body) = capture_avoiding_quantifier_body(*var, body, from, to);
+            Proposition::Exists {
+                name: name.clone(),
+                var,
+                sort: sort.clone(),
+                body: Box::new(substitute_bitvector_variable_in_proposition(
+                    &body, from, to,
+                )),
+            }
+        }
         proposition => proposition.clone(),
+    }
+}
+
+fn capture_avoiding_quantifier_body(
+    binder: Variable,
+    body: &Proposition,
+    substituted: Variable,
+    replacement: &Bitvector32Term,
+) -> (Variable, Proposition) {
+    let mut replacement_variables = BTreeSet::new();
+    collect_bitvector_variables(replacement, &mut replacement_variables);
+    if !replacement_variables.contains(&binder) {
+        return (binder, body.clone());
+    }
+
+    let mut reserved = replacement_variables;
+    collect_proposition_bitvector_variables(body, &mut reserved);
+    collect_proposition_bound_variables(body, &mut reserved);
+    reserved.insert(binder);
+    reserved.insert(substituted);
+    let mut variables = VerificationVariableGenerator::fresh_for(0, reserved);
+    let fresh = variables.next();
+    let renamed = substitute_bitvector_variable_in_proposition(
+        body,
+        binder,
+        &Bitvector32Term::Variable(fresh),
+    );
+    (fresh, renamed)
+}
+
+pub(super) fn collect_proposition_bound_variables(
+    proposition: &Proposition,
+    variables: &mut BTreeSet<Variable>,
+) {
+    match proposition {
+        Proposition::And(left, right)
+        | Proposition::Or(left, right)
+        | Proposition::Implies(left, right) => {
+            collect_proposition_bound_variables(left, variables);
+            collect_proposition_bound_variables(right, variables);
+        }
+        Proposition::Not(body) => collect_proposition_bound_variables(body, variables),
+        Proposition::ForAll { var, body, .. } | Proposition::Exists { var, body, .. } => {
+            variables.insert(*var);
+            collect_proposition_bound_variables(body, variables);
+        }
+        Proposition::CWhileInvariantRule {
+            invariant,
+            preserved,
+            postcondition,
+            ..
+        } => {
+            for proposition in invariant.iter().chain(preserved) {
+                collect_proposition_bound_variables(proposition, variables);
+            }
+            collect_proposition_bound_variables(postcondition, variables);
+        }
+        _ => {}
     }
 }
 

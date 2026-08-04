@@ -42,6 +42,7 @@ int32 zero_list_push(struct node* node, struct node* tail) {
 }
 
 int32 zero_list_sum(struct node* node) {
+    decreases resource zero_list(node);
     requires node != 0;
     views zero_list(node);
     immutable;

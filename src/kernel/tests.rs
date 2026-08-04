@@ -2060,6 +2060,127 @@ fn conditional_forall_instantiates_at_same_named_variable_in_order_path() {
 }
 
 #[test]
+fn forall_int32_application_preserves_exact_premises_and_conclusion() {
+    let binder = Variable(500);
+    let bound = Bitvector32Term::Variable(binder);
+    let premise = Proposition::ConditionIs(
+        ConditionTerm::signed_greater_equal(bound.clone(), Bitvector32Term::Constant(0)),
+        true,
+    );
+    let conclusion = Proposition::ConditionIs(ConditionTerm::equal(bound.clone(), bound), true);
+    let quantified = Proposition::ForAll {
+        var: binder,
+        sort: Sort::CInt32,
+        body: Box::new(Proposition::Implies(
+            Box::new(premise),
+            Box::new(conclusion),
+        )),
+    };
+    let value = Bitvector32Term::Variable(Variable(501));
+    let instantiated_premise = Proposition::ConditionIs(
+        ConditionTerm::signed_greater_equal(value.clone(), Bitvector32Term::Constant(0)),
+        true,
+    );
+    let instantiated_conclusion =
+        Proposition::ConditionIs(ConditionTerm::equal(value.clone(), value), true);
+
+    let theorem = prove_forall_int32_application(
+        &quantified,
+        Bitvector32Term::Variable(Variable(501)),
+        std::slice::from_ref(&instantiated_premise),
+    )
+    .expect("exact int32 application should be certified");
+    assert_eq!(
+        theorem.proposition(),
+        &Proposition::Implies(
+            Box::new(quantified),
+            Box::new(Proposition::Implies(
+                Box::new(instantiated_premise),
+                Box::new(instantiated_conclusion),
+            )),
+        )
+    );
+}
+
+#[test]
+fn forall_int32_application_rejects_a_mismatched_premise() {
+    let binder = Variable(510);
+    let bound = Bitvector32Term::Variable(binder);
+    let quantified = Proposition::ForAll {
+        var: binder,
+        sort: Sort::CInt32,
+        body: Box::new(Proposition::Implies(
+            Box::new(Proposition::ConditionIs(
+                ConditionTerm::signed_greater_equal(bound.clone(), Bitvector32Term::Constant(0)),
+                true,
+            )),
+            Box::new(Proposition::ConditionIs(
+                ConditionTerm::equal(bound.clone(), bound),
+                true,
+            )),
+        )),
+    };
+    let wrong = Proposition::ConditionIs(
+        ConditionTerm::signed_greater_equal(
+            Bitvector32Term::Variable(Variable(511)),
+            Bitvector32Term::Constant(1),
+        ),
+        true,
+    );
+
+    assert!(
+        prove_forall_int32_application(
+            &quantified,
+            Bitvector32Term::Variable(Variable(511)),
+            &[wrong],
+        )
+        .is_none()
+    );
+}
+
+#[test]
+fn forall_int32_application_avoids_capturing_the_argument_variable() {
+    let outer = Variable(520);
+    let inner = Variable(521);
+    let quantified = Proposition::ForAll {
+        var: outer,
+        sort: Sort::CInt32,
+        body: Box::new(Proposition::ForAll {
+            var: inner,
+            sort: Sort::CInt32,
+            body: Box::new(Proposition::ConditionIs(
+                ConditionTerm::equal(
+                    Bitvector32Term::Variable(outer),
+                    Bitvector32Term::Variable(inner),
+                ),
+                true,
+            )),
+        }),
+    };
+    let theorem =
+        prove_forall_int32_application(&quantified, Bitvector32Term::Variable(inner), &[])
+            .expect("capture-avoiding instantiation should be certified");
+    let Proposition::Implies(_, conclusion) = theorem.proposition() else {
+        panic!("application theorem should retain its quantified premise");
+    };
+    let Proposition::ForAll {
+        var: renamed, body, ..
+    } = conclusion.as_ref()
+    else {
+        panic!("nested quantifier should remain in the conclusion");
+    };
+    assert_ne!(*renamed, inner, "the inner binder must be renamed");
+    assert!(matches!(
+        body.as_ref(),
+        Proposition::ConditionIs(
+            ConditionTerm::Bitvector32Equal(left, right),
+            true
+        ) if left.as_ref() == &Bitvector32Term::Variable(inner)
+            && right.as_ref() == &Bitvector32Term::Variable(*renamed)
+    ));
+}
+
+#[test]
 fn assumptions_prove_by_bounded_disjunction_cases() {
     let x = Bitvector32Term::Variable(Variable(89));
     let x_is_zero = Proposition::ConditionIs(

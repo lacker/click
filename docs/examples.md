@@ -408,8 +408,8 @@ sequence:
   trees, including empty construction, root construction, child swapping, and
   a modular leaf pipeline that composes two empty children.
 - `examples/recursive-zero-list/`: read-only recursive C traversal over a
-  guarded list resource, shown both as ordinary partial correctness and with a
-  separate numeric `decreases` proof.
+  guarded list resource, with both structural-resource and numeric termination
+  proofs kept separate from its ordinary partial contract.
 - `examples/owned-vector/`: composite-resource example over vector metadata and
   dependent backing storage, including viewed reads and resource-state
   transitions.

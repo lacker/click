@@ -1101,6 +1101,42 @@ pub(crate) fn prove_c_condition_fact_direct_transport(
     prove_c_condition_fact_transport_with_assumptions(fact, after, Some((assumptions, true)))
 }
 
+/// Instantiates one universally quantified int32 fact and records the exact
+/// implication premises consumed from its body. The theorem remains
+/// conditional on the quantified fact and every listed premise.
+pub fn prove_forall_int32_application(
+    quantified: &Proposition,
+    value: Bitvector32Term,
+    premises: &[Proposition],
+) -> Option<Theorem> {
+    let Proposition::ForAll { var, sort, body } = quantified else {
+        return None;
+    };
+    if *sort != Sort::CInt32 {
+        return None;
+    }
+    let mut instantiated = substitute_bitvector_variable_in_proposition(body, *var, &value);
+    for premise in premises {
+        let Proposition::Implies(expected, body) = instantiated else {
+            return None;
+        };
+        if expected.as_ref() != premise {
+            return None;
+        }
+        instantiated = *body;
+    }
+    if matches!(instantiated, Proposition::Implies(_, _)) {
+        return None;
+    }
+    let application = premises.iter().rev().fold(instantiated, |body, premise| {
+        Proposition::Implies(Box::new(premise.clone()), Box::new(body))
+    });
+    Some(Theorem::new(Proposition::Implies(
+        Box::new(quantified.clone()),
+        Box::new(application),
+    )))
+}
+
 fn prove_c_condition_fact_transport_with_assumptions(
     fact: &Proposition,
     after: &CMemory,
@@ -2716,6 +2752,17 @@ pub fn substitute_int32_variable_in_proposition(
     value: Bitvector32Term,
 ) -> Proposition {
     substitute_bitvector_variable_in_proposition(proposition, variable, &value)
+}
+
+/// Chooses a variable identity absent from both the free variables and logical
+/// binders of the supplied propositions.
+pub fn fresh_int32_variable_for_propositions(propositions: &[Proposition]) -> Variable {
+    let mut reserved = BTreeSet::new();
+    for proposition in propositions {
+        collect_proposition_bitvector_variables(proposition, &mut reserved);
+        collect_proposition_bound_variables(proposition, &mut reserved);
+    }
+    VerificationVariableGenerator::fresh_for(0, reserved).next()
 }
 
 pub fn c_max_body() -> CStatement {
@@ -6492,12 +6539,12 @@ pub fn c_verified_function_rule(
 /// [`c_verified_function_termination_rules`].
 pub fn c_function_termination_plan(
     function_name: impl Into<String>,
-    recursive_parameter: Option<usize>,
+    recursive_measure: Option<CFunctionTerminationMeasure>,
     loop_measures: impl IntoIterator<Item = (usize, String)>,
 ) -> CFunctionTerminationPlan {
     CFunctionTerminationPlan {
         function_name: function_name.into(),
-        recursive_parameter,
+        recursive_measure,
         loop_measures: loop_measures.into_iter().collect(),
     }
 }

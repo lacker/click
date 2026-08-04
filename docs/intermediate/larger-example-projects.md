@@ -121,12 +121,12 @@ examples/recursive-zero-list/
 ```
 
 This fixture gives every nonnull node the invariant `node->value == 0`, then
-uses a viewed recursive resource to verify an opaque self-call on the tail. The
-unbounded traversal proves only that a returning call yields zero. A second
-fuel-bounded traversal has the same partial contract plus separate numeric
-`decreases` evidence, making the distinction between recursive correctness and
-termination visible in one project. A small pipeline constructs two nodes from
-caller-owned fields, folds the list, and composes both traversal contracts.
+uses a viewed recursive resource to verify an opaque self-call on the tail. Its
+ordinary contract proves that a returning call yields zero, while `decreases
+resource` separately certifies return by descent through the contained tail. A
+second fuel-bounded traversal proves termination with a numeric measure. A
+small pipeline constructs two nodes from caller-owned fields, folds the list,
+and composes both traversal contracts.
 
 ### Owned Vector
 

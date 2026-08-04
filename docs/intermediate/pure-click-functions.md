@@ -111,8 +111,47 @@ Concrete arguments unfold until evaluation reaches a base case. At symbolic
 arguments, Click exposes one defining equation and preserves the next
 unknown-depth call as an opaque pure-function application. The same application
 is structurally equal to itself, but Click does not recursively normalize it by
-an arbitrary depth budget. General induction over the measure remains separate
-proof functionality.
+an arbitrary depth budget.
+
+## Proving Recursive Results
+
+`decreases` establishes that a recursive definition denotes a value. It does
+not prove every property of that value. Use explicit strong induction in a
+pure theorem when the proof needs the result at a smaller argument:
+
+```click
+theorem countdown_is_zero(n: int32) {
+    requires n >= 0;
+    ensures countdown(n) == 0 by {
+        induct(n) as ih;
+        if n <= 0 {
+            simp();
+        } else {
+            apply(ih(n - 1));
+            simp();
+        }
+    }
+}
+```
+
+`induct(n) as ih` is a simple, explicit proof step. It requires the current
+facts to prove `n >= 0`. Within the rest of that theorem proof, `ih(m)` states
+the same goal at any proved nonnegative `m < n`. The application also requires
+the theorem's declared requirements with `n` replaced by `m`; Click never
+drops a domain condition merely because it is doing induction.
+
+The induction variable must be an `int32` theorem parameter. Other theorem
+parameters remain fixed, so `ih` takes only the replacement value for the
+named induction parameter. This is strong induction, so calls such as
+`ih(n - 2)` are supported when the branch facts prove the argument is
+nonnegative and smaller. The local hypothesis is not a global theorem and is
+not available in C execution proofs.
+
+Symbolic function evaluation still exposes only one equation. Neither `simp`
+nor repeated evaluation silently starts induction or unfolds to a depth limit.
+Pure theorem induction is also unrelated to a C function's optional
+termination evidence: it proves a proposition about specification values, not
+that a C call returns.
 
 ## When To Use Pure Functions
 

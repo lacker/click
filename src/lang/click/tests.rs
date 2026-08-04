@@ -256,6 +256,55 @@ fn parses_pure_theorem_definition() {
 }
 
 #[test]
+fn parses_and_prints_pure_induction_tactics() {
+    let source = r#"
+        theorem induction_shape(n: int32) {
+            requires n >= 0;
+            ensures n == n by {
+                induct(n) as ih;
+                apply(ih(n - 1));
+                simp();
+            }
+        }
+    "#;
+    let file = parse(source).expect("induction proof should parse");
+    let Proof::Script(tactics) = file.theorem_definitions()[0].ensures()[0].proof() else {
+        panic!("expected an explicit theorem proof");
+    };
+    assert!(matches!(
+        &tactics[0],
+        ProofTactic::Induct { parameter, hypothesis }
+            if parameter == "n" && hypothesis == "ih"
+    ));
+    assert!(matches!(
+        &tactics[1],
+        ProofTactic::ApplyTheorem(application)
+            if application.name == "ih" && application.arguments.len() == 1
+    ));
+
+    let printable = vec![
+        tactics[0].clone(),
+        ProofTactic::ApplyInduction {
+            hypothesis: "ih".to_string(),
+            argument: match &tactics[1] {
+                ProofTactic::ApplyTheorem(application) => application.arguments[0].clone(),
+                _ => unreachable!(),
+            },
+        },
+        ProofTactic::CloseInduction,
+    ];
+    let printed = super::printing::format_partial_tactic_sequence(&printable);
+    let reparsed = parse(&format!(
+        "theorem induction_shape(n: int32) {{ requires n >= 0; ensures n == n by {{ {printed} }} }}"
+    ))
+    .expect("printed induction proof should parse");
+    assert_eq!(
+        reparsed.theorem_definitions()[0].ensures()[0].proof(),
+        &Proof::Script(tactics.clone())
+    );
+}
+
+#[test]
 fn verifies_pure_theorem_definition() {
     let source = r#"
             theorem preserves_nonnegative(x: int32) {

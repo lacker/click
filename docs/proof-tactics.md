@@ -57,6 +57,8 @@ and certificate-oriented execution names are not part of the surface language.
 | `derive using { Q; ... }` | simple | Establish the current atomic proposition goal from exactly the listed premises using Click's deterministic atomic theories. |
 | `apply(theorem(args))` | smart | Apply a theorem while selecting its premises from context. |
 | `apply(theorem(args)) using { P; ... }` | simple | Apply a theorem using exactly the listed premises. |
+| `induct(n) as ih` | simple | Start strong induction on a nonnegative `int32` theorem parameter. |
+| `apply(ih(m))` | simple in an induction proof | Instantiate the local hypothesis after proving `0 <= m`, `m < n`, and the theorem requirements at `m`. |
 | `have P by { ... }` | structural control; source class inherited | Prove `P` in a nested proof and add it to the surrounding context. |
 | `if P { ... } else { ... }` | control | Split the proof on the exact condition `P`. This does not execute a C `if`. |
 | `witness ...` / `choose ...` | control | Introduce or select existential evidence in the supported proposition contexts. |
@@ -64,6 +66,13 @@ and certificate-oriented execution names are not part of the surface language.
 `by simp;` is sugar for a script containing the same `simp()` operation at the
 same proof state. Neither form implicitly executes a function. Write
 `execute(); simp();` when both operations are intended, or use `by auto;`.
+
+`induct` is available only in a pure theorem, must be the first tactic, and
+names a proof-local hypothesis. It is never inserted by `simp` or `auto`.
+Although ordinary global-theorem `apply` is smart when it searches for
+premises, applying the named induction hypothesis is a deterministic simple
+step with fixed nonnegative, strict-decrease, and substituted-requirement
+obligations.
 
 `derive` is the only public atomic-derivation tactic; `calculate` is not an
 alias. Its target is always the current pure goal; repeating that proposition

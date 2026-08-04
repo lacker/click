@@ -23,6 +23,355 @@ fn variable_minus_positive(expression: &CExpression, variable: &str) -> Option<i
     int32_literal(right).filter(|step| *step > 0)
 }
 
+fn substitute_c_expression_variables(
+    expression: &CExpression,
+    substitutions: &BTreeMap<String, CExpression>,
+) -> CExpression {
+    use CExpression::*;
+    let unary =
+        |body: &CExpression| Box::new(substitute_c_expression_variables(body, substitutions));
+    let binary = |left: &CExpression, right: &CExpression| {
+        (
+            Box::new(substitute_c_expression_variables(left, substitutions)),
+            Box::new(substitute_c_expression_variables(right, substitutions)),
+        )
+    };
+    match expression {
+        Value(_) => expression.clone(),
+        Variable(name) => substitutions
+            .get(name)
+            .cloned()
+            .unwrap_or_else(|| expression.clone()),
+        AddressOf(body) => AddressOf(unary(body)),
+        PointerOffsetBytes { pointer, bytes } => PointerOffsetBytes {
+            pointer: unary(pointer),
+            bytes: *bytes,
+        },
+        LessThan(left, right) => {
+            let (left, right) = binary(left, right);
+            LessThan(left, right)
+        }
+        LessEqual(left, right) => {
+            let (left, right) = binary(left, right);
+            LessEqual(left, right)
+        }
+        GreaterThan(left, right) => {
+            let (left, right) = binary(left, right);
+            GreaterThan(left, right)
+        }
+        GreaterEqual(left, right) => {
+            let (left, right) = binary(left, right);
+            GreaterEqual(left, right)
+        }
+        Equal(left, right) => {
+            let (left, right) = binary(left, right);
+            Equal(left, right)
+        }
+        NotEqual(left, right) => {
+            let (left, right) = binary(left, right);
+            NotEqual(left, right)
+        }
+        Not(body) => Not(unary(body)),
+        And(left, right) => {
+            let (left, right) = binary(left, right);
+            And(left, right)
+        }
+        Or(left, right) => {
+            let (left, right) = binary(left, right);
+            Or(left, right)
+        }
+        Add(left, right) => {
+            let (left, right) = binary(left, right);
+            Add(left, right)
+        }
+        Subtract(left, right) => {
+            let (left, right) = binary(left, right);
+            Subtract(left, right)
+        }
+        Multiply(left, right) => {
+            let (left, right) = binary(left, right);
+            Multiply(left, right)
+        }
+        Divide(left, right) => {
+            let (left, right) = binary(left, right);
+            Divide(left, right)
+        }
+        Remainder(left, right) => {
+            let (left, right) = binary(left, right);
+            Remainder(left, right)
+        }
+        ShiftLeft(left, right) => {
+            let (left, right) = binary(left, right);
+            ShiftLeft(left, right)
+        }
+        ShiftRight(left, right) => {
+            let (left, right) = binary(left, right);
+            ShiftRight(left, right)
+        }
+        BitwiseAnd(left, right) => {
+            let (left, right) = binary(left, right);
+            BitwiseAnd(left, right)
+        }
+        BitwiseOr(left, right) => {
+            let (left, right) = binary(left, right);
+            BitwiseOr(left, right)
+        }
+        BitwiseXor(left, right) => {
+            let (left, right) = binary(left, right);
+            BitwiseXor(left, right)
+        }
+        BitwiseNot(body) => BitwiseNot(unary(body)),
+        Load(body) => Load(unary(body)),
+        TypedLoad {
+            pointer,
+            value_type,
+        } => TypedLoad {
+            pointer: unary(pointer),
+            value_type: *value_type,
+        },
+        Index(left, right) => {
+            let (left, right) = binary(left, right);
+            Index(left, right)
+        }
+    }
+}
+
+fn resolve_c_expression_aliases(
+    expression: &CExpression,
+    aliases: &BTreeMap<String, CExpression>,
+) -> CExpression {
+    let mut resolved = expression.clone();
+    for _ in 0..=aliases.len() {
+        let next = substitute_c_expression_variables(&resolved, aliases);
+        if next == resolved {
+            break;
+        }
+        resolved = next;
+    }
+    resolved
+}
+
+fn instantiate_structural_guard(
+    proposition: &SpecProposition,
+    substitutions: &BTreeMap<String, CExpression>,
+) -> Option<SpecProposition> {
+    let SpecProposition::Comparison {
+        left,
+        operator,
+        right,
+    } = proposition
+    else {
+        return None;
+    };
+    let instantiate = |expression: &SpecExpression| match expression {
+        SpecExpression::Value(value) => Some(SpecExpression::Value(value.clone())),
+        SpecExpression::CExpression(expression) => Some(SpecExpression::CExpression(
+            substitute_c_expression_variables(expression, substitutions),
+        )),
+        _ => None,
+    };
+    Some(SpecProposition::Comparison {
+        left: instantiate(left)?,
+        operator: *operator,
+        right: instantiate(right)?,
+    })
+}
+
+fn structural_recursion_paths(
+    statement: &CStatement,
+    function: &CFunction,
+    measure_arguments: &[CExpression],
+    child_arguments: &[Vec<CExpression>],
+    aliases: Vec<BTreeMap<String, CExpression>>,
+) -> Result<Vec<BTreeMap<String, CExpression>>, CTerminationError> {
+    match statement {
+        CStatement::Skip
+        | CStatement::Assert { .. }
+        | CStatement::Store { .. }
+        | CStatement::TypedStore { .. } => Ok(aliases),
+        CStatement::Return(_) => Ok(Vec::new()),
+        CStatement::Declare { name, .. } => Ok(aliases
+            .into_iter()
+            .map(|mut aliases| {
+                aliases.remove(name);
+                aliases
+            })
+            .collect()),
+        CStatement::Assign { name, expression } => Ok(aliases
+            .into_iter()
+            .map(|mut aliases| {
+                let expression = resolve_c_expression_aliases(expression, &aliases);
+                aliases.insert(name.clone(), expression);
+                aliases
+            })
+            .collect()),
+        CStatement::CallAssign {
+            target,
+            function_name,
+            arguments,
+        } => {
+            let mut next_paths = Vec::new();
+            for mut aliases in aliases {
+                if function_name == function.name() {
+                    let parameter_substitutions = function
+                        .parameters()
+                        .iter()
+                        .zip(arguments)
+                        .map(|(parameter, argument)| {
+                            (
+                                parameter.name().to_string(),
+                                resolve_c_expression_aliases(argument, &aliases),
+                            )
+                        })
+                        .collect::<BTreeMap<_, _>>();
+                    let call_measure_arguments = measure_arguments
+                        .iter()
+                        .map(|argument| {
+                            substitute_c_expression_variables(argument, &parameter_substitutions)
+                        })
+                        .collect::<Vec<_>>();
+                    if !child_arguments.contains(&call_measure_arguments) {
+                        return Err(error(format!(
+                            "recursive call to `{function_name}` does not pass a direct contained child of its structural resource measure"
+                        )));
+                    }
+                }
+                aliases.remove(target);
+                next_paths.push(aliases);
+            }
+            Ok(next_paths)
+        }
+        CStatement::Seq(first, second) => structural_recursion_paths(
+            second,
+            function,
+            measure_arguments,
+            child_arguments,
+            structural_recursion_paths(
+                first,
+                function,
+                measure_arguments,
+                child_arguments,
+                aliases,
+            )?,
+        ),
+        CStatement::If {
+            then_branch,
+            else_branch,
+            ..
+        } => {
+            let mut paths = structural_recursion_paths(
+                then_branch,
+                function,
+                measure_arguments,
+                child_arguments,
+                aliases.clone(),
+            )?;
+            paths.extend(structural_recursion_paths(
+                else_branch,
+                function,
+                measure_arguments,
+                child_arguments,
+                aliases,
+            )?);
+            Ok(paths)
+        }
+        CStatement::While { body, .. } => {
+            let mut calls = BTreeSet::new();
+            statement_calls(body, &mut calls);
+            if calls.contains(function.name()) {
+                return Err(error(
+                    "recursive calls inside a loop require a lexicographic measure and are not yet supported",
+                ));
+            }
+            Ok(aliases)
+        }
+    }
+}
+
+fn structural_resource_children(
+    function: &CFunction,
+    requirement_index: usize,
+) -> Result<(Vec<CExpression>, Vec<Vec<CExpression>>), CTerminationError> {
+    if !function.contract_mutable().is_empty()
+        || !function
+            .contract_claims()
+            .iter()
+            .any(|claim| matches!(claim.target, CFunctionContractClaimTarget::Effect))
+    {
+        return Err(error(format!(
+            "structural resource termination for `{}` currently requires an `immutable` contract",
+            function.name()
+        )));
+    }
+    let Some(CResourceSpec::Composite {
+        name, arguments, ..
+    }) = function.resource_requires().get(requirement_index)
+    else {
+        return Err(error(format!(
+            "structural resource measure index is invalid for `{}`",
+            function.name()
+        )));
+    };
+    let definition = function
+        .composite_resource_definitions()
+        .iter()
+        .find(|definition| definition.name() == name)
+        .ok_or_else(|| error(format!("resource measure `{name}` has no definition")))?;
+    if !definition.is_recursive() {
+        return Err(error(format!(
+            "resource measure `{name}` is not directly recursive"
+        )));
+    }
+    if definition.parameters().len() != arguments.len() {
+        return Err(error(format!(
+            "resource measure `{name}` has mismatched definition arguments"
+        )));
+    }
+    let substitutions = definition
+        .parameters()
+        .iter()
+        .zip(arguments)
+        .map(|(parameter, argument)| (parameter.name().to_string(), argument.clone()))
+        .collect::<BTreeMap<_, _>>();
+    let guard = definition
+        .condition()
+        .and_then(|condition| instantiate_structural_guard(condition, &substitutions))
+        .ok_or_else(|| {
+            error(format!(
+                "resource measure `{name}` currently requires a simple comparison guard"
+            ))
+        })?;
+    if !function.contract_requires().contains(&guard) {
+        return Err(error(format!(
+            "structural resource termination for `{}` requires the instantiated `{name}` guard as an exact function precondition",
+            function.name()
+        )));
+    }
+    let children = definition
+        .contains()
+        .iter()
+        .filter_map(|contained| match contained {
+            CResourceSpec::Composite {
+                name: child_name,
+                arguments,
+                ..
+            } if child_name == name => Some(
+                arguments
+                    .iter()
+                    .map(|argument| substitute_c_expression_variables(argument, &substitutions))
+                    .collect::<Vec<_>>(),
+            ),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    if children.is_empty() {
+        return Err(error(format!(
+            "resource measure `{name}` has no direct recursive child"
+        )));
+    }
+    Ok((arguments.clone(), children))
+}
+
 fn refined_lower_bound(condition: &CExpression, variable: &str, branch: bool, current: i64) -> i64 {
     use CExpression::*;
     let direct = match condition {
@@ -345,11 +694,12 @@ pub fn c_verified_function_termination_rules(
                 .iter()
                 .any(|name| calls[name].contains(name.as_str()));
         let mut parameter_indices = BTreeMap::new();
+        let mut structural_requirement = None;
         if recursive {
             if component.iter().any(|name| {
                 plans
                     .get(name)
-                    .and_then(|plan| plan.recursive_parameter)
+                    .and_then(|plan| plan.recursive_measure.as_ref())
                     .is_none()
             }) {
                 for name in component {
@@ -357,26 +707,55 @@ pub fn c_verified_function_termination_rules(
                 }
                 continue;
             }
-            for name in component {
-                let function = functions[name];
-                let index = plans[name].recursive_parameter.unwrap();
-                let parameter = function.parameters.get(index).ok_or_else(|| {
-                    error(format!(
-                        "termination parameter index is invalid for `{name}`"
-                    ))
-                })?;
-                if parameter.c_type != CType::Int32 {
-                    return Err(error(format!(
-                        "termination parameter `{}` in `{name}` must have type int32",
-                        parameter.name
-                    )));
+            let has_resource_measure = component.iter().any(|name| {
+                matches!(
+                    plans[name].recursive_measure,
+                    Some(CFunctionTerminationMeasure::ResourceRequirement(_))
+                )
+            });
+            if has_resource_measure {
+                if component.len() != 1 {
+                    return Err(error(
+                        "structural resource termination currently supports direct recursion only",
+                    ));
                 }
-                parameter_indices.insert(name.clone(), index);
+                let name = component.first().expect("recursive component is nonempty");
+                let Some(CFunctionTerminationMeasure::ResourceRequirement(index)) =
+                    plans[name].recursive_measure
+                else {
+                    return Err(error(
+                        "a recursive component cannot mix numeric and structural measures",
+                    ));
+                };
+                structural_requirement = Some(index);
+            } else {
+                for name in component {
+                    let function = functions[name];
+                    let Some(CFunctionTerminationMeasure::NumericParameter(index)) =
+                        plans[name].recursive_measure
+                    else {
+                        return Err(error(
+                            "a recursive component cannot mix numeric and structural measures",
+                        ));
+                    };
+                    let parameter = function.parameters.get(index).ok_or_else(|| {
+                        error(format!(
+                            "termination parameter index is invalid for `{name}`"
+                        ))
+                    })?;
+                    if parameter.c_type != CType::Int32 {
+                        return Err(error(format!(
+                            "termination parameter `{}` in `{name}` must have type int32",
+                            parameter.name
+                        )));
+                    }
+                    parameter_indices.insert(name.clone(), index);
+                }
             }
         } else if let Some(name) = component.first()
             && plans
                 .get(name)
-                .is_some_and(|plan| plan.recursive_parameter.is_some())
+                .is_some_and(|plan| plan.recursive_measure.is_some())
         {
             return Err(error(format!(
                 "function-level `decreases` on nonrecursive function `{name}` has no recursive edge to rank"
@@ -396,15 +775,27 @@ pub fn c_verified_function_termination_rules(
                 )));
             }
             if recursive {
-                let index = parameter_indices[name];
-                let measure = &function.parameters[index].name;
-                recursion_paths(
-                    &function.source_body,
-                    measure,
-                    component,
-                    &parameter_indices,
-                    vec![i64::MIN / 2],
-                )?;
+                if let Some(requirement_index) = structural_requirement {
+                    let (measure_arguments, children) =
+                        structural_resource_children(function, requirement_index)?;
+                    structural_recursion_paths(
+                        &function.source_body,
+                        function,
+                        &measure_arguments,
+                        &children,
+                        vec![BTreeMap::new()],
+                    )?;
+                } else {
+                    let index = parameter_indices[name];
+                    let measure = &function.parameters[index].name;
+                    recursion_paths(
+                        &function.source_body,
+                        measure,
+                        component,
+                        &parameter_indices,
+                        vec![i64::MIN / 2],
+                    )?;
+                }
             }
         }
         for name in component {

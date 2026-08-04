@@ -83,12 +83,35 @@ for loop(0) {
 }
 ```
 
-The initial supported proof shape is deliberately small. The measure must be
+Recursive traversal of an inductive resource may instead use its hidden
+structural rank:
+
+```click
+int32 zero_walk(struct node* node) {
+    decreases resource zero_list(node);
+    requires node != 0;
+    views zero_list(node);
+    immutable;
+    ensures result == 0;
+}
+```
+
+The declaration must exactly name an owned or viewed entry resource. The
+current structural slice supports direct recursion, an immutable function, a
+guarded directly recursive composite definition, and a simple resource guard
+that is also an exact function precondition. Every recursive call must pass one
+of the definition's direct `contains` children; Click follows ordinary C-local
+aliases but does not accept pointer inequality, a same-named unrelated
+resource, or a newly folded resource as ancestry evidence. This proves descent
+of the finite resource witness, not descent of a pointer value.
+
+The numeric proof shape is also deliberately small. A function measure must be
 one `int32` variable. A recursive edge passes `measure - K`, and a loop back
 edge updates `measure = measure - K`, for a positive constant `K`; the path
 guard must make the resulting value nonnegative. Mutually recursive functions
-all declare their corresponding parameter. Nested ranking arguments and
-compound expressions are rejected rather than guessed.
+all declare their corresponding numeric parameter. Structural measures do not
+yet support mutual C recursion. Nested rankings, mixed numeric/structural
+tuples, and compound expressions are rejected rather than guessed.
 
 Supplying any C `decreases` clause asks Click to certify termination of the
 whole function, so every reachable loop and recursive component must be ranked
@@ -178,6 +201,30 @@ derive atomic propositions. They cannot execute C or transform resources.
 Applying a theorem never consumes, creates, returns, opens, or closes
 resources. The exact inventory is in the
 [proof tactics reference](proof-tactics.md).
+
+Pure theorems can use explicit strong induction on an `int32` parameter:
+
+```click
+theorem countdown_is_zero(n: int32) {
+    requires n >= 0;
+    ensures countdown(n) == 0 by {
+        induct(n) as ih;
+        if n <= 0 {
+            simp();
+        } else {
+            apply(ih(n - 1));
+            simp();
+        }
+    }
+}
+```
+
+`induct` must be the first tactic and the current requirements must establish
+that its parameter is nonnegative. `ih(m)` is available only in that proof and
+requires `m` to be nonnegative and strictly smaller, plus all theorem
+requirements after substituting `m` for the induction parameter. Other theorem
+parameters remain fixed. This is a pure proposition rule, not C execution or
+C termination evidence.
 
 Theorems can be reused by explicit application:
 
@@ -655,6 +702,13 @@ Concrete calls evaluate to a base case. Symbolic calls expose one equation and
 leave the next recursive application opaque, so verification never guesses a
 recursion depth. This total value semantics is intentionally different from
 partial-correctness C recursion.
+
+General properties of symbolic recursive calls use theorem-level
+`induct(parameter) as hypothesis`. Induction is explicit and strong: applying
+the local hypothesis checks a nonnegative strictly smaller argument and the
+theorem's substituted requirements. `simp` does not invent induction, and a
+pure function's `decreases` clause remains definition-totality evidence rather
+than a theorem about the result.
 
 Function contracts may also use contract-level `let` bindings:
 

@@ -75,6 +75,7 @@ new proof workflow concepts too early.
 | C array and struct surface syntax | C frontends, C verifiers | parameter-array lowering, local stack blocks, LP64 struct field loads/stores, and retained struct-pointer field types | ordinary C/Click signatures plus explicit ranges for multi-field structs | `mdtests/fill3_array_loop.md`, `mdtests/copy3_array_demo.md`, `mdtests/local_array.md`, `mdtests/local_array_loop.md`, `mdtests/struct_multifield_explicit_permissions.md`, `mdtests/struct_pointer_field_explicit_permissions.md`, `mdtests/jsonc_refcount_getter.md`, `mdtests/jsonc_refcount_setter.md`, `mdtests/jsonc_refcount_increment.md` |
 | Byte buffers | C string/memory libraries | `uint8` values, byte-width loads/stores, typed array refs | `auto`, `simp()`, `unfold` | `mdtests/uint8_literals.md`, `mdtests/uint8_buffer_read.md`, `mdtests/uint8_narrowing.md`, `mdtests/byte_slice_stdlib.md`, `mdtests/cstr_stdlib.md` |
 | Stdlib folds and permutation | functional array specs, multiset proofs | `RangeFold`, finite forall/range facts, count-shaped fold reasoning | `unfold`, `simp`, loop invariants | `mdtests/compare_swap2_permutation.md`, `mdtests/sort3_permutation.md`, `mdtests/bubble_sort3_loop_permutation.md`, `mdtests/loop_stdlib_permutation_invariant.md` |
+| Pure-function induction | Lean/Coq/Isabelle strong induction | nonnegative `int32` theorem induction with exact local-hypothesis instantiation | `induct(n) as ih`, `apply(ih(m))` | `mdtests/pure_induction_countdown.md`, `mdtests/pure_induction_two_step.md` |
 
 ## Current C0 Boundary
 

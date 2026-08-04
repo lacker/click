@@ -261,6 +261,15 @@ consumes `live_fd(fd)`, and neither step unfolds owned permissions. This
 one-step behavior is intentional: large composite resources should not be
 recursively expanded by default proof automation.
 
+A guarded directly recursive resource also has a finite inductive witness.
+`decreases resource list(node)` can use a direct contained child as a hidden
+structural rank for an immutable, directly recursive C traversal. This does
+not turn pointers into sizes and does not automatically unfold the resource:
+the proof still uses `observe` or `unfold` to expose the layer it needs, while
+the termination checker independently rechecks the declared child against the
+exact resource definition. The current form requires the resource guard (for
+example, `node != 0`) as an exact function precondition.
+
 When code needs the contained owned resources, use `unfold(resource)`. When
 the proof has rebuilt the body, use `fold(resource)`:
 

@@ -90,6 +90,16 @@ integer types, guards, and decreasing edges before constructing
 when every member has a compatible measure. Whole-function evidence is
 withheld if any reachable loop, recursive component, or callee lacks evidence.
 
+For `decreases resource`, the plan contains only an index into the exact entry
+resource requirements. The kernel resolves that requirement and the exact
+composite definition again, instantiates its guard and direct recursive
+children, requires the guard as an exact contract precondition, checks the
+function's certified immutable effect, and compares every direct self-call's
+instantiated measure with a direct child. C-local aliases are normalized from
+the source body. Thus the surface plan cannot assert ancestry, and an
+unrelated or same-parent resource does not become decreasing merely because it
+has the same resource name.
+
 Termination rules live in their own execution-environment map. Constructing or
 applying `CVerifiedFunctionRule` does not consult that map, so a termination
 feature cannot accidentally turn ordinary `ensures` into total correctness.
@@ -313,6 +323,19 @@ The Click parser is hand-written in `src/lang/click.rs`. Validation checks:
 - unavailable `old(...)`
 - unsupported predicate calls in pure `if` conditions
 - well-founded recursive Click functions and their `decreases` edges
+- explicit nonnegative `int32` induction in pure theorem replay, including
+  exact universal instantiation of the local smaller-value hypothesis
 
 Stdlib definitions are parsed and combined with user definitions for validation
 and verification.
+
+Pure-function induction deliberately preserves the symbolic evaluation
+boundary. The language layer lowers the theorem predicate with recursive pure
+applications opaque, constructs a fresh universally quantified strong
+hypothesis, and replays every proof branch. Applying that hypothesis goes
+through the kernel's exact `forall int32` instantiation operation: the
+quantified fact, nonnegative argument, strict decrease, substituted theorem
+requirements, and resulting predicate must all match. The ordinary one-step
+pure-function elaborator then exposes the current defining equation; it never
+uses an unfolding-depth budget. This machinery is separate from recursive C
+contract and C-termination judgments.

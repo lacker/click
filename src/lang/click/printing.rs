@@ -139,6 +139,26 @@ fn write_tactic(output: &mut String, tactic: &ProofTactic, indent: usize) {
             &prefix,
             &format!("fold({});", format_resource_call(resource)),
         ),
+        ProofTactic::Induct {
+            parameter,
+            hypothesis,
+        } => line(
+            output,
+            &prefix,
+            &format!("induct({parameter}) as {hypothesis};"),
+        ),
+        ProofTactic::ApplyInduction {
+            hypothesis,
+            argument,
+        } => line(
+            output,
+            &prefix,
+            &format!(
+                "apply({hypothesis}({}));",
+                describe_contract_expression(argument)
+            ),
+        ),
+        ProofTactic::CloseInduction => line(output, &prefix, "simp();"),
         ProofTactic::ApplyTheorem(application) => line(
             output,
             &prefix,

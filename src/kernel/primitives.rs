@@ -557,8 +557,17 @@ pub struct CVerifiedFunctionTerminationRule {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CFunctionTerminationPlan {
     pub(super) function_name: String,
-    pub(super) recursive_parameter: Option<usize>,
+    pub(super) recursive_measure: Option<CFunctionTerminationMeasure>,
     pub(super) loop_measures: BTreeMap<usize, String>,
+}
+
+/// An untrusted description of the function-level ranking candidate. The
+/// termination checker resolves the selected parameter or exact contract
+/// resource again against the verified function.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CFunctionTerminationMeasure {
+    NumericParameter(usize),
+    ResourceRequirement(usize),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

@@ -70,6 +70,18 @@ pub(super) fn expand_declared_resource_clauses(
     }
 
     for function in &mut file.function_blocks {
+        function.decreases = function
+            .decreases
+            .take()
+            .map(|decreases| match decreases {
+                CFunctionDecrease::Numeric(expression) => {
+                    Ok(CFunctionDecrease::Numeric(expression))
+                }
+                CFunctionDecrease::Resource(resource) => Ok(CFunctionDecrease::Resource(
+                    expand_declared_resource_clause(resource, &resource_definitions)?,
+                )),
+            })
+            .transpose()?;
         function.requires = function
             .requires
             .drain(..)
@@ -2332,6 +2344,9 @@ fn validate_pure_theorem_tactics(
     for tactic in tactics {
         match tactic {
             ProofTactic::UnfoldPredicate(_)
+            | ProofTactic::Induct { .. }
+            | ProofTactic::ApplyInduction { .. }
+            | ProofTactic::CloseInduction
             | ProofTactic::ApplyTheorem(_)
             | ProofTactic::ApplyTheoremUsing { .. }
             | ProofTactic::Assumption
@@ -2408,6 +2423,9 @@ pub(super) fn tactic_name(tactic: &ProofTactic) -> &'static str {
         ProofTactic::FrameUsing { .. } => "frame",
         ProofTactic::UnfoldPredicate(_) | ProofTactic::UnfoldResource(_) => "unfold",
         ProofTactic::FoldResource(_) => "fold",
+        ProofTactic::Induct { .. } => "induct",
+        ProofTactic::ApplyInduction { .. } => "apply",
+        ProofTactic::CloseInduction => "simp",
         ProofTactic::ApplyTheorem(_) | ProofTactic::ApplyTheoremUsing { .. } => "apply",
         ProofTactic::Have(_) => "have",
         ProofTactic::If(_) => "if",

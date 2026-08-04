@@ -674,15 +674,25 @@ impl Parser {
                             signature.name()
                         )));
                     }
-                    let measure = self.parse_contract_expression()?;
-                    self.expect(Token::Semicolon)?;
-                    decreases = Some(
-                        substitute_contract_expression(
-                            &measure,
-                            &contract_let_substitutions(&contract_lets),
+                    decreases = Some(if self.peek_ident() == Some("resource") {
+                        self.position += 1;
+                        let resource = self.parse_resource_target(ResourceAccessMode::View)?;
+                        self.expect(Token::Semicolon)?;
+                        CFunctionDecrease::Resource(
+                            apply_contract_lets_to_resource_clause(resource, &contract_lets)
+                                .map_err(|message| self.error(message))?,
                         )
-                        .map_err(|message| self.error(message))?,
-                    );
+                    } else {
+                        let measure = self.parse_contract_expression()?;
+                        self.expect(Token::Semicolon)?;
+                        CFunctionDecrease::Numeric(
+                            substitute_contract_expression(
+                                &measure,
+                                &contract_let_substitutions(&contract_lets),
+                            )
+                            .map_err(|message| self.error(message))?,
+                        )
+                    });
                 }
                 Some("owns") => {
                     self.position += 1;
@@ -2012,6 +2022,17 @@ impl Parser {
                 let resource = self.parse_declared_resource_call()?;
                 self.expect(Token::RParen)?;
                 ProofTactic::FoldResource(resource)
+            }
+            "induct" => {
+                self.expect(Token::LParen)?;
+                let parameter = self.expect_ident("induction parameter")?;
+                self.expect(Token::RParen)?;
+                self.expect_ident_spelling("as")?;
+                let hypothesis = self.expect_ident("induction hypothesis name")?;
+                ProofTactic::Induct {
+                    parameter,
+                    hypothesis,
+                }
             }
             _ if is_tactic_name(&name) => {
                 return Err(self.error(format!(

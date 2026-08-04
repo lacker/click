@@ -4340,6 +4340,11 @@ impl KernelPropositionLowerer {
         }
     }
 
+    pub(super) fn with_active_functions(mut self, names: impl IntoIterator<Item = String>) -> Self {
+        self.active_functions.extend(names);
+        self
+    }
+
     pub(super) fn lower_requirement_proposition(
         &mut self,
         proposition: &ClickProposition,
