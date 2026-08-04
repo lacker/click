@@ -39,6 +39,7 @@ pub(super) fn lower_composite_resource_condition(
             })
             .collect(),
         quantified_values: BTreeMap::new(),
+        active_click_functions: BTreeSet::new(),
         loop_index: 0,
         statement_index: 0,
         next_quantifier_variable: 3_200_000,
@@ -88,6 +89,7 @@ pub(super) fn lower_composite_resource_facts(
             })
             .collect(),
         quantified_values: BTreeMap::new(),
+        active_click_functions: BTreeSet::new(),
         loop_index: 0,
         statement_index: 0,
         next_quantifier_variable: 3_200_000,
@@ -146,6 +148,7 @@ pub(super) fn annotated_function(
             })
             .collect(),
         quantified_values: BTreeMap::new(),
+        active_click_functions: BTreeSet::new(),
         loop_index: 0,
         statement_index: 0,
         next_quantifier_variable: 3_000_000,
@@ -219,6 +222,7 @@ pub(super) fn function_contract_summary(
             })
             .collect(),
         quantified_values: BTreeMap::new(),
+        active_click_functions: BTreeSet::new(),
         loop_index: 0,
         statement_index: 0,
         next_quantifier_variable: 3_100_000,
@@ -454,6 +458,7 @@ struct AnnotationLowerer<'a> {
     entry_values: BTreeMap<String, CValue>,
     parameter_array_element_types: BTreeMap<String, CType>,
     quantified_values: BTreeMap<String, CValue>,
+    active_click_functions: BTreeSet<String>,
     loop_index: usize,
     statement_index: usize,
     next_quantifier_variable: u64,
@@ -1273,6 +1278,21 @@ impl AnnotationLowerer<'_> {
             ));
         }
 
+        if self.active_click_functions.contains(name) {
+            if definition.decreases().is_none() {
+                return Err(format!(
+                    "recursive function call `{name}` has no decreases measure"
+                ));
+            }
+            return Ok(SpecExpression::PureFunctionApplication {
+                name: name.to_string(),
+                arguments: arguments
+                    .iter()
+                    .map(|argument| self.lower_contract_expression_to_spec(argument, environment))
+                    .collect::<Result<Vec<_>, _>>()?,
+            });
+        }
+
         let mut function_environment =
             SpecElaborationContext::with_current_memory(environment.current_memory.clone());
         for (parameter, argument) in definition.parameters().iter().zip(arguments) {
@@ -1306,7 +1326,11 @@ impl AnnotationLowerer<'_> {
             }
         }
 
-        self.lower_contract_expression_to_spec(definition.body(), &function_environment)
+        self.active_click_functions.insert(name.to_string());
+        let result =
+            self.lower_contract_expression_to_spec(definition.body(), &function_environment);
+        self.active_click_functions.remove(name);
+        result
     }
 
     fn lower_array_ref_to_spec(

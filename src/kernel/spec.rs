@@ -933,6 +933,16 @@ pub(super) fn evaluate_spec_expression_paths_with_loop_entry(
             }
             paths
         }
+        SpecExpression::PureFunctionApplication { name, arguments } => {
+            evaluate_spec_pure_function_application_paths(
+                state,
+                name,
+                arguments,
+                loop_entry_state,
+                assumptions,
+                budget,
+            )?
+        }
         SpecExpression::LoopEntrySnapshot(expression) => {
             if let Some(loop_entry_state) = loop_entry_state {
                 evaluate_spec_expression_paths_with_loop_entry(
@@ -1019,6 +1029,59 @@ pub(super) fn evaluate_spec_expression_paths_with_loop_entry(
     };
     budget.consume_paths(paths.len())?;
     Ok(paths)
+}
+
+fn evaluate_spec_pure_function_application_paths(
+    state: &CState,
+    name: &str,
+    arguments: &[SpecExpression],
+    loop_entry_state: Option<&CState>,
+    assumptions: &Assumptions,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<SpecExpressionPath>> {
+    let mut paths = vec![(Vec::new(), Vec::new(), Vec::new())];
+    for argument in arguments {
+        let mut next = Vec::new();
+        for (values, facts, obligations) in paths {
+            let path_assumptions = assumptions_with_path_context(assumptions, &facts, &obligations);
+            for argument_path in evaluate_spec_expression_paths_with_loop_entry(
+                state,
+                argument,
+                loop_entry_state,
+                &path_assumptions,
+                budget,
+            )? {
+                let CValue::Int32(value) = argument_path.value else {
+                    continue;
+                };
+                if let Some((merged_facts, merged_obligations)) =
+                    merge_execution_pure_facts_and_obligations(
+                        &facts,
+                        &obligations,
+                        &argument_path.facts,
+                        &argument_path.obligations,
+                        assumptions,
+                    )
+                {
+                    let mut merged_values = values.clone();
+                    merged_values.push(value);
+                    next.push((merged_values, merged_facts, merged_obligations));
+                }
+            }
+        }
+        paths = next;
+    }
+    Ok(paths
+        .into_iter()
+        .map(|(arguments, facts, obligations)| SpecExpressionPath {
+            value: CValue::Int32(Bitvector32Term::PureFunctionApplication {
+                name: name.to_string(),
+                arguments,
+            }),
+            facts,
+            obligations,
+        })
+        .collect())
 }
 
 pub(super) fn evaluate_spec_pointer_offset_paths(

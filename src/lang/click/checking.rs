@@ -2489,6 +2489,15 @@ fn normalize_direct_atomic_memory_load(term: &Bitvector32Term) -> Bitvector32Ter
             item: *item,
             body: Box::new(normalize_direct_atomic_memory_load(body)),
         },
+        Bitvector32Term::PureFunctionApplication { name, arguments } => {
+            Bitvector32Term::PureFunctionApplication {
+                name: name.clone(),
+                arguments: arguments
+                    .iter()
+                    .map(normalize_direct_atomic_memory_load)
+                    .collect(),
+            }
+        }
         Bitvector32Term::MemoryLoad(memory, pointer) => match memory.load(pointer) {
             CExpressionOutcome::Value(CValue::Int32(value) | CValue::UInt8(value))
                 if &value != term =>
@@ -2798,6 +2807,7 @@ pub(super) fn simp_bitvector_const(term: &Bitvector32Term) -> Option<u32> {
         Bitvector32Term::Constant(value) => Some(*value),
         Bitvector32Term::Variable(_)
         | Bitvector32Term::RangeFold { .. }
+        | Bitvector32Term::PureFunctionApplication { .. }
         | Bitvector32Term::MemoryLoad(_, _) => None,
         Bitvector32Term::Add(left, right) => {
             Some(simp_bitvector_const(left)?.wrapping_add(simp_bitvector_const(right)?))
@@ -2937,6 +2947,12 @@ pub(super) fn simp_bitvector(term: &Bitvector32Term) -> Bitvector32Term {
             *item,
             simp_bitvector(body),
         ),
+        Bitvector32Term::PureFunctionApplication { name, arguments } => {
+            Bitvector32Term::PureFunctionApplication {
+                name: name.clone(),
+                arguments: arguments.iter().map(simp_bitvector).collect(),
+            }
+        }
         Bitvector32Term::MemoryLoad(memory, pointer) => {
             Bitvector32Term::MemoryLoad(memory.clone(), pointer.clone())
         }
@@ -5617,9 +5633,10 @@ pub(super) fn evaluate_click_function_call(
             arguments.len()
         ));
     }
-    if !active_functions.insert(name.to_string()) {
+    let recursive_reentry = active_functions.contains(name);
+    if recursive_reentry && definition.decreases().is_none() {
         return Err(format!(
-            "recursive function call `{name}` is not supported yet"
+            "recursive function call `{name}` has no decreases measure"
         ));
     }
 
@@ -5678,6 +5695,30 @@ pub(super) fn evaluate_click_function_call(
         function_values.insert(parameter.name().to_string(), value);
     }
 
+    if recursive_reentry {
+        let symbolic_arguments = definition
+            .parameters()
+            .iter()
+            .map(|parameter| match function_values.get(parameter.name()) {
+                Some(CValue::Int32(value)) => Ok(value.clone()),
+                _ => Err(format!(
+                    "recursive function `{name}` currently supports only int32 arguments"
+                )),
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        if symbolic_arguments
+            .iter()
+            .any(|argument| !matches!(argument, Bitvector32Term::Constant(_)))
+        {
+            return Ok(CValue::Int32(Bitvector32Term::PureFunctionApplication {
+                name: name.to_string(),
+                arguments: symbolic_arguments,
+            }));
+        }
+    }
+
+    let inserted = active_functions.insert(name.to_string());
+
     let value = evaluate_contract_expression_with_environment(
         &function_values,
         &function_array_refs,
@@ -5691,7 +5732,9 @@ pub(super) fn evaluate_click_function_call(
         program_point_states,
         active_functions,
     )?;
-    active_functions.remove(name);
+    if inserted {
+        active_functions.remove(name);
+    }
 
     if !c_value_matches_click_type(&value, definition.return_type()) {
         return Err(format!(
@@ -6575,6 +6618,9 @@ fn bitvector_contains_contract_load(
                 || bitvector_contains_contract_load(initial, memory, pointer)
                 || bitvector_contains_contract_load(body, memory, pointer)
         }
+        Bitvector32Term::PureFunctionApplication { arguments, .. } => arguments
+            .iter()
+            .any(|argument| bitvector_contains_contract_load(argument, memory, pointer)),
     }
 }
 

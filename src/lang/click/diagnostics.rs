@@ -979,6 +979,20 @@ pub(super) fn describe_bitvector_with_context(
             describe_bitvector_with_context(else_term, parameters, arguments)
         ),
         Bitvector32Term::RangeFold { .. } => format!("{term:?}"),
+        Bitvector32Term::PureFunctionApplication {
+            name,
+            arguments: values,
+        } => format!(
+            "{}({})",
+            name,
+            values
+                .iter()
+                .map(|argument| {
+                    describe_bitvector_with_context(argument, parameters, arguments)
+                })
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
         Bitvector32Term::MemoryLoad(_, pointer) => {
             format!("load({})", describe_pointer(pointer, parameters, arguments))
         }

@@ -285,6 +285,12 @@ impl Parser {
         self.expect(Token::RParen)?;
         self.expect(Token::Arrow)?;
         let return_type = self.parse_type()?.c_type;
+        let decreases = if self.peek_ident() == Some("decreases") {
+            self.position += 1;
+            Some(self.parse_contract_expression()?)
+        } else {
+            None
+        };
         self.expect(Token::LBrace)?;
         let previous_struct_params = std::mem::replace(
             &mut self.current_struct_params,
@@ -297,6 +303,7 @@ impl Parser {
             name,
             parameters: parsed_parameters.parameters,
             return_type,
+            decreases,
             body,
         })
     }

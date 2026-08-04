@@ -599,8 +599,25 @@ function count3(p: int32[], x: int32) -> int32 {
 Supported expression features include parameters, literals, `+`, `-`, `*`,
 `/`, `%`, `<<`, `>>`, `int32` bitwise `&`, `|`, `^`, unary `~`, indexing,
 `let name [: type] = value; body`, `if proposition { then } else { else }`,
-range `.fold`, and calls to other non-recursive Click functions. Recursive
-Click functions are rejected.
+range `.fold`, and calls to other Click functions.
+
+Recursive pure functions must declare a well-founded natural-number measure:
+
+```click
+function countdown(n: int32) -> int32
+    decreases n
+{
+    if n <= 0 { 0 } else { countdown(n - 1) }
+}
+```
+
+Every direct or mutual recursive edge must pass a nonnegative measure strictly
+smaller than the caller's. The initial slice restricts the measure to one named
+`int32` parameter and recursive components to `int32` parameters and results.
+Concrete calls evaluate to a base case. Symbolic calls expose one equation and
+leave the next recursive application opaque, so verification never guesses a
+recursion depth. This total value semantics is intentionally different from
+partial-correctness C recursion.
 
 Function contracts may also use contract-level `let` bindings:
 

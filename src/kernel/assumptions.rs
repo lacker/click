@@ -1273,6 +1273,15 @@ impl Assumptions {
                 *item,
                 self.simplify_bitvector_under_assumptions(body),
             ),
+            Bitvector32Term::PureFunctionApplication { name, arguments } => {
+                Bitvector32Term::PureFunctionApplication {
+                    name: name.clone(),
+                    arguments: arguments
+                        .iter()
+                        .map(|argument| self.simplify_bitvector_under_assumptions(argument))
+                        .collect(),
+                }
+            }
             Bitvector32Term::MemoryLoad(memory, pointer) => {
                 Bitvector32Term::MemoryLoad(memory.clone(), pointer.clone())
             }
@@ -8006,6 +8015,9 @@ fn bitvector_term_contains_load(term: &Bitvector32Term) -> bool {
                 || bitvector_term_contains_load(end)
                 || bitvector_term_contains_load(initial)
                 || bitvector_term_contains_load(body)
+        }
+        Bitvector32Term::PureFunctionApplication { arguments, .. } => {
+            arguments.iter().any(bitvector_term_contains_load)
         }
     }
 }

@@ -2215,6 +2215,11 @@ pub(super) fn collect_spec_expression_bitvector_variables(
             collect_spec_expression_bitvector_variables(value, variables);
             collect_spec_expression_bitvector_variables(body, variables);
         }
+        SpecExpression::PureFunctionApplication { arguments, .. } => {
+            for argument in arguments {
+                collect_spec_expression_bitvector_variables(argument, variables);
+            }
+        }
         SpecExpression::LoopEntrySnapshot(expression) => {
             collect_spec_expression_bitvector_variables(expression, variables);
         }
@@ -2618,6 +2623,11 @@ pub(super) fn collect_bitvector_variables(
             collect_bitvector_variables(body, variables);
             variables.remove(accumulator);
             variables.remove(item);
+        }
+        Bitvector32Term::PureFunctionApplication { arguments, .. } => {
+            for argument in arguments {
+                collect_bitvector_variables(argument, variables);
+            }
         }
         Bitvector32Term::MemoryLoad(memory, pointer) => {
             collect_memory_bitvector_variables(memory, variables);
@@ -3417,6 +3427,17 @@ pub(super) fn substitute_bitvector_variable_in_spec_expression(
                 body, from, to,
             )),
         },
+        SpecExpression::PureFunctionApplication { name, arguments } => {
+            SpecExpression::PureFunctionApplication {
+                name: name.clone(),
+                arguments: arguments
+                    .iter()
+                    .map(|argument| {
+                        substitute_bitvector_variable_in_spec_expression(argument, from, to)
+                    })
+                    .collect(),
+            }
+        }
         SpecExpression::LoopEntrySnapshot(expression) => {
             SpecExpression::LoopEntrySnapshot(Box::new(
                 substitute_bitvector_variable_in_spec_expression(expression, from, to),
@@ -4069,6 +4090,15 @@ pub(super) fn substitute_bitvector_variable(
                 *item,
                 body,
             )
+        }
+        Bitvector32Term::PureFunctionApplication { name, arguments } => {
+            Bitvector32Term::PureFunctionApplication {
+                name: name.clone(),
+                arguments: arguments
+                    .iter()
+                    .map(|argument| substitute_bitvector_variable(argument, from, to))
+                    .collect(),
+            }
         }
         Bitvector32Term::MemoryLoad(memory, pointer) => Bitvector32Term::MemoryLoad(
             crate::kernel::intern_c_memory(substitute_bitvector_variable_in_memory(

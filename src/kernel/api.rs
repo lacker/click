@@ -1342,6 +1342,15 @@ fn canonicalize_atomic_loads_with_depth(term: &Bitvector32Term, depth: usize) ->
             item: *item,
             body: Box::new(canonicalize_atomic_loads_with_depth(body, depth + 1)),
         },
+        Bitvector32Term::PureFunctionApplication { name, arguments } => {
+            Bitvector32Term::PureFunctionApplication {
+                name: name.clone(),
+                arguments: arguments
+                    .iter()
+                    .map(|argument| canonicalize_atomic_loads_with_depth(argument, depth + 1))
+                    .collect(),
+            }
+        }
     }
 }
 
@@ -1498,6 +1507,9 @@ pub(crate) fn c_condition_fact_has_memory(fact: &Proposition) -> bool {
                     || bitvector_has_memory(initial)
                     || bitvector_has_memory(body)
             }
+            Bitvector32Term::PureFunctionApplication { arguments, .. } => {
+                arguments.iter().any(bitvector_has_memory)
+            }
             Bitvector32Term::Constant(_) | Bitvector32Term::Variable(_) => false,
         }
     }
@@ -1616,6 +1628,11 @@ fn collect_bitvector_memories(term: &Bitvector32Term, memories: &mut Vec<CMemory
             collect_bitvector_memories(end, memories);
             collect_bitvector_memories(initial, memories);
             collect_bitvector_memories(body, memories);
+        }
+        Bitvector32Term::PureFunctionApplication { arguments, .. } => {
+            for argument in arguments {
+                collect_bitvector_memories(argument, memories);
+            }
         }
     }
 }
@@ -1848,6 +1865,15 @@ fn transport_framed_atomic_bitvector(
             item: *item,
             body: Box::new(transport_framed_atomic_bitvector(body, after, assumptions)?),
         },
+        Bitvector32Term::PureFunctionApplication { name, arguments } => {
+            Bitvector32Term::PureFunctionApplication {
+                name: name.clone(),
+                arguments: arguments
+                    .iter()
+                    .map(|argument| transport_framed_atomic_bitvector(argument, after, assumptions))
+                    .collect::<Option<Vec<_>>>()?,
+            }
+        }
     })
 }
 
@@ -1963,6 +1989,17 @@ fn normalize_exact_memory_loads_in_bitvector(
             )),
         },
         Bitvector32Term::RangeFold { .. } => term.clone(),
+        Bitvector32Term::PureFunctionApplication { name, arguments } => {
+            Bitvector32Term::PureFunctionApplication {
+                name: name.clone(),
+                arguments: arguments
+                    .iter()
+                    .map(|argument| {
+                        normalize_exact_memory_loads_in_bitvector(argument, assumptions, depth + 1)
+                    })
+                    .collect(),
+            }
+        }
         Bitvector32Term::MemoryLoad(memory, pointer) => {
             if let Some(CValue::Int32(value)) = memory.known_value(pointer)
                 && &value != term
@@ -6888,6 +6925,9 @@ pub(crate) fn bitvector_term_deeper_than(term: &Bitvector32Term, limit: usize) -
                     || term_depth_exceeds(initial, remaining - 1)
                     || term_depth_exceeds(body, remaining - 1)
             }
+            Bitvector32Term::PureFunctionApplication { arguments, .. } => arguments
+                .iter()
+                .any(|argument| term_depth_exceeds(argument, remaining - 1)),
         }
     }
     fn condition_depth_exceeds(condition: &ConditionTerm, remaining: usize) -> bool {

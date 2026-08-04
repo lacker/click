@@ -13536,6 +13536,16 @@ fn synthesize_surface_bitvector(
         Bitvector32Term::Variable(_)
         | Bitvector32Term::If { .. }
         | Bitvector32Term::RangeFold { .. } => None,
+        Bitvector32Term::PureFunctionApplication {
+            name,
+            arguments: values,
+        } => Some(ContractExpression::Call {
+            name: name.clone(),
+            arguments: values
+                .iter()
+                .map(|value| synthesize_surface_bitvector(value, parameters, arguments, state))
+                .collect::<Option<Vec<_>>>()?,
+        }),
     }
 }
 

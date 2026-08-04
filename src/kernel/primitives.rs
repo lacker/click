@@ -57,6 +57,12 @@ pub enum Bitvector32Term {
         item: Variable,
         body: Box<Bitvector32Term>,
     },
+    /// An opaque application left by one-step unfolding of a total recursive
+    /// pure Click function at symbolic arguments.
+    PureFunctionApplication {
+        name: String,
+        arguments: Vec<Bitvector32Term>,
+    },
     MemoryLoad(SharedCMemory, Box<Pointer>),
 }
 
@@ -253,6 +259,10 @@ pub enum SpecExpression {
         name: String,
         value: Box<SpecExpression>,
         body: Box<SpecExpression>,
+    },
+    PureFunctionApplication {
+        name: String,
+        arguments: Vec<SpecExpression>,
     },
     LoopEntrySnapshot(Box<SpecExpression>),
     PointerOffset {
@@ -1579,7 +1589,9 @@ impl Bitvector32Term {
     pub(crate) fn as_const(&self) -> Option<u32> {
         match self {
             Self::Constant(value) => Some(*value),
-            Self::Variable(_) | Self::MemoryLoad(_, _) => None,
+            Self::Variable(_) | Self::MemoryLoad(_, _) | Self::PureFunctionApplication { .. } => {
+                None
+            }
             Self::Add(left, right) => Some(left.as_const()?.wrapping_add(right.as_const()?)),
             Self::Subtract(left, right) => Some(left.as_const()?.wrapping_sub(right.as_const()?)),
             Self::Multiply(left, right) => Some(left.as_const()?.wrapping_mul(right.as_const()?)),

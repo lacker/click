@@ -295,7 +295,7 @@ The Click parser is hand-written in `src/lang/click.rs`. Validation checks:
 - predicate/function namespace conflicts
 - unavailable `old(...)`
 - unsupported predicate calls in pure `if` conditions
-- recursive Click functions
+- well-founded recursive Click functions and their `decreases` edges
 
 Stdlib definitions are parsed and combined with user definitions for validation
 and verification.

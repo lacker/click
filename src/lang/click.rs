@@ -127,6 +127,7 @@ pub struct ClickFunctionDefinition {
     name: String,
     parameters: Vec<FunctionParameter>,
     return_type: C0Type,
+    decreases: Option<ContractExpression>,
     body: ContractExpression,
 }
 
@@ -1551,6 +1552,10 @@ impl ClickFunctionDefinition {
 
     pub fn return_type(&self) -> C0Type {
         self.return_type
+    }
+
+    pub fn decreases(&self) -> Option<&ContractExpression> {
+        self.decreases.as_ref()
     }
 
     pub fn body(&self) -> &ContractExpression {

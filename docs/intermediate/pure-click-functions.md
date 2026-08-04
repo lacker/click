@@ -81,6 +81,39 @@ The kernel has selected reasoning support for the current standard-library
 folds, especially `count` and `permutation`. It is not yet a general induction
 engine for arbitrary folds.
 
+## Well-Founded Recursion
+
+A pure function may recurse when it declares an integer measure:
+
+```click
+function countdown(n: int32) -> int32
+    decreases n
+{
+    if n <= 0 { 0 } else { countdown(n - 1) }
+}
+```
+
+Unlike a C contract, a pure function denotes a value and must be total. Click
+therefore checks every call inside a direct or mutual recursive component. On
+each reachable recursive edge, the callee measure must be nonnegative and
+strictly smaller than the caller measure. A path that makes no recursive call
+does not need a nonnegative incoming measure, so the example returns `0` for a
+negative argument without recursing.
+
+The first recursion slice deliberately keeps the proof rule easy to audit:
+`decreases` names one `int32` parameter, recursive components use only `int32`
+parameters and results, and a decreasing call is written as that parameter
+minus a positive constant (or as a smaller nonnegative constant) under an
+explicit comparison guard. Lexicographic measures and recursive array
+summaries are not yet supported.
+
+Concrete arguments unfold until evaluation reaches a base case. At symbolic
+arguments, Click exposes one defining equation and preserves the next
+unknown-depth call as an opaque pure-function application. The same application
+is structurally equal to itself, but Click does not recursively normalize it by
+an arbitrary depth budget. General induction over the measure remains separate
+proof functionality.
+
 ## When To Use Pure Functions
 
 Use a pure Click function when:
