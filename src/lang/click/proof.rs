@@ -15061,19 +15061,32 @@ fn lower_outcome_simp_tactic(
     }
     let mut premise_pairs = Vec::new();
     for fact in available {
-        let Ok(surface) = checked_surface_fact_at_outcome(
-            replay,
-            fact,
-            SurfaceFactMatch::CanonicalExact,
-            available,
-            parameters,
-            arguments,
-            pre_state,
-            post_state,
-            result,
-            predicate_environment,
-            click_function_environment,
-        ) else {
+        // Recorded exact spellings are already paired with this kernel fact
+        // and avoid a costly synthesis attempt at every retained program
+        // point. The completed fallback certificate is still replayed below,
+        // so an inapplicable spelling cannot escape validation.
+        let surface = replay
+            .surface_propositions
+            .surfaces(fact)
+            .next()
+            .cloned()
+            .or_else(|| {
+                checked_surface_fact_at_outcome(
+                    replay,
+                    fact,
+                    SurfaceFactMatch::CanonicalExact,
+                    available,
+                    parameters,
+                    arguments,
+                    pre_state,
+                    post_state,
+                    result,
+                    predicate_environment,
+                    click_function_environment,
+                )
+                .ok()
+            });
+        let Some(surface) = surface else {
             continue;
         };
         if check(&surface).is_ok_and(|lowered| condition_polarity_equivalent(&lowered, fact))
@@ -18436,16 +18449,19 @@ fn surface_outcome_smart_have_derivation(
     let mut premises = Vec::new();
     for fact in atomic_available {
         let relevant = matches!(fact, Proposition::CMemoryLoadable { .. })
-            || matches!(
-                fact,
+            || match fact {
                 Proposition::ConditionIs(
-                    ConditionTerm::Bitvector32SignedLessThan(_, _)
-                        | ConditionTerm::Bitvector32SignedLessEqual(_, _)
-                        | ConditionTerm::Bitvector32SignedGreaterThan(_, _)
-                        | ConditionTerm::Bitvector32SignedGreaterEqual(_, _),
+                    ConditionTerm::Bitvector32SignedLessThan(left, right)
+                    | ConditionTerm::Bitvector32SignedLessEqual(left, right)
+                    | ConditionTerm::Bitvector32SignedGreaterThan(left, right)
+                    | ConditionTerm::Bitvector32SignedGreaterEqual(left, right),
                     _,
-                )
-            );
+                ) => [left.as_const(), right.as_const()]
+                    .into_iter()
+                    .flatten()
+                    .all(|constant| constant == 0),
+                _ => false,
+            };
         if !relevant {
             continue;
         }
