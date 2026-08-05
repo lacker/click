@@ -280,7 +280,13 @@ and must be proved separate or causes `free` to fail locally. Retired identities
 make use-after-free and double-free explicit. `HeapAllocated` and `HeapFreed`
 memory DAG edges preserve these transitions for replay; an allocation resource
 that crosses a verified call is also interpreted as a lifetime effect, not as
-an untrusted ordinary token.
+an untrusted ordinary token. Exact execution records every successful
+retirement as `CHeapLifetimeRetired(before, after, base, bytes)`. Effect
+certification checks that replaying `free(base)` from `before` with the stated
+extent produces `after`, and chains that transition separately from ordinary
+`CMemoryMutatesOnly` and ranged call-havoc effects. This lets a function free
+owned storage directly even when its surface `mutable` clause names only
+unrelated surviving memory.
 
 If a directly required composite resource has an undecided conditional body,
 opaque-contract certification derives both guard cases from the kernel

@@ -5,7 +5,10 @@ mixing its resource definitions into a larger example. `allocate_int32s`
 allocates `count * 4` bytes for a positive, signed-safe runtime count and
 returns a conditional resource: null carries no allocation, while non-null owns
 the exact allocation authority and `data[0..count]` memory. `free_int32s`
-unfolds and consumes that complete resource.
+unfolds and consumes that complete resource. The same resource pair authorizes
+a direct `free` inside a larger function: deallocation is tracked as a
+heap-lifetime effect rather than requiring a fictitious mutable byte range or
+an allocation-specific wrapper call.
 
 This is intentionally not vector growth. Copying between allocations, replacing
 an owning object's dependent pointer/capacity resource, and freeing the old

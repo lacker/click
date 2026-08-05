@@ -3365,6 +3365,28 @@ impl Assumptions {
                     || endpoint_matches(before, right) && endpoint_matches(after, left);
                 matches && self.ranges_directly_disjoint_from_pointer(mutable_ranges, pointer)
             }
+            Proposition::CHeapLifetimeRetired {
+                before,
+                after,
+                allocation_base,
+                bytes,
+            } => {
+                let endpoint_matches = |expected: &CMemory, actual: &CMemory| {
+                    memory_matches_effect_summary_endpoint(expected, actual, pointer)
+                        || memories_match_for_pointer_load_under_assumptions(
+                            expected, actual, pointer, self,
+                        )
+                };
+                let matches = endpoint_matches(before, left) && endpoint_matches(after, right)
+                    || endpoint_matches(before, right) && endpoint_matches(after, left);
+                matches
+                    && super::api::heap_allocation_proven_separate_from_pointer(
+                        allocation_base,
+                        bytes,
+                        pointer,
+                        self,
+                    )
+            }
             _ => false,
         })
     }

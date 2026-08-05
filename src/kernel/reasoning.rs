@@ -1205,6 +1205,7 @@ pub(super) fn collect_implication_antecedent_order_facts(
         | Proposition::CResourceContains { .. }
         | Proposition::CMemoryMutatesOnly { .. }
         | Proposition::CMemoryEffectSummary { .. }
+        | Proposition::CHeapLifetimeRetired { .. }
         | Proposition::CWhileInvariantRule { .. } => {}
     }
 }
@@ -1989,6 +1990,17 @@ pub(super) fn collect_proposition_bitvector_variables(
             for range in mutable_ranges {
                 collect_c_memory_range_bitvector_variables(range, variables);
             }
+        }
+        Proposition::CHeapLifetimeRetired {
+            before,
+            after,
+            allocation_base,
+            bytes,
+        } => {
+            collect_memory_bitvector_variables(before, variables);
+            collect_memory_bitvector_variables(after, variables);
+            collect_pointer_bitvector_variables(allocation_base, variables);
+            collect_bitvector_variables(bytes, variables);
         }
         Proposition::CWhileInvariantRule {
             state,
@@ -2879,6 +2891,17 @@ pub(super) fn substitute_bitvector_variable_in_proposition(
                 .iter()
                 .map(|range| substitute_bitvector_variable_in_c_memory_range(range, from, to))
                 .collect(),
+        },
+        Proposition::CHeapLifetimeRetired {
+            before,
+            after,
+            allocation_base,
+            bytes,
+        } => Proposition::CHeapLifetimeRetired {
+            before: substitute_bitvector_variable_in_memory(before, from, to),
+            after: substitute_bitvector_variable_in_memory(after, from, to),
+            allocation_base: substitute_bitvector_variable_in_pointer(allocation_base, from, to),
+            bytes: substitute_bitvector_variable(bytes, from, to),
         },
         Proposition::CWhileInvariantRule {
             state,
@@ -4438,7 +4461,9 @@ pub(super) fn memory_effect_execution_facts(facts: &[ExecutionPureFact]) -> Vec<
         .filter(|fact| {
             matches!(
                 fact.proposition(),
-                Proposition::CMemoryMutatesOnly { .. } | Proposition::CMemoryEffectSummary { .. }
+                Proposition::CMemoryMutatesOnly { .. }
+                    | Proposition::CMemoryEffectSummary { .. }
+                    | Proposition::CHeapLifetimeRetired { .. }
             )
         })
         .cloned()
@@ -5022,7 +5047,9 @@ pub(super) fn merge_facts(
         // agreeing entry facts can still make a postcondition redundant.
         if matches!(
             fact.proposition(),
-            Proposition::CMemoryMutatesOnly { .. } | Proposition::CMemoryEffectSummary { .. }
+            Proposition::CMemoryMutatesOnly { .. }
+                | Proposition::CMemoryEffectSummary { .. }
+                | Proposition::CHeapLifetimeRetired { .. }
         ) {
             saw_memory_effect = true;
         }

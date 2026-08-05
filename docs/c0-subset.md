@@ -180,7 +180,9 @@ For an `int32*`, C0 also accepts a runtime byte expression such as
 positive, is an exact number of `int32` elements, and does not overflow signed
 `int32`. Click can package the result as
 `allocation(data, count * 4)` plus `data[0..count]`; `free(data)` consumes that
-same symbolic extent.
+same symbolic extent. Direct deallocation is a certified heap-lifetime effect
+authorized by those resources; it does not need to appear in a `mutable`
+segment or be routed through a helper function.
 
 This is a modeled C0 builtin, not general libc compatibility. Zero-size
 allocation, arbitrary byte layouts, incomplete types, `size_t`, `void *`

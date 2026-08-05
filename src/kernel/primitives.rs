@@ -1376,6 +1376,12 @@ pub enum Proposition {
         after: CMemory,
         mutable_ranges: Vec<CMemoryRange>,
     },
+    CHeapLifetimeRetired {
+        before: CMemory,
+        after: CMemory,
+        allocation_base: Pointer,
+        bytes: Bitvector32Term,
+    },
     CWhileInvariantRule {
         state: CState,
         condition: CExpression,

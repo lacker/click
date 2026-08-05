@@ -607,6 +607,7 @@ pub(super) fn prove_ensure_proposition_by_simp(
                     fact.proposition(),
                     Proposition::CMemoryMutatesOnly { .. }
                         | Proposition::CMemoryEffectSummary { .. }
+                        | Proposition::CHeapLifetimeRetired { .. }
                 )
             })
             .map(|fact| fact.proposition().clone()),
@@ -2683,6 +2684,7 @@ pub(super) fn simp_proposition(
         | Proposition::CResourceContains { .. }
         | Proposition::CMemoryMutatesOnly { .. }
         | Proposition::CMemoryEffectSummary { .. }
+        | Proposition::CHeapLifetimeRetired { .. }
         | Proposition::CWhileInvariantRule { .. } => {
             SimpProposition::Proposition(proposition.clone())
         }
@@ -3075,6 +3077,7 @@ pub(super) fn plan_effect_clause_derivations(
                     proposition,
                     Proposition::CMemoryMutatesOnly { .. }
                         | Proposition::CMemoryEffectSummary { .. }
+                        | Proposition::CHeapLifetimeRetired { .. }
                 )
             })
             .cloned()
@@ -3452,6 +3455,7 @@ fn prove_mutation_footprint_with_policy(
                     proposition,
                     Proposition::CMemoryMutatesOnly { .. }
                         | Proposition::CMemoryEffectSummary { .. }
+                        | Proposition::CHeapLifetimeRetired { .. }
                 )
             })
             .cloned()

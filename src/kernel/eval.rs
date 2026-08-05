@@ -2992,7 +2992,7 @@ fn execute_c_heap_free_paths(
     for path in evaluate_c_expression_paths(state, expression, assumptions, budget)? {
         let CExpressionPath {
             outcome,
-            facts,
+            mut facts,
             obligations,
         } = path;
         let outcome = match outcome {
@@ -3040,6 +3040,7 @@ fn execute_c_heap_free_paths(
             .find_map(|fact| fact.allocation())
             .filter(|(base, _)| **base == pointer)
             .map(|(_, bytes)| bytes.clone());
+        let lifetime_before = state.memory.clone();
         let mut working_memory = state.memory.clone();
         let bytes = if let Some(bytes) = working_memory.live_heap_block_size(&pointer) {
             bytes.clone()
@@ -3143,6 +3144,14 @@ fn execute_c_heap_free_paths(
         let memory = working_memory
             .free_heap_block(&pointer)
             .expect("validated live heap base should free");
+        facts.push(ExecutionPureFact::internal(
+            Proposition::CHeapLifetimeRetired {
+                before: lifetime_before,
+                after: memory.clone(),
+                allocation_base: pointer.clone(),
+                bytes: bytes.clone(),
+            },
+        ));
         paths.push(CStatementExecutionPath {
             outcome: CStatementOutcome::Normal(
                 state

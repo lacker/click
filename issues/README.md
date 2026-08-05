@@ -32,9 +32,8 @@ Runtime-sized allocation/free and the independently verifiable general vector
 push are implemented in focused example projects. Composing allocation, copy,
 replacement, and free into vector growth exposed distinct remaining bugs:
 
-1. [Authorize `free` effects from owned allocation resources](owned-allocation-free-effects.md).
-2. [Preserve unchanged loads across opaque calls](opaque-call-unchanged-loads.md).
-3. [Compose runtime allocation into owned-vector growth](owned-vector-runtime-growth.md)
+1. [Preserve unchanged loads across opaque calls](opaque-call-unchanged-loads.md).
+2. [Compose runtime allocation into owned-vector growth](owned-vector-runtime-growth.md)
    after the blocking invariants above are restored.
 
 ## Partial correctness and recursion

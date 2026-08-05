@@ -44,8 +44,13 @@ free is diagnosed separately. Verified function exits also check that live
 allocation authority was returned through the contract or actually freed.
 
 The allocation/null refinement and allocation/free transitions are recorded
-as memory-snapshot edges, so replay and modular call verification use the same
-lifetime model as direct execution.
+as memory-snapshot edges. A successful `free` also emits a checked heap
+lifetime-retirement effect connecting its before and after snapshots, exact
+base, and possibly symbolic byte extent. This is deliberately distinct from a
+mutable byte range: retirement changes which allocation identities are live,
+while a mutable range bounds ordinary stores. Exact contract replay and
+modular call verification therefore use the same lifetime model as direct
+execution without pretending deallocation is a byte write.
 
 ## Argument Memory And Aliasing
 

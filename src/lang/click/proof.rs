@@ -421,7 +421,9 @@ fn check_atomic_derivation_goal(
         .filter(|fact| {
             matches!(
                 fact,
-                Proposition::CMemoryMutatesOnly { .. } | Proposition::CMemoryEffectSummary { .. }
+                Proposition::CMemoryMutatesOnly { .. }
+                    | Proposition::CMemoryEffectSummary { .. }
+                    | Proposition::CHeapLifetimeRetired { .. }
             )
         })
         .cloned()
@@ -5368,7 +5370,9 @@ fn directly_covering_loadability_fact(
 fn proposition_has_contextual_derivation_rules(proposition: &Proposition) -> bool {
     !matches!(
         proposition,
-        Proposition::CMemoryMutatesOnly { .. } | Proposition::CMemoryEffectSummary { .. }
+        Proposition::CMemoryMutatesOnly { .. }
+            | Proposition::CMemoryEffectSummary { .. }
+            | Proposition::CHeapLifetimeRetired { .. }
     )
 }
 
@@ -5562,6 +5566,7 @@ fn assumptions_for_direct_fact_transport(propositions: &[Proposition]) -> Assump
         match proposition {
             Proposition::ConditionIs(_, _)
             | Proposition::CMemoryEffectSummary { .. }
+            | Proposition::CHeapLifetimeRetired { .. }
             | Proposition::CResourceSeparate { .. } => facts.push(proposition.clone()),
             Proposition::And(left, right) => {
                 collect(left, facts);
@@ -5596,6 +5601,7 @@ fn facts_for_direct_surface_lowering(propositions: &[Proposition]) -> Vec<Propos
                             | Proposition::CResourceContains { .. }
                             | Proposition::CMemoryMutatesOnly { .. }
                             | Proposition::CMemoryEffectSummary { .. }
+                            | Proposition::CHeapLifetimeRetired { .. }
                     )
                 })
                 .cloned(),
@@ -7548,6 +7554,7 @@ fn advance_execution_proof_statement(
                                     fact,
                                     Proposition::CMemoryEffectSummary { .. }
                                         | Proposition::CMemoryMutatesOnly { .. }
+                                        | Proposition::CHeapLifetimeRetired { .. }
                                 )
                         });
                         for surface in loop_clause
@@ -9311,7 +9318,9 @@ fn plan_explicit_fact_transport(
             | Proposition::CMemoryLoadable { .. }
             | Proposition::CMemoryCanStore { .. } => 0,
             Proposition::ConditionIs(_, _) => 1,
-            Proposition::CMemoryMutatesOnly { .. } | Proposition::CMemoryEffectSummary { .. } => 2,
+            Proposition::CMemoryMutatesOnly { .. }
+            | Proposition::CMemoryEffectSummary { .. }
+            | Proposition::CHeapLifetimeRetired { .. } => 2,
             _ => 3,
         };
         let mut remaining = candidates
@@ -11517,6 +11526,7 @@ mod exit_claim {
                             fact.proposition(),
                             Proposition::CMemoryMutatesOnly { .. }
                                 | Proposition::CMemoryEffectSummary { .. }
+                                | Proposition::CHeapLifetimeRetired { .. }
                         )
                     })
                     .map(|fact| fact.proposition().clone()),
@@ -12290,6 +12300,7 @@ fn finish_ordered_proof_replay(
                                 fact.proposition(),
                                 Proposition::CMemoryMutatesOnly { .. }
                                     | Proposition::CMemoryEffectSummary { .. }
+                                    | Proposition::CHeapLifetimeRetired { .. }
                             ) && !certificate_available.contains(fact.proposition())
                             {
                                 certificate_available.push(fact.proposition().clone());
@@ -12427,6 +12438,7 @@ fn finish_ordered_proof_replay(
                                         effect.proposition(),
                                         Proposition::CMemoryMutatesOnly { .. }
                                             | Proposition::CMemoryEffectSummary { .. }
+                                            | Proposition::CHeapLifetimeRetired { .. }
                                     ) && !replay_available.contains(effect.proposition())
                                     {
                                         replay_available.push(effect.proposition().clone());
@@ -13100,6 +13112,7 @@ fn finish_ordered_proof_replay(
                                                 fact.proposition(),
                                                 Proposition::CMemoryMutatesOnly { .. }
                                                     | Proposition::CMemoryEffectSummary { .. }
+                                                    | Proposition::CHeapLifetimeRetired { .. }
                                             )
                                         })
                                         .map(|fact| fact.proposition().clone()),
@@ -14800,6 +14813,7 @@ fn lower_outcome_simp_tactic(
                         premise,
                         Proposition::CMemoryMutatesOnly { .. }
                             | Proposition::CMemoryEffectSummary { .. }
+                            | Proposition::CHeapLifetimeRetired { .. }
                     )
                     // A loadability premise the ambient context re-derives
                     // (for example from materialized memory) needs no
@@ -16601,6 +16615,7 @@ fn frame_certified_ensure_goals(
                     fact.proposition(),
                     Proposition::CMemoryMutatesOnly { .. }
                         | Proposition::CMemoryEffectSummary { .. }
+                        | Proposition::CHeapLifetimeRetired { .. }
                 )
             })
             .map(|fact| fact.proposition().clone()),
@@ -21727,7 +21742,8 @@ fn fact_transport_transition_facts(
     let matching_effect = facts.iter().position(|fact| {
         let before = match fact.proposition() {
             Proposition::CMemoryMutatesOnly { before, .. }
-            | Proposition::CMemoryEffectSummary { before, .. } => before,
+            | Proposition::CMemoryEffectSummary { before, .. }
+            | Proposition::CHeapLifetimeRetired { before, .. } => before,
             _ => return false,
         };
         source_memories.contains(before)
@@ -21746,7 +21762,9 @@ fn fact_transport_transition_facts(
 fn is_memory_effect_proposition(proposition: &Proposition) -> bool {
     matches!(
         proposition,
-        Proposition::CMemoryMutatesOnly { .. } | Proposition::CMemoryEffectSummary { .. }
+        Proposition::CMemoryMutatesOnly { .. }
+            | Proposition::CMemoryEffectSummary { .. }
+            | Proposition::CHeapLifetimeRetired { .. }
     )
 }
 
@@ -22881,6 +22899,7 @@ fn execute_step_from_execution_point(
                     fact,
                     Proposition::CMemoryEffectSummary { .. }
                         | Proposition::CMemoryMutatesOnly { .. }
+                        | Proposition::CHeapLifetimeRetired { .. }
                 )
         });
         let mut mapped_invariants = Vec::new();

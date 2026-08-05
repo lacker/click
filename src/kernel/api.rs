@@ -283,6 +283,25 @@ pub(crate) fn c_memory_load_is_unchanged(
                     && after_matches
                     && assumptions.ranges_proven_disjoint_from_pointer(mutable_ranges, pointer)
             }
+            Proposition::CHeapLifetimeRetired {
+                before: effect_before,
+                after: effect_after,
+                allocation_base,
+                bytes,
+            } => {
+                let before_matches =
+                    memory_matches_effect_summary_endpoint(effect_before, before, pointer);
+                let after_matches =
+                    memory_matches_effect_summary_endpoint(effect_after, after, pointer);
+                before_matches
+                    && after_matches
+                    && heap_allocation_proven_separate_from_pointer(
+                        allocation_base,
+                        bytes,
+                        pointer,
+                        assumptions,
+                    )
+            }
             _ => false,
         })
     {
@@ -627,7 +646,7 @@ fn memory_dag_cell_source(
     MemoryDagCell::Unwritten { node: current }
 }
 
-fn heap_allocation_proven_separate_from_pointer(
+pub(super) fn heap_allocation_proven_separate_from_pointer(
     allocation_base: &Pointer,
     bytes: &Bitvector32Term,
     pointer: &Pointer,
@@ -924,6 +943,21 @@ fn load_unchanged_via_effect_chain(
                     steps.push((step_before, step_after));
                 }
             }
+            Proposition::CHeapLifetimeRetired {
+                before: step_before,
+                after: step_after,
+                allocation_base,
+                bytes,
+            } => {
+                if heap_allocation_proven_separate_from_pointer(
+                    allocation_base,
+                    bytes,
+                    pointer,
+                    assumptions,
+                ) {
+                    steps.push((step_before, step_after));
+                }
+            }
             _ => {}
         }
     }
@@ -1088,6 +1122,33 @@ fn c_memory_load_is_directly_unchanged(
                 let disjoint = after_matches
                     && assumptions.ranges_directly_disjoint_from_pointer(mutable_ranges, pointer);
                 before_matches && after_matches && disjoint
+            }
+            Proposition::CHeapLifetimeRetired {
+                before: effect_before,
+                after: effect_after,
+                allocation_base,
+                bytes,
+            } => {
+                let before_matches = memories_directly_match_for_pointer_load(
+                    effect_before,
+                    before,
+                    pointer,
+                    assumptions,
+                );
+                let after_matches = before_matches
+                    && memories_directly_match_for_pointer_load(
+                        effect_after,
+                        after,
+                        pointer,
+                        assumptions,
+                    );
+                after_matches
+                    && heap_allocation_proven_separate_from_pointer(
+                        allocation_base,
+                        bytes,
+                        pointer,
+                        assumptions,
+                    )
             }
             _ => false,
         })
@@ -6657,11 +6718,19 @@ fn function_claim_holds_on_prepared_path(
                 } => {
                     let repeats_transition =
                         seen_transitions.iter().any(|(seen_before, seen_after)| {
-                            c_memories_definitionally_equal(seen_before, before, assumptions)
-                                && c_memories_definitionally_equal(seen_after, after, assumptions)
+                            c_effect_memories_definitionally_equal(seen_before, before, assumptions)
+                                && c_effect_memories_definitionally_equal(
+                                    seen_after,
+                                    after,
+                                    assumptions,
+                                )
                         });
                     if !repeats_transition
-                        && !c_memories_definitionally_equal(&effect_memory, before, assumptions)
+                        && !c_effect_memories_definitionally_equal(
+                            &effect_memory,
+                            before,
+                            assumptions,
+                        )
                     {
                         return false;
                     }
@@ -6691,11 +6760,19 @@ fn function_claim_holds_on_prepared_path(
                 } => {
                     let repeats_transition =
                         seen_transitions.iter().any(|(seen_before, seen_after)| {
-                            c_memories_definitionally_equal(seen_before, before, assumptions)
-                                && c_memories_definitionally_equal(seen_after, after, assumptions)
+                            c_effect_memories_definitionally_equal(seen_before, before, assumptions)
+                                && c_effect_memories_definitionally_equal(
+                                    seen_after,
+                                    after,
+                                    assumptions,
+                                )
                         });
                     if !repeats_transition
-                        && !c_memories_definitionally_equal(&effect_memory, before, assumptions)
+                        && !c_effect_memories_definitionally_equal(
+                            &effect_memory,
+                            before,
+                            assumptions,
+                        )
                     {
                         return false;
                     }
@@ -6709,14 +6786,80 @@ fn function_claim_holds_on_prepared_path(
                             .any(|allowed| memory_range_covers(allowed, nested, assumptions))
                     })
                 }
+                Proposition::CHeapLifetimeRetired {
+                    before,
+                    after,
+                    allocation_base,
+                    bytes,
+                } => {
+                    let repeats_transition =
+                        seen_transitions.iter().any(|(seen_before, seen_after)| {
+                            c_effect_memories_definitionally_equal(seen_before, before, assumptions)
+                                && c_effect_memories_definitionally_equal(
+                                    seen_after,
+                                    after,
+                                    assumptions,
+                                )
+                        });
+                    if !repeats_transition
+                        && !c_effect_memories_definitionally_equal(
+                            &effect_memory,
+                            before,
+                            assumptions,
+                        )
+                    {
+                        return false;
+                    }
+                    if !heap_retirement_effect_is_valid(before, after, allocation_base, bytes) {
+                        return false;
+                    }
+                    if !repeats_transition {
+                        effect_memory = after.clone();
+                        seen_transitions.push((before.clone(), after.clone()));
+                    }
+                    true
+                }
                 _ => true,
             });
             let endpoint_matches = return_state.as_ref().is_none_or(|return_state| {
-                c_memories_definitionally_equal(&effect_memory, return_state.memory(), assumptions)
+                c_effect_memories_definitionally_equal(
+                    &effect_memory,
+                    return_state.memory(),
+                    assumptions,
+                )
             });
             effects_are_bounded && endpoint_matches
         }
     }
+}
+
+fn c_effect_memories_definitionally_equal(
+    left: &CMemory,
+    right: &CMemory,
+    assumptions: &Assumptions,
+) -> bool {
+    left.heap == right.heap && c_memories_definitionally_equal(left, right, assumptions)
+}
+
+fn heap_retirement_effect_is_valid(
+    before: &CMemory,
+    after: &CMemory,
+    allocation_base: &Pointer,
+    bytes: &Bitvector32Term,
+) -> bool {
+    let Some(live) = (if before.live_heap_block_size(allocation_base).is_some() {
+        Some(before.clone())
+    } else {
+        before
+            .clone()
+            .with_heap_allocation_claim(allocation_base.clone(), bytes.clone())
+    }) else {
+        return false;
+    };
+    live.live_heap_block_size(allocation_base) == Some(bytes)
+        && live
+            .free_heap_block(allocation_base)
+            .is_ok_and(|expected| expected == *after)
 }
 
 /// Certifies every exact contract claim in one pass over a kernel-produced,

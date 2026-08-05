@@ -695,7 +695,7 @@ fn execute_verified_function_rule(
                 continue;
             }
         };
-        let memory = match apply_verified_allocation_lifetime_effects(
+        let (memory, lifetime_effects) = match apply_verified_allocation_lifetime_effects(
             post_state.memory.clone(),
             &transfer.callee_resources,
             &return_resources,
@@ -712,6 +712,7 @@ fn execute_verified_function_rule(
                 continue;
             }
         };
+        facts.extend(lifetime_effects);
         post_state.memory = memory;
         post_state.resources = return_resources.clone();
         let post_contract_state =
@@ -766,7 +767,8 @@ fn apply_verified_allocation_lifetime_effects(
     output_resources: &ResourceContext,
     function: &CFunction,
     assumptions: &Assumptions,
-) -> Result<CMemory, CRuntimeError> {
+) -> Result<(CMemory, Vec<ExecutionPureFact>), CRuntimeError> {
+    let mut effects = Vec::new();
     let input = expand_all_composite_resource_facts(
         input_resources,
         function.composite_resource_definitions(),
@@ -824,6 +826,7 @@ fn apply_verified_allocation_lifetime_effects(
                 resource: stale.clone(),
             });
         }
+        let lifetime_before = memory.clone();
         if memory.live_heap_block_size(&base).is_none() {
             memory = memory
                 .with_heap_allocation_claim(base.clone(), bytes.clone())
@@ -832,6 +835,14 @@ fn apply_verified_allocation_lifetime_effects(
         memory = memory
             .free_heap_block(&base)
             .map_err(CRuntimeError::InvalidFree)?;
+        effects.push(ExecutionPureFact::internal(
+            Proposition::CHeapLifetimeRetired {
+                before: lifetime_before,
+                after: memory.clone(),
+                allocation_base: base,
+                bytes,
+            },
+        ));
     }
 
     for (base, bytes) in output.facts().iter().filter_map(CResourceFact::allocation) {
@@ -851,7 +862,7 @@ fn apply_verified_allocation_lifetime_effects(
                 )
             })?;
     }
-    Ok(memory)
+    Ok((memory, effects))
 }
 
 fn with_contract_argument_views(state: &CState, function: &CFunction, values: &[CValue]) -> CState {

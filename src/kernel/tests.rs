@@ -8605,6 +8605,7 @@ fn heap_free_retires_the_complete_block_and_rejects_double_free() {
     let [
         CStatementExecutionPath {
             outcome: CStatementOutcome::Normal(freed),
+            facts: free_facts,
             ..
         },
     ] = freed.as_slice()
@@ -8616,6 +8617,20 @@ fn heap_free_retires_the_complete_block_and_rejects_double_free() {
     };
     assert!(freed.memory().is_retired_heap_address(pointer));
     assert!(freed.resources().facts().is_empty());
+    assert!(matches!(
+        free_facts.as_slice(),
+        [ExecutionPureFact {
+            proposition: Proposition::CHeapLifetimeRetired {
+                after,
+                allocation_base,
+                bytes,
+                ..
+            },
+            ..
+        }] if after == freed.memory()
+            && allocation_base == pointer
+            && *bytes == Bitvector32Term::Constant(16)
+    ));
     if !skip_without_memory_dag() {
         let derivation = intern_c_memory_ref(freed.memory())
             .derivation()
