@@ -1373,6 +1373,27 @@ mod certificate_tests {
     use super::*;
 
     #[test]
+    fn local_index_surface_candidates_reject_nested_loads() {
+        let pointer = Pointer {
+            block: "data".into(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let load = Bitvector32Term::MemoryLoad(
+            crate::kernel::intern_c_memory(CMemory::new()),
+            Box::new(pointer),
+        );
+
+        assert!(bitvector_term_is_load_free(&Bitvector32Term::Add(
+            Box::new(Bitvector32Term::Variable(Variable(1))),
+            Box::new(Bitvector32Term::Constant(1)),
+        )));
+        assert!(!bitvector_term_is_load_free(&Bitvector32Term::Add(
+            Box::new(load),
+            Box::new(Bitvector32Term::Constant(1)),
+        )));
+    }
+
+    #[test]
     fn fresh_heap_separation_is_not_spelled_as_an_ambient_step_premise() {
         let range = |block| {
             CResource::Memory(CMemoryRange::new(
@@ -14795,6 +14816,46 @@ fn synthesize_parameter_field_indexed_int32_load(
     Some(ContractExpression::Index(Box::new(field), Box::new(index)))
 }
 
+fn bitvector_term_is_load_free(term: &Bitvector32Term) -> bool {
+    match term {
+        Bitvector32Term::MemoryLoad(_, _) => false,
+        Bitvector32Term::Constant(_) | Bitvector32Term::Variable(_) => true,
+        Bitvector32Term::Add(left, right)
+        | Bitvector32Term::Subtract(left, right)
+        | Bitvector32Term::Multiply(left, right)
+        | Bitvector32Term::Divide(left, right)
+        | Bitvector32Term::Remainder(left, right)
+        | Bitvector32Term::ShiftLeft(left, right)
+        | Bitvector32Term::ArithmeticShiftRight(left, right)
+        | Bitvector32Term::BitwiseAnd(left, right)
+        | Bitvector32Term::BitwiseOr(left, right)
+        | Bitvector32Term::BitwiseXor(left, right) => {
+            bitvector_term_is_load_free(left) && bitvector_term_is_load_free(right)
+        }
+        Bitvector32Term::BitwiseNot(value) => bitvector_term_is_load_free(value),
+        Bitvector32Term::If {
+            then_term,
+            else_term,
+            ..
+        } => bitvector_term_is_load_free(then_term) && bitvector_term_is_load_free(else_term),
+        Bitvector32Term::RangeFold {
+            start,
+            end,
+            initial,
+            body,
+            ..
+        } => {
+            bitvector_term_is_load_free(start)
+                && bitvector_term_is_load_free(end)
+                && bitvector_term_is_load_free(initial)
+                && bitvector_term_is_load_free(body)
+        }
+        Bitvector32Term::PureFunctionApplication { arguments, .. } => {
+            arguments.iter().all(bitvector_term_is_load_free)
+        }
+    }
+}
+
 fn synthesize_local_indexed_int32_load(
     pointer: &Pointer,
     parameters: &[syntax::C0Parameter],
@@ -14808,6 +14869,14 @@ fn synthesize_local_indexed_int32_load(
         };
         let index = pointer.element_index_from_base(base)?;
         if index == Bitvector32Term::Constant(0) {
+            return None;
+        }
+        // This candidate is for ordinary `local[index]` spellings. If the
+        // derived index itself reads memory, trying to synthesize that load
+        // can rediscover another local-relative spelling with a still larger
+        // index indefinitely. More specific field and pointer spellings are
+        // tried by the surrounding reconstruction logic.
+        if !bitvector_term_is_load_free(&index) {
             return None;
         }
         Some(ContractExpression::Index(
