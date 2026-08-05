@@ -2313,6 +2313,201 @@ int32 inspect(struct box* owner) {
     }
 
     #[test]
+    fn expanded_frame_uses_snapshot_checked_field_loadability() {
+        let get_source = r#"
+struct vector { int32 len; int32 cap; int32* data; };
+int32 vector_get(struct vector* owner, int32 index) {
+    int32* data;
+    data = owner->data;
+    return data[index];
+}
+"#;
+        let set_source = r#"
+struct vector { int32 len; int32 cap; int32* data; };
+int32 vector_set(struct vector* owner, int32 index, int32 value) {
+    int32* data;
+    data = owner->data;
+    data[index] = value;
+    return data[index];
+}
+"#;
+        let replace_source = r#"
+struct vector { int32 len; int32 cap; int32* data; };
+int32 vector_replace_if(
+    struct vector* owner,
+    int32 index,
+    int32 replacement,
+    int32 replace
+) {
+    int32 original;
+    int32 selected;
+    original = vector_get(owner, index);
+    if (replace != 0) {
+        selected = vector_set(owner, index, replacement);
+    } else {
+        selected = vector_set(owner, index, original);
+    }
+    return selected;
+}
+"#;
+        let click_source = r#"
+resource nonempty_vector(owner: struct vector*) {
+    owns owner->len;
+    owns owner->cap;
+    owns owner->data;
+    owns owner->data[0..owner->cap];
+    fact 1 <= owner->len;
+    fact owner->len <= owner->cap;
+    fact separate(memory(object(owner)), memory(owner->data[0..owner->cap]));
+}
+
+verifying "vector_get.c";
+verifying "vector_set.c";
+verifying "vector_replace_if.c";
+
+int32 vector_get(struct vector* owner, int32 index) {
+    requires 0 <= index;
+    requires index < owner->len;
+    views nonempty_vector(owner);
+    immutable;
+    ensures result == owner->data[index];
+    ensures result == old(owner->data[index]);
+} by {
+    execute();
+    frame();
+    have result == owner->data[index] by {
+        normalize();
+    }
+    assumption();
+    have result == old(owner->data[index]) by {
+        assumption();
+    }
+    assumption();
+}
+
+int32 vector_set(struct vector* owner, int32 index, int32 value) {
+    requires 0 <= index;
+    requires index < owner->len;
+    mutable owner->data[index..index + 1];
+    owns nonempty_vector(owner);
+    ensures result == value;
+    ensures owner->data[index] == value;
+    ensures owner->len == old(owner->len);
+    ensures owner->cap == old(owner->cap);
+    ensures owner->data == old(owner->data);
+} by {
+    unfold(nonempty_vector(owner));
+    step();
+    step();
+    step();
+    step() using {
+        0 <= index;
+        index < owner->len;
+        loadable(old(owner->len));
+        loadable(old(owner->cap));
+        loadable(old(owner->data));
+        1 <= owner->len;
+        owner->len <= owner->cap;
+        separate(memory(object(owner)), memory(owner->data[0..owner->cap]));
+    }
+    fold(nonempty_vector(owner));
+    have index < index + 1 by simp;
+    frame();
+    simp();
+}
+
+int32 vector_replace_if(
+    struct vector* owner,
+    int32 index,
+    int32 replacement,
+    int32 replace
+) {
+    requires 0 <= index;
+    requires index < owner->len;
+    owns nonempty_vector(owner);
+    mutable owner->data[index..index + 1];
+    for statement(3) as choose_replacement {
+        assert replace == replace by auto;
+    }
+    ensures replace != 0 implies result == replacement;
+} by {
+    step();
+    step();
+    step() using {
+        index < owner->len;
+        0 <= index;
+        1 <= owner->len;
+        owner->len <= owner->cap;
+        loadable(old(owner->cap));
+        loadable(old(owner->data));
+        loadable(old(owner->len));
+    }
+    reach(choose_replacement.exit)
+    ensuring {
+        fact replace != 0 implies selected == replacement;
+        fact not (replace != 0) implies selected == original;
+        fact index < index + 1;
+        owns nonempty_vector(owner);
+    }
+    by {
+        if replace != 0 {
+            step();
+            step() using {
+                index < owner->len;
+                0 <= index;
+                1 <= owner->len;
+                owner->len <= owner->cap;
+                replace != 0;
+                loadable(old(owner->cap));
+                loadable(old(owner->data));
+                loadable(old(owner->len));
+            }
+            have replace != 0 implies selected == replacement by simp;
+            have not (replace != 0) implies selected == original by simp;
+            have index < index + 1 by simp;
+        } else {
+            step();
+            step() using {
+                index < owner->len;
+                0 <= index;
+                1 <= owner->len;
+                owner->len <= owner->cap;
+                replace == 0;
+                loadable(old(owner->cap));
+                loadable(old(owner->data));
+                loadable(old(owner->len));
+            }
+            have replace != 0 implies selected == replacement by simp;
+            have not (replace != 0) implies selected == original by simp;
+            have index < index + 1 by simp;
+        }
+    }
+    execute();
+    have index < index + 1 by simp;
+    frame();
+    simp();
+}
+"#;
+        let sources = [
+            ("vector_get.c", get_source),
+            ("vector_set.c", set_source),
+            ("vector_replace_if.c", replace_source),
+        ];
+        let expanded = expand_top_level_tactic_for_test(
+            click_source,
+            &sources,
+            "vector_replace_if",
+            CProofClaim::Grouped,
+            6,
+        )
+        .expect("smart frame should expand with snapshot-correct loadability premises");
+
+        assert!(expanded.contains("frame() using {"), "{expanded}");
+        verify_c0_sources(&expanded, &sources)
+            .expect("expanded frame certificate should independently replay");
+    }
+
+    #[test]
     fn source_position_maps_smart_and_implicit_default_proofs() {
         let c_source = "int32 identity(int32 x) { return x; }";
         let explicit = r#"verifying "identity.c";

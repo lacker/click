@@ -1372,6 +1372,30 @@ fn prove_pure_theorem_script(
 mod certificate_tests {
     use super::*;
 
+    #[test]
+    fn fresh_heap_separation_is_not_spelled_as_an_ambient_step_premise() {
+        let range = |block| {
+            CResource::Memory(CMemoryRange::new(
+                Pointer {
+                    block,
+                    offset: PointerOffsetTerm::Constant(0),
+                },
+                Bitvector32Term::Constant(0),
+                Bitvector32Term::Constant(1),
+            ))
+        };
+        let separation = Proposition::CResourceSeparate {
+            left: range(PointerBlock::ExternalArgument),
+            right: range(PointerBlock::Heap(7)),
+        };
+
+        assert!(Assumptions::new().proves(&separation));
+        assert!(
+            !statement_step_permission_needs_surface_premise(&separation, &[]),
+            "fresh heap provenance is replayable without a potentially stale surface spelling"
+        );
+    }
+
     fn linear_tactic_coordinates(node: &InternalProofNode) -> Vec<(usize, usize)> {
         match node {
             InternalProofNode::Done => Vec::new(),
@@ -13050,7 +13074,12 @@ fn finish_ordered_proof_replay(
                                 .is_none()
                             {
                                 return Err(ClickError::new(format!(
-                                    "`{proof_label}` path {path_index}, tactic {tactic_index}: `frame using` requires an exact premise that has not been established: {fact:?}"
+                                    "`{proof_label}` path {path_index}, tactic {tactic_index}: `frame using` requires an exact premise that has not been established: {}",
+                                    describe_pure_fact(
+                                        fact,
+                                        parsed_function.parameters(),
+                                        arguments,
+                                    )
                                 )));
                             }
                         }
@@ -17548,12 +17577,10 @@ fn record_surface_replay_tactic(
                     // reproduce is only available because the ambient context
                     // carried it, so the certificate has to spell it.
                     let non_reconstructible_permission =
-                        matches!(
+                        statement_step_permission_needs_surface_premise(
                             fact,
-                            Proposition::CMemoryDisjoint { .. }
-                                | Proposition::CResourceSeparate { .. }
-                                | Proposition::CMemoryLoadable { .. }
-                        ) && !exact_fact_is_available(fact, &projected_resource_facts);
+                            &projected_resource_facts,
+                        );
                     if !selected_by_derivation && !non_reconstructible_permission {
                         continue;
                     }
@@ -18382,14 +18409,16 @@ fn record_surface_replay_tactic(
                             .iter()
                             .flat_map(PropositionDerivation::context_premises),
                     ) {
-                        if let Some(surface) = replay
-                            .surface_propositions
-                            .surfaces(&fact)
-                            .find(|surface| {
-                                replay.surface_propositions.unique_kernel(surface) == Some(&fact)
-                            })
-                            .cloned()
-                            && !premises.contains(&surface)
+                        if let Ok(surface) = checked_surface_fact_at_point(
+                            replay,
+                            &fact,
+                            available,
+                            parameters,
+                            arguments,
+                            state,
+                            predicate_environment,
+                            click_function_environment,
+                        ) && !premises.contains(&surface)
                         {
                             premises.push(surface);
                         }
@@ -18449,6 +18478,28 @@ fn record_surface_replay_tactic(
             TacticClass::Smart(_) | TacticClass::Simple(_) => {}
         },
     }
+}
+
+fn statement_step_permission_needs_surface_premise(
+    fact: &Proposition,
+    projected_resource_facts: &[Proposition],
+) -> bool {
+    let separation_follows_from_fresh_heap_provenance = matches!(
+        fact,
+        Proposition::CResourceSeparate {
+            left: CResource::Memory(left),
+            right: CResource::Memory(right),
+        } if left.base().block != right.base().block
+            && (matches!(left.base().block, PointerBlock::Heap(_))
+                || matches!(right.base().block, PointerBlock::Heap(_)))
+    );
+    matches!(
+        fact,
+        Proposition::CMemoryDisjoint { .. }
+            | Proposition::CResourceSeparate { .. }
+            | Proposition::CMemoryLoadable { .. }
+    ) && !separation_follows_from_fresh_heap_provenance
+        && !exact_fact_is_available(fact, projected_resource_facts)
 }
 
 fn have_proof_is_smart_simp(proof: &Proof) -> bool {
