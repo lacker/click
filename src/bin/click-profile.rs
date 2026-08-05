@@ -11,7 +11,7 @@ use click::cli::{
     find_projects, format_duration, format_fractional_duration, looks_like_mdtest, parse_duration,
     read_mdtest, read_verifying_sources, shell_quote, source_refs,
 };
-use click::instrumentation::{self, TacticEvent, VerificationEvent};
+use click::instrumentation::{self, ActiveVerificationWork, TacticEvent, VerificationEvent};
 use click::lang::click::{SourcePosition, c0_tactic_source_position, verify_c0_sources};
 
 const DEFAULT_TIME_LIMIT: Duration = Duration::from_secs(30);
@@ -135,6 +135,7 @@ struct ProjectProfile {
     project: String,
     slow_steps: Vec<SlowStep>,
     active: Vec<StepKey>,
+    interrupted: Option<InterruptedWork>,
     timed_out: bool,
     verification_failure: Option<String>,
     /// `click timing:` lines this profiler did not recognize, keyed by the
@@ -149,6 +150,13 @@ struct ProjectProfile {
     /// indices that no surface proof has, so those steps are reported with
     /// their claim and no location rather than sinking the whole profile.
     unresolved_positions: BTreeMap<String, usize>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum InterruptedWork {
+    Tactic(StepKey),
+    Phase(&'static str),
+    Driver,
 }
 
 #[derive(Clone, Debug)]
@@ -421,10 +429,22 @@ fn profile_target(
                 .is_err_and(|message| message.contains("time limit exceeded")),
     )
     .map_err(|message| format!("while profiling `{}`: {message}", project.display()))?;
-    profile.accounting.wall_total = wall_elapsed;
+    finish_time_accounting(&mut profile, wall_elapsed);
     profile.verification_failure = verification.err();
     resolve_source_positions(&mut profile)?;
     Ok(profile)
+}
+
+fn finish_time_accounting(profile: &mut ProjectProfile, wall_elapsed: Duration) {
+    profile.accounting.wall_total = wall_elapsed;
+    if profile.timed_out {
+        let completed = profile.accounting.frontend
+            + profile.accounting.environment
+            + profile.accounting.tactic_total()
+            + profile.accounting.certification
+            + profile.accounting.verifier_core();
+        profile.accounting.interrupted = wall_elapsed.saturating_sub(completed);
+    }
 }
 
 /// The prefix every verifier timing line carries.
@@ -464,6 +484,10 @@ struct TimeAccounting {
     certification: Duration,
     frontend: Duration,
     environment: Duration,
+    /// Wall time left in the active operation when a project deadline
+    /// interrupted an incomplete run. This is explicit rather than silently
+    /// becoming process/driver residual.
+    interrupted: Duration,
     /// Sum of the `click timing: function` lines. These cover function proof
     /// and certification work, but not the complete verifier invocation.
     total: Duration,
@@ -497,8 +521,14 @@ impl TimeAccounting {
     /// Direct driver work outside the verifier's emitted phase boundaries,
     /// principally source reads and report setup.
     fn process_driver(self) -> Duration {
-        self.wall_total
-            .saturating_sub(self.frontend + self.environment + self.total)
+        self.wall_total.saturating_sub(
+            self.frontend
+                + self.environment
+                + self.tactic_total()
+                + self.certification
+                + self.verifier_core()
+                + self.interrupted,
+        )
     }
 
     fn attributed(self) -> Duration {
@@ -507,6 +537,7 @@ impl TimeAccounting {
             + self.tactic_total()
             + self.certification
             + self.verifier_core()
+            + self.interrupted
             + self.process_driver()
     }
 
@@ -572,6 +603,9 @@ enum TimingEvent {
     CertificationPaths(usize),
     /// One contract claim completed certification checking.
     ClaimCompleted,
+    /// Structured snapshot captured at the cooperative deadline checkpoint,
+    /// before scope guards close the active tactic or phase.
+    Interrupted(InterruptedWork),
     /// A recognized kind the profiler does not consume.
     Ignored,
     /// A `click timing:` line matching no known kind. Counted and reported.
@@ -634,6 +668,13 @@ fn profile_from_events(
                 TimingEvent::CertificationPaths(*count)
             }
             VerificationEvent::ClaimFinished { .. } => TimingEvent::ClaimCompleted,
+            VerificationEvent::DeadlineExceeded(active) => TimingEvent::Interrupted(match active {
+                ActiveVerificationWork::Tactic(tactic) => {
+                    InterruptedWork::Tactic(structured_step(tactic, &source_path)?)
+                }
+                ActiveVerificationWork::Phase(name) => InterruptedWork::Phase(name),
+                ActiveVerificationWork::Driver => InterruptedWork::Driver,
+            }),
             VerificationEvent::PhaseStarted(_) | VerificationEvent::Diagnostic(_) => {
                 TimingEvent::Ignored
             }
@@ -654,6 +695,7 @@ fn build_profile(
     let mut accounting = TimeAccounting::default();
     let mut work = WorkMetrics::default();
     let mut source_files = BTreeSet::new();
+    let mut interrupted = None;
     for event in events {
         match event {
             TimingEvent::Source(path) => {
@@ -698,16 +740,26 @@ fn build_profile(
             TimingEvent::Environment(elapsed) => accounting.environment += elapsed,
             TimingEvent::CertificationPaths(count) => work.certification_paths += count,
             TimingEvent::ClaimCompleted => work.claims += 1,
+            TimingEvent::Interrupted(work) => interrupted = Some(work),
             TimingEvent::Ignored => {}
             #[cfg(test)]
             TimingEvent::Unknown => {}
         }
     }
     work.source_files = source_files.len();
+    let active = open.into_iter().map(|(key, _)| key).collect::<Vec<_>>();
+    if timed_out && interrupted.is_none() {
+        interrupted = active
+            .last()
+            .cloned()
+            .map(InterruptedWork::Tactic)
+            .or(Some(InterruptedWork::Driver));
+    }
     Ok(ProjectProfile {
         project: project.to_string(),
         slow_steps,
-        active: open.into_iter().map(|(key, _)| key).collect(),
+        active,
+        interrupted,
         timed_out,
         verification_failure: None,
         unknown_timing: BTreeMap::new(),
@@ -732,6 +784,7 @@ fn parse_profile(
     let mut accounting = TimeAccounting::default();
     let mut work = WorkMetrics::default();
     let mut source_files = BTreeSet::new();
+    let mut interrupted = None;
     let mut unknown_timing: BTreeMap<String, UnknownTiming> = BTreeMap::new();
     let mut source_path = PathBuf::new();
     for line in output.lines() {
@@ -785,6 +838,7 @@ fn parse_profile(
             TimingEvent::Environment(elapsed) => accounting.environment += elapsed,
             TimingEvent::CertificationPaths(count) => work.certification_paths += count,
             TimingEvent::ClaimCompleted => work.claims += 1,
+            TimingEvent::Interrupted(work) => interrupted = Some(work),
             TimingEvent::Ignored => {}
             TimingEvent::Unknown => {
                 let kind = unknown_timing_kind(line);
@@ -799,10 +853,19 @@ fn parse_profile(
         }
     }
     work.source_files = source_files.len();
+    let active = open.into_iter().map(|(key, _)| key).collect::<Vec<_>>();
+    if timed_out && interrupted.is_none() {
+        interrupted = active
+            .last()
+            .cloned()
+            .map(InterruptedWork::Tactic)
+            .or(Some(InterruptedWork::Driver));
+    }
     Ok(ProjectProfile {
         project: project.to_string(),
         slow_steps,
-        active: open.into_iter().map(|(key, _)| key).collect(),
+        active,
+        interrupted,
         timed_out,
         verification_failure: None,
         unknown_timing,
@@ -1001,11 +1064,16 @@ fn load_profiled_source(path: &Path) -> Result<ProfiledSource, String> {
 fn resolve_source_positions(profile: &mut ProjectProfile) -> Result<(), String> {
     let mut sources: BTreeMap<PathBuf, ProfiledSource> = BTreeMap::new();
     let mut unresolved: BTreeMap<String, usize> = BTreeMap::new();
+    let interrupted_key = match profile.interrupted.as_mut() {
+        Some(InterruptedWork::Tactic(key)) => Some(key),
+        Some(InterruptedWork::Phase(_) | InterruptedWork::Driver) | None => None,
+    };
     for key in profile
         .slow_steps
         .iter_mut()
         .map(|step| &mut step.key)
         .chain(profile.active.iter_mut())
+        .chain(interrupted_key)
     {
         if key.source_path.as_os_str().is_empty() {
             return Err("timing event had no Click source path".to_string());
@@ -1139,23 +1207,32 @@ fn render_profiles(
             format_fractional_duration(time_limit)
         )
         .expect("writing a String cannot fail");
-        for key in &profile.active {
-            writeln!(
-                output,
-                "    [{}] {}  {}  {}  statement {}",
-                key.category.label(),
-                step_location(key),
-                key.claim,
-                key.tactic_name,
-                key.statement_index
-            )
-            .expect("writing a String cannot fail");
-            if key.category == TacticCategory::Smart {
+        match profile.interrupted.as_ref() {
+            Some(InterruptedWork::Tactic(key)) => {
                 writeln!(
                     output,
-                    "              interrupted before a certificate was produced; reduce the search in Click"
+                    "    [{}] {}  {}  {}  statement {}",
+                    key.category.label(),
+                    step_location(key),
+                    key.claim,
+                    key.tactic_name,
+                    key.statement_index
                 )
                 .expect("writing a String cannot fail");
+                if key.category == TacticCategory::Smart {
+                    writeln!(
+                        output,
+                        "              interrupted before a certificate was produced; reduce the search in Click"
+                    )
+                    .expect("writing a String cannot fail");
+                }
+            }
+            Some(InterruptedWork::Phase(phase)) => {
+                writeln!(output, "    [PHASE] {phase}").expect("writing a String cannot fail");
+            }
+            Some(InterruptedWork::Driver) | None => {
+                writeln!(output, "    [DRIVER] verification orchestration")
+                    .expect("writing a String cannot fail");
             }
         }
     }
@@ -1165,10 +1242,11 @@ fn render_profiles(
         .any(|step| step.key.category == TacticCategory::Simple)
         || profiles.iter().any(|profile| {
             (profile.timed_out
-                && profile
-                    .active
-                    .iter()
-                    .any(|key| key.category == TacticCategory::Simple))
+                && matches!(
+                    profile.interrupted,
+                    Some(InterruptedWork::Tactic(ref key))
+                        if key.category == TacticCategory::Simple
+                ))
                 || {
                     let simple = profile.work.category(TacticCategory::Simple);
                     simple.count > 0 && simple.average() > SIMPLE_AVERAGE_LIMIT
@@ -1182,21 +1260,34 @@ fn render_profiles(
         .any(|step| step.key.category == TacticCategory::Smart && step.failed)
         || profiles.iter().any(|profile| {
             profile.timed_out
-                && profile
-                    .active
-                    .iter()
-                    .any(|key| key.category == TacticCategory::Smart)
+                && matches!(
+                    profile.interrupted,
+                    Some(InterruptedWork::Tactic(ref key))
+                        if key.category == TacticCategory::Smart
+                )
         });
     let has_control_problem = slow_steps
         .iter()
         .any(|step| step.key.category == TacticCategory::Control)
         || profiles.iter().any(|profile| {
             profile.timed_out
-                && profile
-                    .active
-                    .iter()
-                    .any(|key| key.category == TacticCategory::Control)
+                && matches!(
+                    profile.interrupted,
+                    Some(InterruptedWork::Tactic(ref key))
+                        if key.category == TacticCategory::Control
+                )
         });
+    let interrupted_phase = profiles.iter().find_map(|profile| {
+        if profile.timed_out {
+            match profile.interrupted.as_ref() {
+                Some(InterruptedWork::Phase(phase)) => Some(*phase),
+                Some(InterruptedWork::Driver) | None => Some("driver"),
+                Some(InterruptedWork::Tactic(_)) => None,
+            }
+        } else {
+            None
+        }
+    });
     let has_certification_problem = profiles.iter().any(|profile| {
         (profile.work.claims > 0
             && average_time(profile.accounting.certification, profile.work.claims)
@@ -1273,7 +1364,7 @@ fn render_profiles(
         .any(|profile| profile.accounting.materially_unattributed());
     let has_verification_failure = profiles
         .iter()
-        .any(|profile| profile.verification_failure.is_some());
+        .any(|profile| profile.verification_failure.is_some() && !profile.timed_out);
     if has_verification_failure {
         writeln!(
             output,
@@ -1316,6 +1407,12 @@ fn render_profiles(
             "\nNEXT: reduce the SETUP bottleneck in frontend or environment construction."
         )
         .expect("writing a String cannot fail");
+    } else if let Some(phase) = interrupted_phase {
+        writeln!(
+            output,
+            "\nNEXT: the profile is incomplete because its deadline interrupted `{phase}` work. Reduce or instrument that phase before treating aggregate volume as healthy."
+        )
+        .expect("writing a String cannot fail");
     } else if has_unknown_timing {
         writeln!(
             output,
@@ -1326,6 +1423,12 @@ fn render_profiles(
         writeln!(
             output,
             "\nNEXT: nothing crossed the configured thresholds, but a material amount of wall time is UNATTRIBUTED. Instrument that machinery before reading this profile as clean."
+        )
+        .expect("writing a String cannot fail");
+    } else if profiles.iter().any(|profile| profile.timed_out) {
+        writeln!(
+            output,
+            "\nNEXT: the profile is incomplete because a project deadline fired; use the interrupted operation above, not aggregate volume, as the next debugging target."
         )
         .expect("writing a String cannot fail");
     } else if profiles
@@ -1364,7 +1467,7 @@ fn render_accounting(output: &mut String, profiles: &[ProjectProfile]) {
     writeln!(output, "\nTIME ACCOUNTING").expect("writing a String cannot fail");
     writeln!(
         output,
-        "  The total is direct verification wall time. Tactic time is exclusive, and every row is non-overlapping. VERIFIER CORE is measured function time outside tactics and certification; PROCESS/DRIVER is source I/O and driver work outside emitted verifier phases."
+        "  The total is direct verification wall time. Tactic time is exclusive, and every row is non-overlapping. VERIFIER CORE is measured function time outside tactics and certification; INTERRUPTED is unfinished active work observed at a deadline; PROCESS/DRIVER is source I/O and driver work outside emitted verifier phases."
     )
     .expect("writing a String cannot fail");
     for profile in measured {
@@ -1389,6 +1492,7 @@ fn render_accounting(output: &mut String, profiles: &[ProjectProfile]) {
             ("CONTROL", accounting.control),
             ("CERTIFICATION", accounting.certification),
             ("VERIFIER CORE", accounting.verifier_core()),
+            ("INTERRUPTED", accounting.interrupted),
             ("PROCESS/DRIVER", accounting.process_driver()),
             ("UNATTRIBUTED", accounting.unattributed()),
         ] {
@@ -1565,6 +1669,24 @@ fn render_diagnoses(output: &mut String, profiles: &[ProjectProfile]) {
     for profile in profiles {
         writeln!(output, "  {}:", profile.project).expect("writing a String cannot fail");
         let mut findings = 0;
+        if profile.timed_out {
+            findings += 1;
+            let active = match profile.interrupted.as_ref() {
+                Some(InterruptedWork::Tactic(key)) => format!(
+                    "{} tactic `{}` in `{}`",
+                    key.category.label(),
+                    key.tactic_name,
+                    key.claim
+                ),
+                Some(InterruptedWork::Phase(phase)) => format!("`{phase}` phase"),
+                Some(InterruptedWork::Driver) | None => "verification driver".to_string(),
+            };
+            writeln!(
+                output,
+                "    INCOMPLETE TIMEOUT — the project deadline interrupted {active}; completed counts and exclusive timings are preserved below."
+            )
+            .expect("writing a String cannot fail");
+        }
         let simple = profile.work.category(TacticCategory::Simple);
         let slow_simple = profile
             .slow_steps
@@ -1595,10 +1717,11 @@ fn render_diagnoses(output: &mut String, profiles: &[ProjectProfile]) {
             .iter()
             .any(|step| step.key.category == TacticCategory::Smart && step.failed)
             || (profile.timed_out
-                && profile
-                    .active
-                    .iter()
-                    .any(|key| key.category == TacticCategory::Smart))
+                && matches!(
+                    profile.interrupted.as_ref(),
+                    Some(InterruptedWork::Tactic(key))
+                        if key.category == TacticCategory::Smart
+                ))
         {
             findings += 1;
             writeln!(
@@ -1659,7 +1782,7 @@ fn render_diagnoses(output: &mut String, profiles: &[ProjectProfile]) {
             )
             .expect("writing a String cannot fail");
         }
-        if profile.verification_failure.is_some() {
+        if profile.verification_failure.is_some() && !profile.timed_out {
             findings += 1;
             writeln!(
                 output,
@@ -1901,6 +2024,52 @@ click timing: tactic example.contract 2 step class simple statement 4 source 5 1
         assert_eq!(profile.active[0].tactic_name, "execute");
         assert_eq!(profile.active[0].category, TacticCategory::Smart);
         assert!(profile.unknown_timing.is_empty());
+    }
+
+    #[test]
+    fn structured_timeout_attributes_interrupted_phase_and_preserves_completed_work() {
+        let source = PathBuf::from("examples/sample.click");
+        let completed = TacticEvent {
+            claim: "sample.contract".to_string(),
+            tactic_index: 0,
+            tactic_name: "step".to_string(),
+            class: "simple".to_string(),
+            statement_index: 0,
+            source_index: 0,
+        };
+        let events = vec![
+            VerificationEvent::Source(source),
+            VerificationEvent::PhaseFinished {
+                name: "frontend",
+                elapsed: Duration::from_millis(100),
+            },
+            VerificationEvent::TacticStarted(completed.clone()),
+            VerificationEvent::TacticFinished {
+                tactic: completed,
+                elapsed: Duration::from_millis(10),
+            },
+            VerificationEvent::DeadlineExceeded(ActiveVerificationWork::Phase("certification")),
+        ];
+        let mut profile =
+            profile_from_events("sample", &events, Thresholds::default(), true).unwrap();
+        finish_time_accounting(&mut profile, Duration::from_secs(5));
+
+        assert_eq!(profile.accounting.simple, Duration::from_millis(10));
+        assert_eq!(profile.accounting.interrupted, Duration::from_millis(4890));
+        assert_eq!(profile.accounting.process_driver(), Duration::ZERO);
+        assert_eq!(
+            profile.interrupted,
+            Some(InterruptedWork::Phase("certification"))
+        );
+
+        let report = render_profiles(&[profile], Thresholds::default(), Duration::from_secs(5));
+        assert!(report.contains("[PHASE] certification"), "{report}");
+        assert!(report.contains("INCOMPLETE TIMEOUT"), "{report}");
+        assert!(
+            report.contains("deadline interrupted `certification` work"),
+            "{report}"
+        );
+        assert!(!report.contains("HEALTHY VOLUME"), "{report}");
     }
 
     /// The certification timing kinds added on 2026-07-30 share the stderr

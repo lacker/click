@@ -100,7 +100,11 @@ one tactic; it does not replace the class deadlines.
 `click profile` reconciles direct verification wall time across frontend,
 environment, exclusive SIMPLE/SMART/CONTROL time, kernel certification,
 measured function work outside those operations (`VERIFIER CORE`), and
-source-I/O/driver time (`PROCESS/DRIVER`).
+source-I/O/driver time (`PROCESS/DRIVER`). If the project deadline fires, the
+engine records the active tactic or frontend, environment, certification,
+verifier-core, or driver phase before scopes unwind. The unfinished residual
+is reported separately as `INTERRUPTED`; a timed-out run is always diagnosed
+as incomplete and never as healthy volume.
 `UNATTRIBUTED` is reserved for an inconsistent or unknown remainder rather
 than being a catch-all for known overhead. Work counts and conservative
 development baselines then distinguish smart hotspots, simple engine bugs,

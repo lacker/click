@@ -19,6 +19,13 @@ pub struct TacticEvent {
     pub source_index: usize,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ActiveVerificationWork {
+    Tactic(TacticEvent),
+    Phase(&'static str),
+    Driver,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum VerificationEvent {
     Source(PathBuf),
@@ -55,6 +62,7 @@ pub enum VerificationEvent {
         key: String,
         elapsed: Duration,
     },
+    DeadlineExceeded(ActiveVerificationWork),
     Diagnostic(String),
 }
 
@@ -97,6 +105,7 @@ struct ActiveTactic {
 thread_local! {
     static COLLECTORS: RefCell<Vec<Vec<VerificationEvent>>> = const { RefCell::new(Vec::new()) };
     static DEADLINES: RefCell<Vec<Instant>> = const { RefCell::new(Vec::new()) };
+    static DEADLINE_CAPTURED: RefCell<Vec<bool>> = const { RefCell::new(Vec::new()) };
     static TACTIC_LIMITS: RefCell<Vec<TacticLimits>> = const { RefCell::new(Vec::new()) };
     static ACTIVE_TACTICS: RefCell<Vec<ActiveTactic>> = const { RefCell::new(Vec::new()) };
     static ACTIVE_PHASES: RefCell<Vec<&'static str>> = const { RefCell::new(Vec::new()) };
@@ -110,6 +119,9 @@ impl Drop for DeadlineGuard {
         DEADLINES.with(|deadlines| {
             deadlines.borrow_mut().pop();
         });
+        DEADLINE_CAPTURED.with(|captured| {
+            captured.borrow_mut().pop();
+        });
     }
 }
 
@@ -118,6 +130,7 @@ impl Drop for DeadlineGuard {
 /// path checkpoints; verifier phase boundaries consult it as well.
 pub fn with_deadline<R>(limit: Duration, operation: impl FnOnce() -> R) -> R {
     DEADLINES.with(|deadlines| deadlines.borrow_mut().push(Instant::now() + limit));
+    DEADLINE_CAPTURED.with(|captured| captured.borrow_mut().push(false));
     let _guard = DeadlineGuard;
     operation()
 }
@@ -164,7 +177,47 @@ pub fn deadline_exceeded() -> bool {
             .is_some_and(|active| active.exclusive + active.running_since.elapsed() >= active.limit)
     });
     let pending = PENDING_LIMIT.with(|pending| pending.borrow().is_some());
-    run || tactic || pending
+    let exceeded = run || tactic || pending;
+    if exceeded {
+        capture_active_deadline_work();
+    }
+    exceeded
+}
+
+fn capture_active_deadline_work() {
+    let should_capture = DEADLINE_CAPTURED.with(|captured| {
+        let mut captured = captured.borrow_mut();
+        let Some(current) = captured.last_mut() else {
+            return false;
+        };
+        if *current {
+            false
+        } else {
+            *current = true;
+            true
+        }
+    });
+    if !should_capture {
+        return;
+    }
+    let active = ACTIVE_TACTICS
+        .with(|tactics| {
+            tactics
+                .borrow()
+                .last()
+                .map(|active| ActiveVerificationWork::Tactic(active.event.clone()))
+        })
+        .or_else(|| {
+            ACTIVE_PHASES.with(|phases| {
+                phases
+                    .borrow()
+                    .last()
+                    .copied()
+                    .map(ActiveVerificationWork::Phase)
+            })
+        })
+        .unwrap_or(ActiveVerificationWork::Driver);
+    emit(VerificationEvent::DeadlineExceeded(active));
 }
 
 pub fn deadline_context() -> String {
@@ -354,6 +407,9 @@ fn render_legacy(event: &VerificationEvent) -> String {
             "click timing: claim {function} {key} {:.6}s",
             elapsed.as_secs_f64()
         ),
+        VerificationEvent::DeadlineExceeded(active) => {
+            format!("click timing: deadline exceeded in {active:?}")
+        }
         VerificationEvent::Diagnostic(message) => format!("click timing: {message}"),
     }
 }
@@ -433,5 +489,52 @@ mod tests {
                 elapsed: Duration::from_millis(100),
             });
         });
+    }
+
+    #[test]
+    fn project_deadline_captures_each_active_tactic_class_before_unwinding() {
+        let limits = TacticLimits {
+            simple: Duration::from_secs(1),
+            smart: Duration::from_secs(1),
+            control: Duration::from_secs(1),
+        };
+        for class in ["simple", "smart", "control"] {
+            let (_, events) = with_deadline(Duration::ZERO, || {
+                with_tactic_limits(limits, || {
+                    collect(|| {
+                        let active = tactic(class, 0);
+                        emit(VerificationEvent::TacticStarted(active.clone()));
+                        assert!(deadline_exceeded());
+                        emit(VerificationEvent::TacticFailed(active));
+                    })
+                })
+            });
+            assert!(events.iter().any(|event| matches!(
+                event,
+                VerificationEvent::DeadlineExceeded(ActiveVerificationWork::Tactic(active))
+                    if active.class == class
+            )));
+        }
+    }
+
+    #[test]
+    fn project_deadline_captures_named_verifier_phases_before_scope_cleanup() {
+        for phase in ["frontend", "environment", "certification", "verifier-core"] {
+            let (_, events) = with_deadline(Duration::ZERO, || {
+                collect(|| {
+                    emit(VerificationEvent::PhaseStarted(phase));
+                    assert!(deadline_exceeded());
+                    emit(VerificationEvent::PhaseFinished {
+                        name: phase,
+                        elapsed: Duration::ZERO,
+                    });
+                })
+            });
+            assert!(events.iter().any(|event| matches!(
+                event,
+                VerificationEvent::DeadlineExceeded(ActiveVerificationWork::Phase(active))
+                    if active == &phase
+            )));
+        }
     }
 }

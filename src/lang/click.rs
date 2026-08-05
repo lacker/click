@@ -2386,6 +2386,10 @@ fn verify_c0_sources_with_environment(
         {
             continue;
         }
+        // This outer span makes otherwise-unclassified proof orchestration
+        // visible at an interrupted project deadline. Nested tactic and
+        // certification spans take precedence in the active-work snapshot.
+        let _verifier_core_timing = VerificationTimingPhase::new("verifier-core");
         let function_timing_start = std::time::Instant::now();
         let (source_path, parsed_function) = parsed_sources
             .get(function_block.signature.name())
@@ -2573,22 +2577,25 @@ fn verify_c0_sources_with_environment(
                 CFunctionContractExecutionMode::VerifyLoops
             };
             let certification_started = std::time::Instant::now();
-            let contract_execution = prove_c_function_contract_execution_paths_with_environment(
-                certification_state,
-                contract_function.clone(),
-                certification_arguments,
-                certification_facts,
-                verification_function_environment.clone(),
-                match contract_execution_mode {
-                    CFunctionContractExecutionMode::VerifyLoops => {
-                        CExecutionSemantics::APPLY_CALL_RULES_AND_VERIFY_LOOPS
-                    }
-                    CFunctionContractExecutionMode::ExecuteLoops => {
-                        CExecutionSemantics::APPLY_VERIFIED_RULES
-                    }
-                },
-                contract_execution_mode,
-            );
+            let contract_execution = {
+                let _certification_timing = VerificationTimingPhase::new("certification");
+                prove_c_function_contract_execution_paths_with_environment(
+                    certification_state,
+                    contract_function.clone(),
+                    certification_arguments,
+                    certification_facts,
+                    verification_function_environment.clone(),
+                    match contract_execution_mode {
+                        CFunctionContractExecutionMode::VerifyLoops => {
+                            CExecutionSemantics::APPLY_CALL_RULES_AND_VERIFY_LOOPS
+                        }
+                        CFunctionContractExecutionMode::ExecuteLoops => {
+                            CExecutionSemantics::APPLY_VERIFIED_RULES
+                        }
+                    },
+                    contract_execution_mode,
+                )
+            };
             if matches!(
                 contract_execution.limit(),
                 Some(crate::kernel::ExecutionLimit::Deadline)
@@ -2611,8 +2618,10 @@ fn verify_c0_sources_with_environment(
                     function_block.signature.name(),
                 )));
             }
-            let certified_claims =
-                c_verified_function_contract_claims(&contract_function, &contract_execution);
+            let certified_claims = {
+                let _certification_timing = VerificationTimingPhase::new("certification");
+                c_verified_function_contract_claims(&contract_function, &contract_execution)
+            };
             if instrumentation::enabled() {
                 instrumentation::emit(VerificationEvent::ContractClaimsFinished {
                     function: function_block.signature.name().to_string(),
