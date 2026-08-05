@@ -52,13 +52,13 @@ cargo nextest run
 kills any test still running after 60 seconds. Treat a test that trips either
 threshold as a bug: split it, or fix the prover slowdown it is exposing. The
 mdtest and example-project harnesses are exempted up to 20 minutes because
-each is a single test function that already bounds its own child processes.
+each is a single test function covering many directly verified fixtures.
 
-Plain `cargo test` does not apply nextest's outer Rust-test deadline, but the
-fixture harnesses still bound their isolated children: each mdtest gets 30
-seconds by default (`MDTEST_TIME_LIMIT`), and each example project gets 10
-minutes (`CLICK_EXAMPLE_TIME_LIMIT`). Override those variables while reducing
-a slow fixture; neither disables tactic budgets.
+Plain `cargo test` does not apply nextest's outer Rust-test deadline. The
+fixture harnesses still report per-fixture limits from the shared event stream:
+each mdtest gets 30 seconds by default (`MDTEST_TIME_LIMIT`), and each example
+project gets 10 minutes (`CLICK_EXAMPLE_TIME_LIMIT`). Override those variables
+while reducing a slow fixture; neither disables tactic budgets.
 
 ## Quarantine
 
@@ -117,51 +117,50 @@ Use mdtests for focused language, lowering, proof, and diagnostic behavior.
 ## Example Project Tests
 
 Example projects live under `examples/`. The integration test in
-`tests/examples.rs` verifies `.click` sidecars against C files in each direct
-child directory.
+`tests/examples.rs` verifies `.click` sidecars against C files in each immediate
+project directory.
 
 Use example projects for larger library-shaped fixtures. Keep them small enough
 that a reader can understand the proof boundary.
 
 ### Verifying one file or project directly
 
-`click-verify` is the plain verification command the expansion workflow ends
+`click verify` is the plain verification command the expansion workflow ends
 with. It takes either a sidecar or a directory:
 
 ```sh
-cargo run --quiet --bin click-verify -- examples/input-cursor/input_cursor.click
-cargo run --quiet --bin click-verify -- examples/input-cursor
-cargo run --quiet --bin click-verify -- examples
+click verify examples/input-cursor/input_cursor.click
+click verify examples/input-cursor
+click verify examples
 ```
 
 A bare sidecar path verifies the whole file. A `:LINE:COLUMN` suffix verifies
 only the proof unit containing that one-based source location and the C
-functions it calls — the same location scheme `click-profile`, `click-expand`,
-and `click-audit` use, and the targeted entry point the audit's cold
+functions it calls — the same location scheme `click profile`, `click expand`,
+and `click audit` use, and the targeted entry point the audit's cold
 reverification runs. A directory verifies every sidecar in it: the directory
 itself when it holds sidecars, otherwise each immediate subdirectory that does.
 
 That makes the expansion loop runnable end to end:
 
 ```sh
-cargo run --quiet --bin click-expand -- path/to/file.click:LINE:COLUMN > expanded.click
-mv expanded.click path/to/file.click
-cargo run --quiet --bin click-verify -- path/to/file.click
+click expand --in-place path/to/file.click:LINE:COLUMN
+click verify path/to/file.click
 ```
 
-`click-expand` deliberately does not reverify what it emits; verification and
-expansion stay separate composable operations, so the third command is the one
-that checks the rewrite.
+`click expand` verifies the selected rewritten proof unit before it writes
+anything. `--in-place` atomically replaces the source only on success;
+`--output PATH` writes a checked sibling artifact without shell redirection.
 
 ### Profiling slow proof steps
 
-Use `click-profile` to find slow proof steps without letting one project run
+Use `click profile` to find slow proof steps without letting one project run
 indefinitely:
 
 ```sh
-cargo run --quiet --bin click-profile -- examples
-cargo run --quiet --bin click-profile -- mdtests/bubble_sort3_two_pass_sorted.md
-cargo run --quiet --bin click-profile -- mdtests
+click profile examples
+click profile mdtests/bubble_sort3_two_pass_sorted.md
+click profile mdtests
 ```
 
 Pass one sidecar, one example-project directory, the complete `examples`
@@ -180,7 +179,7 @@ after 30 seconds. Override them with `--smart-threshold`,
 `--simple-threshold`, `--control-threshold`, and `--time-limit`;
 `--threshold` is shorthand for setting all three class thresholds equally.
 
-The verifier emits each tactic's class into the timing stream. The report uses
+The verifier emits each tactic's class as a structured event. The report uses
 that class to prescribe the next action:
 
 - Successful `SMART` hotspots are expansion candidates. The report prints
@@ -203,7 +202,7 @@ being mistaken for smart search merely because it is nested inside a smart
 tactic.
 
 The category sections list only steps that crossed a tail threshold. `TIME
-ACCOUNTING` reconciles bounded child-process wall time across frontend,
+ACCOUNTING` reconciles direct verification wall time across frontend,
 environment, exclusive tactic classes, kernel certification, measured
 `VERIFIER CORE` orchestration, and parent-observed `PROCESS/DRIVER` overhead.
 `UNATTRIBUTED` is only the remaining inconsistent or unknown portion.
@@ -230,13 +229,13 @@ interrupted run should identify its active statement. Raw tactic events include
 
 ### Auditing smart-tactic expansion
 
-Use `click-audit` for a slow, exhaustive check of the source-expansion
+Use `click audit` for a slow, exhaustive check of the source-expansion
 boundary:
 
 ```sh
-cargo run --quiet --bin click-audit -- examples
-cargo run --quiet --bin click-audit -- mdtests
-cargo run --quiet --bin click-audit -- .
+click audit examples
+click audit mdtests
+click audit .
 ```
 
 The repository-root form is the complete manual release/certificate-boundary
@@ -248,8 +247,8 @@ coverage; they do not run the exhaustive audit.
 
 The audit first parses every proof container and builds a deterministic
 inventory of smart source sites without executing any proof, printing its
-size. Locations in mdtests use markdown coordinates, like `click-profile` and
-`click-expand`:
+size. Locations in mdtests use markdown coordinates, like `click profile` and
+`click expand`:
 
 ```text
 INVENTORY
@@ -262,7 +261,7 @@ sidecar or mdtest, so resuming in a later file does not initialize earlier
 files. The resulting certified function environment stays alive while the
 audit handles that file. Each site gets these checks:
 
-1. **expand** — run expansion for that location in a bounded child process,
+1. **expand** — run expansion directly for that location,
    require the emitted proof container to differ from the on-disk original,
    and require it to round-trip through the ordinary Surface Click parser
    (there is no separate generated or Kernel Click grammar);
@@ -270,9 +269,10 @@ audit handles that file. Each site gets these checks:
    entry point additionally requires the location to resolve to the same proof
    unit as the baseline and the Click source to be identical outside that unit;
    it then reverifies just that proof unit while reusing certified dependencies;
-3. **cold original/rewritten** — on the first site of each claim, cold-verify the
-   original and expanded versions of the same targeted proof unit in fresh
-   processes. Later sites explicitly report `cold comparison not run`;
+3. **cold original/rewritten** — on the first site of each claim, directly
+   verify the original and expanded versions of the same targeted proof unit
+   without the retained session. Later sites explicitly report
+   `cold comparison not run`;
 4. **reexpand** — check that the rewrite is an expansion fixed point. The check
    is claim-based, because the rewrite moves and replaces tactics so the site
    cannot be re-found by its original position: the audited smart tactic must be
@@ -321,7 +321,7 @@ fixed-point, or confirmed performance failure and prints a copy-pasteable
 continuation command carrying every current limit:
 
 ```sh
-click-audit --session-time-limit 5m --expansion-time-limit 2m \
+click audit --session-time-limit 5m --expansion-time-limit 2m \
   --verification-time-limit 5m --performance-slack 500ms --time-limit 10m \
   --start-at path/to/file.click:LINE:COLUMN examples
 ```
@@ -333,10 +333,9 @@ failure-collecting behavior. Use `--max-sites` only for a deliberately partial
 diagnostic run; it prints the next cursor when the bound is reached. A release
 or certificate-boundary audit should omit it and finish one complete pass.
 
-Every timeout child or worker is killed and reaped. Every site starts from the
-unchanged baseline source, so an earlier rewrite cannot hide or cause a later
-failure. With `--keep-going`, a timed-out worker is rebuilt from a fresh
-complete verification before the audit continues. The command exits
+Every site starts from the unchanged baseline source, so an earlier rewrite
+cannot hide or cause a later failure. With `--keep-going`, a failed session is
+rebuilt from a fresh complete verification before the audit continues. The command exits
 unsuccessfully if session initialization, expansion, parsing, source isolation,
 proof-unit verification, the fixed-point check, the confirmed relative
 performance contract, or the run limit fails.

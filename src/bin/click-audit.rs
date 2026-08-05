@@ -1,17 +1,13 @@
 use std::collections::BTreeMap;
 use std::env;
 use std::fs;
-use std::io::{Read, Write};
+use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStdin, Command, Stdio};
-use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
-use std::thread;
 use std::time::{Duration, Instant};
 
 use click::cli::{
-    self, BoundedOutput, ChildOutput, MdTestExpectation, files_with_extension, find_mdtests,
-    find_projects, format_duration, looks_like_mdtest, parse_duration, read_verifying_sources,
-    run_bounded, run_bounded_with_input, shell_quote, source_refs,
+    self, MdTestExpectation, files_with_extension, find_mdtests, find_projects, format_duration,
+    looks_like_mdtest, parse_duration, read_verifying_sources, shell_quote, source_refs,
 };
 use click::lang::click::{
     C0VerificationSession, SourcePosition, c0_smart_tactic_source_sites, c0_tactic_source_position,
@@ -23,15 +19,14 @@ const DEFAULT_EXPANSION_LIMIT: Duration = Duration::from_secs(2 * 60);
 const DEFAULT_VERIFICATION_LIMIT: Duration = Duration::from_secs(5 * 60);
 const DEFAULT_PERFORMANCE_SLACK: Duration = Duration::from_millis(500);
 const DEFAULT_TIME_LIMIT: Duration = Duration::from_secs(10 * 60);
-const MAX_DIAGNOSTIC_CHARS: usize = 2_000;
 const RUN_LIMIT_EXHAUSTED: &str = "whole-run time limit exhausted";
 const USAGE: &str = "\
-usage: click-audit [OPTIONS] <sidecar.click|example-project|examples-directory|mdtest.md|mdtests-directory|repository-root>
+usage: click audit [OPTIONS] <sidecar.click|example-project|examples-directory|mdtest.md|mdtests-directory|repository-root>
 
 The audit inventories smart tactics without executing proofs, then audits each
 selected site in source order: it expands the site, verifies the rewritten
 proof unit in the retained session, reverifies that proof unit through the
-normal targeted entry point in a fresh process, and checks the rewrite is an
+normal direct targeted entry point, and checks the rewrite is an
 expansion fixed point (the audited smart tactic is gone from its claim and
 the emitted expansion introduced no new smart tactic). By default it stops at
 the first failure and prints an inclusive --start-at resume command.
@@ -40,7 +35,7 @@ Raw phase time grows with proof-unit size and is reported but is not itself a
 failure. On the first site of each claim, audit compares cold verification of
 the expanded proof with the original proof in the same run. A regression must
 be both over 2x and over the performance slack, then repeat once, to fail.
-Hard child and whole-run limits remain safety failures.
+Hard phase and whole-run limits remain safety failures.
 
 defaults:
   --session-time-limit 5m     original-sidecar session initialization
@@ -101,58 +96,28 @@ struct AuditSite {
 }
 
 struct AuditSessionWorker {
-    child: Child,
-    stdin: ChildStdin,
-    responses: Receiver<Result<(), String>>,
-    alive: bool,
+    click_path: PathBuf,
+    session: C0VerificationSession,
 }
 
 impl AuditSessionWorker {
     fn start(click_path: &Path, limit: Duration) -> Result<Self, String> {
-        let executable =
-            env::current_exe().map_err(|error| format!("failed to locate click-audit: {error}"))?;
-        let mut child = Command::new(executable)
-            .arg("--internal-session-worker")
-            .arg(click_path)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
-            .spawn()
-            .map_err(|error| format!("failed to start verification session: {error}"))?;
-        let stdin = child
-            .stdin
-            .take()
-            .ok_or_else(|| "failed to open verification-session input".to_string())?;
-        let stdout = child
-            .stdout
-            .take()
-            .ok_or_else(|| "failed to open verification-session output".to_string())?;
-        let (sender, responses) = mpsc::channel();
-        thread::spawn(move || {
-            let mut stdout = stdout;
-            loop {
-                match read_session_response(&mut stdout) {
-                    Ok(Some(response)) => {
-                        if sender.send(response).is_err() {
-                            break;
-                        }
-                    }
-                    Ok(None) => break,
-                    Err(error) => {
-                        let _ = sender.send(Err(error));
-                        break;
-                    }
-                }
-            }
-        });
-        let mut worker = Self {
-            child,
-            stdin,
-            responses,
-            alive: true,
-        };
-        worker.receive(limit, "verification-session initialization")?;
-        Ok(worker)
+        let started = Instant::now();
+        let source = load_audit_source(click_path)?;
+        let refs = source_refs(&source.c_sources);
+        let (session, _) = click::instrumentation::with_deadline(limit, || {
+            C0VerificationSession::new(&source.click_source, &refs)
+        })
+        .map_err(|error| error.message().to_string())?;
+        ensure_phase_limit(
+            started.elapsed(),
+            limit,
+            "verification-session initialization",
+        )?;
+        Ok(Self {
+            click_path: click_path.to_path_buf(),
+            session,
+        })
     }
 
     fn verify(
@@ -161,79 +126,34 @@ impl AuditSessionWorker {
         position: SourcePosition,
         limit: Duration,
     ) -> Result<Duration, String> {
-        if !self.alive {
-            return Err("verification session is not running".to_string());
-        }
-        write_session_request(&mut self.stdin, click_source, position).map_err(|error| {
-            self.terminate();
-            format!("failed to send verification-session request: {error}")
-        })?;
         let start = Instant::now();
-        self.receive(limit, "rewritten-sidecar verification")?;
-        Ok(start.elapsed())
-    }
-
-    fn receive(&mut self, limit: Duration, label: &str) -> Result<(), String> {
-        match self.responses.recv_timeout(limit) {
-            Ok(result) => result,
-            Err(RecvTimeoutError::Timeout) => {
-                self.terminate();
-                Err(format!("{label} exceeded {}", format_duration(limit)))
-            }
-            Err(RecvTimeoutError::Disconnected) => {
-                self.terminate();
-                Err(format!("{label} worker exited without a response"))
-            }
-        }
-    }
-
-    fn terminate(&mut self) {
-        if self.alive {
-            let _ = self.child.kill();
-            let _ = self.child.wait();
-            self.alive = false;
-        }
+        let rewritten = load_audit_source_from_text(&self.click_path, click_source.to_string())?;
+        click::instrumentation::with_deadline(limit, || {
+            self.session
+                .verify_at(&rewritten.click_source, position.line, position.column)
+        })
+        .map_err(|error| error.message().to_string())?;
+        let elapsed = start.elapsed();
+        ensure_phase_limit(elapsed, limit, "rewritten-sidecar verification")?;
+        Ok(elapsed)
     }
 
     fn is_alive(&self) -> bool {
-        self.alive
-    }
-}
-
-impl Drop for AuditSessionWorker {
-    fn drop(&mut self) {
-        self.terminate();
+        true
     }
 }
 
 fn entry() -> Result<(), String> {
-    let raw = env::args().skip(1).collect::<Vec<_>>();
-    if let Some(result) = run_internal_command(&raw) {
-        return result;
-    }
+    entry_with(env::args().skip(1))
+}
+
+pub(crate) fn entry_with(arguments: impl IntoIterator<Item = String>) -> Result<(), String> {
+    let raw = arguments.into_iter().collect::<Vec<_>>();
     if matches!(raw.as_slice(), [argument] if argument == "--help" || argument == "-h") {
         println!("{USAGE}");
         return Ok(());
     }
     run_audit(parse_arguments(raw)?)
-}
-
-fn run_internal_command(arguments: &[String]) -> Option<Result<(), String>> {
-    match arguments {
-        [command, path] if command == "--internal-session-worker" => {
-            Some(run_session_worker(Path::new(path)))
-        }
-        [command, location] if command == "--internal-expand" => {
-            Some(expand_location(location).map(|source| print!("{source}")))
-        }
-        [command, path, claim] if command == "--internal-verify-rewritten" => {
-            Some(verify_rewritten_from_stdin(Path::new(path), claim))
-        }
-        [command, path, claim] if command == "--internal-reexpand" => {
-            Some(reexpand_from_stdin(Path::new(path), claim).map(|source| print!("{source}")))
-        }
-        _ => None,
-    }
 }
 
 fn parse_arguments(arguments: impl IntoIterator<Item = String>) -> Result<Arguments, String> {
@@ -723,7 +643,8 @@ fn print_resume(arguments: &Arguments, site: &AuditSite) {
 
 fn resume_command(arguments: &Arguments, location: &SourceLocation) -> String {
     let mut words = vec![
-        "click-audit".to_string(),
+        "click".to_string(),
+        "audit".to_string(),
         "--session-time-limit".to_string(),
         format_duration(arguments.session_limit),
         "--expansion-time-limit".to_string(),
@@ -788,6 +709,18 @@ fn remaining_phase_limit(deadline: Instant, configured: Duration) -> Result<Dura
     Ok(configured.min(remaining))
 }
 
+fn ensure_phase_limit(elapsed: Duration, limit: Duration, label: &str) -> Result<(), String> {
+    if elapsed > limit {
+        Err(format!(
+            "{label} exceeded {} after {}",
+            format_duration(limit),
+            format_duration(elapsed)
+        ))
+    } else {
+        Ok(())
+    }
+}
+
 fn audit_site(
     site: &AuditSite,
     worker: &mut AuditSessionWorker,
@@ -797,24 +730,18 @@ fn audit_site(
     cold_reverify: bool,
     deadline: Instant,
 ) -> Result<SiteTimings, String> {
-    let executable =
-        env::current_exe().map_err(|error| format!("failed to locate click-audit: {error}"))?;
     let location = format!(
         "{}:{}:{}",
         site.click_path.display(),
         site.position.line,
         site.position.column
     );
-    let mut expansion = Command::new(&executable);
-    expansion.arg("--internal-expand").arg(&location);
     let phase_limit = remaining_phase_limit(deadline, expansion_limit)?;
-    let expansion = require_success(
-        run_bounded(expansion, phase_limit, "expansion")?,
-        phase_limit,
-        "expansion",
-    )?;
-    let expanded = String::from_utf8(expansion.stdout)
-        .map_err(|error| format!("expansion output was not UTF-8: {error}"))?;
+    let expansion_started = Instant::now();
+    let expanded =
+        click::instrumentation::with_deadline(phase_limit, || expand_location(&location))?;
+    let expansion_elapsed = expansion_started.elapsed();
+    ensure_phase_limit(expansion_elapsed, phase_limit, "expansion")?;
     let original = fs::read_to_string(&site.click_path)
         .map_err(|error| format!("failed to reread `{}`: {error}", site.click_path.display()))?;
     if expanded == original {
@@ -834,25 +761,23 @@ fn audit_site(
     )?;
 
     // Checklist step 6: reverify the rewritten proof unit from normal
-    // inputs by running the targeted entry point in a fresh process under
+    // inputs by running the direct targeted entry point under
     // the verification time limit. The retained session already checked the
     // rewrite changed nothing outside the audited proof unit, so the other
     // units' outcomes cannot change; a whole-file pass here would redo them
     // all per site, which made auditing a project cost sites x whole-file
-    // time. The cold-process pass exists to catch anything the retained
-    // session's cached environment masks, which one site per claim already
+    // time. The cold direct pass catches anything the retained session's
+    // cached environment masks, which one site per claim already
     // exercises — repeating it for every site of a many-site claim would
     // double the whole audit for no additional coverage.
     let cold_verification = if cold_reverify {
         let original_elapsed = cold_verify(
-            &executable,
             site,
             &original,
             remaining_phase_limit(deadline, verification_limit)?,
             "original proof-unit verification",
         )?;
         let expanded_elapsed = cold_verify(
-            &executable,
             site,
             &expanded,
             remaining_phase_limit(deadline, verification_limit)?,
@@ -862,14 +787,12 @@ fn audit_site(
             // Timing-only findings get one fresh serial confirmation, matching
             // the ordinary tactic-budget gate's noise policy.
             let confirmed_original = cold_verify(
-                &executable,
                 site,
                 &original,
                 remaining_phase_limit(deadline, verification_limit)?,
                 "confirmation original proof-unit verification",
             )?;
             let confirmed_expanded = cold_verify(
-                &executable,
                 site,
                 &expanded,
                 remaining_phase_limit(deadline, verification_limit)?,
@@ -881,16 +804,16 @@ fn audit_site(
                     "expanded proof-unit verification regressed in two serial comparisons: \
                      {} -> {}, then {} -> {} (failure requires over 2x and over {}); \
                      reproduce the exact expanded workload with:\n  \
-                     cargo run --quiet --bin click-expand -- --time-limit {} {} > {}\n  \
-                     cargo run --quiet --bin click-profile -- {}",
+                     click expand --time-limit {} --output {} {}\n  \
+                     click profile {}",
                     format_duration(original_elapsed),
                     format_duration(expanded_elapsed),
                     format_duration(confirmed_original),
                     format_duration(confirmed_expanded),
                     format_duration(performance_slack),
                     format_duration(expansion_limit),
-                    shell_quote(&location),
                     shell_quote(&artifact.display().to_string()),
+                    shell_quote(&location),
                     shell_quote(&artifact.display().to_string()),
                 ));
             }
@@ -903,24 +826,11 @@ fn audit_site(
     // Checklist step 7: re-expanding the same claim against the rewritten
     // source must be a fixed point, byte for byte. The site is re-resolved
     // by claim because the rewrite moves and replaces tactics.
-    let mut reexpansion = Command::new(&executable);
-    reexpansion
-        .arg("--internal-reexpand")
-        .arg(&site.click_path)
-        .arg(&site.claim);
     let phase_limit = remaining_phase_limit(deadline, expansion_limit)?;
-    let reexpansion = require_success(
-        run_bounded_with_input(
-            reexpansion,
-            Some(expanded.clone().into_bytes()),
-            phase_limit,
-            "re-expansion",
-        )?,
-        phase_limit,
-        "re-expansion",
-    )?;
-    let reexpanded = String::from_utf8(reexpansion.stdout)
-        .map_err(|error| format!("re-expansion output was not UTF-8: {error}"))?;
+    let reexpansion_started = Instant::now();
+    let reexpanded = reexpand_source(&site.click_path, &site.claim, &expanded)?;
+    let reexpansion_elapsed = reexpansion_started.elapsed();
+    ensure_phase_limit(reexpansion_elapsed, phase_limit, "re-expansion")?;
     if reexpanded != expanded {
         return Err(format!(
             "re-expansion was not byte-identical to the first rewrite \
@@ -936,36 +846,26 @@ fn audit_site(
     // is intentionally not an audit invariant.
 
     Ok(SiteTimings {
-        expansion: expansion.elapsed,
+        expansion: expansion_elapsed,
         session_verification: verification_elapsed,
         cold_verification,
-        reexpansion: reexpansion.elapsed,
+        reexpansion: reexpansion_elapsed,
     })
 }
 
 fn cold_verify(
-    executable: &Path,
     site: &AuditSite,
     source: &str,
     verification_limit: Duration,
     label: &str,
 ) -> Result<Duration, String> {
-    let mut verification = Command::new(executable);
-    verification
-        .arg("--internal-verify-rewritten")
-        .arg(&site.click_path)
-        .arg(&site.claim);
-    let output = require_success(
-        run_bounded_with_input(
-            verification,
-            Some(source.as_bytes().to_vec()),
-            verification_limit,
-            label,
-        )?,
-        verification_limit,
-        label,
-    )?;
-    Ok(output.elapsed)
+    let started = Instant::now();
+    click::instrumentation::with_deadline(verification_limit, || {
+        verify_rewritten(&site.click_path, &site.claim, source)
+    })?;
+    let elapsed = started.elapsed();
+    ensure_phase_limit(elapsed, verification_limit, label)?;
+    Ok(elapsed)
 }
 
 fn verification_regressed(
@@ -1015,25 +915,17 @@ fn expand_location(location: &str) -> Result<String, String> {
     }
 }
 
-fn read_stdin_source(label: &str) -> Result<String, String> {
-    let mut source = String::new();
-    std::io::stdin()
-        .read_to_string(&mut source)
-        .map_err(|error| format!("failed to read {label} from stdin: {error}"))?;
-    Ok(source)
-}
-
-/// Checklist step 6 worker: verifies the audited proof unit of a rewritten
-/// sidecar, read from stdin, through the normal targeted entry point,
+/// Verifies the audited proof unit of a rewritten sidecar through the normal
+/// targeted entry point,
 /// resolving its C sources relative to the original on-disk sidecar path.
 /// The unit is re-located by claim (its first tactic source) because the
 /// rewrite moves source positions.
-fn verify_rewritten_from_stdin(
+fn verify_rewritten(
     original_click_path: &Path,
     claim_label: &str,
+    rewritten: &str,
 ) -> Result<(), String> {
-    let rewritten = read_stdin_source("rewritten sidecar")?;
-    let source = load_audit_source_from_text(original_click_path, rewritten)?;
+    let source = load_audit_source_from_text(original_click_path, rewritten.to_string())?;
     let refs = source_refs(&source.c_sources);
     let position = claim_source_position(&source, claim_label)?;
     verify_c0_sources_at(&source.click_source, &refs, position.line, position.column)
@@ -1054,8 +946,8 @@ fn claim_source_position(
     })
 }
 
-/// Checklist step 7 worker: checks the rewritten sidecar (read from stdin)
-/// is an expansion fixed point for the audited site, resolving C sources
+/// Checks that the rewritten sidecar is an expansion fixed point for the
+/// audited site, resolving C sources
 /// relative to the original on-disk sidecar path.
 ///
 /// The rewrite moves and replaces tactics, so the audited site cannot be
@@ -1070,10 +962,13 @@ fn claim_source_position(
 /// original sidecar.
 /// On success the rewritten source is echoed so the caller's byte-identical
 /// comparison passes.
-fn reexpand_from_stdin(click_path: &Path, claim_label: &str) -> Result<String, String> {
+fn reexpand_source(
+    click_path: &Path,
+    claim_label: &str,
+    rewritten: &str,
+) -> Result<String, String> {
     let original = load_audit_source(click_path)?;
-    let rewritten = read_stdin_source("rewritten sidecar")?;
-    let rewritten_source = load_audit_source_from_text(click_path, rewritten.clone())?;
+    let rewritten_source = load_audit_source_from_text(click_path, rewritten.to_string())?;
     let claim_sites = |source: &str, sources: &[(String, String)]| {
         let refs = sources
             .iter()
@@ -1124,208 +1019,7 @@ fn reexpand_from_stdin(click_path: &Path, claim_label: &str) -> Result<String, S
             rewritten_sites.len(),
         ));
     }
-    Ok(rewritten)
-}
-
-fn require_success(
-    output: BoundedOutput,
-    limit: Duration,
-    label: &str,
-) -> Result<ChildOutput, String> {
-    match output {
-        BoundedOutput::TimedOut {
-            stdout,
-            stderr,
-            elapsed,
-        } => {
-            let diagnostic = child_diagnostic(&stdout, &stderr);
-            Err(format!(
-                "{label} exceeded {} after {}{}",
-                format_duration(limit),
-                format_duration(elapsed),
-                if diagnostic.is_empty() {
-                    String::new()
-                } else {
-                    format!("\nlast diagnostics:\n{diagnostic}")
-                }
-            ))
-        }
-        BoundedOutput::Completed(output) if output.status.success() => Ok(output),
-        BoundedOutput::Completed(output) => {
-            let diagnostic = child_diagnostic(&output.stdout, &output.stderr);
-            Err(if diagnostic.is_empty() {
-                format!("{label} exited with {}", output.status)
-            } else {
-                format!("{label} failed:\n{diagnostic}")
-            })
-        }
-    }
-}
-
-fn child_diagnostic(stdout: &[u8], stderr: &[u8]) -> String {
-    let stderr = String::from_utf8_lossy(stderr);
-    let stderr = stderr
-        .lines()
-        .filter(|line| !line.starts_with("click timing:"))
-        .collect::<Vec<_>>()
-        .join("\n");
-    if !stderr.trim().is_empty() {
-        let diagnostic = stderr
-            .trim()
-            .strip_prefix("click-audit: ")
-            .unwrap_or(stderr.trim());
-        return truncate_diagnostic(diagnostic);
-    }
-    truncate_diagnostic(String::from_utf8_lossy(stdout).trim())
-}
-
-fn truncate_diagnostic(diagnostic: &str) -> String {
-    let Some((cut, _)) = diagnostic.char_indices().nth(MAX_DIAGNOSTIC_CHARS) else {
-        return diagnostic.to_string();
-    };
-    format!(
-        "{}\n... diagnostic truncated ({} more characters)",
-        &diagnostic[..cut],
-        diagnostic.chars().count() - MAX_DIAGNOSTIC_CHARS
-    )
-}
-
-fn run_session_worker(click_path: &Path) -> Result<(), String> {
-    let source = load_audit_source(click_path)?;
-    let refs = source_refs(&source.c_sources);
-    let session = match C0VerificationSession::new(&source.click_source, &refs) {
-        Ok((session, _)) => {
-            write_session_response(&mut std::io::stdout(), Ok(()))?;
-            session
-        }
-        Err(error) => {
-            write_session_response(&mut std::io::stdout(), Err(error.message().to_string()))?;
-            return Ok(());
-        }
-    };
-    let mut stdin = std::io::stdin();
-    loop {
-        let Some((rewritten, position)) = read_session_request(&mut stdin)? else {
-            return Ok(());
-        };
-        let rewritten = load_audit_source_from_text(click_path, rewritten)?;
-        let result = session
-            .verify_at(&rewritten.click_source, position.line, position.column)
-            .map(|_| ())
-            .map_err(|error| error.message().to_string());
-        write_session_response(&mut std::io::stdout(), result)?;
-    }
-}
-
-fn write_session_request(
-    output: &mut impl Write,
-    click_source: &str,
-    position: SourcePosition,
-) -> std::io::Result<()> {
-    write_u64(output, click_source.len() as u64)?;
-    output.write_all(click_source.as_bytes())?;
-    write_u64(output, position.line as u64)?;
-    write_u64(output, position.column as u64)?;
-    output.flush()
-}
-
-fn read_session_request(input: &mut impl Read) -> Result<Option<(String, SourcePosition)>, String> {
-    let Some(length) = read_u64(input)? else {
-        return Ok(None);
-    };
-    let length = usize::try_from(length)
-        .map_err(|_| "verification-session request is too large".to_string())?;
-    if length > 64 * 1024 * 1024 {
-        return Err("verification-session request exceeds 64 MiB".to_string());
-    }
-    let mut source = vec![0; length];
-    input
-        .read_exact(&mut source)
-        .map_err(|error| format!("failed to read verification-session source: {error}"))?;
-    let line = read_required_u64(input, "line")?;
-    let column = read_required_u64(input, "column")?;
-    let source = String::from_utf8(source)
-        .map_err(|error| format!("verification-session source was not UTF-8: {error}"))?;
-    let line =
-        usize::try_from(line).map_err(|_| "verification-session line is too large".to_string())?;
-    let column = usize::try_from(column)
-        .map_err(|_| "verification-session column is too large".to_string())?;
-    Ok(Some((source, SourcePosition { line, column })))
-}
-
-fn write_session_response(
-    output: &mut impl Write,
-    result: Result<(), String>,
-) -> Result<(), String> {
-    let (status, message) = match result {
-        Ok(()) => (0_u8, String::new()),
-        Err(message) => (1_u8, message),
-    };
-    output
-        .write_all(&[status])
-        .and_then(|_| write_u64(output, message.len() as u64))
-        .and_then(|_| output.write_all(message.as_bytes()))
-        .and_then(|_| output.flush())
-        .map_err(|error| format!("failed to write verification-session response: {error}"))
-}
-
-fn read_session_response(input: &mut impl Read) -> Result<Option<Result<(), String>>, String> {
-    let mut status = [0_u8; 1];
-    match input.read(&mut status) {
-        Ok(0) => return Ok(None),
-        Ok(1) => {}
-        Ok(_) => unreachable!("one-byte buffer cannot read more than one byte"),
-        Err(error) => {
-            return Err(format!(
-                "failed to read verification-session response: {error}"
-            ));
-        }
-    }
-    let length = read_required_u64(input, "response length")?;
-    let length = usize::try_from(length)
-        .map_err(|_| "verification-session response is too large".to_string())?;
-    let mut message = vec![0; length];
-    input
-        .read_exact(&mut message)
-        .map_err(|error| format!("failed to read verification-session diagnostic: {error}"))?;
-    let message = String::from_utf8(message)
-        .map_err(|error| format!("verification-session diagnostic was not UTF-8: {error}"))?;
-    match status[0] {
-        0 if message.is_empty() => Ok(Some(Ok(()))),
-        0 => Err("successful verification-session response contained a diagnostic".to_string()),
-        1 => Ok(Some(Err(message))),
-        other => Err(format!(
-            "unknown verification-session response status {other}"
-        )),
-    }
-}
-
-fn write_u64(output: &mut impl Write, value: u64) -> std::io::Result<()> {
-    output.write_all(&value.to_le_bytes())
-}
-
-fn read_u64(input: &mut impl Read) -> Result<Option<u64>, String> {
-    let mut bytes = [0_u8; 8];
-    let mut read = 0;
-    while read < bytes.len() {
-        match input.read(&mut bytes[read..]) {
-            Ok(0) if read == 0 => return Ok(None),
-            Ok(0) => {
-                return Err("verification-session frame ended mid-integer".to_string());
-            }
-            Ok(count) => read += count,
-            Err(error) => {
-                return Err(format!(
-                    "failed to read verification-session frame: {error}"
-                ));
-            }
-        }
-    }
-    Ok(Some(u64::from_le_bytes(bytes)))
-}
-
-fn read_required_u64(input: &mut impl Read, field: &str) -> Result<u64, String> {
-    read_u64(input)?.ok_or_else(|| format!("verification-session frame ended before its {field}"))
+    Ok(rewritten.to_string())
 }
 
 #[cfg(test)]
@@ -1403,7 +1097,7 @@ mod tests {
         };
         assert_eq!(
             resume_command(&arguments, &location),
-            "click-audit --session-time-limit 30s --expansion-time-limit 2s \
+            "click audit --session-time-limit 30s --expansion-time-limit 2s \
              --verification-time-limit 3s --performance-slack 500ms --time-limit 10m \
              --max-sites 1 --start-at /tmp/example.click:12:34 'examples with spaces'"
         );
@@ -1506,34 +1200,6 @@ mod tests {
                 })
             ),
             1
-        );
-    }
-
-    #[test]
-    fn session_protocol_round_trips_requests_and_responses() {
-        let position = SourcePosition {
-            line: 12,
-            column: 34,
-        };
-        let mut request = Vec::new();
-        write_session_request(&mut request, "proof source λ", position).unwrap();
-        assert_eq!(
-            read_session_request(&mut request.as_slice()).unwrap(),
-            Some(("proof source λ".to_string(), position))
-        );
-
-        let mut success = Vec::new();
-        write_session_response(&mut success, Ok(())).unwrap();
-        assert_eq!(
-            read_session_response(&mut success.as_slice()).unwrap(),
-            Some(Ok(()))
-        );
-
-        let mut failure = Vec::new();
-        write_session_response(&mut failure, Err("bad certificate".to_string())).unwrap();
-        assert_eq!(
-            read_session_response(&mut failure.as_slice()).unwrap(),
-            Some(Err("bad certificate".to_string()))
         );
     }
 
@@ -1689,13 +1355,5 @@ int32 count_to_one() {
         let refs = source_refs(&source.c_sources);
         verify_c0_sources(&source.click_source, &refs)
             .expect("expanded markdown proof should verify");
-    }
-
-    #[test]
-    fn truncates_large_child_diagnostics_at_character_boundaries() {
-        let diagnostic = "λ".repeat(MAX_DIAGNOSTIC_CHARS + 2);
-        let truncated = truncate_diagnostic(&diagnostic);
-        assert!(truncated.starts_with(&"λ".repeat(MAX_DIAGNOSTIC_CHARS)));
-        assert!(truncated.ends_with("2 more characters)"));
     }
 }

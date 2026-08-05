@@ -9,8 +9,8 @@ use click::cli::{
 use click::lang::click::{verify_c0_sources, verify_c0_sources_at};
 
 const USAGE: &str = "\
-usage: click-verify <sidecar.click>[:<line>:<column>]
-       click-verify <project-directory|examples-directory>
+usage: click verify <sidecar.click>[:<line>:<column>]
+       click verify <project-directory|examples-directory>
 
 Verifies the whole sidecar, or, when a one-based :LINE:COLUMN suffix is
 supplied, only the proof unit containing that source location and the C
@@ -18,7 +18,7 @@ functions it calls.
 
 Given a directory, verifies every sidecar in it: either the project directory
 itself when it holds sidecars, or each immediate subdirectory that does. This
-is the command to run after applying an expansion emitted by click-expand.";
+is the command to run after applying an expansion emitted by `click expand`.";
 
 fn main() {
     if let Err(message) = entry() {
@@ -28,7 +28,11 @@ fn main() {
 }
 
 fn entry() -> Result<(), String> {
-    let arguments = env::args().skip(1).collect::<Vec<_>>();
+    entry_with(env::args().skip(1))
+}
+
+pub(crate) fn entry_with(arguments: impl IntoIterator<Item = String>) -> Result<(), String> {
+    let arguments = arguments.into_iter().collect::<Vec<_>>();
     if matches!(arguments.as_slice(), [argument] if argument == "--help" || argument == "-h") {
         println!("{USAGE}");
         return Ok(());

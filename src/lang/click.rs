@@ -7,6 +7,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
+use crate::instrumentation::{self, TacticEvent, VerificationEvent};
 use crate::kernel::{
     Assumptions, Bitvector32Term, CComparisonOperator, CCompositeResourceDefinition,
     CConditionOutcome, CExecutionEnvironment, CExecutionSemantics, CExpression, CExpressionOutcome,
@@ -86,10 +87,14 @@ struct VerificationTimingPhase {
 
 impl VerificationTimingPhase {
     fn new(name: &'static str) -> Self {
+        let enabled = instrumentation::enabled();
+        if enabled {
+            instrumentation::emit(VerificationEvent::PhaseStarted(name));
+        }
         Self {
             name,
             started: std::time::Instant::now(),
-            enabled: std::env::var_os("CLICK_TIMINGS").is_some(),
+            enabled,
         }
     }
 }
@@ -97,12 +102,22 @@ impl VerificationTimingPhase {
 impl Drop for VerificationTimingPhase {
     fn drop(&mut self) {
         if self.enabled {
-            eprintln!(
-                "click timing: phase {} {:.6}s",
-                self.name,
-                self.started.elapsed().as_secs_f64(),
-            );
+            instrumentation::emit(VerificationEvent::PhaseFinished {
+                name: self.name,
+                elapsed: self.started.elapsed(),
+            });
         }
+    }
+}
+
+fn check_verification_deadline() -> Result<(), ClickError> {
+    if instrumentation::deadline_exceeded() {
+        Err(ClickError::new(format!(
+            "verification time limit exceeded inside {}",
+            instrumentation::deadline_context()
+        )))
+    } else {
+        Ok(())
     }
 }
 
@@ -1968,19 +1983,18 @@ impl ClickError {
     }
 
     fn emit_timing_failure(&self) {
-        if std::env::var_os("CLICK_TIMINGS").is_none() || self.expansion_complete {
+        if !instrumentation::enabled() || self.expansion_complete {
             return;
         }
         if let Some(tactic) = &self.timing_tactic {
-            eprintln!(
-                "click timing: failed tactic {} {} {} class {} statement {} source {}",
-                tactic.claim_label,
-                tactic.tactic_index,
-                tactic.tactic_name,
-                tactic.tactic_class,
-                tactic.statement_index,
-                tactic.source_index,
-            );
+            instrumentation::emit(VerificationEvent::TacticFailed(TacticEvent {
+                claim: tactic.claim_label.clone(),
+                tactic_index: tactic.tactic_index,
+                tactic_name: tactic.tactic_name.clone(),
+                class: tactic.tactic_class.clone(),
+                statement_index: tactic.statement_index,
+                source_index: tactic.source_index,
+            }));
         }
     }
 }
@@ -2194,6 +2208,7 @@ fn verify_c0_sources_with_environment(
     verification_target: Option<VerificationTarget>,
     initial_function_environment: Option<CExecutionEnvironment>,
 ) -> Result<(Vec<VerifiedCTheorem>, CExecutionEnvironment), ClickError> {
+    check_verification_deadline()?;
     let (file, parsed_sources, selected_functions) = {
         let _timing = VerificationTimingPhase::new("frontend");
         let c_sources: BTreeMap<&str, &str> = c_sources.iter().copied().collect();
@@ -2224,6 +2239,7 @@ fn verify_c0_sources_with_environment(
         };
         (file, parsed_sources, selected_functions)
     };
+    check_verification_deadline()?;
     let (termination_plans, requested_termination) =
         c_function_termination_plans(&file, selected_functions.as_ref())?;
     let (
@@ -2321,9 +2337,11 @@ fn verify_c0_sources_with_environment(
             theorem_environment,
         )
     };
+    check_verification_deadline()?;
     let mut verified = Vec::new();
 
     for function_block in file.function_blocks {
+        check_verification_deadline()?;
         if selected_functions
             .as_ref()
             .is_some_and(|functions| !functions.contains(function_block.signature.name()))
@@ -2533,12 +2551,20 @@ fn verify_c0_sources_with_environment(
                 },
                 contract_execution_mode,
             );
-            if std::env::var_os("CLICK_TIMINGS").is_some() {
-                eprintln!(
-                    "click timing: contract execution {} {:.6}s",
-                    function_block.signature.name(),
-                    certification_started.elapsed().as_secs_f64(),
-                );
+            if matches!(
+                contract_execution.limit(),
+                Some(crate::kernel::ExecutionLimit::Deadline)
+            ) {
+                return Err(ClickError::new(format!(
+                    "verification time limit exceeded inside {}",
+                    instrumentation::deadline_context()
+                )));
+            }
+            if instrumentation::enabled() {
+                instrumentation::emit(VerificationEvent::ContractExecutionFinished {
+                    function: function_block.signature.name().to_string(),
+                    elapsed: certification_started.elapsed(),
+                });
             }
             let claims_started = std::time::Instant::now();
             if contract_execution.path_count() == 0 && contract_execution.limit().is_none() {
@@ -2549,12 +2575,11 @@ fn verify_c0_sources_with_environment(
             }
             let certified_claims =
                 c_verified_function_contract_claims(&contract_function, &contract_execution);
-            if std::env::var_os("CLICK_TIMINGS").is_some() {
-                eprintln!(
-                    "click timing: contract claims {} {:.6}s",
-                    function_block.signature.name(),
-                    claims_started.elapsed().as_secs_f64(),
-                );
+            if instrumentation::enabled() {
+                instrumentation::emit(VerificationEvent::ContractClaimsFinished {
+                    function: function_block.signature.name().to_string(),
+                    elapsed: claims_started.elapsed(),
+                });
             }
             let Some(certified_claims) = certified_claims else {
                 let detail = match c_unverified_function_contract_claims(
@@ -2643,13 +2668,13 @@ fn verify_c0_sources_with_environment(
                 })?;
             function_environment = function_environment.with_verified_function_rule(rule);
         }
-        if std::env::var_os("CLICK_TIMINGS").is_some() {
-            eprintln!(
-                "click timing: function {} {:.3}s",
-                function_block.signature.name(),
-                function_timing_start.elapsed().as_secs_f64()
-            );
+        if instrumentation::enabled() {
+            instrumentation::emit(VerificationEvent::FunctionFinished {
+                name: function_block.signature.name().to_string(),
+                elapsed: function_timing_start.elapsed(),
+            });
         }
+        check_verification_deadline()?;
     }
 
     let partial_rules = function_environment.verified_function_rules();

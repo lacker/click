@@ -1,18 +1,20 @@
 use std::env;
 use std::fs;
 use std::io::Write;
-use std::path::PathBuf;
-use std::process::Command;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use click::cli::{
-    BoundedOutput, DEFAULT_EXPANSION_TIME_LIMIT, format_duration, looks_like_mdtest,
-    parse_duration, parse_source_location, read_mdtest, read_verifying_sources, run_bounded,
-    source_refs,
+    DEFAULT_EXPANSION_TIME_LIMIT, looks_like_mdtest, parse_duration, parse_source_location,
+    read_mdtest, read_verifying_sources, source_refs,
 };
-use click::lang::click::expand_c0_tactic_source_at;
+use click::lang::click::{
+    C0VerificationSession, c0_smart_tactic_source_sites, c0_tactic_source_position,
+    expand_c0_tactic_source_at,
+};
 
-const USAGE: &str = "usage: click-expand [--time-limit <DURATION>] <sidecar.click|mdtest.md>:<line>:<column>\n\nThe expansion is bounded to 60s by default; --time-limit overrides it.";
+const USAGE: &str = "usage: click expand [--time-limit <DURATION>] [--output <PATH> | --in-place] <sidecar.click|mdtest.md>:<line>:<column>\n\nExpansion is checked before output. With --in-place, the original is atomically replaced only after targeted verification succeeds.";
 
 fn main() {
     if let Err(message) = entry() {
@@ -27,27 +29,38 @@ struct Arguments {
     line: usize,
     column: usize,
     time_limit: Duration,
-    child: bool,
+    output: Option<PathBuf>,
+    in_place: bool,
 }
 
 fn entry() -> Result<(), String> {
-    let raw = env::args().skip(1).collect::<Vec<_>>();
+    entry_with(env::args().skip(1))
+}
+
+pub(crate) fn entry_with(arguments: impl IntoIterator<Item = String>) -> Result<(), String> {
+    let raw = arguments.into_iter().collect::<Vec<_>>();
     if matches!(raw.as_slice(), [argument] if argument == "--help" || argument == "-h") {
         println!("{USAGE}");
         return Ok(());
     }
     let arguments = parse_arguments(raw)?;
-    if arguments.child {
-        run(&arguments)
+    let expanded = click::instrumentation::with_deadline(arguments.time_limit, || run(&arguments))?;
+    if arguments.in_place {
+        atomic_replace(&arguments.click_path, expanded.as_bytes())
+    } else if let Some(output) = &arguments.output {
+        fs::write(output, expanded)
+            .map_err(|error| format!("failed to write `{}`: {error}", output.display()))
     } else {
-        run_with_time_limit(&arguments, arguments.time_limit)
+        print!("{expanded}");
+        Ok(())
     }
 }
 
 fn parse_arguments(arguments: impl IntoIterator<Item = String>) -> Result<Arguments, String> {
     let mut positional = Vec::new();
     let mut time_limit = None;
-    let mut child = false;
+    let mut output = None;
+    let mut in_place = false;
     let mut parse_options = true;
     let mut arguments = arguments.into_iter();
     while let Some(argument) = arguments.next() {
@@ -55,8 +68,16 @@ fn parse_arguments(arguments: impl IntoIterator<Item = String>) -> Result<Argume
             parse_options = false;
         } else if !parse_options {
             positional.push(argument);
-        } else if argument == "--child" {
-            child = true;
+        } else if argument == "--output" {
+            if output.is_some() {
+                return Err("`--output` may only be supplied once".to_string());
+            }
+            output =
+                Some(PathBuf::from(arguments.next().ok_or_else(|| {
+                    format!("missing path after `--output`\n{USAGE}")
+                })?));
+        } else if argument == "--in-place" {
+            in_place = true;
         } else if argument == "--time-limit" {
             if time_limit.is_some() {
                 return Err("`--time-limit` may only be supplied once".to_string());
@@ -75,63 +96,20 @@ fn parse_arguments(arguments: impl IntoIterator<Item = String>) -> Result<Argume
         [location] => parse_source_location(location)?,
         _ => return Err(USAGE.to_string()),
     };
+    if in_place && output.is_some() {
+        return Err("`--output` and `--in-place` cannot be combined".to_string());
+    }
     Ok(Arguments {
         click_path,
         line,
         column,
         time_limit: time_limit.unwrap_or(DEFAULT_EXPANSION_TIME_LIMIT),
-        child,
+        output,
+        in_place,
     })
 }
 
-fn run_with_time_limit(arguments: &Arguments, time_limit: Duration) -> Result<(), String> {
-    let executable = env::current_exe()
-        .map_err(|error| format!("failed to locate click-expand executable: {error}"))?;
-    let mut command = Command::new(executable);
-    command.arg("--child").arg(format!(
-        "{}:{}:{}",
-        arguments.click_path.display(),
-        arguments.line,
-        arguments.column
-    ));
-    let output = match run_bounded(command, time_limit, "timed expansion")? {
-        BoundedOutput::TimedOut { stderr, .. } => {
-            let diagnostics = String::from_utf8_lossy(&stderr);
-            let diagnostics = diagnostics.trim();
-            return Err(if diagnostics.is_empty() {
-                format!("time limit of {} exceeded", format_duration(time_limit))
-            } else {
-                format!(
-                    "time limit of {} exceeded\nlast diagnostics:\n{}",
-                    format_duration(time_limit),
-                    diagnostics
-                )
-            });
-        }
-        BoundedOutput::Completed(output) => output,
-    };
-    if !output.status.success() {
-        let message = String::from_utf8_lossy(&output.stderr);
-        let message = message
-            .trim()
-            .strip_prefix("click-expand: ")
-            .unwrap_or(message.trim());
-        return Err(if message.is_empty() {
-            format!("timed expansion exited with {}", output.status)
-        } else {
-            message.to_string()
-        });
-    }
-    std::io::stdout()
-        .write_all(&output.stdout)
-        .map_err(|error| format!("failed to write expanded source: {error}"))?;
-    std::io::stderr()
-        .write_all(&output.stderr)
-        .map_err(|error| format!("failed to write expansion diagnostics: {error}"))?;
-    Ok(())
-}
-
-fn run(arguments: &Arguments) -> Result<(), String> {
+fn run(arguments: &Arguments) -> Result<String, String> {
     if looks_like_mdtest(&arguments.click_path) {
         return run_mdtest(arguments);
     }
@@ -143,18 +121,21 @@ fn run(arguments: &Arguments) -> Result<(), String> {
     })?;
     let owned_sources = read_verifying_sources(&arguments.click_path, &click_source)?;
     let sources = source_refs(&owned_sources);
+    let (session, _) = C0VerificationSession::new(&click_source, &sources)
+        .map_err(|error| error.message().to_string())?;
+    let claim = selected_claim(&click_source, &sources, arguments.line, arguments.column)?;
     let expanded =
         expand_c0_tactic_source_at(&click_source, &sources, arguments.line, arguments.column)
             .map_err(|error| error.message().to_string())?;
-    print!("{expanded}");
-    Ok(())
+    verify_expansion(&session, &expanded, &sources, &claim)?;
+    Ok(expanded)
 }
 
 /// Expands a tactic inside an mdtest's ```click block. The location is given
-/// in `.md` file coordinates — the same coordinates click-profile reports —
+/// in `.md` file coordinates — the same coordinates `click profile` reports —
 /// and the output is the whole markdown file with the block's body replaced,
 /// so the same redirect workflow as sidecar expansion applies.
-fn run_mdtest(arguments: &Arguments) -> Result<(), String> {
+fn run_mdtest(arguments: &Arguments) -> Result<String, String> {
     let markdown = fs::read_to_string(&arguments.click_path).map_err(|error| {
         format!(
             "failed to read `{}`: {error}",
@@ -170,10 +151,85 @@ fn run_mdtest(arguments: &Arguments) -> Result<(), String> {
     })?;
     let click_line = mdtest.click_line(arguments.line)?;
     let sources = source_refs(&mdtest.c_sources);
+    let (session, _) = C0VerificationSession::new(click_source, &sources)
+        .map_err(|error| error.message().to_string())?;
+    let claim = selected_claim(click_source, &sources, click_line, arguments.column)?;
     let expanded = expand_c0_tactic_source_at(click_source, &sources, click_line, arguments.column)
         .map_err(|error| error.message().to_string())?;
-    print!("{}", mdtest.replace_click_source(&markdown, &expanded)?);
-    Ok(())
+    verify_expansion(&session, &expanded, &sources, &claim)?;
+    mdtest.replace_click_source(&markdown, &expanded)
+}
+
+fn selected_claim(
+    click_source: &str,
+    sources: &[(&str, &str)],
+    line: usize,
+    column: usize,
+) -> Result<String, String> {
+    c0_smart_tactic_source_sites(click_source, sources)
+        .map_err(|error| error.message().to_string())?
+        .into_iter()
+        .find_map(|site| {
+            let position = c0_tactic_source_position(
+                click_source,
+                sources,
+                &site.claim_label,
+                site.source_index,
+            )
+            .ok()?;
+            (position.line == line && position.column == column).then_some(site.claim_label)
+        })
+        .ok_or_else(|| "source location does not select a smart tactic".to_string())
+}
+
+fn verify_expansion(
+    session: &C0VerificationSession,
+    expanded: &str,
+    sources: &[(&str, &str)],
+    claim: &str,
+) -> Result<(), String> {
+    let position = c0_tactic_source_position(expanded, sources, claim, 0)
+        .map_err(|error| error.message().to_string())?;
+    session
+        .verify_at(expanded, position.line, position.column)
+        .map(|_| ())
+        .map_err(|error| format!("expanded proof did not verify: {}", error.message()))
+}
+
+static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+fn atomic_replace(path: &Path, contents: &[u8]) -> Result<(), String> {
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("click-source");
+    let sequence = TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let temporary = parent.join(format!(
+        ".{name}.click-expand-{}-{sequence}",
+        std::process::id()
+    ));
+    let result = (|| {
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)
+            .map_err(|error| format!("failed to create `{}`: {error}", temporary.display()))?;
+        file.write_all(contents)
+            .and_then(|_| file.sync_all())
+            .map_err(|error| format!("failed to write `{}`: {error}", temporary.display()))?;
+        fs::rename(&temporary, path).map_err(|error| {
+            format!(
+                "failed to atomically replace `{}` from `{}`: {error}",
+                path.display(),
+                temporary.display()
+            )
+        })
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+    result
 }
 
 #[cfg(test)]
@@ -191,7 +247,8 @@ mod tests {
 
         assert_eq!(before, after);
         assert_eq!(before.time_limit, Duration::from_secs(30));
-        assert!(!before.child);
+        assert_eq!(before.output, None);
+        assert!(!before.in_place);
         let default = parse_arguments(["example.click:12:5".to_string()])
             .expect("the default expansion should be bounded");
         assert_eq!(default.time_limit, DEFAULT_EXPANSION_TIME_LIMIT);

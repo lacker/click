@@ -19,9 +19,9 @@ appears finished.
 
 ## Intended design
 
-- First remove the self-reexecuting/profile/expand/test wrappers described in
-  `direct-click-cli-engine.md`. Ordinary deadlines belong inside the shared
-  engine and should not require a child process.
+- The self-reexecuting profile, expand, audit, and fixture wrappers are now
+  removed. Ordinary deadlines run inside the shared engine and do not require
+  a child process.
 - For the smaller set of workers retained solely for crash/stack-overflow
   isolation, start the direct Click worker in a new process group/session on
   Unix.

@@ -5721,6 +5721,12 @@ fn certified_condition_transitions(
         assumptions.clone(),
     );
     if let Some(limit) = evaluation.limit() {
+        if matches!(limit, crate::kernel::ExecutionLimit::Deadline) {
+            return Err(ClickError::new(format!(
+                "verification time limit exceeded inside {}",
+                crate::instrumentation::deadline_context()
+            )));
+        }
         return Err(ClickError::new(format!(
             "{context_label} hit condition execution limit {limit:?}"
         )));
@@ -6133,6 +6139,12 @@ fn certified_transitions_from_execution(
     normalize_statement_facts_to_exit: bool,
 ) -> Result<(Vec<CertifiedStatementTransition>, Option<CVerifiedLoopRule>), ClickError> {
     if let Some(limit) = execution.limit() {
+        if matches!(limit, crate::kernel::ExecutionLimit::Deadline) {
+            return Err(ClickError::new(format!(
+                "verification time limit exceeded inside {}",
+                crate::instrumentation::deadline_context()
+            )));
+        }
         return Err(ClickError::new(format!(
             "{context_label} hit execution limit {limit:?}"
         )));
@@ -7636,7 +7648,7 @@ fn verify_loop_initialization_pure_proof(
     // plans or replays reports source tactic 0 — the clause itself — and the
     // loop's body entry as its statement. Computing the layout is only worth
     // it when something will read the timings.
-    let timings_enabled = std::env::var_os("CLICK_TIMINGS").is_some();
+    let timings_enabled = crate::instrumentation::enabled();
     let initialize_source_index = 0;
     let initialize_statement_index = if timings_enabled {
         SourceExecutionLayout::new(environment.parsed_function.body())
@@ -8232,16 +8244,19 @@ fn verify_one_loop_preservation_proof(
             } else {
                 (tactics.len(), tactics.len(), "assumption", "simple")
             };
-        let _timing = std::env::var_os("CLICK_TIMINGS").is_some().then(|| {
-            if std::env::var_os("CLICK_TIMING_STARTS").is_some() {
-                eprintln!(
-                    "click timing: started tactic {} {} {} class {} statement {} source {}",
-                    claim_label,
-                    closer_index,
-                    closer_name,
-                    closer_class,
-                    context.replay.frontier.next_statement_index,
-                    closer_source
+        let _timing = crate::instrumentation::enabled().then(|| {
+            if crate::instrumentation::starts_enabled() {
+                crate::instrumentation::emit(
+                    crate::instrumentation::VerificationEvent::TacticStarted(
+                        crate::instrumentation::TacticEvent {
+                            claim: claim_label.clone(),
+                            tactic_index: closer_index,
+                            tactic_name: closer_name.to_string(),
+                            class: closer_class.to_string(),
+                            statement_index: context.replay.frontier.next_statement_index,
+                            source_index: closer_source,
+                        },
+                    ),
                 );
             }
             let timing_context = TimingTacticContext {
@@ -11734,6 +11749,12 @@ fn finish_ordered_proof_replay(
             )
         };
         if let Some(limit) = certified_execution.limit() {
+            if matches!(limit, crate::kernel::ExecutionLimit::Deadline) {
+                return Err(ClickError::new(format!(
+                    "verification time limit exceeded inside {}",
+                    crate::instrumentation::deadline_context()
+                )));
+            }
             return Err(ClickError::new(format!(
                 "kernel certification hit execution limit {limit:?} for `{proof_label}`"
             )));
@@ -12011,17 +12032,20 @@ fn finish_ordered_proof_replay(
                 let tactic_index = &deferred.tactic_index;
                 let source_index = &deferred.source_index;
                 let post_tactic = &deferred.tactic;
-                let _timing = std::env::var_os("CLICK_TIMINGS").is_some().then(|| {
+                let _timing = crate::instrumentation::enabled().then(|| {
                     let (tactic_name, tactic_class) = post_execution_tactic_timing(post_tactic);
-                    if std::env::var_os("CLICK_TIMING_STARTS").is_some() {
-                        eprintln!(
-                            "click timing: started tactic {} {} {} class {} statement {} source {}",
-                            proof_label,
-                            tactic_index,
-                            tactic_name,
-                            tactic_class,
-                            replay.frontier.next_statement_index,
-                            source_index
+                    if crate::instrumentation::starts_enabled() {
+                        crate::instrumentation::emit(
+                            crate::instrumentation::VerificationEvent::TacticStarted(
+                                crate::instrumentation::TacticEvent {
+                                    claim: proof_label.clone(),
+                                    tactic_index: *tactic_index,
+                                    tactic_name: tactic_name.to_string(),
+                                    class: tactic_class.to_string(),
+                                    statement_index: replay.frontier.next_statement_index,
+                                    source_index: *source_index,
+                                },
+                            ),
                         );
                     }
                     let timing_context = TimingTacticContext {
@@ -18480,12 +18504,20 @@ impl TacticTiming {
         source_index: usize,
         statement_index: usize,
     ) -> Option<Self> {
-        std::env::var_os("CLICK_TIMINGS").is_some().then(|| {
+        crate::instrumentation::enabled().then(|| {
             let tactic_class = source_tactic_class(tactic).label();
-            if std::env::var_os("CLICK_TIMING_STARTS").is_some() {
-                eprintln!(
-                    "click timing: started tactic {} {} {} class {} statement {} source {}",
-                    claim_label, tactic_index, name, tactic_class, statement_index, source_index
+            if crate::instrumentation::starts_enabled() {
+                crate::instrumentation::emit(
+                    crate::instrumentation::VerificationEvent::TacticStarted(
+                        crate::instrumentation::TacticEvent {
+                            claim: claim_label.to_string(),
+                            tactic_index,
+                            tactic_name: name.to_string(),
+                            class: tactic_class.to_string(),
+                            statement_index,
+                            source_index,
+                        },
+                    ),
                 );
             }
             let context = TimingTacticContext {
@@ -18513,16 +18545,17 @@ impl TacticTiming {
 
 impl Drop for TacticTiming {
     fn drop(&mut self) {
-        eprintln!(
-            "click timing: tactic {} {} {} class {} statement {} source {} {:.6}s",
-            self.claim_label,
-            self.tactic_index,
-            self.tactic_name,
-            self.tactic_class,
-            self.statement_index,
-            self.source_index,
-            self.start.elapsed().as_secs_f64()
-        );
+        crate::instrumentation::emit(crate::instrumentation::VerificationEvent::TacticFinished {
+            tactic: crate::instrumentation::TacticEvent {
+                claim: self.claim_label.clone(),
+                tactic_index: self.tactic_index,
+                tactic_name: self.tactic_name.clone(),
+                class: self.tactic_class.to_string(),
+                statement_index: self.statement_index,
+                source_index: self.source_index,
+            },
+            elapsed: self.start.elapsed(),
+        });
         pop_timing_tactic(&self.context);
     }
 }

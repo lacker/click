@@ -4,11 +4,11 @@ Three tools work together so Click users can diagnose proof cost, replace
 successful automation with explicit replay, and test Click's expansion
 boundary:
 
-- `click-profile` measures verification and identifies individual tactic
+- `click profile` measures verification and identifies individual tactic
   hotspots;
-- `click-expand` replaces one successful smart tactic with its accepted
+- `click expand` replaces one successful smart tactic with its accepted
   surface certificate;
-- `click-audit` checks that expansion succeeds and reverifies across examples
+- `click audit` checks that expansion succeeds and reverifies across examples
   and mdtests.
 
 The tools explain expensive verification; they do not promise that every
@@ -72,8 +72,8 @@ necessarily a flat or nonempty list of simple tactics.
 An unsuccessful smart tactic has no certificate to expand. Errors created
 inside tactics retain the originating timing identity, so the profiler can
 distinguish a failed smart attempt from a successful expansion candidate.
-Smart execution uses finite execution/search budgets, `click-profile` has an
-outer project deadline, and `click-expand` has a 60-second default child
+Smart execution uses finite execution/search budgets, `click profile` has an
+outer project deadline, and `click expand` has a 60-second default engine
 deadline that can be overridden explicitly.
 
 ## What is enforced today
@@ -89,10 +89,10 @@ and names the active tactic when one is known.
 These are per-operation tail guards. They are not an aggregate throughput
 promise.
 
-`click-profile` reconciles child-process wall time across frontend,
+`click profile` reconciles direct verification wall time across frontend,
 environment, exclusive SIMPLE/SMART/CONTROL time, kernel certification,
 measured function work outside those operations (`VERIFIER CORE`), and
-parent-observed process/source-I/O/driver time (`PROCESS/DRIVER`).
+source-I/O/driver time (`PROCESS/DRIVER`).
 `UNATTRIBUTED` is reserved for an inconsistent or unknown remainder rather
 than being a catch-all for known overhead. Work counts and conservative
 development baselines then distinguish smart hotspots, simple engine bugs,
@@ -101,7 +101,7 @@ evidence.
 Wall-clock baselines are deliberately conservative and are not a
 machine-independent SLA.
 
-`click-audit` checks every source-selectable smart site in passing example and
+`click audit` checks every source-selectable smart site in passing example and
 mdtest inputs, whether or not profiling called it slow. On the first site of a
 claim it cold-verifies both the original and expanded proof units. A timing
 regression must exceed both 2x and the configured 500 ms slack, then repeat in
@@ -111,14 +111,14 @@ manual release/certificate-boundary gate, not part of ordinary `cargo test`.
 
 ## Using the tools
 
-- `click-profile <sidecar.click|project|mdtest.md|dir>` profiles examples and mdtests,
-  ignores quarantine, and prints a `click-expand` command for each completed
+- `click profile <sidecar.click|project|mdtest.md|dir>` profiles examples and mdtests,
+  ignores quarantine, and prints a `click expand` command for each completed
   smart tactic above the configured threshold. Its default project limit is
   30 seconds.
-- `click-expand <sidecar.click|mdtest.md>:<line>:<column>` writes rewritten
-  source to stdout. It does not modify or reverify the source. Its default
-  limit is 60 seconds; `--time-limit` overrides it.
-- `click-audit <sidecar.click|example|mdtest|directory|repository-root>` expands,
+- `click expand [--output PATH | --in-place] <sidecar.click|mdtest.md>:<line>:<column>`
+  verifies the rewritten proof unit before writing it. Its default limit is
+  60 seconds; `--time-limit` overrides it.
+- `click audit <sidecar.click|example|mdtest|directory|repository-root>` expands,
   retained-session verifies, compares original and expanded cold verification,
   and checks the claim's smart-site multiset strictly shrinks without
   introducing a new smart tactic. One path-aligned expansion may remove
@@ -137,8 +137,9 @@ rewritten artifact before deciding that expansion improved performance.
 - Never hide a slow simple tactic by expanding an enclosing smart tactic.
 - `ProofSite` and one-based `PATH:LINE:COLUMN` locations are shared by
   verification, profiling, expansion, auditing, and rewriting.
-- `click-expand` does not reverify; verification and auditing remain separate
-  composable operations.
+- `click expand` directly verifies every rewrite before output; `click audit`
+  additionally checks retained-session equivalence, cold verification, and
+  the expansion fixed point.
 - Kernel Click has no textual syntax. Tool output is documented Surface Click
   accepted by the ordinary parser. Canonical struct spellings include
   `owner->field`, `owner->pointer_field[start..end]`, and `object(owner)`.

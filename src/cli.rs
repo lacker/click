@@ -15,6 +15,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use crate::instrumentation::{TacticEvent, VerificationEvent};
 use crate::lang::click::verifying_source_paths;
 
 /// Parses a one-based `PATH:LINE:COLUMN` source location.
@@ -345,7 +346,7 @@ fn without_timing_lines(output: &str) -> String {
 
 /// Per-class tactic time budgets (owner ruling 2026-07-31): a slow SIMPLE
 /// tactic is an engine bug, a slow SMART tactic is an expansion obligation.
-/// These match click-profile's default thresholds.
+/// These match `click profile`'s default thresholds.
 pub const DEFAULT_SIMPLE_TACTIC_LIMIT: Duration = Duration::from_millis(500);
 pub const DEFAULT_SMART_TACTIC_LIMIT: Duration = Duration::from_secs(2);
 pub const DEFAULT_CONTROL_TACTIC_LIMIT: Duration = Duration::from_secs(2);
@@ -361,7 +362,7 @@ fn tactic_budget(class: &str) -> Option<(Duration, &'static str)> {
             DEFAULT_SIMPLE_TACTIC_LIMIT,
             "a slow simple tactic is a Click engine bug",
         )),
-        "smart" => Some((DEFAULT_SMART_TACTIC_LIMIT, "expand it with click-expand")),
+        "smart" => Some((DEFAULT_SMART_TACTIC_LIMIT, "expand it with `click expand`")),
         "control" => Some((
             DEFAULT_CONTROL_TACTIC_LIMIT,
             "a slow control tactic is a Click engine bug",
@@ -434,6 +435,58 @@ pub fn tactic_budget_violations(stderr: &str) -> Vec<String> {
                     format_duration(budget),
                 ));
             }
+        }
+    }
+    violations
+}
+
+/// Checks structured tactic events against the production class budgets.
+/// This is the direct-engine equivalent of [`tactic_budget_violations`]; CLI
+/// and fixture workflows use it without capturing or parsing stderr.
+pub fn structured_tactic_budget_violations(events: &[VerificationEvent]) -> Vec<String> {
+    let mut open: Vec<(TacticEvent, Duration)> = Vec::new();
+    let mut violations = Vec::new();
+    for event in events {
+        match event {
+            VerificationEvent::TacticStarted(tactic) => {
+                open.push((tactic.clone(), Duration::ZERO));
+            }
+            VerificationEvent::TacticFinished { tactic, elapsed } => {
+                let nested = match open.iter().rposition(|(candidate, _)| candidate == tactic) {
+                    Some(index) => {
+                        let (_, nested) = open.remove(index);
+                        open.truncate(index);
+                        nested
+                    }
+                    None => Duration::ZERO,
+                };
+                if let Some((_, parent_nested)) = open.last_mut() {
+                    *parent_nested += *elapsed;
+                }
+                let exclusive = elapsed.saturating_sub(nested);
+                let Some((budget, consequence)) = tactic_budget(&tactic.class) else {
+                    violations.push(format!(
+                        "unrecognized tactic class `{}` (structured timing drift)",
+                        tactic.class
+                    ));
+                    continue;
+                };
+                if exclusive > budget {
+                    violations.push(format!(
+                        "{} {} {} class {} statement {} source {}: {:.3} s exclusive, over the {} {} budget — {consequence}",
+                        tactic.claim,
+                        tactic.tactic_index,
+                        tactic.tactic_name,
+                        tactic.class,
+                        tactic.statement_index,
+                        tactic.source_index,
+                        exclusive.as_secs_f64(),
+                        format_duration(budget),
+                        tactic.class,
+                    ));
+                }
+            }
+            _ => {}
         }
     }
     violations

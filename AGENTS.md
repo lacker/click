@@ -8,8 +8,8 @@ current feature when any of these occurs:
 - verification is unexpectedly slow or crosses a tactic budget without a
   prompt, local failure;
 - a smart tactic reports success but its certificate does not replay;
-- `click-expand` fails, emits an unverifiable rewrite, or disagrees with
-  `click-profile` or `click-audit`;
+- `click expand` fails, emits an unverifiable rewrite, or disagrees with
+  `click profile` or `click audit`;
 - a normal diagnostic expands into a huge internal state dump; or
 - an example needs unnatural C or irrelevant proof bookkeeping to route around
   verifier behavior.

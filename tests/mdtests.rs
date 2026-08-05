@@ -3,12 +3,12 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use click::cli::{
-    IsolatedRun, MdTestExpectation, default_worker_count, duration_from_env, isolated_test_command,
-    read_mdtest, run_isolated, run_parallel,
+    DISABLE_TACTIC_BUDGETS, MdTestExpectation, default_worker_count, duration_from_env,
+    format_duration, read_mdtest, run_parallel, structured_tactic_budget_violations,
 };
+use click::instrumentation;
 use click::lang::click::verify_c0_sources;
 
-const MDTEST_CHILD_PATH: &str = "CLICK_MDTEST_CHILD_PATH";
 const MDTEST_TIME_LIMIT: &str = "MDTEST_TIME_LIMIT";
 const RUN_QUARANTINED: &str = "CLICK_RUN_QUARANTINED";
 const DEFAULT_MDTEST_TIME_LIMIT: Duration = Duration::from_secs(30);
@@ -30,11 +30,6 @@ const QUARANTINED: &[(&str, &str)] = &[
 
 #[test]
 fn mdtests() {
-    if let Some(path) = std::env::var_os(MDTEST_CHILD_PATH) {
-        run_mdtest(Path::new(&path));
-        return;
-    }
-
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let mdtests_dir = manifest_dir.join("mdtests");
     let mut paths = fs::read_dir(&mdtests_dir)
@@ -103,29 +98,46 @@ fn mdtest_time_limit() -> Duration {
         .unwrap_or_else(|message| panic!("{message}"))
 }
 
-/// Runs one mdtest in an isolated child process (Click proofs have
-/// overflowed the stack before; isolation keeps one crash from hiding the
-/// other results) under a wall-clock limit.
 fn run_mdtest_with_timeout(path: &Path, time_limit: Duration) -> Result<(), String> {
-    let command = isolated_test_command("mdtests", MDTEST_CHILD_PATH, path)?;
-    run_isolated(
-        command,
-        time_limit,
-        IsolatedRun {
-            label: &format!("isolated mdtest `{}`", path.display()),
-            limit_description: "the per-file mdtest time limit",
-            limit_variable: MDTEST_TIME_LIMIT,
-            process_description: "its isolated mdtest process",
-        },
-    )
+    let path = path.to_path_buf();
+    std::thread::Builder::new()
+        .name("click-mdtest".to_string())
+        .stack_size(64 * 1024 * 1024)
+        .spawn(move || {
+            let started = std::time::Instant::now();
+            let (result, events) = instrumentation::with_deadline(time_limit, || {
+                instrumentation::collect(|| run_mdtest(&path))
+            });
+            result?;
+            let elapsed = started.elapsed();
+            if elapsed > time_limit {
+                return Err(format!(
+                    "exceeded the per-file mdtest time limit of {}; set {MDTEST_TIME_LIMIT} to override it",
+                    format_duration(time_limit)
+                ));
+            }
+            if std::env::var_os(DISABLE_TACTIC_BUDGETS).is_none() {
+                let violations = structured_tactic_budget_violations(&events);
+                if !violations.is_empty() {
+                    return Err(format!(
+                        "passed, but broke tactic time budgets (set {DISABLE_TACTIC_BUDGETS}=1 to bypass):\n  {}",
+                        violations.join("\n  ")
+                    ));
+                }
+            }
+            Ok(())
+        })
+        .map_err(|error| format!("failed to start mdtest verifier: {error}"))?
+        .join()
+        .map_err(|_| "mdtest verifier panicked".to_string())?
 }
 
-fn run_mdtest(path: &Path) {
-    let mdtest = read_mdtest(path).unwrap_or_else(|message| panic!("{message}"));
+fn run_mdtest(path: &Path) -> Result<(), String> {
+    let mdtest = read_mdtest(path)?;
     let click_source = mdtest
         .click_source
         .as_deref()
-        .unwrap_or_else(|| panic!("`{}` is missing a ```click block", path.display()));
+        .ok_or_else(|| format!("`{}` is missing a ```click block", path.display()))?;
     let c_sources = mdtest
         .c_sources
         .iter()
@@ -134,31 +146,33 @@ fn run_mdtest(path: &Path) {
     let expectation = mdtest
         .expectation
         .as_ref()
-        .unwrap_or_else(|| panic!("`{}` is missing a ```expect block", path.display()));
+        .ok_or_else(|| format!("`{}` is missing a ```expect block", path.display()))?;
 
     let result = verify_c0_sources(click_source, &c_sources);
     match (expectation, result) {
         (MdTestExpectation::Pass, Ok(_)) => {}
         (MdTestExpectation::Pass, Err(error)) => {
-            panic!(
+            return Err(format!(
                 "`{}` expected pass, but failed: {}",
                 path.display(),
                 error.message()
-            );
+            ));
         }
         (MdTestExpectation::FailContains(expected), Ok(_)) => {
-            panic!(
+            return Err(format!(
                 "`{}` expected failure containing `{expected}`, but passed",
                 path.display()
-            );
+            ));
         }
         (MdTestExpectation::FailContains(expected), Err(error)) => {
-            assert!(
-                error.message().contains(expected),
-                "`{}` expected failure containing `{expected}`, got `{}`",
-                path.display(),
-                error.message()
-            );
+            if !error.message().contains(expected) {
+                return Err(format!(
+                    "`{}` expected failure containing `{expected}`, got `{}`",
+                    path.display(),
+                    error.message()
+                ));
+            }
         }
     }
+    Ok(())
 }

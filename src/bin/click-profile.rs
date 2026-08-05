@@ -3,16 +3,15 @@ use std::env;
 use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use click::cli::{
-    BoundedOutput, DEFAULT_CONTROL_TACTIC_LIMIT, DEFAULT_EXPANSION_TIME_LIMIT,
-    DEFAULT_SIMPLE_TACTIC_LIMIT, DEFAULT_SMART_TACTIC_LIMIT, MdTestExpectation,
-    files_with_extension, find_mdtests, find_projects, format_duration, format_fractional_duration,
-    looks_like_mdtest, parse_duration, read_mdtest, read_verifying_sources, run_bounded,
-    shell_quote, source_refs,
+    DEFAULT_CONTROL_TACTIC_LIMIT, DEFAULT_EXPANSION_TIME_LIMIT, DEFAULT_SIMPLE_TACTIC_LIMIT,
+    DEFAULT_SMART_TACTIC_LIMIT, MdTestExpectation, files_with_extension, find_mdtests,
+    find_projects, format_duration, format_fractional_duration, looks_like_mdtest, parse_duration,
+    read_mdtest, read_verifying_sources, shell_quote, source_refs,
 };
+use click::instrumentation::{self, TacticEvent, VerificationEvent};
 use click::lang::click::{SourcePosition, c0_tactic_source_position, verify_c0_sources};
 
 const DEFAULT_TIME_LIMIT: Duration = Duration::from_secs(30);
@@ -26,7 +25,7 @@ const SETUP_PER_FILE_LIMIT: Duration = Duration::from_millis(250);
 const VOLUME_REPORT_THRESHOLD: Duration = Duration::from_secs(1);
 
 const USAGE: &str = "\
-usage: click-profile [OPTIONS] <sidecar.click|example-project|examples-directory|mdtest.md|mdtests-directory>
+usage: click profile [OPTIONS] <sidecar.click|example-project|examples-directory|mdtest.md|mdtests-directory>
 
 An mdtest is profiled from its embedded ```c and ```click blocks, using the
 same extraction the mdtests gate uses. Quarantine does not apply: any mdtest
@@ -57,7 +56,6 @@ struct Arguments {
     path: PathBuf,
     thresholds: Thresholds,
     time_limit: Duration,
-    child: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -243,20 +241,16 @@ fn is_retired_internal_tactic_name(name: &str) -> bool {
 }
 
 fn entry() -> Result<(), String> {
-    let raw_arguments = env::args().skip(1).collect::<Vec<_>>();
+    entry_with(env::args().skip(1))
+}
+
+pub(crate) fn entry_with(arguments: impl IntoIterator<Item = String>) -> Result<(), String> {
+    let raw_arguments = arguments.into_iter().collect::<Vec<_>>();
     if matches!(raw_arguments.as_slice(), [argument] if argument == "--help" || argument == "-h") {
         println!("{USAGE}");
         return Ok(());
     }
     let arguments = parse_arguments(raw_arguments)?;
-    if arguments.child {
-        return if looks_like_mdtest(&arguments.path) {
-            verify_mdtest(&arguments.path)
-        } else {
-            verify_project(&arguments.path)
-        };
-    }
-
     let targets = profile_targets(&arguments.path)?;
     let mut profiles = Vec::new();
     for target in targets {
@@ -286,7 +280,6 @@ fn parse_arguments(arguments: impl IntoIterator<Item = String>) -> Result<Argume
     let mut common_threshold = None;
     let mut class_threshold_supplied = false;
     let mut time_limit = DEFAULT_TIME_LIMIT;
-    let mut child = false;
     let mut parse_options = true;
     let mut arguments = arguments.into_iter();
     while let Some(argument) = arguments.next() {
@@ -337,7 +330,6 @@ fn parse_arguments(arguments: impl IntoIterator<Item = String>) -> Result<Argume
                     .ok_or_else(|| format!("missing duration after `--time-limit`\n{USAGE}"))?;
                 time_limit = parse_duration(&source)?;
             }
-            "--child" => child = true,
             _ if argument.starts_with('-') => {
                 return Err(format!("unknown option `{argument}`\n{USAGE}"));
             }
@@ -359,7 +351,6 @@ fn parse_arguments(arguments: impl IntoIterator<Item = String>) -> Result<Argume
         path: path.ok_or_else(|| USAGE.to_string())?,
         thresholds,
         time_limit,
-        child,
     })
 }
 
@@ -397,75 +388,40 @@ fn profile_target(
     thresholds: Thresholds,
     time_limit: Duration,
 ) -> Result<ProjectProfile, String> {
-    let executable = env::current_exe()
-        .map_err(|error| format!("failed to locate click-profile executable: {error}"))?;
-    let mut command = Command::new(executable);
-    command
-        .arg("--child")
-        .arg(project)
-        .env("CLICK_TIMINGS", "1")
-        .env("CLICK_TIMING_STARTS", "1")
-        // Prover recursion follows term structure, which nests deeper than
-        // the default stack on the snapshot-heavy proofs worth profiling.
-        .env("RUST_MIN_STACK", "67108864");
-    let label = format!("profiler for `{}`", project.display());
-    let (status, stdout, stderr, wall_elapsed) = match run_bounded(command, time_limit, &label)? {
-        BoundedOutput::Completed(output) => (
-            Some(output.status),
-            output.stdout,
-            output.stderr,
-            output.elapsed,
-        ),
-        BoundedOutput::TimedOut {
-            stdout,
-            stderr,
-            elapsed,
-        } => (None, stdout, stderr, elapsed),
-    };
+    let started = Instant::now();
+    let (verification, events) = instrumentation::with_deadline(time_limit, || {
+        instrumentation::collect(|| {
+            if looks_like_mdtest(project) {
+                verify_mdtest(project)
+            } else {
+                verify_project(project)
+            }
+        })
+    });
+    let wall_elapsed = started.elapsed();
     let project_name = project
         .file_name()
         .and_then(|name| name.to_str())
         .unwrap_or_else(|| project.as_os_str().to_str().unwrap_or("example"))
         .to_string();
-    let stderr = String::from_utf8_lossy(&stderr);
-    let mut profile = parse_profile(&project_name, &stderr, thresholds, status.is_none())
-        .map_err(|message| format!("while profiling `{}`: {message}", project.display()))?;
+    let mut profile = profile_from_events(
+        &project_name,
+        &events,
+        thresholds,
+        wall_elapsed >= time_limit
+            || verification
+                .as_ref()
+                .is_err_and(|message| message.contains("time limit exceeded")),
+    )
+    .map_err(|message| format!("while profiling `{}`: {message}", project.display()))?;
     profile.accounting.wall_total = wall_elapsed;
-    if status.is_some_and(|status| !status.success()) {
-        profile.verification_failure = Some(extract_verification_failure(
-            &String::from_utf8_lossy(&stdout),
-            &stderr,
-            status.expect("failed status should be present"),
-        ));
-    }
+    profile.verification_failure = verification.err();
     resolve_source_positions(&mut profile)?;
     Ok(profile)
 }
 
-fn extract_verification_failure(
-    stdout: &str,
-    stderr: &str,
-    status: std::process::ExitStatus,
-) -> String {
-    let diagnostics = stderr
-        .lines()
-        .filter(|line| !line.starts_with("click timing:"))
-        .collect::<Vec<_>>()
-        .join("\n");
-    let diagnostics = diagnostics
-        .trim()
-        .strip_prefix("click-profile: ")
-        .unwrap_or(diagnostics.trim());
-    if !diagnostics.is_empty() {
-        diagnostics.to_string()
-    } else if !stdout.trim().is_empty() {
-        stdout.trim().to_string()
-    } else {
-        format!("profiler child exited with {status}")
-    }
-}
-
 /// The prefix every verifier timing line carries.
+#[cfg(test)]
 const TIMING_PREFIX: &str = "click timing: ";
 
 /// Timing-line kinds the verifier emits that this profiler deliberately does
@@ -479,19 +435,20 @@ const TIMING_PREFIX: &str = "click timing: ";
 /// Detailed claim events are consumed as work counts but not as elapsed-time
 /// buckets: `contract claims` already owns their time, so adding it again
 /// would double-count certification.
+#[cfg(test)]
 const IGNORED_TIMING_KINDS: &[&str] = &["contract entry resources"];
 
 /// The two `click timing:` kinds that together make up the kernel
 /// certification phase of one function.
+#[cfg(test)]
 const CERTIFICATION_TIMING_KINDS: &[&str] = &["contract execution", "contract claims"];
 
 /// Where a verified function's wall-clock time went.
 ///
 /// Tactic time is *exclusive*: a control container's own row excludes the
 /// nested steps it ran, so the four class buckets and the unattributed
-/// remainder add up to the total instead of overlapping. Exclusive time needs
-/// the `started tactic` lines to know what nests inside what, which is why
-/// the profiler always runs its child with `CLICK_TIMING_STARTS`.
+/// remainder add up to the total instead of overlapping. Structured start and
+/// finish events identify nesting without a text protocol.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 struct TimeAccounting {
     simple: Duration,
@@ -503,8 +460,8 @@ struct TimeAccounting {
     /// Sum of the `click timing: function` lines. These cover function proof
     /// and certification work, but not the complete verifier invocation.
     total: Duration,
-    /// Parent-observed duration of the bounded child, including process start,
-    /// source I/O, and verifier work. Synthetic parser tests leave this zero
+    /// Driver-observed duration of the direct verification run, including
+    /// source I/O and verifier work. Synthetic parser tests leave this zero
     /// and use the function total as their denominator.
     wall_total: Duration,
 }
@@ -530,8 +487,8 @@ impl TimeAccounting {
             .saturating_sub(self.tactic_total() + self.certification)
     }
 
-    /// Parent-observed work outside the verifier's emitted phase boundaries,
-    /// principally process startup, source reads, and driver teardown.
+    /// Direct driver work outside the verifier's emitted phase boundaries,
+    /// principally source reads and report setup.
     fn process_driver(self) -> Duration {
         self.wall_total
             .saturating_sub(self.frontend + self.environment + self.total)
@@ -553,7 +510,7 @@ impl TimeAccounting {
         self.denominator().saturating_sub(self.attributed())
     }
 
-    /// The denominator for shares: parent-observed child wall time, falling
+    /// The denominator for shares: direct run wall time, falling
     /// back to the reported function total and then measured phases for unit
     /// tests and failures without a parent measurement.
     fn denominator(self) -> Duration {
@@ -611,9 +568,149 @@ enum TimingEvent {
     /// A recognized kind the profiler does not consume.
     Ignored,
     /// A `click timing:` line matching no known kind. Counted and reported.
+    #[cfg(test)]
     Unknown,
 }
 
+fn structured_step(tactic: &TacticEvent, source_path: &Path) -> Result<StepKey, String> {
+    Ok(StepKey {
+        source_path: source_path.to_path_buf(),
+        claim: tactic.claim.clone(),
+        tactic_index: tactic.tactic_index,
+        source_index: tactic.source_index,
+        tactic_name: (!is_retired_internal_tactic_name(&tactic.tactic_name))
+            .then(|| tactic.tactic_name.clone())
+            .ok_or_else(|| format!("retired internal tactic name `{}`", tactic.tactic_name))?,
+        category: TacticCategory::parse(&tactic.class)
+            .ok_or_else(|| format!("unknown tactic class `{}`", tactic.class))?,
+        statement_index: tactic.statement_index,
+        position: None,
+    })
+}
+
+fn profile_from_events(
+    project: &str,
+    events: &[VerificationEvent],
+    thresholds: Thresholds,
+    timed_out: bool,
+) -> Result<ProjectProfile, String> {
+    let mut classified = Vec::new();
+    let mut source_path = PathBuf::new();
+    for event in events {
+        let event = match event {
+            VerificationEvent::Source(path) => {
+                source_path = path.clone();
+                TimingEvent::Source(path.clone())
+            }
+            VerificationEvent::TacticStarted(tactic) => {
+                TimingEvent::Started(structured_step(tactic, &source_path)?)
+            }
+            VerificationEvent::TacticFinished { tactic, elapsed } => {
+                TimingEvent::Finished(structured_step(tactic, &source_path)?, *elapsed)
+            }
+            VerificationEvent::TacticFailed(tactic) => {
+                TimingEvent::Failed(structured_step(tactic, &source_path)?)
+            }
+            VerificationEvent::FunctionFinished { elapsed, .. } => {
+                TimingEvent::FunctionTotal(*elapsed)
+            }
+            VerificationEvent::ContractExecutionFinished { elapsed, .. }
+            | VerificationEvent::ContractClaimsFinished { elapsed, .. } => {
+                TimingEvent::Certification(*elapsed)
+            }
+            VerificationEvent::PhaseFinished { name, elapsed } => match *name {
+                "frontend" => TimingEvent::Frontend(*elapsed),
+                "environment" => TimingEvent::Environment(*elapsed),
+                _ => TimingEvent::Ignored,
+            },
+            VerificationEvent::ClaimPathsPrepared { count, .. } => {
+                TimingEvent::CertificationPaths(*count)
+            }
+            VerificationEvent::ClaimFinished { .. } => TimingEvent::ClaimCompleted,
+            VerificationEvent::PhaseStarted(_) | VerificationEvent::Diagnostic(_) => {
+                TimingEvent::Ignored
+            }
+        };
+        classified.push(event);
+    }
+    build_profile(project, classified, thresholds, timed_out)
+}
+
+fn build_profile(
+    project: &str,
+    events: impl IntoIterator<Item = TimingEvent>,
+    thresholds: Thresholds,
+    timed_out: bool,
+) -> Result<ProjectProfile, String> {
+    let mut slow_steps = Vec::new();
+    let mut open: Vec<(StepKey, Duration)> = Vec::new();
+    let mut accounting = TimeAccounting::default();
+    let mut work = WorkMetrics::default();
+    let mut source_files = BTreeSet::new();
+    for event in events {
+        match event {
+            TimingEvent::Source(path) => {
+                source_files.insert(path);
+            }
+            TimingEvent::Started(key) => open.push((key, Duration::ZERO)),
+            TimingEvent::Finished(key, elapsed) => {
+                let nested = match open.iter().rposition(|(candidate, _)| candidate == &key) {
+                    Some(index) => {
+                        let (_, nested) = open.remove(index);
+                        open.truncate(index);
+                        nested
+                    }
+                    None => Duration::ZERO,
+                };
+                let exclusive = elapsed.saturating_sub(nested);
+                accounting.add_tactic(key.category, exclusive);
+                work.add_tactic(&key, exclusive);
+                if let Some((_, parent_nested)) = open.last_mut() {
+                    *parent_nested += elapsed;
+                }
+                if exclusive >= thresholds.for_category(key.category) {
+                    slow_steps.push(SlowStep {
+                        key,
+                        elapsed: exclusive,
+                        failed: false,
+                    });
+                }
+            }
+            TimingEvent::Failed(key) => {
+                if let Some(step) = slow_steps.iter_mut().rev().find(|step| step.key == key) {
+                    step.failed = true;
+                }
+                work.failed_tactics.push(key);
+            }
+            TimingEvent::FunctionTotal(elapsed) => {
+                accounting.total += elapsed;
+                work.functions += 1;
+            }
+            TimingEvent::Certification(elapsed) => accounting.certification += elapsed,
+            TimingEvent::Frontend(elapsed) => accounting.frontend += elapsed,
+            TimingEvent::Environment(elapsed) => accounting.environment += elapsed,
+            TimingEvent::CertificationPaths(count) => work.certification_paths += count,
+            TimingEvent::ClaimCompleted => work.claims += 1,
+            TimingEvent::Ignored => {}
+            #[cfg(test)]
+            TimingEvent::Unknown => {}
+        }
+    }
+    work.source_files = source_files.len();
+    Ok(ProjectProfile {
+        project: project.to_string(),
+        slow_steps,
+        active: open.into_iter().map(|(key, _)| key).collect(),
+        timed_out,
+        verification_failure: None,
+        unknown_timing: BTreeMap::new(),
+        accounting,
+        work,
+        unresolved_positions: BTreeMap::new(),
+    })
+}
+
+#[cfg(test)]
 fn parse_profile(
     project: &str,
     output: &str,
@@ -713,6 +810,7 @@ fn parse_profile(
 /// A line whose kind this profiler depends on but whose structure does not
 /// parse is a hard error: the whole report would otherwise be a false green,
 /// showing no slow steps because it silently understood none of them.
+#[cfg(test)]
 fn classify_timing_line(line: &str, source_path: &Path) -> Result<TimingEvent, String> {
     let body = line
         .strip_prefix(TIMING_PREFIX)
@@ -783,6 +881,7 @@ fn classify_timing_line(line: &str, source_path: &Path) -> Result<TimingEvent, S
 
 /// Splits a trailing `<seconds>s` field off a timing line body, returning the
 /// text before it and the parsed duration.
+#[cfg(test)]
 fn split_trailing_seconds(rest: &str) -> Option<(&str, Duration)> {
     let (head, elapsed) = rest.trim_end().rsplit_once(char::is_whitespace)?;
     let elapsed = elapsed
@@ -795,6 +894,7 @@ fn split_trailing_seconds(rest: &str) -> Option<(&str, Duration)> {
 
 /// Strips a kind keyword, requiring it to end at a word boundary so `tactic`
 /// never matches a future `tactical` kind, and returns the rest of the line.
+#[cfg(test)]
 fn strip_kind<'a>(body: &'a str, kind: &str) -> Option<&'a str> {
     let rest = body.strip_prefix(kind)?;
     if rest.is_empty() || rest.starts_with(char::is_whitespace) {
@@ -804,6 +904,7 @@ fn strip_kind<'a>(body: &'a str, kind: &str) -> Option<&'a str> {
     }
 }
 
+#[cfg(test)]
 fn drift_message(line: &str) -> String {
     format!(
         "the verifier timing format this profile depends on has drifted; \
@@ -815,6 +916,7 @@ fn drift_message(line: &str) -> String {
 
 /// Groups unrecognized timing lines by the first word after the prefix, so a
 /// thousand copies of one new kind collapse to a single counted row.
+#[cfg(test)]
 fn unknown_timing_kind(line: &str) -> String {
     line.strip_prefix(TIMING_PREFIX)
         .unwrap_or(line)
@@ -826,6 +928,7 @@ fn unknown_timing_kind(line: &str) -> String {
 
 /// Parses the nine fields shared by started and finished tactic lines:
 /// `CLAIM INDEX NAME class CLASS statement INDEX source INDEX`.
+#[cfg(test)]
 fn parse_step_key(rest: &str, source_path: &Path) -> Option<StepKey> {
     let fields = rest.split_whitespace().collect::<Vec<_>>();
     if fields.len() != 9
@@ -1254,7 +1357,7 @@ fn render_accounting(output: &mut String, profiles: &[ProjectProfile]) {
     writeln!(output, "\nTIME ACCOUNTING").expect("writing a String cannot fail");
     writeln!(
         output,
-        "  The total is child-process wall time when available. Tactic time is exclusive, and every row is non-overlapping. VERIFIER CORE is measured function time outside tactics and certification; PROCESS/DRIVER is parent-observed time outside emitted verifier phases."
+        "  The total is direct verification wall time. Tactic time is exclusive, and every row is non-overlapping. VERIFIER CORE is measured function time outside tactics and certification; PROCESS/DRIVER is source I/O and driver work outside emitted verifier phases."
     )
     .expect("writing a String cannot fail");
     for profile in measured {
@@ -1656,23 +1759,23 @@ fn render_expansion_command(
     );
     writeln!(
         output,
-        "              expand: cargo run --quiet --bin click-expand -- --time-limit {} {} > {}",
+        "              expand: click expand --time-limit {} --output {} {}",
         format_duration(DEFAULT_EXPANSION_TIME_LIMIT),
-        shell_quote(&location),
         shell_quote(&artifact.display().to_string()),
+        shell_quote(&location),
     )
     .expect("writing a String cannot fail");
     if !looks_like_mdtest(&artifact) {
         writeln!(
             output,
-            "              verify: cargo run --quiet --bin click-verify -- {}",
+            "              verify: click verify {}",
             shell_quote(&artifact.display().to_string()),
         )
         .expect("writing a String cannot fail");
     }
     writeln!(
         output,
-        "           reprofile: cargo run --quiet --bin click-profile -- --smart-threshold {} --simple-threshold {} --control-threshold {} --time-limit {} {}",
+        "           reprofile: click profile --smart-threshold {} --simple-threshold {} --control-threshold {} --time-limit {} {}",
         format_duration(thresholds.smart),
         format_duration(thresholds.simple),
         format_duration(thresholds.control),
@@ -1694,7 +1797,7 @@ fn expanded_artifact_path(source: &Path) -> PathBuf {
     source.with_file_name(format!("{stem}.expanded.{extension}"))
 }
 
-/// Verifies one markdown test in the child process, from the same embedded
+/// Verifies one markdown test directly, from the same embedded
 /// blocks the mdtests gate extracts.
 ///
 /// An mdtest that declares `fail:` is profiled to its expected failure, so a
@@ -1706,8 +1809,8 @@ fn verify_mdtest(path: &Path) -> Result<(), String> {
         .as_deref()
         .ok_or_else(|| format!("mdtest `{}` has no ```click block", path.display()))?;
     let c_sources = source_refs(&mdtest.c_sources);
-    if env::var_os("CLICK_TIMINGS").is_some() {
-        eprintln!("click timing: source {}", path.display());
+    if instrumentation::enabled() {
+        instrumentation::emit(VerificationEvent::Source(path.to_path_buf()));
     }
     let result = verify_c0_sources(click_source, &c_sources);
     match (mdtest.expectation.as_ref(), result) {
@@ -1756,8 +1859,8 @@ fn verify_project(project: &Path) -> Result<(), String> {
         let click_source = fs::read_to_string(&click_path)
             .map_err(|error| format!("failed to read `{}`: {error}", click_path.display()))?;
         let c_sources = read_verifying_sources(&click_path, &click_source)?;
-        if env::var_os("CLICK_TIMINGS").is_some() {
-            eprintln!("click timing: source {}", click_path.display());
+        if instrumentation::enabled() {
+            instrumentation::emit(VerificationEvent::Source(click_path.clone()));
         }
         verify_c0_sources(&click_source, &source_refs(&c_sources)).map_err(|error| {
             format!(
@@ -2229,7 +2332,6 @@ click timing: widget 0.5s
                     control: DEFAULT_CONTROL_TACTIC_LIMIT,
                 },
                 time_limit: Duration::from_secs(120),
-                child: false,
             })
         );
     }
@@ -2314,17 +2416,11 @@ click timing: tactic example.contract 2 have class control statement 3 source 30
         assert!(report.contains("SMART — EXPAND SUCCESSES; REDUCE FAILURES"));
         assert!(report.contains("CONTROL — INSPECT NESTED STEPS"));
         assert!(report.contains("NEXT: fix or reduce the SIMPLE bottleneck first"));
-        assert_eq!(report.matches("expand: cargo run").count(), 1);
+        assert_eq!(report.matches("expand: click expand").count(), 1);
         assert!(report.contains("--time-limit 1m"));
         assert!(report.contains("sample.expanded.click"), "{report}");
-        assert!(
-            report.contains("verify: cargo run --quiet --bin click-verify"),
-            "{report}"
-        );
-        assert!(
-            report.contains("reprofile: cargo run --quiet --bin click-profile"),
-            "{report}"
-        );
+        assert!(report.contains("verify: click verify"), "{report}");
+        assert!(report.contains("reprofile: click profile"), "{report}");
         assert!(report.contains("--smart-threshold 2s"), "{report}");
     }
 
@@ -2403,7 +2499,7 @@ click timing: failed tactic example.contract 0 simp class smart statement 1 sour
             "{report}"
         );
         assert!(report.contains("0 succeeded,      1 failed"), "{report}");
-        assert!(!report.contains("expand: cargo run"), "{report}");
+        assert!(!report.contains("expand: click expand"), "{report}");
         assert!(report.contains("click-expand is not available"), "{report}");
     }
 
@@ -2423,7 +2519,7 @@ click timing: tactic example.contract 0 have class control statement 1 source 10
         let report = render_profiles(&[profile], Thresholds::default(), DEFAULT_TIME_LIMIT);
 
         assert!(report.contains("NEXT: inspect the nested timings inside the CONTROL container"));
-        assert!(!report.contains("expand: cargo run"));
+        assert!(!report.contains("expand: click expand"));
     }
 
     #[test]
@@ -2465,18 +2561,24 @@ click timing: tactic example.contract 0 execute class smart statement 1 source 1
     }
 
     #[test]
-    fn failure_diagnostic_omits_timing_stream() {
-        let status = std::process::Command::new("sh")
-            .arg("-c")
-            .arg("exit 1")
-            .status()
-            .expect("test shell should run");
-        let diagnostic = extract_verification_failure(
-            "",
-            "click timing: source example.click\nclick-profile: proof failed",
-            status,
-        );
-
-        assert_eq!(diagnostic, "proof failed");
+    fn structured_events_do_not_require_text_parsing() {
+        let events = vec![
+            VerificationEvent::Source(PathBuf::from("example.click")),
+            VerificationEvent::TacticFinished {
+                tactic: TacticEvent {
+                    claim: "f.contract".to_string(),
+                    tactic_index: 0,
+                    tactic_name: "step".to_string(),
+                    class: "simple".to_string(),
+                    statement_index: 0,
+                    source_index: 0,
+                },
+                elapsed: Duration::from_secs(1),
+            },
+        ];
+        let profile = profile_from_events("example", &events, Thresholds::default(), false)
+            .expect("structured events should profile");
+        assert_eq!(profile.slow_steps.len(), 1);
+        assert!(profile.unknown_timing.is_empty());
     }
 }

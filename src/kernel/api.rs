@@ -4517,7 +4517,7 @@ fn c_function_contract_certification_assumptions(
         entry_resources = exposed;
     }
     if !missing.is_empty() {
-        if std::env::var_os("CLICK_TIMINGS").is_some() {
+        if crate::instrumentation::enabled() {
             let missing = missing
                 .into_iter()
                 .map(|(index, required)| {
@@ -4531,12 +4531,14 @@ fn c_function_contract_certification_assumptions(
                     format!("{index}: {kind}")
                 })
                 .collect::<Vec<_>>();
-            eprintln!(
-                "click timing: contract entry resources do not satisfy requirements ({}/{}, missing {})",
-                entry_resources.facts().len(),
-                expanded_required_resources.facts().len(),
-                missing.join(", ")
-            );
+            crate::instrumentation::emit(crate::instrumentation::VerificationEvent::Diagnostic(
+                format!(
+                    "contract entry resources do not satisfy requirements ({}/{}, missing {})",
+                    entry_resources.facts().len(),
+                    expanded_required_resources.facts().len(),
+                    missing.join(", ")
+                ),
+            ));
         }
         return None;
     }
@@ -4569,8 +4571,10 @@ fn c_function_contract_certification_assumptions(
                 obligation.proposition(),
             )
     }) {
-        if std::env::var_os("CLICK_TIMINGS").is_some() {
-            eprintln!("click timing: contract entry resources do not certify requirement safety");
+        if crate::instrumentation::enabled() {
+            crate::instrumentation::emit(crate::instrumentation::VerificationEvent::Diagnostic(
+                "contract entry resources do not certify requirement safety".to_string(),
+            ));
         }
         return None;
     }
@@ -6688,7 +6692,7 @@ pub fn c_verified_function_contract_claims(
     if execution.limit().is_some() || execution.paths().is_empty() {
         return None;
     }
-    let timings = std::env::var_os("CLICK_TIMINGS").is_some();
+    let timings = crate::instrumentation::enabled();
     let prepare_started = std::time::Instant::now();
     let paths = execution
         .paths()
@@ -6697,11 +6701,12 @@ pub fn c_verified_function_contract_claims(
         .collect::<Result<Vec<_>, _>>()
         .ok()?;
     if timings {
-        eprintln!(
-            "click timing: claim paths {} prepared {} in {:.6}s",
-            function.name(),
-            paths.len(),
-            prepare_started.elapsed().as_secs_f64(),
+        crate::instrumentation::emit(
+            crate::instrumentation::VerificationEvent::ClaimPathsPrepared {
+                function: function.name().to_string(),
+                count: paths.len(),
+                elapsed: prepare_started.elapsed(),
+            },
         );
     }
     function
@@ -6713,11 +6718,12 @@ pub fn c_verified_function_contract_claims(
                 .iter()
                 .all(|path| function_claim_holds_on_prepared_path(function, claim, path));
             if timings {
-                eprintln!(
-                    "click timing: claim {} {:?} {:.6}s",
-                    function.name(),
-                    claim.key(),
-                    claim_started.elapsed().as_secs_f64(),
+                crate::instrumentation::emit(
+                    crate::instrumentation::VerificationEvent::ClaimFinished {
+                        function: function.name().to_string(),
+                        key: format!("{:?}", claim.key()),
+                        elapsed: claim_started.elapsed(),
+                    },
                 );
             }
             holds.then(|| CVerifiedFunctionContractClaim {

@@ -673,6 +673,7 @@ pub enum CRuntimeError {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum ExecutionLimit {
+    Deadline,
     ExpressionSteps,
     StatementSteps,
     FunctionCalls,
@@ -4844,6 +4845,9 @@ impl ExecutionBudget {
     }
 
     pub(super) fn consume_paths(&mut self, paths: usize) -> ExecutionResult<()> {
+        if crate::instrumentation::deadline_exceeded() {
+            return Err(ExecutionLimit::Deadline);
+        }
         if self.paths < paths {
             return Err(ExecutionLimit::Paths);
         }
@@ -4855,6 +4859,9 @@ impl ExecutionBudget {
 pub(super) type ExecutionResult<T> = Result<T, ExecutionLimit>;
 
 pub(super) fn consume_budget(remaining: &mut usize, limit: ExecutionLimit) -> ExecutionResult<()> {
+    if crate::instrumentation::deadline_exceeded() {
+        return Err(ExecutionLimit::Deadline);
+    }
     if *remaining == 0 {
         return Err(limit);
     }

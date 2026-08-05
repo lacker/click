@@ -3,12 +3,13 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use click::cli::{
-    IsolatedRun, default_worker_count, duration_from_env, files_with_extension,
-    isolated_test_command, read_verifying_sources, run_isolated, run_parallel, source_refs,
+    DISABLE_TACTIC_BUDGETS, default_worker_count, duration_from_env, files_with_extension,
+    format_duration, read_verifying_sources, run_parallel, source_refs,
+    structured_tactic_budget_violations,
 };
+use click::instrumentation;
 use click::lang::click::verify_c0_sources;
 
-const EXAMPLE_CHILD_PATH: &str = "CLICK_EXAMPLE_CHILD_PATH";
 const EXAMPLE_TIME_LIMIT: &str = "CLICK_EXAMPLE_TIME_LIMIT";
 const RUN_QUARANTINED: &str = "CLICK_RUN_QUARANTINED";
 const DEFAULT_EXAMPLE_TIME_LIMIT: Duration = Duration::from_secs(10 * 60);
@@ -24,11 +25,6 @@ const QUARANTINED: &[(&str, &str)] = &[(
 
 #[test]
 fn example_projects() {
-    if let Some(path) = std::env::var_os(EXAMPLE_CHILD_PATH) {
-        run_example_project(Path::new(&path));
-        return;
-    }
-
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let examples_dir = manifest_dir.join("examples");
     let requested = std::env::var_os("CLICK_EXAMPLE");
@@ -108,46 +104,63 @@ fn example_time_limit() -> Duration {
         .unwrap_or_else(|message| panic!("{message}"))
 }
 
-/// Runs one example project in an isolated child process (Click proofs have
-/// overflowed the stack before; isolation keeps one crash from hiding the
-/// other results) under a wall-clock limit.
 fn run_example_with_timeout(project: &Path, time_limit: Duration) -> Result<(), String> {
-    let command = isolated_test_command("example_projects", EXAMPLE_CHILD_PATH, project)?;
-    run_isolated(
-        command,
-        time_limit,
-        IsolatedRun {
-            label: &format!("isolated example project `{}`", project.display()),
-            limit_description: "the per-project example time limit",
-            limit_variable: EXAMPLE_TIME_LIMIT,
-            process_description: "its isolated example process",
-        },
-    )
+    let project = project.to_path_buf();
+    std::thread::Builder::new()
+        .name("click-example".to_string())
+        .stack_size(64 * 1024 * 1024)
+        .spawn(move || {
+            let started = std::time::Instant::now();
+            let (result, events) = instrumentation::with_deadline(time_limit, || {
+                instrumentation::collect(|| run_example_project(&project))
+            });
+            result?;
+            let elapsed = started.elapsed();
+            if elapsed > time_limit {
+                return Err(format!(
+                    "exceeded the per-project example time limit of {}; set {EXAMPLE_TIME_LIMIT} to override it",
+                    format_duration(time_limit)
+                ));
+            }
+            if std::env::var_os(DISABLE_TACTIC_BUDGETS).is_none() {
+                let violations = structured_tactic_budget_violations(&events);
+                if !violations.is_empty() {
+                    return Err(format!(
+                        "passed, but broke tactic time budgets (set {DISABLE_TACTIC_BUDGETS}=1 to bypass):\n  {}",
+                        violations.join("\n  ")
+                    ));
+                }
+            }
+            Ok(())
+        })
+        .map_err(|error| format!("failed to start example verifier: {error}"))?
+        .join()
+        .map_err(|_| "example verifier panicked".to_string())?
 }
 
-fn run_example_project(project: &Path) {
-    let mut click_paths =
-        files_with_extension(project, "click").unwrap_or_else(|message| panic!("{message}"));
+fn run_example_project(project: &Path) -> Result<(), String> {
+    let mut click_paths = files_with_extension(project, "click")?;
 
-    assert!(
-        !click_paths.is_empty(),
-        "example project `{}` must contain at least one .click sidecar",
-        project.display()
-    );
+    if click_paths.is_empty() {
+        return Err(format!(
+            "example project `{}` must contain at least one .click sidecar",
+            project.display()
+        ));
+    }
 
     click_paths.sort();
 
     for click_path in click_paths {
         let click_source = fs::read_to_string(&click_path)
-            .unwrap_or_else(|error| panic!("failed to read `{}`: {error}", click_path.display()));
-        let c_sources = read_verifying_sources(&click_path, &click_source)
-            .unwrap_or_else(|message| panic!("{message}"));
-        verify_c0_sources(&click_source, &source_refs(&c_sources)).unwrap_or_else(|error| {
-            panic!(
+            .map_err(|error| format!("failed to read `{}`: {error}", click_path.display()))?;
+        let c_sources = read_verifying_sources(&click_path, &click_source)?;
+        verify_c0_sources(&click_source, &source_refs(&c_sources)).map_err(|error| {
+            format!(
                 "example sidecar `{}` failed: {}",
                 click_path.display(),
                 error.message()
             )
-        });
+        })?;
     }
+    Ok(())
 }
