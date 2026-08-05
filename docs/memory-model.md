@@ -154,6 +154,11 @@ The current `p` argument carries post-state memory. The `old(p)` argument
 carries function-entry memory. Both carry the same C pointer value unless the
 pointer variable itself changed.
 
+Freeing an allocation retires it only in the current and later states. A load
+inside `old(...)` remains a historical entry-state value when the entry
+permissions and bounds justified that load; the corresponding current-state
+load is still rejected as use-after-free.
+
 ## Effects And Frames
 
 Function-level effects:

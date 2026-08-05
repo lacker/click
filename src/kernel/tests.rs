@@ -1796,6 +1796,90 @@ fn loadable_symbolic_subrange_proves_an_indexed_cell() {
 }
 
 #[test]
+fn field_derived_capacity_range_covers_a_shorter_live_prefix() {
+    if skip_without_memory_dag() {
+        return;
+    }
+    let entry_memory = CMemory::new();
+    let owner = Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::Int32Scaled {
+            value: Box::new(Bitvector32Term::Variable(Variable(100_000))),
+            byte_width: 4,
+        },
+    };
+    let field = |byte_offset| Pointer {
+        block: owner.block.clone(),
+        offset: PointerOffsetTerm::Add(
+            Box::new(owner.offset.clone()),
+            Box::new(PointerOffsetTerm::Constant(byte_offset)),
+        ),
+    };
+    let len = Bitvector32Term::MemoryLoad(
+        crate::kernel::intern_c_memory_ref(&entry_memory),
+        Box::new(owner.clone()),
+    );
+    let after_len = entry_memory
+        .clone()
+        .store(owner.clone(), CValue::Int32(len.clone()));
+    let cap = Bitvector32Term::MemoryLoad(
+        crate::kernel::intern_c_memory_ref(&after_len),
+        Box::new(field(4)),
+    );
+    let after_cap = after_len
+        .clone()
+        .store(field(4), CValue::Int32(cap.clone()));
+    let range_data_offset = Bitvector32Term::MemoryLoad(
+        crate::kernel::intern_c_memory_ref(&after_cap),
+        Box::new(field(8)),
+    );
+    let range_data = Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::Int32Scaled {
+            value: Box::new(range_data_offset),
+            byte_width: 4,
+        },
+    };
+    let entry_data_offset = Bitvector32Term::MemoryLoad(
+        crate::kernel::intern_c_memory_ref(&entry_memory),
+        Box::new(field(8)),
+    );
+    let entry_data = Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::Int32Scaled {
+            value: Box::new(entry_data_offset),
+            byte_width: 4,
+        },
+    };
+    let index = Bitvector32Term::Variable(Variable(2_000_000));
+    let assumptions = Assumptions::new()
+        .assume_proposition(Proposition::CMemoryLoadable {
+            memory: after_cap,
+            base: range_data,
+            bytes: Bitvector32Term::multiply(cap.clone(), Bitvector32Term::Constant(4)),
+        })
+        .assume_condition(
+            ConditionTerm::signed_less_equal(Bitvector32Term::Constant(0), index.clone()),
+            true,
+        )
+        .assume_condition(
+            ConditionTerm::signed_less_than(index.clone(), len.clone()),
+            true,
+        )
+        .assume_condition(ConditionTerm::signed_less_equal(len, cap), true);
+    let target = Proposition::CMemoryLoadable {
+        memory: entry_memory,
+        base: entry_data.offset_by_int32_elements(index),
+        bytes: Bitvector32Term::Constant(4),
+    };
+
+    assert!(
+        assumptions.derive_atomic_proposition(&target).is_some(),
+        "a field-derived capacity range must cover an entry-spelled live-prefix cell"
+    );
+}
+
+#[test]
 fn proposition_derivation_replay_requires_its_context() {
     let x = Bitvector32Term::Variable(Variable(86));
     let proposition = Proposition::ConditionIs(
