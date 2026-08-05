@@ -26,6 +26,10 @@ The issue should contain a small intended regression, the violated invariant,
 and acceptance criteria. Do not leave the only reproduction in an uncommitted
 large example or quarantine a regression without its issue.
 
+## Proof-tooling blockers
+
+1. [Make direct CLI deadlines interrupt derivation search](direct-cli-deadline-misses-derivation-search.md).
+
 ## Allocation and proof-tooling follow-up
 
 Runtime-sized allocation/free and the independently verifiable general vector
