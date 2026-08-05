@@ -26,6 +26,25 @@ The issue should contain a small intended regression, the violated invariant,
 and acceptance criteria. Do not leave the only reproduction in an uncommitted
 large example or quarantine a regression without its issue.
 
+## Proof-tool hardening
+
+These are ordered by priority. A verifier process abort is a stronger failure
+than missing performance guidance, and both come before another feature
+example.
+
+1. [Bound every Surface Click reconstruction search](bound-surface-reconstruction.md).
+2. [Attribute healthy proof volume to functions and claims](profile-healthy-volume-by-claim.md).
+3. [Make large expansion audits concise and scope-aware](scalable-expansion-audit.md).
+4. [Add dependency-aware incremental verification](incremental-verification.md).
+
+## Documentation cleanup
+
+1. [Remove stale claims that vector growth is pending](document-completed-vector-growth.md).
+
+## Container composition follow-up
+
+1. [Compose in-capacity append with allocated-vector growth](allocated-vector-push.md).
+
 ## Partial correctness and recursion
 
 Click's C contracts now use partial correctness consistently: concrete
