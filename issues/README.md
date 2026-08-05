@@ -32,7 +32,8 @@ Runtime-sized allocation/free and the independently verifiable general vector
 push are implemented in focused example projects. Composing allocation, copy,
 replacement, and free into vector growth exposed distinct remaining bugs:
 
-1. [Compose runtime allocation into owned-vector growth](owned-vector-runtime-growth.md)
+1. [Replay assumption-derived premises selected by `execute`](smart-execute-derived-premise-replay.md).
+2. [Compose runtime allocation into owned-vector growth](owned-vector-runtime-growth.md)
    after the blocking invariants above are restored.
 
 ## Partial correctness and recursion
