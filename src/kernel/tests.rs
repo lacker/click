@@ -8866,6 +8866,7 @@ fn nullable_owner_contract(body: CStatement) -> (CState, CFunction, Vec<CExpress
                 base: c_variable("item"),
                 start: c_int32_literal(0),
                 end: c_int32_literal(1),
+                guard: None,
             }),
         ],
         Vec::new(),
@@ -8895,6 +8896,74 @@ fn nullable_owner_contract(body: CStatement) -> (CState, CFunction, Vec<CExpress
         CResourceFact::own_composite("owned_item".to_string(), vec![pointer_value]),
     ));
     (state, function, vec![c_pointer_value(pointer)])
+}
+
+#[test]
+fn guarded_opaque_call_footprints_skip_only_inactive_segments() {
+    let (_, mut function, _) = nullable_owner_contract(c_return(c_int32_literal(0)));
+    let active = SpecProposition::Comparison {
+        left: SpecExpression::CExpression(c_variable("item")),
+        operator: CComparisonOperator::NotEqual,
+        right: SpecExpression::Value(CValue::Pointer(Pointer::null())),
+    };
+    function.contract_mutable = vec![
+        CMemorySegment::new(c_int32_literal(7), c_int32_literal(0), c_int32_literal(1))
+            .with_guard(active),
+    ];
+    let environment = CExecutionEnvironment::new()
+        .with_function(function.clone())
+        .with_verified_function_rule(CVerifiedFunctionRule {
+            function: function.clone(),
+        });
+
+    let null = CValue::Pointer(Pointer::null());
+    let null_state =
+        CState::new().with_resource_context(ResourceContext::new().unchecked_with_fact(
+            CResourceFact::own_composite("owned_item".to_string(), vec![null]),
+        ));
+    let null_paths = execute_c_statement_paths(
+        &null_state,
+        &c_call_assign("result", "item_destroy", vec![c_int32_literal(0)]),
+        &Assumptions::new(),
+        &environment,
+        CExecutionSemantics::APPLY_VERIFIED_RULES,
+        &mut ExecutionBudget::default(),
+    )
+    .expect("an inactive malformed footprint should not be evaluated");
+    assert!(matches!(
+        null_paths.as_slice(),
+        [CStatementExecutionPath {
+            outcome: CStatementOutcome::Normal(_),
+            ..
+        }]
+    ));
+
+    let nonnull = Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let nonnull_state = CState::new().with_resource_context(
+        ResourceContext::new().unchecked_with_fact(CResourceFact::own_composite(
+            "owned_item".to_string(),
+            vec![CValue::Pointer(nonnull.clone())],
+        )),
+    );
+    let nonnull_paths = execute_c_statement_paths(
+        &nonnull_state,
+        &c_call_assign("result", "item_destroy", vec![c_pointer_value(nonnull)]),
+        &Assumptions::new(),
+        &environment,
+        CExecutionSemantics::APPLY_VERIFIED_RULES,
+        &mut ExecutionBudget::default(),
+    )
+    .expect("an active malformed footprint should produce a local diagnostic");
+    assert!(matches!(
+        nonnull_paths.as_slice(),
+        [CStatementExecutionPath {
+            outcome: CStatementOutcome::RuntimeError(CRuntimeError::FunctionContract(message)),
+            ..
+        }] if message.contains("could not evaluate mutable footprint")
+    ));
 }
 
 #[test]

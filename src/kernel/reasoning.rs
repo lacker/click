@@ -2453,6 +2453,9 @@ pub(super) fn collect_c_function_bitvector_variables(
         collect_c_expression_bitvector_variables(&segment.base, variables);
         collect_c_expression_bitvector_variables(&segment.start, variables);
         collect_c_expression_bitvector_variables(&segment.end, variables);
+        if let Some(guard) = segment.guard() {
+            collect_spec_proposition_bitvector_variables(guard, variables);
+        }
     }
     collect_c_statement_bitvector_variables(function.body(), variables);
 }
@@ -2466,11 +2469,17 @@ pub(super) fn collect_resource_spec_bitvector_variables(
             collect_c_expression_bitvector_variables(&segment.base, variables);
             collect_c_expression_bitvector_variables(&segment.start, variables);
             collect_c_expression_bitvector_variables(&segment.end, variables);
+            if let Some(guard) = segment.guard() {
+                collect_spec_proposition_bitvector_variables(guard, variables);
+            }
         }
         CResourceSpec::Write(segment) => {
             collect_c_expression_bitvector_variables(&segment.base, variables);
             collect_c_expression_bitvector_variables(&segment.start, variables);
             collect_c_expression_bitvector_variables(&segment.end, variables);
+            if let Some(guard) = segment.guard() {
+                collect_spec_proposition_bitvector_variables(guard, variables);
+            }
         }
         CResourceSpec::Composite { arguments, .. } | CResourceSpec::Token { arguments, .. } => {
             for argument in arguments {
@@ -3721,6 +3730,9 @@ pub(super) fn substitute_bitvector_variable_in_loop_effect(
                     base: substitute_bitvector_variable_in_c_expression(&segment.base, from, to),
                     start: substitute_bitvector_variable_in_c_expression(&segment.start, from, to),
                     end: substitute_bitvector_variable_in_c_expression(&segment.end, from, to),
+                    guard: segment.guard.as_ref().map(|guard| {
+                        substitute_bitvector_variable_in_spec_proposition(guard, from, to)
+                    }),
                 })
                 .collect(),
         ),
@@ -3915,6 +3927,9 @@ pub(super) fn substitute_bitvector_variable_in_c_function(
                 base: substitute_bitvector_variable_in_c_expression(&segment.base, from, to),
                 start: substitute_bitvector_variable_in_c_expression(&segment.start, from, to),
                 end: substitute_bitvector_variable_in_c_expression(&segment.end, from, to),
+                guard: segment.guard.as_ref().map(|guard| {
+                    substitute_bitvector_variable_in_spec_proposition(guard, from, to)
+                }),
             })
             .collect(),
         contract_claims: function.contract_claims.clone(),
@@ -3956,11 +3971,19 @@ pub(super) fn substitute_bitvector_variable_in_resource_spec(
             base: substitute_bitvector_variable_in_c_expression(&segment.base, from, to),
             start: substitute_bitvector_variable_in_c_expression(&segment.start, from, to),
             end: substitute_bitvector_variable_in_c_expression(&segment.end, from, to),
+            guard: segment
+                .guard
+                .as_ref()
+                .map(|guard| substitute_bitvector_variable_in_spec_proposition(guard, from, to)),
         }),
         CResourceSpec::Write(segment) => CResourceSpec::Write(CMemorySegment {
             base: substitute_bitvector_variable_in_c_expression(&segment.base, from, to),
             start: substitute_bitvector_variable_in_c_expression(&segment.start, from, to),
             end: substitute_bitvector_variable_in_c_expression(&segment.end, from, to),
+            guard: segment
+                .guard
+                .as_ref()
+                .map(|guard| substitute_bitvector_variable_in_spec_proposition(guard, from, to)),
         }),
         CResourceSpec::Composite {
             access,

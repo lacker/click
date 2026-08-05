@@ -610,6 +610,16 @@ fn execute_verified_function_rule(
         let mut mutable_ranges = Vec::new();
         let mut footprint_error = None;
         for segment in function.contract_mutable() {
+            if segment.guard().is_some_and(|guard| {
+                evaluate_guarded_contract_condition(
+                    guard,
+                    &entry_contract_state,
+                    &effective_assumptions,
+                    budget,
+                ) == Some(false)
+            }) {
+                continue;
+            }
             match evaluate_loop_effect_segment(
                 &footprint_state,
                 segment,
@@ -1343,15 +1353,12 @@ fn expand_composite_resource_fact_with_children(
     Some((expanded, children))
 }
 
-fn evaluate_composite_resource_body_condition(
-    definition: &CCompositeResourceDefinition,
+pub(super) fn evaluate_guarded_contract_condition(
+    condition: &SpecProposition,
     state: &CState,
     assumptions: &Assumptions,
     budget: &mut ExecutionBudget,
 ) -> Option<bool> {
-    let Some(condition) = definition.condition() else {
-        return Some(true);
-    };
     let paths = lower_spec_proposition_at_state_with_loop_entry(
         state,
         condition,
@@ -1395,6 +1402,17 @@ fn evaluate_composite_resource_body_condition(
         proposition => Proposition::Not(Box::new(proposition.clone())),
     };
     proves_body_condition(&false_proposition).then_some(false)
+}
+
+fn evaluate_composite_resource_body_condition(
+    definition: &CCompositeResourceDefinition,
+    state: &CState,
+    assumptions: &Assumptions,
+    budget: &mut ExecutionBudget,
+) -> Option<bool> {
+    definition.condition().map_or(Some(true), |condition| {
+        evaluate_guarded_contract_condition(condition, state, assumptions, budget)
+    })
 }
 
 pub(super) fn expand_all_composite_resource_facts(

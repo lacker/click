@@ -282,7 +282,11 @@ opaque-contract certification derives both guard cases from the kernel
 resource definition and executes the function in each case. This permits a
 proof-only case split to justify branchless C such as unconditional
 `free(nullable_pointer)`. Both cases are mandatory; a safe empty/null case
-cannot hide an unsafe active-resource case.
+cannot hide an unsafe active-resource case. Mutable footprints inferred from
+such a resource retain the same guard. Opaque call application decides that
+guard before evaluating the guarded pointer and range, so the empty case does
+not manufacture a null footprint while an active malformed footprint still
+fails locally.
 
 ## Assumption Reasoning
 

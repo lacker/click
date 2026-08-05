@@ -442,6 +442,9 @@ pub struct CMemorySegment {
     pub(super) base: CExpression,
     pub(super) start: CExpression,
     pub(super) end: CExpression,
+    /// An optional entry-state condition guarding a contract footprint.
+    /// Resource and loop segments are normally unconditional.
+    pub(super) guard: Option<SpecProposition>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -2651,7 +2654,21 @@ impl CLoopEffectCheck {
 
 impl CMemorySegment {
     pub fn new(base: CExpression, start: CExpression, end: CExpression) -> Self {
-        Self { base, start, end }
+        Self {
+            base,
+            start,
+            end,
+            guard: None,
+        }
+    }
+
+    pub fn with_guard(mut self, guard: SpecProposition) -> Self {
+        self.guard = Some(guard);
+        self
+    }
+
+    pub fn guard(&self) -> Option<&SpecProposition> {
+        self.guard.as_ref()
     }
 }
 

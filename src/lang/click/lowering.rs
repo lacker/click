@@ -294,6 +294,7 @@ pub(super) fn function_contract_summary(
                 collect_owned_resource_memory_segments(
                     resource,
                     resource_environment,
+                    &mut lowerer,
                     &mut mutable,
                 )?;
             }
@@ -376,30 +377,46 @@ fn proposition_supported_in_opaque_contract(proposition: &ClickProposition) -> b
 fn collect_owned_resource_memory_segments(
     resource: &ResourceClause,
     resource_environment: &ResourceEnvironment,
+    lowerer: &mut AnnotationLowerer<'_>,
     output: &mut Vec<CMemorySegment>,
 ) -> Result<(), ClickError> {
     collect_owned_resource_memory_segments_inner(
         resource,
         resource_environment,
+        lowerer,
         output,
         &mut BTreeSet::new(),
+        None,
     )
 }
 
 fn collect_owned_resource_memory_segments_inner(
     resource: &ResourceClause,
     resource_environment: &ResourceEnvironment,
+    lowerer: &mut AnnotationLowerer<'_>,
     output: &mut Vec<CMemorySegment>,
     active_resources: &mut BTreeSet<String>,
+    active_guard: Option<ClickProposition>,
 ) -> Result<(), ClickError> {
     match resource {
         ResourceClause::Read(_) => Ok(()),
         ResourceClause::Write(segment) => {
-            output.push(CMemorySegment::new(
+            let mut segment = CMemorySegment::new(
                 segment.base.clone(),
                 segment.start.clone(),
                 segment.end.clone(),
-            ));
+            );
+            if let Some(guard) = active_guard {
+                segment = segment.with_guard(
+                    lowerer
+                        .click_proposition_to_spec_proposition(
+                            &guard,
+                            &SpecElaborationContext::for_function_contract(),
+                        )
+                        .map_err(ClickError::new)?,
+                );
+            }
+            output.push(segment);
             Ok(())
         }
         ResourceClause::Declared {
@@ -430,6 +447,18 @@ fn collect_owned_resource_memory_segments_inner(
                 };
                 let substitutions =
                     resource_argument_contract_substitutions(definition, arguments)?;
+                let nested_guard = body
+                    .condition()
+                    .map(|condition| substitute_click_proposition(condition, &substitutions))
+                    .transpose()
+                    .map_err(ClickError::new)?;
+                let active_guard = match (active_guard.clone(), nested_guard) {
+                    (Some(outer), Some(inner)) => {
+                        Some(ClickProposition::And(Box::new(outer), Box::new(inner)))
+                    }
+                    (Some(guard), None) | (None, Some(guard)) => Some(guard),
+                    (None, None) => None,
+                };
                 for contained in body.contains() {
                     let contained =
                         substitute_resource_clause_for_summary(contained, &substitutions)
@@ -437,8 +466,10 @@ fn collect_owned_resource_memory_segments_inner(
                     collect_owned_resource_memory_segments_inner(
                         &contained,
                         resource_environment,
+                        lowerer,
                         output,
                         active_resources,
+                        active_guard.clone(),
                     )?;
                 }
                 Ok(())

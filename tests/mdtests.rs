@@ -17,10 +17,7 @@ const DEFAULT_MDTEST_TIME_LIMIT: Duration = Duration::from_secs(30);
 /// green gate. Run one with `MDTEST_FILTER=<name>`, or all of them with
 /// `CLICK_RUN_QUARANTINED=1`. Each entry names the reason; remove entries as
 /// they are fixed (see docs/advanced/testing-click.md).
-const QUARANTINED: &[(&str, &str)] = &[(
-    "conditional_resource_branchless_free.md",
-    "null opaque-call footprint type mismatch; see issues/conditional-null-free-call-footprint.md",
-)];
+const QUARANTINED: &[(&str, &str)] = &[];
 
 #[test]
 fn mdtests() {

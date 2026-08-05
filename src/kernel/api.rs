@@ -6630,6 +6630,16 @@ fn function_claim_holds_on_prepared_path(
         CFunctionContractClaimTarget::Effect => {
             let mut mutable_ranges = Vec::new();
             for segment in function.contract_mutable() {
+                if segment.guard().is_some_and(|guard| {
+                    evaluate_guarded_contract_condition(
+                        guard,
+                        entry_state,
+                        assumptions,
+                        &mut budget,
+                    ) == Some(false)
+                }) {
+                    continue;
+                }
                 let Ok(Ok(segment)) =
                     evaluate_loop_effect_segment(entry_state, segment, assumptions, &mut budget)
                 else {

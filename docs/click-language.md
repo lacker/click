@@ -552,7 +552,10 @@ it even if the C body is branchless. Each proof case unfolds the matching
 resource body: the empty branch certifies operations such as `free(NULL)`, and
 the active branch exposes the resources those operations consume. Exact
 contract certification checks both cases independently, so this does not add
-a precondition or require rewriting the C control flow.
+a precondition or require rewriting the C control flow. The same condition
+guards the mutable footprint inferred from the resource. At an opaque call,
+Click decides the guard before evaluating its pointer and range expressions;
+an inactive body therefore contributes no footprint.
 
 Composite and token arguments are compared using proved scalar and pointer
 equalities. Thus a held `list(node->next)` can satisfy `list(tail)` after the
