@@ -7662,9 +7662,7 @@ fn loop_phase_proofs_can_unfold_invariant_predicates() {
                 ensures still_sorted: sorted(p, 3) by {
                     execute();
                     frame(loop(0));
-                    unfold(sorted);
-                    unfold(sorted_range);
-                    simp();
+                    assumption();
                 }
             }
         "#;

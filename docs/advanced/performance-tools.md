@@ -79,12 +79,13 @@ deadline that can be overridden explicitly.
 ## What is enforced today
 
 Ordinary verification stops a tactic when its class deadline expires, measured
-as **exclusive** time: a container does not inherit its children's cost. The
-defaults are SIMPLE 500 ms and SMART/CONTROL 2 s. Kernel expression,
+as **exclusive per-thread CPU time** on Unix: scheduler contention is not
+charged, and a container does not inherit its children's cost. Platforms
+without a thread CPU clock fall back to exclusive wall-clock time. The defaults
+are SIMPLE 500 ms and SMART/CONTROL 2 s. Kernel expression,
 statement, call, loop, and path checkpoints observe the active deadline, and
 the failure names the class, claim, statement, source tactic, elapsed time, and
-limit. Fixture correctness gates run serially so scheduler contention is not
-charged to wall-clock tactic deadlines. `CLICK_DISABLE_TACTIC_BUDGETS=1`
+limit. `CLICK_DISABLE_TACTIC_BUDGETS=1`
 bypasses enforcement for reduction and archaeology. `click profile` is itself
 a diagnostic override: its project deadline remains hard, while individual
 tactics are allowed to complete so the report can identify the slow operation.

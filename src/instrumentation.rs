@@ -98,8 +98,57 @@ impl TacticLimits {
 struct ActiveTactic {
     event: TacticEvent,
     exclusive: Duration,
-    running_since: Instant,
+    running_since: TacticInstant,
     limit: Duration,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct TacticInstant {
+    wall: Instant,
+    thread_cpu: Option<Duration>,
+}
+
+impl TacticInstant {
+    fn now() -> Self {
+        Self {
+            wall: Instant::now(),
+            thread_cpu: thread_cpu_time(),
+        }
+    }
+
+    fn elapsed(self) -> Duration {
+        match (self.thread_cpu, thread_cpu_time()) {
+            (Some(start), Some(end)) => end.saturating_sub(start),
+            _ => self.wall.elapsed(),
+        }
+    }
+
+    fn duration_since(self, earlier: Self) -> Duration {
+        match (earlier.thread_cpu, self.thread_cpu) {
+            (Some(start), Some(end)) => end.saturating_sub(start),
+            _ => self.wall.saturating_duration_since(earlier.wall),
+        }
+    }
+}
+
+#[cfg(unix)]
+fn thread_cpu_time() -> Option<Duration> {
+    let mut value = std::mem::MaybeUninit::<libc::timespec>::uninit();
+    // SAFETY: `clock_gettime` initializes the supplied `timespec` on success.
+    let result = unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, value.as_mut_ptr()) };
+    if result != 0 {
+        return None;
+    }
+    // SAFETY: a zero return from `clock_gettime` guarantees initialization.
+    let value = unsafe { value.assume_init() };
+    let seconds = u64::try_from(value.tv_sec).ok()?;
+    let nanoseconds = u32::try_from(value.tv_nsec).ok()?;
+    (nanoseconds < 1_000_000_000).then(|| Duration::new(seconds, nanoseconds))
+}
+
+#[cfg(not(unix))]
+fn thread_cpu_time() -> Option<Duration> {
+    None
 }
 
 thread_local! {
@@ -290,7 +339,7 @@ pub fn emit(event: VerificationEvent) {
             });
             if let Some(limit) = limit {
                 ACTIVE_TACTICS.with(|active| {
-                    let now = Instant::now();
+                    let now = TacticInstant::now();
                     let mut active = active.borrow_mut();
                     if let Some(parent) = active.last_mut() {
                         parent.exclusive += now.duration_since(parent.running_since);
@@ -307,7 +356,7 @@ pub fn emit(event: VerificationEvent) {
         VerificationEvent::TacticFinished { tactic, .. }
         | VerificationEvent::TacticFailed(tactic) => {
             ACTIVE_TACTICS.with(|active| {
-                let now = Instant::now();
+                let now = TacticInstant::now();
                 let mut active = active.borrow_mut();
                 if let Some(index) = active
                     .iter()
@@ -489,6 +538,18 @@ mod tests {
                 elapsed: Duration::from_millis(100),
             });
         });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn tactic_clock_does_not_charge_descheduled_wall_time() {
+        let start = TacticInstant::now();
+        assert!(start.thread_cpu.is_some());
+        std::thread::sleep(Duration::from_millis(50));
+        assert!(
+            start.elapsed() < Duration::from_millis(25),
+            "a sleeping verifier thread should consume negligible tactic budget"
+        );
     }
 
     #[test]
