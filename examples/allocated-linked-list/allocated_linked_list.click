@@ -65,11 +65,9 @@ struct node* list_drop_front(struct node* node) {
     simp();
 }
 
-int32 list_destroy(struct node* node) {
+void list_destroy(struct node* node) {
     decreases resource allocated_list(node);
     consumes allocated_list(node);
-
-    ensures result == 0;
 } by {
     if node == 0 {
         unfold(allocated_list(node));

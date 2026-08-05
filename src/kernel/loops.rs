@@ -33,6 +33,13 @@ pub(super) fn execute_c_call_assign_paths(
     .map(|path| {
         let outcome = match path.outcome {
             CFunctionOutcome::Return { value, mut state } => {
+                if value == CValue::Void {
+                    return CStatementExecutionPath {
+                        outcome: CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+                        facts: path.facts,
+                        obligations: path.obligations,
+                    };
+                }
                 if state.locals.is_array_object(target) {
                     return CStatementExecutionPath {
                         outcome: CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch),
@@ -60,6 +67,52 @@ pub(super) fn execute_c_call_assign_paths(
             facts: path.facts,
             obligations: path.obligations,
         }
+    })
+    .collect::<Vec<_>>();
+    budget.consume_paths(paths.len())?;
+    Ok(paths)
+}
+
+pub(super) fn execute_c_call_paths(
+    state: &CState,
+    function_name: &str,
+    arguments: &[CExpression],
+    assumptions: &Assumptions,
+    environment: &CExecutionEnvironment,
+    execution_semantics: CExecutionSemantics,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<CStatementExecutionPath>> {
+    let Some(function) = environment.get_function(function_name) else {
+        return Ok(vec![CStatementExecutionPath {
+            outcome: CStatementOutcome::RuntimeError(CRuntimeError::UnknownFunction(
+                function_name.to_string(),
+            )),
+            facts: Vec::new(),
+            obligations: Vec::new(),
+        }]);
+    };
+
+    let paths = execute_c_function_call_paths(
+        state,
+        function,
+        arguments,
+        assumptions,
+        environment,
+        execution_semantics,
+        budget,
+    )?
+    .into_iter()
+    .map(|path| CStatementExecutionPath {
+        outcome: match path.outcome {
+            CFunctionOutcome::Return { state, .. } => CStatementOutcome::Normal(state),
+            CFunctionOutcome::VerificationDiverges => CStatementOutcome::VerificationDiverges,
+            CFunctionOutcome::UndefinedBehavior(undefined_behavior) => {
+                CStatementOutcome::UndefinedBehavior(undefined_behavior)
+            }
+            CFunctionOutcome::RuntimeError(error) => CStatementOutcome::RuntimeError(error),
+        },
+        facts: path.facts,
+        obligations: path.obligations,
     })
     .collect::<Vec<_>>();
     budget.consume_paths(paths.len())?;
@@ -1454,6 +1507,7 @@ pub(super) fn havoc_loop_modified_locals(
         };
         let c_type = *c_type;
         let value = match c_type {
+            CType::Void => continue,
             CType::Int32 => int32(Bitvector32Term::Variable(variables.next())),
             CType::UInt8 => uint8(Bitvector32Term::Variable(variables.next())),
             CType::Int32Pointer => continue,
@@ -1492,6 +1546,7 @@ pub(super) fn statement_may_write_memory(statement: &CStatement) -> bool {
         | CStatement::Assert { .. }
         | CStatement::Return(_) => false,
         CStatement::CallAssign { .. }
+        | CStatement::Call { .. }
         | CStatement::HeapAllocate { .. }
         | CStatement::HeapFree { .. }
         | CStatement::Store { .. }
@@ -1522,6 +1577,7 @@ pub(super) fn collect_loop_modified_locals(statement: &CStatement, names: &mut B
         CStatement::CallAssign { target, .. } => {
             names.insert(target.clone());
         }
+        CStatement::Call { .. } => {}
         CStatement::HeapAllocate { target, .. } => {
             names.insert(target.clone());
         }
@@ -1578,6 +1634,11 @@ pub(super) fn collect_address_taken_locals(statement: &CStatement, names: &mut B
             collect_address_taken_in_expression(expression, names)
         }
         CStatement::CallAssign { arguments, .. } => {
+            for argument in arguments {
+                collect_address_taken_in_expression(argument, names);
+            }
+        }
+        CStatement::Call { arguments, .. } => {
             for argument in arguments {
                 collect_address_taken_in_expression(argument, names);
             }

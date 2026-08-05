@@ -6,6 +6,19 @@ struct CFunctionResourceTransfer {
     caller_resources_after_requirements: ResourceContext,
 }
 
+fn complete_void_fallthrough(
+    function: &CFunction,
+    outcome: CStatementOutcome,
+) -> CStatementOutcome {
+    match (function.return_type(), outcome) {
+        (CType::Void, CStatementOutcome::Normal(state)) => CStatementOutcome::Return {
+            value: CValue::Void,
+            state,
+        },
+        (_, outcome) => outcome,
+    }
+}
+
 pub(super) fn execute_c_function_paths(
     state: &CState,
     function: &CFunction,
@@ -129,7 +142,7 @@ pub(super) fn execute_c_function_paths_with_contract_resources(
                 function_outcome_from_body_with_resource_transfer(
                     state,
                     function,
-                    body_path.outcome,
+                    complete_void_fallthrough(function, body_path.outcome),
                     obligations,
                     &return_assumptions,
                     resource_transfer,
@@ -140,7 +153,7 @@ pub(super) fn execute_c_function_paths_with_contract_resources(
                 function_outcome_from_body(
                     state,
                     function,
-                    body_path.outcome,
+                    complete_void_fallthrough(function, body_path.outcome),
                     obligations,
                     &return_assumptions,
                     None,
@@ -263,7 +276,7 @@ pub(super) fn execute_c_function_verification_paths(
                 function_outcome_from_body_with_resource_transfer(
                     state,
                     function,
-                    body_path.outcome,
+                    complete_void_fallthrough(function, body_path.outcome),
                     obligations,
                     &return_assumptions,
                     resource_transfer,
@@ -274,7 +287,7 @@ pub(super) fn execute_c_function_verification_paths(
                 function_outcome_from_body(
                     state,
                     function,
-                    body_path.outcome,
+                    complete_void_fallthrough(function, body_path.outcome),
                     obligations,
                     &return_assumptions,
                     None,
@@ -631,9 +644,13 @@ fn execute_verified_function_rule(
         }
         let result = symbolic_call_result(function.return_type(), result_identity);
         let mut post_state = entry_state.clone().with_memory(memory);
-        post_state
-            .locals
-            .set_typed("result".to_string(), result.clone(), function.return_type());
+        if function.return_type() != CType::Void {
+            post_state.locals.set_typed(
+                "result".to_string(),
+                result.clone(),
+                function.return_type(),
+            );
+        }
         post_state.resources = transfer.caller_resources_after_requirements.clone();
         let output_resource_state =
             with_contract_argument_views(&post_state, &arguments_path.values);
@@ -828,6 +845,7 @@ fn with_contract_argument_views(state: &CState, values: &[CValue]) -> CState {
 
 fn symbolic_call_result(c_type: CType, variable: Variable) -> CValue {
     match c_type {
+        CType::Void => CValue::Void,
         CType::Int32 => CValue::Int32(Bitvector32Term::Variable(variable)),
         CType::UInt8 => CValue::UInt8(Bitvector32Term::Variable(variable)),
         CType::Int32Pointer | CType::UInt8Pointer => CValue::Pointer(Pointer::symbolic(variable)),
@@ -2180,9 +2198,11 @@ pub(crate) fn unreturned_allocation_at_function_exit(
         return Ok(Ok(None));
     }
     let mut output_state = state.clone();
-    output_state
-        .locals
-        .set_typed("result".to_string(), value.clone(), function.return_type());
+    if function.return_type() != CType::Void {
+        output_state
+            .locals
+            .set_typed("result".to_string(), value.clone(), function.return_type());
+    }
     let returned_resources = match evaluate_function_resource_context(
         &output_state,
         function.resource_ensures(),
@@ -2230,9 +2250,11 @@ fn function_outcome_from_body_with_resource_transfer(
         ));
     };
 
-    state
-        .locals
-        .set_typed("result".to_string(), value.clone(), function.return_type());
+    if function.return_type() != CType::Void {
+        state
+            .locals
+            .set_typed("result".to_string(), value.clone(), function.return_type());
+    }
     let output_resource_state = with_contract_argument_views(&state, argument_values);
     let return_resources = match evaluate_function_return_resources(
         &transfer.caller_resources_after_requirements,

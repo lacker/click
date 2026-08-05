@@ -3416,6 +3416,7 @@ pub(super) fn collect_c0_loop_modified_locals(
         syntax::C0Statement::CallAssign { target, .. } => {
             names.insert(target.clone());
         }
+        syntax::C0Statement::Call { .. } => {}
         syntax::C0Statement::HeapAllocate { target, .. } => {
             names.insert(target.clone());
         }
@@ -3525,6 +3526,12 @@ pub(super) fn initial_call_state(
 
     for (index, parameter) in parameters.iter().enumerate() {
         match parameter.c_type() {
+            C0Type::Void => {
+                return Err(ClickError::new(format!(
+                    "parameter `{}` cannot have type void",
+                    parameter.name()
+                )));
+            }
             C0Type::Int32Pointer => {
                 arguments.push(c_pointer_value(Pointer {
                     block: PointerBlock::ExternalArgument,
@@ -5201,7 +5208,7 @@ pub(super) fn int32_term_value(value: CValue, label: &str) -> Result<Bitvector32
 pub(super) fn promoted_int32_term(value: &CValue) -> Option<Bitvector32Term> {
     match value {
         CValue::Int32(bits) | CValue::UInt8(bits) => Some(simp_bitvector(bits)),
-        CValue::Pointer(_) => None,
+        CValue::Void | CValue::Pointer(_) => None,
     }
 }
 

@@ -66,6 +66,60 @@ fn c0_syntax_ignores_line_and_block_comments() {
 }
 
 #[test]
+fn c0_void_functions_accept_return_and_fallthrough() {
+    let explicit = syntax::parse_function("void stop() { return; }")
+        .expect("a void function may return without a value");
+    let fallthrough = syntax::parse_function("void stop() { int32 value = 0; }")
+        .expect("a void function may fall through");
+
+    assert_eq!(explicit.return_type(), syntax::C0Type::Void);
+    assert_eq!(fallthrough.return_type(), syntax::C0Type::Void);
+    assert_eq!(
+        explicit.to_kernel_function().return_type(),
+        crate::kernel::CType::Void
+    );
+}
+
+#[test]
+fn c0_void_and_nonvoid_returns_do_not_mix() {
+    let void_error = syntax::parse_function("void bad() { return 1; }")
+        .expect_err("a void function cannot return a value");
+    assert_eq!(void_error.message(), "void functions cannot return a value");
+
+    let value_error = syntax::parse_function("int32 bad() { return; }")
+        .expect_err("a non-void function must return a value");
+    assert_eq!(
+        value_error.message(),
+        "non-void functions must return a value"
+    );
+}
+
+#[test]
+fn c0_parses_standalone_calls() {
+    let function =
+        syntax::parse_function("int32 caller(int32 value) { observe(value); return 0; }")
+            .expect("a function result may be discarded");
+
+    fn contains_call(statement: &syntax::C0Statement) -> bool {
+        match statement {
+            syntax::C0Statement::Call { function_name, .. } => function_name == "observe",
+            syntax::C0Statement::Seq(first, second) => {
+                contains_call(first) || contains_call(second)
+            }
+            syntax::C0Statement::If {
+                then_branch,
+                else_branch,
+                ..
+            } => contains_call(then_branch) || contains_call(else_branch),
+            syntax::C0Statement::While { body, .. } => contains_call(body),
+            _ => false,
+        }
+    }
+
+    assert!(contains_call(function.body()));
+}
+
+#[test]
 fn c0_syntax_reports_unterminated_block_comments() {
     let error = syntax::parse_function("/* never closed")
         .expect_err("an unterminated block comment should be rejected");
@@ -200,6 +254,7 @@ fn c0_syntax_models_missing_else_and_empty_statements_as_skip() {
             syntax::C0Statement::While { body, .. } => contains_skip(body),
             syntax::C0Statement::Declare { .. }
             | syntax::C0Statement::Assign { .. }
+            | syntax::C0Statement::Call { .. }
             | syntax::C0Statement::CallAssign { .. }
             | syntax::C0Statement::HeapAllocate { .. }
             | syntax::C0Statement::HeapFree { .. }

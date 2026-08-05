@@ -268,8 +268,9 @@ pointers into sizes and does not automatically unfold the resource: the proof
 still uses `observe` or `unfold` to expose the layer it needs, while the
 termination checker independently rechecks the declared child against the
 exact resource definition. The recursive call path must establish the resource
-guard (for example, `node != 0`), either from an entry requirement or from C
-control flow. The ordinary partial-correctness proof checks resource transfer,
+guard (for example, `node != 0` or the equivalent nonnull arm of
+`if (!node)`), either from an entry requirement or from C control flow. The
+ordinary partial-correctness proof checks resource transfer,
 so the traversal may consume and deallocate nodes after descending.
 
 When code needs the contained owned resources, use `unfold(resource)`. When

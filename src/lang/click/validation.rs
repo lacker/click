@@ -875,12 +875,22 @@ pub(super) fn validate_click_definitions(file: &ClickFile) -> Result<(), ClickEr
 
         for ensure in function.ensures() {
             match ensure.ensure() {
-                Ensure::Proposition(proposition) => validate_predicate_calls_in_proposition(
-                    proposition,
-                    &predicates,
-                    &click_functions,
-                    &format!("ensures clause in `{}`", function.signature().name()),
-                )?,
+                Ensure::Proposition(proposition) => {
+                    validate_predicate_calls_in_proposition(
+                        proposition,
+                        &predicates,
+                        &click_functions,
+                        &format!("ensures clause in `{}`", function.signature().name()),
+                    )?;
+                    if function.signature().return_type() == C0Type::Void {
+                        validate_proposition_expression_types(
+                            proposition,
+                            &ensures_type_environment,
+                            &click_function_types,
+                            &format!("ensures clause in `{}`", function.signature().name()),
+                        )?;
+                    }
+                }
                 Ensure::Resource(resource) => validate_resource_clause(
                     resource,
                     &resources,
@@ -2223,7 +2233,7 @@ fn function_signature_type_environment(
         .iter()
         .map(|parameter| (parameter.name().to_string(), parameter.c_type()))
         .collect::<BTreeMap<_, _>>();
-    if include_result {
+    if include_result && signature.return_type() != C0Type::Void {
         variables.insert("result".to_string(), signature.return_type());
     }
     variables
@@ -2279,20 +2289,30 @@ fn validate_proposition_expression_types(
         ClickProposition::Not(body)
         | ClickProposition::At {
             proposition: body, ..
-        }
-        | ClickProposition::ForAll { body, .. }
-        | ClickProposition::Exists { body, .. } => {
-            validate_proposition_expression_types(body, variables, click_functions, context)
+        } => validate_proposition_expression_types(body, variables, click_functions, context),
+        ClickProposition::ForAll { c_type, name, body }
+        | ClickProposition::Exists { c_type, name, body } => {
+            let mut body_variables = variables.clone();
+            body_variables.insert(name.clone(), *c_type);
+            validate_proposition_expression_types(body, &body_variables, click_functions, context)
         }
         ClickProposition::RangeAll {
-            start, end, body, ..
+            start,
+            end,
+            item,
+            body,
         }
         | ClickProposition::RangeAny {
-            start, end, body, ..
+            start,
+            end,
+            item,
+            body,
         } => {
             let _ = infer_contract_expression_type(start, variables, click_functions, context)?;
             let _ = infer_contract_expression_type(end, variables, click_functions, context)?;
-            validate_proposition_expression_types(body, variables, click_functions, context)
+            let mut body_variables = variables.clone();
+            body_variables.insert(item.clone(), C0Type::Int32);
+            validate_proposition_expression_types(body, &body_variables, click_functions, context)
         }
         ClickProposition::PredicateCall { arguments, .. } => {
             for argument in arguments {
@@ -2530,6 +2550,7 @@ pub(super) fn describe_resource_clause(resource: &ResourceClause) -> String {
 
 pub(super) fn describe_c0_type(c_type: C0Type) -> String {
     match c_type {
+        C0Type::Void => "void".to_string(),
         C0Type::Int32 => "int32".to_string(),
         C0Type::UInt8 => "uint8".to_string(),
         C0Type::Int32Pointer | C0Type::Int32Array(_) => "int32*".to_string(),
@@ -2558,7 +2579,15 @@ fn infer_contract_expression_type(
         | ContractExpression::Field {
             lowered: expression,
             ..
-        } => Ok(infer_c_expression_type(expression, variables)),
+        } => {
+            if !variables.contains_key("result") && c_expression_uses_variable(expression, "result")
+            {
+                return Err(ClickError::new(format!(
+                    "`result` is not available in {context}"
+                )));
+            }
+            Ok(infer_c_expression_type(expression, variables))
+        }
         // C locals are resolved against the concrete program state during
         // lowering, not against the contract namespace used here. In
         // particular, `c(result)` must not inherit the type of built-in
@@ -2694,6 +2723,7 @@ fn infer_c_expression_type(
     variables: &BTreeMap<String, C0Type>,
 ) -> Option<C0Type> {
     match expression {
+        CExpression::Value(CValue::Void) => Some(C0Type::Void),
         CExpression::Value(CValue::Int32(_)) => Some(C0Type::Int32),
         CExpression::Value(CValue::UInt8(_)) => Some(C0Type::UInt8),
         CExpression::Value(CValue::Pointer(_)) => None,
@@ -2737,6 +2767,7 @@ fn infer_c_expression_type(
             infer_c_expression_type(pointer, variables).and_then(pointer_element_type)
         }
         CExpression::TypedLoad { value_type, .. } => match value_type {
+            CType::Void => None,
             CType::Int32 => Some(C0Type::Int32),
             CType::UInt8 => Some(C0Type::UInt8),
             CType::Int32Pointer => Some(C0Type::Int32Pointer),
@@ -2831,7 +2862,7 @@ fn pointer_element_type(c_type: C0Type) -> Option<C0Type> {
     match c_type {
         C0Type::Int32Pointer | C0Type::Int32Array(_) => Some(C0Type::Int32),
         C0Type::UInt8Pointer | C0Type::UInt8Array(_) => Some(C0Type::UInt8),
-        C0Type::Int32 | C0Type::UInt8 => None,
+        C0Type::Void | C0Type::Int32 | C0Type::UInt8 => None,
     }
 }
 
@@ -3173,6 +3204,47 @@ fn validate_if_condition_proposition(
         ClickProposition::PredicateCall { name, .. } => Err(ClickError::new(format!(
             "predicate call `{name}` is not supported in `if` expression condition in {context}"
         ))),
+    }
+}
+
+fn c_expression_uses_variable(expression: &CExpression, variable: &str) -> bool {
+    match expression {
+        CExpression::Value(_) => false,
+        CExpression::Variable(name) => name == variable,
+        CExpression::AddressOf(expression)
+        | CExpression::Not(expression)
+        | CExpression::BitwiseNot(expression)
+        | CExpression::Load(expression)
+        | CExpression::TypedLoad {
+            pointer: expression,
+            ..
+        }
+        | CExpression::PointerOffsetBytes {
+            pointer: expression,
+            ..
+        } => c_expression_uses_variable(expression, variable),
+        CExpression::LessThan(left, right)
+        | CExpression::LessEqual(left, right)
+        | CExpression::GreaterThan(left, right)
+        | CExpression::GreaterEqual(left, right)
+        | CExpression::Equal(left, right)
+        | CExpression::NotEqual(left, right)
+        | CExpression::And(left, right)
+        | CExpression::Or(left, right)
+        | CExpression::Add(left, right)
+        | CExpression::Subtract(left, right)
+        | CExpression::Multiply(left, right)
+        | CExpression::Divide(left, right)
+        | CExpression::Remainder(left, right)
+        | CExpression::ShiftLeft(left, right)
+        | CExpression::ShiftRight(left, right)
+        | CExpression::BitwiseAnd(left, right)
+        | CExpression::BitwiseOr(left, right)
+        | CExpression::BitwiseXor(left, right)
+        | CExpression::Index(left, right) => {
+            c_expression_uses_variable(left, variable)
+                || c_expression_uses_variable(right, variable)
+        }
     }
 }
 

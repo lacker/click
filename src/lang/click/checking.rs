@@ -2372,6 +2372,7 @@ pub(super) fn normalize_direct_atomic_memory_loads(proposition: &Proposition) ->
 
 fn normalize_direct_atomic_resource_loads(resource: &CResource) -> CResource {
     let normalize_value = |value: &CValue| match value {
+        CValue::Void => CValue::Void,
         CValue::Int32(value) => CValue::Int32(normalize_direct_atomic_memory_load(value)),
         CValue::UInt8(value) => CValue::UInt8(normalize_direct_atomic_memory_load(value)),
         CValue::Pointer(pointer) => CValue::Pointer(Pointer {
@@ -6646,6 +6647,7 @@ pub(super) fn symbolic_contract_memory_load(
         Box::new(pointer.clone()),
     );
     match value_type {
+        CType::Void => Err("cannot symbolically load void".to_string()),
         CType::Int32 => Ok(CValue::Int32(load)),
         CType::UInt8 => Ok(CValue::UInt8(load)),
         CType::Int32Pointer | CType::UInt8Pointer => {

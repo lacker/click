@@ -149,6 +149,7 @@ impl std::fmt::Display for PointerBlock {
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum CValue {
+    Void,
     Int32(Bitvector32Term),
     UInt8(Bitvector32Term),
     Pointer(Pointer),
@@ -156,6 +157,7 @@ pub enum CValue {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum CType {
+    Void,
     Int32,
     UInt8,
     Int32Pointer,
@@ -363,6 +365,10 @@ pub enum CStatement {
     },
     CallAssign {
         target: String,
+        function_name: String,
+        arguments: Vec<CExpression>,
+    },
+    Call {
         function_name: String,
         arguments: Vec<CExpression>,
     },
@@ -2186,7 +2192,8 @@ impl CType {
     pub(super) fn accepts(self, value: &CValue) -> bool {
         matches!(
             (self, value),
-            (Self::Int32, CValue::Int32(_))
+            (Self::Void, CValue::Void)
+                | (Self::Int32, CValue::Int32(_))
                 | (Self::UInt8, CValue::UInt8(_))
                 | (Self::Int32Pointer, CValue::Pointer(_))
                 | (Self::UInt8Pointer, CValue::Pointer(_))
@@ -2195,6 +2202,7 @@ impl CType {
 
     pub fn byte_width(self) -> u32 {
         match self {
+            Self::Void => 0,
             Self::Int32 => 4,
             Self::UInt8 => 1,
             Self::Int32Pointer => C_POINTER_BYTE_WIDTH,
@@ -2216,6 +2224,7 @@ impl CType {
 impl CValue {
     pub(super) fn c_type(&self) -> CType {
         match self {
+            Self::Void => CType::Void,
             Self::Int32(_) => CType::Int32,
             Self::UInt8(_) => CType::UInt8,
             Self::Pointer(_) => CType::Int32Pointer,
@@ -2224,6 +2233,7 @@ impl CValue {
 
     pub(super) fn byte_width(&self) -> u32 {
         match self {
+            Self::Void => 0,
             Self::Int32(_) => 4,
             Self::UInt8(_) => 1,
             Self::Pointer(_) => C_POINTER_BYTE_WIDTH,

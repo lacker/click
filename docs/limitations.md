@@ -27,11 +27,13 @@ than approximated.
 
 ## Type Support Is Still Narrow
 
-The verifier supports `int32` and a byte-like `uint8` type, including `uint8*`,
-`uint8[]`, ASCII character literals, byte loads/stores, byte promotion through
-integer operators, and typed Click array refs. This is not a full C integer
-model: there are no casts beyond checked `int32`-to-`uint8` narrowing, no broad
-usual-arithmetic-conversion lattice, and no general unsigned arithmetic yet.
+The verifier supports `void` function returns, `int32`, and a byte-like
+`uint8` type, including `uint8*`, `uint8[]`, ASCII character literals, byte
+loads/stores, byte promotion through integer operators, and typed Click array
+refs. It does not support `void` objects, parameters, or pointers. This is not
+a full C integer model: there are no casts beyond checked
+`int32`-to-`uint8` narrowing, no broad usual-arithmetic-conversion lattice, and
+no general unsigned arithmetic yet.
 Signed `int32` addition, subtraction, multiplication, division, and remainder
 are modeled with C undefined behavior for their C undefined cases: overflow,
 zero divisors, and `INT_MIN / -1` or `INT_MIN % -1`. `int32` bitwise `&`, `|`,

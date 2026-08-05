@@ -557,6 +557,7 @@ pub(super) fn c_values_proven_equal_for_memory_resolution(
     assumptions: &Assumptions,
 ) -> bool {
     match (left, right) {
+        (CValue::Void, CValue::Void) => true,
         (CValue::Int32(left), CValue::Int32(right))
         | (CValue::UInt8(left), CValue::UInt8(right)) => {
             bitvector_terms_proven_equal_for_memory_resolution(left, right, assumptions)
@@ -946,6 +947,7 @@ fn cell_disjoint_from_load_by_constant_offset(
         return false;
     }
     let cell_width = match value {
+        CValue::Void => return false,
         CValue::Int32(_) => 4,
         CValue::UInt8(_) => 1,
         CValue::Pointer(_) => return false,
@@ -961,7 +963,7 @@ fn materialized_cell_source<'a>(cell_pointer: &Pointer, value: &'a CValue) -> Op
         {
             Some(source)
         }
-        CValue::Int32(_) | CValue::UInt8(_) | CValue::Pointer(_) => None,
+        CValue::Void | CValue::Int32(_) | CValue::UInt8(_) | CValue::Pointer(_) => None,
     }
 }
 
@@ -2106,6 +2108,11 @@ pub(super) fn collect_c_statement_bitvector_variables(
                 collect_c_expression_bitvector_variables(argument, variables);
             }
         }
+        CStatement::Call { arguments, .. } => {
+            for argument in arguments {
+                collect_c_expression_bitvector_variables(argument, variables);
+            }
+        }
         CStatement::HeapAllocate { .. } => {}
         CStatement::HeapFree { pointer } => {
             collect_c_expression_bitvector_variables(pointer, variables);
@@ -2686,6 +2693,7 @@ pub(super) fn collect_c_value_bitvector_variables(
     variables: &mut BTreeSet<Variable>,
 ) {
     match value {
+        CValue::Void => {}
         CValue::Int32(bits) | CValue::UInt8(bits) => collect_bitvector_variables(bits, variables),
         CValue::Pointer(pointer) => collect_pointer_bitvector_variables(pointer, variables),
     }
@@ -3248,6 +3256,16 @@ pub(super) fn substitute_bitvector_variable_in_c_statement(
             arguments,
         } => CStatement::CallAssign {
             target: target.clone(),
+            function_name: function_name.clone(),
+            arguments: arguments
+                .iter()
+                .map(|argument| substitute_bitvector_variable_in_c_expression(argument, from, to))
+                .collect(),
+        },
+        CStatement::Call {
+            function_name,
+            arguments,
+        } => CStatement::Call {
             function_name: function_name.clone(),
             arguments: arguments
                 .iter()
@@ -4286,6 +4304,7 @@ pub(super) fn substitute_bitvector_variable_in_c_value(
     to: &Bitvector32Term,
 ) -> CValue {
     match value {
+        CValue::Void => CValue::Void,
         CValue::Int32(bits) => int32(substitute_bitvector_variable(bits, from, to)),
         CValue::UInt8(bits) => uint8(substitute_bitvector_variable(bits, from, to)),
         CValue::Pointer(pointer) => {

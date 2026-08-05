@@ -9,6 +9,7 @@ documentation calls that syntax a **C fragment**.
 
 - `int32`
 - `uint8`
+- `void` as a function return type
 - `int32*`
 - `uint8*`
 - Function parameters written as `int32 p[]`, `int32 p[3]`, `uint8 p[]`, or
@@ -48,13 +49,15 @@ Supported C0 surface includes:
 - `while`
 - assignment-style `for (init; condition; step)` loops lowered to `while`
 - `return`
+- bare `return;` and ordinary fallthrough from `void` functions
 - address-of lvalues
 - pointer arithmetic for `int32*` and `uint8*`, scaled by the pointee width
 - pointer loads and stores
 - `p[i]` indexing for `int32*` and `uint8*`
 - a small struct slice: `struct name { ... };`, `struct name*` pointers, and
   chained `p->child->field` loads/stores for `int32` and pointer fields
-- known function calls through the current function environment
+- known function calls through the current function environment, either
+  assigned or used as standalone statements when the result is discarded
 - fixed-size `malloc(sizeof(struct T))` assigned to a matching `struct T*`
   local, and standalone `free(pointer);`
 - local scalar, pointer, and fixed-size array declarations for `int32` and
@@ -205,6 +208,7 @@ These are not general C features yet:
 - mixed-width integer conversions beyond `uint8` promotion to `int32`
 - pointer comparisons beyond the supported equality/range patterns
 - general heap allocation beyond the fixed-size struct-object slice
+- `void` objects, `void` parameters, and `void *`
 - function pointers
 - global variables
 - `do while`, `switch`, `break`, `continue`

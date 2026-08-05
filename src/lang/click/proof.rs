@@ -750,6 +750,7 @@ pub(super) fn pure_theorem_parameter_values(
         .enumerate()
         .map(|(index, parameter)| {
             let value = match parameter.c_type() {
+                C0Type::Void => unreachable!("pure theorem parameters cannot be void"),
                 C0Type::Int32 => CValue::Int32(Bitvector32Term::Variable(Variable(index as u64))),
                 C0Type::UInt8 => CValue::UInt8(Bitvector32Term::Variable(Variable(index as u64))),
                 C0Type::Int32Pointer | C0Type::Int32Array(_) => CValue::Pointer(Pointer {
@@ -6017,6 +6018,7 @@ fn statement_consults_conditions(state: &CState, statement: &CStatement) -> bool
                 || statement_consults_conditions(state, second)
         }
         CStatement::CallAssign { .. }
+        | CStatement::Call { .. }
         | CStatement::HeapAllocate { .. }
         | CStatement::HeapFree { .. }
         | CStatement::Assert { .. }
@@ -6067,7 +6069,7 @@ fn certified_loop_exit_transitions_with_proven_phases(
 
 fn statement_contains_call_assign(statement: &CStatement) -> bool {
     match statement {
-        CStatement::CallAssign { .. } => true,
+        CStatement::CallAssign { .. } | CStatement::Call { .. } => true,
         CStatement::Seq(first, second) => {
             statement_contains_call_assign(first) || statement_contains_call_assign(second)
         }
@@ -6946,6 +6948,7 @@ fn kernel_statement_contains_loop(statement: &CStatement) -> bool {
         | CStatement::Declare { .. }
         | CStatement::Assign { .. }
         | CStatement::CallAssign { .. }
+        | CStatement::Call { .. }
         | CStatement::HeapAllocate { .. }
         | CStatement::HeapFree { .. }
         | CStatement::Return(_)
@@ -14306,6 +14309,7 @@ fn synthesize_surface_bitvector(
                                 C0Type::UInt8Pointer | C0Type::UInt8Array(_) => Some(CType::UInt8),
                                 C0Type::Int32Pointer | C0Type::Int32Array(_) => Some(CType::Int32),
                                 C0Type::Int32 | C0Type::UInt8 => None,
+                                C0Type::Void => None,
                             }
                         });
                 let pointer = synthesize_surface_pointer(pointer, parameters, arguments, state)?;

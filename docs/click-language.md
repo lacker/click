@@ -33,9 +33,12 @@ binders introduced by Click itself use `name: type`: theorem and resource
 parameters, pure-function and predicate parameters, typed `let` bindings, and
 `forall`/`exists` variables.
 
-Click signatures currently understand `int32`, `uint8`, `int32*`, `uint8*`,
-pilot `struct name*` parameters, and array-parameter spellings such as
-`int32 p[]` and `uint8 bytes[]`.
+Click signatures currently understand `void` C return types, `int32`, `uint8`,
+`int32*`, `uint8*`, pilot `struct name*` parameters, and array-parameter
+spellings such as `int32 p[]` and `uint8 bytes[]`. `void` is not an object or
+parameter type. A `void` contract has no `result` binding; it may still state
+resource transfer, memory effects, and return-state propositions that do not
+mention a result.
 Character literals such as `'x'`, `'\n'`, and `'\0'` are `uint8` values.
 
 Inside C fragments and pure Click expressions over C values, `uint8` rvalues
@@ -98,9 +101,11 @@ The declaration must exactly name an owned or viewed entry resource. The
 current structural slice supports direct recursion, a guarded directly
 recursive composite definition, and a simple resource guard. Every recursive
 call path must establish that guard, either from a function precondition or
-ordinary C control flow, and must pass one of the definition's direct
-`contains` children. Click follows ordinary C-local aliases but does not accept
-pointer inequality, a same-named unrelated resource, or a newly folded
+ordinary C control flow. Guard matching uses C meaning rather than one
+spelling: negation, branch polarity, symmetric equality, and corresponding
+ordered comparisons are normalized. The call must pass one of the definition's
+direct `contains` children. Click follows ordinary C-local aliases but does not
+accept pointer inequality, a same-named unrelated resource, or a newly folded
 resource as ancestry evidence. Because the separately certified partial
 contract checks the actual resource transfer at each call, the traversal may
 consume or mutate resources; postorder recursive deallocation is supported.
@@ -140,7 +145,8 @@ int32 set_first(int32 p[], int32 value) {
 ```
 
 The trailing block executes the function once and proves every listed claim
-from that shared replay. `frame()` discharges the effect claims, while
+from that shared replay. It may also certify a resource-only contract with no
+effect or postcondition clauses. `frame()` discharges the effect claims, while
 `simp()` and resource steps discharge the postconditions. A function uses
 either this grouped form or per-claim `by` clauses; the two forms cannot be
 mixed. Structural region clauses, including loop proofs, retain their own

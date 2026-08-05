@@ -221,18 +221,101 @@ fn branch_establishes_structural_guard(
     branch_value: bool,
     guard: &CExpression,
 ) -> bool {
-    if branch_condition == guard {
-        return branch_value;
+    #[derive(Eq, PartialEq)]
+    enum ConditionAtom {
+        Equal(CExpression, CExpression),
+        LessThan(CExpression, CExpression),
     }
-    match (branch_condition, guard) {
-        (CExpression::Equal(left, right), CExpression::NotEqual(guard_left, guard_right))
-        | (CExpression::NotEqual(left, right), CExpression::Equal(guard_left, guard_right)) => {
-            !branch_value
-                && ((left == guard_left && right == guard_right)
-                    || (left == guard_right && right == guard_left))
+
+    fn normalized(expression: &CExpression, value: bool) -> (ConditionAtom, bool) {
+        let ordered = |left: &CExpression, right: &CExpression| {
+            if left <= right {
+                (left.clone(), right.clone())
+            } else {
+                (right.clone(), left.clone())
+            }
+        };
+        match expression {
+            CExpression::Not(body) => normalized(body, !value),
+            CExpression::Equal(left, right) => {
+                let (left, right) = ordered(left, right);
+                (ConditionAtom::Equal(left, right), value)
+            }
+            CExpression::NotEqual(left, right) => {
+                let (left, right) = ordered(left, right);
+                (ConditionAtom::Equal(left, right), !value)
+            }
+            CExpression::LessThan(left, right) => (
+                ConditionAtom::LessThan(left.as_ref().clone(), right.as_ref().clone()),
+                value,
+            ),
+            CExpression::GreaterEqual(left, right) => (
+                ConditionAtom::LessThan(left.as_ref().clone(), right.as_ref().clone()),
+                !value,
+            ),
+            CExpression::GreaterThan(left, right) => (
+                ConditionAtom::LessThan(right.as_ref().clone(), left.as_ref().clone()),
+                value,
+            ),
+            CExpression::LessEqual(left, right) => (
+                ConditionAtom::LessThan(right.as_ref().clone(), left.as_ref().clone()),
+                !value,
+            ),
+            expression => {
+                let (left, right) = ordered(
+                    expression,
+                    &CExpression::Value(CValue::Int32(Bitvector32Term::Constant(0))),
+                );
+                (ConditionAtom::Equal(left, right), !value)
+            }
         }
-        _ => false,
     }
+
+    normalized(branch_condition, branch_value) == normalized(guard, true)
+}
+
+fn check_structural_recursive_call(
+    function_name: &str,
+    arguments: &[CExpression],
+    function: &CFunction,
+    measure_arguments: &[CExpression],
+    child_arguments: &[Vec<CExpression>],
+    guard: &CExpression,
+    path: &StructuralRecursionPath,
+) -> Result<(), CTerminationError> {
+    if function_name != function.name() {
+        return Ok(());
+    }
+    if !path
+        .conditions
+        .iter()
+        .any(|(condition, value)| branch_establishes_structural_guard(condition, *value, guard))
+    {
+        return Err(error(format!(
+            "recursive call to `{function_name}` is reachable without establishing the active structural resource guard"
+        )));
+    }
+    let parameter_substitutions = function
+        .parameters()
+        .iter()
+        .zip(arguments)
+        .map(|(parameter, argument)| {
+            (
+                parameter.name().to_string(),
+                resolve_c_expression_aliases(argument, &path.aliases),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    let call_measure_arguments = measure_arguments
+        .iter()
+        .map(|argument| substitute_c_expression_variables(argument, &parameter_substitutions))
+        .collect::<Vec<_>>();
+    if !child_arguments.contains(&call_measure_arguments) {
+        return Err(error(format!(
+            "recursive call to `{function_name}` does not pass a direct contained child of its structural resource measure"
+        )));
+    }
+    Ok(())
 }
 
 fn structural_recursion_paths(
@@ -279,41 +362,36 @@ fn structural_recursion_paths(
         } => {
             let mut next_paths = Vec::new();
             for mut path in paths {
-                if function_name == function.name() {
-                    if !path.conditions.iter().any(|(condition, value)| {
-                        branch_establishes_structural_guard(condition, *value, guard)
-                    }) {
-                        return Err(error(format!(
-                            "recursive call to `{function_name}` is reachable without establishing the active structural resource guard"
-                        )));
-                    }
-                    let parameter_substitutions = function
-                        .parameters()
-                        .iter()
-                        .zip(arguments)
-                        .map(|(parameter, argument)| {
-                            (
-                                parameter.name().to_string(),
-                                resolve_c_expression_aliases(argument, &path.aliases),
-                            )
-                        })
-                        .collect::<BTreeMap<_, _>>();
-                    let call_measure_arguments = measure_arguments
-                        .iter()
-                        .map(|argument| {
-                            substitute_c_expression_variables(argument, &parameter_substitutions)
-                        })
-                        .collect::<Vec<_>>();
-                    if !child_arguments.contains(&call_measure_arguments) {
-                        return Err(error(format!(
-                            "recursive call to `{function_name}` does not pass a direct contained child of its structural resource measure"
-                        )));
-                    }
-                }
+                check_structural_recursive_call(
+                    function_name,
+                    arguments,
+                    function,
+                    measure_arguments,
+                    child_arguments,
+                    guard,
+                    &path,
+                )?;
                 path.aliases.remove(target);
                 next_paths.push(path);
             }
             Ok(next_paths)
+        }
+        CStatement::Call {
+            function_name,
+            arguments,
+        } => {
+            for path in &paths {
+                check_structural_recursive_call(
+                    function_name,
+                    arguments,
+                    function,
+                    measure_arguments,
+                    child_arguments,
+                    guard,
+                    path,
+                )?;
+            }
+            Ok(paths)
         }
         CStatement::Seq(first, second) => structural_recursion_paths(
             second,
@@ -502,7 +580,7 @@ fn refined_lower_bound(condition: &CExpression, variable: &str, branch: bool, cu
 
 fn statement_calls(statement: &CStatement, calls: &mut BTreeSet<String>) {
     match statement {
-        CStatement::CallAssign { function_name, .. } => {
+        CStatement::CallAssign { function_name, .. } | CStatement::Call { function_name, .. } => {
             calls.insert(function_name.clone());
         }
         CStatement::Seq(first, second) => {
@@ -563,6 +641,30 @@ fn recursion_paths(
                     "recursive termination measure `{measure}` is overwritten by a call result"
                 )));
             }
+            if component.contains(function_name) {
+                let index = parameter_indices[function_name];
+                let argument = arguments.get(index).ok_or_else(|| {
+                    error(format!(
+                        "recursive call to `{function_name}` has no argument for its termination measure"
+                    ))
+                })?;
+                let step = variable_minus_positive(argument, measure).ok_or_else(|| {
+                    error(format!(
+                        "recursive call to `{function_name}` must pass `{measure} - K` for a positive constant K"
+                    ))
+                })?;
+                if lower_bounds.iter().any(|bound| *bound < step) {
+                    return Err(error(format!(
+                        "recursive call to `{function_name}` does not establish that `{measure} - {step}` is nonnegative"
+                    )));
+                }
+            }
+            Ok(lower_bounds)
+        }
+        CStatement::Call {
+            function_name,
+            arguments,
+        } => {
             if component.contains(function_name) {
                 let index = parameter_indices[function_name];
                 let argument = arguments.get(index).ok_or_else(|| {
@@ -657,6 +759,7 @@ fn loop_paths(
             "loop measure `{measure}` is overwritten by a call result"
         ))),
         CStatement::CallAssign { .. } => Ok(offsets),
+        CStatement::Call { .. } => Ok(offsets),
         CStatement::Seq(first, second) => {
             loop_paths(second, measure, loop_paths(first, measure, offsets)?)
         }
@@ -719,6 +822,7 @@ fn check_loops(
         | CStatement::Declare { .. }
         | CStatement::Assign { .. }
         | CStatement::CallAssign { .. }
+        | CStatement::Call { .. }
         | CStatement::HeapAllocate { .. }
         | CStatement::HeapFree { .. }
         | CStatement::Assert { .. }

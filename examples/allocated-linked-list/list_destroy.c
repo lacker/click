@@ -3,12 +3,11 @@ struct node {
     struct node *next;
 };
 
-int32 list_destroy(struct node *node) {
-    if (node == 0) {
-        return 0;
+void list_destroy(struct node *node) {
+    if (!node) {
+        return;
     }
     struct node *next = node->next;
-    int32 destroyed = list_destroy(next);
+    list_destroy(next);
     free(node);
-    return 0;
 }

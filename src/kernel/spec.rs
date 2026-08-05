@@ -1738,6 +1738,6 @@ pub(super) fn c_value_comparison_proposition(
 fn c_value_int32_term(value: &CValue) -> Option<Bitvector32Term> {
     match value {
         CValue::Int32(value) | CValue::UInt8(value) => Some(value.clone()),
-        CValue::Pointer(_) => None,
+        CValue::Void | CValue::Pointer(_) => None,
     }
 }

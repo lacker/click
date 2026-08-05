@@ -48,6 +48,7 @@ pub(super) fn promote_c_int32_path_value(
     assumptions: &Assumptions,
 ) -> Option<Bitvector32Term> {
     match value {
+        CValue::Void => None,
         CValue::Int32(value) => Some(value),
         CValue::UInt8(value) => {
             add_uint8_range_execution_pure_facts(facts, assumptions, &value)?;
@@ -795,6 +796,7 @@ pub(super) fn c_truthiness_paths(
     assumptions: &Assumptions,
 ) -> Vec<CTruthinessPath> {
     match value {
+        CValue::Void => Vec::new(),
         CValue::Int32(bits) | CValue::UInt8(bits) => {
             let is_zero = ConditionTerm::equal(bits, Bitvector32Term::Constant(0));
             match decide_with_facts(assumptions, &facts, &is_zero) {
@@ -1288,6 +1290,7 @@ pub(super) fn symbolic_load_value(
     value_type: CType,
 ) -> Option<CValue> {
     match value_type {
+        CType::Void => None,
         CType::Int32 => Some(memory.symbolic_int32_load(pointer)),
         CType::UInt8 => Some(memory.symbolic_uint8_load(pointer)),
         CType::Int32Pointer => Some(memory.symbolic_pointer_load(pointer, 4)),
@@ -3141,6 +3144,18 @@ pub(super) fn execute_c_statement_paths(
             execution_semantics,
             budget,
         )?,
+        CStatement::Call {
+            function_name,
+            arguments,
+        } => execute_c_call_paths(
+            state,
+            function_name,
+            arguments,
+            assumptions,
+            environment,
+            execution_semantics,
+            budget,
+        )?,
         CStatement::HeapAllocate { target, bytes } => {
             execute_c_heap_allocate_paths(state, target, *bytes, assumptions, budget)?
         }
@@ -3537,6 +3552,7 @@ pub(super) fn execute_c_while_body_paths(
 pub(super) fn declare_local(state: &CState, name: &str, c_type: CType) -> CState {
     let mut state = state.clone();
     let byte_width = match c_type {
+        CType::Void => unreachable!("void local objects are not supported"),
         CType::Int32 => 4,
         CType::UInt8 => 1,
         CType::Int32Pointer | CType::UInt8Pointer => C_POINTER_BYTE_WIDTH,

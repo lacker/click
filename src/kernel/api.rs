@@ -21,6 +21,7 @@ pub(crate) fn c_resources_directly_match(
     assumptions: &Assumptions,
 ) -> bool {
     let values_match = |left: &CValue, right: &CValue| match (left, right) {
+        (CValue::Void, CValue::Void) => true,
         (CValue::Int32(left), CValue::Int32(right))
         | (CValue::UInt8(left), CValue::UInt8(right)) => {
             bitvector_terms_proven_equal_for_memory_resolution(left, right, assumptions)
@@ -192,6 +193,7 @@ fn canonical_c_memory_deep_uncached(memory: &CMemory) -> CMemory {
     for (pointer, value) in cells {
         let key = canonicalize_pointer_loads(&pointer, 0);
         let value = match value {
+            CValue::Void => CValue::Void,
             CValue::Int32(term) => CValue::Int32(canonicalize_atomic_loads(&term)),
             CValue::UInt8(term) => CValue::UInt8(canonicalize_atomic_loads(&term)),
             CValue::Pointer(pointer) => CValue::Pointer(canonicalize_pointer_loads(&pointer, 0)),
@@ -1476,7 +1478,7 @@ pub(crate) fn certified_store_equations(facts: &[ExecutionPureFact]) -> Vec<Prop
             let store = fact.certified_store_data()?;
             let value = match &store.value {
                 CValue::Int32(term) | CValue::UInt8(term) => term.clone(),
-                CValue::Pointer(_) => return None,
+                CValue::Void | CValue::Pointer(_) => return None,
             };
             Some(Proposition::ConditionIs(
                 ConditionTerm::Bitvector32Equal(
@@ -1498,6 +1500,7 @@ pub(crate) fn certified_store_loadability_facts(facts: &[ExecutionPureFact]) -> 
         .filter_map(|fact| {
             let store = fact.certified_store_data()?;
             let byte_width = match store.value {
+                CValue::Void => return None,
                 CValue::UInt8(_) => 1,
                 CValue::Int32(_) | CValue::Pointer(_) => 4,
             };
@@ -2346,6 +2349,7 @@ pub fn abstract_c_state_for_join(
             value.clone()
         } else {
             match c_type {
+                CType::Void => continue,
                 CType::Int32 => int32(Bitvector32Term::Variable(variables.next())),
                 CType::UInt8 => uint8(Bitvector32Term::Variable(variables.next())),
                 CType::Int32Pointer | CType::UInt8Pointer => {
@@ -2516,6 +2520,13 @@ pub fn c_call_assign(
     }
 }
 
+pub fn c_call(function_name: impl Into<String>, arguments: Vec<CExpression>) -> CStatement {
+    CStatement::Call {
+        function_name: function_name.into(),
+        arguments,
+    }
+}
+
 pub fn c_heap_allocate(target: impl Into<String>, bytes: u32) -> CStatement {
     CStatement::HeapAllocate {
         target: target.into(),
@@ -2558,6 +2569,10 @@ pub fn c_skip() -> CStatement {
 
 pub fn c_return(expression: CExpression) -> CStatement {
     CStatement::Return(expression)
+}
+
+pub fn c_void_value() -> CExpression {
+    CExpression::Value(CValue::Void)
 }
 
 pub fn c_store(pointer: CExpression, value: CExpression) -> CStatement {
@@ -6361,9 +6376,11 @@ fn prepare_function_claim_path(
         .clone()
         .with_memory(return_state.memory().clone());
     post_state.resources = post_resources.clone();
-    post_state
-        .locals
-        .set_typed("result".to_string(), value.clone(), function.return_type());
+    if function.return_type() != CType::Void {
+        post_state
+            .locals
+            .set_typed("result".to_string(), value.clone(), function.return_type());
+    }
     if let Some(obligation) = path.obligations().iter().find(|obligation| {
         let proved = certification_proves_proposition(&assumptions, obligation.proposition())
             || loadable_covered_by_fact(&assumptions, obligation.proposition())
@@ -7254,6 +7271,7 @@ pub(crate) fn bitvector_term_deeper_than(term: &Bitvector32Term, limit: usize) -
         memory.cells.iter().any(|(pointer, value)| {
             pointer_depth_exceeds(pointer, remaining - 1)
                 || match value {
+                    CValue::Void => false,
                     CValue::Int32(term) | CValue::UInt8(term) => {
                         term_depth_exceeds(term, remaining - 1)
                     }

@@ -8,9 +8,9 @@ int32 list_pipeline(int32 first, int32 second) {
     list = list_prepend(first, list);
     list = list_prepend(second, list);
     if (list != 0) {
-        int32 observed = list_head(list);
+        list_head(list);
         list = list_drop_front(list);
     }
-    int32 destroyed = list_destroy(list);
+    list_destroy(list);
     return 0;
 }

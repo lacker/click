@@ -95,8 +95,9 @@ resource requirements. The kernel resolves that requirement and the exact
 composite definition again, instantiates its guard and direct recursive
 children, checks that control flow establishes the active guard before every
 recursive edge, and compares every direct self-call's instantiated measure
-with a direct child. C-local aliases and branch polarity are normalized from
-the source body. The already certified partial contract remains responsible
+with a direct child. C-local aliases, logical negation, equivalent comparisons,
+scalar truthiness, and branch polarity are normalized from the source body.
+The already certified partial contract remains responsible
 for the actual resource transfer and memory safety, so a structurally ranked
 function may consume or mutate its witness, including freeing a parent after
 destroying its child. Thus the surface plan cannot assert ancestry, and an
@@ -124,8 +125,11 @@ In `src/kernel/`:
 - `ConditionTerm`: proof-level truth-valued conditions such as signed order,
   equality, overflow, and pointer-offset equality.
 - `CValue`, `CType`, `Pointer`, `CMemory`, `CState`: C semantic state,
-  including `int32`, `uint8`, pointers, and typed memory loads/stores.
-- `CExpression`, `CStatement`, `CFunction`: lowered C0 syntax.
+  including the non-object `Void` return value, `int32`, `uint8`, pointers, and
+  typed memory loads/stores.
+- `CExpression`, `CStatement`, `CFunction`: lowered C0 syntax. Calls have
+  distinct assigned-result and discarded-result statements; a normal
+  fallthrough from a `void` body completes with `CValue::Void`.
 - `SpecExpression`, `SpecProposition`: Kernel Click forms used for
   state-parametric loop invariants. They can include current-state C fragments,
   fixed-memory loads, pure `if`, `let`, and `RangeFold`. Specification memory

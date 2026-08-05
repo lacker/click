@@ -285,6 +285,9 @@ impl Parser {
         self.expect(Token::RParen)?;
         self.expect(Token::Arrow)?;
         let return_type = self.parse_type()?.c_type;
+        if return_type == C0Type::Void {
+            return Err(self.error("pure Click functions must return a value"));
+        }
         let decreases = if self.peek_ident() == Some("decreases") {
             self.position += 1;
             Some(self.parse_contract_expression()?)
@@ -940,11 +943,12 @@ impl Parser {
         }
 
         let scalar_type = match spelling.as_str() {
+            "void" => C0Type::Void,
             "int32" => C0Type::Int32,
             "uint8" => C0Type::UInt8,
             _ => {
                 return Err(self.error(format!(
-                    "expected type `int32` or `uint8`, got `{spelling}`"
+                    "expected type `void`, `int32`, or `uint8`, got `{spelling}`"
                 )));
             }
         };
@@ -952,6 +956,7 @@ impl Parser {
             self.position += 1;
             Ok(ParsedType {
                 c_type: match scalar_type {
+                    C0Type::Void => return Err(self.error("`void *` is not supported yet")),
                     C0Type::Int32 => C0Type::Int32Pointer,
                     C0Type::UInt8 => C0Type::UInt8Pointer,
                     _ => unreachable!("scalar type should not be aggregate"),
@@ -971,6 +976,9 @@ impl Parser {
         name: String,
         parsed_type: ParsedType,
     ) -> Result<ParsedParameter, ClickError> {
+        if parsed_type.c_type == C0Type::Void {
+            return Err(self.error("parameters cannot have type `void`"));
+        }
         if self.peek() != Some(&Token::LBracket) {
             let struct_name = parsed_type.struct_name;
             return Ok(ParsedParameter {

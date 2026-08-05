@@ -43,6 +43,7 @@ pub struct C0StructField {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum C0Type {
+    Void,
     Int32,
     UInt8,
     Int32Pointer,
@@ -61,6 +62,7 @@ impl CAbi {
 
     fn size_and_alignment(self, c_type: C0Type) -> (u32, u32) {
         match (self, c_type) {
+            (Self::Lp64, C0Type::Void) => (0, 1),
             (Self::Lp64, C0Type::Int32) => (4, 4),
             (Self::Lp64, C0Type::UInt8) => (1, 1),
             (Self::Lp64, C0Type::Int32Pointer | C0Type::UInt8Pointer) => (8, 8),
@@ -83,6 +85,10 @@ pub enum C0Statement {
     },
     CallAssign {
         target: String,
+        function_name: String,
+        arguments: Vec<C0Expression>,
+    },
+    Call {
         function_name: String,
         arguments: Vec<C0Expression>,
     },
@@ -113,6 +119,7 @@ pub enum C0Statement {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum C0Expression {
+    Void,
     Variable(String),
     AddressOf(Box<C0Expression>),
     PointerOffsetBytes {
@@ -268,6 +275,7 @@ impl C0Parameter {
 impl C0Type {
     pub fn to_kernel_type(self) -> crate::kernel::CType {
         match self {
+            Self::Void => crate::kernel::CType::Void,
             Self::Int32 => crate::kernel::CType::Int32,
             Self::UInt8 => crate::kernel::CType::UInt8,
             Self::Int32Pointer => crate::kernel::CType::Int32Pointer,
@@ -294,6 +302,16 @@ impl C0Statement {
                 arguments,
             } => crate::kernel::c_call_assign(
                 target.clone(),
+                function_name.clone(),
+                arguments
+                    .iter()
+                    .map(C0Expression::to_kernel_expression)
+                    .collect(),
+            ),
+            Self::Call {
+                function_name,
+                arguments,
+            } => crate::kernel::c_call(
                 function_name.clone(),
                 arguments
                     .iter()
@@ -346,6 +364,7 @@ impl C0Statement {
 impl C0Expression {
     pub fn to_kernel_expression(&self) -> crate::kernel::CExpression {
         match self {
+            Self::Void => crate::kernel::c_void_value(),
             Self::Variable(name) => crate::kernel::c_variable(name.clone()),
             Self::AddressOf(target) => {
                 crate::kernel::CExpression::AddressOf(Box::new(target.to_kernel_expression()))
@@ -486,6 +505,43 @@ pub fn parse_function(source: &str) -> Result<C0Function, C0SyntaxError> {
 
 pub fn parse_function_for_abi(source: &str, abi: CAbi) -> Result<C0Function, C0SyntaxError> {
     Parser::new(source, abi)?.parse_function()
+}
+
+fn validate_function_returns(
+    statement: &C0Statement,
+    return_type: C0Type,
+) -> Result<(), C0SyntaxError> {
+    match statement {
+        C0Statement::Return(C0Expression::Void) if return_type != C0Type::Void => {
+            Err(C0SyntaxError::new("non-void functions must return a value"))
+        }
+        C0Statement::Return(C0Expression::Void) => Ok(()),
+        C0Statement::Return(_) if return_type == C0Type::Void => {
+            Err(C0SyntaxError::new("void functions cannot return a value"))
+        }
+        C0Statement::Seq(first, second) => {
+            validate_function_returns(first, return_type)?;
+            validate_function_returns(second, return_type)
+        }
+        C0Statement::If {
+            then_branch,
+            else_branch,
+            ..
+        } => {
+            validate_function_returns(then_branch, return_type)?;
+            validate_function_returns(else_branch, return_type)
+        }
+        C0Statement::While { body, .. } => validate_function_returns(body, return_type),
+        C0Statement::Skip
+        | C0Statement::Declare { .. }
+        | C0Statement::Assign { .. }
+        | C0Statement::CallAssign { .. }
+        | C0Statement::Call { .. }
+        | C0Statement::HeapAllocate { .. }
+        | C0Statement::HeapFree { .. }
+        | C0Statement::Return(_)
+        | C0Statement::Store { .. } => Ok(()),
+    }
 }
 
 fn align_up(offset: u32, alignment: u32) -> Option<u32> {
@@ -688,7 +744,14 @@ impl Parser {
         self.expect(Token::LParen)?;
         let parameters = self.parse_parameters()?;
         self.expect(Token::RParen)?;
-        let body = self.parse_block_statement()?;
+        let mut body = self.parse_block_statement()?;
+        validate_function_returns(&body, return_type)?;
+        if return_type == C0Type::Void {
+            body = C0Statement::Seq(
+                Box::new(body),
+                Box::new(C0Statement::Return(C0Expression::Void)),
+            );
+        }
         self.expect_end(&name)?;
 
         Ok(C0Function {
@@ -784,6 +847,9 @@ impl Parser {
 
         loop {
             let parsed_type = self.parse_type()?;
+            if parsed_type.c_type == C0Type::Void {
+                return Err(self.error_here("function parameters cannot have type `void`"));
+            }
             let name = self.expect_ident("parameter name")?;
             let c_type = self.parse_parameter_array_suffix(parsed_type.c_type)?;
             let struct_name = parsed_type.struct_name;
@@ -829,13 +895,17 @@ impl Parser {
                     Err(self.error_here("only pointer-to-struct types are supported"))
                 }
             }
-            Some(Token::Ident(name)) if name == "int32" || name == "uint8" => {
-                let scalar_type = if name == "int32" {
-                    C0Type::Int32
-                } else {
-                    C0Type::UInt8
+            Some(Token::Ident(name)) if name == "void" || name == "int32" || name == "uint8" => {
+                let scalar_type = match name.as_str() {
+                    "void" => C0Type::Void,
+                    "int32" => C0Type::Int32,
+                    "uint8" => C0Type::UInt8,
+                    _ => unreachable!(),
                 };
                 if self.peek() == Some(&Token::Star) {
+                    if scalar_type == C0Type::Void {
+                        return Err(self.error_here("`void *` is not supported yet"));
+                    }
                     self.position += 1;
                     Ok(ParsedType {
                         c_type: match scalar_type {
@@ -853,13 +923,12 @@ impl Parser {
                 }
             }
             Some(token) => Err(self.error_at_previous(format!(
-                "expected type `int32`, `uint8`, or `struct`, got {}",
+                "expected type `void`, `int32`, `uint8`, or `struct`, got {}",
                 token.describe()
             ))),
-            None => {
-                Err(self
-                    .error_here("expected type `int32`, `uint8`, or `struct`, got end of input"))
-            }
+            None => Err(self.error_here(
+                "expected type `void`, `int32`, `uint8`, or `struct`, got end of input",
+            )),
         }
     }
 
@@ -1042,7 +1111,11 @@ impl Parser {
             Some(Token::Ident(_)) => match self.peek_ident() {
                 Some("return") => {
                     self.position += 1;
-                    let expression = self.parse_expression()?;
+                    let expression = if self.peek() == Some(&Token::Semicolon) {
+                        C0Expression::Void
+                    } else {
+                        self.parse_expression()?
+                    };
                     self.expect(Token::Semicolon)?;
                     Ok(C0Statement::Return(expression))
                 }
@@ -1104,6 +1177,19 @@ impl Parser {
                         };
                         Ok(C0Statement::HeapFree {
                             pointer: pointer.clone(),
+                        })
+                    } else if self.peek_next() == Some(&Token::LParen) {
+                        let function_name = self.expect_ident("function name")?;
+                        if function_name == "malloc" {
+                            return Err(self.error_here(
+                                "the fixed-size `malloc` result may not be discarded",
+                            ));
+                        }
+                        let arguments = self.parse_call_arguments()?;
+                        self.expect(Token::Semicolon)?;
+                        Ok(C0Statement::Call {
+                            function_name,
+                            arguments,
                         })
                     } else {
                         Err(self

@@ -1733,7 +1733,7 @@ fn click_array_element_type(c_type: C0Type) -> Option<CType> {
     match c_type {
         C0Type::Int32Pointer | C0Type::Int32Array(_) => Some(CType::Int32),
         C0Type::UInt8Pointer | C0Type::UInt8Array(_) => Some(CType::UInt8),
-        C0Type::Int32 | C0Type::UInt8 => None,
+        C0Type::Void | C0Type::Int32 | C0Type::UInt8 => None,
     }
 }
 
@@ -2369,12 +2369,6 @@ fn verify_c0_sources_with_environment(
         }
         let mut function_verified = Vec::new();
         if let Some(grouped_proof) = function_block.grouped_proof() {
-            if !has_explicit_claims {
-                return Err(ClickError::new(format!(
-                    "grouped proof for `{}` requires at least one effect or postcondition",
-                    function_block.signature().name()
-                )));
-            }
             let theorems = match grouped_proof {
                 Proof::Tactic(SmartTactic::Auto) => prove_claims_by_grouped_auto(
                     source_path,
@@ -2846,6 +2840,9 @@ fn c0_statement_calls(statement: &syntax::C0Statement) -> Vec<BTreeSet<String>> 
                 visit(body, calls);
             }
             syntax::C0Statement::CallAssign { function_name, .. } => {
+                calls.push(BTreeSet::from([function_name.clone()]));
+            }
+            syntax::C0Statement::Call { function_name, .. } => {
                 calls.push(BTreeSet::from([function_name.clone()]));
             }
             syntax::C0Statement::Declare { .. }

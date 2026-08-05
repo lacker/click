@@ -1,7 +1,8 @@
 # structural descent permits a nullable recursive destructor
 
 The resource guard may be established by C control flow instead of an entry
-precondition. The ordinary contract certifies ownership transfer and `free`;
+precondition. Equivalent C spellings such as `!node` establish the same guard
+as `node == 0`. The ordinary contract certifies ownership transfer and `free`;
 the structural measure separately certifies that the recursive call receives
 the direct contained tail.
 
@@ -11,14 +12,13 @@ struct node {
     struct node *next;
 };
 
-int32 list_destroy(struct node *node) {
-    if (node == 0) {
-        return 0;
+void list_destroy(struct node *node) {
+    if (!node) {
+        return;
     }
     struct node *next = node->next;
-    int32 destroyed = list_destroy(next);
+    list_destroy(next);
     free(node);
-    return 0;
 }
 ```
 
@@ -33,11 +33,9 @@ resource allocated_list(node: struct node*) {
 
 verifying "c_decreases_resource_mutating_nullable.c";
 
-int32 list_destroy(struct node* node) {
+void list_destroy(struct node* node) {
     decreases resource allocated_list(node);
     consumes allocated_list(node);
-
-    ensures result == 0;
 } by {
     if node == 0 {
         unfold(allocated_list(node));

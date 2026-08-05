@@ -229,6 +229,41 @@ fn parses_checked_signature_and_contract_clauses() {
 }
 
 #[test]
+fn parses_void_c_function_contracts_without_a_result_binding() {
+    let source = r#"
+        verifying "destroy.c";
+
+        void destroy(int32* value) {
+            consumes value[0..1];
+        } by {
+            execute();
+            simp();
+        }
+    "#;
+    let file = parse(source).expect("void C contracts should parse");
+    assert_eq!(
+        file.function_blocks()[0].signature().return_type(),
+        C0Type::Void
+    );
+
+    let error = verify_c0_sources(
+        r#"
+            verifying "destroy.c";
+            void destroy(int32* value) {
+                ensures result == 0;
+            }
+        "#,
+        &[("destroy.c", "void destroy(int32* value) { return; }")],
+    )
+    .expect_err("void contracts must not expose `result`");
+    assert!(
+        error.message().contains("`result` is not available"),
+        "unexpected error: {}",
+        error.message()
+    );
+}
+
+#[test]
 fn parses_pure_theorem_definition() {
     let source = r#"
             theorem preserves_nonnegative(x: int32) {
