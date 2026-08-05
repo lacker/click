@@ -5876,7 +5876,10 @@ fn ordinary_verification_stops_at_the_tactic_deadline() {
             _ => None,
         })
         .collect::<Vec<_>>();
-    assert!(!started.is_empty(), "the interrupted tactic should be named");
+    assert!(
+        !started.is_empty(),
+        "the interrupted tactic should be named"
+    );
     assert!(
         !started.contains(&"simp"),
         "later tactics must not start after a deadline: {started:?}"

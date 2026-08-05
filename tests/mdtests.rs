@@ -79,9 +79,7 @@ fn mdtests() {
     // Wall-clock tactic deadlines must not count scheduler contention as
     // verifier work. Keep the correctness gate serial until Click has a
     // contention-independent work budget.
-    let failures = run_parallel(&paths, 1, |path| {
-        run_mdtest_with_timeout(path, time_limit)
-    });
+    let failures = run_parallel(&paths, 1, |path| run_mdtest_with_timeout(path, time_limit));
     if failures.is_empty() {
         return;
     }

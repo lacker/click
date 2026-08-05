@@ -92,6 +92,11 @@ tactics are allowed to complete so the report can identify the slow operation.
 These are per-operation tail guards. They are not an aggregate throughput
 promise.
 
+`click verify` also applies a 30-second outer limit independently to every
+sidecar or selected proof unit. That outer deadline contains slow frontend,
+environment, certification, verifier-core, or driver work that is not owned by
+one tactic; it does not replace the class deadlines.
+
 `click profile` reconciles direct verification wall time across frontend,
 environment, exclusive SIMPLE/SMART/CONTROL time, kernel certification,
 measured function work outside those operations (`VERIFIER CORE`), and

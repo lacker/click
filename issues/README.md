@@ -32,18 +32,17 @@ Runtime-sized allocation/free and the independently verifiable general vector
 push are implemented in focused example projects. Composing allocation, copy,
 replacement, and free into vector growth exposed distinct remaining bugs:
 
-1. [Bound ordinary `click verify` runs](click-verify-time-limit.md).
-2. [Make smart-search success imply certificate replay](smart-certificate-replay-consistency.md).
-3. [Bound and summarize verifier diagnostics](bounded-verifier-diagnostics.md).
-4. [Attribute active work when profiling times out](profile-timeout-attribution.md).
-5. [Isolate `click expand` to its selected proof unit](click-expand-target-isolation.md).
-6. [Align branched expansion certificates by execution path](branched-expansion-path-alignment.md).
-7. [Reduce the owned-vector certification bottleneck](owned-vector-pipeline-slow.md).
-8. [Apply null free contracts without invalid footprints](conditional-null-free-call-footprint.md).
-9. [Define borrowed-resource lifetime at `free`](borrowed-resource-lifetime-at-free.md).
-10. [Authorize `free` effects from owned allocation resources](owned-allocation-free-effects.md).
-11. [Preserve unchanged loads across opaque calls](opaque-call-unchanged-loads.md).
-12. [Compose runtime allocation into owned-vector growth](owned-vector-runtime-growth.md)
+1. [Make smart-search success imply certificate replay](smart-certificate-replay-consistency.md).
+2. [Bound and summarize verifier diagnostics](bounded-verifier-diagnostics.md).
+3. [Attribute active work when profiling times out](profile-timeout-attribution.md).
+4. [Isolate `click expand` to its selected proof unit](click-expand-target-isolation.md).
+5. [Align branched expansion certificates by execution path](branched-expansion-path-alignment.md).
+6. [Reduce the owned-vector certification bottleneck](owned-vector-pipeline-slow.md).
+7. [Apply null free contracts without invalid footprints](conditional-null-free-call-footprint.md).
+8. [Define borrowed-resource lifetime at `free`](borrowed-resource-lifetime-at-free.md).
+9. [Authorize `free` effects from owned allocation resources](owned-allocation-free-effects.md).
+10. [Preserve unchanged loads across opaque calls](opaque-call-unchanged-loads.md).
+11. [Compose runtime allocation into owned-vector growth](owned-vector-runtime-growth.md)
    after the blocking invariants above are restored.
 
 ## Partial correctness and recursion

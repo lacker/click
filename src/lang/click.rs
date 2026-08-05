@@ -2268,6 +2268,7 @@ fn verify_c0_sources_with_environment(
                 None => None,
             }
         };
+        check_verification_deadline()?;
         (file, parsed_sources, selected_functions)
     };
     check_verification_deadline()?;
@@ -2359,6 +2360,7 @@ fn verify_c0_sources_with_environment(
             })
             .collect::<Vec<_>>();
         let theorem_environment = TheoremEnvironment::new(&theorem_definitions);
+        check_verification_deadline()?;
         (
             predicate_environment,
             click_function_environment,

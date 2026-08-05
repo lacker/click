@@ -4,8 +4,7 @@ use std::time::Duration;
 
 use click::cli::{
     DISABLE_TACTIC_BUDGETS, duration_from_env, files_with_extension, format_duration,
-    read_verifying_sources, run_parallel, source_refs,
-    structured_tactic_budget_violations,
+    read_verifying_sources, run_parallel, source_refs, structured_tactic_budget_violations,
 };
 use click::instrumentation;
 use click::lang::click::verify_c0_sources;
