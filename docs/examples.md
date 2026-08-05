@@ -15,8 +15,10 @@ interior free, and double free.
 
 `examples/runtime-int32-allocation/` is the focused runtime-sized array
 allocation project. It proves `malloc(count * 4)` and matching `free` for a
-positive signed-safe `int32` count. Malloc-copy-free vector growth remains an
-explicit issue until its tooling and ownership-lifetime blockers are fixed.
+positive signed-safe `int32` count. `examples/owned-vector/` composes that
+lifetime support with a checked copy helper to verify ordinary
+malloc-copy-install-free growth, including unchanged failure and live-prefix
+preservation on success.
 
 ## Basic Function Contracts
 

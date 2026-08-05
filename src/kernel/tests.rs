@@ -1953,6 +1953,65 @@ fn quantified_int32_fact_certifies_an_instantiated_load() {
 }
 
 #[test]
+fn quantified_int32_fact_certifies_its_complete_guarded_range() {
+    let memory = CMemory::new();
+    let data = Pointer {
+        block: "data".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let index = Variable(2_100_010);
+    let length = Bitvector32Term::Variable(Variable(2_100_011));
+    let index_bits = Bitvector32Term::Variable(index);
+    let loaded_value = Bitvector32Term::MemoryLoad(
+        crate::kernel::intern_c_memory_ref(&memory),
+        Box::new(data.offset_by_int32_elements(index_bits.clone())),
+    );
+    let guarded_fact = forall_int32(
+        index,
+        Proposition::Implies(
+            Box::new(Proposition::And(
+                Box::new(Proposition::ConditionIs(
+                    ConditionTerm::signed_less_equal(
+                        Bitvector32Term::Constant(0),
+                        index_bits.clone(),
+                    ),
+                    true,
+                )),
+                Box::new(Proposition::ConditionIs(
+                    ConditionTerm::signed_less_than(index_bits, length.clone()),
+                    true,
+                )),
+            )),
+            Box::new(Proposition::ConditionIs(
+                ConditionTerm::equal(loaded_value, Bitvector32Term::Constant(7)),
+                true,
+            )),
+        ),
+    );
+    let assumptions = Assumptions::new().assume_proposition(guarded_fact);
+    let target = Proposition::CMemoryLoadable {
+        memory: memory.clone(),
+        base: data.clone(),
+        bytes: Bitvector32Term::multiply(length.clone(), Bitvector32Term::Constant(4)),
+    };
+
+    assert!(assumptions.proves(&target));
+    assert!(!assumptions.proves(&Proposition::CMemoryLoadable {
+        memory: memory.with_block("other-state", 4),
+        base: data.clone(),
+        bytes: Bitvector32Term::multiply(length.clone(), Bitvector32Term::Constant(4)),
+    }));
+    assert!(!assumptions.proves(&Proposition::CMemoryLoadable {
+        memory: CMemory::new(),
+        base: Pointer {
+            block: "other-data".into(),
+            offset: PointerOffsetTerm::Constant(0),
+        },
+        bytes: Bitvector32Term::multiply(length, Bitvector32Term::Constant(4)),
+    }));
+}
+
+#[test]
 fn proposition_derivation_replay_requires_its_context() {
     let x = Bitvector32Term::Variable(Variable(86));
     let proposition = Proposition::ConditionIs(
@@ -2085,6 +2144,55 @@ fn successor_order_derivation_needs_only_an_upper_bound() {
 
     assert!(derivation.replay(&assumptions));
     assert_eq!(derivation.context_premises(), vec![upper_bound]);
+}
+
+#[test]
+fn upper_bound_extends_to_a_nonoverflowing_successor() {
+    let length = Bitvector32Term::Variable(Variable(89_100));
+    let capacity = Bitvector32Term::Variable(Variable(89_101));
+    let successor = Bitvector32Term::add(capacity.clone(), Bitvector32Term::Constant(1));
+    let goal = ConditionTerm::signed_less_equal(length.clone(), successor.clone());
+    let bounded = Assumptions::new()
+        .assume_condition(
+            ConditionTerm::signed_less_equal(length, capacity.clone()),
+            true,
+        )
+        .assume_condition(
+            ConditionTerm::signed_less_equal(capacity.clone(), Bitvector32Term::Constant(100)),
+            true,
+        );
+
+    assert_eq!(
+        bounded.decide(&ConditionTerm::signed_less_equal(
+            Bitvector32Term::Variable(Variable(89_100)),
+            capacity.clone(),
+        )),
+        Some(true)
+    );
+    assert_eq!(
+        bounded.decide(&ConditionTerm::signed_add_overflows(
+            capacity.clone(),
+            Bitvector32Term::Constant(1),
+        )),
+        Some(false)
+    );
+    assert_eq!(bounded.decide(&goal), Some(true));
+    assert_eq!(
+        Assumptions::new()
+            .assume_condition(
+                ConditionTerm::signed_less_equal(
+                    Bitvector32Term::Variable(Variable(89_100)),
+                    capacity,
+                ),
+                true,
+            )
+            .decide(&ConditionTerm::signed_less_equal(
+                Bitvector32Term::Variable(Variable(89_100)),
+                successor,
+            )),
+        None,
+        "the successor relation must still require overflow evidence"
+    );
 }
 
 #[test]

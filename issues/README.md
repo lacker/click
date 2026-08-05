@@ -26,14 +26,6 @@ The issue should contain a small intended regression, the violated invariant,
 and acceptance criteria. Do not leave the only reproduction in an uncommitted
 large example or quarantine a regression without its issue.
 
-## Allocation and proof-tooling follow-up
-
-Runtime-sized allocation/free and the independently verifiable general vector
-push are implemented in focused example projects. Composing allocation, copy,
-replacement, and free into vector growth has one remaining integration task:
-
-1. [Compose runtime allocation into owned-vector growth](owned-vector-runtime-growth.md).
-
 ## Partial correctness and recursion
 
 Click's C contracts now use partial correctness consistently: concrete

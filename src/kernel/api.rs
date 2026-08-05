@@ -4571,6 +4571,160 @@ pub(super) fn quantified_int32_fact_certifies_loadable_cell(
         })
 }
 
+/// A checked universal fact that reads every int32 cell in a guarded prefix
+/// certifies that complete prefix as loadable. This is the range form needed
+/// after modular initialization helpers: their postcondition can expose the
+/// value of each written cell without returning a separate ad-hoc permission
+/// proposition.
+pub(super) fn quantified_int32_fact_certifies_loadable_range(
+    assumptions: &Assumptions,
+    memory: &CMemory,
+    base: &Pointer,
+    bytes: &Bitvector32Term,
+) -> bool {
+    if crate::instrumentation::deadline_exceeded() {
+        return false;
+    }
+
+    let element_count = match bytes {
+        Bitvector32Term::Multiply(left, right) if right.as_const() == Some(4) => left.as_ref(),
+        Bitvector32Term::Multiply(left, right) if left.as_const() == Some(4) => right.as_ref(),
+        _ => return false,
+    };
+
+    fn conjunct_refs<'a>(proposition: &'a Proposition, output: &mut Vec<&'a Proposition>) {
+        match proposition {
+            Proposition::And(left, right) => {
+                conjunct_refs(left, output);
+                conjunct_refs(right, output);
+            }
+            proposition => output.push(proposition),
+        }
+    }
+
+    fn implication_parts(body: &Proposition) -> (Vec<&Proposition>, &Proposition) {
+        let mut premises = Vec::new();
+        let mut conclusion = body;
+        while let Proposition::Implies(premise, rest) = conclusion {
+            conjunct_refs(premise, &mut premises);
+            conclusion = rest.as_ref();
+        }
+        (premises, conclusion)
+    }
+
+    fn collect_loads<'a>(term: &'a Bitvector32Term, loads: &mut Vec<(&'a CMemory, &'a Pointer)>) {
+        match term {
+            Bitvector32Term::MemoryLoad(memory, pointer) => {
+                loads.push((memory, pointer));
+            }
+            Bitvector32Term::Add(left, right)
+            | Bitvector32Term::Subtract(left, right)
+            | Bitvector32Term::Multiply(left, right)
+            | Bitvector32Term::Divide(left, right)
+            | Bitvector32Term::Remainder(left, right)
+            | Bitvector32Term::ShiftLeft(left, right)
+            | Bitvector32Term::ArithmeticShiftRight(left, right)
+            | Bitvector32Term::BitwiseAnd(left, right)
+            | Bitvector32Term::BitwiseOr(left, right)
+            | Bitvector32Term::BitwiseXor(left, right) => {
+                collect_loads(left, loads);
+                collect_loads(right, loads);
+            }
+            Bitvector32Term::BitwiseNot(inner) => collect_loads(inner, loads),
+            Bitvector32Term::If {
+                then_term,
+                else_term,
+                ..
+            } => {
+                collect_loads(then_term, loads);
+                collect_loads(else_term, loads);
+            }
+            Bitvector32Term::RangeFold {
+                start,
+                end,
+                initial,
+                body,
+                ..
+            } => {
+                collect_loads(start, loads);
+                collect_loads(end, loads);
+                collect_loads(initial, loads);
+                collect_loads(body, loads);
+            }
+            Bitvector32Term::PureFunctionApplication { arguments, .. } => {
+                for argument in arguments {
+                    collect_loads(argument, loads);
+                }
+            }
+            Bitvector32Term::Constant(_) | Bitvector32Term::Variable(_) => {}
+        }
+    }
+
+    fn condition_loads<'a>(
+        proposition: &'a Proposition,
+        loads: &mut Vec<(&'a CMemory, &'a Pointer)>,
+    ) {
+        let Proposition::ConditionIs(condition, _) = proposition else {
+            return;
+        };
+        match condition {
+            ConditionTerm::Bitvector32SignedLessThan(left, right)
+            | ConditionTerm::Bitvector32SignedLessEqual(left, right)
+            | ConditionTerm::Bitvector32SignedGreaterThan(left, right)
+            | ConditionTerm::Bitvector32SignedGreaterEqual(left, right)
+            | ConditionTerm::Bitvector32Equal(left, right)
+            | ConditionTerm::Bitvector32SignedAddOverflows(left, right)
+            | ConditionTerm::Bitvector32SignedSubtractOverflows(left, right)
+            | ConditionTerm::Bitvector32SignedMultiplyOverflows(left, right)
+            | ConditionTerm::Bitvector32SignedDivideOverflows(left, right)
+            | ConditionTerm::Bitvector32SignedShiftLeftOverflows(left, right) => {
+                collect_loads(left, loads);
+                collect_loads(right, loads);
+            }
+            ConditionTerm::PointerOffsetEqual(_, _)
+            | ConditionTerm::PointerEqual(_, _)
+            | ConditionTerm::Constant(_)
+            | ConditionTerm::Variable(_) => {}
+        }
+    }
+
+    let guard_matches = |premises: &[&Proposition], target: &ConditionTerm| {
+        premises.iter().any(|premise| {
+            matches!(premise, Proposition::ConditionIs(condition, true)
+                if condition == target || assumptions.condition_matches(condition, target))
+        })
+    };
+
+    assumptions.prop_facts.iter().any(|fact| {
+        if crate::instrumentation::deadline_exceeded() {
+            return false;
+        }
+        let Proposition::ForAll {
+            var,
+            sort: Sort::CInt32 | Sort::Bitvector32,
+            body,
+        } = fact
+        else {
+            return false;
+        };
+        let (premises, conclusion) = implication_parts(body);
+        let index = Bitvector32Term::Variable(*var);
+        let lower = ConditionTerm::signed_less_equal(Bitvector32Term::Constant(0), index.clone());
+        let upper = ConditionTerm::signed_less_than(index.clone(), element_count.clone());
+        if !guard_matches(&premises, &lower) || !guard_matches(&premises, &upper) {
+            return false;
+        }
+        let mut loads = Vec::new();
+        condition_loads(conclusion, &mut loads);
+        loads.iter().any(|(load_memory, pointer)| {
+            *load_memory == memory
+                && pointer
+                    .element_index_from_base(base)
+                    .is_some_and(|load_index| load_index == index)
+        })
+    })
+}
+
 /// Certifies an existential requirement side-obligation (typically the
 /// loadability safety of an existential requirement body): the witness of an
 /// assumed existential over the same sort supplies the bound variable, its
@@ -6895,6 +7049,10 @@ fn function_claim_holds_on_prepared_path(
             }
             let mut effect_memory = caller_state.memory().clone();
             let mut seen_transitions = Vec::<(CMemory, CMemory)>::new();
+            let is_function_fresh_heap_pointer = |pointer: &Pointer| {
+                matches!(pointer.block, PointerBlock::Heap(_))
+                    && entry_state.memory().live_heap_block_size(pointer).is_none()
+            };
             let effects_are_bounded = effect_facts.iter().all(|fact| match fact.proposition() {
                 Proposition::CMemoryMutatesOnly {
                     before,
@@ -6916,6 +7074,12 @@ fn function_claim_holds_on_prepared_path(
                             before,
                             assumptions,
                         )
+                        && !c_effect_memory_advances_over_internal_heap_state(
+                            &effect_memory,
+                            before,
+                            entry_state.memory(),
+                            assumptions,
+                        )
                     {
                         return false;
                     }
@@ -6927,15 +7091,16 @@ fn function_claim_holds_on_prepared_path(
                         .iter()
                         .filter(|pointer| !pointer.block.starts_with("local:"))
                         .all(|pointer| {
-                            mutable_ranges.iter().any(|range| {
-                                assumptions.pointer_access_in_range(
-                                    pointer,
-                                    4,
-                                    range.base(),
-                                    range.start(),
-                                    range.end(),
-                                )
-                            })
+                            is_function_fresh_heap_pointer(pointer)
+                                || mutable_ranges.iter().any(|range| {
+                                    assumptions.pointer_access_in_range(
+                                        pointer,
+                                        4,
+                                        range.base(),
+                                        range.start(),
+                                        range.end(),
+                                    )
+                                })
                         })
                 }
                 Proposition::CMemoryEffectSummary {
@@ -6958,6 +7123,12 @@ fn function_claim_holds_on_prepared_path(
                             before,
                             assumptions,
                         )
+                        && !c_effect_memory_advances_over_internal_heap_state(
+                            &effect_memory,
+                            before,
+                            entry_state.memory(),
+                            assumptions,
+                        )
                     {
                         return false;
                     }
@@ -6966,9 +7137,10 @@ fn function_claim_holds_on_prepared_path(
                         seen_transitions.push((before.clone(), after.clone()));
                     }
                     nested_ranges.iter().all(|nested| {
-                        mutable_ranges
-                            .iter()
-                            .any(|allowed| memory_range_covers(allowed, nested, assumptions))
+                        is_function_fresh_heap_pointer(nested.base())
+                            || mutable_ranges
+                                .iter()
+                                .any(|allowed| memory_range_covers(allowed, nested, assumptions))
                     })
                 }
                 Proposition::CHeapLifetimeRetired {
@@ -6990,6 +7162,12 @@ fn function_claim_holds_on_prepared_path(
                         && !c_effect_memories_definitionally_equal(
                             &effect_memory,
                             before,
+                            assumptions,
+                        )
+                        && !c_effect_memory_advances_over_internal_heap_state(
+                            &effect_memory,
+                            before,
+                            entry_state.memory(),
                             assumptions,
                         )
                     {
@@ -7024,6 +7202,61 @@ fn c_effect_memories_definitionally_equal(
     assumptions: &Assumptions,
 ) -> bool {
     left.heap == right.heap && c_memories_definitionally_equal(left, right, assumptions)
+}
+
+/// Accepts internal heap bookkeeping between externally visible effects:
+/// newly allocated trusted blocks and the registration of an already-owned
+/// symbolic allocation before direct `free`. Removing only those additions
+/// leaves a memory that must still match the preceding endpoint exactly.
+fn c_effect_memory_advances_over_internal_heap_state(
+    before: &CMemory,
+    after: &CMemory,
+    function_entry: &CMemory,
+    assumptions: &Assumptions,
+) -> bool {
+    let fresh_blocks = after
+        .blocks
+        .keys()
+        .filter(|block| {
+            matches!(block, PointerBlock::Heap(_))
+                && !before.blocks.contains_key(*block)
+                && !function_entry.blocks.contains_key(*block)
+        })
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let added_allocation_claims = after
+        .heap
+        .live_allocations
+        .keys()
+        .filter(|pointer| !before.heap.live_allocations.contains_key(*pointer))
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    if fresh_blocks.is_empty() && added_allocation_claims.is_empty() {
+        return false;
+    }
+    let mut stripped = after.clone();
+    stripped
+        .blocks
+        .retain(|block, _| !fresh_blocks.contains(block));
+    stripped
+        .cells
+        .retain(|pointer, _| !fresh_blocks.contains(&pointer.block));
+    stripped.heap.live_allocations.retain(|pointer, _| {
+        !fresh_blocks.contains(&pointer.block) && !added_allocation_claims.contains(pointer)
+    });
+    stripped
+        .heap
+        .retired_allocations
+        .retain(|pointer, _| !fresh_blocks.contains(&pointer.block));
+    stripped
+        .heap
+        .pending_allocations
+        .retain(|pointer, _| !fresh_blocks.contains(&pointer.block));
+    stripped
+        .heap
+        .uninitialized_allocations
+        .retain(|pointer| !fresh_blocks.contains(&pointer.block));
+    c_effect_memories_definitionally_equal(before, &stripped, assumptions)
 }
 
 fn heap_retirement_effect_is_valid(

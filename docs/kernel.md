@@ -292,6 +292,15 @@ extent produces `after`, and chains that transition separately from ordinary
 owned storage directly even when its surface `mutable` clause names only
 unrelated surviving memory.
 
+Function-effect certification treats stores into heap blocks created after
+function entry as internal initialization, not as writes to the caller's
+preexisting footprint. Its memory chain may also cross the bookkeeping step
+that registers allocation authority for already-owned symbolic storage before
+a direct `free`. Both allowances strip only newly introduced trusted heap
+state and then require the remaining memory to match the preceding endpoint
+definitionally; the subsequent retirement still needs its independently
+checked lifetime effect.
+
 If a directly required composite resource has an undecided conditional body,
 opaque-contract certification derives both guard cases from the kernel
 resource definition and executes the function in each case. This permits a

@@ -1871,6 +1871,7 @@ impl Assumptions {
                             ) || self.has_lower_bound_above(&base, &zero))
                     })
                     || self.has_add_const_upper_bound_at_or_below(&left, &right)
+                    || self.is_bounded_by_base_before_nonnegative_offset(&left, &right)
                     || self.has_condition_fact(
                         ConditionTerm::signed_less_than(left.clone(), right.clone()),
                         true,
@@ -3306,6 +3307,21 @@ impl Assumptions {
         )) == Some(false)
     }
 
+    fn is_bounded_by_base_before_nonnegative_offset(
+        &self,
+        lower: &Bitvector32Term,
+        offset_term: &Bitvector32Term,
+    ) -> bool {
+        let Some((base, _)) = offset_term.add_const_parts() else {
+            return false;
+        };
+        self.exact_condition_value(&ConditionTerm::signed_less_equal(
+            lower.clone(),
+            base.clone(),
+        )) == Some(true)
+            && self.nonnegative_offset_is_proven_at_or_above(&base, offset_term)
+    }
+
     /// Decides whether two conditions are two spellings of one fact that
     /// differ only in the memory snapshots their load atoms carry.
     ///
@@ -3536,7 +3552,18 @@ impl Assumptions {
                                 _ => false,
                             }
                         });
+                    let has_direct_nonoverflowing_upper_bound =
+                        self.condition_facts.iter().any(|(condition, value)| {
+                            matches!(
+                                (condition, value),
+                                (ConditionTerm::Bitvector32SignedLessEqual(fact_left, upper), true)
+                                    if fact_left.as_ref() == &left
+                                        && signed_bitvector_constant(upper)
+                                            .is_some_and(|upper| upper < i64::from(i32::MAX))
+                            )
+                        });
                     return (has_strict_upper_bound
+                        || has_direct_nonoverflowing_upper_bound
                         || self.has_condition_fact(
                             ConditionTerm::signed_less_than(left.clone(), int_max.clone()),
                             true,
@@ -5739,6 +5766,10 @@ impl Assumptions {
             return true;
         }
 
+        if super::api::quantified_int32_fact_certifies_loadable_range(self, memory, base, bytes) {
+            return true;
+        }
+
         if self.proves_memory_loadable_for_memory_resolution(memory, base, bytes) {
             return true;
         }
@@ -5832,6 +5863,14 @@ impl Assumptions {
             && let Some(index) = base.element_index_from_base(range_base)
             && let Some(element_count) = int32_element_count_from_bytes(range_bytes)
         {
+            let lower =
+                ConditionTerm::signed_less_equal(Bitvector32Term::Constant(0), index.clone());
+            let upper = ConditionTerm::signed_less_than(index.clone(), element_count.clone());
+            if self.exact_condition_value(&lower) == Some(true)
+                && self.exact_condition_value(&upper) == Some(true)
+            {
+                return true;
+            }
             if let Some(index_constant) = signed_bitvector_constant(&index) {
                 if let Some(element_count) = signed_bitvector_constant(&element_count) {
                     return 0 <= index_constant && index_constant < element_count;
@@ -5929,13 +5968,19 @@ impl Assumptions {
         if byte_width == 4
             && let Some(index) = self.pointer_element_index_from_base(pointer, base)
             && let Some(element_count) = int32_element_count_from_bytes(bytes)
-            && self.decide(&ConditionTerm::signed_greater_equal(
-                index.clone(),
-                Bitvector32Term::Constant(0),
-            )) == Some(true)
-            && self.decide(&ConditionTerm::signed_less_than(index, element_count)) == Some(true)
         {
-            return true;
+            let lower_condition =
+                ConditionTerm::signed_less_equal(Bitvector32Term::Constant(0), index.clone());
+            let upper_condition = ConditionTerm::signed_less_than(index, element_count);
+            let lower = self
+                .exact_condition_value(&lower_condition)
+                .or_else(|| self.decide(&lower_condition));
+            let upper = self
+                .exact_condition_value(&upper_condition)
+                .or_else(|| self.decide(&upper_condition));
+            if lower == Some(true) && upper == Some(true) {
+                return true;
+            }
         }
 
         if let Some(byte_offset) = pointer_byte_offset_from_base(pointer, base) {

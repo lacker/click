@@ -27,6 +27,20 @@ resource nonempty_vector(owner: struct vector*) {
     fact separate(memory(object(owner)), memory(owner->data[0..owner->cap]));
 }
 
+resource allocated_vector(owner: struct vector*) {
+    owns owner->len;
+    owns owner->cap;
+    owns owner->data;
+    contains allocation(owner->data, owner->cap * 4);
+    owns owner->data[0..owner->cap];
+    fact 0 <= owner->len;
+    fact owner->len <= owner->cap;
+    fact 1 <= owner->cap;
+    fact owner->cap <= 536870911;
+    fact loadable(owner->data[0..owner->len]);
+    fact separate(memory(object(owner)), memory(owner->data[0..owner->cap]));
+}
+
 verifying "vector_init.c";
 verifying "vector_len.c";
 verifying "vector_get.c";
@@ -36,6 +50,164 @@ verifying "vector_replace_if.c";
 verifying "vector_push_first.c";
 verifying "vector_clear.c";
 verifying "vector_pipeline.c";
+verifying "vector_copy.c";
+verifying "vector_grow.c";
+
+int32 vector_copy(
+    int32 dst[],
+    int32 src[],
+    int32 length,
+    int32 dst_capacity,
+    int32 src_capacity
+) {
+    requires 0 <= length;
+    requires length <= dst_capacity;
+    requires length <= src_capacity;
+    requires 1 <= dst_capacity;
+    requires 1 <= src_capacity;
+    owns dst[0..dst_capacity];
+    views src[0..src_capacity];
+    requires separate(memory(dst[0..dst_capacity]), memory(src[0..src_capacity]));
+    mutable dst[0..length];
+    for loop(0) {
+        invariant 0 <= i;
+        invariant i <= length;
+        invariant forall (k: int32) {
+            0 <= k and k < i implies dst[k] == old(src[k])
+        };
+        mutable dst[0..length] by frame;
+    }
+    ensures result == length by auto;
+    ensures forall (k: int32) {
+        0 <= k and k < length implies src[k] == old(src[k])
+    } by auto;
+    ensures forall (k: int32) {
+        0 <= k and k < length implies dst[k] == old(src[k])
+    } by auto;
+}
+
+int32 vector_grow(struct vector* owner) {
+    let entry_length = old(owner->len);
+    let entry_capacity = old(owner->cap);
+
+    requires owner->cap <= 536870910;
+    consumes allocated_vector(owner);
+    mutable owner->data, owner->cap;
+    produces allocated_vector(owner);
+    ensures result == 0 or result == 1;
+    ensures owner->len == entry_length;
+    ensures result == 0 implies owner->cap == entry_capacity;
+    ensures result == 0 implies owner->data == old(owner->data);
+    ensures result == 1 implies owner->cap == entry_capacity + 1;
+    ensures forall (k: int32) {
+        0 <= k and k < entry_length implies
+            owner->data[k] == old(owner->data[k])
+    };
+} by {
+    unfold(allocated_vector(owner));
+    have owner->cap < 2147483647 by simp;
+    have owner->cap + 1 <= 536870911 by simp;
+    execute_until(statement(9));
+    have 0 <= owner->len by simp;
+    have owner->len <= owner->cap by simp;
+    have 1 <= new_capacity by simp;
+    have owner->len <= old_capacity by simp;
+    have owner->len <= new_capacity by simp;
+    have new_capacity <= 536870911 by simp;
+    have loadable(old_data[0..old_capacity]) by {
+        derive using {
+            loadable(old(owner->data[0..owner->cap]));
+        }
+    }
+    if new_data == 0 {
+        have loadable(owner->data[0..owner->cap]) by {
+            derive using {
+                loadable(old(owner->data[0..owner->cap]));
+            }
+        }
+        execute();
+        have forall (k: int32) {
+            0 <= k and k < old(owner->len) implies
+                owner->data[k] == old(owner->data[k])
+        } by simp;
+        fold(allocated_vector(owner));
+        frame();
+        have result == 0 by simp;
+        have result == 0 or result == 1 by simp;
+        have owner->len == old(owner->len) by simp;
+        have result == 0 implies owner->cap == old(owner->cap) by simp;
+        have result == 0 implies owner->data == old(owner->data) by simp;
+        have result == 1 implies owner->cap == old(owner->cap) + 1 by simp;
+        assumption();
+        assumption();
+        assumption();
+        assumption();
+        assumption();
+        assumption();
+        assumption();
+    } else {
+        execute_until(statement(13));
+        step();
+        step();
+        step();
+        step();
+        have 0 <= owner->len by {
+            assumption();
+        }
+        have owner->cap == at(statement(9).entry, new_capacity) by {
+            normalize();
+        }
+        have owner->len <= owner->cap by {
+            derive using {
+                at(statement(9).entry, owner->len <= new_capacity);
+                owner->cap == at(statement(9).entry, new_capacity);
+            }
+        }
+        have 1 <= owner->cap by {
+            derive using {
+                at(statement(9).entry, 1 <= new_capacity);
+                owner->cap == at(statement(9).entry, new_capacity);
+            }
+        }
+        have owner->cap <= 536870911 by {
+            derive using {
+                at(statement(9).entry, new_capacity <= 536870911);
+                owner->cap == at(statement(9).entry, new_capacity);
+            }
+        }
+        have separate(
+            memory(object(owner)),
+            memory(owner->data[0..owner->cap])
+        ) by simp;
+        have forall (k: int32) {
+            0 <= k and k < old(owner->len) implies
+                owner->data[k] == old(owner->data[k])
+        } by simp;
+        have loadable(owner->data[0..owner->len]) by {
+            derive using {
+                forall (k: int32) {
+                    0 <= k and k < old(owner->len) implies
+                        owner->data[k] == old(owner->data[k])
+                };
+            }
+        }
+        fold(allocated_vector(owner));
+        frame();
+        have result == 1 by simp;
+        have result == 0 or result == 1 by simp;
+        have owner->len == old(owner->len) by simp;
+        have result == 0 implies owner->cap == old(owner->cap) by simp;
+        have result == 0 implies owner->data == old(owner->data) by simp;
+        have result == 1 implies owner->cap == old(owner->cap) + 1 by simp;
+        assumption();
+        assumption();
+        assumption();
+        assumption();
+        assumption();
+        assumption();
+        assumption();
+    }
+}
 
 int32 vector_init(struct vector* owner, int32 data[], int32 capacity) {
     requires 1 <= capacity;

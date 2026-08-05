@@ -57,6 +57,13 @@ while a mutable range bounds ordinary stores. Exact contract replay and
 modular call verification therefore use the same lifetime model as direct
 execution without pretending deallocation is a byte write.
 
+Writes to a block freshly allocated by the current function are internal while
+that block is being initialized: they do not mutate memory that was externally
+visible at function entry. The function must still return the new access and
+lifetime authority in its contract or free it. Registering allocation authority
+for already-owned storage immediately before a direct `free` is likewise
+bookkeeping, while the actual retirement remains an explicit lifetime effect.
+
 ## Argument Memory And Aliasing
 
 Function pointer parameters are modeled as symbolic offsets into one shared
@@ -99,6 +106,12 @@ Viewed and owned memory resources imply loadability for the covered range. A sep
 `loadable(...)` clause is useful when a proof needs loadability without access
 permission, or when it needs a larger structural range than the immediate
 permission covers.
+
+A checked universal fact that reads every `int32` cell under the exact guard
+`0 <= k and k < n` also certifies `loadable(p[0..n])` for that same memory and
+base. This lets a modular copy or initialization postcondition re-establish the
+initialized prefix without an extra ad-hoc permission proposition. A narrower
+guard, another base, or another memory snapshot does not establish the range.
 
 Use `loadable(p[lo..hi])` for the same kind of loadability fact when Click
 expects a proposition, for example in a composite resource `fact`. `loadable`
@@ -169,9 +182,11 @@ mutable p[0..n] by frame;
 mutable dst[0..n], counter[0..1] by frame;
 ```
 
-`immutable` means no externally visible memory is changed. Stack-local writes
-are allowed. `mutable` means all externally visible writes are inside the listed
-segments. It is an upper bound, not a promise that each cell changed.
+`immutable` means no memory visible at function entry is changed. Stack-local
+writes and initialization of a function-fresh allocation are allowed.
+`mutable` means all externally visible writes are inside the listed segments.
+It is an upper bound, not a promise that each cell changed. Allocation and
+retirement must still satisfy their separate lifetime/resource obligations.
 
 Loop-level effects describe dynamic writes inside a loop. Step effects describe
 one loop body iteration and may use iteration locals.
