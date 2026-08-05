@@ -26,14 +26,6 @@ The issue should contain a small intended regression, the violated invariant,
 and acceptance criteria. Do not leave the only reproduction in an uncommitted
 large example or quarantine a regression without its issue.
 
-## Proof-tool hardening
-
-These are ordered by priority. A verifier process abort is a stronger failure
-than missing performance guidance, and both come before another feature
-example.
-
-1. [Make large expansion audits concise and scope-aware](scalable-expansion-audit.md).
-
 ## Documentation cleanup
 
 1. [Remove stale claims that vector growth is pending](document-completed-vector-growth.md).

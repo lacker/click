@@ -3,6 +3,7 @@ use std::env;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::time::{Duration, Instant};
 
 use click::cli::{
@@ -10,8 +11,9 @@ use click::cli::{
     looks_like_mdtest, parse_duration, read_verifying_sources, shell_quote, source_refs,
 };
 use click::lang::click::{
-    C0VerificationSession, SourcePosition, c0_smart_tactic_source_sites, c0_tactic_source_position,
-    expand_c0_tactic_source_at, verify_c0_sources_at,
+    C0VerificationSession, SourcePosition, c0_incremental_selection, c0_smart_tactic_source_sites,
+    c0_tactic_source_position, expand_c0_tactic_source_at, verify_c0_sources_at,
+    verifying_source_paths,
 };
 
 const DEFAULT_SESSION_LIMIT: Duration = Duration::from_secs(5 * 60);
@@ -57,6 +59,7 @@ options:
   --start-at <PATH:LINE:COLUMN>
                               inclusively resume at this source location
   --claim <CLAIM>             audit one named claim; may be repeated
+  --changed-since <REVISION>  audit claims affected since a Git revision
   --verbose                   print one successful row per smart site
   --keep-going                continue after failures instead of stopping
   --max-sites <COUNT>         bounded diagnostic run; prints the next cursor";
@@ -78,6 +81,7 @@ struct Arguments {
     time_limit: Duration,
     start_at: Option<SourceLocation>,
     claims: Vec<String>,
+    changed_since: Option<String>,
     verbose: bool,
     keep_going: bool,
     max_sites: Option<usize>,
@@ -177,6 +181,7 @@ fn parse_arguments(arguments: impl IntoIterator<Item = String>) -> Result<Argume
     let mut time_limit = DEFAULT_TIME_LIMIT;
     let mut start_at = None;
     let mut claims = Vec::new();
+    let mut changed_since = None;
     let mut verbose = false;
     let mut keep_going = false;
     let mut max_sites = None;
@@ -227,6 +232,16 @@ fn parse_arguments(arguments: impl IntoIterator<Item = String>) -> Result<Argume
                 }
                 claims.push(claim);
             }
+            "--changed-since" => {
+                if changed_since.is_some() {
+                    return Err("`--changed-since` may only be supplied once".to_string());
+                }
+                changed_since = Some(
+                    arguments
+                        .next()
+                        .ok_or_else(|| format!("missing revision after `{argument}`\n{USAGE}"))?,
+                );
+            }
             "--verbose" => verbose = true,
             "--keep-going" => keep_going = true,
             "--max-sites" => {
@@ -257,6 +272,7 @@ fn parse_arguments(arguments: impl IntoIterator<Item = String>) -> Result<Argume
         time_limit,
         start_at,
         claims,
+        changed_since,
         verbose,
         keep_going,
         max_sites,
@@ -291,14 +307,29 @@ fn run_audit(arguments: Arguments) -> Result<(), String> {
         "  {} unique smart source sites in {inventory_claims} claims",
         sites.len()
     );
-    let scoped_sites = select_claim_sites(&sites, &arguments.claims)?;
+    let claim_sites = select_claim_sites(&sites, &arguments.claims)?;
     if !arguments.claims.is_empty() {
         println!(
             "  selected {} sites in {} named claims",
-            scoped_sites.len(),
+            claim_sites.len(),
             arguments.claims.len()
         );
     }
+    let scoped_sites = if let Some(revision) = &arguments.changed_since {
+        let selected = select_changed_sites(&sources, &claim_sites, revision)?;
+        let selected_claims = selected
+            .iter()
+            .map(|site| (site.click_path.clone(), site.claim.clone()))
+            .collect::<BTreeSet<_>>()
+            .len();
+        println!(
+            "  selected {} sites in {selected_claims} affected claims since {revision}",
+            selected.len()
+        );
+        selected
+    } else {
+        claim_sites
+    };
 
     let start_at = arguments
         .start_at
@@ -752,6 +783,221 @@ fn select_claim_sites(sites: &[AuditSite], claims: &[String]) -> Result<Vec<Audi
         .collect())
 }
 
+fn select_changed_sites(
+    sources: &[PathBuf],
+    sites: &[AuditSite],
+    revision: &str,
+) -> Result<Vec<AuditSite>, String> {
+    if sources.is_empty() {
+        return Ok(Vec::new());
+    }
+    let repo = git_repo_root(&sources[0])?;
+    git_commit_id(&repo, revision)?;
+    let changed_paths = git_changed_paths(&repo, revision)?;
+    if changed_paths_require_full_audit(&repo, &changed_paths) {
+        println!("  full audit: Click verifier or audit implementation changed");
+        return Ok(sites.to_vec());
+    }
+
+    let mut selected = Vec::new();
+    for source_path in sources {
+        let source_sites = sites
+            .iter()
+            .filter(|site| site.click_path == *source_path)
+            .cloned()
+            .collect::<Vec<_>>();
+        if source_sites.is_empty() {
+            continue;
+        }
+        let current = load_audit_source(source_path)?;
+        let Some(baseline) = load_baseline_audit_source(&repo, revision, source_path)? else {
+            println!(
+                "  full sidecar: `{}` is absent or incomplete at {revision}",
+                source_path.display()
+            );
+            selected.extend(source_sites);
+            continue;
+        };
+        let current_refs = source_refs(&current.c_sources);
+        let baseline_refs = source_refs(&baseline.c_sources);
+        let selection = match c0_incremental_selection(
+            &current.click_source,
+            &current_refs,
+            &baseline.click_source,
+            &baseline_refs,
+        ) {
+            Ok(selection) => selection,
+            Err(error) => {
+                println!(
+                    "  full sidecar: `{}` could not be compared semantically: {}",
+                    source_path.display(),
+                    error.message()
+                );
+                selected.extend(source_sites);
+                continue;
+            }
+        };
+        if selection.full_rebuild {
+            selected.extend(source_sites);
+            continue;
+        }
+        let functions = selection
+            .selected_functions
+            .iter()
+            .map(String::as_str)
+            .collect::<BTreeSet<_>>();
+        selected.extend(select_function_sites(&source_sites, &functions));
+    }
+    Ok(selected)
+}
+
+fn select_function_sites(sites: &[AuditSite], functions: &BTreeSet<&str>) -> Vec<AuditSite> {
+    sites
+        .iter()
+        .filter(|site| {
+            site.claim
+                .split_once('.')
+                .is_none_or(|(owner, _)| functions.contains(owner))
+        })
+        .cloned()
+        .collect()
+}
+
+fn git_repo_root(path: &Path) -> Result<PathBuf, String> {
+    let anchor = if path.is_dir() {
+        path
+    } else {
+        path.parent().unwrap_or_else(|| Path::new("."))
+    };
+    let output = Command::new("git")
+        .args([
+            "-C",
+            &anchor.display().to_string(),
+            "rev-parse",
+            "--show-toplevel",
+        ])
+        .output()
+        .map_err(|error| format!("failed to run git: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "`{}` is not inside a readable git worktree",
+            path.display()
+        ));
+    }
+    Ok(PathBuf::from(
+        String::from_utf8_lossy(&output.stdout).trim(),
+    ))
+}
+
+fn git_commit_id(repo: &Path, revision: &str) -> Result<String, String> {
+    let output = Command::new("git")
+        .args([
+            "-C",
+            &repo.display().to_string(),
+            "rev-parse",
+            "--verify",
+            &format!("{revision}^{{commit}}"),
+        ])
+        .output()
+        .map_err(|error| format!("failed to run git: {error}"))?;
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    } else {
+        Err(format!("unknown git revision `{revision}`"))
+    }
+}
+
+fn git_changed_paths(repo: &Path, revision: &str) -> Result<Vec<PathBuf>, String> {
+    let output = Command::new("git")
+        .args([
+            "-C",
+            &repo.display().to_string(),
+            "diff",
+            "--name-only",
+            revision,
+            "--",
+        ])
+        .output()
+        .map_err(|error| format!("failed to run git: {error}"))?;
+    if !output.status.success() {
+        return Err(format!("git diff failed for revision `{revision}`"));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter(|line| !line.is_empty())
+        .map(PathBuf::from)
+        .collect())
+}
+
+fn changed_paths_require_full_audit(repo: &Path, changed_paths: &[PathBuf]) -> bool {
+    let click_engine_checkout = repo.join("src/lang/click.rs").is_file()
+        && repo.join("src/kernel").is_dir()
+        && fs::read_to_string(repo.join("Cargo.toml"))
+            .is_ok_and(|manifest| manifest.contains("name = \"click\""));
+    click_engine_checkout
+        && changed_paths.iter().any(|path| {
+            path.starts_with("src")
+                || path == Path::new("Cargo.toml")
+                || path == Path::new("Cargo.lock")
+                || path.starts_with("stdlib")
+        })
+}
+
+fn git_show(repo: &Path, revision: &str, path: &Path) -> Result<Option<String>, String> {
+    let relative = path.strip_prefix(repo).map_err(|_| {
+        format!(
+            "`{}` is outside git worktree `{}`",
+            path.display(),
+            repo.display()
+        )
+    })?;
+    let spec = format!("{revision}:{}", relative.display());
+    let output = Command::new("git")
+        .args(["-C", &repo.display().to_string(), "show", &spec])
+        .output()
+        .map_err(|error| format!("failed to run git: {error}"))?;
+    if output.status.success() {
+        Ok(Some(String::from_utf8_lossy(&output.stdout).into_owned()))
+    } else {
+        Ok(None)
+    }
+}
+
+fn load_baseline_audit_source(
+    repo: &Path,
+    revision: &str,
+    path: &Path,
+) -> Result<Option<AuditSource>, String> {
+    let Some(container_source) = git_show(repo, revision, path)? else {
+        return Ok(None);
+    };
+    if looks_like_mdtest(path) {
+        return load_audit_source_from_text(path, container_source).map(Some);
+    }
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let mut c_sources = Vec::new();
+    for name in verifying_source_paths(&container_source).map_err(|error| {
+        format!(
+            "could not read baseline sidecar `{}`: {}",
+            path.display(),
+            error.message()
+        )
+    })? {
+        let source_path = parent.join(&name);
+        let Some(source) = git_show(repo, revision, &source_path)? else {
+            return Ok(None);
+        };
+        c_sources.push((name, source));
+    }
+    Ok(Some(AuditSource {
+        click_source: container_source.clone(),
+        container_source,
+        c_sources,
+        line_offset: 0,
+        mdtest: None,
+    }))
+}
+
 fn canonicalize_location(location: &SourceLocation) -> Result<SourceLocation, String> {
     let path = fs::canonicalize(&location.path)
         .map_err(|error| format!("failed to resolve `{}`: {error}", location.path.display()))?;
@@ -815,6 +1061,10 @@ fn resume_command(arguments: &Arguments, location: &SourceLocation) -> String {
     for claim in &arguments.claims {
         words.push("--claim".to_string());
         words.push(claim.clone());
+    }
+    if let Some(revision) = &arguments.changed_since {
+        words.push("--changed-since".to_string());
+        words.push(revision.clone());
     }
     if let Some(max_sites) = arguments.max_sites {
         words.push("--max-sites".to_string());
@@ -1198,6 +1448,8 @@ mod tests {
                 "examples/example.click:12:3",
                 "--claim",
                 "example.ensures_0",
+                "--changed-since",
+                "HEAD~1",
                 "--verbose",
                 "--keep-going",
                 "--max-sites",
@@ -1221,6 +1473,7 @@ mod tests {
         assert!(arguments.keep_going);
         assert!(arguments.verbose);
         assert_eq!(arguments.claims, ["example.ensures_0"]);
+        assert_eq!(arguments.changed_since.as_deref(), Some("HEAD~1"));
         assert_eq!(arguments.max_sites, Some(3));
         assert_eq!(arguments.path, PathBuf::from("examples"));
     }
@@ -1275,6 +1528,73 @@ mod tests {
     }
 
     #[test]
+    fn changed_selection_maps_leaf_proof_and_contract_changes_to_callers() {
+        let c_sources = [
+            ("leaf.c", "int32 leaf(int32 x) { return x; }"),
+            (
+                "caller.c",
+                "int32 caller(int32 x) { int32 y = leaf(x); return y; }",
+            ),
+            ("unrelated.c", "int32 unrelated(int32 x) { return x; }"),
+        ];
+        let baseline = r#"
+verifying "leaf.c";
+verifying "caller.c";
+verifying "unrelated.c";
+int32 leaf(int32 x) { ensures result == x; } by simp;
+int32 caller(int32 x) { ensures result == x; } by auto;
+int32 unrelated(int32 x) { ensures result == x; } by auto;
+"#;
+        let site = |claim: &str, line| AuditSite {
+            click_path: PathBuf::from("example.click"),
+            position: SourcePosition { line, column: 1 },
+            click_position: SourcePosition { line, column: 1 },
+            claim: claim.to_string(),
+            tactic_name: "auto".to_string(),
+        };
+        let sites = vec![
+            site("leaf.contract", 1),
+            site("caller.contract", 2),
+            site("unrelated.contract", 3),
+        ];
+
+        for changed in [
+            baseline.replacen("by simp", "by auto", 1),
+            baseline.replacen("result == x", "result >= x", 1),
+        ] {
+            let selection =
+                c0_incremental_selection(&changed, &c_sources, baseline, &c_sources).unwrap();
+            assert_eq!(selection.selected_functions, ["caller", "leaf"]);
+            let functions = selection
+                .selected_functions
+                .iter()
+                .map(String::as_str)
+                .collect::<BTreeSet<_>>();
+            let selected = select_function_sites(&sites, &functions);
+            assert_eq!(
+                selected
+                    .iter()
+                    .map(|site| site.claim.as_str())
+                    .collect::<Vec<_>>(),
+                ["leaf.contract", "caller.contract"]
+            );
+        }
+    }
+
+    #[test]
+    fn click_engine_changes_force_a_full_changed_audit() {
+        let repo = Path::new(env!("CARGO_MANIFEST_DIR"));
+        assert!(changed_paths_require_full_audit(
+            repo,
+            &[PathBuf::from("src/lang/click.rs")]
+        ));
+        assert!(!changed_paths_require_full_audit(
+            repo,
+            &[PathBuf::from("examples/owned-vector/vector.c")]
+        ));
+    }
+
+    #[test]
     fn resume_command_retries_the_cursor_inclusively() {
         let arguments = Arguments {
             path: PathBuf::from("examples with spaces"),
@@ -1285,6 +1605,7 @@ mod tests {
             time_limit: Duration::from_secs(600),
             start_at: None,
             claims: vec!["example.ensures_0".to_string()],
+            changed_since: Some("HEAD~1".to_string()),
             verbose: true,
             keep_going: false,
             max_sites: Some(1),
@@ -1298,7 +1619,7 @@ mod tests {
             resume_command(&arguments, &location),
             "click audit --session-time-limit 30s --expansion-time-limit 2s \
              --verification-time-limit 3s --performance-slack 500ms --time-limit 10m \
-             --verbose --claim example.ensures_0 --max-sites 1 \
+             --verbose --claim example.ensures_0 --changed-since 'HEAD~1' --max-sites 1 \
              --start-at /tmp/example.click:12:34 'examples with spaces'"
         );
     }

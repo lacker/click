@@ -374,6 +374,16 @@ counting deadline exhaustion as a Click check failure.
 `--claim` and `--verbose` are selection/presentation controls and are retained
 in resume commands; they do not weaken any selected site's checks.
 
+Use `--changed-since REVISION` to audit only smart-tactic claims affected by a
+Git change. It uses the same parsed C/Click comparison and reverse-call
+dependency selection as incremental verification. A changed function selects
+its claims and callers' claims; shared predicates, resources, pure functions,
+or theorems select the whole sidecar. A missing or unparsable baseline also
+selects the whole sidecar. When auditing Click's own checkout, changes to its
+parser, kernel, verifier, standard library, CLI, or build inputs select the
+complete audit. `--claim` intersects with this semantic selection, and both
+options are retained in resume commands.
+
 `--discovery-time-limit` remains as a compatibility alias for
 `--session-time-limit`; `--slow-site-limit` is a compatibility alias for
 `--performance-slack`.
