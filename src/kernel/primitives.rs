@@ -1618,6 +1618,11 @@ pub(super) struct VerificationVariableGenerator {
 }
 
 impl VerificationVariableGenerator {
+    /// Build the deterministic fresh-name stream used by both planning and
+    /// certificate replay. Given the same lower bound and reserved set, the
+    /// first available identifier and every successor are identical; callers
+    /// carry `next` across proof steps so a replay never relies on accidental
+    /// equality with an independently chosen symbolic name.
     pub(super) fn fresh_for(lower_bound: u64, existing: BTreeSet<Variable>) -> Self {
         Self {
             next: lower_bound,

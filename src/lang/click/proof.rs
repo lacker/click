@@ -1507,19 +1507,30 @@ mod certificate_tests {
         let succeeding = TacticCertificate::from_proof_tactics(&[ProofTactic::Normalize])
             .expect("normalize is a simple tactic");
 
+        let error = pure_goal_certificate_gateway(
+            "reflexive.ensures_0",
+            || Ok(failing.clone()),
+            |certificate| {
+                replay_pure_theorem_certificate(
+                    "reflexive.ensures_0",
+                    &context.requires,
+                    &goal,
+                    &predicate_environment,
+                    &click_function_environment,
+                    &theorem_environment,
+                    &context,
+                    certificate,
+                    None,
+                )
+            },
+        )
+        .expect_err("a perturbed smart certificate must not be reported as success");
         assert!(
-            replay_pure_theorem_certificate(
-                "reflexive.ensures_0",
-                &context.requires,
-                &goal,
-                &predicate_environment,
-                &click_function_environment,
-                &theorem_environment,
-                &context,
-                &failing,
-                None,
-            )
-            .is_err()
+            error
+                .message()
+                .contains("certificate failed ordinary replay"),
+            "unexpected gateway error: {}",
+            error.message()
         );
         replay_pure_theorem_certificate(
             "reflexive.ensures_0",

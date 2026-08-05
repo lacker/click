@@ -847,12 +847,19 @@ fn apply_verified_allocation_lifetime_effects(
 fn with_contract_argument_views(state: &CState, function: &CFunction, values: &[CValue]) -> CState {
     let mut state = state.clone();
     for (parameter, value) in function.parameters().iter().zip(values) {
+        // Keep the contract view identical to the typed parameter binding.
+        // In particular, a C null-pointer constant arrives here as the
+        // caller's int32 `0`, but the callee parameter is a pointer.  Using
+        // the raw caller value would overwrite the correctly coerced binding
+        // and make pointer preconditions impossible to lower.
+        let value = coerce_c_null_pointer_constant(value.clone(), parameter.c_type())
+            .expect("function arguments were type-checked before building contract views");
         state.locals.set_typed(
             parameter.name().to_string(),
             value.clone(),
             parameter.c_type(),
         );
-        if let CValue::Pointer(pointer) = value {
+        if let CValue::Pointer(pointer) = &value {
             state.resources = state
                 .resources
                 .unchecked_with_fact(CResourceFact::view_memory(CMemoryRange::new(

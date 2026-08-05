@@ -7399,6 +7399,59 @@ fn verified_function_rule_applies_contract_without_executing_body() {
 }
 
 #[test]
+fn verified_function_rule_coerces_null_constants_in_contract_views() {
+    let p_is_null = SpecProposition::Comparison {
+        left: SpecExpression::CExpression(c_variable("p")),
+        operator: CComparisonOperator::Equal,
+        right: SpecExpression::CExpression(c_int32_literal(0)),
+    };
+    let returns_one = SpecProposition::Comparison {
+        left: SpecExpression::CExpression(c_variable("result")),
+        operator: CComparisonOperator::Equal,
+        right: SpecExpression::CExpression(c_int32_literal(1)),
+    };
+    let helper = c_function(
+        CType::Int32,
+        "pointer_is_null",
+        vec![c_parameter("p", CType::Int32Pointer)],
+        c_return(c_int32_literal(1)),
+    )
+    .with_contract(
+        vec![p_is_null],
+        vec![returns_one],
+        Vec::new(),
+        vec![CFunctionContractClaim::ensure_proposition(0, 0)],
+        true,
+    );
+    let environment = CExecutionEnvironment::new()
+        .with_function(helper.clone())
+        .with_verified_function_rule(CVerifiedFunctionRule { function: helper });
+    let execution = prove_symbolic_c_execution_paths_with_environment(
+        CState::new(),
+        c_call_assign("result", "pointer_is_null", vec![c_int32_literal(0)]),
+        Assumptions::new(),
+        environment,
+        CExecutionSemantics::APPLY_VERIFIED_RULES,
+    );
+    let path = execution.paths().first().expect("opaque null call path");
+
+    assert!(
+        path.obligations().is_empty(),
+        "typed null precondition should be discharged: {:#?}",
+        path.obligations()
+    );
+    assert!(path.facts().iter().any(|fact| {
+        matches!(
+            fact.proposition(),
+            Proposition::ConditionIs(
+                ConditionTerm::Bitvector32Equal(_, right),
+                true
+            ) if right.as_const() == Some(1)
+        )
+    }));
+}
+
+#[test]
 fn verified_function_rule_does_not_publish_one_spec_alias_path() {
     let stored = Pointer {
         block: "heap".into(),
