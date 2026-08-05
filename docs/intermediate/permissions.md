@@ -101,7 +101,16 @@ int32 peek(int32 p[]) {
 
 Viewed resources are copyable across function calls. If a caller owns
 `p[0..1]`, it may satisfy a helper's `views p[0..1]` requirement and still keep
-its owned element afterward.
+its owned element afterward. This is a call-scoped borrow: satisfying the
+callee's `views` clause does not add a new persistent view to the caller when
+the call returns. A view that the caller already held is different—it remains
+in the caller's resource context until explicitly transferred or consumed.
+
+This distinction matters at deallocation. `free` requires allocation authority
+and complete owned access, then rejects any other direct or composite resource
+that may still refer to the retired allocation. A scoped call borrow has ended
+and therefore does not block `free`; a pre-existing persistent view does block
+it locally. A view proved separate from the freed allocation survives.
 
 ## Owned Memory
 

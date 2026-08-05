@@ -271,11 +271,16 @@ outcome is refined is rejected.
 
 Nonnull `free` requires the exact live base, allocation authority, and complete
 owned access. It retires that allocation, clears its cells, consumes those
-resources, and rejects surviving resource aliases. Retired identities make
-use-after-free and double-free explicit. `HeapAllocated` and `HeapFreed` memory
-DAG edges preserve these transitions for replay; an allocation resource that
-crosses a verified call is also interpreted as a lifetime effect, not as an
-untrusted ordinary token.
+resources, and rejects surviving direct or composite resource aliases at the
+`free` transition. A `views` requirement on an opaque call is a scoped borrow:
+call application preserves the caller's original owned or viewed resource but
+does not create a new persistent view on return. Thus a borrow from ownership
+ends before a following `free`, while any independently present view remains
+and must be proved separate or causes `free` to fail locally. Retired identities
+make use-after-free and double-free explicit. `HeapAllocated` and `HeapFreed`
+memory DAG edges preserve these transitions for replay; an allocation resource
+that crosses a verified call is also interpreted as a lifetime effect, not as
+an untrusted ordinary token.
 
 If a directly required composite resource has an undecided conditional body,
 opaque-contract certification derives both guard cases from the kernel

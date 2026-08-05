@@ -16,7 +16,10 @@ destructor unchanged: null is a no-op, and nonnull consumes the allocation.
 
 `item_round_trip` shows the lifetime directly in one function.
 `item_pipeline` checks that the same behavior survives modular factory,
-borrower, and destructor calls.
+borrower, and destructor calls. In particular, `item_read`'s `views
+owned_item(item)` is a call-scoped borrow: it does not leave a new ghost view
+behind, so `item_pipeline` can destroy the retained owned item immediately
+after the read.
 
 New heap bytes are not zero-filled: every field is stored before it is read.
 Allocation authority must be returned, transferred, or discharged by an

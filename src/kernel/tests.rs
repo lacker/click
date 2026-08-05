@@ -8648,6 +8648,158 @@ fn heap_free_retires_the_complete_block_and_rejects_double_free() {
 }
 
 #[test]
+fn scoped_call_borrows_end_before_free() {
+    let state = successful_heap_allocation_state();
+    let helper = c_function(
+        CType::Int32,
+        "read_borrow",
+        vec![c_parameter("data", CType::Int32Pointer)],
+        c_return(c_int32_literal(0)),
+    )
+    .with_resource_summary(
+        vec![CResourceSpec::Read(CMemorySegment::new(
+            c_variable("data"),
+            c_int32_literal(0),
+            c_int32_literal(1),
+        ))],
+        Vec::new(),
+    );
+    let environment = CExecutionEnvironment::new()
+        .with_function(helper.clone())
+        .with_verified_function_rule(CVerifiedFunctionRule { function: helper });
+    let statement = c_seq(
+        c_call_assign("observed", "read_borrow", vec![c_variable("p")]),
+        c_heap_free(c_variable("p")),
+    );
+    let paths = execute_c_statement_paths(
+        &state,
+        &statement,
+        &Assumptions::new(),
+        &environment,
+        CExecutionSemantics::APPLY_VERIFIED_RULES,
+        &mut ExecutionBudget::default(),
+    )
+    .expect("a read-only call borrow followed by free should execute");
+
+    assert!(matches!(
+        paths.as_slice(),
+        [CStatementExecutionPath {
+            outcome: CStatementOutcome::Normal(after),
+            ..
+        }] if after.resources().facts().is_empty()
+    ));
+}
+
+#[test]
+fn standalone_view_cannot_authorize_free() {
+    let state = successful_heap_allocation_state();
+    let Some(CValue::Pointer(pointer)) = state.locals().get("p") else {
+        panic!("successful allocation should expose its pointer")
+    };
+    let pointer = pointer.clone();
+    let complete_access = CMemoryRange::new(
+        pointer.clone(),
+        Bitvector32Term::Constant(0),
+        Bitvector32Term::Constant(4),
+    );
+    let resources = ResourceContext::new()
+        .unchecked_with_fact(CResourceFact::own_allocation(pointer, 16))
+        .unchecked_with_fact(CResourceFact::view_memory(complete_access.clone()));
+    let state = state.with_resource_context(resources);
+    let paths = execute_c_statement_paths(
+        &state,
+        &c_heap_free(c_variable("p")),
+        &Assumptions::new(),
+        &CExecutionEnvironment::new(),
+        CExecutionSemantics::EXECUTE_BODIES,
+        &mut ExecutionBudget::default(),
+    )
+    .expect("a standalone view should fail locally at free");
+    assert!(matches!(
+        paths.as_slice(),
+        [CStatementExecutionPath {
+            outcome: CStatementOutcome::RuntimeError(CRuntimeError::MissingResource {
+                resource: CResourceFact::Own(CResource::Memory(missing)),
+            }),
+            ..
+        }] if missing == &complete_access
+    ));
+}
+
+#[test]
+fn persistent_composite_view_blocks_free_locally() {
+    let state = successful_heap_allocation_state();
+    let Some(CValue::Pointer(pointer)) = state.locals().get("p") else {
+        panic!("successful allocation should expose its pointer")
+    };
+    let persistent = CResourceFact::view_composite(
+        "borrowed_allocation".to_string(),
+        vec![CValue::Pointer(pointer.clone())],
+    );
+    let state = state.clone().with_resource_context(
+        state
+            .resources()
+            .clone()
+            .unchecked_with_fact(persistent.clone()),
+    );
+    let paths = execute_c_statement_paths(
+        &state,
+        &c_heap_free(c_variable("p")),
+        &Assumptions::new(),
+        &CExecutionEnvironment::new(),
+        CExecutionSemantics::EXECUTE_BODIES,
+        &mut ExecutionBudget::default(),
+    )
+    .expect("a persistent stale view should produce a local diagnostic");
+    assert!(
+        matches!(
+            paths.as_slice(),
+            [CStatementExecutionPath {
+                outcome: CStatementOutcome::RuntimeError(
+                    CRuntimeError::StaleResourceAfterFree { resource }
+                ),
+                ..
+            }] if resource == &persistent
+        ),
+        "unexpected free result for {persistent:#?}: {paths:#?}"
+    );
+}
+
+#[test]
+fn separated_persistent_view_survives_free() {
+    let state = successful_heap_allocation_state();
+    let other = Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let view = CResourceFact::view_memory(CMemoryRange::new(
+        other,
+        Bitvector32Term::Constant(0),
+        Bitvector32Term::Constant(1),
+    ));
+    let state = state
+        .clone()
+        .with_resource_context(state.resources().clone().unchecked_with_fact(view.clone()));
+    let paths = execute_c_statement_paths(
+        &state,
+        &c_heap_free(c_variable("p")),
+        &Assumptions::new(),
+        &CExecutionEnvironment::new(),
+        CExecutionSemantics::EXECUTE_BODIES,
+        &mut ExecutionBudget::default(),
+    )
+    .expect("a view of a distinct allocation should survive free");
+
+    assert!(matches!(
+        paths.as_slice(),
+        [CStatementExecutionPath {
+            outcome: CStatementOutcome::Normal(after),
+            ..
+        }] if after.resources().facts() == [view]
+    ));
+}
+
+#[test]
 fn free_of_external_allocation_preserves_unrelated_external_cells() {
     let allocation_base = Pointer {
         block: PointerBlock::ExternalArgument,

@@ -521,8 +521,11 @@ transfers and resource transformations.
 
 An owned memory resource implies its viewed core: ownership permits both loads
 and stores, while a view permits loads and is copyable across calls. A callee
-using `views` does not consume the caller's viewed or owned element. Owned
-elements are transferred by `owns`, `consumes`, and `produces`.
+using `views` borrows the caller's viewed or owned element for that call. It
+does not consume the original element or create a second persistent view when
+the call returns. A view that was already present in the caller remains
+persistent. Owned elements are transferred by `owns`, `consumes`, and
+`produces`.
 
 Fixed-size heap objects add the built-in owned resource
 `allocation(base, bytes)`. It is exclusive authority and responsibility for
@@ -545,7 +548,11 @@ The conditional body gives a nullable factory one uniform result resource.
 On the null branch the body is empty. On the success branch it packages both
 access and lifetime authority. A read-only helper can `views owned_item(item)`
 without gaining the ability to free it; a destructor must consume and unfold
-the owned wrapper before calling `free`.
+the owned wrapper before calling `free`. Once a read-only helper returns, that
+call-scoped borrow is over, so the caller may immediately pass its retained
+owned wrapper to the destructor. Conversely, an independently held direct or
+composite view of the same allocation remains live and makes `free` fail at the
+deallocation statement; views proved separate survive.
 
 When the guard is not known at function entry, a proof-level `if` can split on
 it even if the C body is branchless. Each proof case unfolds the matching
