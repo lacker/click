@@ -1394,6 +1394,23 @@ mod certificate_tests {
     }
 
     #[test]
+    fn surface_synthesis_rejects_too_deep_terms_with_a_bounded_reason() {
+        let mut term = Bitvector32Term::Variable(Variable(1));
+        for _ in 0..=SURFACE_SYNTHESIS_DEPTH_LIMIT {
+            term = Bitvector32Term::Add(Box::new(term), Box::new(Bitvector32Term::Constant(1)));
+        }
+        let proposition = Proposition::ConditionIs(
+            ConditionTerm::Bitvector32Equal(Box::new(term), Box::new(Bitvector32Term::Constant(0))),
+            true,
+        );
+
+        assert!(synthesize_surface_proposition(&proposition, &[], &[], &CState::new()).is_none());
+        let reason = surface_synthesis_failure("could not reconstruct test fact", &proposition);
+        assert!(reason.contains("bounded bitvector search"), "{reason}");
+        assert!(!reason.contains("Variable("), "{reason}");
+    }
+
+    #[test]
     fn fresh_heap_separation_is_not_spelled_as_an_ambient_step_premise() {
         let range = |block| {
             CResource::Memory(CMemoryRange::new(
@@ -9089,8 +9106,9 @@ fn checked_surface_fact_at_outcome(
     }
     let surface = synthesize_surface_proposition(kernel, parameters, arguments, post_state)
         .ok_or_else(|| {
-            ClickError::new(format!(
-                "no checked Click spelling for post-execution fact {kernel:?}"
+            ClickError::new(surface_synthesis_failure(
+                "no checked Click spelling for post-execution fact",
+                kernel,
             ))
         })?;
     if matches_kernel(&check(&surface)?) {
@@ -13828,8 +13846,9 @@ fn checked_surface_fact_at_point(
     }
     let candidate = synthesize_surface_proposition(kernel, parameters, arguments, state)
         .ok_or_else(|| {
-            ClickError::new(format!(
-                "kernel fact has no recorded or structurally synthesized Click spelling: {kernel:?}"
+            ClickError::new(surface_synthesis_failure(
+                "kernel fact has no recorded or structurally synthesized Click spelling",
+                kernel,
             ))
         })?;
     let lowered = check(&candidate);
@@ -14071,6 +14090,11 @@ fn checked_surface_comparison_fact_at_point(
             }
         }
     }
+    if let Some(exhaustion) = surface_synthesis_exhaustion_description() {
+        return Err(ClickError::new(format!(
+            "comparison fact has no checked Click spelling at this proof point: {exhaustion}"
+        )));
+    }
     Err(ClickError::new(format!(
         "comparison fact has no checked Click spelling at this proof point: {kernel:?}\n  candidate spellings: {}",
         bases
@@ -14081,12 +14105,122 @@ fn checked_surface_comparison_fact_at_point(
     )))
 }
 
+const SURFACE_SYNTHESIS_WORK_LIMIT: usize = 16_384;
+const SURFACE_SYNTHESIS_DEPTH_LIMIT: usize = 128;
+
+#[derive(Clone, Copy)]
+struct SurfaceSynthesisBudget {
+    remaining_work: usize,
+    depth: usize,
+    exhausted_category: Option<&'static str>,
+}
+
+thread_local! {
+    static SURFACE_SYNTHESIS_BUDGET: std::cell::RefCell<Option<SurfaceSynthesisBudget>> =
+        const { std::cell::RefCell::new(None) };
+    static LAST_SURFACE_SYNTHESIS_EXHAUSTION: std::cell::Cell<Option<&'static str>> =
+        const { std::cell::Cell::new(None) };
+}
+
+struct SurfaceSynthesisScope(Option<SurfaceSynthesisBudget>);
+
+impl SurfaceSynthesisScope {
+    fn enter() -> Self {
+        LAST_SURFACE_SYNTHESIS_EXHAUSTION.with(|last| last.set(None));
+        let previous = SURFACE_SYNTHESIS_BUDGET.with(|slot| {
+            slot.replace(Some(SurfaceSynthesisBudget {
+                remaining_work: SURFACE_SYNTHESIS_WORK_LIMIT,
+                depth: 0,
+                exhausted_category: None,
+            }))
+        });
+        Self(previous)
+    }
+}
+
+impl Drop for SurfaceSynthesisScope {
+    fn drop(&mut self) {
+        let exhausted = SURFACE_SYNTHESIS_BUDGET.with(|slot| {
+            let current = slot.replace(self.0.take());
+            current.and_then(|budget| budget.exhausted_category)
+        });
+        if exhausted.is_some() {
+            LAST_SURFACE_SYNTHESIS_EXHAUSTION.with(|last| last.set(exhausted));
+        }
+    }
+}
+
+struct SurfaceSynthesisFrame {
+    counted: bool,
+}
+
+impl SurfaceSynthesisFrame {
+    fn enter(category: &'static str) -> Option<Self> {
+        let counted = SURFACE_SYNTHESIS_BUDGET.with(|slot| {
+            let mut slot = slot.borrow_mut();
+            let Some(budget) = slot.as_mut() else {
+                return Some(false);
+            };
+            if budget.remaining_work == 0 || budget.depth >= SURFACE_SYNTHESIS_DEPTH_LIMIT {
+                budget.exhausted_category.get_or_insert(category);
+                return None;
+            }
+            budget.remaining_work -= 1;
+            budget.depth += 1;
+            Some(true)
+        })?;
+        Some(Self { counted })
+    }
+}
+
+impl Drop for SurfaceSynthesisFrame {
+    fn drop(&mut self) {
+        if self.counted {
+            SURFACE_SYNTHESIS_BUDGET.with(|slot| {
+                if let Some(budget) = slot.borrow_mut().as_mut() {
+                    budget.depth = budget.depth.saturating_sub(1);
+                }
+            });
+        }
+    }
+}
+
+fn consume_surface_synthesis_work(category: &'static str) -> bool {
+    SURFACE_SYNTHESIS_BUDGET.with(|slot| {
+        let mut slot = slot.borrow_mut();
+        let Some(budget) = slot.as_mut() else {
+            return true;
+        };
+        if budget.remaining_work == 0 {
+            budget.exhausted_category.get_or_insert(category);
+            return false;
+        }
+        budget.remaining_work -= 1;
+        true
+    })
+}
+
+fn surface_synthesis_exhaustion_description() -> Option<String> {
+    LAST_SURFACE_SYNTHESIS_EXHAUSTION.with(|last| {
+        last.get().map(|category| {
+            format!("Surface Click reconstruction exhausted its bounded {category} search")
+        })
+    })
+}
+
+fn surface_synthesis_failure(prefix: &str, kernel: &Proposition) -> String {
+    surface_synthesis_exhaustion_description()
+        .map(|exhaustion| format!("{prefix}: {exhaustion}"))
+        .unwrap_or_else(|| format!("{prefix}: {kernel:?}"))
+}
+
 pub(super) fn synthesize_surface_proposition(
     proposition: &Proposition,
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
     state: &CState,
 ) -> Option<ClickProposition> {
+    let _scope = SurfaceSynthesisScope::enter();
     synthesize_surface_proposition_with_bound_variables(
         proposition,
         parameters,
@@ -14103,6 +14237,7 @@ fn synthesize_surface_proposition_with_bound_variables(
     state: &CState,
     bound_variables: &BTreeMap<Variable, String>,
 ) -> Option<ClickProposition> {
+    let _frame = SurfaceSynthesisFrame::enter("proposition")?;
     match proposition {
         Proposition::And(left, right) => {
             return Some(ClickProposition::And(
@@ -14451,6 +14586,7 @@ fn synthesize_surface_resource_subject(
     state: &CState,
     bound_variables: &BTreeMap<Variable, String>,
 ) -> Option<ResourceSubject> {
+    let _frame = SurfaceSynthesisFrame::enter("resource")?;
     let CResource::Memory(range) = resource else {
         return None;
     };
@@ -14490,6 +14626,7 @@ fn synthesize_surface_pointer_offset(
     state: &CState,
     bound_variables: &BTreeMap<Variable, String>,
 ) -> Option<ContractExpression> {
+    let _frame = SurfaceSynthesisFrame::enter("pointer-offset")?;
     for (parameter, argument) in parameters.iter().zip(arguments) {
         if let CExpression::Value(CValue::Pointer(pointer)) = argument
             && pointer.offset == *term
@@ -14599,6 +14736,7 @@ fn synthesize_surface_bitvector(
     state: &CState,
     bound_variables: &BTreeMap<Variable, String>,
 ) -> Option<ContractExpression> {
+    let _frame = SurfaceSynthesisFrame::enter("bitvector")?;
     if let Bitvector32Term::Variable(variable) = term
         && let Some(name) = bound_variables.get(variable)
     {
@@ -14776,6 +14914,7 @@ fn synthesize_parameter_field_indexed_int32_load(
     state: &CState,
     bound_variables: &BTreeMap<Variable, String>,
 ) -> Option<ContractExpression> {
+    let _frame = SurfaceSynthesisFrame::enter("indexed-field")?;
     let pointer_field_and_index = |base: &PointerOffsetTerm,
                                    index: Option<&PointerOffsetTerm>|
      -> Option<(ContractExpression, ContractExpression)> {
@@ -14817,43 +14956,54 @@ fn synthesize_parameter_field_indexed_int32_load(
 }
 
 fn bitvector_term_is_load_free(term: &Bitvector32Term) -> bool {
-    match term {
-        Bitvector32Term::MemoryLoad(_, _) => false,
-        Bitvector32Term::Constant(_) | Bitvector32Term::Variable(_) => true,
-        Bitvector32Term::Add(left, right)
-        | Bitvector32Term::Subtract(left, right)
-        | Bitvector32Term::Multiply(left, right)
-        | Bitvector32Term::Divide(left, right)
-        | Bitvector32Term::Remainder(left, right)
-        | Bitvector32Term::ShiftLeft(left, right)
-        | Bitvector32Term::ArithmeticShiftRight(left, right)
-        | Bitvector32Term::BitwiseAnd(left, right)
-        | Bitvector32Term::BitwiseOr(left, right)
-        | Bitvector32Term::BitwiseXor(left, right) => {
-            bitvector_term_is_load_free(left) && bitvector_term_is_load_free(right)
+    let mut pending = vec![term];
+    while let Some(term) = pending.pop() {
+        if !consume_surface_synthesis_work("local-index") {
+            return false;
         }
-        Bitvector32Term::BitwiseNot(value) => bitvector_term_is_load_free(value),
-        Bitvector32Term::If {
-            then_term,
-            else_term,
-            ..
-        } => bitvector_term_is_load_free(then_term) && bitvector_term_is_load_free(else_term),
-        Bitvector32Term::RangeFold {
-            start,
-            end,
-            initial,
-            body,
-            ..
-        } => {
-            bitvector_term_is_load_free(start)
-                && bitvector_term_is_load_free(end)
-                && bitvector_term_is_load_free(initial)
-                && bitvector_term_is_load_free(body)
-        }
-        Bitvector32Term::PureFunctionApplication { arguments, .. } => {
-            arguments.iter().all(bitvector_term_is_load_free)
+        match term {
+            Bitvector32Term::MemoryLoad(_, _) => return false,
+            Bitvector32Term::Constant(_) | Bitvector32Term::Variable(_) => {}
+            Bitvector32Term::Add(left, right)
+            | Bitvector32Term::Subtract(left, right)
+            | Bitvector32Term::Multiply(left, right)
+            | Bitvector32Term::Divide(left, right)
+            | Bitvector32Term::Remainder(left, right)
+            | Bitvector32Term::ShiftLeft(left, right)
+            | Bitvector32Term::ArithmeticShiftRight(left, right)
+            | Bitvector32Term::BitwiseAnd(left, right)
+            | Bitvector32Term::BitwiseOr(left, right)
+            | Bitvector32Term::BitwiseXor(left, right) => {
+                pending.push(left);
+                pending.push(right);
+            }
+            Bitvector32Term::BitwiseNot(value) => pending.push(value),
+            Bitvector32Term::If {
+                then_term,
+                else_term,
+                ..
+            } => {
+                pending.push(then_term);
+                pending.push(else_term);
+            }
+            Bitvector32Term::RangeFold {
+                start,
+                end,
+                initial,
+                body,
+                ..
+            } => {
+                pending.push(start);
+                pending.push(end);
+                pending.push(initial);
+                pending.push(body);
+            }
+            Bitvector32Term::PureFunctionApplication { arguments, .. } => {
+                pending.extend(arguments);
+            }
         }
     }
+    true
 }
 
 fn synthesize_local_indexed_int32_load(
@@ -14863,6 +15013,7 @@ fn synthesize_local_indexed_int32_load(
     state: &CState,
     bound_variables: &BTreeMap<Variable, String>,
 ) -> Option<ContractExpression> {
+    let _frame = SurfaceSynthesisFrame::enter("local-index")?;
     state.locals().object_values().find_map(|(name, value)| {
         let CValue::Pointer(base) = value else {
             return None;
@@ -14951,6 +15102,7 @@ fn synthesize_surface_pointer(
     state: &CState,
     bound_variables: &BTreeMap<Variable, String>,
 ) -> Option<CExpression> {
+    let _frame = SurfaceSynthesisFrame::enter("pointer")?;
     if pointer == &Pointer::null() {
         return Some(CExpression::Value(int32(0)));
     }
@@ -15027,6 +15179,7 @@ fn synthesize_surface_pointer_expression(
     state: &CState,
     bound_variables: &BTreeMap<Variable, String>,
 ) -> Option<ContractExpression> {
+    let _frame = SurfaceSynthesisFrame::enter("pointer-expression")?;
     if let Some(pointer) =
         synthesize_surface_pointer(pointer, parameters, arguments, state, bound_variables)
     {

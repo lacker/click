@@ -160,6 +160,10 @@ rewritten artifact before deciding that expansion improved performance.
   accepted by the ordinary parser. Canonical struct spellings include
   `owner->field`, `owner->pointer_field[start..end]`, and `object(owner)`.
 - Everything consumed by certificate replay needs a checked surface spelling.
+- Reconstructing a surface spelling is itself bounded by shared structural
+  depth and work limits. Exhaustion rejects the candidate and reports the
+  reconstruction category without printing the potentially enormous kernel
+  term; it never relaxes the subsequent parse, lowering, or replay checks.
 - An empty proof `if` branch is legal: it contributes its case split, and every
   path goal remains owed at path end.
 
