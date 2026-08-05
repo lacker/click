@@ -11,6 +11,17 @@ type NextTopLevelStatement = (
     Option<CStatement>,
 );
 
+fn check_verification_deadline() -> Result<(), ClickError> {
+    if crate::instrumentation::deadline_exceeded() {
+        Err(ClickError::new(format!(
+            "verification time limit exceeded inside {}",
+            crate::instrumentation::deadline_context()
+        )))
+    } else {
+        Ok(())
+    }
+}
+
 fn apply_logical_goal_tactic(
     tactic: &ProofTactic,
     goal: &mut Proposition,
@@ -315,9 +326,14 @@ fn check_atomic_derivation_goal(
             .is_some();
     if !target_matches_goal {
         return Err(format!(
-            "`{}` target does not match the current goal\n  target: {target:?}\n  goal: {goal:?}",
-            tactic_name(tactic)
+            "`{}` target does not match the current goal\n  target: {}\n  goal: {}",
+            tactic_name(tactic),
+            describe_pure_fact(&target, &[], &[]),
+            describe_pure_fact(goal, &[], &[]),
         ));
+    }
+    if snapshot_bridged_fact_is_available(&target, available, &[]) {
+        return Ok(());
     }
     let premise_part_available = |part: &Proposition| {
         let normalized = normalize_direct_atomic_memory_loads(part);
@@ -345,8 +361,9 @@ fn check_atomic_derivation_goal(
         !parts.into_iter().all(premise_part_available)
     }) {
         return Err(format!(
-            "`{}` is missing an exact listed premise: {missing:?}",
-            tactic_name(tactic)
+            "`{}` is missing an exact listed premise: {}",
+            tactic_name(tactic),
+            describe_pure_fact(missing, &[], &[]),
         ));
     }
     let normalized_premises = premises
@@ -489,8 +506,10 @@ fn check_atomic_derivation_goal(
     }
     if derivation.is_none() {
         return Err(format!(
-            "`{}` could not check the target from exactly the listed premises: {target:?}\n  premises: {normalized_premises:#?}",
+            "`{}` could not check the target from exactly the listed premises: {}\n  premises: {}",
             tactic_name(tactic),
+            describe_pure_fact(&target, &[], &[]),
+            describe_pure_facts(&normalized_premises),
         ));
     }
     Ok(())
@@ -8808,6 +8827,7 @@ fn checked_surface_fact_at_outcome(
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<ClickProposition, ClickError> {
+    check_verification_deadline()?;
     let lowering_facts = facts_for_smart_have_lowering(available);
     let check = |surface: &ClickProposition| {
         lower_outcome_proposition_with_program_points(
@@ -8847,6 +8867,7 @@ fn checked_surface_fact_at_outcome(
         return Ok(surface);
     }
     for (point, point_state) in replay.program_point_states.iter().rev() {
+        check_verification_deadline()?;
         let Some(base) = synthesize_surface_proposition(kernel, parameters, arguments, point_state)
         else {
             continue;
@@ -8856,6 +8877,7 @@ fn checked_surface_fact_at_outcome(
             continue;
         };
         for candidate in variants {
+            check_verification_deadline()?;
             if check(&candidate).is_ok_and(|lowered| matches_kernel(&lowered)) {
                 return Ok(candidate);
             }
@@ -8866,6 +8888,7 @@ fn checked_surface_fact_at_outcome(
         bases.push(surface.clone());
     }
     for recorded in replay.surface_propositions.kernel_facts() {
+        check_verification_deadline()?;
         // The quantifier-shape test is checked first on purpose: it is the
         // weaker of the two conditions, so whenever it holds the mutual
         // `derive_simp_proposition` search below is redundant — and on nested
@@ -8895,16 +8918,19 @@ fn checked_surface_fact_at_outcome(
         .cloned()
         .collect::<Vec<_>>();
     for base in &bases {
+        check_verification_deadline()?;
         let Some(variants) = comparison_program_point_variants(base, &points) else {
             continue;
         };
         for candidate in variants {
+            check_verification_deadline()?;
             if check(&candidate).is_ok_and(|lowered| matches_kernel(&lowered)) {
                 return Ok(candidate);
             }
         }
     }
     for (point, point_state) in &replay.program_point_states {
+        check_verification_deadline()?;
         let Some(base) = synthesize_surface_proposition(kernel, parameters, arguments, point_state)
         else {
             continue;
@@ -8914,6 +8940,7 @@ fn checked_surface_fact_at_outcome(
             continue;
         };
         for candidate in variants {
+            check_verification_deadline()?;
             if check(&candidate).is_ok_and(|lowered| matches_kernel(&lowered)) {
                 return Ok(candidate);
             }
@@ -8944,10 +8971,12 @@ fn checked_surface_fact_at_outcome(
             }
         }
         for base in &kernel_folded_bases {
+            check_verification_deadline()?;
             let Some(variants) = comparison_program_point_variants(base, &points) else {
                 continue;
             };
             for candidate in variants {
+                check_verification_deadline()?;
                 let Ok(unfolded) = unfold_structural_invariant_proposition(
                     predicate_environment,
                     &candidate,
@@ -8967,6 +8996,7 @@ fn checked_surface_fact_at_outcome(
             }
         }
         for fact in available {
+            check_verification_deadline()?;
             if !matches!(fact, Proposition::Predicate { .. }) {
                 continue;
             }
@@ -8977,6 +9007,7 @@ fn checked_surface_fact_at_outcome(
                 }
             }
             for state in std::iter::once(post_state).chain(replay.program_point_states.values()) {
+                check_verification_deadline()?;
                 if let Some(surface) =
                     synthesize_surface_proposition(fact, parameters, arguments, state)
                     && !folded_bases.contains(&surface)
@@ -8985,10 +9016,12 @@ fn checked_surface_fact_at_outcome(
                 }
             }
             for base in &folded_bases {
+                check_verification_deadline()?;
                 let Some(variants) = comparison_program_point_variants(base, &points) else {
                     continue;
                 };
                 for candidate in variants {
+                    check_verification_deadline()?;
                     let Ok(unfolded) = unfold_structural_invariant_proposition(
                         predicate_environment,
                         &candidate,
@@ -10088,11 +10121,6 @@ fn plan_smart_have_at_current_point(
     if matches!(normalize_proposition(&goal), SimpProposition::True) {
         let plan = ProofReplayPlan::from_planned_tactics(&[ProofTactic::Normalize])
             .expect("normalize is a simple replay tactic");
-        return Ok((fact, plan));
-    }
-    if materialization_equivalent_available_fact(&goal, &available).is_some() {
-        let plan = ProofReplayPlan::from_planned_tactics(&[ProofTactic::Assumption])
-            .expect("assumption is a simple replay tactic");
         return Ok((fact, plan));
     }
     if quantified_replay_equivalent_available_fact(&goal, &available).is_some() {
@@ -14009,36 +14037,122 @@ pub(super) fn synthesize_surface_proposition(
     arguments: &[CExpression],
     state: &CState,
 ) -> Option<ClickProposition> {
+    synthesize_surface_proposition_with_bound_variables(
+        proposition,
+        parameters,
+        arguments,
+        state,
+        &BTreeMap::new(),
+    )
+}
+
+fn synthesize_surface_proposition_with_bound_variables(
+    proposition: &Proposition,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    state: &CState,
+    bound_variables: &BTreeMap<Variable, String>,
+) -> Option<ClickProposition> {
     match proposition {
         Proposition::And(left, right) => {
             return Some(ClickProposition::And(
-                Box::new(synthesize_surface_proposition(
-                    left, parameters, arguments, state,
+                Box::new(synthesize_surface_proposition_with_bound_variables(
+                    left,
+                    parameters,
+                    arguments,
+                    state,
+                    bound_variables,
                 )?),
-                Box::new(synthesize_surface_proposition(
-                    right, parameters, arguments, state,
+                Box::new(synthesize_surface_proposition_with_bound_variables(
+                    right,
+                    parameters,
+                    arguments,
+                    state,
+                    bound_variables,
                 )?),
             ));
         }
         Proposition::Or(left, right) => {
             return Some(ClickProposition::Or(
-                Box::new(synthesize_surface_proposition(
-                    left, parameters, arguments, state,
+                Box::new(synthesize_surface_proposition_with_bound_variables(
+                    left,
+                    parameters,
+                    arguments,
+                    state,
+                    bound_variables,
                 )?),
-                Box::new(synthesize_surface_proposition(
-                    right, parameters, arguments, state,
+                Box::new(synthesize_surface_proposition_with_bound_variables(
+                    right,
+                    parameters,
+                    arguments,
+                    state,
+                    bound_variables,
                 )?),
             ));
         }
         Proposition::Implies(left, right) => {
             return Some(ClickProposition::Implies(
-                Box::new(synthesize_surface_proposition(
-                    left, parameters, arguments, state,
+                Box::new(synthesize_surface_proposition_with_bound_variables(
+                    left,
+                    parameters,
+                    arguments,
+                    state,
+                    bound_variables,
                 )?),
-                Box::new(synthesize_surface_proposition(
-                    right, parameters, arguments, state,
+                Box::new(synthesize_surface_proposition_with_bound_variables(
+                    right,
+                    parameters,
+                    arguments,
+                    state,
+                    bound_variables,
                 )?),
             ));
+        }
+        Proposition::ForAll { var, sort, body }
+        | Proposition::Exists {
+            var, sort, body, ..
+        } => {
+            if *sort != Sort::CInt32 {
+                return None;
+            }
+            let mut suffix = bound_variables.len();
+            let name = loop {
+                let candidate = format!("__click_q{suffix}");
+                let conflicts = parameters
+                    .iter()
+                    .any(|parameter| parameter.name() == candidate)
+                    || state
+                        .locals()
+                        .object_values()
+                        .any(|(name, _)| name == candidate)
+                    || bound_variables.values().any(|name| name == &candidate);
+                if !conflicts {
+                    break candidate;
+                }
+                suffix += 1;
+            };
+            let mut body_variables = bound_variables.clone();
+            body_variables.insert(*var, name.clone());
+            let body = Box::new(synthesize_surface_proposition_with_bound_variables(
+                body,
+                parameters,
+                arguments,
+                state,
+                &body_variables,
+            )?);
+            return Some(match proposition {
+                Proposition::ForAll { .. } => ClickProposition::ForAll {
+                    c_type: C0Type::Int32,
+                    name,
+                    body,
+                },
+                Proposition::Exists { .. } => ClickProposition::Exists {
+                    c_type: C0Type::Int32,
+                    name,
+                    body,
+                },
+                _ => unreachable!(),
+            });
         }
         _ => {}
     }
@@ -14066,19 +14180,31 @@ pub(super) fn synthesize_surface_proposition(
                         return None;
                     };
                     call_arguments.push(ContractExpression::CFragment(synthesize_surface_pointer(
-                        pointer, parameters, arguments, state,
+                        pointer,
+                        parameters,
+                        arguments,
+                        state,
+                        bound_variables,
                     )?));
                     index += 2;
                 }
                 Term::CValue(CValue::Pointer(pointer)) => {
                     call_arguments.push(ContractExpression::CFragment(synthesize_surface_pointer(
-                        pointer, parameters, arguments, state,
+                        pointer,
+                        parameters,
+                        arguments,
+                        state,
+                        bound_variables,
                     )?));
                     index += 1;
                 }
                 Term::CValue(CValue::Int32(value) | CValue::UInt8(value)) => {
                     call_arguments.push(synthesize_surface_bitvector(
-                        value, parameters, arguments, state,
+                        value,
+                        parameters,
+                        arguments,
+                        state,
+                        bound_variables,
                     )?);
                     index += 1;
                 }
@@ -14092,8 +14218,20 @@ pub(super) fn synthesize_surface_proposition(
     }
     if let Proposition::CResourceSeparate { left, right } = proposition {
         return Some(ClickProposition::Separate {
-            left: synthesize_surface_resource_subject(left, parameters, arguments, state)?,
-            right: synthesize_surface_resource_subject(right, parameters, arguments, state)?,
+            left: synthesize_surface_resource_subject(
+                left,
+                parameters,
+                arguments,
+                state,
+                bound_variables,
+            )?,
+            right: synthesize_surface_resource_subject(
+                right,
+                parameters,
+                arguments,
+                state,
+                bound_variables,
+            )?,
         });
     }
     if let Proposition::CMemoryLoadable { base, bytes, .. } = proposition {
@@ -14111,15 +14249,25 @@ pub(super) fn synthesize_surface_proposition(
                 return None;
             };
             contract_expression_to_c_fragment(&synthesize_surface_bitvector(
-                elements, parameters, arguments, state,
+                elements,
+                parameters,
+                arguments,
+                state,
+                bound_variables,
             )?)?
         } else {
             return None;
         };
-        let semantic_base = synthesize_surface_pointer(base, parameters, arguments, state)?;
-        let surface_base =
-            synthesize_surface_pointer_offset(&base.offset, parameters, arguments, state)
-                .unwrap_or_else(|| ContractExpression::CFragment(semantic_base.clone()));
+        let semantic_base =
+            synthesize_surface_pointer(base, parameters, arguments, state, bound_variables)?;
+        let surface_base = synthesize_surface_pointer_offset(
+            &base.offset,
+            parameters,
+            arguments,
+            state,
+            bound_variables,
+        )
+        .unwrap_or_else(|| ContractExpression::CFragment(semantic_base.clone()));
         return Some(ClickProposition::Loadable {
             segment: ContractSegment {
                 state: ContractSegmentState::Current,
@@ -14136,7 +14284,13 @@ pub(super) fn synthesize_surface_proposition(
     }
     if let Proposition::Not(body) = proposition {
         return Some(ClickProposition::Not(Box::new(
-            synthesize_surface_proposition(body, parameters, arguments, state)?,
+            synthesize_surface_proposition_with_bound_variables(
+                body,
+                parameters,
+                arguments,
+                state,
+                bound_variables,
+            )?,
         )));
     }
     let Proposition::ConditionIs(condition, value) = proposition else {
@@ -14155,24 +14309,48 @@ pub(super) fn synthesize_surface_proposition(
     }
     if let ConditionTerm::PointerOffsetEqual(left, right) = condition {
         return Some(ClickProposition::Comparison {
-            left: synthesize_surface_pointer_offset(left, parameters, arguments, state)?,
+            left: synthesize_surface_pointer_offset(
+                left,
+                parameters,
+                arguments,
+                state,
+                bound_variables,
+            )?,
             operator: if *value {
                 ComparisonOperator::Equal
             } else {
                 ComparisonOperator::NotEqual
             },
-            right: synthesize_surface_pointer_offset(right, parameters, arguments, state)?,
+            right: synthesize_surface_pointer_offset(
+                right,
+                parameters,
+                arguments,
+                state,
+                bound_variables,
+            )?,
         });
     }
     if let ConditionTerm::PointerEqual(left, right) = condition {
         return Some(ClickProposition::Comparison {
-            left: synthesize_surface_pointer_expression(left, parameters, arguments, state)?,
+            left: synthesize_surface_pointer_expression(
+                left,
+                parameters,
+                arguments,
+                state,
+                bound_variables,
+            )?,
             operator: if *value {
                 ComparisonOperator::Equal
             } else {
                 ComparisonOperator::NotEqual
             },
-            right: synthesize_surface_pointer_expression(right, parameters, arguments, state)?,
+            right: synthesize_surface_pointer_expression(
+                right,
+                parameters,
+                arguments,
+                state,
+                bound_variables,
+            )?,
         });
     }
     let (left, operator, right) = match condition {
@@ -14191,10 +14369,14 @@ pub(super) fn synthesize_surface_proposition(
         ConditionTerm::Bitvector32Equal(left, right) => (left, ComparisonOperator::Equal, right),
         _ => return None,
     };
+    let surface_left =
+        synthesize_surface_bitvector(left, parameters, arguments, state, bound_variables);
+    let surface_right =
+        synthesize_surface_bitvector(right, parameters, arguments, state, bound_variables);
     let comparison = ClickProposition::Comparison {
-        left: synthesize_surface_bitvector(left, parameters, arguments, state)?,
+        left: surface_left?,
         operator,
-        right: synthesize_surface_bitvector(right, parameters, arguments, state)?,
+        right: surface_right?,
     };
     if *value {
         Some(comparison)
@@ -14217,16 +14399,25 @@ fn synthesize_surface_resource_subject(
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
     state: &CState,
+    bound_variables: &BTreeMap<Variable, String>,
 ) -> Option<ResourceSubject> {
     let CResource::Memory(range) = resource else {
         return None;
     };
-    let semantic_base = synthesize_surface_pointer(range.base(), parameters, arguments, state)?;
-    let surface_base =
-        synthesize_surface_pointer_offset(&range.base().offset, parameters, arguments, state)
-            .unwrap_or_else(|| ContractExpression::CFragment(semantic_base.clone()));
-    let surface_start = synthesize_surface_bitvector(range.start(), parameters, arguments, state)?;
-    let surface_end = synthesize_surface_bitvector(range.end(), parameters, arguments, state)?;
+    let semantic_base =
+        synthesize_surface_pointer(range.base(), parameters, arguments, state, bound_variables)?;
+    let surface_base = synthesize_surface_pointer_offset(
+        &range.base().offset,
+        parameters,
+        arguments,
+        state,
+        bound_variables,
+    )
+    .unwrap_or_else(|| ContractExpression::CFragment(semantic_base.clone()));
+    let surface_start =
+        synthesize_surface_bitvector(range.start(), parameters, arguments, state, bound_variables)?;
+    let surface_end =
+        synthesize_surface_bitvector(range.end(), parameters, arguments, state, bound_variables)?;
     let start = contract_expression_to_c_fragment(&surface_start)?;
     let end = contract_expression_to_c_fragment(&surface_end)?;
     Some(ResourceSubject::Memory(ContractSegment {
@@ -14247,6 +14438,7 @@ fn synthesize_surface_pointer_offset(
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
     state: &CState,
+    bound_variables: &BTreeMap<Variable, String>,
 ) -> Option<ContractExpression> {
     for (parameter, argument) in parameters.iter().zip(arguments) {
         if let CExpression::Value(CValue::Pointer(pointer)) = argument
@@ -14272,7 +14464,11 @@ fn synthesize_surface_pointer_offset(
             } else {
                 Some(ContractExpression::CFragment(CExpression::TypedLoad {
                     pointer: Box::new(synthesize_surface_pointer(
-                        pointer, parameters, arguments, state,
+                        pointer,
+                        parameters,
+                        arguments,
+                        state,
+                        bound_variables,
                     )?),
                     value_type: CType::Int32Pointer,
                 }))
@@ -14286,8 +14482,13 @@ fn synthesize_surface_pointer_offset(
                 if byte_offset % 4 != 0 {
                     return None;
                 }
-                let ContractExpression::CFragment(base) =
-                    synthesize_surface_pointer_offset(base, parameters, arguments, state)?
+                let ContractExpression::CFragment(base) = synthesize_surface_pointer_offset(
+                    base,
+                    parameters,
+                    arguments,
+                    state,
+                    bound_variables,
+                )?
                 else {
                     return None;
                 };
@@ -14307,11 +14508,20 @@ fn synthesize_surface_pointer_offset(
                     else {
                         return None;
                     };
-                    let base = contract_expression_to_c_fragment(
-                        &synthesize_surface_pointer_offset(base, parameters, arguments, state)?,
-                    )?;
+                    let base =
+                        contract_expression_to_c_fragment(&synthesize_surface_pointer_offset(
+                            base,
+                            parameters,
+                            arguments,
+                            state,
+                            bound_variables,
+                        )?)?;
                     let index = contract_expression_to_c_fragment(&synthesize_surface_bitvector(
-                        index, parameters, arguments, state,
+                        index,
+                        parameters,
+                        arguments,
+                        state,
+                        bound_variables,
                     )?)?;
                     Some(ContractExpression::CFragment(CExpression::Add(
                         Box::new(base),
@@ -14324,7 +14534,7 @@ fn synthesize_surface_pointer_offset(
                 .or_else(|| dynamically_indexed_pointer(right, left))
         }
         PointerOffsetTerm::Int32Scaled { value, byte_width } if matches!(*byte_width, 1 | 4) => {
-            synthesize_surface_bitvector(value, parameters, arguments, state)
+            synthesize_surface_bitvector(value, parameters, arguments, state, bound_variables)
         }
         PointerOffsetTerm::Constant(_)
         | PointerOffsetTerm::Variable(_)
@@ -14337,7 +14547,20 @@ fn synthesize_surface_bitvector(
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
     state: &CState,
+    bound_variables: &BTreeMap<Variable, String>,
 ) -> Option<ContractExpression> {
+    if let Bitvector32Term::Variable(variable) = term
+        && let Some(name) = bound_variables.get(variable)
+    {
+        return Some(ContractExpression::CFragment(CExpression::Variable(
+            name.clone(),
+        )));
+    }
+    if let Bitvector32Term::Constant(_) = term {
+        return Some(ContractExpression::CFragment(CExpression::Value(
+            CValue::Int32(term.clone()),
+        )));
+    }
     if let Some((name, _)) = state.locals().object_values().find(
         |(_, value)| matches!(value, CValue::Int32(local) | CValue::UInt8(local) if local == term),
     ) {
@@ -14357,17 +14580,23 @@ fn synthesize_surface_bitvector(
     let binary = |left: &Bitvector32Term, right: &Bitvector32Term| {
         Some((
             Box::new(synthesize_surface_bitvector(
-                left, parameters, arguments, state,
+                left,
+                parameters,
+                arguments,
+                state,
+                bound_variables,
             )?),
             Box::new(synthesize_surface_bitvector(
-                right, parameters, arguments, state,
+                right,
+                parameters,
+                arguments,
+                state,
+                bound_variables,
             )?),
         ))
     };
     match term {
-        Bitvector32Term::Constant(_) => Some(ContractExpression::CFragment(CExpression::Value(
-            CValue::Int32(term.clone()),
-        ))),
+        Bitvector32Term::Constant(_) => unreachable!("constants returned above"),
         Bitvector32Term::Add(left, right) => {
             let (left, right) = binary(left, right)?;
             Some(ContractExpression::Add(left, right))
@@ -14409,17 +14638,29 @@ fn synthesize_surface_bitvector(
             Some(ContractExpression::BitwiseXor(left, right))
         }
         Bitvector32Term::BitwiseNot(value) => Some(ContractExpression::BitwiseNot(Box::new(
-            synthesize_surface_bitvector(value, parameters, arguments, state)?,
+            synthesize_surface_bitvector(value, parameters, arguments, state, bound_variables)?,
         ))),
-        Bitvector32Term::MemoryLoad(_, pointer) => {
+        Bitvector32Term::MemoryLoad(_, kernel_pointer) => {
             if let Some(field) =
-                synthesize_parameter_field_load(pointer, CType::Int32, parameters, arguments)
+                synthesize_parameter_field_load(kernel_pointer, CType::Int32, parameters, arguments)
             {
                 Some(field)
-            } else if let Some(indexed_field) =
-                synthesize_parameter_field_indexed_int32_load(pointer, parameters, arguments, state)
-            {
+            } else if let Some(indexed_field) = synthesize_parameter_field_indexed_int32_load(
+                kernel_pointer,
+                parameters,
+                arguments,
+                state,
+                bound_variables,
+            ) {
                 Some(indexed_field)
+            } else if let Some(indexed_local) = synthesize_local_indexed_int32_load(
+                kernel_pointer,
+                parameters,
+                arguments,
+                state,
+                bound_variables,
+            ) {
+                Some(indexed_local)
             } else {
                 let value_type =
                     parameters
@@ -14429,7 +14670,7 @@ fn synthesize_surface_bitvector(
                             let CExpression::Value(CValue::Pointer(base)) = argument else {
                                 return None;
                             };
-                            pointer.element_index_from_base(base)?;
+                            kernel_pointer.element_index_from_base(base)?;
                             match parameter.c_type() {
                                 C0Type::UInt8Pointer | C0Type::UInt8Array(_) => Some(CType::UInt8),
                                 C0Type::Int32Pointer | C0Type::Int32Array(_) => Some(CType::Int32),
@@ -14437,7 +14678,14 @@ fn synthesize_surface_bitvector(
                                 C0Type::Void => None,
                             }
                         });
-                let pointer = synthesize_surface_pointer(pointer, parameters, arguments, state)?;
+                let pointer = synthesize_surface_pointer(
+                    kernel_pointer,
+                    parameters,
+                    arguments,
+                    state,
+                    bound_variables,
+                );
+                let pointer = pointer?;
                 Some(ContractExpression::CFragment(match value_type {
                     Some(CType::UInt8) => CExpression::TypedLoad {
                         pointer: Box::new(pointer),
@@ -14457,7 +14705,15 @@ fn synthesize_surface_bitvector(
             name: name.clone(),
             arguments: values
                 .iter()
-                .map(|value| synthesize_surface_bitvector(value, parameters, arguments, state))
+                .map(|value| {
+                    synthesize_surface_bitvector(
+                        value,
+                        parameters,
+                        arguments,
+                        state,
+                        bound_variables,
+                    )
+                })
                 .collect::<Option<Vec<_>>>()?,
         }),
     }
@@ -14468,6 +14724,7 @@ fn synthesize_parameter_field_indexed_int32_load(
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
     state: &CState,
+    bound_variables: &BTreeMap<Variable, String>,
 ) -> Option<ContractExpression> {
     let pointer_field_and_index = |base: &PointerOffsetTerm,
                                    index: Option<&PointerOffsetTerm>|
@@ -14493,7 +14750,9 @@ fn synthesize_parameter_field_indexed_int32_load(
             Some(PointerOffsetTerm::Int32Scaled {
                 value,
                 byte_width: 4,
-            }) => synthesize_surface_bitvector(value, parameters, arguments, state)?,
+            }) => {
+                synthesize_surface_bitvector(value, parameters, arguments, state, bound_variables)?
+            }
             Some(_) => return None,
         };
         Some((field, index))
@@ -14505,6 +14764,36 @@ fn synthesize_parameter_field_indexed_int32_load(
         PointerOffsetTerm::Constant(_) | PointerOffsetTerm::Variable(_) => return None,
     };
     Some(ContractExpression::Index(Box::new(field), Box::new(index)))
+}
+
+fn synthesize_local_indexed_int32_load(
+    pointer: &Pointer,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    state: &CState,
+    bound_variables: &BTreeMap<Variable, String>,
+) -> Option<ContractExpression> {
+    state.locals().object_values().find_map(|(name, value)| {
+        let CValue::Pointer(base) = value else {
+            return None;
+        };
+        let index = pointer.element_index_from_base(base)?;
+        if index == Bitvector32Term::Constant(0) {
+            return None;
+        }
+        Some(ContractExpression::Index(
+            Box::new(ContractExpression::CFragment(CExpression::Variable(
+                name.to_string(),
+            ))),
+            Box::new(synthesize_surface_bitvector(
+                &index,
+                parameters,
+                arguments,
+                state,
+                bound_variables,
+            )?),
+        ))
+    })
 }
 
 fn synthesize_parameter_field_load(
@@ -14562,6 +14851,7 @@ fn synthesize_surface_pointer(
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
     state: &CState,
+    bound_variables: &BTreeMap<Variable, String>,
 ) -> Option<CExpression> {
     if pointer == &Pointer::null() {
         return Some(CExpression::Value(int32(0)));
@@ -14578,7 +14868,13 @@ fn synthesize_surface_pointer(
             if index == Bitvector32Term::Constant(0) {
                 return Some(base);
             }
-            let index = synthesize_surface_bitvector(&index, parameters, arguments, state)?;
+            let index = synthesize_surface_bitvector(
+                &index,
+                parameters,
+                arguments,
+                state,
+                bound_variables,
+            )?;
             let ContractExpression::CFragment(index) = index else {
                 return None;
             };
@@ -14587,10 +14883,23 @@ fn synthesize_surface_pointer(
     {
         return Some(expression);
     }
-    if let Some((name, _)) = state.locals().object_values().find(
-        |(_, value)| matches!(value, CValue::Pointer(local_pointer) if local_pointer == pointer),
-    ) {
-        return Some(CExpression::Variable(name.to_string()));
+    if let Some(expression) = state.locals().object_values().find_map(|(name, value)| {
+        let CValue::Pointer(base) = value else {
+            return None;
+        };
+        let index = pointer.element_index_from_base(base)?;
+        let base = CExpression::Variable(name.to_string());
+        if index == Bitvector32Term::Constant(0) {
+            return Some(base);
+        }
+        let index =
+            synthesize_surface_bitvector(&index, parameters, arguments, state, bound_variables)?;
+        let ContractExpression::CFragment(index) = index else {
+            return None;
+        };
+        Some(CExpression::Add(Box::new(base), Box::new(index)))
+    }) {
+        return Some(expression);
     }
     if !arguments.iter().any(|argument| {
         matches!(
@@ -14600,8 +14909,13 @@ fn synthesize_surface_pointer(
     }) {
         return None;
     }
-    let ContractExpression::CFragment(expression) =
-        synthesize_surface_pointer_offset(&pointer.offset, parameters, arguments, state)?
+    let ContractExpression::CFragment(expression) = synthesize_surface_pointer_offset(
+        &pointer.offset,
+        parameters,
+        arguments,
+        state,
+        bound_variables,
+    )?
     else {
         return None;
     };
@@ -14613,8 +14927,11 @@ fn synthesize_surface_pointer_expression(
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
     state: &CState,
+    bound_variables: &BTreeMap<Variable, String>,
 ) -> Option<ContractExpression> {
-    if let Some(pointer) = synthesize_surface_pointer(pointer, parameters, arguments, state) {
+    if let Some(pointer) =
+        synthesize_surface_pointer(pointer, parameters, arguments, state, bound_variables)
+    {
         return Some(ContractExpression::CFragment(pointer));
     }
     if !arguments.iter().any(|argument| {
@@ -14625,7 +14942,13 @@ fn synthesize_surface_pointer_expression(
     }) {
         return None;
     }
-    synthesize_surface_pointer_offset(&pointer.offset, parameters, arguments, state)
+    synthesize_surface_pointer_offset(
+        &pointer.offset,
+        parameters,
+        arguments,
+        state,
+        bound_variables,
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -14753,6 +15076,7 @@ fn lower_outcome_simp_tactic(
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<ProofTactic, ClickError> {
+    check_verification_deadline()?;
     if matches!(normalize_proposition(goal), SimpProposition::True) {
         return Ok(ProofTactic::Normalize);
     }
@@ -14779,13 +15103,10 @@ fn lower_outcome_simp_tactic(
     let normalized_goal = normalize_direct_atomic_memory_loads(goal);
     let mut atomic_available = Vec::new();
     for fact in available {
+        check_verification_deadline()?;
         atomic_conjuncts(fact, &mut atomic_available);
     }
     let atomic_available = atomic_available.into_iter().cloned().collect::<Vec<_>>();
-    let normalized_available = atomic_available
-        .iter()
-        .map(normalize_direct_atomic_memory_loads)
-        .collect::<Vec<_>>();
     let source_for_required = |required: &Proposition| {
         let loadability_source = directly_covering_loadability_fact(required, &atomic_available);
         let checked_source = |fact: &Proposition| {
@@ -14839,6 +15160,10 @@ fn lower_outcome_simp_tactic(
                     .find_map(checked_source)
             })
     };
+    let normalized_available = atomic_available
+        .iter()
+        .map(normalize_direct_atomic_memory_loads)
+        .collect::<Vec<_>>();
     // Plan against the kernel facts, then require an exact checked Surface
     // spelling for every premise the derivation actually selected. The
     // derivation context is the complete dependency boundary; eagerly
@@ -14869,6 +15194,7 @@ fn lower_outcome_simp_tactic(
             .collect::<Vec<_>>();
         let mut selected_premises = Some(Vec::new());
         for required in &context {
+            check_verification_deadline()?;
             let Some(selected) = source_for_required(required) else {
                 // The kernel planner may select a derived ambient equality
                 // whose internal pointer spelling has no Surface Click
@@ -14895,67 +15221,6 @@ fn lower_outcome_simp_tactic(
                         .into_iter()
                         .map(|(_, surface)| surface)
                         .collect(),
-                }));
-            }
-        }
-    }
-    if matches!(normalized_goal, Proposition::ForAll { .. }) {
-        let derives_goal = |facts: &[Proposition]| {
-            let facts = facts
-                .iter()
-                .map(normalize_direct_atomic_memory_loads)
-                .collect::<Vec<_>>();
-            assumptions_from_propositions(&facts)
-                .derive_simp_proposition(&normalized_goal)
-                .is_some()
-        };
-        let mut selected = atomic_available
-            .iter()
-            .filter(|fact| {
-                matches!(
-                    fact,
-                    Proposition::ForAll { .. } | Proposition::ConditionIs(_, _)
-                )
-            })
-            .cloned()
-            .collect::<Vec<_>>();
-        if derives_goal(&selected) {
-            let mut index = 0;
-            while index < selected.len() {
-                let mut reduced = selected.clone();
-                reduced.remove(index);
-                if derives_goal(&reduced) {
-                    selected = reduced;
-                } else {
-                    index += 1;
-                }
-            }
-            for fact in &atomic_available {
-                if matches!(fact, Proposition::CMemoryLoadable { .. }) && !selected.contains(fact) {
-                    selected.push(fact.clone());
-                }
-            }
-            let surface_premises = selected
-                .iter()
-                .map(|fact| {
-                    checked_surface_fact_at_outcome(
-                        replay,
-                        fact,
-                        SurfaceFactMatch::CanonicalExact,
-                        available,
-                        parameters,
-                        arguments,
-                        pre_state,
-                        post_state,
-                        result,
-                        predicate_environment,
-                        click_function_environment,
-                    )
-                })
-                .collect::<Result<Vec<_>, _>>();
-            if let Ok(surface_premises) = surface_premises {
-                return Ok(ProofTactic::Derive(ProofDerive {
-                    premises: surface_premises,
                 }));
             }
         }
@@ -15008,6 +15273,7 @@ fn lower_outcome_simp_tactic(
         .collect::<Vec<_>>();
     if let Some(variants) = comparison_program_point_variants(surface_goal, &points) {
         for candidate in variants {
+            check_verification_deadline()?;
             let Ok(lowered) = check(&candidate) else {
                 continue;
             };
@@ -15067,6 +15333,7 @@ fn lower_outcome_simp_tactic(
     }
     let mut premise_pairs = Vec::new();
     for fact in available {
+        check_verification_deadline()?;
         // Recorded exact spellings are already paired with this kernel fact
         // and avoid a costly synthesis attempt at every retained program
         // point. The completed fallback certificate is still replayed below,
@@ -15119,6 +15386,7 @@ fn lower_outcome_simp_tactic(
         })
         .map(ExecutionPureFact::proposition)
     {
+        check_verification_deadline()?;
         if premise_pairs.iter().any(|(kernel, _)| kernel == fact) {
             continue;
         }
@@ -15169,6 +15437,7 @@ fn lower_outcome_simp_tactic(
             )
         })
     {
+        check_verification_deadline()?;
         if premise_pairs.iter().any(|(kernel, _)| kernel == fact) {
             continue;
         }
@@ -15213,6 +15482,7 @@ fn lower_outcome_simp_tactic(
         .collect::<Vec<_>>();
     let assumptions = assumptions_from_propositions(&normalized_kernel_premises);
     let exact_assumptions = assumptions_from_propositions(&kernel_premises);
+    check_verification_deadline()?;
     if let Some(plan) = plan_simp_certificate(goal, &assumptions_from_propositions(available))
         && let [ProofTactic::ExactPropositionDerivation(derivation)] = plan.tactics()
     {
@@ -15264,6 +15534,7 @@ fn lower_outcome_simp_tactic(
         // recorded program-point state when no ambient fact carries it.
         let mut certified_context = available.to_vec();
         for fact in &replay.effect_facts {
+            check_verification_deadline()?;
             if !certified_context.contains(fact.proposition()) {
                 certified_context.push(fact.proposition().clone());
             }
@@ -15271,6 +15542,7 @@ fn lower_outcome_simp_tactic(
         let certified_store_equations =
             crate::kernel::certified_store_equations(&replay.effect_facts);
         for equation in &certified_store_equations {
+            check_verification_deadline()?;
             if !certified_context.contains(equation) {
                 certified_context.push(equation.clone());
             }
@@ -15283,6 +15555,7 @@ fn lower_outcome_simp_tactic(
                 premises: surface_premises.clone(),
             }),
         ] {
+            check_verification_deadline()?;
             if check_atomic_derivation_goal(
                 &candidate,
                 goal.clone(),
@@ -15337,6 +15610,7 @@ fn lower_outcome_simp_tactic(
                     premises: surface_premises.clone(),
                 }),
             ] {
+                check_verification_deadline()?;
                 let checked = check_atomic_derivation_goal(
                     &candidate,
                     goal.clone(),
@@ -15349,8 +15623,10 @@ fn lower_outcome_simp_tactic(
                 }
             }
         }
+        check_verification_deadline()?;
         let minimized = minimal_proposition_derivation(goal, &certified_context)
             .or_else(|| minimal_simp_proposition_derivation(goal, &certified_context));
+        check_verification_deadline()?;
         if minimized.is_none()
             && let Ok(dir) = std::env::var("CLICK_DERIVE_DUMP_DIR")
         {
@@ -15373,6 +15649,7 @@ fn lower_outcome_simp_tactic(
             let mut kernel_premises: Vec<Proposition> = Vec::new();
             let mut complete = true;
             'premises: for required in derivation.context_premises() {
+                check_verification_deadline()?;
                 // A recorded lowering round-trips exactly: replay resolves
                 // the spelling through the same map before re-lowering.
                 if let Ok(surface) = replay.surface_propositions.surface(&required)
@@ -15421,6 +15698,7 @@ fn lower_outcome_simp_tactic(
                 let candidate_states = std::iter::once((&entry_point, pre_state))
                     .chain(replay.program_point_states.iter().rev());
                 for (point, point_state) in candidate_states {
+                    check_verification_deadline()?;
                     let Some(core) = synthesize_surface_proposition(
                         &required,
                         parameters,
@@ -15468,7 +15746,8 @@ fn lower_outcome_simp_tactic(
             }
         }
         Err(ClickError::new(format!(
-            "expressible path facts do not replay the postcondition derivation: {goal:?}\n  surface premises: {}",
+            "expressible path facts do not replay the postcondition derivation: {}\n  surface premises: {}",
+            bounded_debug(goal),
             surface_premises
                 .iter()
                 .map(describe_click_proposition)
@@ -16901,6 +17180,7 @@ fn lower_surface_candidate_at_point(
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<Proposition, ClickError> {
+    check_verification_deadline()?;
     let values = parameter_values(parameters, arguments)?;
     let array_refs = array_refs_for_parameters(parameters, &values, state.memory());
     let (mut values, array_refs) = contract_environment_at_state(&values, &array_refs, state);
@@ -17016,6 +17296,10 @@ fn record_surface_replay_tactic(
     _statement_uses_memory_context: Option<bool>,
 ) {
     if replay.surface_replay.blocker.is_some() {
+        return;
+    }
+    if let Err(error) = check_verification_deadline() {
+        replay.surface_replay.block(error.message());
         return;
     }
     match tactic {
@@ -17829,6 +18113,9 @@ fn record_surface_replay_tactic(
                 }
             }
             let find_candidate = |expected: &Proposition| {
+                if crate::instrumentation::deadline_exceeded() {
+                    return None;
+                }
                 let normalized_expected = normalize_direct_atomic_memory_loads(expected);
                 let lower = |candidate: &ClickProposition| {
                     lower_surface_candidate_at_point(
@@ -17843,7 +18130,10 @@ fn record_surface_replay_tactic(
                     )
                     .ok()
                 };
-                candidates.iter().find_map(|candidate| {
+                for candidate in &candidates {
+                    if crate::instrumentation::deadline_exceeded() {
+                        return None;
+                    }
                     let actual = lower(candidate)?;
                     if normalize_direct_atomic_memory_loads(&actual) == normalized_expected {
                         return Some((candidate.clone(), actual));
@@ -17865,8 +18155,8 @@ fn record_surface_replay_tactic(
                     {
                         return Some((candidate.clone(), actual));
                     }
-                    None
-                })
+                }
+                None
             };
             let selected_by_preceding_step = replay
                 .surface_replay

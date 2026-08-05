@@ -214,6 +214,9 @@ pub(crate) fn c_memory_load_is_unchanged(
     pointer: &Pointer,
     assumptions: &Assumptions,
 ) -> bool {
+    if crate::instrumentation::deadline_exceeded() {
+        return false;
+    }
     if memories_match_for_pointer_load(before, after, pointer) {
         return true;
     }
@@ -229,15 +232,19 @@ pub(crate) fn c_memory_load_is_unchanged(
     if load_unchanged_along_memory_derivations(before, after, pointer, assumptions) {
         return true;
     }
+    if crate::instrumentation::deadline_exceeded() {
+        return false;
+    }
     if memories_match_for_pointer_load_under_assumptions(before, after, pointer, assumptions) {
         return true;
     }
     // Predicate framing is deliberately bounded: use exact certified writes
     // and direct address cancellation, without invoking general alias search.
-    if assumptions
-        .prop_facts
-        .iter()
-        .any(|proposition| match proposition {
+    if assumptions.prop_facts.iter().any(|proposition| {
+        if crate::instrumentation::deadline_exceeded() {
+            return false;
+        }
+        match proposition {
             Proposition::CMemoryMutatesOnly {
                 before: effect_before,
                 after: effect_after,
@@ -303,8 +310,8 @@ pub(crate) fn c_memory_load_is_unchanged(
                     )
             }
             _ => false,
-        })
-    {
+        }
+    }) {
         return true;
     }
     load_unchanged_via_effect_chain(before, after, pointer, assumptions)
@@ -1071,13 +1078,17 @@ fn c_memory_load_is_directly_unchanged(
     pointer: &Pointer,
     assumptions: &Assumptions,
 ) -> bool {
+    if crate::instrumentation::deadline_exceeded() {
+        return false;
+    }
     if memories_directly_match_for_pointer_load(before, after, pointer, assumptions) {
         return true;
     }
-    assumptions
-        .prop_facts
-        .iter()
-        .any(|proposition| match proposition {
+    assumptions.prop_facts.iter().any(|proposition| {
+        if crate::instrumentation::deadline_exceeded() {
+            return false;
+        }
+        match proposition {
             Proposition::CMemoryMutatesOnly {
                 before: effect_before,
                 after: effect_after,
@@ -1153,7 +1164,8 @@ fn c_memory_load_is_directly_unchanged(
                     )
             }
             _ => false,
-        })
+        }
+    })
 }
 
 fn memories_directly_match_for_pointer_load(
@@ -1822,6 +1834,9 @@ fn transport_framed_atomic_condition(
     after: &CMemory,
     assumptions: Option<(&Assumptions, bool)>,
 ) -> Option<ConditionTerm> {
+    if crate::instrumentation::deadline_exceeded() {
+        return None;
+    }
     let binary = |left: &Bitvector32Term, right: &Bitvector32Term| {
         Some((
             transport_framed_atomic_bitvector(left, after, assumptions)?,
@@ -1878,6 +1893,9 @@ fn transport_framed_atomic_pointer_offset(
     after: &CMemory,
     assumptions: Option<(&Assumptions, bool)>,
 ) -> Option<PointerOffsetTerm> {
+    if crate::instrumentation::deadline_exceeded() {
+        return None;
+    }
     Some(match offset {
         PointerOffsetTerm::Constant(_) | PointerOffsetTerm::Variable(_) => offset.clone(),
         PointerOffsetTerm::Add(left, right) => PointerOffsetTerm::add(
@@ -1896,6 +1914,9 @@ fn transport_framed_atomic_bitvector(
     after: &CMemory,
     assumptions: Option<(&Assumptions, bool)>,
 ) -> Option<Bitvector32Term> {
+    if crate::instrumentation::deadline_exceeded() {
+        return None;
+    }
     Some(match term {
         Bitvector32Term::Constant(_) | Bitvector32Term::Variable(_) => term.clone(),
         Bitvector32Term::MemoryLoad(memory, pointer) => {
@@ -4324,13 +4345,17 @@ fn quantified_load_fact_certifies_loadable(assumptions: &Assumptions, goal: &Pro
         }) {
             return false;
         }
-        condition_fact_mentions_load_of(fact_conclusion, base)
+        condition_fact_mentions_load_of(fact_conclusion, base, assumptions)
     })
 }
 
 /// True when a condition fact constrains a load of exactly this pointer, so
 /// the fact witnesses that the pointer's first byte is loadable.
-fn condition_fact_mentions_load_of(fact: &Proposition, base: &Pointer) -> bool {
+fn condition_fact_mentions_load_of(
+    fact: &Proposition,
+    base: &Pointer,
+    assumptions: &Assumptions,
+) -> bool {
     fn collect_load_pointers(term: &Bitvector32Term, pointers: &mut Vec<Pointer>) {
         match term {
             Bitvector32Term::MemoryLoad(_, pointer) => pointers.push(pointer.as_ref().clone()),
@@ -4368,7 +4393,11 @@ fn condition_fact_mentions_load_of(fact: &Proposition, base: &Pointer) -> bool {
         | ConditionTerm::Variable(_) => {}
     }
     load_pointers.iter().any(|pointer| {
+        if crate::instrumentation::deadline_exceeded() {
+            return false;
+        }
         canonicalize_pointer_loads(pointer, 0) == canonicalize_pointer_loads(base, 0)
+            || pointers_proven_equal_for_memory_resolution(pointer, base, assumptions)
     })
 }
 
@@ -4385,7 +4414,161 @@ fn load_fact_certifies_loadable(assumptions: &Assumptions, goal: &Proposition) -
     assumptions
         .pure_facts()
         .iter()
-        .any(|fact| condition_fact_mentions_load_of(fact, base))
+        .any(|fact| condition_fact_mentions_load_of(fact, base, assumptions))
+}
+
+/// An instantiated int32 load from an already-certified quantified fact is
+/// loadable whenever that fact's guard holds for the requested index. This is
+/// the pointwise form used while lowering another quantified proposition: the
+/// bound variable has become an ordinary symbolic variable and its guard is
+/// already present in `assumptions`.
+pub(super) fn quantified_int32_fact_certifies_loadable_cell(
+    assumptions: &Assumptions,
+    base: &Pointer,
+) -> bool {
+    if crate::instrumentation::deadline_exceeded() {
+        return false;
+    }
+    fn collect_shallow_term_variables(term: &Bitvector32Term, variables: &mut BTreeSet<Variable>) {
+        match term {
+            Bitvector32Term::Constant(_) => {}
+            Bitvector32Term::Variable(variable) => {
+                variables.insert(*variable);
+            }
+            Bitvector32Term::Add(left, right)
+            | Bitvector32Term::Subtract(left, right)
+            | Bitvector32Term::Multiply(left, right)
+            | Bitvector32Term::Divide(left, right)
+            | Bitvector32Term::Remainder(left, right)
+            | Bitvector32Term::ShiftLeft(left, right)
+            | Bitvector32Term::ArithmeticShiftRight(left, right)
+            | Bitvector32Term::BitwiseAnd(left, right)
+            | Bitvector32Term::BitwiseOr(left, right)
+            | Bitvector32Term::BitwiseXor(left, right) => {
+                collect_shallow_term_variables(left, variables);
+                collect_shallow_term_variables(right, variables);
+            }
+            Bitvector32Term::BitwiseNot(inner) => {
+                collect_shallow_term_variables(inner, variables);
+            }
+            Bitvector32Term::If {
+                then_term,
+                else_term,
+                ..
+            } => {
+                collect_shallow_term_variables(then_term, variables);
+                collect_shallow_term_variables(else_term, variables);
+            }
+            Bitvector32Term::RangeFold {
+                start,
+                end,
+                initial,
+                body,
+                ..
+            } => {
+                collect_shallow_term_variables(start, variables);
+                collect_shallow_term_variables(end, variables);
+                collect_shallow_term_variables(initial, variables);
+                collect_shallow_term_variables(body, variables);
+            }
+            Bitvector32Term::PureFunctionApplication { arguments, .. } => {
+                for argument in arguments {
+                    collect_shallow_term_variables(argument, variables);
+                }
+            }
+            // The memory snapshot may contain a large symbolic state. Only
+            // variables outside nested loads can be the surrounding
+            // quantified index. Variables in the loaded address belong to
+            // the base expression (for example the owner parameter), not to
+            // that index.
+            Bitvector32Term::MemoryLoad(_, _) => {}
+        }
+    }
+
+    fn collect_shallow_offset_variables(
+        offset: &PointerOffsetTerm,
+        variables: &mut BTreeSet<Variable>,
+    ) {
+        match offset {
+            PointerOffsetTerm::Constant(_) => {}
+            PointerOffsetTerm::Variable(variable) => {
+                variables.insert(*variable);
+            }
+            PointerOffsetTerm::Add(left, right) => {
+                collect_shallow_offset_variables(left, variables);
+                collect_shallow_offset_variables(right, variables);
+            }
+            PointerOffsetTerm::Int32Scaled { value, .. } => {
+                collect_shallow_term_variables(value, variables);
+            }
+        }
+    }
+
+    fn implication_parts(body: &Proposition) -> (Vec<Proposition>, &Proposition) {
+        let mut premises = Vec::new();
+        let mut conclusion = body;
+        while let Proposition::Implies(premise, rest) = conclusion {
+            proposition_conjuncts(premise, &mut premises);
+            conclusion = rest.as_ref();
+        }
+        (premises, conclusion)
+    }
+
+    let mut target_variables = BTreeSet::new();
+    if let PointerBlock::Symbolic(variable) = base.block {
+        target_variables.insert(variable);
+    }
+    collect_shallow_offset_variables(&base.offset, &mut target_variables);
+    let exact_binder_candidates = assumptions.prop_facts.iter().filter(
+        |fact| matches!(fact, Proposition::ForAll { var, .. } if target_variables.contains(var)),
+    );
+    let renamed_binder_candidates = assumptions.prop_facts.iter().filter(
+        |fact| matches!(fact, Proposition::ForAll { var, .. } if !target_variables.contains(var)),
+    );
+    exact_binder_candidates
+        .chain(renamed_binder_candidates)
+        .any(|fact| {
+            if crate::instrumentation::deadline_exceeded() {
+                return false;
+            }
+            let Proposition::ForAll {
+                var: fact_var,
+                sort: Sort::CInt32 | Sort::Bitvector32,
+                body,
+            } = fact
+            else {
+                return false;
+            };
+            let exact_target = target_variables.contains(fact_var).then_some(*fact_var);
+            exact_target
+                .into_iter()
+                .chain(
+                    target_variables
+                        .iter()
+                        .copied()
+                        .filter(|target| target != fact_var),
+                )
+                .any(|target_var| {
+                    if crate::instrumentation::deadline_exceeded() {
+                        return false;
+                    }
+                    let renamed = (target_var != *fact_var).then(|| {
+                        substitute_bitvector_variable_in_proposition(
+                            body,
+                            *fact_var,
+                            &Bitvector32Term::Variable(target_var),
+                        )
+                    });
+                    let instantiated = renamed.as_ref().unwrap_or(body.as_ref());
+                    let (premises, conclusion) = implication_parts(instantiated);
+                    let premises_hold = premises.iter().all(|premise| {
+                        !crate::instrumentation::deadline_exceeded()
+                            && matches!(premise, Proposition::ConditionIs(_, _))
+                            && certification_proves_proposition(assumptions, premise)
+                    });
+                    premises_hold && condition_fact_mentions_load_of(conclusion, base, assumptions)
+                })
+        })
 }
 
 /// Certifies an existential requirement side-obligation (typically the

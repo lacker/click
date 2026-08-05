@@ -128,7 +128,7 @@ pub(super) fn describe_pure_facts(pure_facts: &[Proposition]) -> String {
         return "[]".to_string();
     }
 
-    describe_bounded_list(pure_facts, bounded_debug)
+    describe_bounded_list(pure_facts, |fact| describe_pure_fact(fact, &[], &[]))
 }
 
 pub(super) fn describe_pure_fact(
@@ -152,6 +152,33 @@ pub(super) fn describe_pure_fact(
             describe_c_resource(parent, parameters, arguments),
             describe_c_resource(child, parameters, arguments)
         ),
+        Proposition::ForAll { sort, .. } => {
+            format!("universal proposition over {sort:?}")
+        }
+        Proposition::Exists { sort, .. } => {
+            format!("existential proposition over {sort:?}")
+        }
+        Proposition::ConditionIs(condition, value) => {
+            let kind = match condition {
+                ConditionTerm::Bitvector32SignedLessThan(_, _) => "signed less-than",
+                ConditionTerm::Bitvector32SignedLessEqual(_, _) => "signed less-or-equal",
+                ConditionTerm::Bitvector32SignedGreaterThan(_, _) => "signed greater-than",
+                ConditionTerm::Bitvector32SignedGreaterEqual(_, _) => "signed greater-or-equal",
+                ConditionTerm::Bitvector32Equal(_, _) => "int32 equality",
+                ConditionTerm::Bitvector32SignedAddOverflows(_, _) => "addition overflow",
+                ConditionTerm::Bitvector32SignedSubtractOverflows(_, _) => "subtraction overflow",
+                ConditionTerm::Bitvector32SignedMultiplyOverflows(_, _) => {
+                    "multiplication overflow"
+                }
+                ConditionTerm::Bitvector32SignedDivideOverflows(_, _) => "division overflow",
+                ConditionTerm::Bitvector32SignedShiftLeftOverflows(_, _) => "left-shift overflow",
+                ConditionTerm::PointerOffsetEqual(_, _) => "pointer-offset equality",
+                ConditionTerm::PointerEqual(_, _) => "pointer equality",
+                ConditionTerm::Constant(_) => "constant condition",
+                ConditionTerm::Variable(_) => "condition variable",
+            };
+            format!("{kind} is {value}")
+        }
         _ => bounded_debug(fact),
     }
 }

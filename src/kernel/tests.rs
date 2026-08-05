@@ -1880,6 +1880,79 @@ fn field_derived_capacity_range_covers_a_shorter_live_prefix() {
 }
 
 #[test]
+fn quantified_int32_fact_certifies_an_instantiated_load() {
+    let memory = CMemory::new();
+    let data = Pointer {
+        block: "data".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let fact_index = Variable(2_100_000);
+    let target_index = Variable(2_100_001);
+    let length = Bitvector32Term::Variable(Variable(2_100_002));
+    let indexed_fact_pointer = data.offset_by_int32_elements(Bitvector32Term::Variable(fact_index));
+    let loaded_value = Bitvector32Term::MemoryLoad(
+        crate::kernel::intern_c_memory_ref(&memory),
+        Box::new(indexed_fact_pointer),
+    );
+    let guarded_fact = forall_int32(
+        fact_index,
+        Proposition::Implies(
+            Box::new(Proposition::And(
+                Box::new(Proposition::ConditionIs(
+                    ConditionTerm::signed_less_equal(
+                        Bitvector32Term::Constant(0),
+                        Bitvector32Term::Variable(fact_index),
+                    ),
+                    true,
+                )),
+                Box::new(Proposition::ConditionIs(
+                    ConditionTerm::signed_less_than(
+                        Bitvector32Term::Variable(fact_index),
+                        length.clone(),
+                    ),
+                    true,
+                )),
+            )),
+            Box::new(Proposition::ConditionIs(
+                ConditionTerm::equal(loaded_value, Bitvector32Term::Constant(7)),
+                true,
+            )),
+        ),
+    );
+    let assumptions = Assumptions::new()
+        .assume_proposition(guarded_fact)
+        .assume_condition(
+            ConditionTerm::signed_less_equal(
+                Bitvector32Term::Constant(0),
+                Bitvector32Term::Variable(target_index),
+            ),
+            true,
+        )
+        .assume_condition(
+            ConditionTerm::signed_less_than(Bitvector32Term::Variable(target_index), length),
+            true,
+        );
+    let target = Proposition::CMemoryLoadable {
+        memory,
+        base: data.offset_by_int32_elements(Bitvector32Term::Variable(target_index)),
+        bytes: Bitvector32Term::Constant(4),
+    };
+
+    assert!(assumptions.proves(&target));
+    crate::instrumentation::with_deadline(std::time::Duration::ZERO, || {
+        assert!(!assumptions.proves(&target));
+    });
+    assert!(
+        !Assumptions::new()
+            .assume_proposition(forall_int32(
+                fact_index,
+                Proposition::ConditionIs(ConditionTerm::Constant(true), true),
+            ))
+            .proves(&target)
+    );
+}
+
+#[test]
 fn proposition_derivation_replay_requires_its_context() {
     let x = Bitvector32Term::Variable(Variable(86));
     let proposition = Proposition::ConditionIs(

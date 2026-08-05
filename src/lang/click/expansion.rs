@@ -2857,7 +2857,7 @@ int32 compare_swap2(int32 p[2]) {
         )
         .expect("post-execution simp should expand");
 
-        assert!(expanded.contains("if at(function.entry, *(p + 1))"));
+        assert!(expanded.contains("if at(function.entry, p[1])"));
         verify_c0_sources(&expanded, &[("compare_swap2.c", c_source)])
             .expect("branch certificate should replay against the state where it branched");
     }

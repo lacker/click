@@ -2157,6 +2157,9 @@ impl Assumptions {
         right: &Bitvector32Term,
         require_strict: bool,
     ) -> bool {
+        if crate::instrumentation::deadline_exceeded() {
+            return false;
+        }
         let order_facts = self.condition_order_facts();
         let order_terms_match = |left: &Bitvector32Term, right: &Bitvector32Term| {
             if left == right {
@@ -2184,6 +2187,9 @@ impl Assumptions {
         let mut stack = vec![(left.clone(), false)];
         let mut seen = BTreeSet::new();
         while let Some((current, strict_so_far)) = stack.pop() {
+            if crate::instrumentation::deadline_exceeded() {
+                return false;
+            }
             if !seen.insert((current.clone(), strict_so_far)) {
                 continue;
             }
@@ -2203,6 +2209,9 @@ impl Assumptions {
                 return true;
             }
             for (edge_left, edge_right, edge_strict) in &order_facts {
+                if crate::instrumentation::deadline_exceeded() {
+                    return false;
+                }
                 let constant_connection = signed_bitvector_constant(&current)
                     .zip(signed_bitvector_constant(edge_left))
                     .and_then(|(current, edge_left)| {
@@ -2218,6 +2227,9 @@ impl Assumptions {
                 }
             }
             for (condition, value) in &self.condition_facts {
+                if crate::instrumentation::deadline_exceeded() {
+                    return false;
+                }
                 let (ConditionTerm::Bitvector32Equal(left, right), true) = (condition, value)
                 else {
                     continue;
@@ -2264,6 +2276,9 @@ impl Assumptions {
         condition: &ConditionTerm,
         value: bool,
     ) -> bool {
+        if crate::instrumentation::deadline_exceeded() {
+            return false;
+        }
         condition_as_order_fact(condition, value).is_some_and(|(left, right, strict)| {
             let left = self.simplify_bitvector_under_assumptions(&left);
             let right = self.simplify_bitvector_under_assumptions(&right);
@@ -2780,10 +2795,16 @@ impl Assumptions {
     }
 
     pub(super) fn condition_order_facts(&self) -> Vec<(Bitvector32Term, Bitvector32Term, bool)> {
-        self.condition_facts
-            .iter()
-            .filter_map(|(condition, value)| condition_as_order_fact(condition, *value))
-            .collect()
+        let mut facts = Vec::new();
+        for (condition, value) in &self.condition_facts {
+            if crate::instrumentation::deadline_exceeded() {
+                break;
+            }
+            if let Some(fact) = condition_as_order_fact(condition, *value) {
+                facts.push(fact);
+            }
+        }
+        facts
     }
 
     pub(super) fn collect_derived_order_facts(
@@ -3710,6 +3731,9 @@ impl Assumptions {
     }
 
     pub fn proves(&self, proposition: &Proposition) -> bool {
+        if crate::instrumentation::deadline_exceeded() {
+            return false;
+        }
         // One id resolution up front so every decision this proof attempt
         // makes shares it instead of rehashing the fact set per decision.
         let _id_scope = AssumptionsIdScope::enter(self);
@@ -5694,7 +5718,6 @@ impl Assumptions {
         {
             return true;
         }
-
         if self.prop_facts.iter().any(|proposition| {
             let Proposition::CMemoryLoadable {
                 memory: range_memory,
@@ -5744,7 +5767,8 @@ impl Assumptions {
         ranges.sort_by_key(|(preferred, _, _)| !preferred);
         ranges.into_iter().any(|(_, range_base, range_bytes)| {
             self.proves_loadable_region_from_range(range_base, range_bytes, base, bytes)
-        })
+        }) || bytes.as_const() == Some(4)
+            && super::api::quantified_int32_fact_certifies_loadable_cell(self, base)
     }
 
     pub(crate) fn proves_memory_loadable_for_memory_resolution(
@@ -5895,6 +5919,9 @@ impl Assumptions {
         pointer: &Pointer,
         byte_width: u32,
     ) -> bool {
+        if crate::instrumentation::deadline_exceeded() {
+            return false;
+        }
         if base.block != pointer.block {
             return false;
         }
