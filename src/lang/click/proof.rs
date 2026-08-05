@@ -13385,6 +13385,13 @@ fn finish_ordered_proof_replay(
                     certification_facts.clone(),
                 )
             } else {
+                let certified_outcome = &certified_outcomes[certified_path_for_replay[path_index]];
+                let outcome_delta = describe_function_outcome_delta(
+                    &outcome,
+                    certified_outcome,
+                    parsed_function.parameters(),
+                    arguments,
+                );
                 let certified_path =
                         certify_c_function_execution_path_resource_representation(
                             certified_path,
@@ -13393,8 +13400,7 @@ fn finish_ordered_proof_replay(
                         )
                         .ok_or_else(|| {
                             ClickError::new(format!(
-                                "execution proof for `{proof_label}` path {path_index} changed more than the certified ghost resource representation\n  desired outcome: {outcome:?}\n  certified path: {:?}",
-                                certified_path.theorem().proposition()
+                                "execution proof for `{proof_label}` path {path_index} changed more than the certified ghost resource representation\n  {outcome_delta}"
                             ))
                         })?;
                 (certified_path, outcome.clone(), path_requirements.clone())
@@ -13411,9 +13417,17 @@ fn finish_ordered_proof_replay(
                 &certified_path,
             )
             .ok_or_else(|| {
+                let certified_outcome =
+                    &certified_outcomes[certified_path_for_replay[path_index]];
+                let outcome_delta = describe_function_outcome_delta(
+                    specification.outcome(),
+                    certified_outcome,
+                    parsed_function.parameters(),
+                    arguments,
+                );
                 ClickError::new(format!(
-                    "execution proof for `{proof_label}` path {path_index} does not certify its exact function specification\n  specification: {specification:?}\n  certified path: {:?}",
-                    certified_path.theorem().proposition()
+                    "execution proof for `{proof_label}` path {path_index} does not certify its exact function specification\n  requirements: {}\n  {outcome_delta}",
+                    specification.requires().len()
                 ))
             })?;
             for claim in claims {

@@ -1,27 +1,134 @@
 use super::*;
+use std::fmt::Write;
+
+const MAX_DIAGNOSTIC_ITEMS: usize = 12;
+const DEBUG_VALUE_BYTE_LIMIT: usize = 2 * 1024;
+const TRUNCATION_SUFFIX: &str =
+    "\n… <diagnostic truncated; set CLICK_FULL_DIAGNOSTICS=1 for full internal state>";
+
+pub(super) fn bound_error_message(message: String) -> String {
+    bound_error_message_for_mode(message, std::env::var_os(FULL_DIAGNOSTICS_ENV).is_some())
+}
+
+pub(super) fn bound_error_message_for_mode(message: String, full_internal_state: bool) -> String {
+    if full_internal_state || message.len() <= DEFAULT_DIAGNOSTIC_BYTE_LIMIT {
+        return message;
+    }
+    truncate_utf8_with_suffix(&message, DEFAULT_DIAGNOSTIC_BYTE_LIMIT, TRUNCATION_SUFFIX)
+}
+
+fn truncate_utf8_with_suffix(message: &str, limit: usize, suffix: &str) -> String {
+    if message.len() <= limit {
+        return message.to_string();
+    }
+    let content_limit = limit.saturating_sub(suffix.len());
+    let mut boundary = content_limit.min(message.len());
+    while !message.is_char_boundary(boundary) {
+        boundary -= 1;
+    }
+    let mut bounded = String::with_capacity(boundary + suffix.len());
+    bounded.push_str(&message[..boundary]);
+    bounded.push_str(suffix);
+    bounded
+}
+
+struct BoundedDebugWriter {
+    output: String,
+    content_limit: usize,
+}
+
+impl Write for BoundedDebugWriter {
+    fn write_str(&mut self, value: &str) -> fmt::Result {
+        let remaining = self.content_limit.saturating_sub(self.output.len());
+        if value.len() <= remaining {
+            self.output.push_str(value);
+            return Ok(());
+        }
+        let mut boundary = remaining.min(value.len());
+        while !value.is_char_boundary(boundary) {
+            boundary -= 1;
+        }
+        self.output.push_str(&value[..boundary]);
+        Err(fmt::Error)
+    }
+}
+
+pub(super) fn bounded_debug(value: &impl fmt::Debug) -> String {
+    bounded_debug_for_mode(value, std::env::var_os(FULL_DIAGNOSTICS_ENV).is_some())
+}
+
+pub(super) fn bounded_debug_for_mode(value: &impl fmt::Debug, full_internal_state: bool) -> String {
+    if full_internal_state {
+        return format!("{value:?}");
+    }
+    let content_limit = DEBUG_VALUE_BYTE_LIMIT.saturating_sub(TRUNCATION_SUFFIX.len());
+    let mut writer = BoundedDebugWriter {
+        output: String::with_capacity(DEBUG_VALUE_BYTE_LIMIT),
+        content_limit,
+    };
+    if write!(&mut writer, "{value:?}").is_err() {
+        writer.output.push_str(TRUNCATION_SUFFIX);
+    }
+    writer.output
+}
+
+fn describe_bounded_list<T>(items: &[T], mut describe: impl FnMut(&T) -> String) -> String {
+    if items.is_empty() {
+        return "[]".to_string();
+    }
+    let item_limit = diagnostic_item_limit();
+    let mut entries = items
+        .iter()
+        .take(item_limit)
+        .map(&mut describe)
+        .collect::<Vec<_>>();
+    if items.len() > item_limit {
+        entries.push(format!("… {} more omitted", items.len() - item_limit));
+    }
+    format!("[{}]", entries.join(", "))
+}
+
+fn diagnostic_item_limit() -> usize {
+    if std::env::var_os(FULL_DIAGNOSTICS_ENV).is_some() {
+        usize::MAX
+    } else {
+        MAX_DIAGNOSTIC_ITEMS
+    }
+}
+
+fn describe_context_pure_and_execution_facts(
+    pure_facts: &[Proposition],
+    execution_pure_facts: &[ExecutionPureFact],
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+) -> String {
+    let total = pure_facts.len() + execution_pure_facts.len();
+    if total == 0 {
+        return "[]".to_string();
+    }
+    let item_limit = diagnostic_item_limit();
+    let mut entries = pure_facts
+        .iter()
+        .chain(
+            execution_pure_facts
+                .iter()
+                .map(ExecutionPureFact::proposition),
+        )
+        .take(item_limit)
+        .map(|fact| describe_pure_fact(fact, parameters, arguments))
+        .collect::<Vec<_>>();
+    if total > item_limit {
+        entries.push(format!("… {} more omitted", total - item_limit));
+    }
+    format!("[{}]", entries.join(", "))
+}
 
 pub(super) fn describe_pure_facts(pure_facts: &[Proposition]) -> String {
     if pure_facts.is_empty() {
         return "[]".to_string();
     }
 
-    format!("{pure_facts:?}")
-}
-
-pub(super) fn describe_context_pure_facts(
-    pure_facts: &[Proposition],
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
-) -> String {
-    if pure_facts.is_empty() {
-        return "[]".to_string();
-    }
-
-    let entries = pure_facts
-        .iter()
-        .map(|fact| describe_pure_fact(fact, parameters, arguments))
-        .collect::<Vec<_>>();
-    format!("[{}]", entries.join(", "))
+    describe_bounded_list(pure_facts, bounded_debug)
 }
 
 pub(super) fn describe_pure_fact(
@@ -45,7 +152,7 @@ pub(super) fn describe_pure_fact(
             describe_c_resource(parent, parameters, arguments),
             describe_c_resource(child, parameters, arguments)
         ),
-        _ => format!("{fact:?}"),
+        _ => bounded_debug(fact),
     }
 }
 
@@ -54,11 +161,7 @@ pub(super) fn describe_execution_pure_facts(facts: &[ExecutionPureFact]) -> Stri
         return "[]".to_string();
     }
 
-    let entries = facts
-        .iter()
-        .map(|fact| format!("{:?}", fact.proposition()))
-        .collect::<Vec<_>>();
-    format!("[{}]", entries.join(", "))
+    describe_bounded_list(facts, |fact| bounded_debug(fact.proposition()))
 }
 
 pub(super) fn describe_available_facts(
@@ -68,15 +171,14 @@ pub(super) fn describe_available_facts(
     arguments: &[CExpression],
     execution_pure_facts: &[ExecutionPureFact],
 ) -> String {
-    let mut all_pure_facts = pure_facts.to_vec();
-    all_pure_facts.extend(
-        execution_pure_facts
-            .iter()
-            .map(|fact| fact.proposition().clone()),
-    );
     format!(
         "available pure facts: {}\n  available resource facts: {}",
-        describe_context_pure_facts(&all_pure_facts, parameters, arguments),
+        describe_context_pure_and_execution_facts(
+            pure_facts,
+            execution_pure_facts,
+            parameters,
+            arguments
+        ),
         describe_resource_facts(resource_facts, parameters, arguments)
     )
 }
@@ -151,15 +253,14 @@ pub(super) fn describe_proof_context(
     arguments: &[CExpression],
     execution_pure_facts: &[ExecutionPureFact],
 ) -> String {
-    let mut all_pure_facts = pure_facts.to_vec();
-    all_pure_facts.extend(
-        execution_pure_facts
-            .iter()
-            .map(|fact| fact.proposition().clone()),
-    );
     format!(
         "proof context:\n  pure facts: {}\n  resource facts: {}",
-        describe_context_pure_facts(&all_pure_facts, parameters, arguments),
+        describe_context_pure_and_execution_facts(
+            pure_facts,
+            execution_pure_facts,
+            parameters,
+            arguments
+        ),
         describe_resource_facts(resource_facts, parameters, arguments)
     )
 }
@@ -172,8 +273,10 @@ pub(super) fn describe_missing_proof_obligations(
     arguments: &[CExpression],
     execution_pure_facts: &[ExecutionPureFact],
 ) -> String {
-    let required = obligations
+    let item_limit = diagnostic_item_limit();
+    let mut required = obligations
         .iter()
+        .take(item_limit)
         .map(|obligation| match obligation.context() {
             Some(context) => format!(
                 "{context}: {}",
@@ -182,6 +285,9 @@ pub(super) fn describe_missing_proof_obligations(
             None => describe_pure_fact(obligation.proposition(), parameters, arguments),
         })
         .collect::<Vec<_>>();
+    if obligations.len() > item_limit {
+        required.push(format!("… {} more omitted", obligations.len() - item_limit));
+    }
 
     let label = if required.len() == 1 {
         "missing pure fact"
@@ -237,6 +343,73 @@ pub(super) fn describe_function_outcome(
                 describe_runtime_error(error, parameters, arguments)
             )
         }
+    }
+}
+
+pub(super) fn describe_function_outcome_delta(
+    desired: &CFunctionOutcome,
+    certified: &CFunctionOutcome,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+) -> String {
+    let (
+        CFunctionOutcome::Return {
+            value: desired_value,
+            state: desired_state,
+        },
+        CFunctionOutcome::Return {
+            value: certified_value,
+            state: certified_state,
+        },
+    ) = (desired, certified)
+    else {
+        return format!(
+            "desired {}; certified {}",
+            describe_function_outcome(desired, parameters, arguments),
+            describe_function_outcome(certified, parameters, arguments)
+        );
+    };
+
+    let desired_facts = desired_state.resources().facts();
+    let certified_facts = certified_state.resources().facts();
+    let missing = desired_facts
+        .iter()
+        .filter(|fact| !certified_facts.contains(fact))
+        .cloned()
+        .collect::<Vec<_>>();
+    let extra = certified_facts
+        .iter()
+        .filter(|fact| !desired_facts.contains(fact))
+        .cloned()
+        .collect::<Vec<_>>();
+    let mut differences = Vec::new();
+    if desired_value != certified_value {
+        differences.push(format!(
+            "return value: desired {}, certified {}",
+            describe_c_value(desired_value, parameters, arguments),
+            describe_c_value(certified_value, parameters, arguments)
+        ));
+    }
+    if desired_state.memory() != certified_state.memory() {
+        differences.push("memory snapshots differ".to_string());
+    }
+    if !missing.is_empty() {
+        differences.push(format!(
+            "missing certified resources: {}",
+            describe_resource_facts(&missing, parameters, arguments)
+        ));
+    }
+    if !extra.is_empty() {
+        differences.push(format!(
+            "extra certified resources: {}",
+            describe_resource_facts(&extra, parameters, arguments)
+        ));
+    }
+    if differences.is_empty() {
+        "return states differ outside their visible value, memory, and exact resource facts"
+            .to_string()
+    } else {
+        differences.join("\n  ")
     }
 }
 
@@ -315,11 +488,9 @@ pub(super) fn describe_resource_facts(
     if resource_facts.is_empty() {
         return "[]".to_string();
     }
-    let entries = resource_facts
-        .iter()
-        .map(|resource| describe_resource_fact(resource, parameters, arguments))
-        .collect::<Vec<_>>();
-    format!("[{}]", entries.join(", "))
+    describe_bounded_list(resource_facts, |resource| {
+        describe_resource_fact(resource, parameters, arguments)
+    })
 }
 
 pub(super) fn describe_resource_fact(
@@ -1003,7 +1174,7 @@ pub(super) fn describe_bitvector_with_context(
             describe_bitvector_with_context(then_term, parameters, arguments),
             describe_bitvector_with_context(else_term, parameters, arguments)
         ),
-        Bitvector32Term::RangeFold { .. } => format!("{term:?}"),
+        Bitvector32Term::RangeFold { .. } => bounded_debug(term),
         Bitvector32Term::PureFunctionApplication {
             name,
             arguments: values,

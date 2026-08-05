@@ -73,6 +73,11 @@ use validation::{
 
 const POINTER_ARGUMENT_VARIABLE_BASE: u64 = 100_000;
 const MAX_CONCRETE_RANGE_FOLD_STEPS: i64 = 1024;
+/// Maximum UTF-8 bytes in an ordinary verifier error message. Set
+/// `CLICK_FULL_DIAGNOSTICS=1` when an engine investigation needs unbounded
+/// internal state.
+pub const DEFAULT_DIAGNOSTIC_BYTE_LIMIT: usize = 16 * 1024;
+pub const FULL_DIAGNOSTICS_ENV: &str = "CLICK_FULL_DIAGNOSTICS";
 
 const CLICK_STANDARD_LIBRARY: &str = include_str!("../../stdlib/prelude.click");
 
@@ -1958,7 +1963,7 @@ impl VerifiedPureTheorem {
 impl ClickError {
     fn new(message: impl Into<String>) -> Self {
         Self {
-            message: message.into(),
+            message: diagnostics::bound_error_message(message.into()),
             expansion_complete: false,
             timing_tactic: current_timing_tactic(),
         }

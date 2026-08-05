@@ -32,16 +32,15 @@ Runtime-sized allocation/free and the independently verifiable general vector
 push are implemented in focused example projects. Composing allocation, copy,
 replacement, and free into vector growth exposed distinct remaining bugs:
 
-1. [Bound and summarize verifier diagnostics](bounded-verifier-diagnostics.md).
-2. [Attribute active work when profiling times out](profile-timeout-attribution.md).
-3. [Isolate `click expand` to its selected proof unit](click-expand-target-isolation.md).
-4. [Align branched expansion certificates by execution path](branched-expansion-path-alignment.md).
-5. [Reduce the owned-vector certification bottleneck](owned-vector-pipeline-slow.md).
-6. [Apply null free contracts without invalid footprints](conditional-null-free-call-footprint.md).
-7. [Define borrowed-resource lifetime at `free`](borrowed-resource-lifetime-at-free.md).
-8. [Authorize `free` effects from owned allocation resources](owned-allocation-free-effects.md).
-9. [Preserve unchanged loads across opaque calls](opaque-call-unchanged-loads.md).
-10. [Compose runtime allocation into owned-vector growth](owned-vector-runtime-growth.md)
+1. [Attribute active work when profiling times out](profile-timeout-attribution.md).
+2. [Isolate `click expand` to its selected proof unit](click-expand-target-isolation.md).
+3. [Align branched expansion certificates by execution path](branched-expansion-path-alignment.md).
+4. [Reduce the owned-vector certification bottleneck](owned-vector-pipeline-slow.md).
+5. [Apply null free contracts without invalid footprints](conditional-null-free-call-footprint.md).
+6. [Define borrowed-resource lifetime at `free`](borrowed-resource-lifetime-at-free.md).
+7. [Authorize `free` effects from owned allocation resources](owned-allocation-free-effects.md).
+8. [Preserve unchanged loads across opaque calls](opaque-call-unchanged-loads.md).
+9. [Compose runtime allocation into owned-vector growth](owned-vector-runtime-growth.md)
    after the blocking invariants above are restored.
 
 ## Partial correctness and recursion

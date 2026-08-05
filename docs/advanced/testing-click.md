@@ -19,6 +19,11 @@ actions hide a foundation problem and make the next feature harder to debug.
 The repository-level version of this rule is in `AGENTS.md`; issue-writing
 requirements are in `issues/README.md`.
 
+Ordinary verifier errors are capped at 16 KiB of UTF-8 text. Fact and resource
+lists show at most twelve entries and report how many were omitted. Engine
+debugging that genuinely needs complete internal terms can opt in with
+`CLICK_FULL_DIAGNOSTICS=1`; do not enable it in normal tests or user workflows.
+
 Run the full suite with:
 
 ```sh
