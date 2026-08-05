@@ -4954,7 +4954,13 @@ pub(super) fn merge_obligations(
                 obligation.context(),
             )?;
         } else {
-            add_required_proof_obligation_with_context(
+            // A required obligation was already tested against the path
+            // context that created it.  Merging path fragments must preserve
+            // that verification condition, not rerun the general prover
+            // against an older base context.  The latter cannot discharge a
+            // new obligation and becomes catastrophically expensive as
+            // verified-call chains accumulate implication facts.
+            add_required_proof_obligation_without_search(
                 &mut obligations,
                 assumptions,
                 obligation.proposition().clone(),

@@ -32,12 +32,11 @@ Runtime-sized allocation/free and the independently verifiable general vector
 push are implemented in focused example projects. Composing allocation, copy,
 replacement, and free into vector growth exposed distinct remaining bugs:
 
-1. [Reduce the owned-vector certification bottleneck](owned-vector-pipeline-slow.md).
-2. [Apply null free contracts without invalid footprints](conditional-null-free-call-footprint.md).
-3. [Define borrowed-resource lifetime at `free`](borrowed-resource-lifetime-at-free.md).
-4. [Authorize `free` effects from owned allocation resources](owned-allocation-free-effects.md).
-5. [Preserve unchanged loads across opaque calls](opaque-call-unchanged-loads.md).
-6. [Compose runtime allocation into owned-vector growth](owned-vector-runtime-growth.md)
+1. [Apply null free contracts without invalid footprints](conditional-null-free-call-footprint.md).
+2. [Define borrowed-resource lifetime at `free`](borrowed-resource-lifetime-at-free.md).
+3. [Authorize `free` effects from owned allocation resources](owned-allocation-free-effects.md).
+4. [Preserve unchanged loads across opaque calls](opaque-call-unchanged-loads.md).
+5. [Compose runtime allocation into owned-vector growth](owned-vector-runtime-growth.md)
    after the blocking invariants above are restored.
 
 ## Partial correctness and recursion

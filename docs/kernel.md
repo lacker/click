@@ -291,6 +291,14 @@ trivial propositions, condition facts, conjunctions, disjunction cases,
 implications, finite forall instantiation, memory access, equality facts, order
 facts, and selected memory/frame patterns.
 
+Condition lookup through implication-shaped call facts checks whether the
+conclusion can establish the requested condition before proving the
+antecedent. Sequential path composition also preserves already-generated
+required obligations without rerunning contextual search against the older
+base context; final certification remains responsible for discharging that
+frontier. These evaluation orders are logically neutral, but prevent ordinary
+verified-call chains from repeatedly scanning every earlier call fact.
+
 Universal introduction treats the quantified variable as a binder, not as an
 ambient free variable with the same numeric identifier. Facts containing that
 free identifier are shadowed while checking the body, and explicit derivations

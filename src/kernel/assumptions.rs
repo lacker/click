@@ -1,4 +1,9 @@
 use super::prelude::*;
+
+#[cfg(test)]
+thread_local! {
+    static CONDITION_IMPLICATION_ANTECEDENT_CHECKS: Cell<usize> = const { Cell::new(0) };
+}
 use std::cell::{Cell, RefCell};
 
 // Global equality resolution can re-enter itself through snapshot and alias
@@ -623,6 +628,16 @@ impl Proposition {
 }
 
 impl Assumptions {
+    #[cfg(test)]
+    pub(super) fn reset_condition_implication_antecedent_checks() {
+        CONDITION_IMPLICATION_ANTECEDENT_CHECKS.with(|checks| checks.set(0));
+    }
+
+    #[cfg(test)]
+    pub(super) fn condition_implication_antecedent_checks() -> usize {
+        CONDITION_IMPLICATION_ANTECEDENT_CHECKS.with(Cell::get)
+    }
+
     /// Keep repeated decisions over this borrowed fact set under one memo
     /// identity. Recursive memory resolution can ask several alias questions
     /// about the same large context; without an enclosing scope each question
@@ -2430,8 +2445,11 @@ impl Assumptions {
                     || self.proposition_proves_condition_for_simp(right, condition, value)
             }
             Proposition::Implies(left, right) => {
-                self.proves_proposition_for_simp_without_search(left)
-                    && self.proposition_proves_condition_for_simp(right, condition, value)
+                // Reject implications whose conclusion cannot establish the
+                // target before proving their (potentially expensive)
+                // antecedent against the whole context.
+                self.proposition_proves_condition_for_simp(right, condition, value)
+                    && self.proves_proposition_for_simp_without_search(left)
             }
             Proposition::ForAll { body, .. } => {
                 self.proposition_proves_condition_for_simp(body, condition, value)
@@ -4834,8 +4852,16 @@ impl Assumptions {
                     || self.proposition_proves_condition(right, condition, value)
             }
             Proposition::Implies(left, right) => {
-                self.proves_without_prop_facts(left)
-                    && self.proposition_proves_condition(right, condition, value)
+                // Most accumulated call facts conclude something unrelated
+                // to this target.  Inspect the conclusion first; conjunction
+                // is commutative, and this avoids a global antecedent proof
+                // for every irrelevant implication in a long call chain.
+                self.proposition_proves_condition(right, condition, value) && {
+                    #[cfg(test)]
+                    CONDITION_IMPLICATION_ANTECEDENT_CHECKS
+                        .with(|checks| checks.set(checks.get() + 1));
+                    self.proves_without_prop_facts(left)
+                }
             }
             Proposition::ForAll { body, .. } => {
                 self.proposition_proves_condition(body, condition, value)
@@ -5351,11 +5377,11 @@ impl Assumptions {
     }
 
     pub(super) fn proves_without_prop_facts(&self, proposition: &Proposition) -> bool {
-        if solve_builtin_prop(proposition) || self.is_inconsistent() {
+        if solve_builtin_prop(proposition) {
             return true;
         }
 
-        match proposition {
+        let directly_proven = match proposition {
             Proposition::ConditionIs(condition, value) => self.decide(condition) == Some(*value),
             Proposition::And(left, right) => {
                 self.proves_without_prop_facts(left) && self.proves_without_prop_facts(right)
@@ -5370,7 +5396,17 @@ impl Assumptions {
                 _ => false,
             },
             _ => false,
+        };
+        if directly_proven {
+            return true;
         }
+
+        // Inconsistency proves every proposition, but checking it can scan
+        // all order, equality, and separation facts.  Implication-backed call
+        // contracts invoke this helper for each antecedent; try the direct
+        // evidence first so an ordinary call chain does not repeatedly pay
+        // for a global contradiction search.
+        self.is_inconsistent()
     }
 
     pub(super) fn is_inconsistent(&self) -> bool {

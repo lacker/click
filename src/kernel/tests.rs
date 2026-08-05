@@ -77,6 +77,56 @@ fn strict_reverse_order_derives_a_false_comparison() {
 }
 
 #[test]
+fn condition_search_skips_irrelevant_implication_antecedents() {
+    let target_condition = ConditionTerm::signed_less_than(
+        Bitvector32Term::Variable(Variable(9_001)),
+        Bitvector32Term::Variable(Variable(9_002)),
+    );
+    let unrelated_condition = ConditionTerm::equal(
+        Bitvector32Term::Variable(Variable(9_003)),
+        Bitvector32Term::Variable(Variable(9_004)),
+    );
+    let true_fact = Proposition::ConditionIs(ConditionTerm::Constant(true), true);
+    let assumptions = Assumptions::new()
+        .assume_proposition(Proposition::Implies(
+            Box::new(true_fact.clone()),
+            Box::new(Proposition::ConditionIs(unrelated_condition, true)),
+        ))
+        .assume_proposition(Proposition::Implies(
+            Box::new(true_fact),
+            Box::new(Proposition::ConditionIs(target_condition.clone(), true)),
+        ));
+
+    Assumptions::reset_condition_implication_antecedent_checks();
+    assert!(assumptions.proves(&Proposition::ConditionIs(target_condition, true)));
+    assert_eq!(
+        Assumptions::condition_implication_antecedent_checks(),
+        1,
+        "only an implication whose conclusion can establish the target should inspect its antecedent"
+    );
+}
+
+#[test]
+fn merging_required_obligations_preserves_the_certification_frontier() {
+    let value = Bitvector32Term::Variable(Variable(9_010));
+    let assumptions = Assumptions::new().assume_proposition(Proposition::ConditionIs(
+        ConditionTerm::equal(value.clone(), Bitvector32Term::Constant(1)),
+        true,
+    ));
+    let derived = Proposition::ConditionIs(
+        ConditionTerm::signed_less_than(Bitvector32Term::Constant(0), value),
+        true,
+    );
+    assert!(assumptions.proves(&derived));
+
+    let required = ProofObligation::verification_condition(derived.clone());
+    let merged = merge_obligations(&[], &[required], &assumptions)
+        .expect("required verification conditions should compose");
+    assert_eq!(merged.len(), 1);
+    assert_eq!(merged[0].proposition(), &derived);
+}
+
+#[test]
 fn condition_fact_matching_ignores_unrelated_local_memory() {
     let owner = Pointer {
         block: "arg-memory".into(),
