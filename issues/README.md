@@ -26,6 +26,10 @@ The issue should contain a small intended regression, the violated invariant,
 and acceptance criteria. Do not leave the only reproduction in an uncommitted
 large example or quarantine a regression without its issue.
 
+## Resource-model blockers
+
+1. [Preserve old-snapshot loadability after free](old-snapshot-loadability-after-free.md).
+
 ## Allocation and proof-tooling follow-up
 
 Runtime-sized allocation/free and the independently verifiable general vector
