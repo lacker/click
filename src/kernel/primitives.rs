@@ -940,6 +940,14 @@ pub enum CMemoryDerivation {
         block: PointerBlock,
         bytes: Bitvector32Term,
     },
+    /// `base` with one unresolved allocation result registered. Pending
+    /// metadata changes no program-observable memory, so every existing load
+    /// is preserved across this edge.
+    HeapAllocationPending {
+        base: SharedCMemory,
+        allocation_base: Pointer,
+        bytes: Bitvector32Term,
+    },
     /// `base` with one complete heap allocation lifetime ended.
     ///
     /// `allocation_base` is kept rather than only its broad pointer block:
@@ -982,6 +990,7 @@ impl CMemoryDerivation {
             Self::Store { base, .. }
             | Self::BlockDeclared { base, .. }
             | Self::HeapAllocated { base, .. }
+            | Self::HeapAllocationPending { base, .. }
             | Self::HeapFreed { base, .. }
             | Self::CellsForgotten { base }
             | Self::LoopHavoc { base, .. }
@@ -3148,7 +3157,20 @@ impl CMemory {
         base: Pointer,
         bytes: Bitvector32Term,
     ) -> Self {
-        self.heap.pending_allocations.insert(base, bytes);
+        let prior = (!memory_dag_disabled()).then(|| intern_c_memory_ref(&self));
+        self.heap
+            .pending_allocations
+            .insert(base.clone(), bytes.clone());
+        if let Some(prior) = prior {
+            record_c_memory_derivation(
+                &self,
+                CMemoryDerivation::HeapAllocationPending {
+                    base: prior,
+                    allocation_base: base,
+                    bytes,
+                },
+            );
+        }
         self
     }
 
@@ -3175,6 +3197,7 @@ impl CMemory {
         base: &Pointer,
         succeeds: bool,
     ) -> Option<(Self, Bitvector32Term, Pointer)> {
+        let prior = (!memory_dag_disabled()).then(|| intern_c_memory_ref(&self));
         let bytes = self.heap.pending_allocations.remove(base)?;
         let resolved_base = if succeeds {
             let PointerBlock::Symbolic(Variable(identity)) = base.block else {
@@ -3188,7 +3211,6 @@ impl CMemory {
             Pointer::null()
         };
         if succeeds {
-            let prior = (!memory_dag_disabled()).then(|| intern_c_memory_ref(&self));
             self.blocks.insert(
                 resolved_base.block.clone(),
                 CBlock::with_symbolic_size(bytes.clone()),

@@ -44,7 +44,12 @@ free is diagnosed separately. Verified function exits also check that live
 allocation authority was returned through the contract or actually freed.
 
 The allocation/null refinement and allocation/free transitions are recorded
-as memory-snapshot edges. A successful `free` also emits a checked heap
+as memory-snapshot edges. Registering the pending result has an explicit
+memory-preserving edge, allowing existing loads and permissions to cross the
+unresolved state. Failed allocation removes that metadata and returns to the
+pre-allocation memory identity without producing allocation authority.
+Successful allocation starts from the pending snapshot but introduces only
+its fresh, uninitialized block. A successful `free` also emits a checked heap
 lifetime-retirement effect connecting its before and after snapshots, exact
 base, and possibly symbolic byte extent. This is deliberately distinct from a
 mutable byte range: retirement changes which allocation identities are live,

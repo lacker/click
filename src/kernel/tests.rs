@@ -8524,6 +8524,114 @@ fn heap_allocate_has_null_or_fresh_uninitialized_outcomes() {
 }
 
 #[test]
+fn pending_and_failed_heap_allocation_preserve_existing_memory() {
+    if skip_without_memory_dag() {
+        return;
+    }
+
+    let existing = Pointer {
+        block: "arg-memory".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let state = CState::new()
+        .with_local("p", CValue::Pointer(Pointer::null()))
+        .with_memory(
+            CMemory::new()
+                .with_block("arg-memory", 4)
+                .store(existing.clone(), int32(37)),
+        );
+    let paths = execute_c_statement_paths(
+        &state,
+        &c_heap_allocate("p", 16),
+        &Assumptions::new(),
+        &CExecutionEnvironment::new(),
+        CExecutionSemantics::EXECUTE_BODIES,
+        &mut ExecutionBudget::default(),
+    )
+    .expect("allocation statement should produce a pending result");
+    let [
+        CStatementExecutionPath {
+            outcome: CStatementOutcome::Normal(pending),
+            ..
+        },
+    ] = paths.as_slice()
+    else {
+        panic!("allocation statement should produce one pending outcome");
+    };
+    let Some(CValue::Pointer(pending_pointer)) = pending.locals().get("p") else {
+        panic!("allocation should assign a symbolic pending pointer");
+    };
+    let pending_pointer = pending_pointer.clone();
+    let pending_memory = pending.memory().clone();
+
+    let pending_derivation = intern_c_memory_ref(&pending_memory)
+        .derivation()
+        .expect("pending allocation should record a memory edge");
+    let CMemoryDerivation::HeapAllocationPending {
+        base,
+        allocation_base,
+        bytes,
+    } = pending_derivation.as_ref()
+    else {
+        panic!("unexpected pending-allocation derivation: {pending_derivation:?}");
+    };
+    assert_eq!(base.as_ref(), state.memory());
+    assert_eq!(allocation_base, &pending_pointer);
+    assert_eq!(*bytes, Bitvector32Term::Constant(16));
+    assert!(with_extended_dag_bridging(|| c_memory_load_is_unchanged(
+        state.memory(),
+        &pending_memory,
+        &existing,
+        &Assumptions::new(),
+    )));
+
+    let failed = resolve_pending_heap_allocations(
+        pending,
+        &Assumptions::new().assume_proposition(Proposition::ConditionIs(
+            ConditionTerm::pointer_equal(pending_pointer.clone(), Pointer::null()),
+            true,
+        )),
+    );
+    assert!(failed.resources().facts().is_empty());
+    assert!(
+        failed
+            .memory()
+            .live_heap_block_size(&pending_pointer)
+            .is_none()
+    );
+    assert!(with_extended_dag_bridging(|| c_memory_load_is_unchanged(
+        state.memory(),
+        failed.memory(),
+        &existing,
+        &Assumptions::new(),
+    )));
+    assert_eq!(failed.memory(), state.memory());
+
+    let succeeded = resolve_pending_heap_allocations(
+        pending,
+        &Assumptions::new().assume_proposition(Proposition::ConditionIs(
+            ConditionTerm::pointer_equal(pending_pointer.clone(), Pointer::null()),
+            false,
+        )),
+    );
+    let derivation = intern_c_memory_ref(succeeded.memory())
+        .derivation()
+        .expect("successful allocation should record a memory edge");
+    let CMemoryDerivation::HeapAllocated { base, block, bytes } = derivation.as_ref() else {
+        panic!("unexpected successful-allocation derivation: {derivation:?}");
+    };
+    assert_eq!(base.as_ref(), &pending_memory);
+    assert!(matches!(block, PointerBlock::Heap(_)));
+    assert_eq!(*bytes, Bitvector32Term::Constant(16));
+    assert!(with_extended_dag_bridging(|| c_memory_load_is_unchanged(
+        &pending_memory,
+        succeeded.memory(),
+        &existing,
+        &Assumptions::new(),
+    )));
+}
+
+#[test]
 fn successful_heap_allocation_is_fresh_from_every_existing_block() {
     let first = successful_heap_allocation_state();
     let Some(CValue::Pointer(first_pointer)) = first.locals().get("p") else {

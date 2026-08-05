@@ -262,10 +262,14 @@ that it equals an argument or is distinct from existing storage; an opaque
 return is not treated as an allocation.
 
 Modeled heap allocation is a different kernel transition. A pending symbolic
-`malloc` result is refined by ordinary pointer-null control flow. Its null arm
-leaves memory unchanged; its success arm creates a fresh heap allocation with
-an exact, possibly symbolic size, marks its cells uninitialized, and produces
-complete owned memory plus the
+`malloc` result is refined by ordinary pointer-null control flow. Registering
+that unresolved result records a memory-preserving `HeapAllocationPending`
+edge, so every preexisting load remains transportable while control flow is
+undecided. Its null arm removes the metadata and returns to the pre-allocation
+memory identity. Its success arm records `HeapAllocated` from the pending
+snapshot, creates a
+fresh heap allocation with an exact, possibly symbolic size, marks its cells
+uninitialized, and produces complete owned memory plus the
 exclusive `allocation(base, bytes)` lifetime resource. Returning before that
 outcome is refined is rejected.
 

@@ -29,7 +29,8 @@ execution already knew.
   identity) *is* the name supply.
 - Alongside each id we record how the snapshot was produced:
   `CMemoryDerivation` edge such as `Store`, `LoopHavoc`, `CallHavoc`,
-  `BlockDeclared`, `HeapAllocated`, or `HeapFreed`, each naming its
+  `BlockDeclared`, `HeapAllocationPending`, `HeapAllocated`, or `HeapFreed`,
+  each naming its
   base by `SharedCMemory`. Entry states have no derivation. That is the
   DAG, materialised. The `CMemory` value stays; readers retire one at a
   time.
@@ -115,11 +116,18 @@ There are currently no quarantined per-member failures. Future certificate
 spelling, replay, or performance regressions should be diagnosed as focused
 issues rather than treated as reasons to extend the DAG globally.
 
-The heap slice adds `HeapAllocated` and `HeapFreed` edges. They record the
-fresh/retired allocation identity and exact, possibly symbolic extent.
-Consumers treat both as lifetime-changing boundaries: they may preserve
-unrelated snapshots, but must never transport a load through the affected
-allocation as though allocation or deallocation were an ordinary store.
+The heap slice adds `HeapAllocationPending`, `HeapAllocated`, and `HeapFreed`
+edges. Successful allocation and free record the fresh/retired allocation
+identity and exact, possibly symbolic extent. Consumers treat those two as
+lifetime-changing boundaries: they may preserve unrelated snapshots, but must
+never transport a load through the affected allocation as though allocation
+or deallocation were an ordinary store. `HeapAllocationPending` records the
+unresolved symbolic base and extent but changes no program-visible storage, so
+the scoped loadability walk may cross it for every preexisting address. The
+success edge starts at that pending snapshot. Failure removes the metadata and
+structurally returns to the already-interned pre-allocation memory identity;
+recording a backward edge there would violate the DAG's parent-before-child
+invariant and is unnecessary.
 
 ## Landed 2026-07-31: fourth and fifth edge kinds, scoped consumers
 

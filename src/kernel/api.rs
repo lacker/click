@@ -398,9 +398,9 @@ fn memory_derivations_reach(
             // so every load is untouched — but only the extended-bridging
             // scope may exploit that: elsewhere these edges must look like
             // the pre-arc absence of an edge.
-            CMemoryDerivation::BlockDeclared { .. } | CMemoryDerivation::CellsForgotten { .. } => {
-                extended_dag_bridging_active()
-            }
+            CMemoryDerivation::BlockDeclared { .. }
+            | CMemoryDerivation::HeapAllocationPending { .. }
+            | CMemoryDerivation::CellsForgotten { .. } => extended_dag_bridging_active(),
             CMemoryDerivation::HeapAllocated { block, .. } => {
                 pointer.block != *block && extended_dag_bridging_active()
             }
@@ -599,7 +599,9 @@ fn memory_dag_cell_source(
             // so every load is untouched — but only the extended-bridging
             // scope may exploit that: elsewhere these edges must look like
             // the pre-arc absence of an edge.
-            CMemoryDerivation::BlockDeclared { .. } | CMemoryDerivation::CellsForgotten { .. } => {
+            CMemoryDerivation::BlockDeclared { .. }
+            | CMemoryDerivation::HeapAllocationPending { .. }
+            | CMemoryDerivation::CellsForgotten { .. } => {
                 if !extended_dag_bridging_active() {
                     return MemoryDagCell::Unwritten { node: current };
                 }
