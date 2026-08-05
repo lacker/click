@@ -50,11 +50,11 @@ int32 smart_have_field_loadability_replays(struct buffer* owner) {
     execute_until(statement(6));
     have owner->len <= owner->cap by simp;
     if fresh == 0 {
+        execute();
         have forall (k: int32) {
             0 <= k and k < old(owner->len) implies
                 owner->data[k] == (old(owner->data))[k]
         } by simp;
-        execute();
         fold(replay_buffer(owner));
         simp();
     } else {

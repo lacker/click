@@ -12310,18 +12310,17 @@ fn finish_ordered_proof_replay(
                                 certificate_available.push(equation);
                             }
                         }
-                        let exact_derivation_script = have.proof.tactics().is_some_and(|tactics| {
-                            tactics
-                                .iter()
-                                .any(|tactic| matches!(tactic, ProofTactic::Derive(_)))
-                        });
-                        if exact_derivation_script {
-                            for fact in crate::kernel::certified_store_loadability_facts(
-                                &replay.effect_facts,
-                            ) {
-                                if !certificate_available.contains(&fact) {
-                                    certificate_available.push(fact);
-                                }
+                        // Post-execution proof certificates replay against
+                        // the same kernel-certified loadability consequences
+                        // of stores that were available while planning them.
+                        // Restricting these facts to hand-written `derive`
+                        // scripts let smart `simp` search succeed and then
+                        // fail when its generated certificate was replayed.
+                        for fact in
+                            crate::kernel::certified_store_loadability_facts(&replay.effect_facts)
+                        {
+                            if !certificate_available.contains(&fact) {
+                                certificate_available.push(fact);
                             }
                         }
                         let smart_unfolds = smart_simp_unfold_prefix(&have.proof);
@@ -12412,11 +12411,6 @@ fn finish_ordered_proof_replay(
                                 proposition: have.proposition.clone(),
                                 proof: Proof::Script(proof_tactics),
                             };
-                            let surface_tactic = ProofTactic::Have(surface_have.clone());
-                            TacticCertificate::from_proof_tactics(std::slice::from_ref(
-                                &surface_tactic,
-                            ))
-                            .expect("post-execution smart have must lower to a simple tactic");
                             let uses_store_spelling = matches!(
                                 &proof_tactic,
                                 ProofTactic::Derive(derive)
@@ -12442,30 +12436,78 @@ fn finish_ordered_proof_replay(
                                     }
                                 }
                             }
-                            let replayed_fact = prove_have_at_point(
-                                &surface_have,
-                                theorem_environment,
-                                &proof_label,
-                                *tactic_index,
-                                &replay_available,
-                                parsed_function.parameters(),
-                                arguments,
-                                pre_state,
-                                post_state,
-                                Some(result),
-                                &replay.program_point_states,
-                                Some(&certificate_replay.surface_propositions),
-                                predicate_environment,
-                                click_function_environment,
-                                function_block.requires(),
-                                Some(path_index),
-                            )?;
+                            let replay_have = |candidate: &ProofHave| {
+                                prove_have_at_point(
+                                    candidate,
+                                    theorem_environment,
+                                    &proof_label,
+                                    *tactic_index,
+                                    &replay_available,
+                                    parsed_function.parameters(),
+                                    arguments,
+                                    pre_state,
+                                    post_state,
+                                    Some(result),
+                                    &replay.program_point_states,
+                                    Some(&certificate_replay.surface_propositions),
+                                    predicate_environment,
+                                    click_function_environment,
+                                    function_block.requires(),
+                                    Some(path_index),
+                                )
+                            };
+                            let (surface_have, replayed_fact) = match replay_have(&surface_have) {
+                                Ok(replayed_fact) => (surface_have, replayed_fact),
+                                Err(initial_error) => {
+                                    let Some(fallback) = surface_outcome_smart_have_derivation(
+                                        &certificate_replay,
+                                        &replay_available,
+                                        parsed_function.parameters(),
+                                        arguments,
+                                        pre_state,
+                                        post_state,
+                                        result,
+                                        predicate_environment,
+                                        click_function_environment,
+                                        have,
+                                        &smart_unfolds,
+                                    ) else {
+                                        let failed_tactic = ProofTactic::Have(surface_have);
+                                        let failed_certificate =
+                                            TacticCertificate::from_proof_tactics(
+                                                std::slice::from_ref(&failed_tactic),
+                                            )
+                                            .expect("post-execution smart have must lower to a simple tactic");
+                                        return Err(ClickError::new(format!(
+                                            "`{proof_label}` path {path_index}, tactic {tactic_index}: post-execution smart `have` certificate failed replay:\n{}\n{}",
+                                            format_tactic_certificate(&failed_certificate),
+                                            initial_error.message(),
+                                        )));
+                                    };
+                                    match replay_have(&fallback) {
+                                        Ok(replayed_fact) => (fallback, replayed_fact),
+                                        Err(fallback_error) => {
+                                            let failed_tactic = ProofTactic::Have(fallback);
+                                            let failed_certificate =
+                                                TacticCertificate::from_proof_tactics(
+                                                    std::slice::from_ref(&failed_tactic),
+                                                )
+                                                .expect("post-execution smart have fallback must be a simple tactic");
+                                            return Err(ClickError::new(format!(
+                                                "`{proof_label}` path {path_index}, tactic {tactic_index}: post-execution smart `have` fallback certificate failed replay:\n{}\n{}",
+                                                format_tactic_certificate(&failed_certificate),
+                                                fallback_error.message(),
+                                            )));
+                                        }
+                                    }
+                                }
+                            };
                             if replayed_fact != fact {
                                 return Err(ClickError::new(format!(
                                     "`{proof_label}` path {path_index}, tactic {tactic_index}: smart `have` surface certificate replayed a different fact"
                                 )));
                             }
-                            (surface_tactic, replayed_fact)
+                            (ProofTactic::Have(surface_have), replayed_fact)
                         } else {
                             // A script that validates as a certificate is its
                             // own certificate: `prove_have_at_point` is
@@ -18371,6 +18413,73 @@ fn surface_smart_have_derivation_certificate(
         proof: Proof::Script(vec![ProofTactic::Derive(ProofDerive { premises })]),
     })])
     .ok()
+}
+
+#[allow(clippy::too_many_arguments)]
+fn surface_outcome_smart_have_derivation(
+    replay: &TacticReplayState,
+    available: &[Proposition],
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    pre_state: &CState,
+    post_state: &CState,
+    result: &CValue,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    have: &ProofHave,
+    unfolded_predicates: &[String],
+) -> Option<ProofHave> {
+    let mut atomic_available = Vec::new();
+    for fact in available {
+        atomic_conjuncts(fact, &mut atomic_available);
+    }
+    let mut premises = Vec::new();
+    for fact in atomic_available {
+        let relevant = matches!(fact, Proposition::CMemoryLoadable { .. })
+            || matches!(
+                fact,
+                Proposition::ConditionIs(
+                    ConditionTerm::Bitvector32SignedLessThan(_, _)
+                        | ConditionTerm::Bitvector32SignedLessEqual(_, _)
+                        | ConditionTerm::Bitvector32SignedGreaterThan(_, _)
+                        | ConditionTerm::Bitvector32SignedGreaterEqual(_, _),
+                    _,
+                )
+            );
+        if !relevant {
+            continue;
+        }
+        let Ok(surface) = checked_surface_fact_at_outcome(
+            replay,
+            fact,
+            SurfaceFactMatch::CanonicalExact,
+            available,
+            parameters,
+            arguments,
+            pre_state,
+            post_state,
+            result,
+            predicate_environment,
+            click_function_environment,
+        ) else {
+            continue;
+        };
+        if !premises.contains(&surface) {
+            premises.push(surface);
+        }
+    }
+    (!premises.is_empty()).then(|| {
+        let mut tactics = unfolded_predicates
+            .iter()
+            .cloned()
+            .map(ProofTactic::UnfoldPredicate)
+            .collect::<Vec<_>>();
+        tactics.push(ProofTactic::Derive(ProofDerive { premises }));
+        ProofHave {
+            proposition: have.proposition.clone(),
+            proof: Proof::Script(tactics),
+        }
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
