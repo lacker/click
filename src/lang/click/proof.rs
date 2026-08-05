@@ -18585,6 +18585,12 @@ fn replay_linear_tactics(
     let mut assumptions = assumptions_from_propositions(&requirement_pure_facts);
 
     for indexed_tactic in tactics {
+        if crate::instrumentation::deadline_exceeded() {
+            return Err(ClickError::new(format!(
+                "tactic time limit exceeded: {}",
+                crate::instrumentation::deadline_context()
+            )));
+        }
         let tactic_index = indexed_tactic.index;
         let source_index = indexed_tactic.source_index;
         let tactic = &indexed_tactic.tactic;
@@ -20629,6 +20635,13 @@ fn replay_linear_tactics(
                 false,
             ));
         }
+    }
+
+    if crate::instrumentation::deadline_exceeded() {
+        return Err(ClickError::new(format!(
+            "tactic time limit exceeded: {}",
+            crate::instrumentation::deadline_context()
+        )));
     }
 
     Ok(ProofReplayContext {

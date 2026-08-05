@@ -58,11 +58,49 @@ pub enum VerificationEvent {
     Diagnostic(String),
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TacticLimits {
+    pub simple: Duration,
+    pub smart: Duration,
+    pub control: Duration,
+}
+
+impl Default for TacticLimits {
+    fn default() -> Self {
+        Self {
+            simple: Duration::from_millis(500),
+            smart: Duration::from_secs(2),
+            control: Duration::from_secs(2),
+        }
+    }
+}
+
+impl TacticLimits {
+    fn for_class(self, class: &str) -> Option<Duration> {
+        match class {
+            "simple" => Some(self.simple),
+            "smart" => Some(self.smart),
+            "control" => Some(self.control),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct ActiveTactic {
+    event: TacticEvent,
+    exclusive: Duration,
+    running_since: Instant,
+    limit: Duration,
+}
+
 thread_local! {
     static COLLECTORS: RefCell<Vec<Vec<VerificationEvent>>> = const { RefCell::new(Vec::new()) };
     static DEADLINES: RefCell<Vec<Instant>> = const { RefCell::new(Vec::new()) };
-    static ACTIVE_TACTICS: RefCell<Vec<TacticEvent>> = const { RefCell::new(Vec::new()) };
+    static TACTIC_LIMITS: RefCell<Vec<TacticLimits>> = const { RefCell::new(Vec::new()) };
+    static ACTIVE_TACTICS: RefCell<Vec<ActiveTactic>> = const { RefCell::new(Vec::new()) };
     static ACTIVE_PHASES: RefCell<Vec<&'static str>> = const { RefCell::new(Vec::new()) };
+    static PENDING_LIMIT: RefCell<Option<String>> = const { RefCell::new(None) };
 }
 
 struct DeadlineGuard;
@@ -84,25 +122,66 @@ pub fn with_deadline<R>(limit: Duration, operation: impl FnOnce() -> R) -> R {
     operation()
 }
 
+struct TacticLimitGuard;
+
+impl Drop for TacticLimitGuard {
+    fn drop(&mut self) {
+        TACTIC_LIMITS.with(|limits| {
+            limits.borrow_mut().pop();
+        });
+        PENDING_LIMIT.with(|pending| *pending.borrow_mut() = None);
+    }
+}
+
+pub fn with_tactic_limits<R>(limits: TacticLimits, operation: impl FnOnce() -> R) -> R {
+    TACTIC_LIMITS.with(|installed| installed.borrow_mut().push(limits));
+    let _guard = TacticLimitGuard;
+    operation()
+}
+
+pub fn with_default_tactic_limits<R>(operation: impl FnOnce() -> R) -> R {
+    if std::env::var_os("CLICK_DISABLE_TACTIC_BUDGETS").is_some()
+        || TACTIC_LIMITS.with(|limits| !limits.borrow().is_empty())
+    {
+        operation()
+    } else {
+        with_tactic_limits(TacticLimits::default(), operation)
+    }
+}
+
 pub fn deadline_exceeded() -> bool {
-    DEADLINES.with(|deadlines| {
+    let run = DEADLINES.with(|deadlines| {
         deadlines
             .borrow()
             .iter()
             .min()
             .is_some_and(|deadline| Instant::now() >= *deadline)
-    })
+    });
+    let tactic = ACTIVE_TACTICS.with(|active| {
+        active
+            .borrow()
+            .last()
+            .is_some_and(|active| active.exclusive + active.running_since.elapsed() >= active.limit)
+    });
+    let pending = PENDING_LIMIT.with(|pending| pending.borrow().is_some());
+    run || tactic || pending
 }
 
 pub fn deadline_context() -> String {
-    if let Some(tactic) = ACTIVE_TACTICS.with(|active| active.borrow().last().cloned()) {
+    if let Some(message) = PENDING_LIMIT.with(|pending| pending.borrow().clone()) {
+        return message;
+    }
+    if let Some(active) = ACTIVE_TACTICS.with(|active| active.borrow().last().cloned()) {
+        let elapsed = active.exclusive + active.running_since.elapsed();
         return format!(
-            "tactic `{}` in `{}` (class {}, statement {}, source tactic {})",
-            tactic.tactic_name,
-            tactic.claim,
-            tactic.class,
-            tactic.statement_index,
-            tactic.source_index
+            "tactic `{}` in `{}` (class {}, statement {}, source tactic {}, {:.3}s elapsed, {} limit)",
+            active.event.tactic_name,
+            active.event.claim,
+            active.event.class,
+            active.event.statement_index,
+            active.event.source_index,
+            elapsed.as_secs_f64(),
+            crate::cli::format_duration(active.limit),
         );
     }
     if let Some(phase) = ACTIVE_PHASES.with(|active| active.borrow().last().copied()) {
@@ -127,11 +206,13 @@ pub fn collect<R>(operation: impl FnOnce() -> R) -> (R, Vec<VerificationEvent>) 
 pub fn enabled() -> bool {
     std::env::var_os("CLICK_TIMINGS").is_some()
         || COLLECTORS.with(|collectors| !collectors.borrow().is_empty())
+        || TACTIC_LIMITS.with(|limits| !limits.borrow().is_empty())
 }
 
 pub fn starts_enabled() -> bool {
     std::env::var_os("CLICK_TIMING_STARTS").is_some()
         || COLLECTORS.with(|collectors| !collectors.borrow().is_empty())
+        || TACTIC_LIMITS.with(|limits| !limits.borrow().is_empty())
 }
 
 pub fn emit(event: VerificationEvent) {
@@ -148,14 +229,56 @@ pub fn emit(event: VerificationEvent) {
             });
         }
         VerificationEvent::TacticStarted(tactic) => {
-            ACTIVE_TACTICS.with(|active| active.borrow_mut().push(tactic.clone()));
+            let limit = TACTIC_LIMITS.with(|limits| {
+                limits
+                    .borrow()
+                    .last()
+                    .and_then(|limits| limits.for_class(&tactic.class))
+            });
+            if let Some(limit) = limit {
+                ACTIVE_TACTICS.with(|active| {
+                    let now = Instant::now();
+                    let mut active = active.borrow_mut();
+                    if let Some(parent) = active.last_mut() {
+                        parent.exclusive += now.duration_since(parent.running_since);
+                    }
+                    active.push(ActiveTactic {
+                        event: tactic.clone(),
+                        exclusive: Duration::ZERO,
+                        running_since: now,
+                        limit,
+                    });
+                });
+            }
         }
         VerificationEvent::TacticFinished { tactic, .. }
         | VerificationEvent::TacticFailed(tactic) => {
             ACTIVE_TACTICS.with(|active| {
+                let now = Instant::now();
                 let mut active = active.borrow_mut();
-                if let Some(index) = active.iter().rposition(|candidate| candidate == tactic) {
-                    active.remove(index);
+                if let Some(index) = active
+                    .iter()
+                    .rposition(|candidate| &candidate.event == tactic)
+                {
+                    let finished = active.remove(index);
+                    let elapsed = finished.exclusive + now.duration_since(finished.running_since);
+                    if elapsed >= finished.limit {
+                        PENDING_LIMIT.with(|pending| {
+                            *pending.borrow_mut() = Some(format!(
+                                "tactic `{}` in `{}` exceeded its {} {} limit after {:.3}s (statement {}, source tactic {})",
+                                finished.event.tactic_name,
+                                finished.event.claim,
+                                crate::cli::format_duration(finished.limit),
+                                finished.event.class,
+                                elapsed.as_secs_f64(),
+                                finished.event.statement_index,
+                                finished.event.source_index,
+                            ));
+                        });
+                    }
+                    if let Some(parent) = active.last_mut() {
+                        parent.running_since = now;
+                    }
                 }
             });
         }
@@ -250,5 +373,65 @@ mod tests {
             emit(VerificationEvent::Diagnostic("outer two".to_string()));
         });
         assert_eq!(outer.len(), 2);
+    }
+
+    fn tactic(class: &str, index: usize) -> TacticEvent {
+        TacticEvent {
+            claim: "deadline.contract".to_string(),
+            tactic_index: index,
+            tactic_name: format!("{class}_work"),
+            class: class.to_string(),
+            statement_index: index,
+            source_index: index,
+        }
+    }
+
+    #[test]
+    fn every_tactic_class_has_an_enforced_deadline() {
+        for class in ["simple", "smart", "control"] {
+            let limits = TacticLimits {
+                simple: Duration::ZERO,
+                smart: Duration::ZERO,
+                control: Duration::ZERO,
+            };
+            with_tactic_limits(limits, || {
+                let tactic = tactic(class, 0);
+                emit(VerificationEvent::TacticStarted(tactic.clone()));
+                assert!(deadline_exceeded(), "{class} should be bounded");
+                assert!(deadline_context().contains(class));
+                emit(VerificationEvent::TacticFinished {
+                    tactic,
+                    elapsed: Duration::ZERO,
+                });
+            });
+        }
+    }
+
+    #[test]
+    fn control_deadline_excludes_nested_tactic_time() {
+        let limits = TacticLimits {
+            simple: Duration::from_secs(1),
+            smart: Duration::from_secs(1),
+            control: Duration::from_millis(50),
+        };
+        with_tactic_limits(limits, || {
+            let control = tactic("control", 0);
+            let child = tactic("simple", 1);
+            emit(VerificationEvent::TacticStarted(control.clone()));
+            emit(VerificationEvent::TacticStarted(child.clone()));
+            std::thread::sleep(Duration::from_millis(100));
+            emit(VerificationEvent::TacticFinished {
+                tactic: child,
+                elapsed: Duration::from_millis(100),
+            });
+            assert!(
+                !deadline_exceeded(),
+                "the control container must not inherit its child's time"
+            );
+            emit(VerificationEvent::TacticFinished {
+                tactic: control,
+                elapsed: Duration::from_millis(100),
+            });
+        });
     }
 }

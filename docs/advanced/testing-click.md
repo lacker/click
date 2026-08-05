@@ -60,6 +60,11 @@ each mdtest gets 30 seconds by default (`MDTEST_TIME_LIMIT`), and each example
 project gets 10 minutes (`CLICK_EXAMPLE_TIME_LIMIT`). Override those variables
 while reducing a slow fixture; neither disables tactic budgets.
 
+The fixture gates verify projects serially. Tactic deadlines currently measure
+wall-clock time, so parallel proof engines would turn scheduler contention into
+false deadline failures. Parallel verification remains deferred until Click
+has a contention-independent work budget.
+
 ## Quarantine
 
 Known-broken and pathologically slow tests are quarantined so the default

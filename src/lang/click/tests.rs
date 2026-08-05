@@ -5839,6 +5839,51 @@ fn verifies_simple_postcondition_with_proof_tactics() {
 }
 
 #[test]
+fn ordinary_verification_stops_at_the_tactic_deadline() {
+    let c_source = r#"
+            int32 identity(int32 x) {
+                return x;
+            }
+        "#;
+    let click_source = r#"
+            verifying "identity.c";
+
+            int32 identity(int32 x) {
+                ensures returns_x: result == x by {
+                    execute();
+                    simp();
+                }
+            }
+        "#;
+    let limits = crate::instrumentation::TacticLimits {
+        simple: std::time::Duration::ZERO,
+        smart: std::time::Duration::ZERO,
+        control: std::time::Duration::ZERO,
+    };
+    let (result, events) = crate::instrumentation::collect(|| {
+        crate::instrumentation::with_tactic_limits(limits, || {
+            verify_c0_sources(click_source, &[("identity.c", c_source)])
+        })
+    });
+    let error = result.expect_err("the first tactic should hit its zero deadline");
+    assert!(error.message().contains("time limit exceeded"), "{error:?}");
+    let started = events
+        .iter()
+        .filter_map(|event| match event {
+            crate::instrumentation::VerificationEvent::TacticStarted(tactic) => {
+                Some(tactic.tactic_name.as_str())
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert!(!started.is_empty(), "the interrupted tactic should be named");
+    assert!(
+        !started.contains(&"simp"),
+        "later tactics must not start after a deadline: {started:?}"
+    );
+}
+
+#[test]
 fn verifies_omitted_proof_with_default_prover() {
     let c_source = r#"
             int32 zero() {

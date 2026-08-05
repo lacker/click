@@ -389,13 +389,20 @@ fn profile_target(
     time_limit: Duration,
 ) -> Result<ProjectProfile, String> {
     let started = Instant::now();
+    let diagnostic_limits = instrumentation::TacticLimits {
+        simple: time_limit,
+        smart: time_limit,
+        control: time_limit,
+    };
     let (verification, events) = instrumentation::with_deadline(time_limit, || {
-        instrumentation::collect(|| {
-            if looks_like_mdtest(project) {
-                verify_mdtest(project)
-            } else {
-                verify_project(project)
-            }
+        instrumentation::with_tactic_limits(diagnostic_limits, || {
+            instrumentation::collect(|| {
+                if looks_like_mdtest(project) {
+                    verify_mdtest(project)
+                } else {
+                    verify_project(project)
+                }
+            })
         })
     });
     let wall_elapsed = started.elapsed();

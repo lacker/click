@@ -222,31 +222,6 @@ pub fn structured_tactic_budget_violations(events: &[VerificationEvent]) -> Vec<
     violations
 }
 
-const BUDGET_FAILURE_MARKER: &str = "passed, but broke tactic time budgets";
-
-/// Budget violations measured under a fully parallel suite are load-noisy:
-/// worker contention inflates wall-clock tactic times. Re-runs each
-/// budget-only failure serially and keeps only the repeat offenders, so the
-/// gate reports real slowness rather than scheduler pressure. Non-budget
-/// failures pass through untouched.
-pub fn retain_serial_budget_failures(
-    failures: Vec<(usize, String)>,
-    mut rerun: impl FnMut(usize) -> Result<(), String>,
-) -> Vec<(usize, String)> {
-    failures
-        .into_iter()
-        .filter_map(|(index, message)| {
-            if !message.contains(BUDGET_FAILURE_MARKER) {
-                return Some((index, message));
-            }
-            match rerun(index) {
-                Ok(()) => None,
-                Err(message) => Some((index, message)),
-            }
-        })
-        .collect()
-}
-
 /// Reads the C sources a sidecar declares with `verifying`, relative to the
 /// sidecar's directory.
 pub fn read_verifying_sources(
@@ -613,13 +588,6 @@ pub fn find_mdtests(path: &Path) -> Result<Vec<PathBuf>, String> {
 /// mdtest mode over example-project mode from the argument alone.
 pub fn looks_like_mdtest(path: &Path) -> bool {
     path.extension().is_some_and(|extension| extension == "md")
-}
-
-/// A reasonable worker count for a pool processing `jobs` independent jobs:
-/// the available parallelism, capped at eight and at the job count.
-pub fn default_worker_count(jobs: usize) -> usize {
-    let available = thread::available_parallelism().map_or(1, |count| count.get());
-    available.min(8).min(jobs).max(1)
 }
 
 /// Runs `run` over every item using a bounded worker pool, collecting every

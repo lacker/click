@@ -3,8 +3,8 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use click::cli::{
-    DISABLE_TACTIC_BUDGETS, MdTestExpectation, default_worker_count, duration_from_env,
-    format_duration, read_mdtest, run_parallel, structured_tactic_budget_violations,
+    DISABLE_TACTIC_BUDGETS, MdTestExpectation, duration_from_env, format_duration, read_mdtest,
+    run_parallel, structured_tactic_budget_violations,
 };
 use click::instrumentation;
 use click::lang::click::verify_c0_sources;
@@ -76,11 +76,11 @@ fn mdtests() {
     );
 
     let time_limit = mdtest_time_limit();
-    let failures = run_parallel(&paths, default_worker_count(paths.len()), |path| {
+    // Wall-clock tactic deadlines must not count scheduler contention as
+    // verifier work. Keep the correctness gate serial until Click has a
+    // contention-independent work budget.
+    let failures = run_parallel(&paths, 1, |path| {
         run_mdtest_with_timeout(path, time_limit)
-    });
-    let failures = click::cli::retain_serial_budget_failures(failures, |index| {
-        run_mdtest_with_timeout(&paths[index], time_limit)
     });
     if failures.is_empty() {
         return;

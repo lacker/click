@@ -3,8 +3,8 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use click::cli::{
-    DISABLE_TACTIC_BUDGETS, default_worker_count, duration_from_env, files_with_extension,
-    format_duration, read_verifying_sources, run_parallel, source_refs,
+    DISABLE_TACTIC_BUDGETS, duration_from_env, files_with_extension, format_duration,
+    read_verifying_sources, run_parallel, source_refs,
     structured_tactic_budget_violations,
 };
 use click::instrumentation;
@@ -75,11 +75,11 @@ fn example_projects() {
     );
 
     let time_limit = example_time_limit();
-    let failures = run_parallel(&projects, default_worker_count(projects.len()), |project| {
+    // Wall-clock tactic deadlines must not count scheduler contention as
+    // verifier work. Keep the correctness gate serial until Click has a
+    // contention-independent work budget.
+    let failures = run_parallel(&projects, 1, |project| {
         run_example_with_timeout(project, time_limit)
-    });
-    let failures = click::cli::retain_serial_budget_failures(failures, |index| {
-        run_example_with_timeout(&projects[index], time_limit)
     });
     if failures.is_empty() {
         return;

@@ -78,13 +78,16 @@ deadline that can be overridden explicitly.
 
 ## What is enforced today
 
-The mdtest and example harnesses fail a passing test whose tactic exceeds its
-class budget, measured as **exclusive** time: a container does not inherit its
-children's cost. The defaults are SIMPLE 500 ms and SMART/CONTROL 2 s.
-Violations found under the parallel suite rerun serially, and only repeat
-offenders fail. `CLICK_DISABLE_TACTIC_BUDGETS=1` bypasses this check for
-archaeology. An mdtest that exceeds `MDTEST_TIME_LIMIT` (default 30 s) fails
-and names the active tactic when one is known.
+Ordinary verification stops a tactic when its class deadline expires, measured
+as **exclusive** time: a container does not inherit its children's cost. The
+defaults are SIMPLE 500 ms and SMART/CONTROL 2 s. Kernel expression,
+statement, call, loop, and path checkpoints observe the active deadline, and
+the failure names the class, claim, statement, source tactic, elapsed time, and
+limit. Fixture correctness gates run serially so scheduler contention is not
+charged to wall-clock tactic deadlines. `CLICK_DISABLE_TACTIC_BUDGETS=1`
+bypasses enforcement for reduction and archaeology. `click profile` is itself
+a diagnostic override: its project deadline remains hard, while individual
+tactics are allowed to complete so the report can identify the slow operation.
 
 These are per-operation tail guards. They are not an aggregate throughput
 promise.

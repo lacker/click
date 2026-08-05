@@ -2090,6 +2090,15 @@ pub fn verify_c0_sources(
     click_source: &str,
     c_sources: &[(&str, &str)],
 ) -> Result<Vec<VerifiedCTheorem>, ClickError> {
+    instrumentation::with_default_tactic_limits(|| {
+        verify_c0_sources_with_limits(click_source, c_sources)
+    })
+}
+
+fn verify_c0_sources_with_limits(
+    click_source: &str,
+    c_sources: &[(&str, &str)],
+) -> Result<Vec<VerifiedCTheorem>, ClickError> {
     let result = verify_c0_sources_targeted(click_source, c_sources, None);
     if let Err(error) = &result {
         error.emit_timing_failure();
@@ -2099,6 +2108,15 @@ pub fn verify_c0_sources(
 
 impl C0VerificationSession {
     pub fn new(
+        click_source: &str,
+        c_sources: &[(&str, &str)],
+    ) -> Result<(Self, Vec<VerifiedCTheorem>), ClickError> {
+        instrumentation::with_default_tactic_limits(|| {
+            Self::new_with_limits(click_source, c_sources)
+        })
+    }
+
+    fn new_with_limits(
         click_source: &str,
         c_sources: &[(&str, &str)],
     ) -> Result<(Self, Vec<VerifiedCTheorem>), ClickError> {
@@ -2127,6 +2145,17 @@ impl C0VerificationSession {
     }
 
     pub fn verify_at(
+        &self,
+        click_source: &str,
+        line: usize,
+        column: usize,
+    ) -> Result<Vec<VerifiedCTheorem>, ClickError> {
+        instrumentation::with_default_tactic_limits(|| {
+            self.verify_at_with_limits(click_source, line, column)
+        })
+    }
+
+    fn verify_at_with_limits(
         &self,
         click_source: &str,
         line: usize,
@@ -2189,8 +2218,10 @@ pub fn verify_c0_sources_at(
     line: usize,
     column: usize,
 ) -> Result<Vec<VerifiedCTheorem>, ClickError> {
-    let target = verification_target_at(click_source, c_sources, line, column)?;
-    verify_c0_sources_targeted(click_source, c_sources, Some(target))
+    instrumentation::with_default_tactic_limits(|| {
+        let target = verification_target_at(click_source, c_sources, line, column)?;
+        verify_c0_sources_targeted(click_source, c_sources, Some(target))
+    })
 }
 
 fn verify_c0_sources_targeted(
