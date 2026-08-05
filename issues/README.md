@@ -32,20 +32,19 @@ Runtime-sized allocation/free and the independently verifiable general vector
 push are implemented in focused example projects. Composing allocation, copy,
 replacement, and free into vector growth exposed distinct remaining bugs:
 
-1. [Kill any remaining isolated verifier process groups](bounded-runs-leave-orphan-verifiers.md).
-2. [Enforce tactic deadlines inside verification](tactic-deadlines.md).
-3. [Bound ordinary `click verify` runs](click-verify-time-limit.md).
-4. [Make smart-search success imply certificate replay](smart-certificate-replay-consistency.md).
-5. [Bound and summarize verifier diagnostics](bounded-verifier-diagnostics.md).
-6. [Attribute active work when profiling times out](profile-timeout-attribution.md).
-7. [Isolate `click expand` to its selected proof unit](click-expand-target-isolation.md).
-8. [Align branched expansion certificates by execution path](branched-expansion-path-alignment.md).
-9. [Reduce the owned-vector certification bottleneck](owned-vector-pipeline-slow.md).
-10. [Apply null free contracts without invalid footprints](conditional-null-free-call-footprint.md).
-11. [Define borrowed-resource lifetime at `free`](borrowed-resource-lifetime-at-free.md).
-12. [Authorize `free` effects from owned allocation resources](owned-allocation-free-effects.md).
-13. [Preserve unchanged loads across opaque calls](opaque-call-unchanged-loads.md).
-14. [Compose runtime allocation into owned-vector growth](owned-vector-runtime-growth.md)
+1. [Enforce tactic deadlines inside verification](tactic-deadlines.md).
+2. [Bound ordinary `click verify` runs](click-verify-time-limit.md).
+3. [Make smart-search success imply certificate replay](smart-certificate-replay-consistency.md).
+4. [Bound and summarize verifier diagnostics](bounded-verifier-diagnostics.md).
+5. [Attribute active work when profiling times out](profile-timeout-attribution.md).
+6. [Isolate `click expand` to its selected proof unit](click-expand-target-isolation.md).
+7. [Align branched expansion certificates by execution path](branched-expansion-path-alignment.md).
+8. [Reduce the owned-vector certification bottleneck](owned-vector-pipeline-slow.md).
+9. [Apply null free contracts without invalid footprints](conditional-null-free-call-footprint.md).
+10. [Define borrowed-resource lifetime at `free`](borrowed-resource-lifetime-at-free.md).
+11. [Authorize `free` effects from owned allocation resources](owned-allocation-free-effects.md).
+12. [Preserve unchanged loads across opaque calls](opaque-call-unchanged-loads.md).
+13. [Compose runtime allocation into owned-vector growth](owned-vector-runtime-growth.md)
    after the blocking invariants above are restored.
 
 ## Partial correctness and recursion

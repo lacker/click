@@ -3,17 +3,15 @@
 //! These reconcile driver code that was previously duplicated (with drift)
 //! across `click-verify`, `click-expand`, `click-audit`, `click-profile`, and
 //! the integration-test harnesses: one-based source locations, human-readable
-//! durations, bounded child processes, project discovery, and a bounded
+//! durations, structured tactic budgets, project discovery, and a bounded
 //! worker pool.
 
 use std::fs;
-use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Command, ExitStatus, Stdio};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use crate::instrumentation::{TacticEvent, VerificationEvent};
 use crate::lang::click::verifying_source_paths;
@@ -146,204 +144,6 @@ fn duration_from_optional_os(
     parse_duration(source).map_err(|message| format!("{variable}: {message}"))
 }
 
-/// Indents captured child output for inclusion in a failure message, or
-/// returns the empty string when the child said nothing.
-pub fn indented_output(output: &str) -> String {
-    let output = output.trim();
-    if output.is_empty() {
-        return String::new();
-    }
-    let mut indented = String::from("\n");
-    for (index, line) in output.lines().enumerate() {
-        if index > 0 {
-            indented.push('\n');
-        }
-        indented.push_str("  ");
-        indented.push_str(line);
-    }
-    indented
-}
-
-/// A child process that ran to completion under [`run_bounded`].
-#[derive(Debug)]
-pub struct ChildOutput {
-    pub status: ExitStatus,
-    pub stdout: Vec<u8>,
-    pub stderr: Vec<u8>,
-    pub elapsed: Duration,
-}
-
-/// The outcome of running a child process under a wall-clock limit.
-#[derive(Debug)]
-pub enum BoundedOutput {
-    Completed(ChildOutput),
-    TimedOut {
-        stdout: Vec<u8>,
-        stderr: Vec<u8>,
-        elapsed: Duration,
-    },
-}
-
-/// Runs a child process with a wall-clock limit, killing and reaping it on
-/// timeout and capturing its stdout and stderr either way.
-pub fn run_bounded(
-    command: Command,
-    limit: Duration,
-    label: &str,
-) -> Result<BoundedOutput, String> {
-    run_bounded_with_input(command, None, limit, label)
-}
-
-/// Like [`run_bounded`], but additionally writes `input` to the child's
-/// stdin and closes it so the child observes end-of-input.
-pub fn run_bounded_with_input(
-    mut command: Command,
-    input: Option<Vec<u8>>,
-    limit: Duration,
-    label: &str,
-) -> Result<BoundedOutput, String> {
-    if input.is_some() {
-        command.stdin(Stdio::piped());
-    }
-    let mut child = command
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|error| format!("failed to start {label}: {error}"))?;
-    let writer = match input {
-        Some(bytes) => {
-            let mut stdin = child
-                .stdin
-                .take()
-                .ok_or_else(|| format!("failed to open {label} input"))?;
-            Some(thread::spawn(move || {
-                // The child may exit without draining its input; a broken
-                // pipe here is not an error worth reporting.
-                let _ = stdin.write_all(&bytes);
-            }))
-        }
-        None => None,
-    };
-    let stdout = child
-        .stdout
-        .take()
-        .ok_or_else(|| format!("failed to capture {label} output"))?;
-    let stderr = child
-        .stderr
-        .take()
-        .ok_or_else(|| format!("failed to capture {label} diagnostics"))?;
-    let stdout_reader = thread::spawn(move || read_all(stdout));
-    let stderr_reader = thread::spawn(move || read_all(stderr));
-    let start = Instant::now();
-    let status = loop {
-        if let Some(status) = child
-            .try_wait()
-            .map_err(|error| format!("failed to poll {label}: {error}"))?
-        {
-            break Some(status);
-        }
-        if start.elapsed() >= limit {
-            let _ = child.kill();
-            let _ = child.wait();
-            break None;
-        }
-        thread::sleep(
-            limit
-                .saturating_sub(start.elapsed())
-                .min(Duration::from_millis(10)),
-        );
-    };
-    let elapsed = start.elapsed();
-    if let Some(writer) = writer {
-        let _ = writer.join();
-    }
-    let stdout = join_reader(stdout_reader, label, "output")?;
-    let stderr = join_reader(stderr_reader, label, "diagnostics")?;
-    Ok(match status {
-        Some(status) => BoundedOutput::Completed(ChildOutput {
-            status,
-            stdout,
-            stderr,
-            elapsed,
-        }),
-        None => BoundedOutput::TimedOut {
-            stdout,
-            stderr,
-            elapsed,
-        },
-    })
-}
-
-/// Names the messages [`run_isolated`] reports when a bounded fixture child
-/// times out or fails.
-#[derive(Clone, Copy, Debug)]
-pub struct IsolatedRun<'a> {
-    /// Identifies the child in `run_bounded`'s own I/O errors.
-    pub label: &'a str,
-    /// Names the limit, for example `the per-file mdtest time limit`.
-    pub limit_description: &'a str,
-    /// The environment variable that overrides the limit.
-    pub limit_variable: &'a str,
-    /// Names the child, for example `its isolated mdtest process`.
-    pub process_description: &'a str,
-}
-
-/// Builds the command that re-executes the running integration-test binary
-/// against a single fixture in an isolated child process.
-///
-/// Click proofs have overflowed the stack before, so each fixture runs in its
-/// own process with a large stack: one crash cannot hide the other results.
-pub fn isolated_test_command(
-    test_name: &str,
-    fixture_variable: &str,
-    fixture: &Path,
-) -> Result<Command, String> {
-    let executable = std::env::current_exe()
-        .map_err(|error| format!("failed to locate the {test_name} test executable: {error}"))?;
-    let mut command = Command::new(executable);
-    command
-        .arg("--exact")
-        .arg(test_name)
-        .arg("--nocapture")
-        .env(fixture_variable, fixture)
-        // Prover recursion follows term structure, which nests far deeper
-        // than the default test-thread stack on snapshot-heavy fixtures.
-        .env("RUST_MIN_STACK", "67108864");
-    Ok(command)
-}
-
-/// The tactic a timed-out child was inside when it was killed: the last
-/// `click timing: started tactic ...` line with no matching finish line.
-/// `None` means the child died outside instrumented tactic replay (or the
-/// timing stream was absent), which is itself worth reporting honestly.
-pub fn last_unfinished_tactic(stderr: &str) -> Option<String> {
-    let mut in_flight: Vec<&str> = Vec::new();
-    for line in stderr.lines() {
-        if let Some(rest) = line.strip_prefix("click timing: started tactic ") {
-            in_flight.push(rest.trim_end());
-        } else if let Some(rest) = line.strip_prefix("click timing: tactic ") {
-            // Finish lines repeat the started fields and append the elapsed
-            // seconds; match on the prefix.
-            let finished = rest.trim_end();
-            if let Some(index) = in_flight
-                .iter()
-                .rposition(|started| finished.starts_with(started))
-            {
-                in_flight.remove(index);
-            }
-        }
-    }
-    in_flight.last().map(|tactic| (*tactic).to_string())
-}
-
-fn without_timing_lines(output: &str) -> String {
-    output
-        .lines()
-        .filter(|line| !line.starts_with("click timing:"))
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
 /// Per-class tactic time budgets (owner ruling 2026-07-31): a slow SIMPLE
 /// tactic is an engine bug, a slow SMART tactic is an expansion obligation.
 /// These match `click profile`'s default thresholds.
@@ -371,78 +171,8 @@ fn tactic_budget(class: &str) -> Option<(Duration, &'static str)> {
     }
 }
 
-/// Splits the trailing `<seconds>s` field off a finish line's fields.
-fn split_trailing_seconds(rest: &str) -> Option<(&str, Duration)> {
-    let (fields, elapsed) = rest.trim_end().rsplit_once(char::is_whitespace)?;
-    let elapsed = elapsed.strip_suffix('s')?.parse::<f64>().ok()?;
-    Some((fields, Duration::from_secs_f64(elapsed)))
-}
-
-/// Every finished tactic whose *exclusive* time — its reported elapsed minus
-/// the elapsed of the tactics nested inside it — broke its class budget.
-/// Exclusive time keeps a container from inheriting its children's cost; the
-/// same accounting click-profile uses.
-///
-/// A finish line whose `class` field is unrecognized is reported as drift:
-/// silently skipping it would exempt that tactic from every budget.
-pub fn tactic_budget_violations(stderr: &str) -> Vec<String> {
-    // Open tactics, innermost last, each carrying the elapsed time already
-    // reported by tactics that finished nested inside it.
-    let mut open: Vec<(&str, Duration)> = Vec::new();
-    let mut violations = Vec::new();
-    for line in stderr.lines() {
-        if let Some(rest) = line.strip_prefix("click timing: started tactic ") {
-            open.push((rest.trim_end(), Duration::ZERO));
-        } else if let Some(rest) = line.strip_prefix("click timing: tactic ") {
-            let Some((fields, elapsed)) = split_trailing_seconds(rest) else {
-                violations.push(format!("unparseable tactic finish line: `{line}`"));
-                continue;
-            };
-            let nested = match open.iter().rposition(|(started, _)| *started == fields) {
-                Some(index) => {
-                    let (_, nested) = open.remove(index);
-                    // Anything opened inside it that never finished cannot
-                    // nest in a later tactic either.
-                    open.truncate(index);
-                    nested
-                }
-                None => Duration::ZERO,
-            };
-            if let Some((_, parent_nested)) = open.last_mut() {
-                *parent_nested += elapsed;
-            }
-            let exclusive = elapsed.saturating_sub(nested);
-            let Some(class) = fields
-                .split(" class ")
-                .nth(1)
-                .and_then(|rest| rest.split_whitespace().next())
-            else {
-                violations.push(format!(
-                    "tactic finish line without a class field: `{line}`"
-                ));
-                continue;
-            };
-            let Some((budget, consequence)) = tactic_budget(class) else {
-                violations.push(format!(
-                    "unrecognized tactic class `{class}` (timing format drift): `{line}`"
-                ));
-                continue;
-            };
-            if exclusive > budget {
-                violations.push(format!(
-                    "{fields}: {:.3} s exclusive, over the {} {class} budget — {consequence}",
-                    exclusive.as_secs_f64(),
-                    format_duration(budget),
-                ));
-            }
-        }
-    }
-    violations
-}
-
 /// Checks structured tactic events against the production class budgets.
-/// This is the direct-engine equivalent of [`tactic_budget_violations`]; CLI
-/// and fixture workflows use it without capturing or parsing stderr.
+/// CLI and fixture workflows use it without capturing or parsing stderr.
 pub fn structured_tactic_budget_violations(events: &[VerificationEvent]) -> Vec<String> {
     let mut open: Vec<(TacticEvent, Duration)> = Vec::new();
     let mut violations = Vec::new();
@@ -492,62 +222,6 @@ pub fn structured_tactic_budget_violations(events: &[VerificationEvent]) -> Vec<
     violations
 }
 
-/// Runs a fixture child under a wall-clock limit and reduces the outcome to a
-/// pass/fail result, folding the child's captured output into the message.
-///
-/// The child runs with `CLICK_TIMINGS` enabled so a timeout can name the
-/// tactic it interrupted; the timing stream itself is filtered back out of
-/// every reported message.
-pub fn run_isolated(
-    mut command: Command,
-    limit: Duration,
-    messages: IsolatedRun<'_>,
-) -> Result<(), String> {
-    command.env("CLICK_TIMINGS", "1");
-    let (status, stdout, stderr) = match run_bounded(command, limit, messages.label)? {
-        BoundedOutput::Completed(output) => (Some(output.status), output.stdout, output.stderr),
-        BoundedOutput::TimedOut { stdout, stderr, .. } => (None, stdout, stderr),
-    };
-    let stderr_text = String::from_utf8_lossy(&stderr).into_owned();
-    let output = without_timing_lines(&format!(
-        "{}{stderr_text}",
-        String::from_utf8_lossy(&stdout)
-    ));
-    let Some(status) = status else {
-        let interrupted = match last_unfinished_tactic(&stderr_text) {
-            Some(tactic) => format!("\n  timed out inside tactic: {tactic}"),
-            None => "\n  timed out outside instrumented tactic replay \
-                     (no in-flight `click timing:` tactic)"
-                .to_string(),
-        };
-        return Err(format!(
-            "exceeded {} of {}; set {} to override it{}{}",
-            messages.limit_description,
-            format_duration(limit),
-            messages.limit_variable,
-            interrupted,
-            indented_output(&output)
-        ));
-    };
-    if !status.success() {
-        return Err(format!(
-            "failed in {}{}",
-            messages.process_description,
-            indented_output(&output)
-        ));
-    }
-    if std::env::var_os(DISABLE_TACTIC_BUDGETS).is_none() {
-        let violations = tactic_budget_violations(&stderr_text);
-        if !violations.is_empty() {
-            return Err(format!(
-                "{BUDGET_FAILURE_MARKER} (set {DISABLE_TACTIC_BUDGETS}=1 to bypass):\n  {}",
-                violations.join("\n  ")
-            ));
-        }
-    }
-    Ok(())
-}
-
 const BUDGET_FAILURE_MARKER: &str = "passed, but broke tactic time budgets";
 
 /// Budget violations measured under a fully parallel suite are load-noisy:
@@ -571,23 +245,6 @@ pub fn retain_serial_budget_failures(
             }
         })
         .collect()
-}
-
-fn read_all(mut reader: impl Read) -> std::io::Result<Vec<u8>> {
-    let mut bytes = Vec::new();
-    reader.read_to_end(&mut bytes)?;
-    Ok(bytes)
-}
-
-fn join_reader(
-    reader: thread::JoinHandle<std::io::Result<Vec<u8>>>,
-    label: &str,
-    stream: &str,
-) -> Result<Vec<u8>, String> {
-    reader
-        .join()
-        .map_err(|_| format!("{label} {stream} reader panicked"))?
-        .map_err(|error| format!("failed to read {label} {stream}: {error}"))
 }
 
 /// Reads the C sources a sidecar declares with `verifying`, relative to the
@@ -1003,37 +660,34 @@ where
 
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn last_unfinished_tactic_reports_the_interrupted_one() {
-        let stderr = "\
-click timing: started tactic f.contract 0 step class simple statement 0 source 0
-click timing: tactic f.contract 0 step class simple statement 0 source 0 0.001s
-click timing: started tactic f.contract 1 simp class smart statement 1 source 1
-";
-        assert_eq!(
-            super::last_unfinished_tactic(stderr).as_deref(),
-            Some("f.contract 1 simp class smart statement 1 source 1")
-        );
+    use super::*;
+
+    fn tactic(index: usize, name: &str, class: &str) -> TacticEvent {
+        TacticEvent {
+            claim: "f.contract".to_string(),
+            tactic_index: index,
+            tactic_name: name.to_string(),
+            class: class.to_string(),
+            statement_index: index,
+            source_index: index,
+        }
     }
 
     #[test]
-    fn last_unfinished_tactic_is_none_when_everything_finished() {
-        let stderr = "\
-click timing: started tactic f.contract 0 step class simple statement 0 source 0
-click timing: tactic f.contract 0 step class simple statement 0 source 0 0.001s
-";
-        assert_eq!(super::last_unfinished_tactic(stderr), None);
-    }
-
-    #[test]
-    fn budget_violations_flag_each_class_over_its_own_budget() {
-        let stderr = "\
-click timing: started tactic f.contract 0 step class simple statement 0 source 0
-click timing: tactic f.contract 0 step class simple statement 0 source 0 0.700s
-click timing: started tactic f.contract 1 simp class smart statement 1 source 1
-click timing: tactic f.contract 1 simp class smart statement 1 source 1 1.900s
-";
-        let violations = super::tactic_budget_violations(stderr);
+    fn structured_budget_violations_flag_each_class_over_its_own_budget() {
+        let events = vec![
+            VerificationEvent::TacticStarted(tactic(0, "step", "simple")),
+            VerificationEvent::TacticFinished {
+                tactic: tactic(0, "step", "simple"),
+                elapsed: Duration::from_millis(700),
+            },
+            VerificationEvent::TacticStarted(tactic(1, "simp", "smart")),
+            VerificationEvent::TacticFinished {
+                tactic: tactic(1, "simp", "smart"),
+                elapsed: Duration::from_millis(1_900),
+            },
+        ];
+        let violations = structured_tactic_budget_violations(&events);
         assert_eq!(violations.len(), 1, "{violations:?}");
         assert!(
             violations[0].contains("f.contract 0 step"),
@@ -1043,16 +697,22 @@ click timing: tactic f.contract 1 simp class smart statement 1 source 1 1.900s
     }
 
     #[test]
-    fn budget_violations_use_exclusive_time_for_containers() {
+    fn structured_budget_violations_use_exclusive_time_for_containers() {
         // The smart container reports 2.5 s but 2.4 s of it is the nested
         // simple step; only the simple step is over its own budget.
-        let stderr = "\
-click timing: started tactic f.contract 0 cases class smart statement 0 source 0
-click timing: started tactic f.contract 1 step class simple statement 1 source 1
-click timing: tactic f.contract 1 step class simple statement 1 source 1 2.400s
-click timing: tactic f.contract 0 cases class smart statement 0 source 0 2.500s
-";
-        let violations = super::tactic_budget_violations(stderr);
+        let events = vec![
+            VerificationEvent::TacticStarted(tactic(0, "cases", "smart")),
+            VerificationEvent::TacticStarted(tactic(1, "step", "simple")),
+            VerificationEvent::TacticFinished {
+                tactic: tactic(1, "step", "simple"),
+                elapsed: Duration::from_millis(2_400),
+            },
+            VerificationEvent::TacticFinished {
+                tactic: tactic(0, "cases", "smart"),
+                elapsed: Duration::from_millis(2_500),
+            },
+        ];
+        let violations = structured_tactic_budget_violations(&events);
         assert_eq!(violations.len(), 1, "{violations:?}");
         assert!(
             violations[0].contains("f.contract 1 step"),
@@ -1061,35 +721,36 @@ click timing: tactic f.contract 0 cases class smart statement 0 source 0 2.500s
     }
 
     #[test]
-    fn budget_violations_are_empty_for_a_fast_run() {
-        let stderr = "\
-click timing: started tactic f.contract 0 step class simple statement 0 source 0
-click timing: tactic f.contract 0 step class simple statement 0 source 0 0.010s
-click timing: started tactic f.contract 1 simp class smart statement 1 source 1
-click timing: tactic f.contract 1 simp class smart statement 1 source 1 0.500s
-click timing: contract execution f 0.100000s
-";
+    fn structured_budget_violations_are_empty_for_a_fast_run() {
+        let events = vec![
+            VerificationEvent::TacticStarted(tactic(0, "step", "simple")),
+            VerificationEvent::TacticFinished {
+                tactic: tactic(0, "step", "simple"),
+                elapsed: Duration::from_millis(10),
+            },
+        ];
         assert_eq!(
-            super::tactic_budget_violations(stderr),
+            structured_tactic_budget_violations(&events),
             Vec::<String>::new()
         );
     }
 
     #[test]
-    fn budget_violations_report_class_drift_instead_of_exempting_it() {
-        let stderr = "\
-click timing: started tactic f.contract 0 step class brandnew statement 0 source 0
-click timing: tactic f.contract 0 step class brandnew statement 0 source 0 9.000s
-";
-        let violations = super::tactic_budget_violations(stderr);
+    fn structured_budget_violations_report_class_drift() {
+        let events = vec![
+            VerificationEvent::TacticStarted(tactic(0, "step", "brandnew")),
+            VerificationEvent::TacticFinished {
+                tactic: tactic(0, "step", "brandnew"),
+                elapsed: Duration::from_secs(9),
+            },
+        ];
+        let violations = structured_tactic_budget_violations(&events);
         assert_eq!(violations.len(), 1, "{violations:?}");
         assert!(
             violations[0].contains("unrecognized tactic class"),
             "{violations:?}"
         );
     }
-
-    use super::*;
 
     #[test]
     fn parses_source_locations_from_the_right_and_one_based() {
@@ -1264,94 +925,6 @@ click timing: tactic f.contract 0 step class brandnew statement 0 source 0 9.000
         )
         .expect_err("an unparseable duration should be rejected");
         assert!(message.starts_with("LIMIT: "), "{message}");
-    }
-
-    #[test]
-    fn indented_output_is_empty_for_silent_children() {
-        assert_eq!(indented_output("   \n  \n"), "");
-        assert_eq!(indented_output("one\ntwo"), "\n  one\n  two");
-        assert_eq!(indented_output("\n  padded  \n"), "\n  padded");
-    }
-
-    #[test]
-    fn isolated_runs_report_timeouts_and_failures_with_child_output() {
-        let mut sleeper = Command::new("sleep");
-        sleeper.arg("5");
-        let message = run_isolated(
-            sleeper,
-            Duration::from_millis(10),
-            IsolatedRun {
-                label: "test sleeper",
-                limit_description: "the test time limit",
-                limit_variable: "CLICK_TEST_LIMIT",
-                process_description: "its isolated test process",
-            },
-        )
-        .expect_err("the sleeper should exceed its limit");
-        assert!(
-            message.contains("exceeded the test time limit of 10ms"),
-            "{message}"
-        );
-        assert!(
-            message.contains("set CLICK_TEST_LIMIT to override it"),
-            "{message}"
-        );
-
-        let mut failing = Command::new("sh");
-        failing.arg("-c").arg("echo detail; exit 1");
-        let message = run_isolated(
-            failing,
-            Duration::from_secs(10),
-            IsolatedRun {
-                label: "test failure",
-                limit_description: "the test time limit",
-                limit_variable: "CLICK_TEST_LIMIT",
-                process_description: "its isolated test process",
-            },
-        )
-        .expect_err("a failing child should be reported");
-        assert_eq!(message, "failed in its isolated test process\n  detail");
-
-        let mut passing = Command::new("sh");
-        passing.arg("-c").arg("exit 0");
-        assert_eq!(
-            run_isolated(
-                passing,
-                Duration::from_secs(10),
-                IsolatedRun {
-                    label: "test success",
-                    limit_description: "the test time limit",
-                    limit_variable: "CLICK_TEST_LIMIT",
-                    process_description: "its isolated test process",
-                },
-            ),
-            Ok(())
-        );
-    }
-
-    #[test]
-    fn bounded_children_are_killed_at_their_limit() {
-        let mut command = Command::new("sleep");
-        command.arg("1");
-        let output = run_bounded(command, Duration::from_millis(10), "test sleeper").unwrap();
-        assert!(matches!(output, BoundedOutput::TimedOut { .. }));
-    }
-
-    #[test]
-    fn bounded_children_pipe_input_and_capture_output() {
-        let command = Command::new("cat");
-        let output = run_bounded_with_input(
-            command,
-            Some(b"piped bytes".to_vec()),
-            Duration::from_secs(10),
-            "test cat",
-        )
-        .unwrap();
-        let BoundedOutput::Completed(output) = output else {
-            panic!("cat should complete before its limit");
-        };
-        assert!(output.status.success());
-        assert_eq!(output.stdout, b"piped bytes");
     }
 
     #[test]
