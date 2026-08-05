@@ -6,6 +6,10 @@ by one, preserves capacity and the backing pointer, and produces a nonempty
 vector resource. Keeping this proof separate makes its performance independent
 of the larger owned-vector pipeline.
 
-Allocation and growth are separate concerns. Runtime allocation/free is in
-`examples/runtime-int32-allocation`; malloc-copy-free vector growth remains
-tracked in `issues/owned-vector-runtime-growth.md`.
+This project deliberately isolates the in-capacity operation so it can be
+profiled independently. [`examples/owned-vector`](../owned-vector/) composes
+runtime allocation, copying, pointer/capacity replacement, and freeing the old
+allocation into verified malloc-copy-free growth. That integration uses the
+focused `old_cap + 1` policy; it is not a geometric-growth or `realloc`
+example. The minimal allocation/free fixture remains in
+[`examples/runtime-int32-allocation`](../runtime-int32-allocation/).

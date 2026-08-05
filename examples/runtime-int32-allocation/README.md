@@ -10,10 +10,12 @@ a direct `free` inside a larger function: deallocation is tracked as a
 heap-lifetime effect rather than requiring a fictitious mutable byte range or
 an allocation-specific wrapper call.
 
-This is intentionally not vector growth. Copying between allocations, replacing
-an owning object's dependent pointer/capacity resource, and freeing the old
-allocation remain in `issues/owned-vector-runtime-growth.md` together with the
-tooling and resource-model blockers that work exposed.
+This project remains the minimal allocation/free fixture. Its conditional
+allocation resource is composed with copying, dependent pointer/capacity
+replacement, and freeing the old allocation in the verified
+[`examples/owned-vector`](../owned-vector/) growth operation. That integration
+grows by exactly one slot (`new_cap = old_cap + 1`) rather than claiming a
+general allocation or geometric-growth policy.
 
 The current C0 boundary remains narrow: zero-sized allocation, arbitrary byte
 layouts, `size_t`, `void *` conversions, custom allocators, `calloc`, and
