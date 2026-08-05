@@ -10,15 +10,16 @@ interrupted manually while diagnosing growth.
 
 ## Intended design
 
-- Give `click-verify` a documented default wall-clock limit and a
+- Give `click verify` a documented default wall-clock limit and a
   `--time-limit` override using the same duration parser as the other tools.
 - Bound each project independently when a directory is verified, and name the
   active sidecar/proof unit on timeout.
 - Emit phase progress so a non-tactic timeout distinguishes frontend,
   environment, certification, verifier core, and driver work.
 - Exit unsuccessfully on timeout.
-- Use the shared bounded-run process-group cleanup so no verifier survives the
-  command.
+- Enforce the deadline through the shared engine. If directory crash isolation
+  retains direct worker processes, use the shared process-group cleanup so no
+  worker survives the command.
 
 The outer limit is containment, not a replacement for per-tactic deadlines or
 performance fixes. A project that repeatedly approaches the limit still needs a

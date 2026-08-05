@@ -21,6 +21,8 @@ the actual bottleneck and gives the wrong next action.
   accounting, not unknown verifier execution.
 - Never emit `HEALTHY VOLUME` as the sole diagnosis for an incomplete project.
   State what was incomplete and direct the user to the active operation.
+- Consume structured phase/tactic events directly from the shared engine rather
+  than reconstructing active work from a child process's stderr stream.
 
 ## Regression
 

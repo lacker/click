@@ -19,7 +19,12 @@ appears finished.
 
 ## Intended design
 
-- Start every bounded command in a new process group/session on Unix.
+- First remove the self-reexecuting/profile/expand/test wrappers described in
+  `direct-click-cli-engine.md`. Ordinary deadlines belong inside the shared
+  engine and should not require a child process.
+- For the smaller set of workers retained solely for crash/stack-overflow
+  isolation, start the direct Click worker in a new process group/session on
+  Unix.
 - On timeout or parent-side error, terminate the whole group, wait briefly, then
   force-kill and reap any survivors.
 - Ensure stdout/stderr reader threads cannot wait forever on pipes held by
@@ -27,6 +32,10 @@ appears finished.
 - Provide the equivalent child-tree behavior on supported non-Unix platforms,
   or document and test a platform-specific fallback.
 - Keep exact target scoping: never signal the caller's process group.
+
+Do not resolve this issue by adding another shell, test-binary, or CLI wrapper.
+Process-group cleanup is a safety rule for the isolation that remains after the
+direct-engine migration.
 
 ## Regression
 

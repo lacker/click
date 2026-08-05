@@ -22,6 +22,8 @@ match targeted verification semantics.
   units.
 - If a required dependency is broken, report the dependency path that made it
   relevant.
+- Invoke the selected-unit expansion API directly. Do not re-execute
+  `click-expand` in a child mode to obtain isolation or a timeout.
 
 This is separate from path alignment inside the selected proof; that remains in
 `branched-expansion-path-alignment.md`.

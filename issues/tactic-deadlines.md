@@ -29,6 +29,10 @@ project deadline or leave the user wondering whether verification is hung.
 - Permit an explicit diagnostic override for reduction work while default
   verification and tests retain production limits.
 
+Implement this in the shared engine from `direct-click-cli-engine.md`; do not
+enforce it by spawning and killing a wrapper process around each tactic or
+command.
+
 ## Regression
 
 Add focused fixtures for deliberately expensive SMART search, SIMPLE replay,

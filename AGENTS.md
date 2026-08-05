@@ -25,6 +25,12 @@ After any timeout or interrupted bounded command, confirm that its verifier
 process tree exited before trusting later timing results. Stale workers are a
 tooling failure, not background noise.
 
+Do not build Click workflows by recursively spawning Click commands, hidden
+child modes, test-binary wrappers, stderr scraping, or shell redirect/move
+recipes. CLI subcommands and fixture gates should call the shared bounded
+verification engine directly. Keep OS process isolation only as a narrow,
+owned crash-containment boundary.
+
 This priority is deliberate: Click's examples and language features depend on
 fast verification, replayable certificates, working expansion, and actionable
 diagnostics. Building above a broken proof-tool boundary makes later failures
