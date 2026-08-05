@@ -94,7 +94,7 @@ pub enum C0Statement {
     },
     HeapAllocate {
         target: String,
-        bytes: u32,
+        bytes: C0Expression,
     },
     HeapFree {
         pointer: C0Expression,
@@ -319,7 +319,7 @@ impl C0Statement {
                     .collect(),
             ),
             Self::HeapAllocate { target, bytes } => {
-                crate::kernel::c_heap_allocate(target.clone(), *bytes)
+                crate::kernel::c_heap_allocate_sized(target.clone(), bytes.to_kernel_expression())
             }
             Self::HeapFree { pointer } => {
                 crate::kernel::c_heap_free(pointer.to_kernel_expression())
@@ -1318,22 +1318,27 @@ impl Parser {
                 arguments,
             });
         }
-        let Some(target_struct) = self.variable_structs.get(&target) else {
-            return Err(self.error_here(
-                "this first `malloc` slice requires a pointer-to-struct assignment target",
-            ));
-        };
-        let [C0Expression::SizeOfStruct { name, bytes }] = arguments.as_slice() else {
-            return Err(self.error_here("`malloc` currently requires exactly `sizeof(struct T)`"));
-        };
-        if name != target_struct {
+        let [bytes] = arguments.as_slice() else {
             return Err(self.error_here(format!(
-                "`malloc(sizeof(struct {name}))` does not match target type `struct {target_struct} *`"
+                "`malloc` expects one byte-count argument, got {}",
+                arguments.len()
             )));
+        };
+        if let Some(target_struct) = self.variable_structs.get(&target) {
+            let C0Expression::SizeOfStruct { name, .. } = bytes else {
+                return Err(self.error_here(format!(
+                    "allocation of `struct {target_struct}` currently requires `sizeof(struct {target_struct})`"
+                )));
+            };
+            if name != target_struct {
+                return Err(self.error_here(format!(
+                    "`malloc(sizeof(struct {name}))` does not match target type `struct {target_struct} *`"
+                )));
+            }
         }
         Ok(C0Statement::HeapAllocate {
             target,
-            bytes: *bytes,
+            bytes: bytes.clone(),
         })
     }
 

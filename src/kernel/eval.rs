@@ -129,6 +129,11 @@ pub(super) fn evaluate_c_expression_paths(
 ) -> ExecutionResult<Vec<CExpressionPath>> {
     budget.consume_expression_step()?;
     let paths = match expression {
+        CExpression::Value(CValue::Void) => vec![CExpressionPath {
+            outcome: CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+            facts: Vec::new(),
+            obligations: Vec::new(),
+        }],
         CExpression::Value(value) => vec![CExpressionPath {
             outcome: CExpressionOutcome::Value(value.clone()),
             facts: Vec::new(),
@@ -796,7 +801,7 @@ pub(super) fn c_truthiness_paths(
     assumptions: &Assumptions,
 ) -> Vec<CTruthinessPath> {
     match value {
-        CValue::Void => Vec::new(),
+        CValue::Void => unreachable!("void truthiness must be rejected by the caller"),
         CValue::Int32(bits) | CValue::UInt8(bits) => {
             let is_zero = ConditionTerm::equal(bits, Bitvector32Term::Constant(0));
             match decide_with_facts(assumptions, &facts, &is_zero) {
@@ -1557,7 +1562,10 @@ pub(super) fn apply_c_int32_multiply(
     obligations: Vec<ProofObligation>,
     assumptions: &Assumptions,
 ) -> Vec<CExpressionPath> {
-    let overflow = ConditionTerm::signed_multiply_overflows(left.clone(), right.clone());
+    let overflow = ConditionTerm::signed_multiply_overflows(
+        normalize_exact_memory_loads_in_bitvector(&left, assumptions, 0),
+        normalize_exact_memory_loads_in_bitvector(&right, assumptions, 0),
+    );
     match decide_with_facts(assumptions, &facts, &overflow) {
         Some(true) => vec![CExpressionPath {
             outcome: CExpressionOutcome::UndefinedBehavior(CUndefinedBehavior::SignedOverflow),
@@ -2843,14 +2851,11 @@ pub(super) fn local_name_from_pointer(pointer: &Pointer) -> Option<&str> {
 fn execute_c_heap_allocate_paths(
     state: &CState,
     target: &str,
-    bytes: u32,
+    bytes_expression: &CExpression,
     assumptions: &Assumptions,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<CStatementExecutionPath>> {
-    if bytes == 0
-        || !bytes.is_multiple_of(CType::Int32.byte_width())
-        || state.local_object_type(target) != Some(CType::Int32Pointer)
-    {
+    if state.local_object_type(target) != Some(CType::Int32Pointer) {
         return Ok(vec![CStatementExecutionPath {
             outcome: CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch),
             facts: Vec::new(),
@@ -2858,27 +2863,121 @@ fn execute_c_heap_allocate_paths(
         }]);
     }
 
-    while state
-        .memory
-        .heap_identity_in_use(budget.next_verification_variable)
+    let element_count_expression = match bytes_expression {
+        CExpression::Multiply(left, right)
+            if right.as_ref() == &CExpression::Value(int32(CType::Int32.byte_width())) =>
+        {
+            Some(left.as_ref())
+        }
+        CExpression::Multiply(left, right)
+            if left.as_ref() == &CExpression::Value(int32(CType::Int32.byte_width())) =>
+        {
+            Some(right.as_ref())
+        }
+        _ => None,
+    };
+    let evaluated_size_expression = element_count_expression.unwrap_or(bytes_expression);
+    let mut paths = Vec::new();
+    for size_path in
+        evaluate_c_expression_paths(state, evaluated_size_expression, assumptions, budget)?
     {
-        budget.next_verification_variable += 1;
-    }
-    let pointer = Pointer::symbolic(Variable(budget.next_verification_variable));
-    budget.next_verification_variable += 1;
-    let success_state = state.clone().with_memory(
-        state
+        let CExpressionPath {
+            outcome,
+            facts,
+            obligations,
+        } = size_path;
+        let CExpressionOutcome::Value(CValue::Int32(size)) = outcome else {
+            let outcome = match outcome {
+                CExpressionOutcome::UndefinedBehavior(error) => {
+                    CStatementOutcome::UndefinedBehavior(error)
+                }
+                CExpressionOutcome::RuntimeError(error) => CStatementOutcome::RuntimeError(error),
+                CExpressionOutcome::Value(_) => {
+                    CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch)
+                }
+            };
+            paths.push(CStatementExecutionPath {
+                outcome,
+                facts,
+                obligations,
+            });
+            continue;
+        };
+        let effective_assumptions =
+            assumptions_with_path_context(assumptions, &facts, &obligations);
+        let (bytes, valid_size) = if element_count_expression.is_some() {
+            let positive = effective_assumptions.decide(&ConditionTerm::signed_greater_than(
+                size.clone(),
+                Bitvector32Term::Constant(0),
+            )) == Some(true);
+            let fits = effective_assumptions.decide(&ConditionTerm::signed_less_equal(
+                size.clone(),
+                Bitvector32Term::Constant(i32::MAX as u32 / CType::Int32.byte_width()),
+            )) == Some(true);
+            (
+                Bitvector32Term::multiply(
+                    size,
+                    Bitvector32Term::Constant(CType::Int32.byte_width()),
+                ),
+                positive && fits,
+            )
+        } else {
+            let valid = int32_element_count_from_bytes(&size).is_some()
+                && effective_assumptions.decide(&ConditionTerm::signed_greater_than(
+                    size.clone(),
+                    Bitvector32Term::Constant(0),
+                )) == Some(true);
+            (size, valid)
+        };
+        if !valid_size {
+            paths.push(CStatementExecutionPath {
+                outcome: CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+                facts,
+                obligations,
+            });
+            continue;
+        }
+
+        while state
             .memory
-            .clone()
-            .with_pending_heap_allocation(pointer.clone(), bytes),
-    );
-    let paths = execute_c_lvalue_assignment_paths(
-        &success_state,
-        &c_variable(target.to_string()),
-        &CExpression::Value(CValue::Pointer(pointer)),
-        assumptions,
-        budget,
-    )?;
+            .heap_identity_in_use(budget.next_verification_variable)
+        {
+            budget.next_verification_variable += 1;
+        }
+        let pointer = Pointer::symbolic(Variable(budget.next_verification_variable));
+        budget.next_verification_variable += 1;
+        let success_state = state.clone().with_memory(
+            state
+                .memory
+                .clone()
+                .with_pending_heap_allocation(pointer.clone(), bytes),
+        );
+        let assigned = execute_c_lvalue_assignment_paths(
+            &success_state,
+            &c_variable(target.to_string()),
+            &CExpression::Value(CValue::Pointer(pointer)),
+            &effective_assumptions,
+            budget,
+        )?;
+        for assigned_path in assigned {
+            let Some((merged_facts, merged_obligations)) =
+                merge_execution_pure_facts_and_obligations(
+                    &facts,
+                    &obligations,
+                    &assigned_path.facts,
+                    &assigned_path.obligations,
+                    assumptions,
+                )
+            else {
+                continue;
+            };
+            paths.push(CStatementExecutionPath {
+                outcome: assigned_path.outcome,
+                facts: merged_facts,
+                obligations: merged_obligations,
+            });
+        }
+    }
     budget.consume_paths(paths.len())?;
     Ok(paths)
 }
@@ -2940,10 +3039,10 @@ fn execute_c_heap_free_paths(
             .iter()
             .find_map(|fact| fact.allocation())
             .filter(|(base, _)| **base == pointer)
-            .map(|(_, bytes)| bytes);
+            .map(|(_, bytes)| bytes.clone());
         let mut working_memory = state.memory.clone();
         let bytes = if let Some(bytes) = working_memory.live_heap_block_size(&pointer) {
-            bytes
+            bytes.clone()
         } else if working_memory.is_retired_heap_address(&pointer) {
             let error = CInvalidFree::DoubleFree;
             paths.push(CStatementExecutionPath {
@@ -2961,7 +3060,8 @@ fn execute_c_heap_free_paths(
             });
             continue;
         } else if let Some(bytes) = declared_allocation {
-            let Some(memory) = working_memory.with_heap_allocation_claim(pointer.clone(), bytes)
+            let Some(memory) =
+                working_memory.with_heap_allocation_claim(pointer.clone(), bytes.clone())
             else {
                 paths.push(CStatementExecutionPath {
                     outcome: CStatementOutcome::RuntimeError(CRuntimeError::InvalidFree(
@@ -2984,7 +3084,7 @@ fn execute_c_heap_free_paths(
             });
             continue;
         };
-        let allocation = CResourceFact::own_allocation(pointer.clone(), bytes);
+        let allocation = CResourceFact::own_allocation(pointer.clone(), bytes.clone());
         let Some(resources) = state
             .resources
             .clone()
@@ -3002,7 +3102,8 @@ fn execute_c_heap_free_paths(
         let complete_access = CResourceFact::own_memory(CMemoryRange::new(
             pointer.clone(),
             Bitvector32Term::Constant(0),
-            Bitvector32Term::Constant(bytes / CType::Int32.byte_width()),
+            int32_element_count_from_bytes(&bytes)
+                .expect("supported allocations have an exact int32 element count"),
         ));
         let Some(resources) = resources.without_fact(&complete_access, &effective_assumptions)
         else {
@@ -3026,7 +3127,7 @@ fn execute_c_heap_free_paths(
             resource.may_refer_to_memory_block(&pointer.block)
                 && !resource.is_proven_separate_from_allocation(
                     &pointer,
-                    bytes,
+                    &bytes,
                     &resource_assumptions,
                 )
         }) {
@@ -3066,7 +3167,7 @@ pub(crate) fn resolve_pending_heap_allocations(
         .heap
         .pending_allocations
         .iter()
-        .map(|(base, bytes)| (base.clone(), *bytes))
+        .map(|(base, bytes)| (base.clone(), bytes.clone()))
         .collect::<Vec<_>>();
     let mut state = state.clone();
     for (base, _) in pending {
@@ -3092,11 +3193,15 @@ pub(crate) fn resolve_pending_heap_allocations(
         if !is_null {
             state.resources = state
                 .resources
-                .unchecked_with_fact(CResourceFact::own_allocation(resolved_base.clone(), bytes))
+                .unchecked_with_fact(CResourceFact::own_allocation(
+                    resolved_base.clone(),
+                    bytes.clone(),
+                ))
                 .unchecked_with_fact(CResourceFact::own_memory(CMemoryRange::new(
                     resolved_base,
                     Bitvector32Term::Constant(0),
-                    Bitvector32Term::Constant(bytes / CType::Int32.byte_width()),
+                    int32_element_count_from_bytes(&bytes)
+                        .expect("supported allocations have an exact int32 element count"),
                 )));
         }
     }
@@ -3118,11 +3223,18 @@ pub(super) fn execute_c_statement_paths(
             facts: Vec::new(),
             obligations: Vec::new(),
         }],
-        CStatement::Declare { name, c_type } => vec![CStatementExecutionPath {
-            outcome: CStatementOutcome::Normal(declare_local(state, name, *c_type)),
-            facts: Vec::new(),
-            obligations: Vec::new(),
-        }],
+        CStatement::Declare { name, c_type } => {
+            let outcome = if *c_type == CType::Void {
+                CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch)
+            } else {
+                CStatementOutcome::Normal(declare_local(state, name, *c_type))
+            };
+            vec![CStatementExecutionPath {
+                outcome,
+                facts: Vec::new(),
+                obligations: Vec::new(),
+            }]
+        }
         CStatement::Assign { name, expression } => execute_c_lvalue_assignment_paths(
             state,
             &c_variable(name.clone()),
@@ -3157,7 +3269,7 @@ pub(super) fn execute_c_statement_paths(
             budget,
         )?,
         CStatement::HeapAllocate { target, bytes } => {
-            execute_c_heap_allocate_paths(state, target, *bytes, assumptions, budget)?
+            execute_c_heap_allocate_paths(state, target, bytes, assumptions, budget)?
         }
         CStatement::HeapFree { pointer } => {
             execute_c_heap_free_paths(state, pointer, assumptions, budget)?
@@ -3199,6 +3311,21 @@ pub(super) fn execute_c_statement_paths(
                 }
             }
             paths
+        }
+        CStatement::Return(CExpression::Value(CValue::Void)) => {
+            let outcome = if state.memory.has_pending_heap_allocation() {
+                CStatementOutcome::RuntimeError(CRuntimeError::UnresolvedAllocationOutcome)
+            } else {
+                CStatementOutcome::Return {
+                    value: CValue::Void,
+                    state: state.clone(),
+                }
+            };
+            vec![CStatementExecutionPath {
+                outcome,
+                facts: Vec::new(),
+                obligations: Vec::new(),
+            }]
         }
         CStatement::Return(expression) => {
             evaluate_c_expression_paths(state, expression, assumptions, budget)?

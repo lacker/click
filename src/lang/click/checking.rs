@@ -3085,7 +3085,7 @@ pub(super) fn plan_effect_clause_derivations(
     let assumptions = assumptions_from_propositions(&reasoning_facts);
     let mut derivations = Vec::new();
     let mut writes = memory_effect_write_pointers(&effect_facts);
-    writes.retain(is_effect_relevant_pointer);
+    writes.retain(|pointer| is_preexisting_effect_pointer(pointer, pre_state));
 
     for pointer in &writes {
         let Some(selected) = segments.iter().find_map(|segment| {
@@ -3124,7 +3124,7 @@ pub(super) fn plan_effect_clause_derivations(
             _ => None,
         })
         .flatten()
-        .filter(|range| is_effect_relevant_pointer(range.base()))
+        .filter(|range| is_preexisting_effect_pointer(range.base(), pre_state))
     {
         let Some(selected) = segments.iter().find_map(|segment| {
             let goals = range_containment_goals(segment, range, &assumptions)?;
@@ -3461,7 +3461,7 @@ fn prove_mutation_footprint_with_policy(
     effect_reasoning_facts.extend(effect_facts.iter().map(|fact| fact.proposition().clone()));
     let assumptions = assumptions_from_propositions(&effect_reasoning_facts);
     let mut writes = memory_effect_write_pointers(&effect_facts);
-    writes.retain(is_effect_relevant_pointer);
+    writes.retain(|pointer| is_preexisting_effect_pointer(pointer, pre_state));
 
     for pointer in &writes {
         if !segments.iter().any(|segment| match policy {
@@ -3491,7 +3491,7 @@ fn prove_mutation_footprint_with_policy(
             _ => None,
         })
         .flatten()
-        .filter(|range| is_effect_relevant_pointer(range.base()));
+        .filter(|range| is_preexisting_effect_pointer(range.base(), pre_state));
 
     for range in effect_summary_ranges {
         if !segments.iter().any(|segment| match policy {
@@ -3602,6 +3602,15 @@ fn range_containment_goals(
 
 pub(super) fn is_effect_relevant_pointer(pointer: &Pointer) -> bool {
     !pointer.block.starts_with("local:") && !pointer.block.starts_with("havoc:")
+}
+
+fn is_preexisting_effect_pointer(pointer: &Pointer, pre_state: &CState) -> bool {
+    is_effect_relevant_pointer(pointer)
+        && (!matches!(
+            pointer.block,
+            PointerBlock::Heap(_) | PointerBlock::Symbolic(_)
+        ) || pre_state.memory().has_block(&pointer.block)
+            || pre_state.memory().is_live_heap_address(pointer))
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

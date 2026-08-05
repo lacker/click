@@ -3274,7 +3274,7 @@ pub(super) fn substitute_bitvector_variable_in_c_statement(
         },
         CStatement::HeapAllocate { target, bytes } => CStatement::HeapAllocate {
             target: target.clone(),
-            bytes: *bytes,
+            bytes: substitute_bitvector_variable_in_c_expression(bytes, from, to),
         },
         CStatement::HeapFree { pointer } => CStatement::HeapFree {
             pointer: substitute_bitvector_variable_in_c_expression(pointer, from, to),
@@ -4252,7 +4252,20 @@ pub(super) fn substitute_bitvector_variable_in_memory(
         })
         .collect();
     CMemory {
-        blocks: memory.blocks.clone(),
+        blocks: memory
+            .blocks
+            .iter()
+            .map(|(block, contents)| {
+                (
+                    block.clone(),
+                    CBlock::with_symbolic_size(substitute_bitvector_variable(
+                        contents.size(),
+                        from,
+                        to,
+                    )),
+                )
+            })
+            .collect(),
         cells,
         heap: Box::new(CHeapMemory {
             live_allocations: memory
@@ -4262,7 +4275,7 @@ pub(super) fn substitute_bitvector_variable_in_memory(
                 .map(|(base, bytes)| {
                     (
                         substitute_bitvector_variable_in_pointer(base, from, to),
-                        *bytes,
+                        substitute_bitvector_variable(bytes, from, to),
                     )
                 })
                 .collect(),
@@ -4273,7 +4286,7 @@ pub(super) fn substitute_bitvector_variable_in_memory(
                 .map(|(base, bytes)| {
                     (
                         substitute_bitvector_variable_in_pointer(base, from, to),
-                        *bytes,
+                        substitute_bitvector_variable(bytes, from, to),
                     )
                 })
                 .collect(),
@@ -4284,7 +4297,7 @@ pub(super) fn substitute_bitvector_variable_in_memory(
                 .map(|(base, bytes)| {
                     (
                         substitute_bitvector_variable_in_pointer(base, from, to),
-                        *bytes,
+                        substitute_bitvector_variable(bytes, from, to),
                     )
                 })
                 .collect(),

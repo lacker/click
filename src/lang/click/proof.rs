@@ -5955,7 +5955,7 @@ pub(super) fn certified_statement_transitions(
         prerequisite_policy,
         fact_transport_policy,
         certified_prerequisites,
-        statement_contains_call_assign(statement),
+        statement_contains_call(statement),
     )?;
     for transition in &mut transitions {
         transition.consults_conditions = consults_conditions;
@@ -6063,25 +6063,22 @@ fn certified_loop_exit_transitions_with_proven_phases(
         StatementPrerequisitePolicy::Contextual,
         StatementFactTransportPolicy::Automatic,
         &[],
-        statement_contains_call_assign(statement),
+        statement_contains_call(statement),
     )
 }
 
-fn statement_contains_call_assign(statement: &CStatement) -> bool {
+fn statement_contains_call(statement: &CStatement) -> bool {
     match statement {
         CStatement::CallAssign { .. } | CStatement::Call { .. } => true,
         CStatement::Seq(first, second) => {
-            statement_contains_call_assign(first) || statement_contains_call_assign(second)
+            statement_contains_call(first) || statement_contains_call(second)
         }
         CStatement::If {
             then_branch,
             else_branch,
             ..
-        } => {
-            statement_contains_call_assign(then_branch)
-                || statement_contains_call_assign(else_branch)
-        }
-        CStatement::While { body, .. } => statement_contains_call_assign(body),
+        } => statement_contains_call(then_branch) || statement_contains_call(else_branch),
+        CStatement::While { body, .. } => statement_contains_call(body),
         CStatement::Skip
         | CStatement::Declare { .. }
         | CStatement::Assign { .. }
@@ -7575,7 +7572,8 @@ fn advance_execution_proof_statement(
                 CStatementOutcome::VerificationDiverges => {}
                 CStatementOutcome::UndefinedBehavior(kind) => {
                     return Err(ClickError::new(format!(
-                        "execution proof traversal produced undefined behavior: {kind:?}"
+                        "execution proof traversal for {} statement({region_index}) produced undefined behavior: {kind:?}",
+                        environment.function_block.signature().name()
                     )));
                 }
                 CStatementOutcome::RuntimeError(error) => {
@@ -13238,6 +13236,7 @@ fn finish_ordered_proof_replay(
                     post_state,
                     value,
                     function,
+                    arguments,
                     &lifetime_assumptions,
                     &mut lifetime_budget,
                 )

@@ -18,5 +18,5 @@ int32* invalid_pointer() {
 ```
 
 ```expect
-fail: runtime error: type mismatch
+fail: returned a value that does not match its declared type
 ```

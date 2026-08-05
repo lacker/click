@@ -58,8 +58,9 @@ Supported C0 surface includes:
   chained `p->child->field` loads/stores for `int32` and pointer fields
 - known function calls through the current function environment, either
   assigned or used as standalone statements when the result is discarded
-- fixed-size `malloc(sizeof(struct T))` assigned to a matching `struct T*`
-  local, and standalone `free(pointer);`
+- `malloc(sizeof(struct T))` assigned to a matching `struct T*`, runtime-sized
+  `int32` backing allocation such as `malloc(count * 4)`, and standalone
+  `free(pointer);`
 - local scalar, pointer, and fixed-size array declarations for `int32` and
   `uint8`
 
@@ -150,7 +151,7 @@ available when a contract needs to describe a broader footprint. Field places
 also work in `loadable(p->field)`, and `mutable p->field` describes a
 field-sized effect.
 
-## Fixed-Size Heap Objects
+## Heap Allocation
 
 C0 recognizes one deliberately small allocation pattern:
 
@@ -174,9 +175,17 @@ uninitialized: every field must be stored before it is read. `free(NULL)` is a
 no-op; nonnull `free` requires the allocation base, complete owned access, and
 the matching Click allocation authority.
 
-This is a modeled C0 builtin, not general libc compatibility. Runtime sizes,
-zero-size allocation, incomplete types, `void *` conversions, allocator
-prototypes, casts, `calloc`, and `realloc` remain unsupported.
+For an `int32*`, C0 also accepts a runtime byte expression such as
+`malloc(count * 4)`. Verification must prove that the resulting byte count is
+positive, is an exact number of `int32` elements, and does not overflow signed
+`int32`. Click can package the result as
+`allocation(data, count * 4)` plus `data[0..count]`; `free(data)` consumes that
+same symbolic extent.
+
+This is a modeled C0 builtin, not general libc compatibility. Zero-size
+allocation, arbitrary byte layouts, incomplete types, `size_t`, `void *`
+conversions, allocator prototypes, casts, `calloc`, and `realloc` remain
+unsupported.
 
 ## Loops
 
@@ -207,7 +216,8 @@ These are not general C features yet:
   the contextual null-pointer conversion for integer constant `0` is supported
 - mixed-width integer conversions beyond `uint8` promotion to `int32`
 - pointer comparisons beyond the supported equality/range patterns
-- general heap allocation beyond the fixed-size struct-object slice
+- general heap allocation beyond exact struct objects and runtime-sized
+  `int32` arrays
 - `void` objects, `void` parameters, and `void *`
 - function pointers
 - global variables

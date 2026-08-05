@@ -28,8 +28,8 @@ one or more C sources, gives C functions contracts, and asks the kernel to
 prove each guarantee. The system is intentionally small but already supports:
 
 - C0 symbolic execution over `int32`, `uint8`, pointers, memory, local arrays,
-  loops with invariants, and fixed-size `malloc(sizeof(struct T))`/`free`
-  lifetimes.
+  loops with invariants, and exact struct or runtime-sized `int32`-array
+  `malloc`/`free` lifetimes.
 - Function contracts with `requires`, `ensures`, `immutable`, and `mutable`.
 - Click propositions with `and`, `or`, `not`, `implies`, `forall`, `exists`,
   range `.all`, and range `.any`.

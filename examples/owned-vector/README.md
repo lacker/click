@@ -2,8 +2,7 @@
 
 This project verifies a small vector whose metadata and backing array are owned
 through composite resources. It is large enough to exercise state transitions,
-dependent memory ranges, and calls through viewed resources without introducing
-allocation or deallocation.
+dependent memory ranges, and ownership transfer across verified helper calls.
 
 The C representation has three fields:
 
@@ -15,14 +14,13 @@ struct vector {
 };
 ```
 
-The Click sidecar defines two resource states:
+The Click sidecar defines two vector states:
 
 - `empty_vector(owner)` owns the metadata and backing array and establishes
   `owner->len == 0` and `1 <= owner->cap`.
 - `nonempty_vector(owner)` owns the same memory and establishes
   `1 <= owner->len <= owner->cap`.
-
-Both resources record that the metadata and backing-array footprints are
+The resources record that the metadata and backing-array footprints are
 separate. The backing resource depends on the stored `data` and `cap` fields,
 so folding either resource tests dependent composite-resource definitions.
 
@@ -39,13 +37,16 @@ so folding either resource tests dependent composite-resource definitions.
 - `vector_replace_if` calls verified vector operations on both sides of a
   branch, then exports a common resource-and-fact interface with `reach`.
 - `vector_push_first` transitions an empty vector to a nonempty vector.
+- The focused sibling project `examples/vector-push` verifies a general
+  in-capacity append without adding another proof unit to this larger sidecar.
 - `vector_clear` transitions a nonempty vector back to an empty vector.
 - `vector_pipeline` composes the mutating and indexed operations through their
   verified contracts. A named checkpoint exposes the vector view needed by the
   final getter; each call advances as one step without unfolding its body.
 
-The integration test in `tests/examples.rs` verifies every C file against
-`vector.click`.
+The integration test in `tests/examples.rs` verifies the operations in
+`vector.click`. The general-push proof is independently checked in
+`examples/vector-push`.
 
 ## Proof Style
 
@@ -58,9 +59,12 @@ after profiling.
 
 ## Current Boundary
 
-The caller supplies the backing array, capacity is at least one, and the example
-does not allocate, free, resize, or handle a full vector. Those operations need
-resource-algebra features beyond composite resources.
+`empty_vector` and `nonempty_vector` model caller-supplied storage. Runtime
+allocation and deallocation are exercised independently in
+`examples/runtime-int32-allocation`; composing them into malloc-copy-free vector
+growth is tracked in `issues/owned-vector-runtime-growth.md`. The example does
+not yet grow a full vector, use geometric capacity, or specify
+element-by-element preservation across reallocation.
 
 Functions with several effects, produced resources, and pure postconditions
 use one trailing grouped proof. Click executes each function body once and

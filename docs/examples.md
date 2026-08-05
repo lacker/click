@@ -13,6 +13,11 @@ across calls, and destruction. The neighboring `heap_*` mdtests pin the main
 negative cases: unresolved allocation outcome, uninitialized read, leak,
 interior free, and double free.
 
+`examples/runtime-int32-allocation/` is the focused runtime-sized array
+allocation project. It proves `malloc(count * 4)` and matching `free` for a
+positive signed-safe `int32` count. Malloc-copy-free vector growth remains an
+explicit issue until its tooling and ownership-lifetime blockers are fixed.
+
 ## Basic Function Contracts
 
 - `mdtests/scalar.md`: simplest scalar postcondition.

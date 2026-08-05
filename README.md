@@ -78,6 +78,11 @@ High-value entry points:
   reference.
 - [docs/kernel.md](docs/kernel.md): Rust kernel implementation map.
 
+Repository work follows [AGENTS.md](AGENTS.md). In particular, verifier and
+proof-tooling instability takes priority over new features and example work:
+slow tactics must fail locally, smart certificates must replay, expansion must
+work, and normal diagnostics must remain bounded.
+
 ## Verification
 
 Run the full test suite with:

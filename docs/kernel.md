@@ -126,7 +126,8 @@ In `src/kernel/`:
   equality, overflow, and pointer-offset equality.
 - `CValue`, `CType`, `Pointer`, `CMemory`, `CState`: C semantic state,
   including the non-object `Void` return value, `int32`, `uint8`, pointers, and
-  typed memory loads/stores.
+  typed memory loads/stores. Kernel execution reports `TypeMismatch` if `Void`
+  is used as a condition or object type; it never erases that execution path.
 - `CExpression`, `CStatement`, `CFunction`: lowered C0 syntax. Calls have
   distinct assigned-result and discarded-result statements; a normal
   fallthrough from a `void` body completes with `CValue::Void`.
@@ -255,13 +256,14 @@ return is not treated as an allocation.
 
 Modeled heap allocation is a different kernel transition. A pending symbolic
 `malloc` result is refined by ordinary pointer-null control flow. Its null arm
-leaves memory unchanged; its success arm creates a fresh exact-size heap block,
-marks its cells uninitialized, and produces complete owned memory plus the
+leaves memory unchanged; its success arm creates a fresh heap allocation with
+an exact, possibly symbolic size, marks its cells uninitialized, and produces
+complete owned memory plus the
 exclusive `allocation(base, bytes)` lifetime resource. Returning before that
 outcome is refined is rejected.
 
 Nonnull `free` requires the exact live base, allocation authority, and complete
-owned access. It retires the block identity, clears its cells, consumes those
+owned access. It retires that allocation, clears its cells, consumes those
 resources, and rejects surviving resource aliases. Retired identities make
 use-after-free and double-free explicit. `HeapAllocated` and `HeapFreed` memory
 DAG edges preserve these transitions for replay; an allocation resource that

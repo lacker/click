@@ -382,9 +382,27 @@ fn memory_derivations_reach(
             CMemoryDerivation::BlockDeclared { .. } | CMemoryDerivation::CellsForgotten { .. } => {
                 extended_dag_bridging_active()
             }
-            CMemoryDerivation::HeapAllocated { block, .. }
-            | CMemoryDerivation::HeapFreed { block, .. } => {
+            CMemoryDerivation::HeapAllocated { block, .. } => {
                 pointer.block != *block && extended_dag_bridging_active()
+            }
+            CMemoryDerivation::HeapFreed {
+                allocation_base,
+                bytes,
+                ..
+            } => {
+                extended_dag_bridging_active()
+                    && (allocation_base.blocks_proven_distinct(pointer)
+                        || pointers_proven_distinct_for_memory_resolution(
+                            allocation_base,
+                            pointer,
+                            assumptions,
+                        )
+                        || heap_allocation_proven_separate_from_pointer(
+                            allocation_base,
+                            bytes,
+                            pointer,
+                            assumptions,
+                        ))
             }
             CMemoryDerivation::CallHavoc { mutable_ranges, .. } => {
                 assumptions.ranges_proven_disjoint_from_pointer(mutable_ranges, pointer)
@@ -567,9 +585,30 @@ fn memory_dag_cell_source(
                     return MemoryDagCell::Unwritten { node: current };
                 }
             }
-            CMemoryDerivation::HeapAllocated { block, .. }
-            | CMemoryDerivation::HeapFreed { block, .. } => {
+            CMemoryDerivation::HeapAllocated { block, .. } => {
                 if pointer.block == *block || !extended_dag_bridging_active() {
+                    return MemoryDagCell::Unwritten { node: current };
+                }
+            }
+            CMemoryDerivation::HeapFreed {
+                allocation_base,
+                bytes,
+                ..
+            } => {
+                if !extended_dag_bridging_active()
+                    || !(allocation_base.blocks_proven_distinct(pointer)
+                        || pointers_proven_distinct_for_memory_resolution(
+                            allocation_base,
+                            pointer,
+                            assumptions,
+                        )
+                        || heap_allocation_proven_separate_from_pointer(
+                            allocation_base,
+                            bytes,
+                            pointer,
+                            assumptions,
+                        ))
+                {
                     return MemoryDagCell::Unwritten { node: current };
                 }
             }
@@ -586,6 +625,31 @@ fn memory_dag_cell_source(
         current = derivation.base().clone();
     }
     MemoryDagCell::Unwritten { node: current }
+}
+
+fn heap_allocation_proven_separate_from_pointer(
+    allocation_base: &Pointer,
+    bytes: &Bitvector32Term,
+    pointer: &Pointer,
+    assumptions: &Assumptions,
+) -> bool {
+    let allocation_token = CResourceFact::own_allocation(allocation_base.clone(), bytes.clone())
+        .resource()
+        .clone();
+    let cell = CResource::Memory(CMemoryRange::new(
+        pointer.clone(),
+        Bitvector32Term::Constant(0),
+        Bitvector32Term::Constant(1),
+    ));
+    assumptions.proves_resource_separate(&allocation_token, &cell)
+        || int32_element_count_from_bytes(bytes).is_some_and(|count| {
+            let allocation_memory = CResource::Memory(CMemoryRange::new(
+                allocation_base.clone(),
+                Bitvector32Term::Constant(0),
+                count,
+            ));
+            assumptions.proves_resource_separate(&allocation_memory, &cell)
+        })
 }
 
 /// Answers "are these two loads equal" from the memory DAG: both sides are
@@ -821,6 +885,10 @@ fn load_unchanged_via_effect_chain(
     pointer: &Pointer,
     assumptions: &Assumptions,
 ) -> bool {
+    // Real allocator/copy/install/free paths routinely cross more than eight
+    // individually certified effects. Keep the search bounded, but leave
+    // enough room for an ordinary multi-call helper rather than treating it
+    // as an unrelated write merely because its proof is longer.
     const EFFECT_CHAIN_HOP_LIMIT: usize = 8;
     let mut steps = Vec::new();
     for proposition in &assumptions.prop_facts {
@@ -1970,7 +2038,7 @@ pub(super) fn normalize_exact_memory_loads_in_pointer_offset(
     }
 }
 
-fn normalize_exact_memory_loads_in_bitvector(
+pub(super) fn normalize_exact_memory_loads_in_bitvector(
     term: &Bitvector32Term,
     assumptions: &Assumptions,
     depth: usize,
@@ -2528,6 +2596,10 @@ pub fn c_call(function_name: impl Into<String>, arguments: Vec<CExpression>) -> 
 }
 
 pub fn c_heap_allocate(target: impl Into<String>, bytes: u32) -> CStatement {
+    c_heap_allocate_sized(target, c_int32_literal(bytes))
+}
+
+pub fn c_heap_allocate_sized(target: impl Into<String>, bytes: CExpression) -> CStatement {
     CStatement::HeapAllocate {
         target: target.into(),
         bytes,

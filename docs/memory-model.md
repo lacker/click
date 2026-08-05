@@ -23,17 +23,18 @@ nonzero integers still cannot be used as pointers.
 
 ## Heap Blocks And Lifetimes
 
-The supported `malloc(sizeof(struct T))` operation has a null outcome and a
-successful outcome. Success creates a fresh block identity with the exact LP64
-size of `struct T`, at offset zero. Heap identities are not reused within a
-proof. Fresh bytes are live but uninitialized, so ownership permits stores but
-does not make an unstored field readable.
+The supported `malloc` forms have a null outcome and a successful outcome.
+Success creates a fresh block identity at offset zero, with either the exact
+LP64 size of `struct T` or a verified runtime `int32`-array extent such as
+`count * 4`. Heap identities are not reused within a proof. Fresh bytes are
+live but uninitialized, so ownership permits stores but does not make an
+unstored cell readable.
 
 Click tracks two different facts on the successful branch:
 
 - owned memory for the complete object permits reads and writes;
-- `allocation(p, sizeof(struct T))` is the exclusive authority and obligation
-  to end that block's lifetime.
+- `allocation(p, bytes)` is the exclusive authority and obligation to end that
+  allocation's lifetime; `bytes` may be a supported symbolic runtime extent.
 
 `free(p)` requires both facts for the complete allocation and consumes them.
 `free(NULL)` changes nothing. An interior, stack, opaque, or retired pointer is

@@ -372,11 +372,11 @@ pub enum CStatement {
         function_name: String,
         arguments: Vec<CExpression>,
     },
-    /// Allocate one fixed-size heap object and assign either null or its fresh
+    /// Allocate a runtime-sized heap block and assign either null or its fresh
     /// base pointer to `target`.
     HeapAllocate {
         target: String,
-        bytes: u32,
+        bytes: CExpression,
     },
     /// End the heap allocation named by `pointer`. Null is a no-op.
     HeapFree {
@@ -762,13 +762,13 @@ pub struct CMemory {
 pub(super) struct CHeapMemory {
     /// Live heap blocks are also present in `blocks`; this set distinguishes
     /// them from automatic storage and memory-havoc markers.
-    pub(super) live_allocations: BTreeMap<Pointer, u32>,
+    pub(super) live_allocations: BTreeMap<Pointer, Bitvector32Term>,
     /// Heap identities are never reused within a proof. Keeping retired
     /// identities makes double-free and stale-pointer checks explicit.
-    pub(super) retired_allocations: BTreeMap<Pointer, u32>,
+    pub(super) retired_allocations: BTreeMap<Pointer, Bitvector32Term>,
     /// A malloc result whose null/success outcome has not yet been refined by
     /// control flow. Pending allocations carry no authority until resolved.
-    pub(super) pending_allocations: BTreeMap<Pointer, u32>,
+    pub(super) pending_allocations: BTreeMap<Pointer, Bitvector32Term>,
     /// Successful malloc storage remains uninitialized until individual
     /// cells are written. Contract-imported allocations are not placed here.
     pub(super) uninitialized_allocations: BTreeSet<Pointer>,
@@ -776,7 +776,7 @@ pub(super) struct CHeapMemory {
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct CBlock {
-    pub(super) size: u32,
+    pub(super) size: Bitvector32Term,
 }
 
 /// An interned, immutable memory snapshot for embedding inside terms.
@@ -934,13 +934,18 @@ pub enum CMemoryDerivation {
     HeapAllocated {
         base: SharedCMemory,
         block: PointerBlock,
-        bytes: u32,
+        bytes: Bitvector32Term,
     },
-    /// `base` with one complete heap-block lifetime ended.
+    /// `base` with one complete heap allocation lifetime ended.
+    ///
+    /// `allocation_base` is kept rather than only its broad pointer block:
+    /// allocations imported from contracts can be subranges of external
+    /// memory, where retiring the whole `ExternalArgument` block would also
+    /// retire unrelated objects.
     HeapFreed {
         base: SharedCMemory,
-        block: PointerBlock,
-        bytes: u32,
+        allocation_base: Pointer,
+        bytes: Bitvector32Term,
     },
     /// `base` with some cached cell values forgotten at one program point:
     /// the write path narrows the cell map before storing
@@ -2948,12 +2953,47 @@ impl CLocalEnvironment {
 
 impl CBlock {
     pub fn new(size: u32) -> Self {
+        Self {
+            size: Bitvector32Term::Constant(size),
+        }
+    }
+
+    pub(super) fn with_symbolic_size(size: Bitvector32Term) -> Self {
         Self { size }
     }
 
-    pub fn size(&self) -> u32 {
-        self.size
+    pub fn size(&self) -> &Bitvector32Term {
+        &self.size
     }
+}
+
+fn heap_allocation_may_contain_pointer(base: &Pointer, pointer: &Pointer) -> bool {
+    if base.block != pointer.block {
+        return false;
+    }
+    if base.block != PointerBlock::ExternalArgument {
+        return true;
+    }
+
+    if pointer.offset == base.offset {
+        return true;
+    }
+
+    fn contains_base_offset(term: &PointerOffsetTerm, base: &PointerOffsetTerm) -> bool {
+        match term {
+            PointerOffsetTerm::Add(left, right) => {
+                left.as_ref() == base
+                    || right.as_ref() == base
+                    || contains_base_offset(left, base)
+                    || contains_base_offset(right, base)
+            }
+            PointerOffsetTerm::Constant(_)
+            | PointerOffsetTerm::Variable(_)
+            | PointerOffsetTerm::Int32Scaled { .. } => false,
+        }
+    }
+
+    contains_base_offset(&pointer.offset, &base.offset)
 }
 
 impl CMemory {
@@ -2995,7 +3035,7 @@ impl CMemory {
                     .heap
                     .live_allocations
                     .keys()
-                    .any(|base| base.block == pointer.block)
+                    .any(|base| heap_allocation_may_contain_pointer(base, pointer))
                 {
                     CInvalidFree::InteriorPointer
                 } else {
@@ -3004,58 +3044,68 @@ impl CMemory {
             );
         };
         let base = (!memory_dag_disabled()).then(|| intern_c_memory_ref(&self));
-        self.blocks.remove(&pointer.block);
-        self.heap.retired_allocations.insert(pointer.clone(), bytes);
+        if pointer.block != PointerBlock::ExternalArgument {
+            self.blocks.remove(&pointer.block);
+        }
+        self.heap
+            .retired_allocations
+            .insert(pointer.clone(), bytes.clone());
         self.heap.uninitialized_allocations.remove(pointer);
-        self.cells.retain(|cell, _| cell.block != pointer.block);
+        self.cells
+            .retain(|cell, _| !heap_allocation_may_contain_pointer(pointer, cell));
         if let Some(base) = base {
             record_c_memory_derivation(
                 &self,
                 CMemoryDerivation::HeapFreed {
                     base,
-                    block: pointer.block.clone(),
-                    bytes,
+                    allocation_base: pointer.clone(),
+                    bytes: bytes.clone(),
                 },
             );
         }
         Ok(self)
     }
 
-    pub(super) fn live_heap_block_size(&self, pointer: &Pointer) -> Option<u32> {
-        self.heap.live_allocations.get(pointer).copied()
+    pub(super) fn live_heap_block_size(&self, pointer: &Pointer) -> Option<&Bitvector32Term> {
+        self.heap.live_allocations.get(pointer)
     }
 
-    pub(super) fn is_live_heap_address(&self, pointer: &Pointer) -> bool {
+    pub(crate) fn is_live_heap_address(&self, pointer: &Pointer) -> bool {
         self.heap
             .live_allocations
             .keys()
-            .any(|base| base.block == pointer.block)
+            .any(|base| heap_allocation_may_contain_pointer(base, pointer))
     }
 
     pub(super) fn is_uninitialized_heap_address(&self, pointer: &Pointer) -> bool {
         self.heap
             .uninitialized_allocations
             .iter()
-            .any(|base| base.block == pointer.block)
+            .any(|base| heap_allocation_may_contain_pointer(base, pointer))
     }
 
     pub(super) fn is_retired_heap_address(&self, pointer: &Pointer) -> bool {
         self.heap
             .retired_allocations
             .keys()
-            .any(|base| base.block == pointer.block)
+            .any(|base| heap_allocation_may_contain_pointer(base, pointer))
     }
 
     /// Registers the exact base named by an allocation contract. Unlike a
     /// fresh `malloc`, this does not create a concrete block or imply that its
     /// existing bytes are uninitialized; access remains governed by the
     /// accompanying memory resources.
-    pub(super) fn with_heap_allocation_claim(mut self, base: Pointer, bytes: u32) -> Option<Self> {
-        if bytes == 0 || self.heap.retired_allocations.contains_key(&base) {
+    pub(super) fn with_heap_allocation_claim(
+        mut self,
+        base: Pointer,
+        bytes: impl Into<Bitvector32Term>,
+    ) -> Option<Self> {
+        let bytes = bytes.into();
+        if bytes.as_const() == Some(0) || self.heap.retired_allocations.contains_key(&base) {
             return None;
         }
         match self.heap.live_allocations.get(&base) {
-            Some(existing) if *existing != bytes => None,
+            Some(existing) if existing != &bytes => None,
             Some(_) => Some(self),
             None => {
                 self.heap.live_allocations.insert(base, bytes);
@@ -3064,7 +3114,11 @@ impl CMemory {
         }
     }
 
-    pub(super) fn with_pending_heap_allocation(mut self, base: Pointer, bytes: u32) -> Self {
+    pub(super) fn with_pending_heap_allocation(
+        mut self,
+        base: Pointer,
+        bytes: Bitvector32Term,
+    ) -> Self {
         self.heap.pending_allocations.insert(base, bytes);
         self
     }
@@ -3091,7 +3145,7 @@ impl CMemory {
         mut self,
         base: &Pointer,
         succeeds: bool,
-    ) -> Option<(Self, u32, Pointer)> {
+    ) -> Option<(Self, Bitvector32Term, Pointer)> {
         let bytes = self.heap.pending_allocations.remove(base)?;
         let resolved_base = if succeeds {
             let PointerBlock::Symbolic(Variable(identity)) = base.block else {
@@ -3106,11 +3160,13 @@ impl CMemory {
         };
         if succeeds {
             let prior = (!memory_dag_disabled()).then(|| intern_c_memory_ref(&self));
-            self.blocks
-                .insert(resolved_base.block.clone(), CBlock::new(bytes));
+            self.blocks.insert(
+                resolved_base.block.clone(),
+                CBlock::with_symbolic_size(bytes.clone()),
+            );
             self.heap
                 .live_allocations
-                .insert(resolved_base.clone(), bytes);
+                .insert(resolved_base.clone(), bytes.clone());
             self.heap
                 .uninitialized_allocations
                 .insert(resolved_base.clone());
@@ -3120,7 +3176,7 @@ impl CMemory {
                     CMemoryDerivation::HeapAllocated {
                         base: prior,
                         block: resolved_base.block.clone(),
-                        bytes,
+                        bytes: bytes.clone(),
                     },
                 );
             }
@@ -3260,7 +3316,7 @@ impl CMemory {
         }
     }
 
-    pub(super) fn has_block(&self, block: &PointerBlock) -> bool {
+    pub(crate) fn has_block(&self, block: &PointerBlock) -> bool {
         self.blocks.contains_key(block)
     }
 
@@ -3284,9 +3340,12 @@ impl CMemory {
         let Some(block) = self.blocks.get(&pointer.block) else {
             return false;
         };
+        let Some(block_size) = block.size().as_const() else {
+            return false;
+        };
         offset
             .checked_add(byte_width)
-            .is_some_and(|end| end <= block.size())
+            .is_some_and(|end| end <= block_size)
     }
 
     pub(super) fn symbolic_int32_load(&self, pointer: &Pointer) -> CValue {
@@ -4405,14 +4464,15 @@ impl CResourceFact {
         Self::Own(CResource::Token { name, arguments })
     }
 
-    pub fn own_allocation(base: Pointer, bytes: u32) -> Self {
+    pub fn own_allocation(base: Pointer, bytes: impl Into<Bitvector32Term>) -> Self {
+        let bytes = bytes.into();
         Self::own_token(
             Self::ALLOCATION_RESOURCE_NAME.to_string(),
             vec![CValue::Pointer(base), int32(bytes)],
         )
     }
 
-    pub fn allocation(&self) -> Option<(&Pointer, u32)> {
+    pub fn allocation(&self) -> Option<(&Pointer, &Bitvector32Term)> {
         let Self::Own(CResource::Token { name, arguments }) = self else {
             return None;
         };
@@ -4422,7 +4482,7 @@ impl CResourceFact {
         let [CValue::Pointer(base), CValue::Int32(bytes)] = arguments.as_slice() else {
             return None;
         };
-        Some((base, bytes.as_const()?))
+        Some((base, bytes))
     }
 
     pub(super) fn may_refer_to_memory_block(&self, block: &PointerBlock) -> bool {
@@ -4438,13 +4498,16 @@ impl CResourceFact {
     pub(super) fn is_proven_separate_from_allocation(
         &self,
         base: &Pointer,
-        bytes: u32,
+        bytes: &Bitvector32Term,
         assumptions: &Assumptions,
     ) -> bool {
+        let Some(element_count) = super::reasoning::int32_element_count_from_bytes(bytes) else {
+            return false;
+        };
         let allocation_memory = CResource::Memory(CMemoryRange::new(
             base.clone(),
             Bitvector32Term::Constant(0),
-            Bitvector32Term::Constant(bytes / CType::Int32.byte_width()),
+            element_count,
         ));
         assumptions.proves(&Proposition::CResourceSeparate {
             left: allocation_memory,

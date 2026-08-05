@@ -2,6 +2,23 @@
 
 Click uses ordinary Rust tests plus markdown integration tests.
 
+## Tooling failures block feature work
+
+Treat the verifier and its proof tools as the foundation for every language
+feature and example. If verification becomes unexpectedly slow without a local
+bounded failure, a searched certificate does not replay, `click-expand` fails
+or emits an unverifiable rewrite, the performance tools disagree, or a normal
+diagnostic dumps enormous internal state, stop feature work. Reduce and fix the
+tooling defect first. If it cannot be fixed in the same chunk, record a focused
+issue with a regression plan and return the branch to a green checkpoint before
+continuing.
+
+Do not compensate by increasing a time limit, accepting eventual success,
+rewriting the example into unnatural C, or adding irrelevant proof facts. Those
+actions hide a foundation problem and make the next feature harder to debug.
+The repository-level version of this rule is in `AGENTS.md`; issue-writing
+requirements are in `issues/README.md`.
+
 Run the full suite with:
 
 ```sh

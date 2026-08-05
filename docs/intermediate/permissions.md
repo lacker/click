@@ -503,7 +503,7 @@ Implemented today:
 - copyable read transfer,
 - linear write transfer through function summaries,
 - covered subrange splitting and adjacent range rejoining,
-- fixed-size heap allocation authority through the built-in owned
+- fixed- or runtime-sized heap allocation authority through the built-in owned
   `allocation(base, bytes)` resource, and
 - complete-access `free`, retired lifetimes, double-free/use-after-free
   rejection, and verified-exit leak checks.
@@ -511,8 +511,8 @@ Implemented today:
 Not implemented yet:
 
 - fractional permissions,
-- runtime-sized or general C allocation APIs beyond
-  `malloc(sizeof(struct T))` and `free`,
+- general C allocation APIs beyond exact struct allocation, runtime-sized
+  `int32` arrays, and `free`,
 - custom resource-family algebra,
 - implicit resource unfold/fold search in `auto`,
 - persistent token resources,

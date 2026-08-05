@@ -115,11 +115,11 @@ There are currently no quarantined per-member failures. Future certificate
 spelling, replay, or performance regressions should be diagnosed as focused
 issues rather than treated as reasons to extend the DAG globally.
 
-The fixed-size heap slice adds `HeapAllocated` and `HeapFreed` edges. They
-record the fresh/retired block identity and exact extent. Consumers treat both
-as lifetime-changing boundaries: they may preserve unrelated snapshots, but
-must never transport a load through the affected heap block as though
-allocation or deallocation were an ordinary store.
+The heap slice adds `HeapAllocated` and `HeapFreed` edges. They record the
+fresh/retired allocation identity and exact, possibly symbolic extent.
+Consumers treat both as lifetime-changing boundaries: they may preserve
+unrelated snapshots, but must never transport a load through the affected
+allocation as though allocation or deallocation were an ordinary store.
 
 ## Landed 2026-07-31: fourth and fifth edge kinds, scoped consumers
 

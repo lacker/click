@@ -76,7 +76,10 @@ pub(super) fn execute_c_function_paths_with_contract_resources(
         let Some(callee_state) = bind_c_function_arguments(state, function, &arguments_path.values)
         else {
             paths.push(CFunctionPath {
-                outcome: CFunctionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+                outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(format!(
+                    "could not bind arguments for {}",
+                    function.name()
+                ))),
                 facts: arguments_path.facts,
                 obligations: arguments_path.obligations,
             });
@@ -209,7 +212,10 @@ pub(super) fn execute_c_function_verification_paths(
         let Some(callee_state) = bind_c_function_arguments(state, function, &arguments_path.values)
         else {
             paths.push(CFunctionPath {
-                outcome: CFunctionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+                outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(format!(
+                    "could not bind arguments for {}",
+                    function.name()
+                ))),
                 facts: arguments_path.facts,
                 obligations: arguments_path.obligations,
             });
@@ -367,7 +373,10 @@ pub(super) fn execute_c_function_call_paths(
             bind_c_function_arguments(caller_state, function, &arguments_path.values)
         else {
             paths.push(CFunctionPath {
-                outcome: CFunctionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+                outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(format!(
+                    "could not bind arguments for {}",
+                    function.name()
+                ))),
                 facts: arguments_path.facts,
                 obligations: arguments_path.obligations,
             });
@@ -479,7 +488,10 @@ fn execute_verified_function_rule(
             bind_c_function_arguments(caller_state, function, &arguments_path.values)
         else {
             paths.push(CFunctionPath {
-                outcome: CFunctionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+                outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(format!(
+                    "could not bind arguments for {}",
+                    function.name()
+                ))),
                 facts: arguments_path.facts,
                 obligations: arguments_path.obligations,
             });
@@ -510,7 +522,7 @@ fn execute_verified_function_rule(
         };
         entry_state.resources = transfer.callee_resources.clone();
         let entry_contract_state =
-            with_contract_argument_views(&entry_state, &arguments_path.values);
+            with_contract_argument_views(&entry_state, function, &arguments_path.values);
 
         let mut obligations = arguments_path.obligations;
         let mut facts = arguments_path.facts;
@@ -653,7 +665,7 @@ fn execute_verified_function_rule(
         }
         post_state.resources = transfer.caller_resources_after_requirements.clone();
         let output_resource_state =
-            with_contract_argument_views(&post_state, &arguments_path.values);
+            with_contract_argument_views(&post_state, function, &arguments_path.values);
 
         let return_resources = match evaluate_function_return_resources(
             &transfer.caller_resources_after_requirements,
@@ -692,7 +704,8 @@ fn execute_verified_function_rule(
         };
         post_state.memory = memory;
         post_state.resources = return_resources.clone();
-        let post_contract_state = with_contract_argument_views(&post_state, &arguments_path.values);
+        let post_contract_state =
+            with_contract_argument_views(&post_state, function, &arguments_path.values);
 
         for ensure in function.contract_ensures() {
             let ensure_assumptions =
@@ -775,7 +788,7 @@ fn apply_verified_allocation_lifetime_effects(
 
     for allocation in input.facts().iter().filter_map(|fact| {
         fact.allocation()
-            .map(|(base, bytes)| (fact, base.clone(), bytes))
+            .map(|(base, bytes)| (fact, base.clone(), bytes.clone()))
     }) {
         let (fact, base, bytes) = allocation;
         if expose_composite_resource_fact(
@@ -791,7 +804,11 @@ fn apply_verified_allocation_lifetime_effects(
         }
         if let Some(stale) = output.facts().iter().find(|resource| {
             resource.may_refer_to_memory_block(&base.block)
-                && !resource.is_proven_separate_from_allocation(&base, bytes, &lifetime_assumptions)
+                && !resource.is_proven_separate_from_allocation(
+                    &base,
+                    &bytes,
+                    &lifetime_assumptions,
+                )
         }) {
             return Err(CRuntimeError::StaleResourceAfterFree {
                 resource: stale.clone(),
@@ -799,7 +816,7 @@ fn apply_verified_allocation_lifetime_effects(
         }
         if memory.live_heap_block_size(&base).is_none() {
             memory = memory
-                .with_heap_allocation_claim(base.clone(), bytes)
+                .with_heap_allocation_claim(base.clone(), bytes.clone())
                 .ok_or(CRuntimeError::InvalidFree(CInvalidFree::NonHeapPointer))?;
         }
         memory = memory
@@ -816,7 +833,7 @@ fn apply_verified_allocation_lifetime_effects(
             continue;
         }
         memory = memory
-            .with_heap_allocation_claim(base.clone(), bytes)
+            .with_heap_allocation_claim(base.clone(), bytes.clone())
             .ok_or_else(|| {
                 CRuntimeError::FunctionContract(
                     "returned allocation conflicts with an existing or retired lifetime"
@@ -827,9 +844,14 @@ fn apply_verified_allocation_lifetime_effects(
     Ok(memory)
 }
 
-fn with_contract_argument_views(state: &CState, values: &[CValue]) -> CState {
+fn with_contract_argument_views(state: &CState, function: &CFunction, values: &[CValue]) -> CState {
     let mut state = state.clone();
-    for value in values {
+    for (parameter, value) in function.parameters().iter().zip(values) {
+        state.locals.set_typed(
+            parameter.name().to_string(),
+            value.clone(),
+            parameter.c_type(),
+        );
         if let CValue::Pointer(pointer) = value {
             state.resources = state
                 .resources
@@ -1189,7 +1211,10 @@ pub(super) fn prepare_function_contract_entry_state_with_values(
 ) -> ExecutionResult<Result<CState, CRuntimeError>> {
     let Some(callee_state) = bind_c_function_arguments(caller_state, function, argument_values)
     else {
-        return Ok(Err(CRuntimeError::TypeMismatch));
+        return Ok(Err(CRuntimeError::FunctionContract(format!(
+            "could not bind contract-entry arguments for {}",
+            function.name()
+        ))));
     };
     let transfer = match prepare_function_resource_transfer(
         caller_state,
@@ -1274,12 +1299,13 @@ fn expand_composite_resource_fact_with_children(
     } else {
         &[]
     } {
-        let Ok(Ok(child)) = evaluate_function_resource_spec(
+        let child_result = evaluate_function_resource_spec(
             &state,
             contained,
             &evaluation_assumptions,
             &mut budget,
-        ) else {
+        );
+        let Ok(Ok(child)) = child_result else {
             return None;
         };
         state.resources = state.resources.clone().unchecked_with_fact(child.clone());
@@ -2011,7 +2037,11 @@ pub(super) fn evaluate_function_resource_spec(
         CResourceSpec::Read(segment) => {
             let segment = match evaluate_loop_effect_segment(state, segment, assumptions, budget)? {
                 Ok(segment) => segment,
-                Err(_) => return Ok(Err(CRuntimeError::TypeMismatch)),
+                Err(_) => {
+                    return Ok(Err(CRuntimeError::FunctionContract(
+                        "could not evaluate a read resource segment".to_string(),
+                    )));
+                }
             };
             Ok(Ok(CResourceFact::view_memory(CMemoryRange::new(
                 segment.base,
@@ -2022,7 +2052,11 @@ pub(super) fn evaluate_function_resource_spec(
         CResourceSpec::Write(segment) => {
             let segment = match evaluate_loop_effect_segment(state, segment, assumptions, budget)? {
                 Ok(segment) => segment,
-                Err(_) => return Ok(Err(CRuntimeError::TypeMismatch)),
+                Err(_) => {
+                    return Ok(Err(CRuntimeError::FunctionContract(
+                        "could not evaluate a write resource segment".to_string(),
+                    )));
+                }
             };
             Ok(Ok(CResourceFact::own_memory(CMemoryRange::new(
                 segment.base,
@@ -2074,22 +2108,67 @@ fn evaluate_function_declared_resource_spec(
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Result<CResourceFact, CRuntimeError>> {
     if arguments.len() != parameter_types.len() {
-        return Ok(Err(CRuntimeError::TypeMismatch));
+        return Ok(Err(CRuntimeError::FunctionContract(format!(
+            "resource `{name}` received the wrong number of arguments"
+        ))));
     }
     let mut values = Vec::new();
     for (index, (argument, parameter_type)) in arguments.iter().zip(parameter_types).enumerate() {
-        let value = match evaluate_loop_effect_segment_value(
-            state,
-            argument,
-            assumptions,
-            &format!("resource `{name}` argument {index}"),
-            budget,
-        )? {
-            Ok(value) => value,
-            Err(_) => return Ok(Err(CRuntimeError::TypeMismatch)),
+        let allocation_element_count = (name == CResourceFact::ALLOCATION_RESOURCE_NAME
+            && index == 1)
+            .then(|| match argument {
+                CExpression::Multiply(left, right)
+                    if right.as_ref() == &CExpression::Value(int32(CType::Int32.byte_width())) =>
+                {
+                    Some(left.as_ref())
+                }
+                CExpression::Multiply(left, right)
+                    if left.as_ref() == &CExpression::Value(int32(CType::Int32.byte_width())) =>
+                {
+                    Some(right.as_ref())
+                }
+                _ => None,
+            })
+            .flatten();
+        let value = if let Some(element_count) = allocation_element_count {
+            let count = match evaluate_loop_effect_segment_value(
+                state,
+                element_count,
+                assumptions,
+                &format!("resource `{name}` argument {index} element count"),
+                budget,
+            )? {
+                Ok(CValue::Int32(count)) => count,
+                Ok(_) | Err(_) => {
+                    return Ok(Err(CRuntimeError::FunctionContract(format!(
+                        "resource `{name}` has an invalid allocation element count"
+                    ))));
+                }
+            };
+            int32(Bitvector32Term::multiply(
+                count,
+                Bitvector32Term::Constant(CType::Int32.byte_width()),
+            ))
+        } else {
+            match evaluate_loop_effect_segment_value(
+                state,
+                argument,
+                assumptions,
+                &format!("resource `{name}` argument {index}"),
+                budget,
+            )? {
+                Ok(value) => value,
+                Err(error) => {
+                    return Ok(Err(CRuntimeError::FunctionContract(format!(
+                        "could not evaluate resource `{name}` argument {index}: {error}"
+                    ))));
+                }
+            }
         };
         if !parameter_type.accepts(&value) {
-            return Ok(Err(CRuntimeError::TypeMismatch));
+            return Ok(Err(CRuntimeError::FunctionContract(format!(
+                "resource `{name}` argument {index} has the wrong type"
+            ))));
         }
         values.push(value);
     }
@@ -2102,7 +2181,11 @@ fn evaluate_function_declared_resource_spec(
             name: name.to_string(),
             arguments: values,
         },
-        ResourceFamily::Memory => return Ok(Err(CRuntimeError::TypeMismatch)),
+        ResourceFamily::Memory => {
+            return Ok(Err(CRuntimeError::FunctionContract(
+                "declared resources cannot use the raw memory family".to_string(),
+            )));
+        }
     };
     Ok(Ok(match access {
         CResourceAccessMode::Own => CResourceFact::Own(resource),
@@ -2155,6 +2238,7 @@ pub(crate) fn unreturned_allocation_at_function_exit(
     state: &CState,
     value: &CValue,
     function: &CFunction,
+    arguments: &[CExpression],
     assumptions: &Assumptions,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Result<Option<CResourceFact>, CRuntimeError>> {
@@ -2197,7 +2281,20 @@ pub(crate) fn unreturned_allocation_at_function_exit(
     {
         return Ok(Ok(None));
     }
-    let mut output_state = state.clone();
+    let Some(argument_values) = arguments
+        .iter()
+        .map(|argument| match argument {
+            CExpression::Value(value) => Some(value.clone()),
+            _ => None,
+        })
+        .collect::<Option<Vec<_>>>()
+    else {
+        return Ok(Err(CRuntimeError::FunctionContract(
+            "allocation-lifetime checking requires concrete symbolic contract arguments"
+                .to_string(),
+        )));
+    };
+    let mut output_state = with_contract_argument_views(state, function, &argument_values);
     if function.return_type() != CType::Void {
         output_state
             .locals
@@ -2245,7 +2342,10 @@ fn function_outcome_from_body_with_resource_transfer(
         coerce_c_value_to_type(value, function.return_type(), &mut obligations, assumptions)
     else {
         return Ok((
-            CFunctionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+            CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(format!(
+                "{} returned a value that does not match its declared type",
+                function.name()
+            ))),
             obligations,
         ));
     };
@@ -2255,7 +2355,7 @@ fn function_outcome_from_body_with_resource_transfer(
             .locals
             .set_typed("result".to_string(), value.clone(), function.return_type());
     }
-    let output_resource_state = with_contract_argument_views(&state, argument_values);
+    let output_resource_state = with_contract_argument_views(&state, function, argument_values);
     let return_resources = match evaluate_function_return_resources(
         &transfer.caller_resources_after_requirements,
         &output_resource_state,
@@ -2265,6 +2365,15 @@ fn function_outcome_from_body_with_resource_transfer(
         budget,
     )? {
         Ok(resources) => resources,
+        Err(CRuntimeError::TypeMismatch) => {
+            return Ok((
+                CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(format!(
+                    "could not evaluate {} return resources",
+                    function.name()
+                ))),
+                obligations,
+            ));
+        }
         Err(error) => return Ok((CFunctionOutcome::RuntimeError(error), obligations)),
     };
     match unreturned_allocation_obligation(&state, &return_resources, function, assumptions) {
@@ -2307,7 +2416,10 @@ pub(super) fn function_outcome_from_body(
                 assumptions,
             ) else {
                 return (
-                    CFunctionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+                    CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(format!(
+                        "{} returned a value that does not match its declared type",
+                        function.name()
+                    ))),
                     obligations,
                 );
             };

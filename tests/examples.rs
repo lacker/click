@@ -17,7 +17,24 @@ const DEFAULT_EXAMPLE_TIME_LIMIT: Duration = Duration::from_secs(10 * 60);
 /// suite is a meaningful green gate. Run one with `CLICK_EXAMPLE=<name>`, or
 /// all of them with `CLICK_RUN_QUARANTINED=1`. Each entry names the reason;
 /// remove entries as they are fixed (see docs/advanced/testing-click.md).
-const QUARANTINED: &[(&str, &str)] = &[];
+const QUARANTINED: &[(&str, &str)] = &[
+    (
+        "owned-vector",
+        "vector_pipeline targeted verification takes about 52s; see issues/owned-vector-pipeline-slow.md",
+    ),
+    (
+        "owned-string",
+        "slow control proofs and a slow smart step; see issues/owned-string-control-proofs-slow.md and issues/owned-string-pop-smart-step.md",
+    ),
+    (
+        "perpetual-service",
+        "slow simple loop-effect frame; see issues/perpetual-service-frame-slow.md",
+    ),
+    (
+        "ring-buffer",
+        "slow smart pipeline frame; see issues/ring-buffer-pipeline-frame-slow.md",
+    ),
+];
 
 #[test]
 fn example_projects() {

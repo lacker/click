@@ -4,6 +4,53 @@
 pathologically slow cases belong in explicit quarantine lists in
 `tests/mdtests.rs` and `tests/examples.rs`, with a corresponding issue here.
 
+Do not normalize verifier or tooling failures as part of proof development.
+When work exposes an engine problem, either fix it with a focused regression in
+the current chunk or write an issue before continuing. These problems take
+priority over new language features and over making an example pass. Restore a
+green, check-in-ready checkpoint before resuming the paused feature. In
+particular, always track:
+
+- a tactic that crosses its class budget, even if a larger command eventually
+  finishes;
+- a search that reports success but whose emitted or internal certificate does
+  not replay;
+- `click profile`, `click expand`, and `click audit` disagreeing about the same
+  proof site;
+- diagnostics large enough to obscure the actionable cause;
+- proof scripts that must preserve irrelevant spellings or route calls through
+  artificial helpers to compensate for verifier behavior; and
+- a kernel/resource-model error discovered while building an example.
+
+The issue should contain a small intended regression, the violated invariant,
+and acceptance criteria. Do not leave the only reproduction in an uncommitted
+large example or quarantine a regression without its issue.
+
+## Allocation and proof-tooling follow-up
+
+Runtime-sized allocation/free and the independently verifiable general vector
+push are implemented in focused example projects. Composing allocation, copy,
+replacement, and free into vector growth exposed distinct remaining bugs:
+
+1. [Enforce smart-tactic deadlines inside verification](smart-tactic-deadlines.md).
+2. [Bound and summarize verifier diagnostics](bounded-verifier-diagnostics.md).
+3. [Attribute active work when profiling times out](profile-timeout-attribution.md).
+4. [Reduce the owned-vector pipeline verification time](owned-vector-pipeline-slow.md).
+5. [Reduce slow owned-string control proofs](owned-string-control-proofs-slow.md).
+6. [Expand or reduce the slow owned-string pop step](owned-string-pop-smart-step.md).
+7. [Speed up the perpetual-service simple frame](perpetual-service-frame-slow.md).
+8. [Expand the slow ring-buffer pipeline frame](ring-buffer-pipeline-frame-slow.md).
+9. [Expand slow bubble-sort smart proofs](bubble-sort-smart-proofs-slow.md).
+10. [Apply null free contracts without invalid footprints](conditional-null-free-call-footprint.md).
+11. [Expand slow field-derived load preservation](field-derived-load-preservation-slow.md).
+12. [Make smart-search success imply certificate replay](smart-certificate-replay-consistency.md).
+13. [Align branched expansion certificates by execution path](branched-expansion-path-alignment.md).
+14. [Define borrowed-resource lifetime at `free`](borrowed-resource-lifetime-at-free.md).
+15. [Authorize `free` effects from owned allocation resources](owned-allocation-free-effects.md).
+16. [Preserve unchanged loads across opaque calls](opaque-call-unchanged-loads.md).
+17. [Compose runtime allocation into owned-vector growth](owned-vector-runtime-growth.md)
+   after the blocking invariants above are restored.
+
 ## Partial correctness and recursion
 
 Click's C contracts now use partial correctness consistently: concrete

@@ -420,7 +420,13 @@ fn c0_syntax_lowers_struct_malloc_sizeof_and_free() {
         match statement {
             syntax::C0Statement::HeapAllocate { target, bytes } => {
                 assert_eq!(target, "item");
-                assert_eq!(*bytes, 16);
+                assert_eq!(
+                    *bytes,
+                    syntax::C0Expression::SizeOfStruct {
+                        name: "item".to_string(),
+                        bytes: 16,
+                    }
+                );
                 (true, false)
             }
             syntax::C0Statement::HeapFree { pointer } => {
@@ -473,7 +479,23 @@ fn c0_syntax_rejects_malloc_size_that_does_not_match_its_target() {
 }
 
 #[test]
-fn c0_syntax_rejects_dynamic_malloc_sizes_and_wrong_free_arity() {
+fn c0_syntax_accepts_runtime_sized_int32_allocation() {
+    let function = syntax::parse_function(
+        r#"
+        int32 allocate(int32 count) {
+            int32* data = malloc(count * 4);
+            free(data);
+            return 0;
+        }
+        "#,
+    )
+    .expect("runtime-sized scalar allocation should parse");
+
+    assert!(matches!(function.body(), syntax::C0Statement::Seq(_, _)));
+}
+
+#[test]
+fn c0_syntax_rejects_dynamic_struct_malloc_and_wrong_free_arity() {
     let malloc_error = syntax::parse_function(
         r#"
         struct item { int32 value; };
@@ -483,11 +505,11 @@ fn c0_syntax_rejects_dynamic_malloc_sizes_and_wrong_free_arity() {
         }
         "#,
     )
-    .expect_err("this slice should reject dynamic allocation sizes");
+    .expect_err("struct allocation still needs its exact layout");
     assert!(
         malloc_error
             .message()
-            .contains("requires exactly `sizeof(struct T)`")
+            .contains("requires `sizeof(struct item)`")
     );
 
     let free_error = syntax::parse_function(

@@ -560,8 +560,9 @@ range loadable for symbolic execution, so ordinary external reads and writes
 do not need a separate `loadable(...)` requirement for the same range.
 
 This is intentionally not the full permission system. There are no fractions,
-general ownership predicates, runtime-sized allocation, or user-defined
-resource algebras. `loadable`, `mutable`, and `immutable` remain separate
+general ownership predicates, general allocator APIs, or user-defined resource
+algebras. Exact struct allocation and runtime-sized `int32` arrays are the
+supported heap slices. `loadable`, `mutable`, and `immutable` remain separate
 concepts from permission: loadability proves an access is in bounds, while
 resources authorize the access.
 

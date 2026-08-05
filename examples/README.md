@@ -26,6 +26,10 @@ Current projects:
   metadata-only child permutation.
 - `owned-vector/` verifies composite-resource state transitions over vector
   metadata and dependent backing storage.
+- `vector-push/` verifies a general in-capacity vector append in a small,
+  independently profiled proof unit.
+- `runtime-int32-allocation/` verifies positive runtime-sized `int32` backing
+  allocation and exact deallocation authority in isolation.
 - `allocated-linked-list/` combines fixed-size allocation authority with a
   recursive list resource, including failure-preserving prepend, one-node
   deallocation, and a terminating recursive destructor.

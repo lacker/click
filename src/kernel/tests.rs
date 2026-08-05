@@ -2765,6 +2765,78 @@ fn condition_evaluation_certifies_c_truthiness_directly() {
 }
 
 #[test]
+fn void_truthiness_is_an_explicit_type_error() {
+    let state = CState::new();
+    let condition = c_void_value();
+    let evaluation =
+        prove_symbolic_c_condition_evaluation(state.clone(), condition.clone(), Assumptions::new());
+
+    assert_eq!(evaluation.paths().len(), 1);
+    assert_eq!(
+        evaluation.paths()[0]
+            .theorem()
+            .proposition()
+            .peel_implications(),
+        &Proposition::CConditionEvaluates {
+            state: state.clone(),
+            condition,
+            outcome: CConditionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+        }
+    );
+
+    for expression in [
+        c_not(c_void_value()),
+        c_and(c_void_value(), c_int32_literal(1)),
+        c_or(c_void_value(), c_int32_literal(1)),
+    ] {
+        let theorem = prove_c_expression_evaluation(state.clone(), expression.clone())
+            .expect("invalid void truthiness should retain its runtime-error frontier");
+        assert_eq!(
+            theorem.proposition(),
+            &Proposition::CExpressionEvaluates {
+                state: state.clone(),
+                expression,
+                outcome: CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+            }
+        );
+    }
+}
+
+#[test]
+fn void_local_declaration_is_an_explicit_type_error() {
+    let paths = execute_c_statement_paths(
+        &CState::new(),
+        &c_declare("invalid", CType::Void),
+        &Assumptions::new(),
+        &CExecutionEnvironment::new(),
+        CExecutionSemantics::EXECUTE_BODIES,
+        &mut ExecutionBudget::default(),
+    )
+    .expect("invalid void declarations should execute to a type error");
+
+    assert_eq!(paths.len(), 1);
+    assert_eq!(
+        &paths[0].outcome,
+        &CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch)
+    );
+
+    let paths = execute_c_statement_paths(
+        &CState::new(),
+        &c_if(c_void_value(), CStatement::Skip, CStatement::Skip),
+        &Assumptions::new(),
+        &CExecutionEnvironment::new(),
+        CExecutionSemantics::EXECUTE_BODIES,
+        &mut ExecutionBudget::default(),
+    )
+    .expect("a void condition should execute to a type error");
+    assert_eq!(paths.len(), 1);
+    assert_eq!(
+        &paths[0].outcome,
+        &CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch)
+    );
+}
+
+#[test]
 fn symbolic_condition_evaluation_exposes_both_truthiness_paths() {
     let x = Variable(90);
     let state = CState::new().with_local("x", int32(Bitvector32Term::Variable(x)));
@@ -8296,7 +8368,10 @@ fn heap_allocate_has_null_or_fresh_uninitialized_outcomes() {
     let Some(CValue::Pointer(pointer)) = success.locals().get("p") else {
         panic!("allocation should assign a pointer");
     };
-    assert_eq!(success.memory().live_heap_block_size(pointer), Some(16));
+    assert_eq!(
+        success.memory().live_heap_block_size(pointer),
+        Some(&Bitvector32Term::Constant(16))
+    );
     if !skip_without_memory_dag() {
         let derivation = intern_c_memory_ref(success.memory())
             .derivation()
@@ -8304,7 +8379,7 @@ fn heap_allocate_has_null_or_fresh_uninitialized_outcomes() {
         assert!(matches!(
             derivation.as_ref(),
             CMemoryDerivation::HeapAllocated { block, bytes, .. }
-                if block == &pointer.block && *bytes == 16
+                if block == &pointer.block && *bytes == Bitvector32Term::Constant(16)
         ));
     }
     assert!(
@@ -8444,8 +8519,8 @@ fn heap_free_retires_the_complete_block_and_rejects_double_free() {
             .expect("free should record a memory edge");
         assert!(matches!(
             derivation.as_ref(),
-            CMemoryDerivation::HeapFreed { block, bytes, .. }
-                if block == &pointer.block && *bytes == 16
+            CMemoryDerivation::HeapFreed { allocation_base, bytes, .. }
+                if allocation_base == pointer && *bytes == Bitvector32Term::Constant(16)
         ));
     }
 
@@ -8467,6 +8542,64 @@ fn heap_free_retires_the_complete_block_and_rejects_double_free() {
             ..
         }]
     ));
+}
+
+#[test]
+fn free_of_external_allocation_preserves_unrelated_external_cells() {
+    let allocation_base = Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(908_000)), 4),
+    };
+    let unrelated = Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(908_001)), 4),
+    };
+    let memory = CMemory::new()
+        .store(unrelated.clone(), int32(37))
+        .with_heap_allocation_claim(allocation_base.clone(), 16)
+        .expect("external allocation claim should be fresh");
+    let resources = ResourceContext::new()
+        .unchecked_with_fact(CResourceFact::own_allocation(allocation_base.clone(), 16))
+        .unchecked_with_fact(CResourceFact::own_memory(CMemoryRange::new(
+            allocation_base.clone(),
+            Bitvector32Term::Constant(0),
+            Bitvector32Term::Constant(4),
+        )));
+    let state = CState::new()
+        .with_memory(memory)
+        .with_resource_context(resources)
+        .with_local("p", CValue::Pointer(allocation_base.clone()));
+
+    let paths = execute_c_statement_paths(
+        &state,
+        &c_heap_free(c_variable("p")),
+        &Assumptions::new(),
+        &CExecutionEnvironment::new(),
+        CExecutionSemantics::EXECUTE_BODIES,
+        &mut ExecutionBudget::default(),
+    )
+    .expect("freeing an imported allocation should execute");
+    let [
+        CStatementExecutionPath {
+            outcome: CStatementOutcome::Normal(after),
+            ..
+        },
+    ] = paths.as_slice()
+    else {
+        panic!("free should have one normal path: {paths:?}");
+    };
+
+    assert_eq!(
+        after.memory().load(&unrelated),
+        CExpressionOutcome::Value(int32(37))
+    );
+    assert!(!after.memory().is_retired_heap_address(&unrelated));
+    assert!(after.memory().is_retired_heap_address(&allocation_base));
+    assert!(
+        after
+            .memory()
+            .is_retired_heap_address(&allocation_base.offset_by_int32_elements(1.into()))
+    );
 }
 
 #[test]

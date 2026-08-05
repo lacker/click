@@ -5777,12 +5777,7 @@ impl Assumptions {
             block: pointer.block.clone(),
             offset: PointerOffsetTerm::Constant(0),
         };
-        self.proves_loadable_cell_from_region(
-            &base,
-            &Bitvector32Term::Constant(block.size()),
-            pointer,
-            byte_width,
-        )
+        self.proves_loadable_cell_from_region(&base, block.size(), pointer, byte_width)
     }
 
     pub(super) fn proves_loadable_cell_from_region(
