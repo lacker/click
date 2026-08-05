@@ -72,6 +72,11 @@ platforms without a thread CPU clock, tactic enforcement falls back to
 exclusive wall-clock time; parallel proof execution should remain disabled on
 those platforms.
 
+The direct CLI is itself the bounding mechanism: `click verify --time-limit`
+cooperatively interrupts execution, proposition derivation, memory resolution,
+and resource search. Do not wrap Click in an external timeout command; a proof
+search that outlives the CLI limit is a Click tooling bug.
+
 ## Quarantine
 
 Known-broken and pathologically slow tests are quarantined so the default

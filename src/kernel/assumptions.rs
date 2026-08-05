@@ -477,6 +477,10 @@ impl Drop for SimpReasoningFuelGuard {
 }
 
 fn consume_simp_reasoning_fuel() -> bool {
+    if crate::instrumentation::deadline_exceeded() {
+        note_search_truncation();
+        return false;
+    }
     SIMP_REASONING_FUEL.with(|fuel| match fuel.get() {
         None => true,
         Some(0) => {
@@ -3870,6 +3874,9 @@ impl Assumptions {
         proposition: &Proposition,
         for_simp: bool,
     ) -> Option<PropositionDerivation> {
+        if !consume_simp_reasoning_fuel() {
+            return None;
+        }
         self.atomic_derivation_premises(proposition, for_simp)
             .map(|(premises, premises_id)| {
                 proposition_derivation(
@@ -3923,6 +3930,9 @@ impl Assumptions {
                     .cloned()
                     .collect::<Vec<_>>();
                 for condition in conditions {
+                    if !consume_simp_reasoning_fuel() {
+                        return None;
+                    }
                     let Some(value) = candidate.condition_facts.remove(&condition) else {
                         continue;
                     };
@@ -3959,6 +3969,9 @@ impl Assumptions {
             .collect::<Vec<_>>();
         if candidates.len() > 1 {
             for selected in candidates {
+                if !consume_simp_reasoning_fuel() {
+                    return None;
+                }
                 let mut candidate = self.clone();
                 candidate.prop_facts.retain(|fact| !candidate_family(fact));
                 candidate.prop_facts.insert(selected);

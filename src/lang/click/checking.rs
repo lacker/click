@@ -656,7 +656,14 @@ pub(super) fn lower_ensure_proposition_goal(
         predicate_environment,
         click_function_environment,
         program_point_states,
-    )?;
+    );
+    if crate::instrumentation::deadline_exceeded() {
+        return Err(format!(
+            "verification time limit exceeded inside {}",
+            crate::instrumentation::deadline_context()
+        ));
+    }
+    let proposition = proposition?;
     let assumptions = assumptions_from_propositions(available_pure_facts);
     unfold_predicates_in_proposition(
         predicate_environment,
@@ -3098,6 +3105,12 @@ pub(super) fn plan_effect_clause_derivations(
                 .map(|goal| assumptions.derive_proposition(&goal))
                 .collect::<Option<Vec<_>>>()
         }) else {
+            if crate::instrumentation::deadline_exceeded() {
+                return Err(ClickError::new(format!(
+                    "verification time limit exceeded inside {}",
+                    crate::instrumentation::deadline_context()
+                )));
+            }
             return prove_effect_clause(
                 claim_label,
                 path_index,
@@ -3136,6 +3149,12 @@ pub(super) fn plan_effect_clause_derivations(
                 .map(|goal| assumptions.derive_proposition(&goal))
                 .collect::<Option<Vec<_>>>()
         }) else {
+            if crate::instrumentation::deadline_exceeded() {
+                return Err(ClickError::new(format!(
+                    "verification time limit exceeded inside {}",
+                    crate::instrumentation::deadline_context()
+                )));
+            }
             return prove_effect_clause(
                 claim_label,
                 path_index,

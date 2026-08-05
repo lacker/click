@@ -61,6 +61,10 @@ pub(super) fn with_isolated_memory_resolution_fuel<T>(
 /// exhausted; callers must fail their check (never claim a proof) then.
 /// Outside any armed query this is a no-op that returns true.
 pub(super) fn consume_memory_resolution_fuel() -> bool {
+    if crate::instrumentation::deadline_exceeded() {
+        super::assumptions::note_search_truncation();
+        return false;
+    }
     MEMORY_RESOLUTION_FUEL.with(|fuel| match fuel.get() {
         None => true,
         Some(0) => {
@@ -99,6 +103,10 @@ pub(super) fn with_resource_prover_fuel<T>(body: impl FnOnce() -> T) -> T {
 }
 
 pub(super) fn consume_resource_prover_fuel() -> bool {
+    if crate::instrumentation::deadline_exceeded() {
+        super::assumptions::note_search_truncation();
+        return false;
+    }
     RESOURCE_PROVER_FUEL.with(|fuel| match fuel.get() {
         None => true,
         Some(0) => {

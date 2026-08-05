@@ -52,6 +52,33 @@ fn assert_replayable_derivation(assumptions: &Assumptions, proposition: &Proposi
 }
 
 #[test]
+fn proposition_derivation_honors_active_deadline() {
+    let assumptions = Assumptions::new();
+    let proposition = Proposition::ConditionIs(ConditionTerm::Constant(true), true);
+    assert!(assumptions.derive_proposition(&proposition).is_some());
+    assert!(
+        assumptions
+            .derive_atomic_proposition(&proposition)
+            .is_some()
+    );
+
+    crate::instrumentation::with_deadline(std::time::Duration::ZERO, || {
+        assert!(assumptions.derive_proposition(&proposition).is_none());
+        assert!(
+            assumptions
+                .derive_atomic_proposition(&proposition)
+                .is_none()
+        );
+        assert!(!super::reasoning::with_memory_resolution_fuel(|| {
+            super::reasoning::consume_memory_resolution_fuel()
+        }));
+        assert!(!super::reasoning::with_resource_prover_fuel(|| {
+            super::reasoning::consume_resource_prover_fuel()
+        }));
+    });
+}
+
+#[test]
 fn strict_reverse_order_derives_a_false_comparison() {
     let left = Bitvector32Term::Variable(Variable(200));
     let right = Bitvector32Term::Variable(Variable(201));

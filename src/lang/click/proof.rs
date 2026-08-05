@@ -475,6 +475,12 @@ fn check_atomic_derivation_goal(
         derive_from(&canonical_premises, &canonical_target)
             .or_else(|| derive_from(&with_effect_context(&canonical_premises), &canonical_target))
     });
+    if crate::instrumentation::deadline_exceeded() {
+        return Err(format!(
+            "tactic time limit exceeded: {}",
+            crate::instrumentation::deadline_context()
+        ));
+    }
     if derivation.is_none()
         && (pointer_offset_equality_by_frame(&normalized_target, available)
             || equal_by_premise_chain(&normalized_premises, &normalized_target, available))
