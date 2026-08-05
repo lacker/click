@@ -86,6 +86,13 @@ inherits SMART from a supported smart body, SIMPLE from a nonempty entirely
 simple body, and is CONTROL otherwise. Profiling, smart-site discovery, and
 expansion all use this source-site class.
 
+When a smart `have` needs memory permissions merely to lower its goal, its
+surface certificate retains the relevant loadability and order facts in an
+explicit `derive using` block. A context-free-looking result such as a
+normalized equality is not emitted as bare `normalize()` if replay still needs
+those premises to interpret an indexed load. Verification checks the emitted
+certificate immediately, and expansion/audit replay the same surface proof.
+
 ## Effects, resources, and snapshots
 
 | Surface form | Class | Meaning |

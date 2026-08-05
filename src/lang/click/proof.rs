@@ -10039,9 +10039,9 @@ fn plan_smart_have_at_current_point(
             click_function_environment,
         ) {
             Ok(fact) => fact,
-            Err(_) => {
+            Err(fallback_message) => {
                 return Err(ClickError::new(format!(
-                    "`{claim_label}` have proof {outer_tactic_index}: could not lower pure goal: {message}"
+                    "`{claim_label}` have proof {outer_tactic_index}: could not lower pure goal: {fallback_message}\n  direct lowering also failed: {message}"
                 )));
             }
         },
@@ -18321,6 +18321,59 @@ fn surface_smart_have_certificate(
 }
 
 #[allow(clippy::too_many_arguments)]
+fn surface_smart_have_derivation_certificate(
+    replay: &TacticReplayState,
+    state: &CState,
+    available: &[Proposition],
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    have: &ProofHave,
+) -> Option<TacticCertificate> {
+    let mut premises = Vec::new();
+    for fact in available {
+        let relevant = matches!(fact, Proposition::CMemoryLoadable { .. })
+            || matches!(
+                fact,
+                Proposition::ConditionIs(
+                    ConditionTerm::Bitvector32SignedLessThan(_, _)
+                        | ConditionTerm::Bitvector32SignedLessEqual(_, _)
+                        | ConditionTerm::Bitvector32SignedGreaterThan(_, _)
+                        | ConditionTerm::Bitvector32SignedGreaterEqual(_, _),
+                    _,
+                )
+            );
+        if !relevant {
+            continue;
+        }
+        let Ok(surface) = checked_surface_fact_at_point(
+            replay,
+            fact,
+            available,
+            parameters,
+            arguments,
+            state,
+            predicate_environment,
+            click_function_environment,
+        ) else {
+            continue;
+        };
+        if !premises.contains(&surface) {
+            premises.push(surface);
+        }
+    }
+    if premises.is_empty() {
+        return None;
+    }
+    TacticCertificate::from_proof_tactics(&[ProofTactic::Have(ProofHave {
+        proposition: have.proposition.clone(),
+        proof: Proof::Script(vec![ProofTactic::Derive(ProofDerive { premises })]),
+    })])
+    .ok()
+}
+
+#[allow(clippy::too_many_arguments)]
 fn surface_smart_apply_have_certificate(
     replay: &mut TacticReplayState,
     state: &CState,
@@ -20547,35 +20600,65 @@ fn replay_linear_tactics(
                         &fact,
                     )?
                 };
-                if let Some(certificate) = surface_certificate {
-                    let (_, _) = pure_goal_certificate_gateway(
+                if let Some(mut certificate) = surface_certificate {
+                    let replay_certificate = |certificate: &TacticCertificate| {
+                        verify_surface_certificate(
+                            ProofReplayContext {
+                                state: state.clone(),
+                                // Replay from the same certified context
+                                // used to plan the smart `have`. In
+                                // particular, field-derived loadability may
+                                // depend on previously established surface
+                                // facts or exact execution effects that are
+                                // not part of the function's requirements.
+                                pure_facts: have_facts.clone(),
+                                replay: replay.clone(),
+                                branch_path: branch_path.clone(),
+                            },
+                            function_block,
+                            parsed_function,
+                            claims,
+                            claim_label,
+                            function_environment,
+                            predicate_environment,
+                            click_function_environment,
+                            resource_environment,
+                            theorem_environment,
+                            function,
+                            arguments,
+                            tactic_index,
+                            source_index,
+                            certificate,
+                        )
+                    };
+                    let initial_replay = pure_goal_certificate_gateway(
                         claim_label,
                         || Ok(certificate.clone()),
-                        |certificate| {
-                            verify_surface_certificate(
-                                ProofReplayContext {
-                                    state: state.clone(),
-                                    pure_facts: requirement_pure_facts.clone(),
-                                    replay: replay.clone(),
-                                    branch_path: branch_path.clone(),
-                                },
-                                function_block,
-                                parsed_function,
-                                claims,
-                                claim_label,
-                                function_environment,
+                        replay_certificate,
+                    );
+                    if let Err(initial_error) = initial_replay {
+                        let fallback = smart_plan.as_ref().and_then(|_| {
+                            surface_smart_have_derivation_certificate(
+                                &replay,
+                                &state,
+                                &have_facts,
+                                parsed_function.parameters(),
+                                arguments,
                                 predicate_environment,
                                 click_function_environment,
-                                resource_environment,
-                                theorem_environment,
-                                function,
-                                arguments,
-                                tactic_index,
-                                source_index,
-                                certificate,
+                                have,
                             )
-                        },
-                    )?;
+                        });
+                        let Some(fallback) = fallback else {
+                            return Err(initial_error);
+                        };
+                        pure_goal_certificate_gateway(
+                            claim_label,
+                            || Ok(fallback.clone()),
+                            replay_certificate,
+                        )?;
+                        certificate = fallback;
+                    }
                     replay
                         .surface_replay
                         .tactics
