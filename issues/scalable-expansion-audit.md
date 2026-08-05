@@ -23,11 +23,11 @@ later expansion must never mask an individually broken earlier expansion.
 
 Implement this in stages:
 
-1. Add a concise mode that prints inventory, claim-level progress, failures,
-   resumable cursors, and the final summary. Preserve per-site rows behind a
-   verbose flag.
-2. Add explicit claim selection so a developer can audit one or more named
-   proof units without finding line and column coordinates manually.
+1. **Complete:** concise output prints inventory, claim-level progress,
+   failures, resumable cursors, and the final summary. `--verbose` preserves
+   the former per-site rows.
+2. **Complete:** repeatable `--claim` selection audits exact named proof units
+   and rejects unknown or cross-sidecar-ambiguous labels.
 3. Add `--changed-since <revision>` after the dependency selection used by
    incremental verification is available. Changes to proof-engine,
    certification, kernel, parser, or printing code must conservatively select

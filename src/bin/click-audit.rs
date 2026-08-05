@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::fs;
 use std::io::Write;
@@ -30,6 +30,8 @@ normal direct targeted entry point, and checks the rewrite is an
 expansion fixed point (the audited smart tactic is gone from its claim and
 the emitted expansion introduced no new smart tactic). By default it stops at
 the first failure and prints an inclusive --start-at resume command.
+Successful progress is concise by default: one row per claim. `--verbose`
+restores one row per smart site.
 
 Raw phase time grows with proof-unit size and is reported but is not itself a
 failure. On the first site of each claim, audit compares cold verification of
@@ -54,6 +56,8 @@ options:
   --time-limit <DURATION>
   --start-at <PATH:LINE:COLUMN>
                               inclusively resume at this source location
+  --claim <CLAIM>             audit one named claim; may be repeated
+  --verbose                   print one successful row per smart site
   --keep-going                continue after failures instead of stopping
   --max-sites <COUNT>         bounded diagnostic run; prints the next cursor";
 
@@ -73,6 +77,8 @@ struct Arguments {
     performance_slack: Duration,
     time_limit: Duration,
     start_at: Option<SourceLocation>,
+    claims: Vec<String>,
+    verbose: bool,
     keep_going: bool,
     max_sites: Option<usize>,
 }
@@ -93,6 +99,12 @@ struct AuditSite {
     click_position: SourcePosition,
     claim: String,
     tactic_name: String,
+}
+
+struct ConciseClaimProgress {
+    key: (PathBuf, String),
+    passed: usize,
+    total: usize,
 }
 
 struct AuditSessionWorker {
@@ -164,6 +176,8 @@ fn parse_arguments(arguments: impl IntoIterator<Item = String>) -> Result<Argume
     let mut performance_slack = DEFAULT_PERFORMANCE_SLACK;
     let mut time_limit = DEFAULT_TIME_LIMIT;
     let mut start_at = None;
+    let mut claims = Vec::new();
+    let mut verbose = false;
     let mut keep_going = false;
     let mut max_sites = None;
     let mut parse_options = true;
@@ -204,6 +218,16 @@ fn parse_arguments(arguments: impl IntoIterator<Item = String>) -> Result<Argume
                     .ok_or_else(|| format!("missing location after `{argument}`\n{USAGE}"))?;
                 start_at = Some(parse_source_location(&source)?);
             }
+            "--claim" => {
+                let claim = arguments
+                    .next()
+                    .ok_or_else(|| format!("missing claim after `{argument}`\n{USAGE}"))?;
+                if claims.contains(&claim) {
+                    return Err(format!("claim `{claim}` was selected more than once"));
+                }
+                claims.push(claim);
+            }
+            "--verbose" => verbose = true,
             "--keep-going" => keep_going = true,
             "--max-sites" => {
                 let source = arguments
@@ -232,6 +256,8 @@ fn parse_arguments(arguments: impl IntoIterator<Item = String>) -> Result<Argume
         performance_slack,
         time_limit,
         start_at,
+        claims,
+        verbose,
         keep_going,
         max_sites,
     })
@@ -256,7 +282,23 @@ fn run_audit(arguments: Arguments) -> Result<(), String> {
     let sources = audit_targets(&arguments.path)?;
     println!("INVENTORY");
     let sites = inventory_sites(&sources)?;
-    println!("  {} unique smart source sites", sites.len());
+    let inventory_claims = sites
+        .iter()
+        .map(|site| (site.click_path.clone(), site.claim.clone()))
+        .collect::<BTreeSet<_>>()
+        .len();
+    println!(
+        "  {} unique smart source sites in {inventory_claims} claims",
+        sites.len()
+    );
+    let scoped_sites = select_claim_sites(&sites, &arguments.claims)?;
+    if !arguments.claims.is_empty() {
+        println!(
+            "  selected {} sites in {} named claims",
+            scoped_sites.len(),
+            arguments.claims.len()
+        );
+    }
 
     let start_at = arguments
         .start_at
@@ -264,7 +306,9 @@ fn run_audit(arguments: Arguments) -> Result<(), String> {
         .map(canonicalize_location)
         .transpose()?;
     if let Some(start_at) = &start_at
-        && !sites.iter().any(|site| site.click_path == start_at.path)
+        && !scoped_sites
+            .iter()
+            .any(|site| site.click_path == start_at.path)
     {
         return Err(format!(
             "`--start-at` path `{}` has no smart tactic sites in `{}`",
@@ -272,12 +316,20 @@ fn run_audit(arguments: Arguments) -> Result<(), String> {
             arguments.path.display()
         ));
     }
-    let first = first_site_at_or_after(&sites, start_at.as_ref());
-    if start_at.is_some() && first == sites.len() {
+    let first = first_site_at_or_after(&scoped_sites, start_at.as_ref());
+    if start_at.is_some() && first == scoped_sites.len() {
         return Err("`--start-at` is after the final smart tactic site".to_string());
     }
 
-    let selected = &sites[first..];
+    let selected = &scoped_sites[first..];
+    let mut selected_claim_counts = BTreeMap::new();
+    let mut selected_claim_order = BTreeMap::new();
+    for site in selected {
+        let key = (site.click_path.clone(), site.claim.clone());
+        let next = selected_claim_order.len() + 1;
+        selected_claim_order.entry(key.clone()).or_insert(next);
+        *selected_claim_counts.entry(key).or_default() += 1;
+    }
     let mut audited_sites = 0;
     let mut site_failures = 0;
     let mut session_failures = 0;
@@ -286,6 +338,7 @@ fn run_audit(arguments: Arguments) -> Result<(), String> {
     let mut cursor = 0;
     let mut out_of_time = false;
     let mut cold_reverified_claims = std::collections::BTreeSet::new();
+    let mut concise_progress: Option<ConciseClaimProgress> = None;
     let started = Instant::now();
     let deadline = started + arguments.time_limit;
 
@@ -358,13 +411,30 @@ fn run_audit(arguments: Arguments) -> Result<(), String> {
 
         attempted_sites += 1;
         let label = format_location(&site_location(site));
-        print!(
-            "[{}/{}] {label}  {} ({}) ... ",
-            first + cursor + 1,
-            sites.len(),
-            site.claim,
-            site.tactic_name,
-        );
+        if arguments.verbose {
+            print!(
+                "[{}/{}] {label}  {} ({}) ... ",
+                first + cursor + 1,
+                scoped_sites.len(),
+                site.claim,
+                site.tactic_name,
+            );
+        } else if concise_progress.is_none() {
+            let key = (site.click_path.clone(), site.claim.clone());
+            print!(
+                "CLAIM [{}/{}] {}  {} ({} sites) ... ",
+                selected_claim_order[&key],
+                selected_claim_order.len(),
+                site.click_path.display(),
+                site.claim,
+                selected_claim_counts[&key],
+            );
+            concise_progress = Some(ConciseClaimProgress {
+                key,
+                passed: 0,
+                total: selected_claim_counts[&(site.click_path.clone(), site.claim.clone())],
+            });
+        }
         std::io::stdout()
             .flush()
             .map_err(|error| format!("failed to flush audit progress: {error}"))?;
@@ -385,7 +455,28 @@ fn run_audit(arguments: Arguments) -> Result<(), String> {
         ) {
             Ok(timings) => {
                 audited_sites += 1;
-                println!("{}", render_site_timings(&timings));
+                if arguments.verbose {
+                    println!("{}", render_site_timings(&timings));
+                } else if let Some(progress) = concise_progress.as_mut() {
+                    progress.passed += 1;
+                    let next_is_same_claim = selected.get(cursor + 1).is_some_and(|next| {
+                        progress.key == (next.click_path.clone(), next.claim.clone())
+                    });
+                    let capped_mid_claim = arguments
+                        .max_sites
+                        .is_some_and(|limit| attempted_sites == limit)
+                        && next_is_same_claim;
+                    if !next_is_same_claim {
+                        println!("ok ({} sites)", progress.passed);
+                        concise_progress = None;
+                    } else if capped_mid_claim {
+                        println!(
+                            "partial ({}/{} sites passed)",
+                            progress.passed, progress.total
+                        );
+                        concise_progress = None;
+                    }
+                }
                 cursor += 1;
             }
             Err(message) => {
@@ -395,7 +486,12 @@ fn run_audit(arguments: Arguments) -> Result<(), String> {
                     out_of_time = true;
                     break;
                 }
-                println!("FAIL");
+                if arguments.verbose {
+                    println!("FAIL");
+                } else {
+                    println!("FAIL at {label} ({})", site.tactic_name);
+                    concise_progress = None;
+                }
                 println!("    {}", message.replace('\n', "\n    "));
                 print_resume(&arguments, site);
                 site_failures += 1;
@@ -407,10 +503,17 @@ fn run_audit(arguments: Arguments) -> Result<(), String> {
         }
     }
 
+    if let Some(progress) = concise_progress.take() {
+        println!(
+            "partial ({}/{} sites passed)",
+            progress.passed, progress.total
+        );
+    }
+
     println!(
         "\nSUMMARY: {audited_sites} sites passed; {site_failures} site failures; \
          {session_failures} session failures; {} sites discovered{}",
-        sites.len(),
+        scoped_sites.len(),
         if arguments.max_sites.is_some() {
             " (bounded run)"
         } else {
@@ -602,6 +705,53 @@ fn inventory_sites(sources: &[PathBuf]) -> Result<Vec<AuditSite>, String> {
     Ok(sites.into_values().collect())
 }
 
+fn select_claim_sites(sites: &[AuditSite], claims: &[String]) -> Result<Vec<AuditSite>, String> {
+    if claims.is_empty() {
+        return Ok(sites.to_vec());
+    }
+    for claim in claims {
+        let paths = sites
+            .iter()
+            .filter(|site| site.claim == *claim)
+            .map(|site| site.click_path.clone())
+            .collect::<BTreeSet<_>>();
+        if paths.is_empty() {
+            let known = sites
+                .iter()
+                .map(|site| site.claim.as_str())
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .take(12)
+                .collect::<Vec<_>>()
+                .join(", ");
+            return Err(format!(
+                "unknown audit claim `{claim}`{}",
+                if known.is_empty() {
+                    String::new()
+                } else {
+                    format!("; known claims include: {known}")
+                }
+            ));
+        }
+        if paths.len() > 1 {
+            return Err(format!(
+                "audit claim `{claim}` is ambiguous across: {}; name one sidecar as the audit target",
+                paths
+                    .iter()
+                    .map(|path| path.display().to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        }
+    }
+    let requested = claims.iter().collect::<BTreeSet<_>>();
+    Ok(sites
+        .iter()
+        .filter(|site| requested.contains(&site.claim))
+        .cloned()
+        .collect())
+}
+
 fn canonicalize_location(location: &SourceLocation) -> Result<SourceLocation, String> {
     let path = fs::canonicalize(&location.path)
         .map_err(|error| format!("failed to resolve `{}`: {error}", location.path.display()))?;
@@ -658,6 +808,13 @@ fn resume_command(arguments: &Arguments, location: &SourceLocation) -> String {
     ];
     if arguments.keep_going {
         words.push("--keep-going".to_string());
+    }
+    if arguments.verbose {
+        words.push("--verbose".to_string());
+    }
+    for claim in &arguments.claims {
+        words.push("--claim".to_string());
+        words.push(claim.clone());
     }
     if let Some(max_sites) = arguments.max_sites {
         words.push("--max-sites".to_string());
@@ -1039,6 +1196,9 @@ mod tests {
                 "2m",
                 "--start-at",
                 "examples/example.click:12:3",
+                "--claim",
+                "example.ensures_0",
+                "--verbose",
                 "--keep-going",
                 "--max-sites",
                 "3",
@@ -1059,6 +1219,8 @@ mod tests {
             })
         );
         assert!(arguments.keep_going);
+        assert!(arguments.verbose);
+        assert_eq!(arguments.claims, ["example.ensures_0"]);
         assert_eq!(arguments.max_sites, Some(3));
         assert_eq!(arguments.path, PathBuf::from("examples"));
     }
@@ -1078,6 +1240,41 @@ mod tests {
     }
 
     #[test]
+    fn named_claim_selection_is_exact_ordered_and_rejects_ambiguity() {
+        let site = |path: &str, claim: &str, line| AuditSite {
+            click_path: PathBuf::from(path),
+            position: SourcePosition { line, column: 1 },
+            click_position: SourcePosition { line, column: 1 },
+            claim: claim.to_string(),
+            tactic_name: "auto".to_string(),
+        };
+        let sites = vec![
+            site("a.click", "alpha.ensures_0", 1),
+            site("a.click", "alpha.ensures_0", 2),
+            site("a.click", "beta.ensures_0", 3),
+        ];
+        let selected = select_claim_sites(&sites, &["alpha.ensures_0".to_string()]).unwrap();
+        assert_eq!(selected.len(), 2);
+        assert_eq!(selected[0].position.line, 1);
+        assert_eq!(selected[1].position.line, 2);
+        assert!(
+            select_claim_sites(&sites, &["missing".to_string()])
+                .unwrap_err()
+                .contains("unknown audit claim")
+        );
+
+        let ambiguous = vec![
+            site("a.click", "alpha.ensures_0", 1),
+            site("b.click", "alpha.ensures_0", 1),
+        ];
+        assert!(
+            select_claim_sites(&ambiguous, &["alpha.ensures_0".to_string()])
+                .unwrap_err()
+                .contains("ambiguous")
+        );
+    }
+
+    #[test]
     fn resume_command_retries_the_cursor_inclusively() {
         let arguments = Arguments {
             path: PathBuf::from("examples with spaces"),
@@ -1087,6 +1284,8 @@ mod tests {
             performance_slack: Duration::from_millis(500),
             time_limit: Duration::from_secs(600),
             start_at: None,
+            claims: vec!["example.ensures_0".to_string()],
+            verbose: true,
             keep_going: false,
             max_sites: Some(1),
         };
@@ -1099,7 +1298,8 @@ mod tests {
             resume_command(&arguments, &location),
             "click audit --session-time-limit 30s --expansion-time-limit 2s \
              --verification-time-limit 3s --performance-slack 500ms --time-limit 10m \
-             --max-sites 1 --start-at /tmp/example.click:12:34 'examples with spaces'"
+             --verbose --claim example.ensures_0 --max-sites 1 \
+             --start-at /tmp/example.click:12:34 'examples with spaces'"
         );
     }
 

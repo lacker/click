@@ -152,9 +152,14 @@ manual release/certificate-boundary gate, not part of ordinary `cargo test`.
   retained-session verifies, compares original and expanded cold verification,
   and checks the claim's smart-site multiset strictly shrinks without
   introducing a new smart tactic. One path-aligned expansion may remove
-  multiple symmetric occurrences. Audit stops at the first failure by default and prints a
-  resumable `--start-at` command. Point it at the repository root to cover both
-  `examples/` and `mdtests/` in one run.
+  multiple symmetric occurrences. Passing progress is one row per claim by
+  default; `--verbose` restores per-site timing rows. Repeat `--claim LABEL` to
+  audit specific named proof units without locating their coordinates. Claim
+  selection is exact and rejects unknown or cross-sidecar-ambiguous labels.
+  Audit stops at the first failure by default and prints a resumable
+  `--start-at` command that retains the selected claims and output mode. Point
+  it at the repository root to cover both `examples/` and `mdtests/` in one
+  run.
 
 An empty expansion deletes the selected tactic: the successful smart tactic
 contributed no surface certificate steps. Always verify and profile the exact
