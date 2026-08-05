@@ -21,6 +21,10 @@ check-in-ready checkpoint. Do not silently work around the problem, raise time
 limits, accept a slow successful run, or leave the only reproduction inside an
 unverified example.
 
+After any timeout or interrupted bounded command, confirm that its verifier
+process tree exited before trusting later timing results. Stale workers are a
+tooling failure, not background noise.
+
 This priority is deliberate: Click's examples and language features depend on
 fast verification, replayable certificates, working expansion, and actionable
 diagnostics. Building above a broken proof-tool boundary makes later failures

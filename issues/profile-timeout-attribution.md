@@ -35,3 +35,6 @@ timings, and keeps process/driver residual small and explainable.
 - Interrupted time is not silently assigned to process/driver.
 - An incomplete project cannot receive an unqualified healthy diagnosis.
 - The report's next action follows the active class or phase.
+- The command exits unsuccessfully on timeout after its complete child process
+  group has been terminated; process cleanup itself is tracked separately in
+  `bounded-runs-leave-orphan-verifiers.md`.
