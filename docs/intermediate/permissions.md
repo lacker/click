@@ -178,6 +178,16 @@ caller has permissions in its own context. Explicit `mutable` clauses provide
 the precise abstract write footprint. Without one, an owned input resource is
 used as a conservative mutable footprint.
 
+Loads outside that footprint are preserved across the opaque call. This
+includes adjacent struct fields and composes across several calls, so callers
+do not need to save and restore unchanged metadata merely to give it a stable
+proof spelling. Expansion exposes only ordinary source-level premises such as
+the relevant `loadable(...)` range; call-havoc identities remain internal.
+Preserving a dependent load such as `owner->data[i]` additionally requires the
+address inputs (`owner->data` and `i`) and the target range to remain stable.
+If any mutable range may overlap the loaded field, Click does not transport the
+equality.
+
 Opaque summaries support comparison, logical, quantified, predicate-call,
 `separate(...)`, `contains(...)`, and `loadable(...)` propositions, including
 `old(...)` and `at(function.entry, ...)`. A contract containing a snapshot of

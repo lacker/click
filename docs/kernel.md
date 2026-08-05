@@ -299,6 +299,14 @@ guard before evaluating the guarded pointer and range, so the empty case does
 not manufacture a null footprint while an active malformed footprint still
 fails locally.
 
+A `CallHavoc` edge carries the callee's checked mutable ranges. Load transport
+may cross that edge only when the loaded address is proved disjoint from every
+range; multiple opaque calls compose by following the corresponding bounded
+effect chain. This rule preserves an adjacent unchanged field without exposing
+havoc block names in a surface certificate. A dependent address is transported
+only when its pointer and index expressions are themselves stable. An
+overlapping or undecidable footprint stops the transport.
+
 ## Assumption Reasoning
 
 `Assumptions::proves` is the main deterministic proposition checker. It handles
