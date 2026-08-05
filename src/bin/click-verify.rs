@@ -1,17 +1,24 @@
 use std::env;
 use std::fs;
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use click::cli::{
     files_with_extension, find_projects, format_duration, looks_like_source_location,
     parse_duration, parse_source_location, read_verifying_sources, source_refs,
 };
-use click::lang::click::{verify_c0_sources, verify_c0_sources_at};
+use click::lang::click::{
+    c0_function_names, c0_incremental_selection, verify_c0_sources, verify_c0_sources_at,
+    verify_c0_sources_functions, verifying_source_paths,
+};
 
 const USAGE: &str = "\
 usage: click verify [--time-limit <DURATION>] <sidecar.click>[:<line>:<column>]
        click verify [--time-limit <DURATION>] <project-directory|examples-directory>
+       click verify --changed-since <REVISION> [--explain] <sidecar.click|directory>
 
 Verifies the whole sidecar, or, when a one-based :LINE:COLUMN suffix is
 supplied, only the proof unit containing that source location and the C
@@ -23,11 +30,15 @@ is the command to run after applying an expansion emitted by `click expand`.
 Each sidecar has a 30-second limit by default.";
 
 const DEFAULT_TIME_LIMIT: Duration = Duration::from_secs(30);
+const INCREMENTAL_CACHE_SCHEMA: &str = "click-verified-v1";
+type LoadedSidecar = (String, Vec<(String, String)>);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct Arguments {
     target: String,
     time_limit: Duration,
+    changed_since: Option<String>,
+    explain: bool,
 }
 
 fn main() {
@@ -48,6 +59,13 @@ pub(crate) fn entry_with(arguments: impl IntoIterator<Item = String>) -> Result<
         return Ok(());
     }
     let arguments = parse_arguments(raw)?;
+    if let Some(revision) = &arguments.changed_since {
+        let path = Path::new(&arguments.target);
+        return verify_changed(path, revision, arguments.time_limit, arguments.explain);
+    }
+    if arguments.explain {
+        return Err("`--explain` requires `--changed-since`".to_string());
+    }
     if looks_like_source_location(&arguments.target) {
         let (click_path, line, column) = parse_source_location(&arguments.target)?;
         return verify_location(&click_path, line, column, arguments.time_limit);
@@ -63,6 +81,8 @@ pub(crate) fn entry_with(arguments: impl IntoIterator<Item = String>) -> Result<
 fn parse_arguments(arguments: impl IntoIterator<Item = String>) -> Result<Arguments, String> {
     let mut target = None;
     let mut time_limit = DEFAULT_TIME_LIMIT;
+    let mut changed_since = None;
+    let mut explain = false;
     let mut parse_options = true;
     let mut arguments = arguments.into_iter();
     while let Some(argument) = arguments.next() {
@@ -73,6 +93,17 @@ fn parse_arguments(arguments: impl IntoIterator<Item = String>) -> Result<Argume
                 .next()
                 .ok_or_else(|| format!("missing duration after `--time-limit`\n{USAGE}"))?;
             time_limit = parse_duration(&value)?;
+        } else if parse_options && argument == "--changed-since" {
+            if changed_since.is_some() {
+                return Err("`--changed-since` may only be supplied once".to_string());
+            }
+            changed_since = Some(
+                arguments
+                    .next()
+                    .ok_or_else(|| format!("missing revision after `--changed-since`\n{USAGE}"))?,
+            );
+        } else if parse_options && argument == "--explain" {
+            explain = true;
         } else if parse_options && argument.starts_with('-') {
             return Err(format!("unknown option `{argument}`\n{USAGE}"));
         } else if target.replace(argument).is_some() {
@@ -82,6 +113,8 @@ fn parse_arguments(arguments: impl IntoIterator<Item = String>) -> Result<Argume
     Ok(Arguments {
         target: target.ok_or_else(|| USAGE.to_string())?,
         time_limit,
+        changed_since,
+        explain,
     })
 }
 
@@ -113,6 +146,395 @@ fn verify_directory(path: &Path, time_limit: Duration) -> Result<(), String> {
         plural(projects.len())
     );
     Ok(())
+}
+
+fn verify_changed(
+    path: &Path,
+    revision: &str,
+    time_limit: Duration,
+    explain_only: bool,
+) -> Result<(), String> {
+    let sidecars = if path.is_dir() {
+        let projects = find_projects(path)?;
+        let mut sidecars = Vec::new();
+        for project in projects {
+            sidecars.extend(files_with_extension(&project, "click")?);
+        }
+        sidecars.sort();
+        sidecars
+    } else {
+        vec![path.to_path_buf()]
+    };
+    if sidecars.is_empty() {
+        return Err(format!("`{}` contains no Click sidecars", path.display()));
+    }
+    let repo = git_repo_root(path)?;
+    let baseline_commit = git_commit_id(&repo, revision)?;
+
+    let mut verified = 0usize;
+    let mut skipped = 0usize;
+    for sidecar in sidecars {
+        let sidecar = fs::canonicalize(&sidecar)
+            .map_err(|error| format!("failed to resolve `{}`: {error}", sidecar.display()))?;
+        let (click_source, sources) = load_sidecar(&sidecar)?;
+        let refs = source_refs(&sources);
+        let baseline_attested = has_full_verification_marker(&repo, &baseline_commit, &sidecar)?;
+        let mut full_rebuild = !baseline_attested;
+        let mut reasons = if !baseline_attested {
+            vec![format!(
+                "baseline commit {baseline_commit} has no valid full-verification marker for this sidecar and verifier binary"
+            )]
+        } else {
+            Vec::new()
+        };
+        let (selected, reused) = if full_rebuild {
+            (
+                c0_function_names(&click_source, &refs).map_err(click_message)?,
+                Vec::new(),
+            )
+        } else if let Some((baseline_click, baseline_sources)) =
+            load_baseline_sidecar(&repo, revision, &sidecar)?
+        {
+            let baseline_refs = source_refs(&baseline_sources);
+            let selection =
+                c0_incremental_selection(&click_source, &refs, &baseline_click, &baseline_refs)
+                    .map_err(click_message)?;
+            full_rebuild = selection.full_rebuild;
+            reasons = selection.reasons;
+            (selection.selected_functions, selection.reused_functions)
+        } else {
+            full_rebuild = true;
+            reasons.push(
+                "sidecar or one of its declared C sources is absent at the baseline".to_string(),
+            );
+            (
+                c0_function_names(&click_source, &refs).map_err(click_message)?,
+                Vec::new(),
+            )
+        };
+
+        print_incremental_selection(
+            &sidecar,
+            revision,
+            &selected,
+            &reused,
+            &reasons,
+            full_rebuild,
+        );
+        if explain_only || selected.is_empty() {
+            skipped += usize::from(selected.is_empty());
+            continue;
+        }
+        click::instrumentation::with_deadline(time_limit, || {
+            if full_rebuild {
+                verify_c0_sources(&click_source, &refs)
+            } else {
+                verify_c0_sources_functions(&click_source, &refs, selected.clone())
+            }
+            .map_err(|error| {
+                format!(
+                    "incremental sidecar `{}` failed under its {} limit: {}",
+                    sidecar.display(),
+                    format_duration(time_limit),
+                    error.message()
+                )
+            })
+        })?;
+        if full_rebuild && let Err(message) = record_full_verification(&sidecar) {
+            eprintln!("click-verify: warning: could not record incremental baseline: {message}");
+        }
+        verified += 1;
+        println!("  result: verified");
+    }
+    if explain_only {
+        println!("dry run: no proofs were executed");
+    } else {
+        println!(
+            "incremental verification completed: {verified} sidecars verified, {skipped} unchanged sidecars skipped"
+        );
+    }
+    Ok(())
+}
+
+fn click_message(error: click::lang::click::ClickError) -> String {
+    error.message().to_string()
+}
+
+fn print_incremental_selection(
+    sidecar: &Path,
+    revision: &str,
+    selected: &[String],
+    reused: &[String],
+    reasons: &[String],
+    full_rebuild: bool,
+) {
+    println!("INCREMENTAL {} since {revision}", sidecar.display());
+    println!(
+        "  mode: {}",
+        if full_rebuild {
+            "full rebuild"
+        } else {
+            "semantic function selection"
+        }
+    );
+    println!(
+        "  selected ({}): {}",
+        selected.len(),
+        bounded_names(selected)
+    );
+    println!("  reused ({}): {}", reused.len(), bounded_names(reused));
+    for reason in reasons.iter().take(12) {
+        println!("  because: {reason}");
+    }
+    if reasons.len() > 12 {
+        println!("  because: ... {} more reasons", reasons.len() - 12);
+    }
+}
+
+fn bounded_names(names: &[String]) -> String {
+    if names.is_empty() {
+        return "(none)".to_string();
+    }
+    let mut shown = names.iter().take(12).cloned().collect::<Vec<_>>();
+    if names.len() > shown.len() {
+        shown.push(format!("... {} more", names.len() - shown.len()));
+    }
+    shown.join(", ")
+}
+
+fn git_repo_root(path: &Path) -> Result<PathBuf, String> {
+    let anchor = if path.is_dir() {
+        path
+    } else {
+        path.parent().unwrap_or_else(|| Path::new("."))
+    };
+    let output = Command::new("git")
+        .args([
+            "-C",
+            &anchor.display().to_string(),
+            "rev-parse",
+            "--show-toplevel",
+        ])
+        .output()
+        .map_err(|error| format!("failed to run git: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "`{}` is not inside a readable git worktree",
+            path.display()
+        ));
+    }
+    Ok(PathBuf::from(
+        String::from_utf8_lossy(&output.stdout).trim(),
+    ))
+}
+
+fn git_commit_id(repo: &Path, revision: &str) -> Result<String, String> {
+    let output = Command::new("git")
+        .args([
+            "-C",
+            &repo.display().to_string(),
+            "rev-parse",
+            "--verify",
+            &format!("{revision}^{{commit}}"),
+        ])
+        .output()
+        .map_err(|error| format!("failed to run git: {error}"))?;
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    } else {
+        Err(format!("unknown git revision `{revision}`"))
+    }
+}
+
+fn verification_marker_path(repo: &Path, commit: &str, sidecar: &Path) -> Result<PathBuf, String> {
+    let relative = sidecar.strip_prefix(repo).map_err(|_| {
+        format!(
+            "`{}` is outside git worktree `{}`",
+            sidecar.display(),
+            repo.display()
+        )
+    })?;
+    let mut hasher = DefaultHasher::new();
+    relative.hash(&mut hasher);
+    let output = Command::new("git")
+        .args([
+            "-C",
+            &repo.display().to_string(),
+            "rev-parse",
+            "--git-path",
+            INCREMENTAL_CACHE_SCHEMA,
+        ])
+        .output()
+        .map_err(|error| format!("failed to locate git metadata: {error}"))?;
+    if !output.status.success() {
+        return Err("git did not expose its metadata path".to_string());
+    }
+    let root = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
+    let root = if root.is_absolute() {
+        root
+    } else {
+        repo.join(root)
+    };
+    Ok(root.join(commit).join(format!("{:016x}", hasher.finish())))
+}
+
+fn verifier_fingerprint() -> Result<&'static str, String> {
+    static FINGERPRINT: OnceLock<Result<String, String>> = OnceLock::new();
+    FINGERPRINT
+        .get_or_init(|| {
+            let executable = env::current_exe()
+                .map_err(|error| format!("failed to locate the Click executable: {error}"))?;
+            let bytes = fs::read(&executable).map_err(|error| {
+                format!(
+                    "failed to fingerprint Click executable `{}`: {error}",
+                    executable.display()
+                )
+            })?;
+            let mut hasher = DefaultHasher::new();
+            bytes.hash(&mut hasher);
+            Ok(format!("{:016x}", hasher.finish()))
+        })
+        .as_deref()
+        .map_err(Clone::clone)
+}
+
+fn marker_contents(commit: &str, relative: &Path, fingerprint: &str) -> String {
+    format!(
+        "{INCREMENTAL_CACHE_SCHEMA}\nverifier={fingerprint}\ncommit={commit}\nsidecar={}\n",
+        relative.display()
+    )
+}
+
+fn valid_marker(contents: &str, commit: &str, relative: &Path, fingerprint: &str) -> bool {
+    contents == marker_contents(commit, relative, fingerprint)
+}
+
+fn has_full_verification_marker(repo: &Path, commit: &str, sidecar: &Path) -> Result<bool, String> {
+    let marker = verification_marker_path(repo, commit, sidecar)?;
+    let relative = sidecar.strip_prefix(repo).map_err(|_| {
+        format!(
+            "`{}` is outside git worktree `{}`",
+            sidecar.display(),
+            repo.display()
+        )
+    })?;
+    let fingerprint = verifier_fingerprint()?;
+    match fs::read_to_string(marker) {
+        Ok(contents) => Ok(valid_marker(&contents, commit, relative, fingerprint)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(_) => Ok(false),
+    }
+}
+
+fn record_full_verification(sidecar: &Path) -> Result<(), String> {
+    let sidecar = fs::canonicalize(sidecar)
+        .map_err(|error| format!("failed to resolve `{}`: {error}", sidecar.display()))?;
+    let repo = git_repo_root(&sidecar)?;
+    let commit = git_commit_id(&repo, "HEAD")?;
+    let relative = sidecar.strip_prefix(&repo).map_err(|_| {
+        format!(
+            "`{}` is outside git worktree `{}`",
+            sidecar.display(),
+            repo.display()
+        )
+    })?;
+    let (click_source, _) = load_sidecar(&sidecar)?;
+    let mut tracked = vec![relative.to_path_buf()];
+    let parent = relative.parent().unwrap_or_else(|| Path::new(""));
+    tracked.extend(
+        verifying_source_paths(&click_source)
+            .map_err(click_message)?
+            .into_iter()
+            .map(|name| parent.join(name)),
+    );
+    for path in &tracked {
+        let status = Command::new("git")
+            .args([
+                "-C",
+                &repo.display().to_string(),
+                "ls-files",
+                "--error-unmatch",
+                "--",
+            ])
+            .arg(path)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map_err(|error| format!("failed to inspect tracked sources: {error}"))?;
+        if !status.success() {
+            return Ok(());
+        }
+    }
+    for staged in [false, true] {
+        let mut command = Command::new("git");
+        command.args(["-C", &repo.display().to_string(), "diff"]);
+        if staged {
+            command.arg("--cached");
+        }
+        command.arg("--quiet").arg("HEAD").arg("--");
+        command.args(&tracked);
+        let status = command
+            .status()
+            .map_err(|error| format!("failed to inspect git worktree: {error}"))?;
+        if !status.success() {
+            return Ok(());
+        }
+    }
+    let marker = verification_marker_path(&repo, &commit, &sidecar)?;
+    let parent = marker
+        .parent()
+        .ok_or_else(|| "incremental marker has no parent directory".to_string())?;
+    fs::create_dir_all(parent)
+        .map_err(|error| format!("failed to create `{}`: {error}", parent.display()))?;
+    let temporary = parent.join(format!(".tmp-{}", std::process::id()));
+    fs::write(
+        &temporary,
+        marker_contents(&commit, relative, verifier_fingerprint()?),
+    )
+    .map_err(|error| format!("failed to write `{}`: {error}", temporary.display()))?;
+    fs::rename(&temporary, &marker)
+        .map_err(|error| format!("failed to install `{}`: {error}", marker.display()))?;
+    Ok(())
+}
+
+fn git_show(repo: &Path, revision: &str, path: &Path) -> Result<Option<String>, String> {
+    let relative = path.strip_prefix(repo).map_err(|_| {
+        format!(
+            "`{}` is outside git worktree `{}`",
+            path.display(),
+            repo.display()
+        )
+    })?;
+    let spec = format!("{revision}:{}", relative.display());
+    let output = Command::new("git")
+        .args(["-C", &repo.display().to_string(), "show", &spec])
+        .output()
+        .map_err(|error| format!("failed to run git: {error}"))?;
+    if output.status.success() {
+        Ok(Some(String::from_utf8_lossy(&output.stdout).into_owned()))
+    } else {
+        Ok(None)
+    }
+}
+
+fn load_baseline_sidecar(
+    repo: &Path,
+    revision: &str,
+    click_path: &Path,
+) -> Result<Option<LoadedSidecar>, String> {
+    let Some(click_source) = git_show(repo, revision, click_path)? else {
+        return Ok(None);
+    };
+    let parent = click_path.parent().unwrap_or_else(|| Path::new("."));
+    let mut sources = Vec::new();
+    for name in verifying_source_paths(&click_source).map_err(click_message)? {
+        let source_path = parent.join(&name);
+        let Some(source) = git_show(repo, revision, &source_path)? else {
+            return Ok(None);
+        };
+        sources.push((name, source));
+    }
+    Ok(Some((click_source, sources)))
 }
 
 /// Shows a discovered sidecar relative to the directory the user named, since
@@ -149,6 +571,9 @@ fn verify_file(click_path: &Path, time_limit: Duration) -> Result<(), String> {
             )
         })
     })?;
+    if let Err(message) = record_full_verification(click_path) {
+        eprintln!("click-verify: warning: could not record incremental baseline: {message}");
+    }
     Ok(())
 }
 
@@ -175,7 +600,7 @@ fn verify_location(
     Ok(())
 }
 
-fn load_sidecar(click_path: &Path) -> Result<(String, Vec<(String, String)>), String> {
+fn load_sidecar(click_path: &Path) -> Result<LoadedSidecar, String> {
     let click_source = fs::read_to_string(click_path)
         .map_err(|error| format!("failed to read `{}`: {error}", click_path.display()))?;
     let sources = read_verifying_sources(click_path, &click_source)?;
@@ -200,6 +625,8 @@ mod tests {
             Ok(Arguments {
                 target: "example.click".to_string(),
                 time_limit: DEFAULT_TIME_LIMIT,
+                changed_since: None,
+                explain: false,
             })
         );
         assert_eq!(
@@ -211,6 +638,22 @@ mod tests {
             Ok(Arguments {
                 target: "example.click".to_string(),
                 time_limit: Duration::from_millis(250),
+                changed_since: None,
+                explain: false,
+            })
+        );
+        assert_eq!(
+            parse_arguments([
+                "--changed-since".to_string(),
+                "HEAD~1".to_string(),
+                "--explain".to_string(),
+                "examples".to_string(),
+            ]),
+            Ok(Arguments {
+                target: "examples".to_string(),
+                time_limit: DEFAULT_TIME_LIMIT,
+                changed_since: Some("HEAD~1".to_string()),
+                explain: true,
             })
         );
     }
@@ -233,5 +676,21 @@ mod tests {
         let sidecars =
             files_with_extension(&projects[0], "click").expect("sidecars should be listed");
         assert!(!sidecars.is_empty());
+    }
+
+    #[test]
+    fn corrupted_or_mismatched_incremental_markers_are_cache_misses() {
+        let path = Path::new("examples/sample.click");
+        let valid = marker_contents("abc123", path, "verifier-a");
+        assert!(valid_marker(&valid, "abc123", path, "verifier-a"));
+        assert!(!valid_marker("truncated", "abc123", path, "verifier-a"));
+        assert!(!valid_marker(&valid, "different", path, "verifier-a"));
+        assert!(!valid_marker(&valid, "abc123", path, "verifier-b"));
+        assert!(!valid_marker(
+            &valid,
+            "abc123",
+            Path::new("examples/other.click"),
+            "verifier-a"
+        ));
     }
 }

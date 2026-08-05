@@ -2100,6 +2100,153 @@ pub fn verify_c0_sources(
     })
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct C0IncrementalSelection {
+    pub selected_functions: Vec<String>,
+    pub reused_functions: Vec<String>,
+    pub reasons: Vec<String>,
+    pub full_rebuild: bool,
+}
+
+pub fn c0_function_names(
+    click_source: &str,
+    c_sources: &[(&str, &str)],
+) -> Result<Vec<String>, ClickError> {
+    Ok(parse_c0_click_file(click_source, c_sources)?
+        .function_blocks()
+        .iter()
+        .map(|function| function.signature().name().to_string())
+        .collect())
+}
+
+/// Compares two parsed versions of one sidecar and returns the current
+/// functions whose proofs may be affected. Comments and formatting disappear
+/// during parsing; changes to shared logical definitions conservatively select
+/// every current function. Function-local C or Click changes select that
+/// function and its transitive callers in the union of the old and new call
+/// graphs.
+pub fn c0_incremental_selection(
+    current_click_source: &str,
+    current_c_sources: &[(&str, &str)],
+    baseline_click_source: &str,
+    baseline_c_sources: &[(&str, &str)],
+) -> Result<C0IncrementalSelection, ClickError> {
+    let current_file = parse_c0_click_file(current_click_source, current_c_sources)?;
+    let baseline_file = parse_c0_click_file(baseline_click_source, baseline_c_sources)?;
+    let current_source_map = current_c_sources
+        .iter()
+        .copied()
+        .collect::<BTreeMap<_, _>>();
+    let baseline_source_map = baseline_c_sources
+        .iter()
+        .copied()
+        .collect::<BTreeMap<_, _>>();
+    let current_parsed = parse_verified_sources(&current_file, &current_source_map)?;
+    let baseline_parsed = parse_verified_sources(&baseline_file, &baseline_source_map)?;
+    let current_blocks = current_file
+        .function_blocks()
+        .iter()
+        .map(|function| (function.signature().name().to_string(), function))
+        .collect::<BTreeMap<_, _>>();
+    let baseline_blocks = baseline_file
+        .function_blocks()
+        .iter()
+        .map(|function| (function.signature().name().to_string(), function))
+        .collect::<BTreeMap<_, _>>();
+    let current_names = current_blocks.keys().cloned().collect::<BTreeSet<_>>();
+
+    let shared_environment_changed = current_file.predicate_definitions()
+        != baseline_file.predicate_definitions()
+        || current_file.click_function_definitions() != baseline_file.click_function_definitions()
+        || current_file.resource_definitions() != baseline_file.resource_definitions()
+        || current_file.theorem_definitions() != baseline_file.theorem_definitions();
+    if shared_environment_changed {
+        return Ok(C0IncrementalSelection {
+            selected_functions: current_names.iter().cloned().collect(),
+            reused_functions: Vec::new(),
+            reasons: vec![
+                "shared predicate, pure function, resource, or theorem definitions changed"
+                    .to_string(),
+            ],
+            full_rebuild: true,
+        });
+    }
+
+    let all_names = current_blocks
+        .keys()
+        .chain(baseline_blocks.keys())
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let mut changed = BTreeSet::new();
+    let mut reasons = Vec::new();
+    for name in all_names {
+        let click_changed = current_blocks.get(&name) != baseline_blocks.get(&name);
+        let c_changed = current_parsed.get(&name) != baseline_parsed.get(&name);
+        if click_changed || c_changed {
+            changed.insert(name.clone());
+            reasons.push(format!(
+                "`{name}` {} changed",
+                match (click_changed, c_changed) {
+                    (true, true) => "C body/signature and Click contract/proof",
+                    (true, false) => "Click contract/proof",
+                    (false, true) => "C body/signature or imported layout",
+                    (false, false) => unreachable!(),
+                }
+            ));
+        }
+    }
+
+    let mut reverse = BTreeMap::<String, BTreeSet<String>>::new();
+    for parsed in [&current_parsed, &baseline_parsed] {
+        for (caller, (_, function)) in parsed {
+            for dependency in c0_statement_calls(function.body()).into_iter().flatten() {
+                reverse
+                    .entry(dependency)
+                    .or_default()
+                    .insert(caller.clone());
+            }
+        }
+    }
+    let mut affected = changed.clone();
+    let mut pending = changed.into_iter().collect::<Vec<_>>();
+    while let Some(name) = pending.pop() {
+        for caller in reverse.get(&name).into_iter().flatten() {
+            if affected.insert(caller.clone()) {
+                reasons.push(format!("`{caller}` calls affected function `{name}`"));
+                pending.push(caller.clone());
+            }
+        }
+    }
+    affected.retain(|name| current_names.contains(name));
+    let reused = current_names
+        .difference(&affected)
+        .cloned()
+        .collect::<Vec<_>>();
+    Ok(C0IncrementalSelection {
+        selected_functions: affected.into_iter().collect(),
+        reused_functions: reused,
+        reasons,
+        full_rebuild: false,
+    })
+}
+
+/// Verifies a selected function set and its transitive callees in one native
+/// verifier transaction.
+pub fn verify_c0_sources_functions(
+    click_source: &str,
+    c_sources: &[(&str, &str)],
+    functions: impl IntoIterator<Item = String>,
+) -> Result<Vec<VerifiedCTheorem>, ClickError> {
+    let functions = functions.into_iter().collect::<BTreeSet<_>>();
+    instrumentation::with_default_tactic_limits(|| {
+        verify_c0_sources_targeted(
+            click_source,
+            c_sources,
+            Some(VerificationTarget::Functions(functions)),
+        )
+    })
+}
+
 fn verify_c0_sources_with_limits(
     click_source: &str,
     c_sources: &[(&str, &str)],
@@ -2183,6 +2330,7 @@ impl C0VerificationSession {
                 .theorem_definitions()
                 .iter()
                 .any(|theorem| theorem.name() == name),
+            VerificationTarget::Functions(_) => false,
         };
         if !target_exists_in_baseline {
             return Err(ClickError::new(
@@ -2204,6 +2352,7 @@ impl C0VerificationSession {
                     .without_verified_function_rule(function_name),
             ),
             VerificationTarget::Theorem(_) => None,
+            VerificationTarget::Functions(_) => None,
         };
         verify_c0_sources_with_environment(
             click_source,
@@ -2268,6 +2417,17 @@ fn verify_c0_sources_with_environment(
                             function_name,
                         )?)
                     }
+                }
+                Some(VerificationTarget::Functions(function_names)) => {
+                    let mut required = BTreeSet::new();
+                    for function_name in function_names {
+                        required.extend(verification_required_functions(
+                            &file,
+                            &parsed_sources,
+                            function_name,
+                        )?);
+                    }
+                    Some(required)
                 }
                 Some(VerificationTarget::Theorem(_)) => Some(BTreeSet::new()),
                 None => None,

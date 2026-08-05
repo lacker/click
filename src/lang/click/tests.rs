@@ -9121,3 +9121,73 @@ fn unrelated_non_comparison_conditions_are_not_polarity_equivalent() {
     );
     assert!(condition_polarity_equivalent(&less_than, &greater_equal));
 }
+
+#[test]
+fn incremental_selection_follows_reverse_call_dependencies_and_ignores_comments() {
+    let sources = [
+        ("leaf.c", "int32 leaf(int32 x) { return x; }"),
+        (
+            "middle.c",
+            "int32 middle(int32 x) { int32 y = leaf(x); return y; }",
+        ),
+        (
+            "top.c",
+            "int32 top(int32 x) { int32 y = middle(x); return y; }",
+        ),
+        ("unrelated.c", "int32 unrelated(int32 x) { return x; }"),
+    ];
+    let baseline = r#"
+verifying "leaf.c";
+verifying "middle.c";
+verifying "top.c";
+verifying "unrelated.c";
+int32 leaf(int32 x) { ensures result == x; } by simp;
+int32 middle(int32 x) { ensures result == x; } by auto;
+int32 top(int32 x) { ensures result == x; } by auto;
+int32 unrelated(int32 x) { ensures result == x; } by auto;
+"#;
+    let changed = baseline.replacen("} by simp;", "} by auto;", 1);
+    let selection = c0_incremental_selection(&changed, &sources, baseline, &sources).unwrap();
+    assert_eq!(selection.selected_functions, ["leaf", "middle", "top"]);
+    assert_eq!(selection.reused_functions, ["unrelated"]);
+    assert!(!selection.full_rebuild);
+    let incremental =
+        verify_c0_sources_functions(&changed, &sources, selection.selected_functions.clone());
+    let clean = verify_c0_sources(&changed, &sources);
+    assert!(clean.is_ok(), "clean verification failed: {clean:?}");
+    assert_eq!(incremental.is_ok(), clean.is_ok(), "{incremental:?}");
+
+    let commented_sources = [
+        (
+            "leaf.c",
+            "// formatting-only edit\nint32 leaf(int32 x) { return x; }",
+        ),
+        sources[1],
+        sources[2],
+        sources[3],
+    ];
+    let unchanged =
+        c0_incremental_selection(baseline, &commented_sources, baseline, &sources).unwrap();
+    assert!(unchanged.selected_functions.is_empty(), "{unchanged:?}");
+    assert_eq!(unchanged.reused_functions.len(), 4);
+}
+
+#[test]
+fn incremental_selection_rebuilds_all_functions_for_shared_logic_changes() {
+    let sources = [
+        ("first.c", "int32 first(int32 x) { return x; }"),
+        ("second.c", "int32 second(int32 x) { return x; }"),
+    ];
+    let baseline = r#"
+verifying "first.c";
+verifying "second.c";
+predicate allowed(x: int32) { x == x }
+int32 first(int32 x) { ensures result == x; } by simp;
+int32 second(int32 x) { ensures result == x; } by simp;
+"#;
+    let changed = baseline.replace("x == x", "x == 0");
+    let selection = c0_incremental_selection(&changed, &sources, baseline, &sources).unwrap();
+    assert!(selection.full_rebuild);
+    assert_eq!(selection.selected_functions, ["first", "second"]);
+    assert!(selection.reused_functions.is_empty());
+}

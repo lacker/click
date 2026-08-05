@@ -248,6 +248,35 @@ timing, set `CLICK_TIMINGS=1`; add `CLICK_TIMING_STARTS=1` when an externally
 interrupted run should identify its active statement. Raw tactic events include
 `class simple`, `class smart`, or `class control`.
 
+### Dependency-aware incremental verification
+
+After a clean full verification, Click records a small atomic success marker
+inside Git metadata for that exact commit, sidecar, and Click executable. It
+records a marker only when the sidecar and its declared C sources match `HEAD`;
+interrupted or dirty verification cannot attest a baseline.
+
+Use the attested commit as a semantic comparison point:
+
+```sh
+click verify --changed-since HEAD~1 --explain examples/my-project
+click verify --changed-since HEAD~1 examples/my-project
+```
+
+`--explain` is a dry run. The report lists selected functions, unchanged
+functions whose baseline result is reused, and bounded reasons. Click compares
+parsed C bodies, imported layouts, Click contracts, and proofs, so comments and
+formatting do not invalidate results. A changed function selects its transitive
+callers; the native verifier checks that set and its callees in one transaction.
+Changes to shared predicates, pure functions, resources, or theorems select the
+whole sidecar.
+
+A different verifier executable (which includes its parser, kernel, proof
+engine, builtins, and embedded standard library), a missing or corrupt marker,
+an absent baseline source, and cache-schema drift all fall back to ordinary full
+verification. The marker contains no theorem or proof object: it only attests
+that the reference full gate passed. Full `click verify` remains the reference
+release check.
+
 ### Auditing smart-tactic expansion
 
 Use `click audit` for a slow, exhaustive check of the source-expansion
@@ -302,7 +331,16 @@ audit handles that file. Each site gets these checks:
    strictly shrinks. A path-aligned certificate may remove multiple symmetric
    occurrences at once.
 
-A passing site prints all phase timings:
+A passing audit prints one bounded row per claim by default:
+
+```text
+CLAIM [2/25] examples/owned-vector/vector.click  vector_copy.ensures_0 (1 sites) ... ok (1 sites)
+```
+
+Repeat `--claim LABEL` to select exact named proof units. Unknown labels are an
+error; labels present in multiple sidecars are rejected as ambiguous unless the
+audit target is narrowed to one sidecar. `--verbose` prints all per-site phase
+timings:
 
 ```text
 [1/26] examples/input-cursor/input_cursor.click:8:9  incremented_zero_is_one.ensures_0 (simp) ... ok (expand 22ms, verify 29ms, cold original 37ms, cold rewritten 35ms, reexpand 23ms)
@@ -332,6 +370,9 @@ counting deadline exhaustion as a Click check failure.
 | `--verification-time-limit` | 5m | retained and cold proof-unit verification |
 | `--performance-slack` | 500ms | minimum same-run regression in addition to the 2x ratio |
 | `--time-limit` | 10m | the whole run's wall clock |
+
+`--claim` and `--verbose` are selection/presentation controls and are retained
+in resume commands; they do not weaken any selected site's checks.
 
 `--discovery-time-limit` remains as a compatibility alias for
 `--session-time-limit`; `--slow-site-limit` is a compatibility alias for

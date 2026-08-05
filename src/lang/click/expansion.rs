@@ -239,6 +239,7 @@ fn collect_smart_script_sites(
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) enum VerificationTarget {
     Function(String),
+    Functions(BTreeSet<String>),
     Theorem(String),
 }
 
