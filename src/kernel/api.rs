@@ -2092,8 +2092,17 @@ pub(crate) fn c_pointer_offsets_proven_equal_for_effect(
     right: &PointerOffsetTerm,
     assumptions: &Assumptions,
 ) -> bool {
+    if crate::instrumentation::deadline_exceeded() {
+        return false;
+    }
     let left = normalize_exact_memory_loads_in_pointer_offset(left, assumptions, 0);
+    if crate::instrumentation::deadline_exceeded() {
+        return false;
+    }
     let right = normalize_exact_memory_loads_in_pointer_offset(right, assumptions, 0);
+    if crate::instrumentation::deadline_exceeded() {
+        return false;
+    }
     left == right
         || assumptions.proves(&Proposition::ConditionIs(
             ConditionTerm::PointerOffsetEqual(Box::new(left), Box::new(right)),
@@ -2106,7 +2115,7 @@ pub(super) fn normalize_exact_memory_loads_in_pointer_offset(
     assumptions: &Assumptions,
     depth: usize,
 ) -> PointerOffsetTerm {
-    if depth >= 64 {
+    if depth >= 64 || crate::instrumentation::deadline_exceeded() {
         return offset.clone();
     }
     match offset {
@@ -2127,7 +2136,7 @@ pub(super) fn normalize_exact_memory_loads_in_bitvector(
     assumptions: &Assumptions,
     depth: usize,
 ) -> Bitvector32Term {
-    if depth >= 64 {
+    if depth >= 64 || crate::instrumentation::deadline_exceeded() {
         return term.clone();
     }
     let binary = |left: &Bitvector32Term, right: &Bitvector32Term| {
@@ -2222,6 +2231,19 @@ pub(super) fn normalize_exact_memory_loads_in_bitvector(
             normalize_exact_memory_loads_in_bitvector(&value, assumptions, depth + 1)
         }
     }
+}
+
+#[cfg(test)]
+#[test]
+fn effect_pointer_equality_stops_at_the_verification_deadline() {
+    let offset = PointerOffsetTerm::Constant(0);
+    crate::instrumentation::with_deadline(std::time::Duration::ZERO, || {
+        assert!(!c_pointer_offsets_proven_equal_for_effect(
+            &offset,
+            &offset,
+            &Assumptions::new(),
+        ));
+    });
 }
 
 #[derive(Clone, Debug)]

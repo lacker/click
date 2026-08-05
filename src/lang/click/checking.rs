@@ -3036,6 +3036,17 @@ pub(super) fn prove_effect_clause_exact(
     )
 }
 
+fn check_effect_planning_deadline() -> Result<(), ClickError> {
+    if crate::instrumentation::deadline_exceeded() {
+        Err(ClickError::new(format!(
+            "verification time limit exceeded inside {}",
+            crate::instrumentation::deadline_context()
+        )))
+    } else {
+        Ok(())
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) fn plan_effect_clause_derivations(
     claim_label: &str,
@@ -3048,6 +3059,7 @@ pub(super) fn plan_effect_clause_derivations(
     pre_state: &CState,
     outcome: &CFunctionOutcome,
 ) -> Result<Vec<PropositionDerivation>, ClickError> {
+    check_effect_planning_deadline()?;
     let CFunctionOutcome::Return { .. } = outcome else {
         return Err(ClickError::new(format!(
             "`{claim_label}` failed on path {path_index}: {}",
@@ -3098,19 +3110,19 @@ pub(super) fn plan_effect_clause_derivations(
     writes.retain(|pointer| is_preexisting_effect_pointer(pointer, pre_state));
 
     for pointer in &writes {
-        let Some(selected) = segments.iter().find_map(|segment| {
+        check_effect_planning_deadline()?;
+        let selected = segments.iter().find_map(|segment| {
+            if crate::instrumentation::deadline_exceeded() {
+                return None;
+            }
             let goals = pointer_containment_goals(segment, pointer, &assumptions)?;
             goals
                 .into_iter()
                 .map(|goal| assumptions.derive_proposition(&goal))
                 .collect::<Option<Vec<_>>>()
-        }) else {
-            if crate::instrumentation::deadline_exceeded() {
-                return Err(ClickError::new(format!(
-                    "verification time limit exceeded inside {}",
-                    crate::instrumentation::deadline_context()
-                )));
-            }
+        });
+        check_effect_planning_deadline()?;
+        let Some(selected) = selected else {
             return prove_effect_clause(
                 claim_label,
                 path_index,
@@ -3142,19 +3154,19 @@ pub(super) fn plan_effect_clause_derivations(
         .flatten()
         .filter(|range| is_preexisting_effect_pointer(range.base(), pre_state))
     {
-        let Some(selected) = segments.iter().find_map(|segment| {
+        check_effect_planning_deadline()?;
+        let selected = segments.iter().find_map(|segment| {
+            if crate::instrumentation::deadline_exceeded() {
+                return None;
+            }
             let goals = range_containment_goals(segment, range, &assumptions)?;
             goals
                 .into_iter()
                 .map(|goal| assumptions.derive_proposition(&goal))
                 .collect::<Option<Vec<_>>>()
-        }) else {
-            if crate::instrumentation::deadline_exceeded() {
-                return Err(ClickError::new(format!(
-                    "verification time limit exceeded inside {}",
-                    crate::instrumentation::deadline_context()
-                )));
-            }
+        });
+        check_effect_planning_deadline()?;
+        let Some(selected) = selected else {
             return prove_effect_clause(
                 claim_label,
                 path_index,
