@@ -180,6 +180,13 @@ closes the postconditions currently provable. Facts established after a closing
 step do not retroactively affect it. All certificates for one symbolic path use
 the same finalized specification.
 
+Inside a proof-level `if`, post-execution tactics apply only to execution paths
+compatible with that branch's checked condition. In particular, `frame()` does
+not plan certificates for a contradictory sibling outcome and then align them
+by vector position. Branch-local expansion therefore preserves the sibling's
+proof text and reports a compact `pN` path identifier if surface and execution
+coverage ever diverge.
+
 ## Pure Theorems
 
 Pure theorem declarations prove Click propositions without attaching the proof

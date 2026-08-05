@@ -4019,7 +4019,7 @@ fn append_surface_tactics_by_leaf(
         Ok(())
     } else {
         Err(format!(
-            "surface proof has {next_path} leaves but frame certificate has {} paths",
+            "surface/certificate path coverage diverged at p{next_path}: surface has {next_path} paths but frame certificate has {}",
             path_tactics.len()
         ))
     }
@@ -19865,6 +19865,64 @@ fn replay_linear_tactics(
                     }
                     let mut path_facts = requirement_pure_facts.clone();
                     path_facts.extend(path.facts().iter().map(|fact| fact.proposition().clone()));
+                    let mut compatible = true;
+                    if !replay.case_assumptions.is_empty() {
+                        let CFunctionOutcome::Return {
+                            value: result,
+                            state: post_state,
+                        } = path.outcome()
+                        else {
+                            return Err(ClickError::new(format!(
+                                "`{claim_label}` tactic {tactic_index}: proof-branch `frame` requires a return outcome"
+                            )));
+                        };
+                        for case in &replay.case_assumptions {
+                            let fact = if let Some(fact) = &case.fact {
+                                fact.clone()
+                            } else {
+                                let condition = lower_outcome_proposition_with_program_points(
+                                    parsed_function.parameters(),
+                                    arguments,
+                                    pre_state,
+                                    post_state,
+                                    result,
+                                    &path_facts,
+                                    &case.condition,
+                                    predicate_environment,
+                                    click_function_environment,
+                                    &replay.program_point_states,
+                                )
+                                .map_err(|message| {
+                                    ClickError::new(format!(
+                                        "`{claim_label}` tactic {tactic_index}: could not align frame path with proof branch: {message}"
+                                    ))
+                                })?;
+                                if case.value {
+                                    condition
+                                } else {
+                                    Proposition::Not(Box::new(condition))
+                                }
+                            };
+                            let mut case_facts = path_facts.clone();
+                            case_facts.push(fact.clone());
+                            if path_facts
+                                .iter()
+                                .any(|available| propositions_are_exact_negations(available, &fact))
+                                || assumptions_from_propositions(&case_facts)
+                                    .derive_proposition(&false_proposition())
+                                    .is_some()
+                            {
+                                compatible = false;
+                                break;
+                            }
+                            path_facts.push(fact);
+                        }
+                    }
+                    if !compatible {
+                        // A frame planned inside one proof branch owns only
+                        // execution outcomes compatible with that branch.
+                        continue;
+                    }
                     path_derivations.push(plan_effect_clause_derivations(
                         claim_label,
                         path_index,

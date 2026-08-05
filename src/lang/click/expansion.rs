@@ -3256,6 +3256,54 @@ int32 caller(int32 x) {
     }
 
     #[test]
+    fn expands_selected_tactics_in_branched_execution_by_path() {
+        let c_source = r#"int32 write_selected(int32 p[2], int32 flag) {
+    if (flag) {
+        p[0] = 1;
+        return 0;
+    } else {
+        p[1] = 1;
+        return 1;
+    }
+}"#;
+        let click_source = r#"verifying "write_selected.c";
+int32 write_selected(int32 p[2], int32 flag) {
+    consumes p[0..2];
+    mutable p[0..2];
+    ensures result == 0 or result == 1;
+} by {
+    execute();
+    if result == 0 {
+        have result + 1 == 1 by simp;
+        frame();
+    } else {
+        have result - 1 == 0 by simp;
+        frame();
+    }
+    simp();
+}
+"#;
+        let sources = [("write_selected.c", c_source)];
+        verify_c0_sources(click_source, &sources).expect("branched baseline should verify");
+        for (selected_text, selected_smart) in [
+            ("have result + 1", "have result + 1 == 1 by simp"),
+            ("have result - 1", "have result - 1 == 0 by simp"),
+        ] {
+            let selected_offset = click_source.find(selected_text).unwrap();
+            let selected = position_at_offset(click_source, selected_offset);
+
+            let expanded =
+                expand_c0_tactic_source_at(click_source, &sources, selected.line, selected.column)
+                    .expect("one branch's smart have should expand by its execution path");
+
+            assert!(!expanded.contains(selected_smart));
+            assert!(expanded.contains("if result == 0"));
+            verify_c0_sources(&expanded, &sources)
+                .expect("path-aligned branch expansion should replay as a complete proof");
+        }
+    }
+
+    #[test]
     fn pure_theorem_expansion_is_certificate_backed_and_idempotent() {
         let source = r#"theorem incremented_zero_is_one(before: int32, after: int32) {
     requires before == 0;

@@ -1356,4 +1356,55 @@ int32 count_to_one() {
         verify_c0_sources(&source.click_source, &refs)
             .expect("expanded markdown proof should verify");
     }
+
+    #[test]
+    fn branched_expansion_reaches_the_audit_fixed_point() {
+        let directory =
+            std::env::temp_dir().join(format!("click-audit-branched-paths-{}", std::process::id()));
+        if directory.exists() {
+            fs::remove_dir_all(&directory).unwrap();
+        }
+        fs::create_dir(&directory).unwrap();
+        let c_source = r#"int32 write_selected(int32 p[2], int32 flag) {
+    if (flag) { p[0] = 1; return 0; }
+    else { p[1] = 1; return 1; }
+}"#;
+        let click_source = r#"verifying "write_selected.c";
+int32 write_selected(int32 p[2], int32 flag) {
+    consumes p[0..2];
+    mutable p[0..2];
+    ensures result == 0 or result == 1;
+} by {
+    execute();
+    if result == 0 {
+        have result + 1 == 1 by simp;
+        frame();
+    } else {
+        have result - 1 == 0 by simp;
+        frame();
+    }
+    simp();
+}
+"#;
+        let click_path = directory.join("branched.click");
+        fs::write(directory.join("write_selected.c"), c_source).unwrap();
+        fs::write(&click_path, click_source).unwrap();
+        let sites = inventory_sites(std::slice::from_ref(&click_path)).unwrap();
+        let site = sites
+            .iter()
+            .find(|site| site.tactic_name == "have")
+            .expect("the branch should expose an auditable smart have");
+        let expanded = expand_location(&format_location(&site_location(site)))
+            .expect("the audit expansion path should handle branched frames");
+        let source = load_audit_source_from_text(&click_path, expanded.clone()).unwrap();
+        let refs = source_refs(&source.c_sources);
+        verify_c0_sources(&source.click_source, &refs)
+            .expect("the audited branched expansion should verify");
+
+        assert_eq!(
+            reexpand_source(&click_path, &site.claim, &expanded).unwrap(),
+            expanded
+        );
+        fs::remove_dir_all(directory).unwrap();
+    }
 }
