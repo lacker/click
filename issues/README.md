@@ -32,7 +32,9 @@ Runtime-sized allocation/free and the independently verifiable general vector
 push are implemented in focused example projects. Composing allocation, copy,
 replacement, and free into vector growth has one remaining integration task:
 
-1. [Compose runtime allocation into owned-vector growth](owned-vector-runtime-growth.md).
+1. [Preserve loadability evidence in smart-have replay](smart-have-loadability-replay.md).
+2. [Compose runtime allocation into owned-vector growth](owned-vector-runtime-growth.md)
+   after the blocking tooling invariant is restored.
 
 ## Partial correctness and recursion
 
