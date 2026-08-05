@@ -115,6 +115,13 @@ definitions carry their logical facts into the kernel, and fold/unfold,
 loadability, separation, and post-resource checks are performed against the
 exact definition rather than accepted as caller assertions.
 
+When two certified execution paths use different memory snapshots, resource
+representation comparison unfolds each composite against its own snapshot.
+Unfolding replaces the folded parent with its children while they are
+evaluated; keeping both parent and children would create a false ownership
+overlap. The composite definition supplies the checked `contains` and
+`separate` relations used to compare the resulting child contexts.
+
 ## Important Types
 
 In `src/kernel/`:

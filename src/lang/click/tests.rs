@@ -8708,8 +8708,30 @@ fn expanded_read_step_keeps_named_range_separation_premises() {
     )
     .expect("the read step's generated surface certificate should replay");
 
-    verify_c0_sources(&expanded, &[("owned_string_pop.c", c_source)])
-        .expect("the expanded read certificate should verify as a complete proof");
+    let strict_limits = crate::instrumentation::TacticLimits {
+        simple: std::time::Duration::from_secs(30),
+        smart: std::time::Duration::from_millis(100),
+        control: std::time::Duration::from_secs(30),
+    };
+    let deadline_error = crate::instrumentation::with_tactic_limits(strict_limits, || {
+        verify_c0_sources(&expanded, &[("owned_string_pop.c", c_source)])
+    })
+    .expect_err("an over-budget deferred tactic should stop verification directly");
+    assert!(
+        deadline_error.message().contains("time limit exceeded"),
+        "unexpected deferred-tactic failure: {}",
+        deadline_error.message()
+    );
+
+    let generous_limits = crate::instrumentation::TacticLimits {
+        simple: std::time::Duration::from_secs(30),
+        smart: std::time::Duration::from_secs(30),
+        control: std::time::Duration::from_secs(30),
+    };
+    crate::instrumentation::with_tactic_limits(generous_limits, || {
+        verify_c0_sources(&expanded, &[("owned_string_pop.c", c_source)])
+    })
+    .expect("the expanded read certificate should verify as a complete proof");
 }
 
 #[test]

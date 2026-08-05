@@ -4797,11 +4797,32 @@ fn certified_function_path_parts<'a>(
 
 fn resource_contexts_definitionally_equal(
     function: &CFunction,
-    memory: &CMemory,
+    left_memory: &CMemory,
     left: &ResourceContext,
+    right_memory: &CMemory,
     right: &ResourceContext,
     assumptions: &Assumptions,
 ) -> bool {
+    let relation_facts = [(left, left_memory), (right, right_memory)]
+        .into_iter()
+        .flat_map(|(resources, memory)| {
+            resources.facts().iter().filter_map(move |fact| {
+                matches!(fact.resource(), CResource::Composite { .. })
+                    .then(|| {
+                        evaluate_composite_resource_relation_propositions(
+                            fact,
+                            function.composite_resource_definitions(),
+                            memory,
+                            assumptions,
+                        )
+                    })
+                    .flatten()
+            })
+        })
+        .flatten()
+        .collect::<Vec<_>>();
+    let enriched_assumptions = assumptions_with_propositions(assumptions, &relation_facts);
+    let assumptions = &enriched_assumptions;
     let facts_directly_match = |left: &CResourceFact, right: &CResourceFact| match (left, right) {
         (CResourceFact::Own(left), CResourceFact::Own(right))
         | (CResourceFact::View(left), CResourceFact::View(right)) => {
@@ -4824,45 +4845,51 @@ fn resource_contexts_definitionally_equal(
                 || left.satisfies_fact(fact, assumptions)
         })
     };
-    let definitionally_covers = |available: &ResourceContext, required: &ResourceContext| {
-        required.facts().iter().all(|fact| {
-            expose_composite_resource_fact(
-                available,
-                fact,
+    let definitionally_covers =
+        |available: &ResourceContext, required: &ResourceContext, memory: &CMemory| {
+            required.facts().iter().all(|fact| {
+                expose_composite_resource_fact(
+                    available,
+                    fact,
+                    function.composite_resource_definitions(),
+                    memory,
+                    assumptions,
+                )
+                .is_some()
+            })
+        };
+    if left == right || directly_equal(left, right) {
+        return true;
+    }
+    if left_memory == right_memory
+        && ((definitionally_covers(left, right, left_memory)
+            && definitionally_covers(right, left, left_memory))
+            || resource_contexts_definitionally_equivalent_by_consumption(
+                left,
+                right,
                 function.composite_resource_definitions(),
-                memory,
+                left_memory,
                 assumptions,
-            )
-            .is_some()
-        })
-    };
-    if left == right
-        || (definitionally_covers(left, right) && definitionally_covers(right, left))
-        || resource_contexts_definitionally_equivalent_by_consumption(
-            left,
-            right,
-            function.composite_resource_definitions(),
-            memory,
-            assumptions,
-        )
-        || directly_equal(left, right)
+            ))
     {
         return true;
     }
-    let Some(left) = expand_all_composite_resource_facts(
+    let expanded_left = expand_all_composite_resource_facts(
         left,
         function.composite_resource_definitions(),
-        memory,
+        left_memory,
         assumptions,
-    ) else {
-        return false;
-    };
-    let Some(right) = expand_all_composite_resource_facts(
+    );
+    let expanded_right = expand_all_composite_resource_facts(
         right,
         function.composite_resource_definitions(),
-        memory,
+        right_memory,
         assumptions,
-    ) else {
+    );
+    let Some(left) = expanded_left else {
+        return false;
+    };
+    let Some(right) = expanded_right else {
         return false;
     };
 
@@ -6044,6 +6071,7 @@ pub fn c_function_outcomes_definitionally_equal(
                 function,
                 left_state.memory(),
                 left_state.resources(),
+                right_state.memory(),
                 right_state.resources(),
                 assumptions,
             ) || resource_context_definitionally_contains(
@@ -6112,6 +6140,7 @@ pub fn c_function_outcomes_equal_by_store_provenance(
             function,
             left_state.memory(),
             left_state.resources(),
+            right_state.memory(),
             right_state.resources(),
             assumptions,
         ) || resource_context_definitionally_contains(
@@ -6309,6 +6338,7 @@ pub fn certify_c_function_execution_path_resource_representation(
         function,
         return_state.memory(),
         return_state.resources(),
+        desired_state.memory(),
         desired_state.resources(),
         &assumptions,
     );

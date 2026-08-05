@@ -1272,9 +1272,10 @@ fn expand_composite_resource_fact_with_children(
     if definition.parameters().len() != arguments.len() {
         return None;
     }
+    let expansion_base = context.clone().without_exact_representation(composite)?;
     let mut state = CState::new()
         .with_memory(memory.clone())
-        .with_resource_context(context.clone());
+        .with_resource_context(expansion_base.clone());
     for (parameter, argument) in definition.parameters().iter().zip(arguments) {
         if parameter.c_type() != argument.c_type() {
             return None;
@@ -1330,7 +1331,7 @@ fn expand_composite_resource_fact_with_children(
             .map(|fact| CResourceFact::View(fact.resource().clone()))
             .collect()
     };
-    let mut expanded = context.clone().without_exact_representation(composite)?;
+    let mut expanded = expansion_base;
     let missing = children
         .iter()
         .filter(|child| !expanded.facts().contains(child))
@@ -1612,7 +1613,7 @@ pub(super) fn expand_all_composite_resource_facts_and_propositions(
     Some((expanded, propositions))
 }
 
-fn evaluate_composite_resource_relation_propositions(
+pub(super) fn evaluate_composite_resource_relation_propositions(
     composite: &CResourceFact,
     definitions: &[CCompositeResourceDefinition],
     memory: &CMemory,
@@ -1627,9 +1628,7 @@ fn evaluate_composite_resource_relation_propositions(
     if definition.parameters().len() != arguments.len() {
         return None;
     }
-    let mut state = CState::new()
-        .with_memory(memory.clone())
-        .with_resource_context(ResourceContext::new().unchecked_with_fact(composite.clone()));
+    let mut state = CState::new().with_memory(memory.clone());
     for (parameter, argument) in definition.parameters().iter().zip(arguments) {
         if parameter.c_type() != argument.c_type() {
             return None;
@@ -1657,12 +1656,13 @@ fn evaluate_composite_resource_relation_propositions(
     } else {
         &[]
     } {
-        let Ok(Ok(child)) = evaluate_function_resource_spec(
+        let child_result = evaluate_function_resource_spec(
             &state,
             contained,
             &evaluation_assumptions,
             &mut budget,
-        ) else {
+        );
+        let Ok(Ok(child)) = child_result else {
             return None;
         };
         state.resources = state.resources.clone().unchecked_with_fact(child.clone());

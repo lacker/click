@@ -13265,6 +13265,12 @@ fn finish_ordered_proof_replay(
                         }
                     }
                 }
+                if crate::instrumentation::deadline_exceeded() {
+                    return Err(ClickError::new(format!(
+                        "verification time limit exceeded inside {}",
+                        crate::instrumentation::deadline_context()
+                    )));
+                }
             }
 
             if let CFunctionOutcome::Return {
