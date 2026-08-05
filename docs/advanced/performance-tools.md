@@ -128,8 +128,11 @@ manual release/certificate-boundary gate, not part of ordinary `cargo test`.
   smart tactic above the configured threshold. Its default project limit is
   30 seconds.
 - `click expand [--output PATH | --in-place] <sidecar.click|mdtest.md>:<line>:<column>`
-  verifies the rewritten proof unit before writing it. Its default limit is
-  60 seconds; `--time-limit` overrides it.
+  parses and typechecks the sidecar, then verifies only the rewritten proof
+  unit and the transitive contracts it calls before writing it. An unrelated
+  broken proof does not block a targeted repair, and unselected source text is
+  preserved byte-for-byte. Its default limit is 60 seconds; `--time-limit`
+  overrides it.
 - `click audit <sidecar.click|example|mdtest|directory|repository-root>` expands,
   retained-session verifies, compares original and expanded cold verification,
   and checks the claim's smart-site multiset strictly shrinks without

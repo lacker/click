@@ -3191,6 +3191,71 @@ int32 bad(int32 x) {
     }
 
     #[test]
+    fn partial_tactic_expansion_skips_unrelated_broken_proofs() {
+        let good_c = "int32 good(int32 x) { return x; }";
+        let bad_c = "int32 bad(int32 x) { return x; }";
+        let click_source = r#"verifying "good.c";
+verifying "bad.c";
+int32 good(int32 x) {
+    ensures result == x by { execute(); simp(); }
+}
+int32 bad(int32 x) {
+    ensures result == x + 1 by simp;
+}
+"#;
+        let sources = [("good.c", good_c), ("bad.c", bad_c)];
+        verify_c0_sources(click_source, &sources)
+            .expect_err("the unrelated bad proof should fail complete verification");
+        let selected_offset = click_source.find("execute();").unwrap();
+        let selected = position_at_offset(click_source, selected_offset);
+
+        let expanded =
+            expand_c0_tactic_source_at(click_source, &sources, selected.line, selected.column)
+                .expect("partial expansion should verify only the selected function");
+
+        assert_ne!(expanded, click_source);
+        assert_eq!(
+            &expanded[..selected_offset],
+            &click_source[..selected_offset]
+        );
+        let unselected_suffix = &click_source[selected_offset + "execute();".len()..];
+        assert!(expanded.ends_with(unselected_suffix));
+        let relocated =
+            c0_tactic_source_position(&expanded, &sources, "good.ensures_0", 0).unwrap();
+        verify_c0_sources_at(&expanded, &sources, relocated.line, relocated.column)
+            .expect("the expanded selected function should verify independently");
+        verify_c0_sources(&expanded, &sources)
+            .expect_err("whole-file verification should still see the unrelated failure");
+    }
+
+    #[test]
+    fn tactic_expansion_reports_required_dependency_path() {
+        let callee_c = "int32 callee(int32 x) { return x; }";
+        let caller_c = "int32 caller(int32 x) { int32 result; result = callee(x); return result; }";
+        let click_source = r#"verifying "callee.c";
+verifying "caller.c";
+int32 callee(int32 x) {
+    ensures result == x + 1 by { execute(); simp(); }
+}
+int32 caller(int32 x) {
+    ensures result == x by { execute(); simp(); }
+}
+"#;
+        let sources = [("callee.c", callee_c), ("caller.c", caller_c)];
+        let selected = position_at_offset(click_source, click_source.rfind("execute();").unwrap());
+
+        let error =
+            expand_c0_tactic_source_at(click_source, &sources, selected.line, selected.column)
+                .expect_err("a broken required dependency must block expansion");
+
+        assert!(
+            error.message().contains("caller -> callee"),
+            "{}",
+            error.message()
+        );
+    }
+
+    #[test]
     fn pure_theorem_expansion_is_certificate_backed_and_idempotent() {
         let source = r#"theorem incremented_zero_is_one(before: int32, after: int32) {
     requires before == 0;

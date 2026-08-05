@@ -10,8 +10,8 @@ use click::cli::{
     read_mdtest, read_verifying_sources, source_refs,
 };
 use click::lang::click::{
-    C0VerificationSession, c0_smart_tactic_source_sites, c0_tactic_source_position,
-    expand_c0_tactic_source_at,
+    c0_smart_tactic_source_sites, c0_tactic_source_position, expand_c0_tactic_source_at,
+    verify_c0_sources_at,
 };
 
 const USAGE: &str = "usage: click expand [--time-limit <DURATION>] [--output <PATH> | --in-place] <sidecar.click|mdtest.md>:<line>:<column>\n\nExpansion is checked before output. With --in-place, the original is atomically replaced only after targeted verification succeeds.";
@@ -121,13 +121,11 @@ fn run(arguments: &Arguments) -> Result<String, String> {
     })?;
     let owned_sources = read_verifying_sources(&arguments.click_path, &click_source)?;
     let sources = source_refs(&owned_sources);
-    let (session, _) = C0VerificationSession::new(&click_source, &sources)
-        .map_err(|error| error.message().to_string())?;
     let claim = selected_claim(&click_source, &sources, arguments.line, arguments.column)?;
     let expanded =
         expand_c0_tactic_source_at(&click_source, &sources, arguments.line, arguments.column)
             .map_err(|error| error.message().to_string())?;
-    verify_expansion(&session, &expanded, &sources, &claim)?;
+    verify_expansion(&expanded, &sources, &claim)?;
     Ok(expanded)
 }
 
@@ -151,12 +149,10 @@ fn run_mdtest(arguments: &Arguments) -> Result<String, String> {
     })?;
     let click_line = mdtest.click_line(arguments.line)?;
     let sources = source_refs(&mdtest.c_sources);
-    let (session, _) = C0VerificationSession::new(click_source, &sources)
-        .map_err(|error| error.message().to_string())?;
     let claim = selected_claim(click_source, &sources, click_line, arguments.column)?;
     let expanded = expand_c0_tactic_source_at(click_source, &sources, click_line, arguments.column)
         .map_err(|error| error.message().to_string())?;
-    verify_expansion(&session, &expanded, &sources, &claim)?;
+    verify_expansion(&expanded, &sources, &claim)?;
     mdtest.replace_click_source(&markdown, &expanded)
 }
 
@@ -182,16 +178,10 @@ fn selected_claim(
         .ok_or_else(|| "source location does not select a smart tactic".to_string())
 }
 
-fn verify_expansion(
-    session: &C0VerificationSession,
-    expanded: &str,
-    sources: &[(&str, &str)],
-    claim: &str,
-) -> Result<(), String> {
+fn verify_expansion(expanded: &str, sources: &[(&str, &str)], claim: &str) -> Result<(), String> {
     let position = c0_tactic_source_position(expanded, sources, claim, 0)
         .map_err(|error| error.message().to_string())?;
-    session
-        .verify_at(expanded, position.line, position.column)
+    verify_c0_sources_at(expanded, sources, position.line, position.column)
         .map(|_| ())
         .map_err(|error| format!("expanded proof did not verify: {}", error.message()))
 }
@@ -299,5 +289,50 @@ mod tests {
     fn end_of_options_accepts_a_dash_prefixed_location() {
         let arguments = parse_arguments(["--", "-example.click:2:3"].map(str::to_string)).unwrap();
         assert_eq!(arguments.click_path, PathBuf::from("-example.click"));
+    }
+
+    #[test]
+    fn run_expands_selected_unit_despite_unrelated_broken_proof() {
+        let sequence = TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let directory = env::temp_dir().join(format!(
+            "click-expand-isolation-{}-{sequence}",
+            std::process::id()
+        ));
+        fs::create_dir(&directory).unwrap();
+        let good_c = "int32 good(int32 x) { return x; }";
+        let bad_c = "int32 bad(int32 x) { return x; }";
+        let click_source = r#"verifying "good.c";
+verifying "bad.c";
+int32 good(int32 x) {
+    ensures result == x by { execute(); simp(); }
+}
+int32 bad(int32 x) {
+    ensures result == x + 1 by simp;
+}
+"#;
+        let click_path = directory.join("project.click");
+        fs::write(directory.join("good.c"), good_c).unwrap();
+        fs::write(directory.join("bad.c"), bad_c).unwrap();
+        fs::write(&click_path, click_source).unwrap();
+        let sources = [("good.c", good_c), ("bad.c", bad_c)];
+        let position = c0_tactic_source_position(click_source, &sources, "good.ensures_0", 0)
+            .expect("selected tactic should have a source position");
+        let arguments = Arguments {
+            click_path,
+            line: position.line,
+            column: position.column,
+            time_limit: DEFAULT_EXPANSION_TIME_LIMIT,
+            output: None,
+            in_place: false,
+        };
+
+        let expanded = run(&arguments)
+            .expect("the command should ignore an unrelated broken proof during expansion");
+
+        assert_ne!(expanded, click_source);
+        assert!(
+            expanded.ends_with("int32 bad(int32 x) {\n    ensures result == x + 1 by simp;\n}\n")
+        );
+        fs::remove_dir_all(directory).unwrap();
     }
 }

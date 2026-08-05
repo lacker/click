@@ -3712,7 +3712,20 @@ pub(super) fn capture_c0_tactic_expansion(
         return result.map_err(ClickError::new);
     }
     match verification {
-        Err(error) if !error.is_expansion_complete() => Err(error),
+        Err(error) if !error.is_expansion_complete() => {
+            match super::tactic_expansion_dependency_context(
+                click_source,
+                c_sources,
+                &site,
+                source_index,
+            )? {
+                Some(context) => Err(ClickError::new(format!(
+                    "selected tactic expansion failed while checking {context}: {}",
+                    error.message()
+                ))),
+                None => Err(error),
+            }
+        }
         Err(_) => Err(ClickError::new(
             "selected tactic completed without recording an expansion",
         )),

@@ -2833,6 +2833,62 @@ fn tactic_expansion_required_functions(
     Ok(required)
 }
 
+fn tactic_expansion_dependency_context(
+    click_source: &str,
+    c_sources: &[(&str, &str)],
+    site: &ProofSite,
+    tactic_index: usize,
+) -> Result<Option<String>, ClickError> {
+    let ProofSite::FunctionClaim { function_name, .. } = site else {
+        return Ok(None);
+    };
+    let source_map = c_sources.iter().copied().collect::<BTreeMap<_, _>>();
+    let file = parse_c0_click_file(click_source, c_sources)?;
+    let parsed_sources = parse_verified_sources(&file, &source_map)?;
+    let required = tactic_expansion_required_functions(
+        &file,
+        &parsed_sources,
+        (site.clone(), Some(tactic_index)),
+    )?;
+    if required.len() <= 1 {
+        return Ok(None);
+    }
+
+    let mut paths = BTreeMap::from([(function_name.clone(), vec![function_name.clone()])]);
+    let mut pending = vec![function_name.clone()];
+    let mut cursor = 0;
+    while let Some(name) = pending.get(cursor).cloned() {
+        cursor += 1;
+        let Some((_, function)) = parsed_sources.get(&name) else {
+            continue;
+        };
+        let parent_path = paths
+            .get(&name)
+            .cloned()
+            .expect("queued dependency has a recorded path");
+        for dependency in c0_statement_calls(function.body())
+            .into_iter()
+            .flatten()
+            .filter(|dependency| required.contains(dependency))
+        {
+            if paths.contains_key(&dependency) {
+                continue;
+            }
+            let mut path = parent_path.clone();
+            path.push(dependency.clone());
+            paths.insert(dependency.clone(), path);
+            pending.push(dependency);
+        }
+    }
+    let rendered = paths
+        .into_values()
+        .filter(|path| path.len() > 1)
+        .map(|path| path.join(" -> "))
+        .collect::<Vec<_>>();
+    Ok((!rendered.is_empty())
+        .then(|| format!("required dependency paths: {}", rendered.join(", "))))
+}
+
 fn proof_statement_prefix_end(
     tactics: &[ProofTactic],
     selected_tactic: usize,

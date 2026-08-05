@@ -32,14 +32,15 @@ Runtime-sized allocation/free and the independently verifiable general vector
 push are implemented in focused example projects. Composing allocation, copy,
 replacement, and free into vector growth exposed distinct remaining bugs:
 
-1. [Isolate `click expand` to its selected proof unit](click-expand-target-isolation.md).
-2. [Align branched expansion certificates by execution path](branched-expansion-path-alignment.md).
-3. [Reduce the owned-vector certification bottleneck](owned-vector-pipeline-slow.md).
-4. [Apply null free contracts without invalid footprints](conditional-null-free-call-footprint.md).
-5. [Define borrowed-resource lifetime at `free`](borrowed-resource-lifetime-at-free.md).
-6. [Authorize `free` effects from owned allocation resources](owned-allocation-free-effects.md).
-7. [Preserve unchanged loads across opaque calls](opaque-call-unchanged-loads.md).
-8. [Compose runtime allocation into owned-vector growth](owned-vector-runtime-growth.md)
+1. [Preserve folded resources across expanded execution replay](expanded-execute-resource-replay.md).
+2. [Isolate verifier state between parallel tests](parallel-test-proof-isolation.md).
+3. [Align branched expansion certificates by execution path](branched-expansion-path-alignment.md).
+4. [Reduce the owned-vector certification bottleneck](owned-vector-pipeline-slow.md).
+5. [Apply null free contracts without invalid footprints](conditional-null-free-call-footprint.md).
+6. [Define borrowed-resource lifetime at `free`](borrowed-resource-lifetime-at-free.md).
+7. [Authorize `free` effects from owned allocation resources](owned-allocation-free-effects.md).
+8. [Preserve unchanged loads across opaque calls](opaque-call-unchanged-loads.md).
+9. [Compose runtime allocation into owned-vector growth](owned-vector-runtime-growth.md)
    after the blocking invariants above are restored.
 
 ## Partial correctness and recursion
