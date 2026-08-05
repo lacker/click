@@ -322,6 +322,14 @@ base context; final certification remains responsible for discharging that
 frontier. These evaluation orders are logically neutral, but prevent ordinary
 verified-call chains from repeatedly scanning every earlier call fact.
 
+Smart execution and exact certification share the same bounded order
+derivations. In particular, a strict upper bound justifies the non-wrapping
+step from `x` to `x + 1` even when the two `x` loads use memory snapshots
+connected by deterministic derivation edges. Resource separation also treats
+intrinsically distinct pointer blocks as context-free evidence. Consequently,
+an opaque-call premise proved during search always has a replayable derivation
+rather than becoming an assumed verification condition.
+
 Universal introduction treats the quantified variable as a binder, not as an
 ambient free variable with the same numeric identifier. Facts containing that
 free identifier are shadowed while checking the body, and explicit derivations

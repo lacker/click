@@ -5388,9 +5388,6 @@ fn minimal_proposition_derivation(
     {
         return Some(derivation);
     }
-    if condition_derivation_has_deep_terms(proposition) {
-        return None;
-    }
     let derive = |facts: &[Proposition]| {
         let assumptions = assumptions_from_propositions(facts);
         assumptions

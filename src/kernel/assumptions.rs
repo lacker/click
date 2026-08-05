@@ -2186,9 +2186,15 @@ impl Assumptions {
             let target_constant_connection = signed_bitvector_constant(&current)
                 .zip(signed_bitvector_constant(right))
                 .and_then(|(current, right)| (current <= right).then_some(current < right));
+            let target_positive_offset =
+                self.positive_offset_is_proven_above_for_memory_resolution(&current, right);
             if (bitvector_terms_proven_equal_for_memory_resolution(&current, right, self)
+                || target_positive_offset
                 || target_constant_connection.is_some())
-                && (!require_strict || strict_so_far || target_constant_connection == Some(true))
+                && (!require_strict
+                    || strict_so_far
+                    || target_positive_offset
+                    || target_constant_connection == Some(true))
             {
                 return true;
             }
@@ -2221,6 +2227,32 @@ impl Assumptions {
             }
         }
         false
+    }
+
+    fn positive_offset_is_proven_above_for_memory_resolution(
+        &self,
+        base: &Bitvector32Term,
+        term: &Bitvector32Term,
+    ) -> bool {
+        let Some((term_base, addend)) = term.add_const_parts() else {
+            return false;
+        };
+        if addend != 1
+            || !bitvector_terms_proven_equal_for_memory_resolution(&term_base, base, self)
+        {
+            return false;
+        }
+        self.condition_facts.iter().any(|(condition, value)| {
+            matches!(
+                (condition, value),
+                (ConditionTerm::Bitvector32SignedLessThan(left, _), true)
+                    if bitvector_terms_proven_equal_for_memory_resolution(left, base, self)
+            ) || matches!(
+                (condition, value),
+                (ConditionTerm::Bitvector32SignedGreaterThan(_, right), true)
+                    if bitvector_terms_proven_equal_for_memory_resolution(right, base, self)
+            )
+        })
     }
 
     pub(super) fn proves_order_condition_for_memory_resolution(
@@ -2625,7 +2657,9 @@ impl Assumptions {
         let Some((term_base, addend)) = term.add_const_parts() else {
             return false;
         };
-        if &term_base != base || signed_u32_constant(addend).is_none_or(|value| value <= 0) {
+        if !self.bitvector_terms_equal_for_simp(&term_base, base)
+            || signed_u32_constant(addend).is_none_or(|value| value <= 0)
+        {
             return false;
         }
         // A strict upper bound by any int32 value proves that `base` is below
@@ -2639,13 +2673,13 @@ impl Assumptions {
                     (
                         ConditionTerm::Bitvector32SignedLessThan(left, _),
                         true
-                    ) if left.as_ref() == base
+                    ) if self.bitvector_terms_equal_for_simp(left, base)
                 ) || matches!(
                     (condition, value),
                     (
                         ConditionTerm::Bitvector32SignedGreaterThan(_, right),
                         true
-                    ) if right.as_ref() == base
+                    ) if self.bitvector_terms_equal_for_simp(right, base)
                 )
             })
     }
@@ -2711,6 +2745,9 @@ impl Assumptions {
     ) -> Option<bool> {
         if self.bitvector_terms_equal_for_simp(left, right) {
             return Some(false);
+        }
+        if self.positive_offset_is_proven_above_for_simp(left, right) {
+            return Some(true);
         }
         let left = self.signed_constant_after_equality_normalization(left)?;
         let right = self.signed_constant_after_equality_normalization(right)?;
@@ -6428,6 +6465,12 @@ impl Assumptions {
     }
 
     fn proves_resource_separate_inner(&self, left: &CResource, right: &CResource) -> bool {
+        if let (CResource::Memory(left), CResource::Memory(right)) = (left, right)
+            && left.base().blocks_proven_distinct(right.base())
+        {
+            return true;
+        }
+
         if let (CResource::Memory(left), CResource::Memory(right)) = (left, right)
             && left.base() == right.base()
             && let (Some(left_start), Some(left_end), Some(right_start), Some(right_end)) = (

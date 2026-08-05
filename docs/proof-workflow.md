@@ -118,6 +118,11 @@ control flow.
 - `execute();`: build symbolic verification paths from the current
   execution point to function exit. From function entry, this executes the
   whole C0 function. It applies verified abstract loop rules where available.
+  Requirements of opaque calls may be routine consequences of current facts;
+  smart execution retains a checked proposition derivation for each such
+  premise, and expansion emits the corresponding exact source-level facts.
+  Equivalent field loads remain matchable when harmless materialization gives
+  them different memory-snapshot spellings.
 - `execute_until(statement(N));`: execute the current deterministic prefix up
   to the entry of statement region `N`. It can cross verified loops, but an
   unresolved `if` still requires explicit branch entry. It composes with prior
