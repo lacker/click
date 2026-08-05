@@ -32,9 +32,8 @@ These are ordered by priority. A verifier process abort is a stronger failure
 than missing performance guidance, and both come before another feature
 example.
 
-1. [Attribute healthy proof volume to functions and claims](profile-healthy-volume-by-claim.md).
-2. [Make large expansion audits concise and scope-aware](scalable-expansion-audit.md).
-3. [Add dependency-aware incremental verification](incremental-verification.md).
+1. [Make large expansion audits concise and scope-aware](scalable-expansion-audit.md).
+2. [Add dependency-aware incremental verification](incremental-verification.md).
 
 ## Documentation cleanup
 

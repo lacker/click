@@ -12,7 +12,9 @@ use click::cli::{
     read_mdtest, read_verifying_sources, shell_quote, source_refs,
 };
 use click::instrumentation::{self, ActiveVerificationWork, TacticEvent, VerificationEvent};
-use click::lang::click::{SourcePosition, c0_tactic_source_position, verify_c0_sources};
+use click::lang::click::{
+    SourcePosition, c0_smart_tactic_source_sites, c0_tactic_source_position, verify_c0_sources,
+};
 
 const DEFAULT_TIME_LIMIT: Duration = Duration::from_secs(30);
 const MATERIAL_UNATTRIBUTED_FLOOR: Duration = Duration::from_millis(250);
@@ -23,6 +25,7 @@ const CERTIFICATION_PER_CLAIM_LIMIT: Duration = Duration::from_millis(250);
 const CERTIFICATION_PER_PATH_LIMIT: Duration = Duration::from_secs(1);
 const SETUP_PER_FILE_LIMIT: Duration = Duration::from_millis(250);
 const VOLUME_REPORT_THRESHOLD: Duration = Duration::from_secs(1);
+const DEFAULT_TOP_ATTRIBUTION_ROWS: usize = 8;
 
 const USAGE: &str = "\
 usage: click profile [OPTIONS] <sidecar.click|example-project|examples-directory|mdtest.md|mdtests-directory>
@@ -36,11 +39,13 @@ defaults:
   --simple-threshold 500ms  slow simple tactics are verifier bugs; do not expand them
   --control-threshold 2s    inspect slow control-flow containers and their nested steps
   --time-limit 30s          wall-clock limit per project
+  --top 8                   maximum function/claim attribution rows per project
 
 options:
   --smart-threshold <DURATION>
   --simple-threshold <DURATION>
   --control-threshold <DURATION>
+  --top <COUNT>
   --threshold <DURATION>    shorthand setting all three thresholds
   --time-limit <DURATION>";
 
@@ -56,6 +61,7 @@ struct Arguments {
     path: PathBuf,
     thresholds: Thresholds,
     time_limit: Duration,
+    top_attribution_rows: usize,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -145,6 +151,7 @@ struct ProjectProfile {
     unknown_timing: BTreeMap<String, UnknownTiming>,
     accounting: TimeAccounting,
     work: WorkMetrics,
+    attribution: BTreeMap<String, FunctionAttribution>,
     /// Reasons a reported step's source position could not be resolved,
     /// counted. Auto-planned loop-phase certificates carry synthesized tactic
     /// indices that no surface proof has, so those steps are reported with
@@ -194,9 +201,49 @@ struct WorkMetrics {
     functions: usize,
     claims: usize,
     certification_paths: usize,
+    smart_source_sites: usize,
     tactics: BTreeMap<(TacticCategory, String), OperationStats>,
     c_transitions: OperationStats,
     failed_tactics: Vec<StepKey>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct AttributedBuckets {
+    simple: Duration,
+    smart: Duration,
+    control: Duration,
+    certification: Duration,
+    verifier_core: Duration,
+    smart_attempts: usize,
+}
+
+impl AttributedBuckets {
+    fn add_tactic(&mut self, category: TacticCategory, elapsed: Duration) {
+        match category {
+            TacticCategory::Simple => self.simple += elapsed,
+            TacticCategory::Smart => {
+                self.smart += elapsed;
+                self.smart_attempts += 1;
+            }
+            TacticCategory::Control => self.control += elapsed,
+        }
+    }
+
+    fn total(self) -> Duration {
+        self.simple + self.smart + self.control + self.certification + self.verifier_core
+    }
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct ClaimAttribution {
+    buckets: AttributedBuckets,
+    smart_sites: BTreeSet<(PathBuf, usize)>,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct FunctionAttribution {
+    buckets: AttributedBuckets,
+    claims: BTreeMap<String, ClaimAttribution>,
 }
 
 impl WorkMetrics {
@@ -268,7 +315,12 @@ pub(crate) fn entry_with(arguments: impl IntoIterator<Item = String>) -> Result<
             arguments.time_limit,
         )?);
     }
-    print_profiles(&profiles, arguments.thresholds, arguments.time_limit);
+    print_profiles(
+        &profiles,
+        arguments.thresholds,
+        arguments.time_limit,
+        arguments.top_attribution_rows,
+    );
     let failed = profiles
         .iter()
         .filter(|profile| profile.verification_failure.is_some())
@@ -288,6 +340,7 @@ fn parse_arguments(arguments: impl IntoIterator<Item = String>) -> Result<Argume
     let mut common_threshold = None;
     let mut class_threshold_supplied = false;
     let mut time_limit = DEFAULT_TIME_LIMIT;
+    let mut top_attribution_rows = DEFAULT_TOP_ATTRIBUTION_ROWS;
     let mut parse_options = true;
     let mut arguments = arguments.into_iter();
     while let Some(argument) = arguments.next() {
@@ -338,6 +391,16 @@ fn parse_arguments(arguments: impl IntoIterator<Item = String>) -> Result<Argume
                     .ok_or_else(|| format!("missing duration after `--time-limit`\n{USAGE}"))?;
                 time_limit = parse_duration(&source)?;
             }
+            "--top" => {
+                let source = arguments
+                    .next()
+                    .ok_or_else(|| format!("missing count after `--top`\n{USAGE}"))?;
+                top_attribution_rows = source
+                    .parse::<usize>()
+                    .ok()
+                    .filter(|count| *count > 0)
+                    .ok_or_else(|| "`--top` must be a positive integer".to_string())?;
+            }
             _ if argument.starts_with('-') => {
                 return Err(format!("unknown option `{argument}`\n{USAGE}"));
             }
@@ -359,6 +422,7 @@ fn parse_arguments(arguments: impl IntoIterator<Item = String>) -> Result<Argume
         path: path.ok_or_else(|| USAGE.to_string())?,
         thresholds,
         time_limit,
+        top_attribution_rows,
     })
 }
 
@@ -431,8 +495,36 @@ fn profile_target(
     .map_err(|message| format!("while profiling `{}`: {message}", project.display()))?;
     finish_time_accounting(&mut profile, wall_elapsed);
     profile.verification_failure = verification.err();
+    profile.work.smart_source_sites = count_smart_source_sites(&events)?;
     resolve_source_positions(&mut profile)?;
     Ok(profile)
+}
+
+fn count_smart_source_sites(events: &[VerificationEvent]) -> Result<usize, String> {
+    let paths = events
+        .iter()
+        .filter_map(|event| match event {
+            VerificationEvent::Source(path) => Some(path.clone()),
+            _ => None,
+        })
+        .collect::<BTreeSet<_>>();
+    paths.into_iter().try_fold(0usize, |total, path| {
+        let source = load_profiled_source(&path)?;
+        let c_sources = source
+            .c_sources
+            .iter()
+            .map(|(name, text)| (name.as_str(), text.as_str()))
+            .collect::<Vec<_>>();
+        let sites =
+            c0_smart_tactic_source_sites(&source.click_source, &c_sources).map_err(|error| {
+                format!(
+                    "could not inventory `{}`: {}",
+                    path.display(),
+                    error.message()
+                )
+            })?;
+        Ok(total + sites.len())
+    })
 }
 
 fn finish_time_accounting(profile: &mut ProjectProfile, wall_elapsed: Duration) {
@@ -590,9 +682,9 @@ enum TimingEvent {
     /// Verification ultimately returned an error created inside this tactic.
     Failed(StepKey),
     /// One verified function's whole wall-clock time.
-    FunctionTotal(Duration),
+    FunctionTotal(String, Duration),
     /// One kernel certification phase of a function.
-    Certification(Duration),
+    Certification(String, Duration),
     /// Parsing C/Click source, lowering declarations, and selecting the
     /// verification dependency closure.
     Frontend(Duration),
@@ -600,9 +692,13 @@ enum TimingEvent {
     /// theorem dependencies before function proofs run.
     Environment(Duration),
     /// Number of certification paths prepared for one function.
-    CertificationPaths(usize),
+    CertificationPaths { function: String, count: usize },
     /// One contract claim completed certification checking.
-    ClaimCompleted,
+    ClaimCompleted {
+        function: String,
+        key: String,
+        elapsed: Duration,
+    },
     /// Structured snapshot captured at the cooperative deadline checkpoint,
     /// before scope guards close the active tactic or phase.
     Interrupted(InterruptedWork),
@@ -629,6 +725,69 @@ fn structured_step(tactic: &TacticEvent, source_path: &Path) -> Result<StepKey, 
     })
 }
 
+fn function_name_from_claim(claim: &str) -> &str {
+    claim
+        .split_once('.')
+        .map_or(claim, |(function, _)| function)
+}
+
+fn add_attributed_tactic(
+    attribution: &mut BTreeMap<String, FunctionAttribution>,
+    key: &StepKey,
+    elapsed: Duration,
+) {
+    let function = function_name_from_claim(&key.claim).to_string();
+    let function_row = attribution.entry(function).or_default();
+    function_row.buckets.add_tactic(key.category, elapsed);
+    let claim_row = function_row.claims.entry(key.claim.clone()).or_default();
+    claim_row.buckets.add_tactic(key.category, elapsed);
+    if key.category == TacticCategory::Smart {
+        claim_row
+            .smart_sites
+            .insert((key.source_path.clone(), key.source_index));
+    }
+}
+
+fn finish_attribution(
+    attribution: &mut BTreeMap<String, FunctionAttribution>,
+    function_totals: &BTreeMap<String, Duration>,
+    function_certification: &BTreeMap<String, Duration>,
+) {
+    for (function, row) in attribution {
+        row.buckets.certification = function_certification
+            .get(function)
+            .copied()
+            .unwrap_or_default();
+        row.buckets.verifier_core = function_totals
+            .get(function)
+            .copied()
+            .unwrap_or_default()
+            .saturating_sub(
+                row.buckets.simple
+                    + row.buckets.smart
+                    + row.buckets.control
+                    + row.buckets.certification,
+            );
+        let claim_certification = row
+            .claims
+            .values()
+            .map(|claim| claim.buckets.certification)
+            .sum::<Duration>();
+        let shared_certification = row
+            .buckets
+            .certification
+            .saturating_sub(claim_certification);
+        if !shared_certification.is_zero() || !row.buckets.verifier_core.is_zero() {
+            let shared = row
+                .claims
+                .entry(format!("{function}::<shared verifier work>"))
+                .or_default();
+            shared.buckets.certification += shared_certification;
+            shared.buckets.verifier_core += row.buckets.verifier_core;
+        }
+    }
+}
+
 fn profile_from_events(
     project: &str,
     events: &[VerificationEvent],
@@ -652,22 +811,35 @@ fn profile_from_events(
             VerificationEvent::TacticFailed(tactic) => {
                 TimingEvent::Failed(structured_step(tactic, &source_path)?)
             }
-            VerificationEvent::FunctionFinished { elapsed, .. } => {
-                TimingEvent::FunctionTotal(*elapsed)
+            VerificationEvent::FunctionFinished { name, elapsed } => {
+                TimingEvent::FunctionTotal(name.clone(), *elapsed)
             }
-            VerificationEvent::ContractExecutionFinished { elapsed, .. }
-            | VerificationEvent::ContractClaimsFinished { elapsed, .. } => {
-                TimingEvent::Certification(*elapsed)
+            VerificationEvent::ContractExecutionFinished { function, elapsed }
+            | VerificationEvent::ContractClaimsFinished { function, elapsed } => {
+                TimingEvent::Certification(function.clone(), *elapsed)
             }
             VerificationEvent::PhaseFinished { name, elapsed } => match *name {
                 "frontend" => TimingEvent::Frontend(*elapsed),
                 "environment" => TimingEvent::Environment(*elapsed),
                 _ => TimingEvent::Ignored,
             },
-            VerificationEvent::ClaimPathsPrepared { count, .. } => {
-                TimingEvent::CertificationPaths(*count)
-            }
-            VerificationEvent::ClaimFinished { .. } => TimingEvent::ClaimCompleted,
+            VerificationEvent::ClaimPathsPrepared {
+                function,
+                count,
+                elapsed: _,
+            } => TimingEvent::CertificationPaths {
+                function: function.clone(),
+                count: *count,
+            },
+            VerificationEvent::ClaimFinished {
+                function,
+                key,
+                elapsed,
+            } => TimingEvent::ClaimCompleted {
+                function: function.clone(),
+                key: key.clone(),
+                elapsed: *elapsed,
+            },
             VerificationEvent::DeadlineExceeded(active) => TimingEvent::Interrupted(match active {
                 ActiveVerificationWork::Tactic(tactic) => {
                     InterruptedWork::Tactic(structured_step(tactic, &source_path)?)
@@ -694,6 +866,9 @@ fn build_profile(
     let mut open: Vec<(StepKey, Duration)> = Vec::new();
     let mut accounting = TimeAccounting::default();
     let mut work = WorkMetrics::default();
+    let mut attribution: BTreeMap<String, FunctionAttribution> = BTreeMap::new();
+    let mut function_totals: BTreeMap<String, Duration> = BTreeMap::new();
+    let mut function_certification: BTreeMap<String, Duration> = BTreeMap::new();
     let mut source_files = BTreeSet::new();
     let mut interrupted = None;
     for event in events {
@@ -714,6 +889,7 @@ fn build_profile(
                 let exclusive = elapsed.saturating_sub(nested);
                 accounting.add_tactic(key.category, exclusive);
                 work.add_tactic(&key, exclusive);
+                add_attributed_tactic(&mut attribution, &key, exclusive);
                 if let Some((_, parent_nested)) = open.last_mut() {
                     *parent_nested += elapsed;
                 }
@@ -731,21 +907,45 @@ fn build_profile(
                 }
                 work.failed_tactics.push(key);
             }
-            TimingEvent::FunctionTotal(elapsed) => {
+            TimingEvent::FunctionTotal(function, elapsed) => {
                 accounting.total += elapsed;
                 work.functions += 1;
+                *function_totals.entry(function.clone()).or_default() += elapsed;
+                attribution.entry(function).or_default();
             }
-            TimingEvent::Certification(elapsed) => accounting.certification += elapsed,
+            TimingEvent::Certification(function, elapsed) => {
+                accounting.certification += elapsed;
+                *function_certification.entry(function.clone()).or_default() += elapsed;
+                attribution.entry(function).or_default();
+            }
             TimingEvent::Frontend(elapsed) => accounting.frontend += elapsed,
             TimingEvent::Environment(elapsed) => accounting.environment += elapsed,
-            TimingEvent::CertificationPaths(count) => work.certification_paths += count,
-            TimingEvent::ClaimCompleted => work.claims += 1,
+            TimingEvent::CertificationPaths { function, count } => {
+                work.certification_paths += count;
+                attribution.entry(function).or_default();
+            }
+            TimingEvent::ClaimCompleted {
+                function,
+                key,
+                elapsed,
+            } => {
+                work.claims += 1;
+                attribution
+                    .entry(function.clone())
+                    .or_default()
+                    .claims
+                    .entry(format!("{function}::{key}"))
+                    .or_default()
+                    .buckets
+                    .certification += elapsed;
+            }
             TimingEvent::Interrupted(work) => interrupted = Some(work),
             TimingEvent::Ignored => {}
             #[cfg(test)]
             TimingEvent::Unknown => {}
         }
     }
+    finish_attribution(&mut attribution, &function_totals, &function_certification);
     work.source_files = source_files.len();
     let active = open.into_iter().map(|(key, _)| key).collect::<Vec<_>>();
     if timed_out && interrupted.is_none() {
@@ -765,6 +965,7 @@ fn build_profile(
         unknown_timing: BTreeMap::new(),
         accounting,
         work,
+        attribution,
         unresolved_positions: BTreeMap::new(),
     })
 }
@@ -783,6 +984,9 @@ fn parse_profile(
     let mut open: Vec<(StepKey, Duration)> = Vec::new();
     let mut accounting = TimeAccounting::default();
     let mut work = WorkMetrics::default();
+    let mut attribution: BTreeMap<String, FunctionAttribution> = BTreeMap::new();
+    let mut function_totals: BTreeMap<String, Duration> = BTreeMap::new();
+    let mut function_certification: BTreeMap<String, Duration> = BTreeMap::new();
     let mut source_files = BTreeSet::new();
     let mut interrupted = None;
     let mut unknown_timing: BTreeMap<String, UnknownTiming> = BTreeMap::new();
@@ -812,6 +1016,7 @@ fn parse_profile(
                 let exclusive = elapsed.saturating_sub(nested);
                 accounting.add_tactic(key.category, exclusive);
                 work.add_tactic(&key, exclusive);
+                add_attributed_tactic(&mut attribution, &key, exclusive);
                 if let Some((_, parent_nested)) = open.last_mut() {
                     *parent_nested += elapsed;
                 }
@@ -829,15 +1034,38 @@ fn parse_profile(
                 }
                 work.failed_tactics.push(key);
             }
-            TimingEvent::FunctionTotal(elapsed) => {
+            TimingEvent::FunctionTotal(function, elapsed) => {
                 accounting.total += elapsed;
                 work.functions += 1;
+                *function_totals.entry(function.clone()).or_default() += elapsed;
+                attribution.entry(function).or_default();
             }
-            TimingEvent::Certification(elapsed) => accounting.certification += elapsed,
+            TimingEvent::Certification(function, elapsed) => {
+                accounting.certification += elapsed;
+                *function_certification.entry(function.clone()).or_default() += elapsed;
+                attribution.entry(function).or_default();
+            }
             TimingEvent::Frontend(elapsed) => accounting.frontend += elapsed,
             TimingEvent::Environment(elapsed) => accounting.environment += elapsed,
-            TimingEvent::CertificationPaths(count) => work.certification_paths += count,
-            TimingEvent::ClaimCompleted => work.claims += 1,
+            TimingEvent::CertificationPaths { function, count } => {
+                work.certification_paths += count;
+                attribution.entry(function).or_default();
+            }
+            TimingEvent::ClaimCompleted {
+                function,
+                key,
+                elapsed,
+            } => {
+                work.claims += 1;
+                attribution
+                    .entry(function.clone())
+                    .or_default()
+                    .claims
+                    .entry(format!("{function}::{key}"))
+                    .or_default()
+                    .buckets
+                    .certification += elapsed;
+            }
             TimingEvent::Interrupted(work) => interrupted = Some(work),
             TimingEvent::Ignored => {}
             TimingEvent::Unknown => {
@@ -852,6 +1080,7 @@ fn parse_profile(
             }
         }
     }
+    finish_attribution(&mut attribution, &function_totals, &function_certification);
     work.source_files = source_files.len();
     let active = open.into_iter().map(|(key, _)| key).collect::<Vec<_>>();
     if timed_out && interrupted.is_none() {
@@ -871,6 +1100,7 @@ fn parse_profile(
         unknown_timing,
         accounting,
         work,
+        attribution,
         unresolved_positions: BTreeMap::new(),
     })
 }
@@ -908,8 +1138,8 @@ fn classify_timing_line(line: &str, source_path: &Path) -> Result<TimingEvent, S
         return Ok(TimingEvent::Finished(key, elapsed));
     }
     if let Some(rest) = strip_kind(body, "function") {
-        let (_, elapsed) = split_trailing_seconds(rest).ok_or_else(|| drift_message(line))?;
-        return Ok(TimingEvent::FunctionTotal(elapsed));
+        let (name, elapsed) = split_trailing_seconds(rest).ok_or_else(|| drift_message(line))?;
+        return Ok(TimingEvent::FunctionTotal(name.trim().to_string(), elapsed));
     }
     if let Some(rest) = strip_kind(body, "phase") {
         let (name, elapsed) = split_trailing_seconds(rest).ok_or_else(|| drift_message(line))?;
@@ -921,24 +1151,38 @@ fn classify_timing_line(line: &str, source_path: &Path) -> Result<TimingEvent, S
     }
     for kind in CERTIFICATION_TIMING_KINDS {
         if let Some(rest) = strip_kind(body, kind) {
-            let (_, elapsed) = split_trailing_seconds(rest).ok_or_else(|| drift_message(line))?;
-            return Ok(TimingEvent::Certification(elapsed));
+            let (function, elapsed) =
+                split_trailing_seconds(rest).ok_or_else(|| drift_message(line))?;
+            return Ok(TimingEvent::Certification(
+                function.trim().to_string(),
+                elapsed,
+            ));
         }
     }
     if let Some(rest) = strip_kind(body, "claim paths") {
-        let (head, _) = split_trailing_seconds(rest).ok_or_else(|| drift_message(line))?;
-        let (_, prepared) = head
+        let (head, _elapsed) = split_trailing_seconds(rest).ok_or_else(|| drift_message(line))?;
+        let (function, prepared) = head
             .rsplit_once(" prepared ")
             .ok_or_else(|| drift_message(line))?;
         let count = prepared
             .strip_suffix(" in")
             .and_then(|count| count.parse::<usize>().ok())
             .ok_or_else(|| drift_message(line))?;
-        return Ok(TimingEvent::CertificationPaths(count));
+        return Ok(TimingEvent::CertificationPaths {
+            function: function.to_string(),
+            count,
+        });
     }
     if let Some(rest) = strip_kind(body, "claim") {
-        split_trailing_seconds(rest).ok_or_else(|| drift_message(line))?;
-        return Ok(TimingEvent::ClaimCompleted);
+        let (head, elapsed) = split_trailing_seconds(rest).ok_or_else(|| drift_message(line))?;
+        let (function, key) = head
+            .split_once(char::is_whitespace)
+            .ok_or_else(|| drift_message(line))?;
+        return Ok(TimingEvent::ClaimCompleted {
+            function: function.to_string(),
+            key: key.trim().to_string(),
+            elapsed,
+        });
     }
     if IGNORED_TIMING_KINDS
         .iter()
@@ -1110,14 +1354,37 @@ fn resolve_source_positions(profile: &mut ProjectProfile) -> Result<(), String> 
     Ok(())
 }
 
-fn print_profiles(profiles: &[ProjectProfile], thresholds: Thresholds, time_limit: Duration) {
-    print!("{}", render_profiles(profiles, thresholds, time_limit));
+fn print_profiles(
+    profiles: &[ProjectProfile],
+    thresholds: Thresholds,
+    time_limit: Duration,
+    top_attribution_rows: usize,
+) {
+    print!(
+        "{}",
+        render_profiles_with_top(profiles, thresholds, time_limit, top_attribution_rows,)
+    );
 }
 
+#[cfg(test)]
 fn render_profiles(
     profiles: &[ProjectProfile],
     thresholds: Thresholds,
     time_limit: Duration,
+) -> String {
+    render_profiles_with_top(
+        profiles,
+        thresholds,
+        time_limit,
+        DEFAULT_TOP_ATTRIBUTION_ROWS,
+    )
+}
+
+fn render_profiles_with_top(
+    profiles: &[ProjectProfile],
+    thresholds: Thresholds,
+    time_limit: Duration,
+    top_attribution_rows: usize,
 ) -> String {
     let mut slow_steps = profiles
         .iter()
@@ -1171,6 +1438,7 @@ fn render_profiles(
 
     render_accounting(&mut output, profiles);
     render_work_metrics(&mut output, profiles);
+    render_attribution(&mut output, profiles, top_attribution_rows);
     render_diagnoses(&mut output, profiles);
 
     let failed = profiles
@@ -1507,6 +1775,90 @@ fn render_accounting(output: &mut String, profiles: &[ProjectProfile]) {
     }
 }
 
+fn render_attribution(output: &mut String, profiles: &[ProjectProfile], top: usize) {
+    if profiles
+        .iter()
+        .all(|profile| profile.attribution.is_empty())
+    {
+        return;
+    }
+    writeln!(output, "\nTOP FUNCTIONS / CLAIMS BY EXCLUSIVE TIME")
+        .expect("writing a String cannot fail");
+    writeln!(
+        output,
+        "  Function and claim rankings are two views of the same exclusive buckets; do not add them together. Within each function, its claim rows plus `<shared verifier work>` reconcile to the function total. Showing at most {top} rows in each ranking."
+    )
+    .expect("writing a String cannot fail");
+    for profile in profiles {
+        if profile.attribution.is_empty() {
+            continue;
+        }
+        writeln!(output, "  {}:", profile.project).expect("writing a String cannot fail");
+        let mut functions = profile.attribution.iter().collect::<Vec<_>>();
+        functions.sort_by(|(left_name, left), (right_name, right)| {
+            right
+                .buckets
+                .total()
+                .cmp(&left.buckets.total())
+                .then_with(|| left_name.cmp(right_name))
+        });
+        writeln!(output, "    FUNCTIONS").expect("writing a String cannot fail");
+        for (name, function) in functions.into_iter().take(top) {
+            let smart_sites = function
+                .claims
+                .values()
+                .map(|claim| claim.smart_sites.len())
+                .sum::<usize>();
+            render_attribution_row(output, "FUNCTION", name, function.buckets, smart_sites);
+        }
+
+        let mut claims = profile
+            .attribution
+            .values()
+            .flat_map(|function| function.claims.iter())
+            .collect::<Vec<_>>();
+        claims.sort_by(|(left_name, left), (right_name, right)| {
+            right
+                .buckets
+                .total()
+                .cmp(&left.buckets.total())
+                .then_with(|| left_name.cmp(right_name))
+        });
+        writeln!(output, "    CLAIMS").expect("writing a String cannot fail");
+        for (name, claim) in claims.into_iter().take(top) {
+            render_attribution_row(
+                output,
+                "CLAIM",
+                name,
+                claim.buckets,
+                claim.smart_sites.len(),
+            );
+        }
+    }
+}
+
+fn render_attribution_row(
+    output: &mut String,
+    kind: &str,
+    name: &str,
+    buckets: AttributedBuckets,
+    smart_sites: usize,
+) {
+    writeln!(
+        output,
+        "      {kind:<8} {name:<36} total {:>9}  simple {:>9}  smart {:>9}  control {:>9}  cert {:>9}  core {:>9}  smart {}/{} attempts/sites",
+        format_fractional_duration(buckets.total()),
+        format_fractional_duration(buckets.simple),
+        format_fractional_duration(buckets.smart),
+        format_fractional_duration(buckets.control),
+        format_fractional_duration(buckets.certification),
+        format_fractional_duration(buckets.verifier_core),
+        buckets.smart_attempts,
+        smart_sites,
+    )
+    .expect("writing a String cannot fail");
+}
+
 fn render_work_metrics(output: &mut String, profiles: &[ProjectProfile]) {
     let measured = profiles
         .iter()
@@ -1571,6 +1923,21 @@ fn render_work_metrics(output: &mut String, profiles: &[ProjectProfile]) {
             .filter(|key| key.category == TacticCategory::Smart)
             .count();
         let smart_attempts = work.category(TacticCategory::Smart).count;
+        if work.smart_source_sites > 0 {
+            writeln!(
+                output,
+                "    {:>24}  {:>6} unique source sites, {:>6} dynamic attempts",
+                "SMART SITES / ATTEMPTS", work.smart_source_sites, smart_attempts,
+            )
+            .expect("writing a String cannot fail");
+            if smart_attempts > work.smart_source_sites {
+                writeln!(
+                    output,
+                    "                           Dynamic attempts exceed source sites when paths or repeated claim execution revisit one source occurrence."
+                )
+                .expect("writing a String cannot fail");
+            }
+        }
         if smart_attempts > 0 || failed_smart > 0 {
             writeln!(
                 output,
@@ -2165,6 +2532,87 @@ click timing: function example_function 12.000s
         assert!(report.contains("12.000s total"), "{report}");
     }
 
+    #[test]
+    fn function_and_claim_attribution_reconciles_exclusive_time_once() {
+        let output = r#"
+click timing: source examples/sample.click
+click timing: started tactic alpha.ensures_0 0 have class control statement 1 source 0
+click timing: started tactic alpha.ensures_0 1 simp class smart statement 1 source 1
+click timing: tactic alpha.ensures_0 1 simp class smart statement 1 source 1 3.000000s
+click timing: started tactic alpha.ensures_0 2 close_invariants class simple statement 1 source 2
+click timing: tactic alpha.ensures_0 2 close_invariants class simple statement 1 source 2 4.000000s
+click timing: tactic alpha.ensures_0 0 have class control statement 1 source 0 8.000000s
+click timing: contract execution alpha 1.000000s
+click timing: claim paths alpha prepared 2 in 0.250000s
+click timing: claim alpha Ensure(0) 0.500000s
+click timing: contract claims alpha 1.000000s
+click timing: function alpha 12.000000s
+click timing: tactic beta.ensures_0 0 step class simple statement 1 source 0 2.000000s
+click timing: contract execution beta 0.500000s
+click timing: claim beta Ensure(0) 0.250000s
+click timing: contract claims beta 0.500000s
+click timing: function beta 4.000000s
+"#;
+        let profile = parse_profile("sample", output, Thresholds::default(), false).unwrap();
+
+        for function in profile.attribution.values() {
+            assert_eq!(
+                function
+                    .claims
+                    .values()
+                    .map(|claim| claim.buckets.total())
+                    .sum::<Duration>(),
+                function.buckets.total(),
+            );
+        }
+        assert_eq!(
+            profile.attribution["alpha"].buckets,
+            AttributedBuckets {
+                simple: Duration::from_secs(4),
+                smart: Duration::from_secs(3),
+                control: Duration::from_secs(1),
+                certification: Duration::from_secs(2),
+                verifier_core: Duration::from_secs(2),
+                smart_attempts: 1,
+            }
+        );
+
+        let report =
+            render_profiles_with_top(&[profile], Thresholds::default(), DEFAULT_TIME_LIMIT, 2);
+        assert!(
+            report.contains("TOP FUNCTIONS / CLAIMS BY EXCLUSIVE TIME"),
+            "{report}"
+        );
+        assert!(report.find("FUNCTION alpha").unwrap() < report.find("FUNCTION beta").unwrap());
+        assert!(report.contains("<shared verifier work>"), "{report}");
+    }
+
+    #[test]
+    fn profile_distinguishes_one_smart_site_from_two_dynamic_attempts() {
+        let output = r#"
+click timing: source examples/sample.click
+click timing: tactic alpha.ensures_0 0 simp class smart statement 1 source 0 0.010000s
+click timing: tactic alpha.ensures_0 0 simp class smart statement 1 source 0 0.020000s
+click timing: function alpha 0.030000s
+"#;
+        let mut profile = parse_profile("sample", output, Thresholds::default(), false).unwrap();
+        profile.work.smart_source_sites = 1;
+
+        let claim = &profile.attribution["alpha"].claims["alpha.ensures_0"];
+        assert_eq!(claim.smart_sites.len(), 1);
+        assert_eq!(claim.buckets.smart_attempts, 2);
+        let report = render_profiles(&[profile], Thresholds::default(), DEFAULT_TIME_LIMIT);
+        assert!(
+            report.contains("1 unique source sites,      2 dynamic attempts"),
+            "{report}"
+        );
+        assert!(
+            report.contains("paths or repeated claim execution"),
+            "{report}"
+        );
+        assert!(report.contains("smart 2/1 attempts/sites"), "{report}");
+    }
+
     /// Function-total time outside tactics is named verifier orchestration,
     /// not a mysterious residual.
     #[test]
@@ -2508,6 +2956,7 @@ click timing: widget 0.5s
                     control: DEFAULT_CONTROL_TACTIC_LIMIT,
                 },
                 time_limit: Duration::from_secs(120),
+                top_attribution_rows: DEFAULT_TOP_ATTRIBUTION_ROWS,
             })
         );
     }
@@ -2566,6 +3015,19 @@ click timing: widget 0.5s
             }
         );
         assert_eq!(arguments.time_limit, DEFAULT_TIME_LIMIT);
+        assert_eq!(arguments.top_attribution_rows, DEFAULT_TOP_ATTRIBUTION_ROWS);
+    }
+
+    #[test]
+    fn top_attribution_rows_are_configurable_and_positive() {
+        let arguments =
+            parse_arguments(["--top".to_string(), "3".to_string(), "examples".to_string()])
+                .unwrap();
+        assert_eq!(arguments.top_attribution_rows, 3);
+        assert!(
+            parse_arguments(["--top".to_string(), "0".to_string(), "examples".to_string(),])
+                .is_err()
+        );
     }
 
     #[test]

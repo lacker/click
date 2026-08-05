@@ -39,6 +39,9 @@ complexity, and expansion intentionally replaces one statement with several.
 More stable units include completed simple certificate leaves, C transitions,
 claims, certification paths, and smart attempts. The profiler reports those
 counts, total/average/maximum tactic costs, and setup and certification rates.
+It also inventories unique smart source sites separately from dynamic smart
+attempts. One site can produce several attempts when multiple symbolic paths
+or repeated claim execution revisit it.
 
 This model distinguishes two kinds of slowness:
 
@@ -114,6 +117,16 @@ evidence.
 Wall-clock baselines are deliberately conservative and are not a
 machine-independent SLA.
 
+For volume-bound runs, `TOP FUNCTIONS / CLAIMS BY EXCLUSIVE TIME` ranks the
+semantic owners of the measured work. Function rows partition their time into
+simple, smart, control, certification, and verifier-core buckets. Claim rows
+use the same exclusive tactic measurements plus per-claim certification; a
+`<shared verifier work>` row owns preparation, certification, and verifier-core
+time that has no narrower claim identity. Claim rows therefore reconcile to
+their function total, while the function and claim rankings are two views of
+the same time and must not be added together. `click profile --top N` bounds
+each ranking; it changes presentation only, never the performance diagnosis.
+
 `click audit` checks every source-selectable smart site in passing example and
 mdtest inputs, whether or not profiling called it slow. On the first site of a
 claim it cold-verifies both the original and expanded proof units. A timing
@@ -127,7 +140,8 @@ manual release/certificate-boundary gate, not part of ordinary `cargo test`.
 - `click profile <sidecar.click|project|mdtest.md|dir>` profiles examples and mdtests,
   ignores quarantine, and prints a `click expand` command for each completed
   smart tactic above the configured threshold. Its default project limit is
-  30 seconds.
+  30 seconds, and `--top` controls the number of function and claim attribution
+  rows (default 8).
 - `click expand [--output PATH | --in-place] <sidecar.click|mdtest.md>:<line>:<column>`
   parses and typechecks the sidecar, then verifies only the rewritten proof
   unit and the transitive contracts it calls before writing it. An unrelated
