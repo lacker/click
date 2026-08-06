@@ -38,8 +38,9 @@ large example or quarantine a regression without its issue.
 
 These block the owned-vector source-fidelity work:
 
-1. [Make condition-certificate search relevance-directed](relevance-directed-condition-certificates.md).
-2. [Let expansion diagnose an earlier hotspot when a later proof fails](expand-before-downstream-failure.md).
+1. [Keep modular-call snapshot provenance stable](stable-modular-call-snapshot-provenance.md).
+2. [Make condition-certificate search relevance-directed](relevance-directed-condition-certificates.md).
+3. [Let expansion diagnose an earlier hotspot when a later proof fails](expand-before-downstream-failure.md).
 
 ## C-source fidelity
 
