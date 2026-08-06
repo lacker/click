@@ -9676,12 +9676,12 @@ fn plan_explicit_fact_transport(
         }
     }
     if !replays(&selected) {
-        let unavailable = available
+        let unavailable_count = available
             .iter()
             .filter(|fact| !candidates.iter().any(|(candidate, _)| candidate == *fact))
-            .collect::<Vec<_>>();
+            .count();
         return Err(ClickError::new(format!(
-            "explicit surface premises do not replay the certified fact transport\n  source: {source:?}\n  target: {target:?}\n  selected surface premises: {}\n  unspellable ambient facts: {unavailable:#?}",
+            "explicit surface premises do not replay the certified fact transport\n  source: {source:?}\n  target: {target:?}\n  selected surface premises: {}\n  unspellable ambient facts: {unavailable_count} (internal facts omitted)",
             selected.len(),
         )));
     }
@@ -19021,10 +19021,53 @@ fn record_surface_replay_tactic(
                                 ));
                             }
                         }
-                        Err(error) => replay.surface_replay.block(format!(
-                            "could not make fact transport premises explicit: {}",
-                            error.message()
-                        )),
+                        Err(error) => {
+                            // A pre-state fact may be impossible to derive
+                            // from the post-state context of an opaque call.
+                            // In that case make the exact statement-entry
+                            // source a dependency of the preceding step, so
+                            // Selected transport replays it as part of the
+                            // statement certificate itself.
+                            let attached = replay
+                                .surface_replay
+                                .tactics
+                                .iter_mut()
+                                .rev()
+                                .find_map(|tactic| match tactic {
+                                    ProofTactic::StepUsing(premises)
+                                    | ProofTactic::SummarizeUsing { premises, .. } => {
+                                        if !premises.contains(&surface_source) {
+                                            premises.push(surface_source.clone());
+                                        }
+                                        Some(true)
+                                    }
+                                    ProofTactic::Step => Some(false),
+                                    _ => None,
+                                })
+                                .unwrap_or(false);
+                            if attached {
+                                if let Err(record_error) = replay
+                                    .surface_propositions
+                                    .record_lowering(&surface_source, &lowered_surface_source)
+                                    .and_then(|()| {
+                                        replay.surface_propositions.record_lowering(
+                                            &surface_target,
+                                            &lowered_surface_target,
+                                        )
+                                    })
+                                {
+                                    replay.surface_replay.block(format!(
+                                        "could not retain the statement-attached fact transport spelling: {}",
+                                        record_error.message()
+                                    ));
+                                }
+                            } else {
+                                replay.surface_replay.block(format!(
+                                    "could not make fact transport premises explicit: {}",
+                                    error.message()
+                                ));
+                            }
+                        }
                     }
                 }
                 _ => replay.surface_replay.block(format!(
