@@ -14384,6 +14384,26 @@ fn checked_surface_comparison_fact_at_point(
                     || materialization_equivalent_available_fact(&premise, available).is_some()
             })
     };
+    // An explicitly snapshot-indexed spelling already paired with this exact
+    // available kernel fact is itself a checked replay certificate. Re-lowering
+    // every such spelling at the end of a long execution is both redundant and
+    // potentially quadratic in the accumulated snapshots; `StepUsing` consults
+    // this same map before lowering its premises. Current-state spellings are
+    // not stable across statements, so they must still be lowered below.
+    let recorded_surfaces = replay
+        .surface_propositions
+        .surfaces(kernel)
+        .collect::<Vec<_>>();
+    for surface in recorded_surfaces.into_iter().rev() {
+        if proposition_contains_at_expression(surface)
+            && replay
+                .surface_propositions
+                .available_kernel(surface, available)
+                .is_some_and(&matches_kernel)
+        {
+            return Ok(surface.clone());
+        }
+    }
     if let Ok(surface) = checked_surface_fact_at_point(
         replay,
         kernel,

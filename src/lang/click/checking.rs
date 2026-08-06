@@ -3157,13 +3157,25 @@ pub(super) fn plan_effect_clause_derivations(
     );
     let mut reasoning_facts = available_pure_facts.to_vec();
     reasoning_facts.extend(effect_facts.iter().map(|fact| fact.proposition().clone()));
-    let assumptions = assumptions_from_propositions(&reasoning_facts);
+    let mut assumptions = None;
     let mut derivations = Vec::new();
     let mut writes = memory_effect_write_pointers(&effect_facts);
     writes.retain(|pointer| is_preexisting_effect_pointer(pointer, pre_state));
 
     for pointer in &writes {
         check_effect_planning_deadline()?;
+        // Most concrete writes already sit at a constant offset inside a
+        // declared mutable object. Match the exact replay rule first; building
+        // a contextual assumptions index over a long execution history is
+        // unnecessary in that overwhelmingly common case.
+        if segments
+            .iter()
+            .any(|segment| segment_contains_pointer_exact(segment, pointer, available_pure_facts))
+        {
+            continue;
+        }
+        let assumptions =
+            assumptions.get_or_insert_with(|| assumptions_from_propositions(&reasoning_facts));
         let selected = segments.iter().find_map(|segment| {
             if crate::instrumentation::deadline_exceeded() {
                 return None;
@@ -3208,6 +3220,14 @@ pub(super) fn plan_effect_clause_derivations(
         .filter(|range| is_preexisting_effect_pointer(range.base(), pre_state))
     {
         check_effect_planning_deadline()?;
+        if segments
+            .iter()
+            .any(|segment| segment_contains_range_exact(segment, range, available_pure_facts))
+        {
+            continue;
+        }
+        let assumptions =
+            assumptions.get_or_insert_with(|| assumptions_from_propositions(&reasoning_facts));
         let selected = segments.iter().find_map(|segment| {
             if crate::instrumentation::deadline_exceeded() {
                 return None;

@@ -14,7 +14,7 @@ int32 input_cursor_shared_pipeline(
     int32 left_value;
     int32 right_value;
     ignored = input_cursor_init(left, data, length);
-    ignored = input_cursor_clone(right, left);
+    ignored = input_cursor_init(right, data, length);
     left_value = input_cursor_take(left);
     right_value = input_cursor_peek(right);
     return right_value;
