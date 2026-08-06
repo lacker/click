@@ -10,6 +10,11 @@ a direct `free` inside a larger function: deallocation is tracked as a
 heap-lifetime effect rather than requiring a fictitious mutable byte range or
 an allocation-specific wrapper call.
 
+The wrapper intentionally returns the `malloc` result without testing it.
+Click resolves the allocator's null and success outcomes at that return, so
+existing C does not need a redundant null-check or self-assignment to expose
+the two proof paths.
+
 This project remains the minimal allocation/free fixture. Its conditional
 allocation resource is composed with copying, dependent pointer/capacity
 replacement, and freeing the old allocation in the verified

@@ -9834,7 +9834,59 @@ fn interior_free_and_store_after_free_are_rejected() {
 }
 
 #[test]
-fn unresolved_malloc_result_cannot_cross_a_return() {
+fn returning_malloc_result_resolves_null_and_success_outcomes() {
+    let state = CState::new().with_local("p", CValue::Pointer(Pointer::null()));
+    let statement = c_seq(c_heap_allocate("p", 16), c_return(c_variable("p")));
+    let paths = execute_c_statement_paths(
+        &state,
+        &statement,
+        &Assumptions::new(),
+        &CExecutionEnvironment::new(),
+        CExecutionSemantics::EXECUTE_BODIES,
+        &mut ExecutionBudget::default(),
+    )
+    .expect("returning a malloc result should split its outcomes");
+    assert_eq!(paths.len(), 2);
+    assert!(
+        paths
+            .iter()
+            .all(|path| path.facts.iter().all(|fact| !fact.is_public())),
+        "the malloc outcome split is internal, not a source-level premise"
+    );
+
+    let mut saw_success = false;
+    let mut saw_failure = false;
+    for path in paths {
+        let CStatementOutcome::Return { value, state } = path.outcome else {
+            panic!("malloc return should not produce a diagnostic");
+        };
+        let CValue::Pointer(pointer) = value else {
+            panic!("malloc should return a pointer");
+        };
+        assert!(!state.memory().has_pending_heap_allocation());
+        if pointer == Pointer::null() {
+            saw_failure = true;
+            assert!(state.resources().facts().is_empty());
+        } else {
+            saw_success = true;
+            assert!(matches!(pointer.block, PointerBlock::Heap(_)));
+            assert_eq!(
+                state.memory().live_heap_block_size(&pointer),
+                Some(&Bitvector32Term::Constant(16))
+            );
+            assert!(
+                state
+                    .resources()
+                    .facts()
+                    .contains(&CResourceFact::own_allocation(pointer.clone(), 16))
+            );
+        }
+    }
+    assert!(saw_success && saw_failure);
+}
+
+#[test]
+fn unreturned_unresolved_malloc_result_cannot_cross_a_return() {
     let state = CState::new().with_local("p", CValue::Pointer(Pointer::null()));
     let statement = c_seq(c_heap_allocate("p", 16), c_return(c_int32_literal(0)));
     let paths = execute_c_statement_paths(

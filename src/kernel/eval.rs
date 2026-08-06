@@ -3217,6 +3217,146 @@ pub(crate) fn resolve_pending_heap_allocations(
     state
 }
 
+fn execute_c_return_expression_paths(
+    state: &CState,
+    expression: &CExpression,
+    assumptions: &Assumptions,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<CStatementExecutionPath>> {
+    let mut paths = Vec::new();
+    for expression_path in evaluate_c_expression_paths(state, expression, assumptions, budget)? {
+        let CExpressionPath {
+            outcome,
+            facts,
+            obligations,
+        } = expression_path;
+        match outcome {
+            CExpressionOutcome::Value(CValue::Pointer(pointer))
+                if state.memory.heap.pending_allocations.contains_key(&pointer) =>
+            {
+                for truthiness_path in pending_allocation_outcome_paths(
+                    pointer.clone(),
+                    facts,
+                    obligations,
+                    assumptions,
+                ) {
+                    let path_assumptions = assumptions_with_path_context(
+                        assumptions,
+                        &truthiness_path.facts,
+                        &truthiness_path.obligations,
+                    );
+                    let resolved_state = resolve_pending_heap_allocations(state, &path_assumptions);
+                    let resolved_pointer = if truthiness_path.is_true {
+                        let PointerBlock::Symbolic(Variable(identity)) = pointer.block else {
+                            unreachable!("pending malloc results have symbolic heap identities");
+                        };
+                        Pointer {
+                            block: PointerBlock::Heap(identity),
+                            offset: PointerOffsetTerm::Constant(0),
+                        }
+                    } else {
+                        Pointer::null()
+                    };
+                    let outcome = if resolved_state.memory.has_pending_heap_allocation() {
+                        CStatementOutcome::RuntimeError(CRuntimeError::UnresolvedAllocationOutcome)
+                    } else {
+                        CStatementOutcome::Return {
+                            value: CValue::Pointer(resolved_pointer),
+                            state: resolved_state,
+                        }
+                    };
+                    paths.push(CStatementExecutionPath {
+                        outcome,
+                        facts: truthiness_path.facts,
+                        obligations: truthiness_path.obligations,
+                    });
+                }
+            }
+            CExpressionOutcome::Value(value) => {
+                let outcome = if state.memory.has_pending_heap_allocation() {
+                    CStatementOutcome::RuntimeError(CRuntimeError::UnresolvedAllocationOutcome)
+                } else {
+                    CStatementOutcome::Return {
+                        value,
+                        state: state.clone(),
+                    }
+                };
+                paths.push(CStatementExecutionPath {
+                    outcome,
+                    facts,
+                    obligations,
+                });
+            }
+            CExpressionOutcome::UndefinedBehavior(undefined_behavior) => {
+                paths.push(CStatementExecutionPath {
+                    outcome: CStatementOutcome::UndefinedBehavior(undefined_behavior),
+                    facts,
+                    obligations,
+                });
+            }
+            CExpressionOutcome::RuntimeError(error) => paths.push(CStatementExecutionPath {
+                outcome: CStatementOutcome::RuntimeError(error),
+                facts,
+                obligations,
+            }),
+        }
+    }
+    Ok(paths)
+}
+
+fn pending_allocation_outcome_paths(
+    pointer: Pointer,
+    facts: Vec<ExecutionPureFact>,
+    obligations: Vec<ProofObligation>,
+    assumptions: &Assumptions,
+) -> Vec<CTruthinessPath> {
+    let is_null = pointer_is_null_condition(pointer);
+    match decide_with_facts(assumptions, &facts, &is_null) {
+        Some(true) => vec![CTruthinessPath {
+            is_true: false,
+            facts,
+            obligations,
+        }],
+        Some(false) => vec![CTruthinessPath {
+            is_true: true,
+            facts,
+            obligations,
+        }],
+        None => {
+            // The pending symbolic pointer is an internal representation of
+            // malloc's nondeterministic outcome. Unlike a C `if` condition,
+            // this split does not expose a new source-level assumption: each
+            // resolved return outcome is valid without making the temporary
+            // symbolic identity part of the execution theorem.
+            let mut success_facts = facts.clone();
+            add_internal_condition_path_fact(
+                &mut success_facts,
+                assumptions,
+                is_null.clone(),
+                false,
+            )
+            .expect("unknown malloc success fact should be consistent");
+
+            let mut failure_facts = facts;
+            add_internal_condition_path_fact(&mut failure_facts, assumptions, is_null, true)
+                .expect("unknown malloc failure fact should be consistent");
+
+            vec![
+                CTruthinessPath {
+                    is_true: true,
+                    facts: success_facts,
+                    obligations: obligations.clone(),
+                },
+                CTruthinessPath {
+                    is_true: false,
+                    facts: failure_facts,
+                    obligations,
+                },
+            ]
+        }
+    }
+}
+
 pub(super) fn execute_c_statement_paths(
     state: &CState,
     statement: &CStatement,
@@ -3337,32 +3477,7 @@ pub(super) fn execute_c_statement_paths(
             }]
         }
         CStatement::Return(expression) => {
-            evaluate_c_expression_paths(state, expression, assumptions, budget)?
-                .into_iter()
-                .map(|path| CStatementExecutionPath {
-                    outcome: match path.outcome {
-                        CExpressionOutcome::Value(_)
-                            if state.memory.has_pending_heap_allocation() =>
-                        {
-                            CStatementOutcome::RuntimeError(
-                                CRuntimeError::UnresolvedAllocationOutcome,
-                            )
-                        }
-                        CExpressionOutcome::Value(value) => CStatementOutcome::Return {
-                            value,
-                            state: state.clone(),
-                        },
-                        CExpressionOutcome::UndefinedBehavior(undefined_behavior) => {
-                            CStatementOutcome::UndefinedBehavior(undefined_behavior)
-                        }
-                        CExpressionOutcome::RuntimeError(error) => {
-                            CStatementOutcome::RuntimeError(error)
-                        }
-                    },
-                    facts: path.facts,
-                    obligations: path.obligations,
-                })
-                .collect()
+            execute_c_return_expression_paths(state, expression, assumptions, budget)?
         }
         CStatement::Store { pointer, value } => execute_c_lvalue_assignment_paths(
             state,

@@ -262,16 +262,18 @@ that it equals an argument or is distinct from existing storage; an opaque
 return is not treated as an allocation.
 
 Modeled heap allocation is a different kernel transition. A pending symbolic
-`malloc` result is refined by ordinary pointer-null control flow. Registering
-that unresolved result records a memory-preserving `HeapAllocationPending`
-edge, so every preexisting load remains transportable while control flow is
-undecided. Its null arm removes the metadata and returns to the pre-allocation
-memory identity. Its success arm records `HeapAllocated` from the pending
-snapshot, creates a
+`malloc` result is refined by ordinary pointer-null control flow or by returning
+the result directly. A direct return splits into the same null and success
+outcomes; this lets natural allocation wrappers expose a conditional owning
+resource without adding a no-op C branch. Registering an unresolved result
+records a memory-preserving `HeapAllocationPending` edge, so every preexisting
+load remains transportable while the outcome is undecided. Its null arm removes
+the metadata and returns to the pre-allocation memory identity. Its success arm
+records `HeapAllocated` from the pending snapshot and creates a
 fresh heap allocation with an exact, possibly symbolic size, marks its cells
 uninitialized, and produces complete owned memory plus the
-exclusive `allocation(base, bytes)` lifetime resource. Returning before that
-outcome is refined is rejected.
+exclusive `allocation(base, bytes)` lifetime resource. Returning a different
+value while an allocation outcome remains unresolved is rejected.
 
 Nonnull `free` requires the exact live base, allocation authority, and complete
 owned access. It retires that allocation, clears its cells, consumes those

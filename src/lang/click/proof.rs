@@ -23934,6 +23934,88 @@ fn execute_step_from_execution_point(
         )?
         .0
     };
+    if transitions.len() > 1
+        && transitions
+            .iter()
+            .all(|transition| matches!(transition.outcome, CStatementOutcome::Return { .. }))
+    {
+        // A single source return can have several valid operational outcomes,
+        // notably when it returns an unresolved malloc result. This is not C
+        // control flow and needs no proof-level case split: all successors
+        // complete the function at the same statement boundary.
+        if matches!(prerequisite_policy, StatementPrerequisitePolicy::Planning) {
+            let mut prerequisite_derivations = Vec::new();
+            let mut exact_premises = Vec::new();
+            for transition in &transitions {
+                for derivation in &transition.prerequisite_derivations {
+                    if !prerequisite_derivations.contains(derivation) {
+                        prerequisite_derivations.push(derivation.clone());
+                    }
+                }
+                if transition.consults_conditions {
+                    for fact in ambient_condition_facts(available_pure_facts) {
+                        if !exact_premises.contains(&fact) {
+                            exact_premises.push(fact);
+                        }
+                    }
+                }
+                for obligation in &transition.obligations {
+                    if exact_fact_is_available(obligation.proposition(), available_pure_facts)
+                        && !exact_premises.contains(obligation.proposition())
+                    {
+                        exact_premises.push(obligation.proposition().clone());
+                    }
+                }
+            }
+            replay
+                .planned_tactics
+                .push(ProofTactic::CertifiedStatementStep {
+                    prerequisite_derivations,
+                    exact_premises,
+                });
+        }
+
+        let mut common_pure_facts = transitions[0].pure_facts.clone();
+        common_pure_facts.retain(|fact| {
+            transitions
+                .iter()
+                .skip(1)
+                .all(|transition| transition.pure_facts.contains(fact))
+        });
+        let mut completed_outcomes = Vec::new();
+        for transition in transitions {
+            let mut completed_execution_facts = transition.execution_facts;
+            append_execution_effect_facts(&mut completed_execution_facts, &replay.effect_facts);
+            let return_assumptions = assumptions_from_propositions(&transition.pure_facts);
+            let (outcome, obligations) = c_function_outcome_from_statement_outcome(
+                &execution_start_state,
+                function,
+                transition.outcome,
+                transition.obligations,
+                &return_assumptions,
+            );
+            completed_outcomes.push((outcome, completed_execution_facts, obligations));
+        }
+        let completed = c_function_execution_candidates_from_outcomes(
+            execution_start_state.clone(),
+            function.clone(),
+            arguments.to_vec(),
+            completed_outcomes,
+        );
+        let replay_state = execution_start_state.clone();
+        set_replay_execution(
+            replay,
+            claim_label,
+            tactic_index,
+            tactic_name,
+            execution_start_state,
+            completed,
+        )?;
+        replay.frontier.next_statement_index = source_region.continuation_node;
+        *available_pure_facts = common_pure_facts;
+        *state = replay_state;
+        return Ok(());
+    }
     if transitions.len() != 1 {
         if matches!(prerequisite_policy, StatementPrerequisitePolicy::Exact) {
             let safe = transitions

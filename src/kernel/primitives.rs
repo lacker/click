@@ -771,7 +771,8 @@ pub(super) struct CHeapMemory {
     /// identities makes double-free and stale-pointer checks explicit.
     pub(super) retired_allocations: BTreeMap<Pointer, Bitvector32Term>,
     /// A malloc result whose null/success outcome has not yet been refined by
-    /// control flow. Pending allocations carry no authority until resolved.
+    /// control flow or direct return. Pending allocations carry no authority
+    /// until resolved.
     pub(super) pending_allocations: BTreeMap<Pointer, Bitvector32Term>,
     /// Successful malloc storage remains uninitialized until individual
     /// cells are written. Contract-imported allocations are not placed here.

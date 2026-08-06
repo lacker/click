@@ -485,7 +485,7 @@ pub(super) fn describe_runtime_error(
             }
         },
         crate::kernel::CRuntimeError::UnresolvedAllocationOutcome => {
-            "malloc result was not refined by a null check before returning".to_string()
+            "malloc result was neither refined by a null check nor returned".to_string()
         }
         crate::kernel::CRuntimeError::LiveAllocationLeak { allocation } => format!(
             "live allocation obligation was neither returned nor freed: `{}`",

@@ -4423,6 +4423,52 @@ fn selected_post_execution_simp_keeps_the_surviving_execution_branch() {
 }
 
 #[test]
+fn returning_malloc_result_expands_to_replayable_statement_steps() {
+    let c_source = r#"
+            int32* allocate_int32s(int32 count) {
+                int32* data;
+                data = malloc(count * 4);
+                return data;
+            }
+        "#;
+    let click_source = r#"
+            resource maybe_allocated_int32s(data: int32*, count: int32) {
+                if data != 0 {
+                    contains allocation(data, count * 4);
+                    owns data[0..count];
+                }
+            }
+
+            verifying "allocate_int32s.c";
+
+            int32* allocate_int32s(int32 count) {
+                requires 1 <= count;
+                requires count <= 536870911;
+                produces maybe_allocated_int32s(result, count);
+            } by {
+                execute();
+                fold(maybe_allocated_int32s(result, count));
+                simp();
+            }
+        "#;
+    let execute = click_source
+        .find("execute();")
+        .expect("proof should contain the selected execute");
+    let position = expansion::position_at_offset(click_source, execute);
+    let expanded = expand_c0_tactic_source_at(
+        click_source,
+        &[("allocate_int32s.c", c_source)],
+        position.line,
+        position.column,
+    )
+    .expect("malloc-return execution should expand");
+    assert!(!expanded.contains("execute();"), "{expanded}");
+    assert!(expanded.contains("step()"), "{expanded}");
+    verify_c0_sources(&expanded, &[("allocate_int32s.c", c_source)])
+        .expect("expanded malloc-return statement steps should replay");
+}
+
+#[test]
 fn selected_post_execution_smart_have_uses_its_path_certificate() {
     let c_source = r#"
             int32 identity(int32 x) {
