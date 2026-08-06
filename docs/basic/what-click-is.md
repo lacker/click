@@ -17,6 +17,27 @@ program, or ask you to move your implementation into a theorem prover. The C
 function remains the thing being verified. The `.click` file is a specification
 and proof layer beside it.
 
+## Existing C Comes First
+
+A fundamental goal of Click is to verify existing C code, including code whose
+control flow, helper boundaries, naming, or memory access patterns were chosen
+without Click in mind. Requiring a large project to refactor working code before
+verification would make adoption much harder and would hide exactly the proof
+patterns Click needs to learn.
+
+For C within Click's supported semantics, an inability to prove a true claim is
+a limitation in the specification, proof language, verifier, or automation. It
+is not a reason to add a no-op branch, route the operation through a special
+helper, rename a local, or otherwise make the C more proof-friendly. The proof
+may need more explicit contracts, invariants, resources, or lemmas; Click may
+need a new general reasoning rule. The implementation being verified stays the
+same.
+
+There are narrow exceptions. A project may fix a real C bug or undefined
+behavior, make a program change it wanted independently of verification, or
+translate unsupported syntax into the C0 subset while preserving its semantics.
+Those are program or frontend-boundary changes, not proof workarounds.
+
 ## What Click Proves
 
 A Click proof says:
@@ -62,5 +83,6 @@ You will see these terms throughout the book:
   `forall (k: int32) { ... }`.
 - **Proof clause**: the `by ...` part that tells Click how to prove a guarantee.
 
-The basic workflow is to write a contract, run Click, and improve either the
-contract or the proof until the verifier can justify the claim.
+The basic workflow is to start from the C as written, write a contract, run
+Click, and improve the contract, proof, or Click itself until the verifier can
+justify the claim.

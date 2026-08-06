@@ -50,6 +50,13 @@ about char*, float64, or malloc into the kernel.
 
 ## Technical Documentation
 
+Click's central adoption principle is to verify existing C as written. A proof
+failure is not permission to refactor working C into a verifier-friendly shape;
+for supported C semantics, the adaptation belongs in the contract, proof,
+language, or verifier. See
+[What Click Is](docs/basic/what-click-is.md#existing-c-comes-first) and
+[AGENTS.md](AGENTS.md#existing-c-is-the-verification-boundary).
+
 Technical documentation for agents and implementers lives in [docs/](docs/).
 Start with [docs/README.md](docs/README.md), which introduces the beginner,
 intermediate, advanced, and reference sections.

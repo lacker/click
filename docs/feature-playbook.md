@@ -4,13 +4,31 @@ Use this workflow when extending Click.
 
 ## Default Process
 
-1. Find the smallest existing mdtest near the desired behavior.
-2. Add or modify an mdtest that demonstrates the new proof or diagnostic.
+1. Freeze the C behavior that motivated the work. If it came from an existing
+   project or example, keep that source unchanged as the integration
+   regression.
+2. Find or reduce the smallest mdtest that preserves the awkward semantic
+   pattern; do not make the reduction pass by changing the C pattern away.
 3. Run `cargo test --test mdtests` and confirm the expected failure.
-4. Implement the smallest parser/lowering/kernel/prover change.
+4. Implement the smallest contract/library/parser/lowering/kernel/prover
+   change that makes the original behavior provable.
 5. Add unit tests when the behavior is lower-level than an mdtest can show.
-6. Run `cargo test`.
-7. Update docs in this directory.
+6. Reverify the unchanged integration source as well as the reduction.
+7. Run `cargo test`.
+8. Update docs in this directory.
+
+## C-source fidelity
+
+Click is intended for adoption in codebases that cannot be reorganized around
+the verifier. Do not repair a proof by adding no-op C, changing a local name,
+splitting or combining helpers, replacing one call sequence with an easier
+one, or weakening the behavior under test. Such a change is a Click issue even
+when the resulting C is valid and the proof becomes green.
+
+Changing C is appropriate when the change is independently part of the
+program's desired behavior, fixes actual C undefined behavior, or performs a
+documented semantics-preserving C0 desugaring. State which exception applies in
+the change description. Otherwise, preserve the C and fix the proof boundary.
 
 ## Where A Feature Belongs
 

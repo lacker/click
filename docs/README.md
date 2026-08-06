@@ -21,6 +21,17 @@ This book is organized by reader need:
 The beginner chapters are intentionally a narrative spine. The reference pages
 remain the source of detailed syntax and implementation truth.
 
+## Existing source is the boundary
+
+Click is designed for adoption in projects whose working C cannot be
+reorganized around a verifier. The C implementation is therefore the fixed
+verification boundary: contracts, proofs, libraries, and Click itself adapt to
+the source, not the other way around. A source change made independently for
+the program, an actual C bug fix, or documented semantics-preserving C0
+desugaring is legitimate; proof-only branches, helpers, assignments, or renames
+are Click bugs. The beginner introduction explains this principle in
+[Existing C Comes First](basic/what-click-is.md#existing-c-comes-first).
+
 ## What Click Is Today
 
 Click is a proof sidecar for a tiny C subset called C0. A `.click` file names
@@ -79,6 +90,7 @@ rg -n "unfold\\(|mutable|loadable|permutation|\\.fold|forall|exists" mdtests doc
 
 ## Editing Rule Of Thumb
 
-When adding a feature, add or update an mdtest first, then implement the parser,
-lowering, kernel/prover behavior, and docs together. If a proof feature is only
-documented in source comments, future agents will miss it.
+When adding a feature, preserve the motivating C pattern, add or update an
+mdtest first, then implement the parser, lowering, kernel/prover behavior, and
+docs together. If a proof feature is only documented in source comments,
+future agents will miss it.

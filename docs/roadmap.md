@@ -15,6 +15,13 @@ is:
 
 ## Design Principles
 
+- **Verify the C as written.** Existing source is the adoption boundary. For C
+  inside the supported semantics, do not change control flow, helper boundaries,
+  redundant operations, local names, or other implementation details merely to
+  make a proof pass. A true but unprovable claim is pressure to improve Click.
+  C changes are acceptable only when independently desired, when fixing a real
+  C bug or undefined behavior, or as documented semantics-preserving C0
+  desugaring.
 - Keep the three-language model clear:
   - **Kernel Click** is pure, explicit, has no ambient C state, and has no
     user-facing textual syntax.
@@ -98,8 +105,10 @@ Design notes:
 
 Done means:
 
-- We can transcribe or parse small real C helper functions without changing
-  their control flow beyond harmless C0 desugaring.
+- We can parse small real C helper functions and verify their original
+  behavior. Where the current frontend requires C0 desugaring, the translation
+  is documented and semantics-preserving; proof convenience never justifies a
+  source change.
 - mdtests cover each new C feature with both a successful proof and at least
   one representative failure.
 

@@ -1,5 +1,28 @@
 # Working on Click
 
+## Existing C is the verification boundary
+
+Click exists to prove properties of existing C programs. Adoption in a large
+codebase must not require refactoring working implementation code into a shape
+the verifier happens to prefer. For C inside Click's supported semantics, a
+true claim that cannot yet be proved is a Click language, model, or tooling gap.
+It is not permission to weaken, specialize, reroute, or cosmetically rewrite
+the C until the proof passes.
+
+Treat C source as fixed when adding a sidecar or repairing a proof. Put the
+adaptation in contracts, lemmas, resources, tactics, lowering, or the kernel.
+In particular, do not add no-op branches, proof-only locals, redundant
+assignments, specialized helper calls, or alternate control flow to expose a
+friendlier proof state. Do not change identifier spellings to avoid a lowering
+or snapshot bug.
+
+A C change is in scope only when it is independently desirable as a program
+change, fixes an actual C bug or undefined behavior, or is a documented
+semantics-preserving translation into the currently supported C0 subset. Keep
+the original source as the regression whenever verifier work exposes a gap.
+Synthetic examples may be small, but they must not be presented as evidence
+that Click handles an awkward source pattern that the example has edited away.
+
 ## Tooling stability comes first
 
 Verifier and proof-tooling problems block feature and example work. Stop the

@@ -4,6 +4,14 @@
 pathologically slow cases belong in explicit quarantine lists in
 `tests/mdtests.rs` and `tests/examples.rs`, with a corresponding issue here.
 
+Click's adoption boundary is existing C source. For code inside the supported
+C semantics, changing implementation behavior, control flow, helper routing,
+redundant operations, or identifier spelling solely to make verification pass
+is itself a verifier issue. Preserve the original source pattern in the
+regression and fix Click. The only exceptions are independently desired program
+changes, actual C bug or undefined-behavior fixes, and documented
+semantics-preserving C0 desugaring.
+
 Do not normalize verifier or tooling failures as part of proof development.
 When work exposes an engine problem, either fix it with a focused regression in
 the current chunk or write an issue before continuing. These problems take
@@ -25,6 +33,18 @@ particular, always track:
 The issue should contain a small intended regression, the violated invariant,
 and acceptance criteria. Do not leave the only reproduction in an uncommitted
 large example or quarantine a regression without its issue.
+
+## C-source fidelity
+
+The repository has several historical cases where example C was simplified or
+rerouted while repairing its proof. Track and remove them independently:
+
+1. [Restore the owned-string modular pipeline](restore-owned-string-pipeline.md).
+2. [Remove the runtime-allocation no-op null branch](remove-runtime-allocation-noop-null-branch.md).
+3. [Use general vector push in the owned-vector pipeline](use-general-vector-push-in-pipeline.md).
+4. [Verify independent input-cursor initialization](verify-independent-input-cursor-initialization.md).
+5. [Remove C-local spelling workarounds](remove-c-local-spelling-workarounds.md).
+6. [Audit examples against unchanged existing C](audit-existing-c-source-fidelity.md).
 
 ## Partial correctness and recursion
 
