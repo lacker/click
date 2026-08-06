@@ -26,14 +26,19 @@ int32 fill_n_loop_mutable_segment(int32 p[], int32 n) {
     requires n <= 2147483647;
     requires loadable(p[0..n]);
     consumes p[0..n];
-    for loop(0) {
+    ensures returns_n: result == n;
+} by {
+    step();
+    step();
+    loop {
         invariant i >= 0;
         invariant i <= n;
         step {
             mutable p[i..i + 1] by frame;
         }
     }
-    ensures returns_n: result == n by auto;
+    step();
+    simp();
 }
 ```
 

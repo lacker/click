@@ -584,6 +584,16 @@ pub struct CFunctionTerminationPlan {
     pub(super) loop_measures: BTreeMap<usize, String>,
 }
 
+impl CFunctionTerminationPlan {
+    pub fn function_name(&self) -> &str {
+        &self.function_name
+    }
+
+    pub fn extend_loop_measures(&mut self, measures: impl IntoIterator<Item = (usize, String)>) {
+        self.loop_measures.extend(measures);
+    }
+}
+
 /// An untrusted description of the function-level ranking candidate. The
 /// termination checker resolves the selected parameter or exact contract
 /// resource again against the verified function.
@@ -2828,7 +2838,8 @@ impl CExecutionEnvironment {
                 .pure_facts()
                 .iter()
                 .all(|required| {
-                    assumptions.proves(required)
+                    assumptions.pure_facts().contains(required)
+                        || assumptions.proves(required)
                         || match required {
                             Proposition::CMemoryLoadable {
                                 memory,

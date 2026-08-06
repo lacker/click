@@ -7168,6 +7168,774 @@ fn verifies_loop_invariants_and_statement_assert() {
 }
 
 #[test]
+fn frontier_local_loop_verifies_and_advances_to_exit() {
+    let c_source = r#"
+            int32 count_to_three() {
+                int32 i;
+                i = 0;
+                while (i < 3) {
+                    i = i + 1;
+                }
+                return i;
+            }
+        "#;
+    let click_source = r#"
+            verifying "count_to_three.c";
+
+            int32 count_to_three() {
+                ensures result == 3;
+            } by {
+                step();
+                step();
+                loop as count {
+                    invariant i >= 0;
+                    invariant i <= 3;
+                    initialize by simp;
+                    preserve by {
+                        step();
+                        close_invariants();
+                    }
+                }
+                have at(count.entry, i) == 0 by simp;
+                have at(count.exit, i) == 3 by simp;
+                step();
+                simp();
+            }
+        "#;
+
+    let verified = verify_c0_sources(click_source, &[("count_to_three.c", c_source)])
+        .expect("frontier-local loop proof should verify from its actual entry frontier");
+
+    assert_eq!(verified.len(), 1);
+}
+
+#[test]
+fn frontier_local_loop_rejects_a_non_loop_frontier() {
+    let c_source = r#"
+            int32 count_to_three() {
+                int32 i;
+                i = 0;
+                while (i < 3) {
+                    i = i + 1;
+                }
+                return i;
+            }
+        "#;
+    let click_source = r#"
+            verifying "count_to_three.c";
+
+            int32 count_to_three() {
+                ensures result == 3;
+            } by {
+                loop {
+                    invariant i >= 0;
+                }
+            }
+        "#;
+
+    let error = verify_c0_sources(click_source, &[("count_to_three.c", c_source)])
+        .expect_err("loop should not seek forward from a non-loop frontier");
+
+    assert!(
+        error
+            .message()
+            .contains("requires the execution frontier to be at a loop"),
+        "{}",
+        error.message()
+    );
+    assert!(
+        error.message().contains("statement(0)"),
+        "{}",
+        error.message()
+    );
+}
+
+#[test]
+fn frontier_local_loop_verifies_a_lowered_c_for_loop() {
+    let c_source = r#"
+            int32 count_to_three() {
+                int32 i;
+                for (i = 0; i < 3; i = i + 1) {
+                }
+                return i;
+            }
+        "#;
+    let click_source = r#"
+            verifying "count_to_three.c";
+
+            int32 count_to_three() {
+                ensures result == 3;
+            } by {
+                step();
+                step();
+                loop {
+                    invariant i >= 0;
+                    invariant i <= 3;
+                    initialize by simp;
+                    preserve by {
+                        step();
+                        step();
+                        close_invariants();
+                    }
+                }
+                step();
+                simp();
+            }
+        "#;
+
+    verify_c0_sources(click_source, &[("count_to_three.c", c_source)])
+        .expect("frontier-local loop should bind a C `for` lowered to a kernel loop");
+}
+
+#[test]
+fn frontier_local_loop_verifies_at_a_branch_local_frontier() {
+    let c_source = r#"
+            int32 branch_count(int32 flag) {
+                int32 i;
+                i = 0;
+                if (flag) {
+                    while (i < 2) {
+                        i = i + 1;
+                    }
+                } else {
+                    i = 1;
+                }
+                return i;
+            }
+        "#;
+    let click_source = r#"
+            verifying "branch_count.c";
+
+            int32 branch_count(int32 flag) {
+                ensures result >= 1;
+                ensures result <= 2;
+            } by {
+                step();
+                step();
+                if flag != 0 {
+                    step();
+                    loop {
+                        invariant i >= 0;
+                        invariant i <= 2;
+                        initialize by simp;
+                        preserve by {
+                            step();
+                            close_invariants();
+                        }
+                    }
+                } else {
+                    step();
+                    step();
+                }
+                step();
+                simp();
+            }
+        "#;
+
+    verify_c0_sources(click_source, &[("branch_count.c", c_source)])
+        .expect("frontier-local loop should use the branch's actual execution context");
+}
+
+#[test]
+fn frontier_local_loop_verifies_nested_loops_at_their_respective_frontiers() {
+    let c_source = r#"
+            int32 nested_count() {
+                int32 i;
+                int32 j;
+                i = 0;
+                while (i < 2) {
+                    j = 0;
+                    while (j < 2) {
+                        j = j + 1;
+                    }
+                    i = i + 1;
+                }
+                return i;
+            }
+        "#;
+    let click_source = r#"
+            verifying "nested_count.c";
+
+            int32 nested_count() {
+                ensures result == 2;
+            } by {
+                step();
+                step();
+                step();
+                loop {
+                    invariant i >= 0;
+                    invariant i <= 2;
+                    initialize by simp;
+                    preserve by {
+                        step();
+                        loop {
+                            invariant j >= 0;
+                            invariant j <= 2;
+                            initialize by simp;
+                            preserve by {
+                                step();
+                                close_invariants();
+                            }
+                        }
+                        step();
+                        close_invariants();
+                    }
+                }
+                step();
+                simp();
+            }
+        "#;
+
+    verify_c0_sources(click_source, &[("nested_count.c", c_source)])
+        .expect("nested loop proofs should be scoped to their respective frontiers");
+}
+
+#[test]
+fn frontier_local_loop_verifies_step_relative_mutable_effects() {
+    let c_source = r#"
+            int32 fill_n(int32 p[], int32 n) {
+                int32 i;
+                i = 0;
+                while (i < n) {
+                    p[i] = i;
+                    i = i + 1;
+                }
+                return i;
+            }
+        "#;
+    let click_source = r#"
+            verifying "fill_n.c";
+
+            int32 fill_n(int32 p[], int32 n) {
+                requires n >= 0;
+                requires n <= 2147483647;
+                requires loadable(p[0..n]);
+                consumes p[0..n];
+                ensures result == n;
+            } by {
+                step();
+                step();
+                loop {
+                    invariant i >= 0;
+                    invariant i <= n;
+                    step {
+                        mutable p[i..i + 1] by frame;
+                    }
+                    initialize by simp;
+                    preserve by {
+                        step();
+                        step();
+                        close_invariants();
+                    }
+                }
+                step();
+                simp();
+            }
+        "#;
+
+    crate::instrumentation::with_deadline(std::time::Duration::from_secs(3), || {
+        verify_c0_sources(click_source, &[("fill_n.c", c_source)])
+    })
+    .expect("frontier-local loops should certify step-relative mutable effects");
+}
+
+#[test]
+fn frontier_local_loop_preserves_a_perpetual_partial_contract() {
+    let c_source = r#"
+            int32 spin() {
+                while (1) {
+                }
+                return 0;
+            }
+        "#;
+    let click_source = r#"
+            verifying "spin.c";
+
+            int32 spin() {
+                ensures 0 == 0;
+            } by {
+                loop {
+                    invariant 0 == 0;
+                    initialize by simp;
+                    preserve by {
+                        step();
+                        close_invariants();
+                    }
+                }
+                simp();
+            }
+        "#;
+
+    crate::instrumentation::with_deadline(std::time::Duration::from_secs(3), || {
+        verify_c0_sources(click_source, &[("spin.c", c_source)])
+    })
+    .expect("a frontier-local loop without `decreases` should prove partial correctness");
+}
+
+#[test]
+fn frontier_local_perpetual_loop_expands_a_direct_closer_without_a_return() {
+    let c_source = r#"
+            int32 spin() {
+                while (1) {
+                }
+                return 0;
+            }
+        "#;
+    let click_source = r#"
+            verifying "spin.c";
+
+            int32 spin() {
+                ensures 0 == 0;
+            } by {
+                loop {
+                    invariant 0 == 0;
+                    initialize by simp;
+                    preserve by {
+                        step();
+                        close_invariants();
+                    }
+                }
+                simp();
+            }
+        "#;
+    let closer = click_source
+        .rfind("simp();")
+        .expect("proof should contain its direct closer");
+    let line = click_source[..closer]
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count()
+        + 1;
+    let column = closer
+        - click_source[..closer]
+            .rfind('\n')
+            .map(|offset| offset + 1)
+            .unwrap_or(0)
+        + 1;
+
+    let expanded = expand_c0_tactic_source_at(click_source, &[("spin.c", c_source)], line, column)
+        .expect("a direct tautology closer should expand without a return outcome");
+
+    verify_c0_sources(&expanded, &[("spin.c", c_source)]).unwrap_or_else(|error| {
+        panic!(
+            "the expanded perpetual-loop proof should freshly replay: {}\n{expanded}",
+            error.message()
+        )
+    });
+}
+
+#[test]
+fn frontier_local_loop_checks_an_optional_decreases_measure() {
+    let c_source = r#"
+            int32 drain(int32 n) {
+                while (n > 0) {
+                    n = n - 1;
+                }
+                return n;
+            }
+        "#;
+    let click_source = r#"
+            verifying "drain.c";
+
+            int32 drain(int32 n) {
+                requires n >= 0;
+                ensures result == 0;
+            } by {
+                loop {
+                    decreases n;
+                    invariant n >= 0;
+                    initialize by simp;
+                    preserve by {
+                        step();
+                        close_invariants();
+                    }
+                }
+                step();
+                simp();
+            }
+        "#;
+
+    let (session, _) = C0VerificationSession::new(click_source, &[("drain.c", c_source)])
+        .expect("frontier-local loop should retain structural termination checking");
+    assert!(session.function_termination_is_verified("drain"));
+}
+
+#[test]
+fn frontier_local_loop_keyword_expands_omitted_phases() {
+    let c_source = r#"
+            int32 count_to_n(int32 n) {
+                int32 i;
+                i = 0;
+                while (i < n) {
+                    i = i + 1;
+                }
+                return i;
+            }
+        "#;
+    let click_source = r#"
+            verifying "count_to_n.c";
+
+            int32 count_to_n(int32 n) {
+                requires n >= 0 and n <= 2147483647;
+                ensures result == n;
+            } by {
+                step();
+                step();
+                loop {
+                    invariant i >= 0;
+                    invariant i <= n;
+                }
+                step();
+                simp();
+            }
+        "#;
+    let loop_offset = click_source
+        .find("loop {")
+        .expect("proof should contain its loop keyword");
+    let line = click_source[..loop_offset]
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count()
+        + 1;
+    let column = loop_offset
+        - click_source[..loop_offset]
+            .rfind('\n')
+            .map(|offset| offset + 1)
+            .unwrap_or(0)
+        + 1;
+
+    let expanded =
+        expand_c0_tactic_source_at(click_source, &[("count_to_n.c", c_source)], line, column)
+            .expect("the loop keyword should expand all omitted phase automation");
+
+    assert!(expanded.contains("initialize by {"), "{expanded}");
+    assert!(expanded.contains("preserve by {"), "{expanded}");
+    verify_c0_sources(&expanded, &[("count_to_n.c", c_source)]).unwrap_or_else(|error| {
+        panic!(
+            "the expanded frontier-local loop should freshly replay: {}\n{expanded}",
+            error.message()
+        )
+    });
+}
+
+#[test]
+fn frontier_local_loop_does_not_leak_phase_tactics_into_a_later_expansion() {
+    let c_source = r#"
+            int32 count_to_three() {
+                int32 i;
+                i = 0;
+                while (i < 3) {
+                    i = i + 1;
+                }
+                return i;
+            }
+        "#;
+    let click_source = r#"
+            verifying "count_to_three.c";
+
+            int32 count_to_three() {
+                ensures result == 3;
+            } by {
+                step();
+                step();
+                loop {
+                    invariant i >= 0;
+                    invariant i <= 3;
+                }
+                step();
+                simp();
+            }
+        "#;
+    let post_loop_step = click_source
+        .rfind("step();")
+        .expect("proof should contain a post-loop step");
+    let line = click_source[..post_loop_step]
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count()
+        + 1;
+    let column = post_loop_step
+        - click_source[..post_loop_step]
+            .rfind('\n')
+            .map(|offset| offset + 1)
+            .unwrap_or(0)
+        + 1;
+
+    let expanded = expand_c0_tactic_source_at(
+        click_source,
+        &[("count_to_three.c", c_source)],
+        line,
+        column,
+    )
+    .expect("the post-loop step should expand independently");
+
+    verify_c0_sources(&expanded, &[("count_to_three.c", c_source)]).unwrap_or_else(|error| {
+        panic!(
+            "post-loop expansion should not leak loop-region tactics: {}\n{expanded}",
+            error.message()
+        )
+    });
+}
+
+#[test]
+fn frontier_local_loop_expands_an_explicit_nested_tactic_at_its_own_location() {
+    let c_source = r#"
+            int32 count_to_three() {
+                int32 i;
+                i = 0;
+                while (i < 3) {
+                    i = i + 1;
+                }
+                return i;
+            }
+        "#;
+    let click_source = r#"
+            verifying "count_to_three.c";
+
+            int32 count_to_three() {
+                ensures result == 3;
+            } by {
+                step();
+                step();
+                loop {
+                    invariant i >= 0;
+                    invariant i <= 3;
+                    initialize by simp;
+                    preserve by {
+                        step();
+                        close_invariants();
+                    }
+                }
+                step();
+                simp();
+            }
+        "#;
+    let initialize_simp = click_source
+        .find("initialize by simp")
+        .expect("proof should contain explicit initialization")
+        + "initialize by ".len();
+    let line = click_source[..initialize_simp]
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count()
+        + 1;
+    let column = initialize_simp
+        - click_source[..initialize_simp]
+            .rfind('\n')
+            .map(|offset| offset + 1)
+            .unwrap_or(0)
+        + 1;
+    let inventory = c0_smart_tactic_source_sites(click_source, &[("count_to_three.c", c_source)])
+        .expect("frontier-local nested tactics should be inventoried without verification");
+    let matching_inventory = inventory
+        .iter()
+        .filter(|site| {
+            c0_tactic_source_position(
+                click_source,
+                &[("count_to_three.c", c_source)],
+                &site.claim_label,
+                site.source_index,
+            )
+            .is_ok_and(|position| position.line == line && position.column == column)
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(matching_inventory.len(), 1, "{inventory:?}");
+    assert_eq!(matching_inventory[0].tactic_name, "simp");
+
+    let expanded = expand_c0_tactic_source_at(
+        click_source,
+        &[("count_to_three.c", c_source)],
+        line,
+        column,
+    )
+    .expect("explicit initialization tactic should expand at its own source location");
+
+    assert!(!expanded.contains("initialize by simp"), "{expanded}");
+    assert!(expanded.contains("preserve by {"), "{expanded}");
+    verify_c0_sources(&expanded, &[("count_to_three.c", c_source)])
+        .expect("expanded explicit initialization tactic should freshly replay");
+}
+
+#[test]
+fn frontier_local_loop_at_function_entry_keeps_initialization_capture_separate() {
+    let c_source = r#"
+            int32 drain(int32 n) {
+                while (n > 0) {
+                    n = n - 1;
+                }
+                return n;
+            }
+        "#;
+    let click_source = r#"
+            verifying "drain.c";
+
+            int32 drain(int32 n) {
+                requires n >= 0;
+                ensures result == 0;
+            } by {
+                loop {
+                    decreases n;
+                    invariant n >= 0;
+                    initialize by simp;
+                    preserve by {
+                        step();
+                        close_invariants();
+                    }
+                }
+                step();
+                simp();
+            }
+        "#;
+
+    let tactics = super::proof::capture_c0_tactic_expansion(
+        click_source,
+        &[("drain.c", c_source)],
+        super::expansion::ProofSite::FunctionClaim {
+            function_name: "drain".to_string(),
+            claim: CProofClaim::Grouped,
+        },
+        1,
+    )
+    .expect("initialization should retain its own expansion certificate");
+
+    assert!(
+        !tactics
+            .iter()
+            .any(|tactic| matches!(tactic, ProofTactic::CloseInvariants)),
+        "initialization captured preservation tactics: {tactics:?}"
+    );
+}
+
+#[test]
+fn frontier_local_loop_expands_a_tactic_inside_preservation_at_its_own_location() {
+    let c_source = r#"
+            int32 count_to_three() {
+                int32 i;
+                i = 0;
+                while (i < 3) {
+                    i = i + 1;
+                }
+                return i;
+            }
+        "#;
+    let click_source = r#"
+            verifying "count_to_three.c";
+
+            int32 count_to_three() {
+                ensures result == 3;
+            } by {
+                step();
+                step();
+                loop {
+                    invariant i >= 0;
+                    invariant i <= 3;
+                    initialize by simp;
+                    preserve by {
+                        step();
+                        close_invariants();
+                    }
+                }
+                step();
+                simp();
+            }
+        "#;
+    let preserve_step = click_source
+        .find("preserve by {")
+        .and_then(|offset| {
+            click_source[offset..]
+                .find("step();")
+                .map(|step| offset + step)
+        })
+        .expect("proof should contain a preservation step");
+    let line = click_source[..preserve_step]
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count()
+        + 1;
+    let column = preserve_step
+        - click_source[..preserve_step]
+            .rfind('\n')
+            .map(|offset| offset + 1)
+            .unwrap_or(0)
+        + 1;
+
+    let expanded = expand_c0_tactic_source_at(
+        click_source,
+        &[("count_to_three.c", c_source)],
+        line,
+        column,
+    )
+    .expect("preservation step should expand at its own source location");
+
+    assert_ne!(expanded, click_source);
+    assert!(expanded.contains("initialize by simp"), "{expanded}");
+    verify_c0_sources(&expanded, &[("count_to_three.c", c_source)])
+        .expect("expanded preservation step should freshly replay");
+}
+
+#[test]
+fn frontier_local_loop_expands_an_explicit_effect_tactic_at_its_own_location() {
+    let c_source = r#"
+            int32 fill(int32 p[], int32 n) {
+                int32 i;
+                i = 0;
+                while (i < n) {
+                    p[i] = i;
+                    i = i + 1;
+                }
+                return i;
+            }
+        "#;
+    let click_source = r#"
+            verifying "fill.c";
+
+            int32 fill(int32 p[], int32 n) {
+                requires n >= 0 and n <= 2147483647;
+                requires loadable(p[0..n]);
+                consumes p[0..n];
+                ensures result == n;
+            } by {
+                step();
+                step();
+                loop {
+                    invariant i >= 0;
+                    invariant i <= n;
+                    step {
+                        mutable p[i..i + 1] by frame;
+                    }
+                }
+                step();
+                simp();
+            }
+        "#;
+    let effect_frame = click_source
+        .find("mutable p[i..i + 1] by frame")
+        .expect("proof should contain an explicit effect tactic")
+        + "mutable p[i..i + 1] by ".len();
+    let line = click_source[..effect_frame]
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count()
+        + 1;
+    let column = effect_frame
+        - click_source[..effect_frame]
+            .rfind('\n')
+            .map(|offset| offset + 1)
+            .unwrap_or(0)
+        + 1;
+
+    let expanded = expand_c0_tactic_source_at(click_source, &[("fill.c", c_source)], line, column)
+        .expect("the explicit effect tactic should expand at its own source location");
+
+    assert!(
+        !expanded.contains("mutable p[i..i + 1] by frame"),
+        "{expanded}"
+    );
+    verify_c0_sources(&expanded, &[("fill.c", c_source)])
+        .expect("expanded explicit effect tactic should freshly replay");
+}
+
+#[test]
 // De-quarantined by the named-memory-states arc, stage 2a: the blocker was not
 // load-equality strength but `old(...)` resolution. Certificate replay used to
 // resolve `old` positionally, to the loop-top havoc snapshot, while the kernel

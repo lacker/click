@@ -15,11 +15,17 @@ int32 spin() {
 verifying "infinite_loop_partial_contract.c";
 
 int32 spin() {
-    for loop(0) {
+    ensures 0 == 0;
+} by {
+    loop {
         invariant 0 == 0;
+        initialize by simp;
+        preserve by {
+            step();
+            close_invariants();
+        }
     }
-
-    ensures 0 == 0 by auto;
+    simp();
 }
 ```
 

@@ -2128,6 +2128,14 @@ fn build_internal_proof(
     build_internal_proof_at(tactics, &mut next_join_id, 0, 0)
 }
 
+fn build_internal_proof_from_source_index(
+    tactics: &[ProofTactic],
+    source_index: usize,
+) -> Result<InternalProofNode, ClickError> {
+    let mut next_join_id = 0;
+    build_internal_proof_at(tactics, &mut next_join_id, 0, source_index)
+}
+
 fn build_generated_certificate_proof(
     tactics: &[ProofTactic],
     claim_label: &str,
@@ -2184,22 +2192,17 @@ fn build_internal_proof_at(
             return Ok(InternalProofNode::Done);
         }
         return Ok(InternalProofNode::Linear {
-            tactics: tactics
-                .iter()
-                .cloned()
-                .enumerate()
-                .map(|(index, tactic)| IndexedTactic {
-                    index: index_offset + index,
-                    source_index: source_index_offset + index,
-                    tactic,
-                })
-                .collect(),
+            tactics: indexed_linear_tactics(tactics, index_offset, source_index_offset),
             continuation: Box::new(InternalProofNode::Done),
         });
     };
 
     let index = index_offset + control_index;
-    let source_index = source_index_offset + control_index;
+    let source_index = source_index_offset
+        + tactics[..control_index]
+            .iter()
+            .map(source_tactic_width)
+            .sum::<usize>();
     let control = match control_tactic {
         ProofTactic::If(proof_if) => {
             let then_width = source_tactic_count(&proof_if.then_tactics);
@@ -2255,19 +2258,36 @@ fn build_internal_proof_at(
         Ok(control)
     } else {
         Ok(InternalProofNode::Linear {
-            tactics: tactics[..control_index]
-                .iter()
-                .cloned()
-                .enumerate()
-                .map(|(prefix_index, tactic)| IndexedTactic {
-                    index: index_offset + prefix_index,
-                    source_index: source_index_offset + prefix_index,
-                    tactic,
-                })
-                .collect(),
+            tactics: indexed_linear_tactics(
+                &tactics[..control_index],
+                index_offset,
+                source_index_offset,
+            ),
             continuation: Box::new(control),
         })
     }
+}
+
+fn indexed_linear_tactics(
+    tactics: &[ProofTactic],
+    index_offset: usize,
+    source_index_offset: usize,
+) -> Vec<IndexedTactic> {
+    let mut source_index = source_index_offset;
+    tactics
+        .iter()
+        .cloned()
+        .enumerate()
+        .map(|(index, tactic)| {
+            let indexed = IndexedTactic {
+                index: index_offset + index,
+                source_index,
+                tactic,
+            };
+            source_index += source_tactic_width(&indexed.tactic);
+            indexed
+        })
+        .collect()
 }
 
 pub(super) fn source_tactic_count(tactics: &[ProofTactic]) -> usize {
@@ -2281,7 +2301,27 @@ fn source_tactic_width(tactic: &ProofTactic) -> usize {
                 + source_tactic_count(&proof_if.else_tactics)
         }
         ProofTactic::Reach(advance) => 1 + source_tactic_count(&advance.tactics),
+        ProofTactic::Loop(clause) => {
+            1 + clause
+                .initialize_proof()
+                .map_or(0, proof_source_tactic_count)
+                + clause.preserve_proof().map_or(0, proof_source_tactic_count)
+                + clause
+                    .items()
+                    .iter()
+                    .filter(|item| item.is_effect_kind())
+                    .map(|item| proof_source_tactic_count(item.proof()))
+                    .sum::<usize>()
+        }
         _ => 1,
+    }
+}
+
+pub(super) fn proof_source_tactic_count(proof: &Proof) -> usize {
+    match proof {
+        Proof::Default => 0,
+        Proof::Tactic(_) => 1,
+        Proof::Script(tactics) => source_tactic_count(tactics),
     }
 }
 
@@ -3882,6 +3922,11 @@ struct TacticReplayState {
     next_verification_variable: u64,
     next_path_choice: usize,
     execution_start_facts: Vec<Proposition>,
+    /// Frontier-local loop proofs become part of the checked function proof,
+    /// not temporary tactic state.  Final kernel certification rebuilds the
+    /// annotated function from these bound clauses and reuses these rules.
+    frontier_loop_clauses: Vec<StructuralClause>,
+    frontier_loop_rules: Vec<CVerifiedLoopRule>,
     /// The snapshot that `old(...)` — and `at(function.entry, ...)`, which is
     /// the same reference under another spelling — names in this region.
     ///
@@ -4756,6 +4801,8 @@ pub(super) fn verify_loop_execution_proofs(
         arguments: &arguments,
         surface_propositions: &surface_propositions,
         source_layout: &source_layout,
+        frontier_loop_certificates: None,
+        frontier_loop_source: None,
     };
     let mut verified_loop_rules = Vec::new();
     let mut next_statement_index = 0;
@@ -4789,6 +4836,43 @@ fn explicit_loop_preservation_tactics(clause: &StructuralClause) -> Option<&[Pro
     .then_some(tactics)
 }
 
+fn kernel_loop_by_index<'a>(
+    statement: &'a CStatement,
+    target: usize,
+    next_loop_index: &mut usize,
+) -> Option<&'a CStatement> {
+    match statement {
+        CStatement::While { body, .. } => {
+            let loop_index = *next_loop_index;
+            *next_loop_index += 1;
+            if loop_index == target {
+                Some(statement)
+            } else {
+                kernel_loop_by_index(body, target, next_loop_index)
+            }
+        }
+        CStatement::Seq(first, second) => kernel_loop_by_index(first, target, next_loop_index)
+            .or_else(|| kernel_loop_by_index(second, target, next_loop_index)),
+        CStatement::If {
+            then_branch,
+            else_branch,
+            ..
+        } => kernel_loop_by_index(then_branch, target, next_loop_index)
+            .or_else(|| kernel_loop_by_index(else_branch, target, next_loop_index)),
+        CStatement::Skip
+        | CStatement::Declare { .. }
+        | CStatement::Assign { .. }
+        | CStatement::CallAssign { .. }
+        | CStatement::Call { .. }
+        | CStatement::HeapAllocate { .. }
+        | CStatement::HeapFree { .. }
+        | CStatement::Return(_)
+        | CStatement::Store { .. }
+        | CStatement::TypedStore { .. }
+        | CStatement::Assert { .. } => None,
+    }
+}
+
 struct ExecutionProofEnvironment<'a> {
     initial_state: &'a CState,
     function_block: &'a FunctionBlock,
@@ -4802,6 +4886,67 @@ struct ExecutionProofEnvironment<'a> {
     arguments: &'a [CExpression],
     surface_propositions: &'a SurfacePropositionMap,
     source_layout: &'a SourceExecutionLayout,
+    frontier_loop_certificates: Option<&'a std::cell::RefCell<LoopProofCertificates>>,
+    frontier_loop_source: Option<&'a FrontierLoopProofSource>,
+}
+
+#[derive(Clone, Default)]
+struct LoopProofCertificates {
+    initialize: Option<TacticCertificate>,
+    preserve: Option<TacticCertificate>,
+    effects: BTreeMap<usize, TacticCertificate>,
+}
+
+#[derive(Clone)]
+struct FrontierLoopProofSource {
+    proof_site: Option<ProofSite>,
+    claim_label: String,
+    loop_source_index: usize,
+    initialize_source_index: Option<usize>,
+    preserve_source_index: Option<usize>,
+    effect_source_indices: BTreeMap<usize, usize>,
+}
+
+impl FrontierLoopProofSource {
+    fn new(
+        clause: &StructuralClause,
+        proof_site: Option<ProofSite>,
+        claim_label: &str,
+        loop_source_index: usize,
+    ) -> Self {
+        let mut next_source_index = loop_source_index + 1;
+        let initialize_source_index = clause.initialize_proof().and_then(|proof| {
+            let width = proof_source_tactic_count(proof);
+            let start = (width != 0).then_some(next_source_index);
+            next_source_index += width;
+            start
+        });
+        let preserve_source_index = clause.preserve_proof().and_then(|proof| {
+            let width = proof_source_tactic_count(proof);
+            let start = (width != 0).then_some(next_source_index);
+            next_source_index += width;
+            start
+        });
+        let mut effect_source_indices = BTreeMap::new();
+        for (item_index, item) in clause.items().iter().enumerate() {
+            if !item.is_effect_kind() {
+                continue;
+            }
+            let width = proof_source_tactic_count(item.proof());
+            if width != 0 {
+                effect_source_indices.insert(item_index, next_source_index);
+            }
+            next_source_index += width;
+        }
+        Self {
+            proof_site,
+            claim_label: claim_label.to_string(),
+            loop_source_index,
+            initialize_source_index,
+            preserve_source_index,
+            effect_source_indices,
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -7260,52 +7405,91 @@ fn verify_execution_proofs_forward(
                 }
             }
             if initialization_proof.is_some() {
-                let claim_label = format!(
-                    "{}.loop({loop_index}).initialize",
-                    environment.function_block.signature().name()
-                );
-                let initialization_certificate = merge_path_aligned_certificates(
-                    &claim_label,
-                    initialization_path_certificates,
-                )?;
-                let site = ProofSite::LoopPhase {
+                let legacy_site = ProofSite::LoopPhase {
                     function_name: environment.function_block.signature().name().to_string(),
                     loop_index,
                     phase: "initialize",
                 };
-                if let Some(source_index) = selected_tactic_index_for_site(&site)
-                    && let Some((_, Proof::Script(source_tactics))) = initialization_proof
-                    && matches!(source_tactics.get(source_index), Some(ProofTactic::Simp))
-                    && !source_tactics.iter().any(|tactic| {
-                        matches!(
-                            tactic,
-                            ProofTactic::ApplyTheorem(_) | ProofTactic::ApplyTheoremUsing { .. }
+                let (claim_label, site, selected_source_index) = environment
+                    .frontier_loop_source
+                    .map(|source| {
+                        (
+                            source.claim_label.clone(),
+                            source
+                                .proof_site
+                                .clone()
+                                .unwrap_or_else(|| legacy_site.clone()),
+                            source.initialize_source_index,
                         )
                     })
-                {
-                    record_proof_site_tactic_expansion(
-                        &site,
-                        source_index,
-                        initialization_certificate.tactics(),
-                    );
+                    .unwrap_or_else(|| (legacy_site.description(), legacy_site.clone(), Some(0)));
+                let initialization_certificate = merge_path_aligned_certificates(
+                    &claim_label,
+                    initialization_path_certificates,
+                )?;
+                if let Some(certificates) = environment.frontier_loop_certificates {
+                    certificates.borrow_mut().initialize = Some(initialization_certificate.clone());
                 }
-                finish_proof_site_expansion_capture(&site, &initialization_certificate)?;
+                if environment.frontier_loop_source.is_some() {
+                    if let Some(source_index) = selected_source_index
+                        && selected_tactic_index_for_site(&site) == Some(source_index)
+                    {
+                        record_proof_site_tactic_expansion(
+                            &site,
+                            source_index,
+                            initialization_certificate.tactics(),
+                        );
+                    }
+                } else {
+                    if let Some(source_index) = selected_tactic_index_for_site(&site)
+                        && let Some((_, Proof::Script(source_tactics))) = initialization_proof
+                        && matches!(source_tactics.get(source_index), Some(ProofTactic::Simp))
+                        && !source_tactics.iter().any(|tactic| {
+                            matches!(
+                                tactic,
+                                ProofTactic::ApplyTheorem(_)
+                                    | ProofTactic::ApplyTheoremUsing { .. }
+                            )
+                        })
+                    {
+                        record_proof_site_tactic_expansion(
+                            &site,
+                            source_index,
+                            initialization_certificate.tactics(),
+                        );
+                    }
+                    finish_proof_site_expansion_capture(&site, &initialization_certificate)?;
+                }
             }
             if !preservation_path_certificates.is_empty() {
-                let claim_label = format!(
-                    "{}.loop({loop_index}).preserve",
-                    environment.function_block.signature().name()
+                let claim_label = environment.frontier_loop_source.map_or_else(
+                    || {
+                        format!(
+                            "{}.loop({loop_index}).preserve",
+                            environment.function_block.signature().name()
+                        )
+                    },
+                    |source| source.claim_label.clone(),
                 );
                 let preservation_certificate =
                     merge_path_aligned_certificates(&claim_label, preservation_path_certificates)?;
-                finish_proof_site_expansion_capture(
-                    &ProofSite::LoopPhase {
-                        function_name: environment.function_block.signature().name().to_string(),
-                        loop_index,
-                        phase: "preserve",
-                    },
-                    &preservation_certificate,
-                )?;
+                if let Some(certificates) = environment.frontier_loop_certificates {
+                    certificates.borrow_mut().preserve = Some(preservation_certificate.clone());
+                }
+                if environment.frontier_loop_source.is_none() {
+                    finish_proof_site_expansion_capture(
+                        &ProofSite::LoopPhase {
+                            function_name: environment
+                                .function_block
+                                .signature()
+                                .name()
+                                .to_string(),
+                            loop_index,
+                            phase: "preserve",
+                        },
+                        &preservation_certificate,
+                    )?;
+                }
             }
             for (item_index, paths) in effect_path_certificates {
                 let site = ProofSite::StructuralItem {
@@ -7327,12 +7511,23 @@ fn verify_execution_proofs_forward(
                         })?,
                 };
                 let certificate = merge_path_aligned_certificates(&site.description(), paths)?;
+                if let Some(certificates) = environment.frontier_loop_certificates {
+                    certificates
+                        .borrow_mut()
+                        .effects
+                        .insert(item_index, certificate.clone());
+                }
                 finish_proof_site_expansion_capture(&site, &certificate)?;
             }
 
-            if kernel_statement_contains_loop(body) {
+            if kernel_statement_contains_loop(body) && environment.frontier_loop_source.is_none() {
                 // Nested loop regions are encountered from the arbitrary iteration
                 // frontier, exactly where the outer induction hypothesis applies.
+                // This detached traversal exists only for legacy `for loop(N)`
+                // clauses. A frontier-local preservation proof encounters and
+                // verifies nested loops through its own `loop` tactics; walking
+                // the body again would duplicate that proof and recursively
+                // grow the verifier stack once per nesting level.
                 *next_statement_index = environment
                     .source_layout
                     .loop_body_entry(loop_index)
@@ -8105,10 +8300,26 @@ fn verify_loop_initialization_pure_proof(
     invariant_checks: &[CLoopInvariantCheck],
     environment: &ExecutionProofEnvironment<'_>,
 ) -> Result<TacticCertificate, ClickError> {
-    let claim_label = format!(
-        "{}.loop({loop_index}).initialize",
-        environment.function_block.signature().name()
-    );
+    let legacy_site = ProofSite::LoopPhase {
+        function_name: environment.function_block.signature().name().to_string(),
+        loop_index,
+        phase: "initialize",
+    };
+    let (claim_label, initialize_source_index, initialize_site) = environment
+        .frontier_loop_source
+        .map(|source| {
+            (
+                source.claim_label.clone(),
+                source
+                    .initialize_source_index
+                    .unwrap_or(source.loop_source_index),
+                source
+                    .proof_site
+                    .clone()
+                    .unwrap_or_else(|| legacy_site.clone()),
+            )
+        })
+        .unwrap_or_else(|| (legacy_site.description(), 0, legacy_site));
     let mut program_point_states = context.program_point_states.clone();
     program_point_states.insert(
         ProgramPointRef {
@@ -8139,12 +8350,10 @@ fn verify_loop_initialization_pure_proof(
         .collect::<Vec<_>>();
     let initialization_surface_propositions =
         std::cell::RefCell::new(context.surface_propositions.clone());
-    // The whole initialize phase is one source `by` clause, so every step it
-    // plans or replays reports source tactic 0 — the clause itself — and the
-    // loop's body entry as its statement. Computing the layout is only worth
-    // it when something will read the timings.
+    // Generated initialization steps belong to the explicit phase tactic when
+    // one exists, or to the enclosing `loop` keyword for an omitted phase.
+    // Computing the source statement is only worth it when timings are read.
     let timings_enabled = crate::instrumentation::enabled();
-    let initialize_source_index = 0;
     let initialize_statement_index = if timings_enabled {
         SourceExecutionLayout::new(environment.parsed_function.body())
             .loop_body_entry(loop_index)
@@ -8234,11 +8443,7 @@ fn verify_loop_initialization_pure_proof(
                     )
                 });
                 let direct_plan = plan_point_pure_goal_certificate(
-                    &ProofSite::LoopPhase {
-                        function_name: environment.function_block.signature().name().to_string(),
-                        loop_index,
-                        phase: "initialize",
-                    },
+                    &initialize_site,
                     proposition,
                     proof,
                     &invariant_claim_label,
@@ -8381,9 +8586,14 @@ fn plan_automatic_loop_preservation_body(
     body: &CStatement,
     environment: &ExecutionProofEnvironment<'_>,
 ) -> Result<TacticCertificate, ClickError> {
-    let claim_label = format!(
-        "{}.loop({loop_index}).preserve",
-        environment.function_block.signature().name()
+    let claim_label = environment.frontier_loop_source.map_or_else(
+        || {
+            format!(
+                "{}.loop({loop_index}).preserve",
+                environment.function_block.signature().name()
+            )
+        },
+        |source| source.claim_label.clone(),
     );
     let sentinel = CStatement::Return(CExpression::Value(int32(0)));
     let remaining = c_seq(body.clone(), sentinel.clone());
@@ -8392,6 +8602,9 @@ fn plan_automatic_loop_preservation_body(
         ClickError::new(format!("`{claim_label}` has no source loop({loop_index})"))
     })?;
     let mut replay = TacticReplayState {
+        proof_site: environment
+            .frontier_loop_source
+            .and_then(|source| source.proof_site.clone()),
         frontier: ExecutionFrontier {
             point: ProofExecutionPoint::StatementEntry { remaining },
             execution_start_state: Some(preservation.state().clone()),
@@ -8478,7 +8691,15 @@ fn plan_automatic_loop_preservation_body(
         let mut advanced = Vec::new();
         let mut errors = Vec::new();
         for tactic in candidates {
-            let program = build_internal_proof(std::slice::from_ref(&tactic), &claim_label)?;
+            let program = if let Some(source) = environment.frontier_loop_source {
+                build_generated_certificate_proof(
+                    std::slice::from_ref(&tactic),
+                    &claim_label,
+                    source.loop_source_index,
+                )?
+            } else {
+                build_internal_proof(std::slice::from_ref(&tactic), &claim_label)?
+            };
             match execute_internal_proof(
                 &program,
                 context.clone(),
@@ -8546,13 +8767,29 @@ fn verify_structural_effect_proof(
     context: &ProofReplayContext,
     environment: &ExecutionProofEnvironment<'_>,
 ) -> Result<TacticCertificate, ClickError> {
-    let site = ProofSite::StructuralItem {
+    let legacy_site = ProofSite::StructuralItem {
         function_name: environment.function_block.signature().name().to_string(),
         region: CodeRegion::Loop(loop_index),
         item_index,
         kind: item.kind(),
     };
-    let claim_label = site.description();
+    let (site, claim_label, effect_source_index) = environment
+        .frontier_loop_source
+        .map(|source| {
+            (
+                source
+                    .proof_site
+                    .clone()
+                    .unwrap_or_else(|| legacy_site.clone()),
+                source.claim_label.clone(),
+                source
+                    .effect_source_indices
+                    .get(&item_index)
+                    .copied()
+                    .unwrap_or(source.loop_source_index),
+            )
+        })
+        .unwrap_or_else(|| (legacy_site.clone(), legacy_site.description(), 0));
     let certificate = match item.proof() {
         Proof::Default | Proof::Tactic(SmartTactic::Auto) | Proof::Tactic(SmartTactic::Frame) => {
             TacticCertificate::from_proof_tactics(&[ProofTactic::FrameUsing {
@@ -8572,7 +8809,13 @@ fn verify_structural_effect_proof(
             "`{claim_label}` produced an invalid structural-effect certificate: {error:?}"
         ))
     })?;
-    let program = build_internal_proof(certificate.tactics(), &claim_label)?;
+    if environment.frontier_loop_source.is_some()
+        && selected_tactic_index_for_site(&site) == Some(effect_source_index)
+    {
+        record_proof_site_tactic_expansion(&site, effect_source_index, certificate.tactics());
+    }
+    let program =
+        build_internal_proof_from_source_index(certificate.tactics(), effect_source_index)?;
     let mut replay = context.replay.clone();
     replay.proof_site = Some(site);
     replay.loop_effect_goal = Some(LoopEffectReplayGoal {
@@ -8640,10 +8883,26 @@ fn verify_one_loop_preservation_proof(
     body: &CStatement,
     environment: &ExecutionProofEnvironment<'_>,
 ) -> Result<LoopPreservationProofResult, ClickError> {
-    let claim_label = format!(
-        "{}.loop({loop_index}).preserve",
-        environment.function_block.signature().name()
-    );
+    let legacy_site = ProofSite::LoopPhase {
+        function_name: environment.function_block.signature().name().to_string(),
+        loop_index,
+        phase: "preserve",
+    };
+    let (claim_label, preserve_source_index, preserve_site) = environment
+        .frontier_loop_source
+        .map(|source| {
+            (
+                source.claim_label.clone(),
+                source
+                    .preserve_source_index
+                    .unwrap_or(source.loop_source_index),
+                source
+                    .proof_site
+                    .clone()
+                    .unwrap_or_else(|| legacy_site.clone()),
+            )
+        })
+        .unwrap_or_else(|| (legacy_site.description(), 0, legacy_site));
 
     let proof_claims = [];
     // Positive closer results from the planner half, keyed by the certificate
@@ -8652,7 +8911,14 @@ fn verify_one_loop_preservation_proof(
     // path reproduces the closer inputs without an expensive deep comparison
     // of snapshot-rich states and proposition sets.
     let mut verified_closer_paths: Vec<Vec<ProofCaseChoice>> = Vec::new();
-    let program = build_internal_proof(tactics, &claim_label)?;
+    let program = if environment
+        .frontier_loop_source
+        .is_some_and(|source| source.preserve_source_index.is_none())
+    {
+        build_generated_certificate_proof(tactics, &claim_label, preserve_source_index)?
+    } else {
+        build_internal_proof_from_source_index(tactics, preserve_source_index)?
+    };
     let sentinel = CStatement::Return(CExpression::Value(int32(0)));
     let remaining = c_seq(body.clone(), sentinel.clone());
     let source_layout = SourceExecutionLayout::new(environment.parsed_function.body());
@@ -8660,11 +8926,7 @@ fn verify_one_loop_preservation_proof(
         ClickError::new(format!("`{claim_label}` has no source loop({loop_index})"))
     })?;
     let mut replay = TacticReplayState {
-        proof_site: Some(ProofSite::LoopPhase {
-            function_name: environment.function_block.signature().name().to_string(),
-            loop_index,
-            phase: "preserve",
-        }),
+        proof_site: Some(preserve_site),
         frontier: ExecutionFrontier {
             point: ProofExecutionPoint::StatementEntry { remaining },
             execution_start_state: Some(preservation.state().clone()),
@@ -8792,9 +9054,14 @@ fn verify_one_loop_preservation_proof(
             verified_closer_paths.push(case_path.clone());
             vec![ProofTactic::CloseInvariants]
         };
-        if context.replay.region_simp.is_some_and(|(_, source_index)| {
-            tactic_expansion_capture_matches(context.replay.proof_site.as_ref(), source_index)
-        }) {
+        let omitted_frontier_preservation = environment
+            .frontier_loop_source
+            .is_some_and(|source| source.preserve_source_index.is_none());
+        if !omitted_frontier_preservation
+            && context.replay.region_simp.is_some_and(|(_, source_index)| {
+                tactic_expansion_capture_matches(context.replay.proof_site.as_ref(), source_index)
+            })
+        {
             let capture = SurfaceReplay {
                 tactics: closer_tactics.clone(),
                 ..SurfaceReplay::default()
@@ -8821,33 +9088,44 @@ fn verify_one_loop_preservation_proof(
     }
     let certificate = merge_path_aligned_certificates(&claim_label, certificate_paths)?;
     let certificate_program = build_internal_proof(certificate.tactics(), &claim_label)?;
-    let replayed = execute_internal_proof(
-        &certificate_program,
-        ProofReplayContext {
-            state: preservation.state().clone(),
-            pure_facts: pure_facts.to_vec(),
-            replay: replay_start,
-            branch_path: Vec::new(),
-        },
-        environment.function_block,
-        environment.parsed_function,
-        &proof_claims,
-        &claim_label,
-        environment.function_environment,
-        environment.predicate_environment,
-        environment.click_function_environment,
-        environment.resource_environment,
-        environment.theorem_environment,
-        environment.function,
-        environment.arguments,
-    )
-    .map_err(|error| {
-        ClickError::new(format!(
-            "`{claim_label}` preservation certificate failed ordinary replay:\n{}\n{}",
-            format_tactic_certificate(&certificate),
-            error.message()
-        ))
-    })?;
+    // This is a detached, deterministic replay of the certificate just
+    // produced above. Its local tactic indices start at zero and are not
+    // source occurrences in the enclosing proof. Letting the expansion probe
+    // observe them can make (for example) certificate tactic 1 overwrite the
+    // expansion selected for enclosing source tactic 1.
+    let replayed = SUPPRESS_TACTIC_EXPANSION_CAPTURE
+        .with(|suppressed| {
+            let previous = suppressed.replace(true);
+            let result = execute_internal_proof(
+                &certificate_program,
+                ProofReplayContext {
+                    state: preservation.state().clone(),
+                    pure_facts: pure_facts.to_vec(),
+                    replay: replay_start,
+                    branch_path: Vec::new(),
+                },
+                environment.function_block,
+                environment.parsed_function,
+                &proof_claims,
+                &claim_label,
+                environment.function_environment,
+                environment.predicate_environment,
+                environment.click_function_environment,
+                environment.resource_environment,
+                environment.theorem_environment,
+                environment.function,
+                environment.arguments,
+            );
+            suppressed.set(previous);
+            result
+        })
+        .map_err(|error| {
+            ClickError::new(format!(
+                "`{claim_label}` preservation certificate failed ordinary replay:\n{}\n{}",
+                format_tactic_certificate(&certificate),
+                error.message()
+            ))
+        })?;
     let effect_items = environment
         .function_block
         .structural_clauses()
@@ -12077,7 +12355,16 @@ mod exit_claim {
     ) -> Result<ExitSimpClosure, ClickError> {
         let outcome = context.outcome;
         if matches!(outcome, CFunctionOutcome::VerificationDiverges) {
-            return Ok(ExitSimpClosure::Closed(ClaimClosure::by_exact_check()));
+            let certificate = TacticCertificate::from_proof_tactics(&[ProofTactic::Normalize])
+                .map_err(|error| {
+                    context.certificate_failure(
+                        claim_label,
+                        &format!("divergence produced an invalid normalize certificate: {error:?}"),
+                    )
+                })?;
+            return Ok(ExitSimpClosure::Closed(
+                ClaimClosure::by_replayed_certificate(&certificate),
+            ));
         }
         if !context.existence_tactics.is_empty() {
             let certificate = match (rewritten_goal, ensure, outcome) {
@@ -12245,6 +12532,33 @@ fn finish_ordered_proof_replay(
     } else {
         function_claim_label(function_block.signature().name(), &claims[0])
     };
+    let pre_state = replay.execution_start_state(&state);
+    let frontier_function_block = (!replay.frontier_loop_clauses.is_empty())
+        .then(|| function_block.with_bound_frontier_loop_clauses(&replay.frontier_loop_clauses));
+    let frontier_function = frontier_function_block
+        .as_ref()
+        .map(|frontier_function_block| {
+            annotated_function(
+                frontier_function_block,
+                parsed_function,
+                pre_state,
+                arguments,
+                predicate_environment,
+                click_function_environment,
+                resource_environment,
+                false,
+            )
+        })
+        .transpose()?;
+    let frontier_function_environment = (!replay.frontier_loop_rules.is_empty()).then(|| {
+        function_environment
+            .clone()
+            .with_verified_loop_rules(replay.frontier_loop_rules.clone())
+    });
+    let function = frontier_function.as_ref().unwrap_or(function);
+    let function_environment = frontier_function_environment
+        .as_ref()
+        .unwrap_or(function_environment);
     let result = (|| {
         let execution = replay.execution().ok_or_else(|| {
             ClickError::new(format!(
@@ -12256,7 +12570,6 @@ fn finish_ordered_proof_replay(
                 "execution proof could not prove any complete execution path for `{proof_label}`"
             )));
         }
-        let pre_state = replay.execution_start_state(&state);
         let mut certification_facts = replay.execution_start_facts.clone();
         certification_facts.extend(
             replay
@@ -12265,13 +12578,14 @@ fn finish_ordered_proof_replay(
                 .filter(|case| case.at_function_entry)
                 .filter_map(|case| case.fact.clone()),
         );
-        let certified_execution = if let Some((_, _, _, execution)) = certification_cache
-            .iter()
-            .find(|(facts, cached_state, concrete_loop_execution, _)| {
-                facts == &certification_facts
-                    && cached_state == pre_state
-                    && *concrete_loop_execution == replay.concrete_loop_execution
-            }) {
+        let certified_execution = if replay.frontier_loop_rules.is_empty()
+            && let Some((_, _, _, execution)) = certification_cache.iter().find(
+                |(facts, cached_state, concrete_loop_execution, _)| {
+                    facts == &certification_facts
+                        && cached_state == pre_state
+                        && *concrete_loop_execution == replay.concrete_loop_execution
+                },
+            ) {
             execution.clone()
         } else {
             let execution_start_assumptions = assumptions_from_propositions(&certification_facts);
@@ -12294,12 +12608,14 @@ fn finish_ordered_proof_replay(
                     CExecutionSemantics::APPLY_VERIFIED_RULES,
                 )
             };
-            certification_cache.push((
-                certification_facts.clone(),
-                pre_state.clone(),
-                replay.concrete_loop_execution,
-                execution.clone(),
-            ));
+            if replay.frontier_loop_rules.is_empty() {
+                certification_cache.push((
+                    certification_facts.clone(),
+                    pre_state.clone(),
+                    replay.concrete_loop_execution,
+                    execution.clone(),
+                ));
+            }
             execution
         };
         if let Some(limit) = certified_execution.limit() {
@@ -12590,32 +12906,34 @@ fn finish_ordered_proof_replay(
             let deferred_capture_branch_path = if let Some(deferred) =
                 replay.deferred_tactic_capture.as_ref()
             {
-                let CFunctionOutcome::Return {
-                    value: result,
-                    state: post_state,
-                } = &outcome
-                else {
-                    return Err(ClickError::new(format!(
-                        "execution proof failed for `{proof_label}` path {path_index}: selected post-execution tactic has no return outcome"
-                    )));
-                };
-                surface_branch_path_for_outcome(
-                    &deferred.branch_skeleton,
-                    &path_requirements,
-                    parsed_function.parameters(),
-                    arguments,
-                    pre_state,
-                    post_state,
-                    result,
-                    &replay.program_point_states,
-                    predicate_environment,
-                    click_function_environment,
-                )
-                .map_err(|message| {
-                    ClickError::new(format!(
-                        "execution proof failed for `{proof_label}` path {path_index}: could not align selected tactic with its execution branch: {message}"
-                    ))
-                })?
+                match &outcome {
+                    CFunctionOutcome::Return {
+                        value: result,
+                        state: post_state,
+                    } => surface_branch_path_for_outcome(
+                        &deferred.branch_skeleton,
+                        &path_requirements,
+                        parsed_function.parameters(),
+                        arguments,
+                        pre_state,
+                        post_state,
+                        result,
+                        &replay.program_point_states,
+                        predicate_environment,
+                        click_function_environment,
+                    )
+                    .map_err(|message| {
+                        ClickError::new(format!(
+                            "execution proof failed for `{proof_label}` path {path_index}: could not align selected tactic with its execution branch: {message}"
+                        ))
+                    })?,
+                    _ if deferred.branch_skeleton.is_empty() => Vec::new(),
+                    _ => {
+                        return Err(ClickError::new(format!(
+                            "execution proof failed for `{proof_label}` path {path_index}: selected post-execution tactic has no return outcome for its proof branch"
+                        )));
+                    }
+                }
             } else {
                 Vec::new()
             };
@@ -13429,6 +13747,15 @@ fn finish_ordered_proof_replay(
                             let FunctionClaimRef::Ensure(_, ensure_clause) = claim else {
                                 continue;
                             };
+                            if matches!(outcome, CFunctionOutcome::VerificationDiverges) {
+                                // Postconditions are conditional on return.
+                                // Normalization exposes that definitional
+                                // partial-correctness rule without requiring a
+                                // nonexistent return value or state.
+                                closures[claim_index] = ClaimClosure::by_exact_check();
+                                closed_any = true;
+                                continue;
+                            }
                             let Ensure::Proposition(surface_goal) = ensure_clause.ensure() else {
                                 continue;
                             };
@@ -13894,6 +14221,24 @@ fn finish_ordered_proof_replay(
                             }
                         }
                         if replay.grouped_contract {
+                            if grouped_pending.is_empty() {
+                                // A divergent path has no return outcome to
+                                // transport through, but `simp` may still
+                                // close claims such as context-free tautologies
+                                // directly. Those closures need no grouped
+                                // outcome-transition certificate.
+                                for claim_index in newly_closed {
+                                    let tactics = closures[claim_index]
+                                        .closed()
+                                        .expect("a newly closed claim has a certificate")
+                                        .claim_tactics();
+                                    path_grouped_surface_closers.extend_from_slice(tactics);
+                                    if capturing_this_tactic {
+                                        path_deferred_capture_tactics.extend_from_slice(tactics);
+                                    }
+                                }
+                                continue;
+                            }
                             let certificate = match &outcome {
                                 CFunctionOutcome::Return {
                                     value: result,
@@ -14149,6 +14494,8 @@ fn finish_ordered_proof_replay(
                     specification: specification.clone(),
                     theorem: theorem.clone(),
                     concrete_loop_execution: replay.concrete_loop_execution,
+                    frontier_loop_clauses: replay.frontier_loop_clauses.clone(),
+                    frontier_loop_rules: replay.frontier_loop_rules.clone(),
                 });
             }
             // Expansion prints what verification holds: the tactics come out
@@ -19526,6 +19873,11 @@ fn record_surface_replay_tactic(
                 )),
             }
         }
+        // A frontier-local loop is lowered after its initialization,
+        // preservation, and effect certificates have been checked. Recording
+        // the source block here would either retain smart defaults or mark
+        // the replay blocked before those certificates exist.
+        ProofTactic::Loop(_) => {}
         _ => match tactic.class() {
             TacticClass::Simple(simple) if simple.is_surface_expressible() => {
                 replay.surface_replay.push(tactic.clone())
@@ -20111,6 +20463,19 @@ pub(super) fn source_tactic_class(tactic: &ProofTactic) -> SourceTacticClass {
             return SourceTacticClass::Simple;
         }
     }
+    if let ProofTactic::Loop(loop_clause) = tactic
+        && (loop_clause.initialize_proof().is_none()
+            || loop_clause.preserve_proof().is_none()
+            || loop_clause
+                .items()
+                .iter()
+                .any(|item| item.is_effect_kind() && matches!(item.proof(), Proof::Default)))
+    {
+        // The loop keyword is the shared source anchor for every omitted
+        // phase/effect proof in this block. Expanding it materializes all of
+        // those defaults together.
+        return SourceTacticClass::Smart;
+    }
     match tactic.class() {
         TacticClass::Simple(_) => SourceTacticClass::Simple,
         TacticClass::Smart(_) => SourceTacticClass::Smart,
@@ -20214,7 +20579,424 @@ impl Drop for TacticTiming {
 }
 
 #[allow(clippy::too_many_arguments)]
+fn execute_frontier_local_loop(
+    loop_template: &StructuralClause,
+    replay: &mut TacticReplayState,
+    state: &mut CState,
+    available_pure_facts: &mut Vec<Proposition>,
+    function_block: &FunctionBlock,
+    parsed_function: &syntax::C0Function,
+    function_environment: &CExecutionEnvironment,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    resource_environment: &ResourceEnvironment,
+    theorem_environment: &TheoremEnvironment,
+    arguments: &[CExpression],
+    claim_label: &str,
+    tactic_index: usize,
+    source_index: usize,
+) -> Result<(), ClickError> {
+    if replay.is_at_function_exit() {
+        return Err(ClickError::new(format!(
+            "`{claim_label}` tactic {tactic_index}: `loop` requires the execution frontier to be at a loop, but execution has reached function exit"
+        )));
+    }
+    let statement_index = replay.frontier.next_statement_index;
+    let source_region = replay.source_layout.statement(statement_index).ok_or_else(|| {
+        ClickError::new(format!(
+            "`{claim_label}` tactic {tactic_index}: `loop` could not resolve source statement({statement_index})"
+        ))
+    })?;
+    let SourceStatementKind::Loop { loop_index } = source_region.kind else {
+        return Err(ClickError::new(format!(
+            "`{claim_label}` tactic {tactic_index}: `loop` requires the execution frontier to be at a loop; current frontier is statement({statement_index})"
+        )));
+    };
+    if function_block
+        .structural_clauses()
+        .iter()
+        .any(|clause| clause.region() == &CodeRegion::Loop(loop_index))
+    {
+        return Err(ClickError::new(format!(
+            "`{claim_label}` tactic {tactic_index}: loop({loop_index}) already has a legacy `for loop({loop_index})` proof; migrate it into this `loop` block instead of combining both forms"
+        )));
+    }
+    if replay
+        .frontier_loop_clauses
+        .iter()
+        .any(|clause| clause.region() == &CodeRegion::Loop(loop_index))
+    {
+        return Err(ClickError::new(format!(
+            "`{claim_label}` tactic {tactic_index}: loop({loop_index}) already has a frontier-local proof on this execution path"
+        )));
+    }
+    if loop_template
+        .items()
+        .iter()
+        .any(|item| item.kind() == StructuralItemKind::Assert)
+    {
+        return Err(ClickError::new(format!(
+            "`{claim_label}` tactic {tactic_index}: assertions inside a frontier-local `loop` are not supported; use `have` at the appropriate execution frontier"
+        )));
+    }
+
+    let function_with_prior_loops =
+        function_block.with_bound_frontier_loop_clauses(&replay.frontier_loop_clauses);
+    let bound_function_block =
+        function_with_prior_loops.with_frontier_loop_clause(loop_template, loop_index);
+    validate_region_proof_clauses(&bound_function_block, parsed_function)?;
+
+    let initial_state = replay.execution_start_state(state).clone();
+    let annotated = annotated_function(
+        &bound_function_block,
+        parsed_function,
+        &initial_state,
+        arguments,
+        predicate_environment,
+        click_function_environment,
+        resource_environment,
+        false,
+    )?;
+    if replay.is_at_function_entry() {
+        let entry_state = c_function_entry_state(&initial_state, &annotated, arguments)
+            .ok_or_else(|| {
+                ClickError::new(format!(
+                    "`{claim_label}` tactic {tactic_index}: `loop` could not bind function arguments"
+                ))
+            })?;
+        replay.frontier.execution_start_state = Some(initial_state.clone());
+        replay.frontier.point = ProofExecutionPoint::StatementEntry {
+            remaining: annotated.body().clone(),
+        };
+        *state = entry_state;
+    }
+    let mut found_loop_index = 0;
+    let current_loop = kernel_loop_by_index(annotated.body(), loop_index, &mut found_loop_index)
+        .cloned()
+        .ok_or_else(|| {
+            ClickError::new(format!(
+                "`{claim_label}` tactic {tactic_index}: `loop` could not lower loop({loop_index}) at statement({statement_index})"
+            ))
+        })?;
+
+    let source_layout = SourceExecutionLayout::new(parsed_function.body());
+    let loop_certificates = std::cell::RefCell::new(LoopProofCertificates::default());
+    let loop_source = FrontierLoopProofSource::new(
+        loop_template,
+        replay.proof_site.clone(),
+        claim_label,
+        source_index,
+    );
+    let proof_environment = ExecutionProofEnvironment {
+        initial_state: &initial_state,
+        function_block: &bound_function_block,
+        parsed_function,
+        function_environment,
+        predicate_environment,
+        click_function_environment,
+        resource_environment,
+        theorem_environment,
+        function: &annotated,
+        arguments,
+        surface_propositions: &replay.surface_propositions,
+        source_layout: &source_layout,
+        frontier_loop_certificates: Some(&loop_certificates),
+        frontier_loop_source: Some(&loop_source),
+    };
+    let case_path = replay
+        .case_assumptions
+        .iter()
+        .map(|choice| ProofCaseChoice {
+            condition: choice.condition.clone(),
+            value: choice.value,
+        })
+        .collect();
+    let mut verified_loop_rules = Vec::new();
+    let mut next_statement_index = statement_index;
+    let mut next_loop_index = loop_index;
+    let _exit_contexts = verify_execution_proofs_forward(
+        &current_loop,
+        vec![ExecutionProofContext {
+            state: state.clone(),
+            pure_facts: available_pure_facts.clone(),
+            surface_propositions: replay.surface_propositions.clone(),
+            program_point_states: replay.program_point_states.clone(),
+            case_path,
+            next_opaque_call: replay.next_opaque_call,
+            next_verification_variable: replay.next_verification_variable,
+        }],
+        &mut next_statement_index,
+        &mut next_loop_index,
+        &proof_environment,
+        &mut verified_loop_rules,
+    )?;
+    let loop_rule = verified_loop_rules.pop().ok_or_else(|| {
+        ClickError::new(format!(
+            "`{claim_label}` tactic {tactic_index}: `loop` did not construct a verified rule for loop({loop_index})"
+        ))
+    })?;
+    let loop_exit_condition = match &current_loop {
+        CStatement::While { condition, .. } => Some(ClickProposition::Not(Box::new(
+            surface_c_condition(condition),
+        ))),
+        _ => None,
+    };
+    let certificates = loop_certificates.borrow().clone();
+    let mut expanded_loop = loop_template.clone();
+    expanded_loop.initialize_proof = Some(Proof::Script(
+        certificates
+            .initialize
+            .as_ref()
+            .map(|certificate| certificate.tactics().to_vec())
+            .unwrap_or_else(|| vec![ProofTactic::Assumption]),
+    ));
+    expanded_loop.preserve_proof = Some(Proof::Script(
+        certificates
+            .preserve
+            .as_ref()
+            .map(|certificate| certificate.tactics().to_vec())
+            .unwrap_or_else(|| vec![ProofTactic::Assumption]),
+    ));
+    for (item_index, item) in expanded_loop.items.iter_mut().enumerate() {
+        if !item.is_effect_kind() {
+            continue;
+        }
+        if let Some(certificate) = certificates.effects.get(&item_index) {
+            item.proof = Proof::Script(certificate.tactics().to_vec());
+        }
+    }
+    let local_function_environment = function_environment.clone().with_verified_loop_rules(
+        replay
+            .frontier_loop_rules
+            .iter()
+            .cloned()
+            .chain(std::iter::once(loop_rule.clone())),
+    );
+
+    if let ProofExecutionPoint::StatementEntry { remaining } = &replay.frontier.point {
+        let old_assertion_count =
+            source_assertion_prefix_count(function_block, statement_index, Some(loop_index));
+        let (assertion_prefix, _, tail) =
+            split_next_source_operation(remaining, old_assertion_count).map_err(|message| {
+                ClickError::new(format!(
+                    "`{claim_label}` tactic {tactic_index}: `loop` could not isolate the current source loop: {message}"
+                ))
+            })?;
+        let mut statements = Vec::new();
+        if let Some(prefix) = assertion_prefix {
+            flatten_top_level_sequence(&prefix, &mut statements).map_err(ClickError::new)?;
+        }
+        statements.push(current_loop);
+        if let Some(tail) = tail {
+            flatten_top_level_sequence(&tail, &mut statements).map_err(ClickError::new)?;
+        }
+        replay.frontier.point = ProofExecutionPoint::StatementEntry {
+            remaining: sequence_from_statements(&statements)
+                .expect("the current loop always contributes one statement"),
+        };
+    }
+
+    let assumptions = assumptions_from_propositions(available_pure_facts);
+    execute_step_from_execution_point(
+        replay,
+        state,
+        available_pure_facts,
+        &bound_function_block,
+        &annotated,
+        parsed_function.parameters(),
+        arguments,
+        &assumptions,
+        &local_function_environment,
+        claim_label,
+        tactic_index,
+        "loop",
+        &[],
+        None,
+        StatementPrerequisitePolicy::Exact,
+        StatementFactTransportPolicy::Automatic,
+        LoopStepPolicy::ApplyVerifiedRule,
+    )?;
+    if let Some(exit_condition) = loop_exit_condition {
+        let exit_point = ProgramPointRef {
+            region: CodeRegionRef::Loop(loop_index),
+            kind: ProgramPointKind::Exit,
+        };
+        let lowered_exit_condition = lower_point_proposition(
+            &exit_condition,
+            available_pure_facts,
+            parsed_function.parameters(),
+            arguments,
+            &initial_state,
+            state,
+            None,
+            &replay.program_point_states,
+            predicate_environment,
+            click_function_environment,
+        )
+        .map_err(|message| {
+            ClickError::new(format!(
+                "`{claim_label}` tactic {tactic_index}: could not lower loop({loop_index}) exit condition provenance: {message}"
+            ))
+        })?;
+        if available_pure_facts.contains(&lowered_exit_condition) {
+            let exit_surface = surface_with_source_site(&exit_condition, &exit_point)?;
+            replay
+                .surface_propositions
+                .record_lowering(&exit_surface, &lowered_exit_condition)?;
+        }
+    }
+    replay
+        .frontier_loop_clauses
+        .push(loop_template.bound_to_loop(loop_index));
+    replay.frontier_loop_rules.push(loop_rule);
+    replay.surface_replay.push(ProofTactic::Loop(expanded_loop));
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
 fn replay_linear_tactics(
+    mut context: ProofReplayContext,
+    function_block: &FunctionBlock,
+    parsed_function: &syntax::C0Function,
+    claims: &[FunctionClaimRef<'_>],
+    claim_label: &str,
+    function_environment: &CExecutionEnvironment,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    resource_environment: &ResourceEnvironment,
+    theorem_environment: &TheoremEnvironment,
+    function: &CFunction,
+    arguments: &[CExpression],
+    tactics: &[IndexedTactic],
+) -> Result<ProofReplayContext, ClickError> {
+    let mut chunk_start = 0;
+    for (index, indexed_tactic) in tactics.iter().enumerate() {
+        let ProofTactic::Loop(loop_clause) = &indexed_tactic.tactic else {
+            continue;
+        };
+        context = replay_linear_tactics_without_frontier_loops(
+            context,
+            function_block,
+            parsed_function,
+            claims,
+            claim_label,
+            function_environment,
+            predicate_environment,
+            click_function_environment,
+            resource_environment,
+            theorem_environment,
+            function,
+            arguments,
+            &tactics[chunk_start..index],
+        )?;
+        context = replay_frontier_local_loop_tactic(
+            context,
+            loop_clause,
+            indexed_tactic.index,
+            indexed_tactic.source_index,
+            function_block,
+            parsed_function,
+            claim_label,
+            function_environment,
+            predicate_environment,
+            click_function_environment,
+            resource_environment,
+            theorem_environment,
+            arguments,
+        )?;
+        chunk_start = index + 1;
+    }
+    replay_linear_tactics_without_frontier_loops(
+        context,
+        function_block,
+        parsed_function,
+        claims,
+        claim_label,
+        function_environment,
+        predicate_environment,
+        click_function_environment,
+        resource_environment,
+        theorem_environment,
+        function,
+        arguments,
+        &tactics[chunk_start..],
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn replay_frontier_local_loop_tactic(
+    context: ProofReplayContext,
+    loop_clause: &StructuralClause,
+    tactic_index: usize,
+    source_index: usize,
+    function_block: &FunctionBlock,
+    parsed_function: &syntax::C0Function,
+    claim_label: &str,
+    function_environment: &CExecutionEnvironment,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    resource_environment: &ResourceEnvironment,
+    theorem_environment: &TheoremEnvironment,
+    arguments: &[CExpression],
+) -> Result<ProofReplayContext, ClickError> {
+    if crate::instrumentation::deadline_exceeded() {
+        return Err(ClickError::new(format!(
+            "tactic time limit exceeded: {}",
+            crate::instrumentation::deadline_context()
+        )));
+    }
+    let ProofReplayContext {
+        mut state,
+        pure_facts: mut available_pure_facts,
+        mut replay,
+        branch_path,
+    } = context;
+    let capture_this_tactic = begin_tactic_expansion_capture(
+        source_index,
+        &ProofTactic::Loop(loop_clause.clone()),
+        &mut replay,
+    )
+    .is_some();
+    let _timing = TacticTiming::new(
+        claim_label,
+        tactic_index,
+        source_index,
+        &ProofTactic::Loop(loop_clause.clone()),
+        replay.frontier.next_statement_index,
+    );
+    execute_frontier_local_loop(
+        loop_clause,
+        &mut replay,
+        &mut state,
+        &mut available_pure_facts,
+        function_block,
+        parsed_function,
+        function_environment,
+        predicate_environment,
+        click_function_environment,
+        resource_environment,
+        theorem_environment,
+        arguments,
+        claim_label,
+        tactic_index,
+        source_index,
+    )?;
+    if capture_this_tactic {
+        return Err(finish_tactic_expansion_capture(
+            &replay.surface_replay,
+            false,
+        ));
+    }
+    Ok(ProofReplayContext {
+        state,
+        pure_facts: available_pure_facts,
+        replay,
+        branch_path,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn replay_linear_tactics_without_frontier_loops(
     context: ProofReplayContext,
     function_block: &FunctionBlock,
     parsed_function: &syntax::C0Function,
@@ -22222,6 +23004,9 @@ fn replay_linear_tactics(
             }
             ProofTactic::If(_) | ProofTactic::Reach(_) => {
                 unreachable!("structured tactics are represented by internal proof nodes")
+            }
+            ProofTactic::Loop(_) => {
+                unreachable!("frontier-local loops are replayed between linear tactic chunks")
             }
             ProofTactic::Witness(_) => {
                 if replay.grouped_contract {

@@ -44,18 +44,19 @@ smaller execution steps or exact premises; `derive using { ... }` and
 | `step() using { P; ... }` | simple | Perform one transition using exactly the listed pure premises. An empty block is valid. |
 | `execute()` | smart | Execute from the current frontier to function exit. It follows verified loop summaries and can plan explicit branch alternatives. |
 | `execute_until(statement(N))` | smart | Execute forward to the selected statement entry without creating a new proof interface. |
-| `summarize(loop(N))` | smart | Cross one already verified loop as an opaque transition, selecting its prerequisites contextually. |
-| `summarize(loop(N)) using { P; ... }` | simple | Apply that loop summary using exactly the listed premises. An empty block is valid. |
+| `loop [as name] { ... }` | control | Verify the C loop exactly at the current frontier, apply its checked rule, and advance to its abstract exit. |
 | `reach(point) ensuring { ... } by { ... }` | control | Prove a scoped execution region and expose only its declared fact/resource interface at the target point. |
 
-The boundaries are intentional: `step` is one transition, `summarize` is one
-verified loop transition, `execute_until` repeats transitions to a point, and
-`execute` runs to function exit. `reach` is a scoped proof and interface join,
-not another spelling of repeated execution.
+The boundaries are intentional: `step` is one concrete transition, `loop`
+constructs and applies one verified abstract loop transition,
+`execute_until` repeats transitions to a point, and `execute` runs to function
+exit. `reach` is a scoped proof and interface join, not another spelling of
+repeated execution.
 
-Expansion of execution automation uses `step() using` and `summarize using`,
-including empty `using {}` blocks. The older branch-specific, budget-specific,
-and certificate-oriented execution names are not part of the surface language.
+Expansion of execution automation uses `step() using`, including empty
+`using {}` blocks. Expansion recurses through `loop` and materializes omitted
+phase proofs at the loop keyword. The older numbered-loop summary syntax
+remains migration compatibility and should not be used in new proofs.
 
 ## Proposition reasoning
 

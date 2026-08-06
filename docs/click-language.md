@@ -77,12 +77,14 @@ int32 countdown(int32 n) {
 }
 ```
 
-A loop measure belongs to that loop's region:
+A loop measure belongs to the loop handled at the current execution frontier:
 
 ```click
-for loop(0) {
+by {
+  loop {
     decreases n;
     invariant n >= 0;
+  }
 }
 ```
 
@@ -292,10 +294,11 @@ step() using {
 Only those listed pure facts are visible to that C transition. Other facts stay
 in the proof context for later tactics.
 
-At an annotated loop entry, smart `summarize(loop(N))` consumes the already
-verified loop rule and reaches its abstract exit. Its simple certificate is
-`summarize(loop(N)) using { ... }`. Ordinary `step()` instead evaluates the
-loop condition and enters at most one iteration.
+At a loop entry, `loop { ... }` verifies initialization and one arbitrary
+iteration, constructs the kernel loop rule, applies it, and reaches the
+abstract exit. It fails if the current frontier is not a loop. Ordinary
+`step()` instead evaluates the loop condition and enters at most one concrete
+iteration; it does not invent a loop summary.
 
 When both proof cases should continue through common code, `reach` gives the
 branch-local execution a shared, explicit postcondition:
@@ -329,11 +332,13 @@ Statement IDs are global within a function and follow source preorder. An
 sequence does not receive a separate ID. The same IDs name execution targets,
 annotations, and `at(statement(N).entry|exit, ...)` snapshots.
 
-A structural clause may give a statement or loop a stable name with
-`for statement(N) as label` or `for loop(N) as label`. Prefer that label in
-proof scripts: `execute_until(label)`, `reach(label.exit)`, and
-`at(label.entry, expression_or_proposition)` all resolve to the same code
-region.
+A frontier-local loop tactic may give the loop it encounters a stable name
+with `loop as label { ... }`.  The label names that encountered loop's entry
+and exit snapshots; it never searches for or jumps to a source region.  Use
+`at(label.entry, expression_or_proposition)` and
+`at(label.exit, expression_or_proposition)` after the tactic has established
+those points.  The older `for statement(N) as label` structural syntax still
+names statement regions during its separate migration.
 
 `apply(...)` instantiates a verified theorem, requires each proposition
 `requires` clause as an exact current pure fact or a context-free tautology,
@@ -888,24 +893,29 @@ ensures sorted: sorted_range(p, 0, n) by {
 }
 ```
 
-Loop invariants are declarations. Predicate bodies needed by the loop rule can
-be exposed in its `initialize` and `preserve` proofs:
+Loop invariants are declared by the `loop` tactic when execution reaches that
+loop. Predicate bodies needed by the loop rule can be exposed in its
+`initialize` and `preserve` proofs:
 
 ```click
-for loop(0) {
-    invariant sorted(p, n);
-    initialize by {
-        unfold(sorted);
-        simp();
-    }
-    preserve by {
-        unfold(sorted);
-        simp();
+by {
+    loop {
+        invariant sorted(p, n);
+        initialize by {
+            unfold(sorted);
+            simp();
+        }
+        preserve by {
+            unfold(sorted);
+            simp();
+        }
     }
 }
 ```
 
-Either phase may be omitted, in which case Click uses `auto` for that phase.
+Either phase may be omitted, in which case Click supplies bounded automation
+for that phase. `click expand` at the `loop` keyword materializes all omitted
+phase proofs together.
 
 Like pure Click functions, predicate array parameters are Click array refs.
 A predicate can compare two arrays from different memory states when its caller

@@ -230,9 +230,66 @@ fn collect_smart_script_sites(
             ProofTactic::Reach(advance) => {
                 collect_smart_script_sites(claim_label, &advance.tactics, source_index + 1, sites)
             }
+            ProofTactic::Loop(clause) => {
+                let mut nested_source_index = source_index + 1;
+                if let Some(proof) = clause.initialize_proof() {
+                    collect_smart_nested_proof_sites(
+                        claim_label,
+                        proof,
+                        nested_source_index,
+                        sites,
+                    );
+                    nested_source_index += proof_source_tactic_count(proof);
+                }
+                if let Some(proof) = clause.preserve_proof() {
+                    collect_smart_nested_proof_sites(
+                        claim_label,
+                        proof,
+                        nested_source_index,
+                        sites,
+                    );
+                    nested_source_index += proof_source_tactic_count(proof);
+                }
+                for item in clause.items() {
+                    if !item.is_effect_kind() {
+                        continue;
+                    }
+                    collect_smart_nested_proof_sites(
+                        claim_label,
+                        item.proof(),
+                        nested_source_index,
+                        sites,
+                    );
+                    nested_source_index += proof_source_tactic_count(item.proof());
+                }
+            }
             _ => {}
         }
         source_index += source_tactic_count(std::slice::from_ref(tactic));
+    }
+}
+
+fn collect_smart_nested_proof_sites(
+    claim_label: &str,
+    proof: &Proof,
+    source_index: usize,
+    sites: &mut Vec<SmartTacticSourceSite>,
+) {
+    match proof {
+        Proof::Default => {}
+        Proof::Tactic(tactic) => sites.push(SmartTacticSourceSite {
+            claim_label: claim_label.to_string(),
+            source_index,
+            tactic_name: match tactic {
+                SmartTactic::Auto => "auto",
+                SmartTactic::Frame => "frame",
+                SmartTactic::Simp => "simp",
+            }
+            .to_string(),
+        }),
+        Proof::Script(tactics) => {
+            collect_smart_script_sites(claim_label, tactics, source_index, sites)
+        }
     }
 }
 
@@ -305,12 +362,14 @@ pub fn expand_c0_tactic_source_at(
         return expand_c0_claim_source(click_source, c_sources, function_name, *claim);
     }
     let replacement_tactics = match &selected.edit {
-        TacticSourceEdit::Partial(_) => super::proof::capture_c0_tactic_expansion(
-            click_source,
-            c_sources,
-            selected.site.clone(),
-            selected.source_index,
-        )?,
+        TacticSourceEdit::Partial(_) | TacticSourceEdit::PartialProofClause(_) => {
+            super::proof::capture_c0_tactic_expansion(
+                click_source,
+                c_sources,
+                selected.site.clone(),
+                selected.source_index,
+            )?
+        }
         TacticSourceEdit::WholeProof(_) => super::proof::capture_c0_proof_site_expansion(
             click_source,
             c_sources,
@@ -322,6 +381,18 @@ pub fn expand_c0_tactic_source_at(
             span,
             super::printing::format_partial_tactic_sequence(&replacement_tactics),
         ),
+        TacticSourceEdit::PartialProofClause(span) => {
+            let certificate =
+                TacticCertificate::from_proof_tactics(&replacement_tactics).map_err(|error| {
+                    ClickError::new(format!(
+                        "selected tactic did not produce a surface certificate: {error:?}"
+                    ))
+                })?;
+            (
+                span,
+                super::printing::format_tactic_certificate(&certificate),
+            )
+        }
         TacticSourceEdit::WholeProof(edit) => {
             let certificate =
                 TacticCertificate::from_proof_tactics(&replacement_tactics).map_err(|error| {
@@ -832,6 +903,7 @@ impl ProofSite {
 #[derive(Clone, Debug)]
 enum TacticSourceEdit {
     Partial(Range<usize>),
+    PartialProofClause(Range<usize>),
     WholeProof(ProofSourceEdit),
 }
 
@@ -993,21 +1065,41 @@ fn locate_tactic_in_proof(
 ) -> Result<Option<LocatedSourceTactic>, ClickError> {
     match proof {
         Proof::Script(tactics) => {
-            let ProofSourceEdit::Explicit(proof_span) = edit else {
+            let ProofSourceEdit::Explicit(source_proof_span) = edit else {
                 return Err(ClickError::new(
                     "an explicit proof script has no source `by` clause",
                 ));
             };
-            let spans = collect_source_tactic_spans(tokens, proof_span, tactics)?;
-            Ok(spans
+            let spans = collect_source_tactic_spans(tokens, source_proof_span, tactics)?;
+            let Some((source_index, span)) = spans
                 .into_iter()
                 .enumerate()
                 .find(|(_, span)| span.start == wanted)
-                .map(|(source_index, span)| LocatedSourceTactic {
-                    site,
-                    source_index,
-                    edit: TacticSourceEdit::Partial(span),
-                }))
+            else {
+                return Ok(None);
+            };
+            let edit = if source_tactic_is_nested_proof_clause(tactics, source_index) {
+                let tactic_token = tokens
+                    .iter()
+                    .position(|token| token.span.start == span.start)
+                    .ok_or_else(|| ClickError::new("could not locate selected nested tactic"))?;
+                let by = tactic_token.checked_sub(1).ok_or_else(|| {
+                    ClickError::new("selected nested tactic has no source `by` clause")
+                })?;
+                if tokens[by].text != "by" {
+                    return Err(ClickError::new(
+                        "selected nested tactic has no source `by` clause",
+                    ));
+                }
+                TacticSourceEdit::PartialProofClause(proof_span(tokens, by)?)
+            } else {
+                TacticSourceEdit::Partial(span)
+            };
+            Ok(Some(LocatedSourceTactic {
+                site,
+                source_index,
+                edit,
+            }))
         }
         Proof::Tactic(_) => match edit {
             ProofSourceEdit::Explicit(proof_span) => {
@@ -1545,6 +1637,70 @@ fn collect_source_tactic_spans(
     Ok(spans)
 }
 
+fn source_tactic_is_nested_proof_clause(tactics: &[ProofTactic], wanted: usize) -> bool {
+    fn in_proof(proof: &Proof, wanted: usize, source_index: usize) -> Option<bool> {
+        match proof {
+            Proof::Default => None,
+            Proof::Tactic(_) => (wanted == source_index).then_some(true),
+            Proof::Script(tactics) => find(tactics, wanted, source_index),
+        }
+    }
+
+    fn find(tactics: &[ProofTactic], wanted: usize, offset: usize) -> Option<bool> {
+        let mut source_index = offset;
+        for tactic in tactics {
+            if wanted == source_index {
+                return Some(false);
+            }
+            let nested = match tactic {
+                ProofTactic::If(proof_if) => find(&proof_if.then_tactics, wanted, source_index + 1)
+                    .or_else(|| {
+                        find(
+                            &proof_if.else_tactics,
+                            wanted,
+                            source_index + 1 + source_tactic_count(&proof_if.then_tactics),
+                        )
+                    }),
+                ProofTactic::Reach(advance) => find(&advance.tactics, wanted, source_index + 1),
+                ProofTactic::Loop(clause) => {
+                    let mut nested_source_index = source_index + 1;
+                    let mut found = None;
+                    if let Some(proof) = clause.initialize_proof() {
+                        found = in_proof(proof, wanted, nested_source_index);
+                        nested_source_index += proof_source_tactic_count(proof);
+                    }
+                    if found.is_none()
+                        && let Some(proof) = clause.preserve_proof()
+                    {
+                        found = in_proof(proof, wanted, nested_source_index);
+                        nested_source_index += proof_source_tactic_count(proof);
+                    } else if let Some(proof) = clause.preserve_proof() {
+                        nested_source_index += proof_source_tactic_count(proof);
+                    }
+                    if found.is_none() {
+                        for item in clause.items().iter().filter(|item| item.is_effect_kind()) {
+                            found = in_proof(item.proof(), wanted, nested_source_index);
+                            nested_source_index += proof_source_tactic_count(item.proof());
+                            if found.is_some() {
+                                break;
+                            }
+                        }
+                    }
+                    found
+                }
+                _ => None,
+            };
+            if nested.is_some() {
+                return nested;
+            }
+            source_index += source_tactic_count(std::slice::from_ref(tactic));
+        }
+        None
+    }
+
+    find(tactics, wanted, 0).unwrap_or(false)
+}
+
 fn collect_tactic_block_spans(
     tokens: &[SourceToken],
     open: usize,
@@ -1585,10 +1741,112 @@ fn collect_tactic_block_spans(
                 let (body_open, body_close) = find_advance_body(tokens, &token_range)?;
                 collect_tactic_block_spans(tokens, body_open, body_close, &advance.tactics, spans)?;
             }
+            ProofTactic::Loop(clause) => {
+                let block_open = (token_range.start..token_range.end)
+                    .find(|index| tokens[*index].text == "{")
+                    .ok_or_else(|| ClickError::new("source `loop` tactic has no body"))?;
+                let block_close = matching_delimiter(tokens, block_open, "{", "}")?;
+                let block = block_open..block_close;
+                for (phase, proof) in [
+                    ("initialize", clause.initialize_proof()),
+                    ("preserve", clause.preserve_proof()),
+                ] {
+                    if let Some(proof) = proof {
+                        let edit = inline_loop_phase_proof_edit(tokens, &block, phase)?
+                            .ok_or_else(|| {
+                                ClickError::new(format!(
+                                    "parsed frontier-local loop has `{phase}` proof but source block does not"
+                                ))
+                            })?;
+                        collect_nested_proof_spans(tokens, &edit, proof, spans)?;
+                    }
+                }
+                let edits = structural_item_proof_edits(tokens, &block)?;
+                if edits.len() != clause.items().len() {
+                    return Err(ClickError::new(format!(
+                        "frontier-local loop source mapping found {} items, expected {}",
+                        edits.len(),
+                        clause.items().len()
+                    )));
+                }
+                for (item, edit) in clause.items().iter().zip(&edits) {
+                    if !item.is_effect_kind() {
+                        continue;
+                    }
+                    collect_nested_proof_spans(tokens, edit, item.proof(), spans)?;
+                }
+            }
             _ => {}
         }
     }
     Ok(())
+}
+
+fn inline_loop_phase_proof_edit(
+    tokens: &[SourceToken],
+    block: &Range<usize>,
+    phase: &str,
+) -> Result<Option<ProofSourceEdit>, ClickError> {
+    let mut cursor = block.start + 1;
+    while cursor < block.end {
+        if tokens[cursor].text == phase {
+            let by = cursor + 1;
+            if tokens.get(by).map(|token| token.text.as_str()) != Some("by") {
+                return Err(ClickError::new(format!(
+                    "loop phase `{phase}` is missing its source `by` clause"
+                )));
+            }
+            return Ok(Some(ProofSourceEdit::Explicit(proof_span(tokens, by)?)));
+        }
+        cursor += 1;
+    }
+    Ok(None)
+}
+
+fn collect_nested_proof_spans(
+    tokens: &[SourceToken],
+    edit: &ProofSourceEdit,
+    proof: &Proof,
+    spans: &mut Vec<Range<usize>>,
+) -> Result<(), ClickError> {
+    match proof {
+        Proof::Default => Ok(()),
+        Proof::Tactic(_) => {
+            let ProofSourceEdit::Explicit(span) = edit else {
+                return Err(ClickError::new(
+                    "explicit nested loop tactic has no source `by` clause",
+                ));
+            };
+            let by = tokens
+                .iter()
+                .position(|token| token.span.start == span.start && token.text == "by")
+                .ok_or_else(|| ClickError::new("could not locate nested source `by` clause"))?;
+            let tactic = tokens
+                .get(by + 1)
+                .ok_or_else(|| ClickError::new("nested source `by` clause has no tactic"))?;
+            spans.push(tactic.span.clone());
+            Ok(())
+        }
+        Proof::Script(tactics) => {
+            let ProofSourceEdit::Explicit(span) = edit else {
+                return Err(ClickError::new(
+                    "explicit nested loop proof has no source `by` clause",
+                ));
+            };
+            let by = tokens
+                .iter()
+                .position(|token| token.span.start == span.start && token.text == "by")
+                .ok_or_else(|| ClickError::new("could not locate nested source `by` clause"))?;
+            let open = by + 1;
+            if tokens.get(open).map(|token| token.text.as_str()) != Some("{") {
+                return Err(ClickError::new(
+                    "nested loop proof script has no source block",
+                ));
+            }
+            let close = matching_delimiter(tokens, open, "{", "}")?;
+            collect_tactic_block_spans(tokens, open, close, tactics, spans)
+        }
+    }
 }
 
 fn direct_tactic_token_ranges(

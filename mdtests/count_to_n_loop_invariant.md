@@ -19,10 +19,15 @@ verifying "count_to_n_loop_invariant.c";
 
 int32 count_to_n_loop_invariant(int32 n) {
     requires n >= 0 and n <= 2147483647;
-    for loop(0) {
+    ensures returns_n: result == n and result >= 0;
+} by {
+    step();
+    step();
+    loop {
         invariant i >= 0 and i <= n;
     }
-    ensures returns_n: result == n and result >= 0 by auto;
+    step();
+    simp();
 }
 ```
 

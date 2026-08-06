@@ -2396,9 +2396,10 @@ fn validate_pure_theorem_tactics(
                 validate_pure_theorem_tactics(theorem_name, &proof_if.then_tactics)?;
                 validate_pure_theorem_tactics(theorem_name, &proof_if.else_tactics)?;
             }
-            ProofTactic::Reach(_) => {
+            ProofTactic::Loop(_) | ProofTactic::Reach(_) => {
                 return Err(ClickError::new(format!(
-                    "execution tactic `reach` is not available in the pure proof for theorem `{theorem_name}`"
+                    "execution tactic `{}` is not available in the pure proof for theorem `{theorem_name}`",
+                    tactic_name(tactic)
                 )));
             }
             ProofTactic::CloseInvariants
@@ -2461,6 +2462,7 @@ pub(super) fn tactic_name(tactic: &ProofTactic) -> &'static str {
         ProofTactic::ApplyTheorem(_) | ProofTactic::ApplyTheoremUsing { .. } => "apply",
         ProofTactic::Have(_) => "have",
         ProofTactic::If(_) => "if",
+        ProofTactic::Loop(_) => "loop",
         ProofTactic::Reach(_) => "reach",
         ProofTactic::ObserveResource(_) => "observe",
         ProofTactic::Witness(_) => "witness",

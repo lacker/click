@@ -1786,6 +1786,65 @@ impl Parser {
                 else_tactics,
             }));
         }
+        if name == "loop" {
+            let label = if self.peek_ident() == Some("as") {
+                self.position += 1;
+                Some(self.expect_ident("loop label")?)
+            } else {
+                None
+            };
+            self.expect(Token::LBrace)?;
+            let mut items = Vec::new();
+            let mut decreases = None;
+            let mut initialize_proof = None;
+            let mut preserve_proof = None;
+            while self.peek() != Some(&Token::RBrace) {
+                if self.peek_ident() == Some("decreases") {
+                    self.position += 1;
+                    if decreases.is_some() {
+                        return Err(self.error("duplicate loop `decreases` clause"));
+                    }
+                    decreases = Some(self.parse_contract_expression()?);
+                    self.expect(Token::Semicolon)?;
+                    continue;
+                }
+                if self.peek_ident() == Some("initialize") {
+                    self.position += 1;
+                    if initialize_proof.is_some() {
+                        return Err(self.error("duplicate `initialize` proof"));
+                    }
+                    initialize_proof = Some(self.parse_by_clause()?);
+                    continue;
+                }
+                if self.peek_ident() == Some("preserve") {
+                    self.position += 1;
+                    if preserve_proof.is_some() {
+                        return Err(self.error("duplicate `preserve` proof"));
+                    }
+                    preserve_proof = Some(self.parse_by_clause()?);
+                    continue;
+                }
+                items.extend(self.parse_region_proof_items()?);
+            }
+            self.expect(Token::RBrace)?;
+            if self.peek() == Some(&Token::Semicolon) {
+                self.position += 1;
+            }
+            if items.is_empty() && decreases.is_none() {
+                return Err(self
+                    .error("`loop` block must contain at least one item or a `decreases` clause"));
+            }
+            return Ok(ProofTactic::Loop(StructuralClause {
+                // The actual loop identity is bound from the execution
+                // frontier during replay.  This sentinel is never lowered.
+                region: CodeRegion::Loop(usize::MAX),
+                label,
+                decreases,
+                items,
+                initialize_proof,
+                preserve_proof,
+            }));
+        }
         if name == "reach" {
             self.expect(Token::LParen)?;
             let target = self.parse_program_point_ref()?;

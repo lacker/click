@@ -844,6 +844,7 @@ pub enum ProofTactic {
     },
     Have(ProofHave),
     If(ProofIf),
+    Loop(StructuralClause),
     Reach(ProofReach),
     ObserveResource(ResourceClause),
     Witness(ProofWitness),
@@ -938,6 +939,7 @@ pub enum SmartTacticKind {
 pub enum ControlFlowTactic {
     Have,
     If,
+    Loop,
     Reach,
     CertifiedAlternatives,
 }
@@ -972,6 +974,9 @@ pub enum CertificatePathSegment {
     HaveBody,
     ThenBranch,
     ElseBranch,
+    LoopInitialize,
+    LoopPreserve,
+    LoopItem(usize),
     ReachBody,
 }
 
@@ -1074,6 +1079,46 @@ fn validate_certificate_tactics(
                     else_result
                 }
             }
+            TacticClass::ControlFlow(ControlFlowTactic::Loop) => {
+                let ProofTactic::Loop(loop_clause) = tactic else {
+                    unreachable!("tactic class and variant must agree")
+                };
+                let mut result;
+                path.push(CertificatePathSegment::LoopInitialize);
+                result = match loop_clause.initialize_proof() {
+                    Some(proof) => validate_certificate_proof(proof, path),
+                    None => Err(CertificateError {
+                        tactic_class: TacticClass::Smart(SmartTacticKind::Auto),
+                        path: path.clone(),
+                    }),
+                };
+                path.pop();
+                if result.is_ok() {
+                    path.push(CertificatePathSegment::LoopPreserve);
+                    result = match loop_clause.preserve_proof() {
+                        Some(proof) => validate_certificate_proof(proof, path),
+                        None => Err(CertificateError {
+                            tactic_class: TacticClass::Smart(SmartTacticKind::Auto),
+                            path: path.clone(),
+                        }),
+                    };
+                    path.pop();
+                }
+                if result.is_ok() {
+                    for (item_index, item) in loop_clause.items().iter().enumerate() {
+                        if !item.is_effect_kind() {
+                            continue;
+                        }
+                        path.push(CertificatePathSegment::LoopItem(item_index));
+                        result = validate_certificate_proof(item.proof(), path);
+                        path.pop();
+                        if result.is_err() {
+                            break;
+                        }
+                    }
+                }
+                result
+            }
             TacticClass::ControlFlow(ControlFlowTactic::Reach) => {
                 let ProofTactic::Reach(proof_advance) = tactic else {
                     unreachable!("tactic class and variant must agree")
@@ -1126,6 +1171,42 @@ fn validate_replay_plan_tactics(
                     path.pop();
                     else_result
                 }
+            }
+            TacticClass::ControlFlow(ControlFlowTactic::Loop) => {
+                let ProofTactic::Loop(loop_clause) = tactic else {
+                    unreachable!("tactic class and variant must agree")
+                };
+                path.push(CertificatePathSegment::LoopInitialize);
+                match loop_clause.initialize_proof() {
+                    Some(proof) => validate_replay_plan_proof(proof, path)?,
+                    None => {
+                        return Err(ReplayPlanError {
+                            smart_tactic: SmartTacticKind::Auto,
+                            path: path.clone(),
+                        });
+                    }
+                }
+                path.pop();
+                path.push(CertificatePathSegment::LoopPreserve);
+                match loop_clause.preserve_proof() {
+                    Some(proof) => validate_replay_plan_proof(proof, path)?,
+                    None => {
+                        return Err(ReplayPlanError {
+                            smart_tactic: SmartTacticKind::Auto,
+                            path: path.clone(),
+                        });
+                    }
+                }
+                path.pop();
+                for (item_index, item) in loop_clause.items().iter().enumerate() {
+                    if !item.is_effect_kind() {
+                        continue;
+                    }
+                    path.push(CertificatePathSegment::LoopItem(item_index));
+                    validate_replay_plan_proof(item.proof(), path)?;
+                    path.pop();
+                }
+                Ok(())
             }
             TacticClass::ControlFlow(ControlFlowTactic::Reach) => {
                 let ProofTactic::Reach(proof_advance) = tactic else {
@@ -1266,6 +1347,7 @@ impl ProofTactic {
             Self::Simp => TacticClass::Smart(SmartTacticKind::Simp),
             Self::Have(_) => TacticClass::ControlFlow(ControlFlowTactic::Have),
             Self::If(_) => TacticClass::ControlFlow(ControlFlowTactic::If),
+            Self::Loop(_) => TacticClass::ControlFlow(ControlFlowTactic::Loop),
             Self::Reach(_) => TacticClass::ControlFlow(ControlFlowTactic::Reach),
             Self::CertifiedAlternatives(_) => {
                 TacticClass::ControlFlow(ControlFlowTactic::CertifiedAlternatives)
@@ -1469,6 +1551,8 @@ pub struct VerifiedCTheorem {
     pub specification: CFunctionSpecification,
     pub theorem: Theorem,
     pub concrete_loop_execution: bool,
+    pub(crate) frontier_loop_clauses: Vec<StructuralClause>,
+    pub(crate) frontier_loop_rules: Vec<CVerifiedLoopRule>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1683,6 +1767,20 @@ impl FunctionBlock {
     pub fn grouped_proof(&self) -> Option<&Proof> {
         self.grouped_proof.as_ref()
     }
+
+    fn with_frontier_loop_clause(&self, clause: &StructuralClause, loop_index: usize) -> Self {
+        let mut function = self.clone();
+        function
+            .structural_clauses
+            .push(clause.bound_to_loop(loop_index));
+        function
+    }
+
+    fn with_bound_frontier_loop_clauses(&self, clauses: &[StructuralClause]) -> Self {
+        let mut function = self.clone();
+        function.structural_clauses.extend_from_slice(clauses);
+        function
+    }
 }
 
 impl FunctionSignature {
@@ -1806,6 +1904,12 @@ impl StructuralClause {
 
     pub fn preserve_proof(&self) -> Option<&Proof> {
         self.preserve_proof.as_ref()
+    }
+
+    fn bound_to_loop(&self, loop_index: usize) -> Self {
+        let mut bound = self.clone();
+        bound.region = CodeRegion::Loop(loop_index);
+        bound
     }
 }
 
@@ -2439,7 +2543,7 @@ fn verify_c0_sources_with_environment(
         (file, parsed_sources, selected_functions)
     };
     check_verification_deadline()?;
-    let (termination_plans, requested_termination) =
+    let (mut termination_plans, mut requested_termination) =
         c_function_termination_plans(&file, selected_functions.as_ref())?;
     let (
         predicate_environment,
@@ -2719,8 +2823,23 @@ fn verify_c0_sources_with_environment(
                 bytes: Bitvector32Term::Constant(*bytes),
             });
         }
+        // A frontier-local proof constructs loop annotations and checked
+        // rules while replaying the actual execution path. Final whole-contract
+        // certification must use one coherent proof's artifacts; otherwise it
+        // forgets the rule and starts concretely unrolling a symbolic loop.
+        // Per-claim proofs may legitimately choose different invariants, so do
+        // not merge their loop sets.
+        let frontier_loop_artifacts = function_verified
+            .iter()
+            .find(|verified| !verified.frontier_loop_rules.is_empty());
+        let certification_function_block = frontier_loop_artifacts.map_or_else(
+            || function_block.clone(),
+            |verified| {
+                function_block.with_bound_frontier_loop_clauses(&verified.frontier_loop_clauses)
+            },
+        );
         let contract_function = annotated_function(
-            &function_block,
+            &certification_function_block,
             parsed_function,
             &certification_state,
             &certification_arguments,
@@ -2730,6 +2849,7 @@ fn verify_c0_sources_with_environment(
             true,
         )?;
         if contract_function.opaque_contract_supported() {
+            let has_frontier_loop_rules = frontier_loop_artifacts.is_some();
             let contract_execution_mode = if function_verified
                 .iter()
                 .any(|verified| verified.concrete_loop_execution)
@@ -2741,18 +2861,30 @@ fn verify_c0_sources_with_environment(
             let certification_started = std::time::Instant::now();
             let contract_execution = {
                 let _certification_timing = VerificationTimingPhase::new("certification");
+                let certification_function_environment = frontier_loop_artifacts.map_or_else(
+                    || verification_function_environment.clone(),
+                    |verified| {
+                        verification_function_environment
+                            .clone()
+                            .with_verified_loop_rules(verified.frontier_loop_rules.clone())
+                    },
+                );
                 prove_c_function_contract_execution_paths_with_environment(
                     certification_state,
                     contract_function.clone(),
                     certification_arguments,
                     certification_facts,
-                    verification_function_environment.clone(),
-                    match contract_execution_mode {
-                        CFunctionContractExecutionMode::VerifyLoops => {
-                            CExecutionSemantics::APPLY_CALL_RULES_AND_VERIFY_LOOPS
-                        }
-                        CFunctionContractExecutionMode::ExecuteLoops => {
-                            CExecutionSemantics::APPLY_VERIFIED_RULES
+                    certification_function_environment,
+                    if has_frontier_loop_rules {
+                        CExecutionSemantics::APPLY_VERIFIED_RULES
+                    } else {
+                        match contract_execution_mode {
+                            CFunctionContractExecutionMode::VerifyLoops => {
+                                CExecutionSemantics::APPLY_CALL_RULES_AND_VERIFY_LOOPS
+                            }
+                            CFunctionContractExecutionMode::ExecuteLoops => {
+                                CExecutionSemantics::APPLY_VERIFIED_RULES
+                            }
                         }
                     },
                     contract_execution_mode,
@@ -2779,6 +2911,47 @@ fn verify_c0_sources_with_environment(
                     "could not certify contract for `{}`: exact symbolic execution produced no valid paths",
                     function_block.signature.name(),
                 )));
+            }
+            if let Some(verified) = frontier_loop_artifacts {
+                let mut loop_measures = BTreeMap::new();
+                for clause in &verified.frontier_loop_clauses {
+                    let Some(measure) = clause.decreases() else {
+                        continue;
+                    };
+                    let CodeRegion::Loop(loop_index) = clause.region() else {
+                        continue;
+                    };
+                    let name = termination_measure_name(
+                        measure,
+                        &format!(
+                            "frontier-local loop {loop_index} `decreases` in `{}`",
+                            function_block.signature.name()
+                        ),
+                    )?;
+                    if let Some(previous) = loop_measures.insert(*loop_index, name.clone())
+                        && previous != name
+                    {
+                        return Err(ClickError::new(format!(
+                            "frontier-local proofs for `{}` disagree on loop {loop_index} `decreases`",
+                            function_block.signature.name()
+                        )));
+                    }
+                }
+                if !loop_measures.is_empty() {
+                    if let Some(plan) = termination_plans
+                        .iter_mut()
+                        .find(|plan| plan.function_name() == function_block.signature.name())
+                    {
+                        plan.extend_loop_measures(loop_measures);
+                    } else {
+                        termination_plans.push(c_function_termination_plan(
+                            function_block.signature.name(),
+                            None,
+                            loop_measures,
+                        ));
+                    }
+                    requested_termination.insert(function_block.signature.name().to_string());
+                }
             }
             let certified_claims = {
                 let _certification_timing = VerificationTimingPhase::new("certification");

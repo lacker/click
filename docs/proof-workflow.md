@@ -129,14 +129,15 @@ control flow.
   execution steps, selected branches, and `reach` joins. The target must be
   forward and reachable on the current execution path, and each source step
   must produce exactly one normal successor.
-- `summarize(loop(N));`: contextually apply an already verified loop's abstract rule
-  at its entry and advance to its exit in one transition, without entering the
-  body. Its simple `using { P; ... }` form names the complete premise set.
+- `loop { ... }`: verify the loop exactly at the current frontier and advance
+  to its checked abstract exit. Its nested `initialize`, `preserve`, invariant,
+  and effect clauses construct the kernel rule; it never seeks to a numbered
+  source loop.
 - `close_invariants();`: discharge a loop's whole invariant bundle at the back
   edge. It is accepted only inside `preserve by { ... }`, and at most once per
   path. Omitting it makes Click append the closer implicitly.
-- `frame();` and `frame(loop(N));`: smart contextual frame reasoning for the
-  function or selected loop.
+- `frame();`: smart contextual frame reasoning for the current function or
+  active structural-effect goal.
 - `frame() using { P; ... }` and the region form: the simple exact-premise
   frame check. Expansion always emits this form.
 - `unfold(name);`: unfold matching predicate facts and goals.
@@ -362,32 +363,35 @@ ensures again: bytes_contains(p, 0, n, 'x') by {
 }
 ```
 
-## Region Execution Proofs
+## Statement Regions And Loop Proofs
 
-Region proof blocks attach specifications and smaller execution proofs to code
-regions:
+Statement-region proof blocks attach one-shot assertions to statically selected
+source statements. Loop proofs instead operate where the execution frontier
+actually encounters a loop:
 
 ```click
 for statement(2) {
     assert i == 0 by auto;
 }
 
-for loop(0) {
-    invariant i >= 0;
-    invariant i <= n;
-    mutable p[0..n] by frame;
+by {
+    step();
+    loop as fill {
+        invariant i >= 0;
+        invariant i <= n;
+        mutable p[0..n] by frame;
 
-    step {
-        mutable p[i..i + 1] by frame;
+        step {
+            mutable p[i..i + 1] by frame;
+        }
     }
 }
 ```
 
 `statement(N)` selects the Nth source statement code region in structural
-order. `loop(N)` selects the Nth `while` loop code region. A code region may
-also be labeled with `as name`. Labels are the preferred proof-facing spelling
-for execution targets and snapshots because they remain meaningful when nearby
-source statements change:
+order. A statement region may be labeled with `as name`. Labels are the
+preferred proof-facing spelling for execution targets and snapshots because
+they remain meaningful when nearby source statements change:
 
 ```click
 for statement(4) as update {
@@ -398,10 +402,10 @@ execute_until(update);
 have at(update.entry, y) >= 0 by simp;
 ```
 
-The same label can be used by `reach(update.exit)`, `at(update.entry, ...)`,
-`at(update.exit, ...)`, and region tactics such as `frame(update)` when the
-region kind is accepted. Numeric `statement(N)` and `loop(N)` references remain
-the way labels are attached and are useful for short proofs.
+The same statement label can be used by `reach(update.exit)`,
+`at(update.entry, ...)`, and `at(update.exit, ...)`. `loop as name { ... }`
+creates entry and exit snapshot names for the loop at the current frontier;
+the name is not a selector and never moves the frontier.
 
 A code region is a static source construct with extent, such as a function,
 loop, statement, or block. A program point is a proof-relevant boundary or
@@ -420,8 +424,9 @@ at(statement(0).entry, p[0] == 7)
 at(statement(0).entry, loadable(p[0..n]))
 ```
 
-The initial `loop_name.entry` support is available in invariants on that loop
-and in its explicit `preserve` proof.
+`loop_name.entry` is available in invariants on that loop and in its explicit
+`preserve` proof. Once the loop tactic succeeds, `loop_name.exit` is available
+to the enclosing proof.
 
 Statement entry and exit snapshots are currently recorded by deterministic
 proof execution. `step()`, `execute_until(...)`, and `execute()`
@@ -446,7 +451,7 @@ first iteration. The `preserve` proof assumes that set and the loop condition,
 executes one body iteration, and reestablishes the set:
 
 ```click
-for loop(0) {
+loop {
     invariant 0 <= i and i <= n;
     invariant sorted(p, n);
 
@@ -459,16 +464,17 @@ for loop(0) {
 }
 ```
 
-Either phase may be omitted, meaning `by auto`. An explicit preservation proof
+Either phase may be omitted. Bounded automation attributed to the `loop`
+keyword supplies an omitted phase. An explicit preservation proof
 runs in a fresh arbitrary-iteration context and must reach the loop back edge
 on every proof branch. It can use ordinary tactics, including `have`,
 resource operations, proof-level `if`, and branch execution.
 
 An explicit initialization proof is an ordinary pure proof at the actual loop
 entry. It can use `apply`, nested `have`, proof-level `if`, `unfold`, and `simp`,
-but it cannot execute C or transform resources. The loop-entry snapshot
-`at(loop(N).entry, ...)` is bound while this proof runs. The facts it proves are
-checked against the kernel invariant instances before rule construction.
+but it cannot execute C or transform resources. A named loop's entry snapshot
+is bound while this proof runs. The facts it proves are checked against the
+kernel invariant instances before rule construction.
 
 Execution-proof traversal advances forward through the function. When it
 encounters a loop, it checks initialization at the current frontier, checks
@@ -481,21 +487,19 @@ Explicit `initialize` and `preserve` proofs directly supply the two premises for
 that abstract exit rule. After initialization establishes every entry invariant
 and every preservation branch reaches the back edge with the invariants and
 effects reestablished, the kernel constructs the loop exit without proving
-either premise again. An omitted phase uses `auto` for that premise.
+either premise again.
 
-That abstract exit produces an opaque kernel `VerifiedLoopRule` over the
-symbolic loop-entry state and its required assumptions. Subsequent function
-claims must consume the registered rule when they encounter an annotated loop.
-Additional assumptions are allowed, but an incompatible symbolic state or
-missing rule makes verification fail; execution does not fall back to proving
-the loop again.
+That abstract exit is justified by an opaque kernel `VerifiedLoopRule` over the
+symbolic loop-entry state and its required assumptions. The `loop` tactic
+applies it immediately and advances the enclosing frontier. There is no later
+summary tactic and no detached traversal from function entry.
 
 ## Loop Effects
 
 Whole-loop effects:
 
 ```click
-for loop(0) {
+loop {
     mutable p[0..n] by frame;
 }
 ```
@@ -503,7 +507,7 @@ for loop(0) {
 Step-relative effects:
 
 ```click
-for loop(0) {
+loop {
     step {
         mutable p[i..i + 1] by frame;
     }

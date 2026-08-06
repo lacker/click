@@ -197,6 +197,72 @@ fn write_tactic(output: &mut String, tactic: &ProofTactic, indent: usize) {
             write_tactics(output, &proof_if.else_tactics, indent + 1);
             line(output, &prefix, "}");
         }
+        ProofTactic::Loop(loop_clause) => {
+            line(
+                output,
+                &prefix,
+                &format!(
+                    "loop{} {{",
+                    loop_clause
+                        .label()
+                        .map(|label| format!(" as {label}"))
+                        .unwrap_or_default()
+                ),
+            );
+            let body_prefix = "    ".repeat(indent + 1);
+            if let Some(decreases) = loop_clause.decreases() {
+                line(
+                    output,
+                    &body_prefix,
+                    &format!("decreases {};", describe_contract_expression(decreases)),
+                );
+            }
+            for item in loop_clause.items() {
+                match item.kind() {
+                    StructuralItemKind::Invariant | StructuralItemKind::Assert => {
+                        let keyword = if item.kind() == StructuralItemKind::Invariant {
+                            "invariant"
+                        } else {
+                            "assert"
+                        };
+                        output.push_str(&body_prefix);
+                        output.push_str(keyword);
+                        output.push(' ');
+                        output.push_str(&source_click_proposition(
+                            item.proposition().expect("proposition structural item"),
+                        ));
+                        if item.kind() == StructuralItemKind::Invariant {
+                            output.push_str(";\n");
+                        } else {
+                            output.push(' ');
+                            write_proof(output, item.proof(), indent + 1);
+                            output.push('\n');
+                        }
+                    }
+                    StructuralItemKind::Effect => {
+                        write_structural_effect(output, item, indent + 1);
+                    }
+                    StructuralItemKind::StepEffect => {
+                        line(output, &body_prefix, "step {");
+                        write_structural_effect(output, item, indent + 2);
+                        line(output, &body_prefix, "}");
+                    }
+                }
+            }
+            if let Some(proof) = loop_clause.initialize_proof() {
+                output.push_str(&body_prefix);
+                output.push_str("initialize ");
+                write_proof(output, proof, indent + 1);
+                output.push('\n');
+            }
+            if let Some(proof) = loop_clause.preserve_proof() {
+                output.push_str(&body_prefix);
+                output.push_str("preserve ");
+                write_proof(output, proof, indent + 1);
+                output.push('\n');
+            }
+            line(output, &prefix, "}");
+        }
         ProofTactic::Reach(advance) => {
             line(
                 output,
@@ -329,6 +395,27 @@ fn write_tactic(output: &mut String, tactic: &ProofTactic, indent: usize) {
         | ProofTactic::CertifiedAlternatives(_)
         | ProofTactic::Simp => unreachable!("certificate validation rejects this tactic"),
     }
+}
+
+fn write_structural_effect(output: &mut String, item: &StructuralItem, indent: usize) {
+    let prefix = "    ".repeat(indent);
+    let effect = item.effect().expect("effect structural item");
+    match effect {
+        Effect::Immutable => output.push_str(&format!("{prefix}immutable")),
+        Effect::Mutable(segments) => {
+            output.push_str(&format!("{prefix}mutable "));
+            output.push_str(
+                &segments
+                    .iter()
+                    .map(describe_contract_segment)
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            );
+        }
+    }
+    output.push(' ');
+    write_proof(output, item.proof(), indent);
+    output.push('\n');
 }
 
 fn write_proof(output: &mut String, proof: &Proof, indent: usize) {

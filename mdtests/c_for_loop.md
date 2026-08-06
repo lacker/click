@@ -47,12 +47,15 @@ int32 for_sum_concrete() {
 
 int32 for_count_invariant(int32 n) {
     requires n >= 0 and n <= 2147483647;
-
-    for loop(0) {
+    ensures count: result == n;
+} by {
+    step();
+    step();
+    loop {
         invariant i >= 0 and i <= n;
     }
-
-    ensures count: result == n by auto;
+    step();
+    simp();
 }
 ```
 

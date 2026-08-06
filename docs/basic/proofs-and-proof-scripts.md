@@ -36,7 +36,7 @@ mutable p[0..n] by {
 ## Smart and simple tactics
 
 Smart tactics may inspect context or search. The most common are bare
-`step()`, `execute()`, `execute_until(...)`, `summarize(...)`, `simp()`, bare
+`step()`, `execute()`, `execute_until(...)`, `simp()`, bare
 `frame()`, bare `apply(...)`, and bare `transport(...)`.
 
 Simple tactics perform one explicit rule. Paired operations use `using` to
@@ -47,7 +47,7 @@ step() using {
     x < 2147483647;
 }
 
-summarize(loop(0)) using {
+execute_until(done) using {
     n >= 0;
 }
 
@@ -76,7 +76,7 @@ An execution proof carries a C frontier. The execution vocabulary is:
 - `step()` for one smart transition;
 - `execute_until(point)` for a forward prefix;
 - `execute()` for the remainder of the function;
-- `summarize(loop(N))` for one verified loop summary; and
+- `loop { ... }` for the C loop exactly at the current frontier; and
 - `reach(point) ensuring { ... } by { ... }` for a scoped execution proof that
   exports an explicit interface.
 

@@ -14,11 +14,19 @@ verifying "c_decreases_loop.c";
 
 int32 drain(int32 n) {
     requires n >= 0;
-    for loop(0) {
+    ensures result == 0;
+} by {
+    loop {
         decreases n;
         invariant n >= 0;
+        initialize by simp;
+        preserve by {
+            step();
+            close_invariants();
+        }
     }
-    ensures result == 0 by auto;
+    step();
+    simp();
 }
 ```
 

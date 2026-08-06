@@ -14,11 +14,11 @@ every finite iteration prefix is safe and that the invariant is available if
 the loop exits. A constant-true service loop can therefore have a useful
 invariant even though it has no exit state.
 
-When termination itself matters, a loop region may additionally declare a
+When termination itself matters, the loop tactic may additionally declare a
 single-variable ranking proof:
 
 ```click
-for loop(0) {
+loop {
     decreases remaining;
     invariant remaining >= 0;
 }
@@ -35,14 +35,21 @@ The [`perpetual-service`](../../examples/perpetual-service/README.md) example
 combines this partial-correctness boundary with an opaque verified call and a
 composite resource transferred through every iteration.
 
-In Click terms, `loop(N)` names a loop code region. The invariant is checked at
-program points associated with that region. Since a loop head can be reached
-more than once, those program points can have many runtime visits.
+An execution proof has a frontier: the boundary between C that has already
+been checked and C that remains. `loop { ... }` handles the C loop exactly at
+that frontier. It does not name a loop by source-order number and does not jump
+forward to find one. If the frontier is not at a loop, the tactic fails.
+
+The tactic checks initialization and one arbitrary iteration, constructs a
+kernel-checked loop rule, applies that rule once, and advances the enclosing
+frontier to the loop exit. Since a loop head can be reached more than once, the
+preservation proof is about an arbitrary visit rather than one concrete
+iteration.
 
 A labeled loop can also expose its entry visit to the invariant:
 
 ```click
-for loop(0) as drain {
+loop as drain {
     invariant at(drain.entry, n) >= 0;
 }
 ```
@@ -61,19 +68,25 @@ int32 count_to(int32 n) {
 }
 ```
 
-the proof needs bounds on `i`:
+the proof first advances through the statements before the loop, then declares
+the bounds on `i` at the frontier:
 
 ```click
-for loop(0) {
-    invariant i >= 0;
-    invariant i <= n;
+by {
+    step();
+    step();
+    loop {
+        invariant i >= 0;
+        invariant i <= n;
+    }
+    step();
 }
 ```
 
 The full induction syntax names its two obligations explicitly:
 
 ```click
-for loop(0) {
+loop {
     invariant i >= 0;
     invariant i <= n;
 
@@ -91,7 +104,8 @@ script may use exactly `unfold(predicate)`, `apply(theorem(args))`, `have`,
 anything else is rejected with `` `initialize` is a pure proof and cannot use
 `<tactic>` ``. `preserve` assumes all invariants and the loop condition,
 executes one complete body iteration, and proves all invariants again. Either
-proof may be omitted; an omitted phase uses `auto`.
+proof may be omitted; bounded automation owned by the `loop` keyword supplies
+an omitted phase. Expanding that keyword writes all omitted phases explicitly.
 
 ## What Invariants Do
 
@@ -113,7 +127,7 @@ one.
 Pointer-writing loops often need both arithmetic invariants and memory facts:
 
 ```click
-for loop(0) {
+loop {
     invariant i >= 0;
     invariant i <= n;
     mutable p[0..n] by frame;
@@ -154,15 +168,15 @@ Click appends the closer implicitly after the last written tactic. The
 certificate contains an explicit `close_invariants` leaf either way, so it
 always appears in an expanded proof.
 
-Successful initialization, preservation, and effect proofs certify a verified
-loop rule. Execution applies that rule directly; there is no separate tactic
-for rechecking the loop's verification conditions.
+Successful initialization, preservation, and effect proofs certify and apply a
+verified loop rule. The enclosing proof is already at the loop exit when the
+`loop` tactic returns; there is no later `summarize(loop(N))` step and no need
+to reconstruct a path from function entry.
 
-`frame(loop(N))` checks a loop's certified write summary against its declared
-effect using exact available bounds, then exposes the summary for later proof
-steps. Labeled code regions can be used in the same positions. A loop effect
-clause may use contextual `by frame` when those bounds should be derived
-automatically.
+A loop effect clause may use contextual `by frame` when its exact bounds should
+be derived automatically. Explicit phase and effect tactics keep their own
+source locations for profiling and expansion. Omitted phase and effect
+automation is attributed to the `loop` keyword.
 
 Most beginner code avoids these details. Intermediate Click needs them whenever
 the loop summary is the central part of the proof.
