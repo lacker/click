@@ -48,7 +48,7 @@ The repository has several historical cases where example C was simplified or
 rerouted while repairing its proof. Track and remove them independently:
 
 1. [Use general vector push in the owned-vector pipeline](use-general-vector-push-in-pipeline.md).
-2. [Audit examples against unchanged existing C](audit-existing-c-source-fidelity.md).
+2. [Add the first unchanged existing-C fixture](audit-existing-c-source-fidelity.md).
 
 ## Partial correctness and recursion
 

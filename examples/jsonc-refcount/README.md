@@ -1,6 +1,8 @@
 # json-c Refcount Pilot
 
-This directory is the first frozen library-shaped example project. Each C file
+This directory is a synthetic, frozen library-shaped example project. Its C
+was written for Click and is not copied from the json-c repository. It must not
+be cited as evidence that Click accepts unchanged json-c source. Each C file
 has a matching `.click` sidecar in this directory. Focused self-contained
 regressions for the same features live in `mdtests/jsonc_refcount_getter.md`,
 `mdtests/jsonc_refcount_setter.md`, and `mdtests/jsonc_refcount_increment.md`.

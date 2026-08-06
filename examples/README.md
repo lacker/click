@@ -11,11 +11,33 @@ sidecar against the C files in the same directory.
 Most fixtures should stay small. Keep everything directly under `examples/`
 unless there is a concrete reason to add hierarchy.
 
+## Source provenance
+
+Examples have three distinct provenance classes:
+
+- **Synthetic** fixtures are C written for this repository to isolate a
+  language or proof-model question. Their C should still remain fixed while a
+  proof is repaired, but they are not evidence that Click accepts unchanged
+  third-party source.
+- **C0 transcriptions** are semantics-preserving translations of identified C
+  into Click's supported C0 subset. They must include a `SOURCE.md` naming the
+  upstream source and revision and recording every translation.
+- **Unchanged existing-source** fixtures preserve identified upstream files
+  byte-for-byte. They must include a `SOURCE.md` plus a checked source-integrity
+  manifest so proof work cannot silently edit the imported C.
+
+Every project currently in this tree is synthetic. In particular,
+`jsonc-refcount/` is deliberately **json-c-shaped**, not copied from json-c.
+It exercises library-like field operations but does not yet support the claim
+that Click verifies unchanged real-world C. The first unchanged-source fixture
+is tracked in `issues/audit-existing-c-source-fidelity.md`.
+
 Current projects:
 
 - `input-cursor/` verifies independently mutable cursors over a shared viewed
   input resource.
-- `jsonc-refcount/` verifies field-level reads and writes on a small object.
+- `jsonc-refcount/` verifies synthetic json-c-shaped field reads and writes on
+  a small object.
 - `owned-string/` verifies a length-tracked string with a trailing terminator
   whose composite resource ties metadata to a mutable backing-memory content
   invariant.

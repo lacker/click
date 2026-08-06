@@ -405,9 +405,9 @@ sequence:
 
 - `examples/input-cursor/`: nested composite resources with independently
   mutable cursors sharing one viewed backing input.
-- `examples/jsonc-refcount/`: first library-shaped example project. It has
+- `examples/jsonc-refcount/`: synthetic library-shaped example project. It has
   ordinary C files and sidecar specs for a getter, setter, and increment helper
-  over a one-field json-c-shaped object.
+  over a one-field json-c-shaped object; it is not unchanged json-c source.
 - `examples/detachable-buffer/`: attached metadata and storage split into two
   independently owned resources and later recombined.
 - `examples/borrowed-slice/`: a symbolic middle range leaves its owner as an
