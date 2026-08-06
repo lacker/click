@@ -33,19 +33,17 @@ int32 branch_count_to_one(int32 flag, int32 i) {
         assert i == 1 by auto;
     }
 
-    for loop(0) as count {
-        invariant i == 1;
-    }
-
     ensures result == 1
         and at(statement(1).exit, i) == 1
-        and at(statement(4).entry, i) == 1 by {
-        step();
-        step();
-        have at(count.exit, i) == 1 by simp;
-        step();
-        simp();
+        and at(statement(4).entry, i) == 1;
+} by {
+    step();
+    loop as count {
+        invariant i == 1;
     }
+    have at(count.exit, i) == 1 by simp;
+    step();
+    simp();
 }
 ```
 

@@ -51,14 +51,19 @@ int32 fill_prefix(int32 p[], int32 n) {
     requires n <= 2147483647;
     requires loadable(p[0..n]);
     consumes p[0..n];
-    for loop(0) {
+    ensures returns_n: result == n;
+} by {
+    step();
+    step();
+    loop {
         invariant i >= 0;
         invariant i <= n;
         step {
             mutable p[0..i + 1] by frame;
         }
     }
-    ensures returns_n: result == n by auto;
+    step();
+    simp();
 }
 
 int32 fill_tail(int32 p[], int32 n) {
@@ -66,12 +71,17 @@ int32 fill_tail(int32 p[], int32 n) {
     requires n <= 2147483647;
     requires loadable(p[0..n]);
     consumes p[0..n];
-    for loop(0) {
+    ensures returns_n: result == n;
+} by {
+    step();
+    step();
+    loop {
         invariant i >= 1;
         invariant i <= n;
         mutable p[1..n] by frame;
     }
-    ensures returns_n: result == n by auto;
+    step();
+    simp();
 }
 
 int32 fill_two(int32 p[], int32 q[], int32 n) {
@@ -81,14 +91,19 @@ int32 fill_two(int32 p[], int32 q[], int32 n) {
     requires loadable(q[0..n]);
     consumes p[0..n];
     consumes q[0..n];
-    for loop(0) {
+    ensures returns_n: result == n;
+} by {
+    step();
+    step();
+    loop {
         invariant i >= 0;
         invariant i <= n;
         step {
             mutable p[i..i + 1], q[i..i + 1] by frame;
         }
     }
-    ensures returns_n: result == n by auto;
+    step();
+    simp();
 }
 ```
 

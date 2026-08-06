@@ -18,13 +18,14 @@ verifying "loop_entry_snapshot.c";
 int32 drain_to_zero(int32 n) {
     requires n >= 0;
     requires n <= 100;
-
-    for loop(0) as drain {
+    ensures returns_zero: result == 0;
+} by {
+    loop as drain {
         invariant n >= 0;
         invariant at(drain.entry, n) >= 0;
     }
-
-    ensures returns_zero: result == 0 by auto;
+    step();
+    simp();
 }
 ```
 

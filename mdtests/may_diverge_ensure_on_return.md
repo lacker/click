@@ -26,12 +26,13 @@ verifying "call_may_diverge.c";
 
 int32 wait_while_nonzero(int32 flag[]) {
     views flag[0..1];
-
-    for loop(0) {
+    ensures result == 0;
+} by {
+    loop {
         invariant flag[0] == old(flag[0]);
     }
-
-    ensures result == 0 by auto;
+    step();
+    simp();
 }
 
 int32 call_wait(int32 flag[]) {

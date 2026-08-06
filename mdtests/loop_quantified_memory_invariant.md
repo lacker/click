@@ -20,13 +20,18 @@ verifying "loop_quantified_memory_invariant.c";
 int32 loop_quantified_memory_invariant(int32 p[], int32 n) {
     requires n >= 0 and n <= 2147483647;
     requires loadable(p[0..n]);
-    for loop(0) {
+    ensures returns_n: result == n;
+} by {
+    step();
+    step();
+    loop {
         invariant i >= 0 and i <= n;
         invariant forall (k: int32) {
             0 <= k and k < n implies p[k] == p[k]
         };
     }
-    ensures returns_n: result == n by auto;
+    step();
+    simp();
 }
 ```
 

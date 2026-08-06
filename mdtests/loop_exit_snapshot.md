@@ -21,42 +21,16 @@ verifying "loop_exit_snapshot.c";
 int32 count_from_to(int32 i, int32 n) {
     requires 0 <= i and i <= n;
     requires n < 2147483647;
-
-    for loop(0) as count {
-        assert i <= n;
+    ensures result == n and at(count.exit, i) == n;
+    ensures batch_execution_records_exit: at(count.exit, i) == n;
+    ensures execute_until_crosses_loop: result == n;
+    ensures advance_to_loop_exit: result == n;
+} by {
+    loop as count {
         invariant 0 <= i and i <= n;
     }
-
-    ensures result == n and at(count.exit, i) == n by {
-        execute_until(statement(2));
-        have at(count.exit, i) == n by simp;
-        step();
-        simp();
-    }
-
-    ensures batch_execution_records_exit: at(count.exit, i) == n by {
-        execute();
-        simp();
-    }
-
-    ensures execute_until_crosses_loop: result == n by {
-        execute_until(statement(2));
-        have at(count.exit, i) == n by simp;
-        step();
-        simp();
-    }
-
-    ensures advance_to_loop_exit: result == n by {
-        reach(count.exit)
-        ensuring {
-            fact i == n;
-        }
-        by {
-            execute_until(statement(2));
-        }
-        step();
-        simp();
-    }
+    step();
+    simp();
 }
 ```
 

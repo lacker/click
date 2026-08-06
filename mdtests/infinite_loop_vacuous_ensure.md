@@ -15,11 +15,12 @@ int32 spin_with_postcondition() {
 verifying "infinite_loop_vacuous_ensure.c";
 
 int32 spin_with_postcondition() {
-    for loop(0) {
+    ensures 0 == 1;
+} by {
+    loop {
         invariant 0 == 0;
     }
-
-    ensures 0 == 1 by auto;
+    simp();
 }
 ```
 
