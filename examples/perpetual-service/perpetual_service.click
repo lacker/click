@@ -47,16 +47,22 @@ int32 service_step(struct service* owner) {
 
 int32 service_run(struct service* owner) {
     owns service(owner);
-
-    for loop(0) {
+} by {
+    step();
+    loop {
         invariant 0 <= owner->phase;
         invariant owner->phase <= 1;
-        mutable owner->phase, owner->cell[0..1] by frame;
+        mutable owner->phase, owner->cell[0..1] by {
+            frame() using {
+                separate(memory(object(owner)), memory(owner->cell[0..1]));
+            }
+        }
 
         initialize by simp;
         preserve by {
-            step();
+            step() using {};
             close_invariants();
         }
     }
+    simp();
 }

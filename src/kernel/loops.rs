@@ -1140,6 +1140,23 @@ pub(super) fn collect_loop_effect_check_obligations(
         .differing_cell_pointers(before_state.memory())
         .into_iter()
         .filter(is_loop_effect_relevant_pointer)
+        .filter(|pointer| {
+            let has_disjoint_effect_summary = facts.iter().any(|fact| {
+                matches!(
+                    fact.proposition(),
+                    Proposition::CMemoryEffectSummary { mutable_ranges, .. }
+                        if effective_assumptions
+                            .ranges_proven_disjoint_from_pointer(mutable_ranges, pointer)
+                )
+            });
+            !has_disjoint_effect_summary
+                || !c_memory_load_is_unchanged(
+                    before_state.memory(),
+                    after_state.memory(),
+                    pointer,
+                    &effective_assumptions,
+                )
+        })
         .collect::<BTreeSet<_>>();
     writes.extend(
         facts

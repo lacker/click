@@ -632,6 +632,7 @@ pub struct CVerifiedLoopRule {
     pub(super) loop_statement: CStatement,
     pub(super) required_assumptions: Assumptions,
     pub(super) paths: Vec<CStatementExecutionPath>,
+    pub(super) composite_resource_definitions: Vec<CCompositeResourceDefinition>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -2831,7 +2832,6 @@ impl CExecutionEnvironment {
         assumptions: &Assumptions,
     ) -> Option<&CVerifiedLoopRule> {
         self.verified_loop_rules.iter().find(|rule| {
-            let state_matches = rule.symbolic_entry_state == *state;
             let statement_matches = rule.loop_statement == *statement;
             let assumptions_match = rule
                 .required_assumptions
@@ -2867,8 +2867,28 @@ impl CExecutionEnvironment {
                             _ => false,
                         }
                 });
+            let state_matches = rule.symbolic_entry_state.locals == state.locals
+                && rule.symbolic_entry_state.memory == state.memory
+                && super::api::resource_contexts_definitionally_equal_with_definitions(
+                    &rule.composite_resource_definitions,
+                    rule.symbolic_entry_state.memory(),
+                    rule.symbolic_entry_state.resources(),
+                    state.memory(),
+                    state.resources(),
+                    assumptions,
+                );
             state_matches && statement_matches && assumptions_match
         })
+    }
+}
+
+impl CVerifiedLoopRule {
+    pub fn with_composite_resource_definitions(
+        mut self,
+        definitions: impl IntoIterator<Item = CCompositeResourceDefinition>,
+    ) -> Self {
+        self.composite_resource_definitions.extend(definitions);
+        self
     }
 }
 

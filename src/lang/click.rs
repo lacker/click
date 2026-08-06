@@ -2838,6 +2838,7 @@ fn verify_c0_sources_with_environment(
                 function_block.with_bound_frontier_loop_clauses(&verified.frontier_loop_clauses)
             },
         );
+        let has_frontier_loop_rules = frontier_loop_artifacts.is_some();
         let contract_function = annotated_function(
             &certification_function_block,
             parsed_function,
@@ -2846,10 +2847,9 @@ fn verify_c0_sources_with_environment(
             &predicate_environment,
             &click_function_environment,
             &resource_environment,
-            true,
+            !has_frontier_loop_rules,
         )?;
         if contract_function.opaque_contract_supported() {
-            let has_frontier_loop_rules = frontier_loop_artifacts.is_some();
             let contract_execution_mode = if function_verified
                 .iter()
                 .any(|verified| verified.concrete_loop_execution)
@@ -3139,7 +3139,21 @@ fn tactic_expansion_required_functions(
         CProofClaim::Effect(index) => index > 0,
         CProofClaim::Ensure(index) => !function_block.effects().is_empty() || index > 0,
     };
-    let structural_traversal = function_block.structural_clauses().iter().any(|clause| {
+    let structural_traversal = proof::proof_contains_frontier_loop(match claim {
+        CProofClaim::Grouped => function_block
+            .grouped_proof()
+            .expect("grouped tactics came from a grouped proof"),
+        CProofClaim::Ensure(index) => function_block
+            .ensures()
+            .get(index)
+            .expect("ensure tactics came from an ensure clause")
+            .proof(),
+        CProofClaim::Effect(index) => function_block
+            .effects()
+            .get(index)
+            .expect("effect tactics came from an effect clause")
+            .proof(),
+    }) || function_block.structural_clauses().iter().any(|clause| {
         matches!(clause.region(), CodeRegion::Loop(_))
             || clause
                 .items()

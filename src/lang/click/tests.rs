@@ -6188,6 +6188,50 @@ fn source_expander_replaces_and_replays_contextual_frame() {
 }
 
 #[test]
+fn source_expander_shares_path_independent_frame_across_c_branches() {
+    let c_source = r#"
+            int32 write_by_flag(int32 p[], int32 flag) {
+                if (flag == 0) {
+                    p[0] = 1;
+                } else {
+                    p[0] = 2;
+                }
+                return p[0];
+            }
+        "#;
+    let click_source = r#"
+            verifying "write_by_flag.c";
+
+            int32 write_by_flag(int32 p[], int32 flag) {
+                consumes p[0..1];
+                mutable p[0..1];
+            } by {
+                execute();
+                frame();
+            }
+        "#;
+
+    let frame_offset = click_source
+        .find("frame();")
+        .expect("proof should contain the selected frame");
+    let position = expansion::position_at_offset(click_source, frame_offset);
+    let expanded = expand_c0_tactic_source_at(
+        click_source,
+        &[("write_by_flag.c", c_source)],
+        position.line,
+        position.column,
+    )
+    .expect("path-independent frame should expand across C branches");
+    assert!(!expanded.contains("frame();"), "{expanded}");
+    verify_c0_sources(&expanded, &[("write_by_flag.c", c_source)]).unwrap_or_else(|error| {
+        panic!(
+            "expanded path-independent frame should re-verify: {}\n{expanded}",
+            error.message()
+        )
+    });
+}
+
+#[test]
 fn source_expander_is_idempotent() {
     let c_source = r#"
             int32 identity(int32 x) {
@@ -7318,6 +7362,104 @@ fn frontier_local_loop_resolves_composite_resources_in_nested_proofs() {
             }) if parameter_types == &[C0Type::Int32Pointer]
         ));
     }
+}
+
+#[test]
+fn frontier_local_loop_frames_untouched_composite_pointer_field_across_call() {
+    let callee_c = r#"
+            struct holder {
+                int32 value;
+                int32* data;
+            };
+
+            int32 mutate(struct holder* owner) {
+                owner->value = 0;
+                owner->data[0] = 0;
+                return 0;
+            }
+        "#;
+    let caller_c = r#"
+            struct holder {
+                int32 value;
+                int32* data;
+            };
+
+            int32 call_once(struct holder* owner) {
+                int32 i;
+                i = 0;
+                while (i < 1) {
+                    mutate(owner);
+                    i = i + 1;
+                }
+                return i;
+            }
+        "#;
+    let click_source = r#"
+            resource holder(owner: struct holder*) {
+                owns owner->value;
+                owns owner->data;
+                owns owner->data[0..1];
+                fact separate(memory(object(owner)), memory(owner->data[0..1]));
+            }
+
+            verifying "mutate.c";
+            verifying "call_once.c";
+
+            int32 mutate(struct holder* owner) {
+                owns holder(owner);
+                mutable owner->value, owner->data[0..1];
+            } by {
+                unfold(holder(owner));
+                execute();
+                fold(holder(owner));
+                frame();
+                simp();
+            }
+
+            int32 call_once(struct holder* owner) {
+                owns holder(owner);
+                mutable owner->value, owner->data[0..1];
+                ensures result == 1;
+            } by {
+                step();
+                step();
+                loop {
+                    invariant i >= 0;
+                    invariant i <= 1;
+                    mutable owner->value, owner->data[0..1] by {
+                        frame() using {
+                            separate(memory(object(owner)), memory(owner->data[0..1]));
+                        }
+                    }
+                    initialize by simp;
+                    preserve by {
+                        step() using {};
+                        step() using {
+                            i < 1;
+                        }
+                        close_invariants();
+                    }
+                }
+                step();
+                frame();
+                simp();
+            }
+        "#;
+
+    let sources = [("mutate.c", callee_c), ("call_once.c", caller_c)];
+    verify_c0_sources(click_source, &sources)
+        .expect("the opaque call effect should preserve the untouched pointer field");
+
+    let initialization = click_source
+        .find("initialize by simp")
+        .expect("loop initialization should have a source position")
+        + "initialize by ".len();
+    let position = expansion::position_at_offset(click_source, initialization);
+    let expanded =
+        expand_c0_tactic_source_at(click_source, &sources, position.line, position.column)
+            .expect("frontier-loop expansion should retain the loop body's callee contract");
+    verify_c0_sources(&expanded, &sources)
+        .expect("expanded frontier-loop initialization should replay");
 }
 
 #[test]

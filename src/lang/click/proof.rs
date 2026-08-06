@@ -3458,7 +3458,10 @@ pub(super) fn initial_claim_context(
     let include_owned_composite_cores = function_block
         .structural_clauses()
         .iter()
-        .any(|clause| matches!(clause.region(), CodeRegion::Loop(_)));
+        .any(|clause| matches!(clause.region(), CodeRegion::Loop(_)))
+        || function_block
+            .grouped_proof()
+            .is_some_and(proof_contains_frontier_loop);
     let mut projection_state = state.clone();
     for iteration in 0..=function_block.requires().len() {
         if iteration > 0
@@ -3587,6 +3590,26 @@ pub(super) fn initial_claim_context(
         requirement_pure_facts,
         surface_propositions,
     ))
+}
+
+pub(super) fn proof_contains_frontier_loop(proof: &Proof) -> bool {
+    proof
+        .tactics()
+        .is_some_and(|tactics| tactics.iter().any(tactic_contains_frontier_loop))
+}
+
+fn tactic_contains_frontier_loop(tactic: &ProofTactic) -> bool {
+    match tactic {
+        ProofTactic::Loop(_) => true,
+        ProofTactic::Have(have) => proof_contains_frontier_loop(&have.proof),
+        ProofTactic::If(proof_if) => proof_if
+            .then_tactics
+            .iter()
+            .chain(&proof_if.else_tactics)
+            .any(tactic_contains_frontier_loop),
+        ProofTactic::Reach(reach) => reach.tactics.iter().any(tactic_contains_frontier_loop),
+        _ => false,
+    }
 }
 
 fn available_initial_requirement_propositions(
@@ -4320,6 +4343,18 @@ fn append_surface_tactics_by_leaf(
     tactics: &mut Vec<ProofTactic>,
     path_tactics: &[Vec<ProofTactic>],
 ) -> Result<(), String> {
+    // Distinct C execution paths do not necessarily correspond to distinct
+    // surface proof branches.  When every path produced the same certificate,
+    // it is path-independent and belongs on every existing surface leaf.
+    if let Some(common) = path_tactics.first()
+        && path_tactics.iter().all(|path| path == common)
+    {
+        for tactic in common {
+            append_surface_tactic_to_leaves(tactics, tactic.clone());
+        }
+        return Ok(());
+    }
+
     fn append(
         tactics: &mut Vec<ProofTactic>,
         path_tactics: &[Vec<ProofTactic>],
@@ -20730,11 +20765,16 @@ fn execute_frontier_local_loop(
         &proof_environment,
         &mut verified_loop_rules,
     )?;
-    let loop_rule = verified_loop_rules.pop().ok_or_else(|| {
-        ClickError::new(format!(
-            "`{claim_label}` tactic {tactic_index}: `loop` did not construct a verified rule for loop({loop_index})"
-        ))
-    })?;
+    let loop_rule = verified_loop_rules
+        .pop()
+        .ok_or_else(|| {
+            ClickError::new(format!(
+                "`{claim_label}` tactic {tactic_index}: `loop` did not construct a verified rule for loop({loop_index})"
+            ))
+        })?
+        .with_composite_resource_definitions(
+            annotated.composite_resource_definitions().iter().cloned(),
+        );
     let loop_exit_condition = match &current_loop {
         CStatement::While { condition, .. } => Some(ClickProposition::Not(Box::new(
             surface_c_condition(condition),
@@ -22425,6 +22465,15 @@ fn replay_linear_tactics_without_frontier_loops(
                 } else {
                     frame_facts = requirement_pure_facts.clone();
                 }
+                let mut loop_effect_facts = frame_facts.clone();
+                loop_effect_facts.extend(
+                    replay
+                        .effect_facts
+                        .iter()
+                        .map(|fact| fact.proposition().clone()),
+                );
+                loop_effect_facts.sort();
+                loop_effect_facts.dedup();
                 if let Some(goal) = replay.loop_effect_goal.as_mut() {
                     if region_ref.is_some() {
                         return Err(ClickError::new(format!(
@@ -22440,8 +22489,8 @@ fn replay_linear_tactics_without_frontier_loops(
                         &goal.before_state,
                         &state,
                         std::slice::from_ref(&goal.check),
-                        &frame_facts,
-                        &assumptions_from_propositions(&frame_facts),
+                        &loop_effect_facts,
+                        &assumptions_from_propositions(&loop_effect_facts),
                     )
                     .map_err(|message| {
                         ClickError::new(format!(

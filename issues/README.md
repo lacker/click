@@ -55,7 +55,6 @@ the structural proof model has one related language cleanup:
 
 1. [Let statement assertions prove how they reach their program point](statement-assertion-explicit-reach-proof.md).
 2. [Make loop proofs local to the execution frontier](frontier-local-loop-proofs.md).
-3. [Preserve composite field identity through frontier-local loop calls](frontier-loop-composite-effect-transport.md).
 
 Smart structural proofs retain ordinary statement snapshots through
 certificate reconstruction and fresh replay. The remaining blocker is that a

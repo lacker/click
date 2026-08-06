@@ -3506,6 +3506,7 @@ fn symbolic_c_statement_execution_with_loop_rule(
         loop_statement: statement.clone(),
         required_assumptions: assumptions.clone(),
         paths: paths.clone(),
+        composite_resource_definitions: Vec::new(),
     });
     let paths = paths
         .into_iter()
@@ -5252,6 +5253,24 @@ fn resource_contexts_definitionally_equal(
     right: &ResourceContext,
     assumptions: &Assumptions,
 ) -> bool {
+    resource_contexts_definitionally_equal_with_definitions(
+        function.composite_resource_definitions(),
+        left_memory,
+        left,
+        right_memory,
+        right,
+        assumptions,
+    )
+}
+
+pub(super) fn resource_contexts_definitionally_equal_with_definitions(
+    composite_resource_definitions: &[CCompositeResourceDefinition],
+    left_memory: &CMemory,
+    left: &ResourceContext,
+    right_memory: &CMemory,
+    right: &ResourceContext,
+    assumptions: &Assumptions,
+) -> bool {
     if left == right {
         return true;
     }
@@ -5263,7 +5282,7 @@ fn resource_contexts_definitionally_equal(
                     .then(|| {
                         evaluate_composite_resource_relation_propositions(
                             fact,
-                            function.composite_resource_definitions(),
+                            composite_resource_definitions,
                             memory,
                             assumptions,
                         )
@@ -5303,7 +5322,7 @@ fn resource_contexts_definitionally_equal(
                 expose_composite_resource_fact(
                     available,
                     fact,
-                    function.composite_resource_definitions(),
+                    composite_resource_definitions,
                     memory,
                     assumptions,
                 )
@@ -5319,7 +5338,7 @@ fn resource_contexts_definitionally_equal(
             || resource_contexts_definitionally_equivalent_by_consumption(
                 left,
                 right,
-                function.composite_resource_definitions(),
+                composite_resource_definitions,
                 left_memory,
                 assumptions,
             ))
@@ -5328,13 +5347,13 @@ fn resource_contexts_definitionally_equal(
     }
     let expanded_left = expand_all_composite_resource_facts(
         left,
-        function.composite_resource_definitions(),
+        composite_resource_definitions,
         left_memory,
         assumptions,
     );
     let expanded_right = expand_all_composite_resource_facts(
         right,
-        function.composite_resource_definitions(),
+        composite_resource_definitions,
         right_memory,
         assumptions,
     );
