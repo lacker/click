@@ -23,17 +23,26 @@ int32 later_loop_preserve() {
 verifying "later_loop_preserve.c";
 
 int32 later_loop_preserve() {
-    for loop(0) {
+    ensures result == 2;
+} by {
+    step();
+    step();
+    step();
+    loop {
         invariant i >= 0 and i <= 1;
     }
-    for loop(1) {
+    step();
+    loop {
         invariant j >= 0 and j <= 1;
         preserve by {
             step();
             simp();
         }
     }
-    ensures result == 2 by auto;
+    have i == 1 by simp;
+    have j == 1 by simp;
+    step();
+    simp();
 }
 ```
 

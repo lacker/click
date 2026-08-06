@@ -6088,6 +6088,14 @@ fn certification_proves_proposition(assumptions: &Assumptions, proposition: &Pro
         {
             true
         }
+        Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), true)
+            if std::env::var_os("CLICK_DISABLE_CERT_ARMS").is_none()
+                && assumptions
+                    .exact_signed_intervals_equal(left, right)
+                    .is_some_and(|equal| equal) =>
+        {
+            true
+        }
         // A signed comparison whose sides both resolve to known constants
         // through equality facts and per-load snapshot bridging.
         Proposition::ConditionIs(condition, value)

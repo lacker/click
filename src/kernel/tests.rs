@@ -7391,6 +7391,49 @@ fn symbolic_execution_uses_no_overflow_fact() {
 }
 
 #[test]
+fn symbolic_add_uses_exact_intervals_to_rule_out_overflow() {
+    let left = Variable(24);
+    let right = Variable(25);
+    let left_bits = Bitvector32Term::Variable(left);
+    let right_bits = Bitvector32Term::Variable(right);
+    let state = CState::new()
+        .with_local("left", int32(left_bits.clone()))
+        .with_local("right", int32(right_bits.clone()));
+    let statement = c_return(c_add(c_variable("left"), c_variable("right")));
+    let assumptions = Assumptions::new()
+        .assume_condition(
+            ConditionTerm::equal(left_bits, Bitvector32Term::Constant(1)),
+            true,
+        )
+        .assume_condition(
+            ConditionTerm::signed_greater_equal(right_bits.clone(), Bitvector32Term::Constant(0)),
+            true,
+        )
+        .assume_condition(
+            ConditionTerm::signed_less_equal(right_bits.clone(), Bitvector32Term::Constant(1)),
+            true,
+        )
+        .assume_condition(
+            ConditionTerm::signed_less_than(right_bits, Bitvector32Term::Constant(1)),
+            false,
+        );
+
+    assert!(assumptions.proves(&Proposition::ConditionIs(
+        ConditionTerm::equal(
+            Bitvector32Term::Add(
+                Box::new(Bitvector32Term::Variable(left)),
+                Box::new(Bitvector32Term::Variable(right)),
+            ),
+            Bitvector32Term::Constant(2),
+        ),
+        true,
+    )));
+
+    prove_symbolic_c_execution(state, statement, assumptions)
+        .expect("exact reconstructed intervals should rule out signed addition overflow");
+}
+
+#[test]
 fn symbolic_increment_uses_int_max_bound_to_rule_out_overflow() {
     let x = Variable(65);
     let x_bits = Bitvector32Term::Variable(x);

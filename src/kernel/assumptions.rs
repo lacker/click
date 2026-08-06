@@ -1729,6 +1729,10 @@ impl Assumptions {
                     return self.decide(&ConditionTerm::equal(left, right));
                 }
 
+                if let Some(equal) = self.exact_signed_intervals_equal(&left, &right) {
+                    return Some(equal);
+                }
+
                 if self.bitvector_terms_equal_from_facts(&left, &right)
                     || self
                         .has_condition_fact(ConditionTerm::equal(left.clone(), right.clone()), true)
@@ -3621,13 +3625,6 @@ impl Assumptions {
                 self.signed_interval(left, SIGNED_INTERVAL_DEPTH_LIMIT)
                     .zip(self.signed_interval(right, SIGNED_INTERVAL_DEPTH_LIMIT))
                     .and_then(|((left_lower, left_upper), (right_lower, right_upper))| {
-                        if left_lower == left_upper && right_lower == right_upper {
-                            // Exact-value arithmetic is handled by the
-                            // existing simplification/equality path. Leaving
-                            // it there preserves the symbolic execution shape
-                            // used when replaying abstract loop rules.
-                            return None;
-                        }
                         let lower = left_lower.checked_add(right_lower)?;
                         let upper = left_upper.checked_add(right_upper)?;
                         (lower >= i64::from(i32::MIN) && upper <= i64::from(i32::MAX))
@@ -3721,6 +3718,18 @@ impl Assumptions {
             }
             _ => None,
         }
+    }
+
+    pub(super) fn exact_signed_intervals_equal(
+        &self,
+        left: &Bitvector32Term,
+        right: &Bitvector32Term,
+    ) -> Option<bool> {
+        let (left_lower, left_upper) = self.signed_interval(left, SIGNED_INTERVAL_DEPTH_LIMIT)?;
+        let (right_lower, right_upper) =
+            self.signed_interval(right, SIGNED_INTERVAL_DEPTH_LIMIT)?;
+        (left_lower == left_upper && right_lower == right_upper)
+            .then_some(left_lower == right_lower)
     }
 
     /// Returns a conservative signed range for `term`. Unknown endpoints use
