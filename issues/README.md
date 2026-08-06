@@ -36,7 +36,10 @@ large example or quarantine a regression without its issue.
 
 ## Tooling blockers
 
-There are no open tooling blockers at present.
+These block the owned-vector source-fidelity work:
+
+1. [Make condition-certificate search relevance-directed](relevance-directed-condition-certificates.md).
+2. [Let expansion diagnose an earlier hotspot when a later proof fails](expand-before-downstream-failure.md).
 
 ## C-source fidelity
 
