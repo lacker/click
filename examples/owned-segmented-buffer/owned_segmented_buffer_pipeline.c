@@ -15,7 +15,7 @@ int32 owned_segmented_buffer_pipeline(
     int32 second_value
 ) {
     int32 ignored;
-    int32 read_value;
+    int32 result;
     ignored = owned_segmented_buffer_init(
         owner,
         first_data,
@@ -25,6 +25,6 @@ int32 owned_segmented_buffer_pipeline(
     );
     ignored = owned_segmented_buffer_set_first(owner, 0, first_value);
     ignored = owned_segmented_buffer_set_second(owner, 0, second_value);
-    read_value = owned_segmented_buffer_get_first(owner, 0);
-    return read_value;
+    result = owned_segmented_buffer_get_first(owner, 0);
+    return result;
 }

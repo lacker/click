@@ -332,21 +332,21 @@ int32 owned_split_buffer_pipeline(
     have owner->data == data by simp;
     have data[0] == left_value by simp;
     have data[1] == right_value by simp;
-    have read_value == data[1] by {
+    have c(result) == data[1] by {
         derive using {
-            at(statement(7).entry, read_value) == at(statement(7).entry, *(owner->data + 1));
+            at(statement(7).entry, c(result)) == at(statement(7).entry, *(owner->data + 1));
             owner->data == data;
         }
     }
     apply(int32_equality_transitive(
-        read_value,
+        c(result),
         data[1],
         right_value
     ));
     step() using {
-        read_value == data[1];
+        c(result) == data[1];
         data[1] == right_value;
-        read_value == right_value;
+        c(result) == right_value;
         at(statement(4).entry, loadable(old(object(owner))));
         1 < owner->split;
         owner->split == 2;

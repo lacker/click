@@ -316,23 +316,23 @@ int32 owned_segmented_buffer_pipeline(
         owner->first_data == first_data;
         first_data[0] == first_value;
     }
-    have read_value == first_data[0] by {
+    have c(result) == first_data[0] by {
         derive using {
-            at(statement(6).entry, read_value) == at(statement(6).entry, owner->first_data[0]);
+            at(statement(6).entry, c(result)) == at(statement(6).entry, owner->first_data[0]);
             owner->first_data == first_data;
         }
     }
     apply(int32_equality_transitive(
-        read_value,
+        c(result),
         first_data[0],
         first_value
     ));
     step() using {
-        read_value == first_data[0];
+        c(result) == first_data[0];
         *first_data == first_value;
-        read_value == first_value;
+        c(result) == first_value;
         at(statement(5).entry, loadable(object(owner)));
-        read_value == owner->first_data[0];
+        c(result) == owner->first_data[0];
         0 < owner->first_len;
         owner->first_data == first_data;
         at(statement(4).entry, loadable(old(object(owner))));

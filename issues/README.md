@@ -41,8 +41,7 @@ rerouted while repairing its proof. Track and remove them independently:
 
 1. [Use general vector push in the owned-vector pipeline](use-general-vector-push-in-pipeline.md).
 2. [Verify independent input-cursor initialization](verify-independent-input-cursor-initialization.md).
-3. [Remove C-local spelling workarounds](remove-c-local-spelling-workarounds.md).
-4. [Audit examples against unchanged existing C](audit-existing-c-source-fidelity.md).
+3. [Audit examples against unchanged existing C](audit-existing-c-source-fidelity.md).
 
 ## Partial correctness and recursion
 
