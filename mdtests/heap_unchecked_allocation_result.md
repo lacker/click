@@ -1,7 +1,8 @@
 # malloc result must be refined
 
 The first allocation slice requires ordinary null-check control flow to decide
-whether `malloc` created a block before the function can return.
+whether `malloc` created a block before the function can return without
+handing the allocation result to its caller.
 
 ```c filename=heap_unchecked_allocation_result.c
 struct item {
@@ -26,5 +27,5 @@ int32 heap_unchecked_allocation_result() {
 ```
 
 ```expect
-fail: malloc result was not refined by a null check before returning
+fail: malloc result was neither refined by a null check nor returned
 ```
