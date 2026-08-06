@@ -22,11 +22,16 @@ function countdown(n: int32) -> int32
 
 int32 count_up(int32 n) {
     requires n >= 0;
-    for loop(0) {
+    ensures result == n;
+} by {
+    step();
+    step();
+    loop {
         invariant i >= 0 and i <= n;
         invariant countdown(n) == countdown(n);
     }
-    ensures result == n by auto;
+    step();
+    simp();
 }
 ```
 

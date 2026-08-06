@@ -32,8 +32,9 @@ theorem nonnegative_is_acceptable(x: int32) {
 
 int32 loop_explicit_initialize_and_preserve(int32 x) {
     requires x >= 0;
-
-    for loop(0) {
+    ensures acceptable(result);
+} by {
+    loop {
         invariant acceptable(x);
 
         initialize by {
@@ -47,12 +48,9 @@ int32 loop_explicit_initialize_and_preserve(int32 x) {
             simp();
         }
     }
-
-    ensures acceptable(result) by {
-        execute();
-        unfold(acceptable);
-        simp();
-    }
+    step();
+    unfold(acceptable);
+    simp();
 }
 ```
 

@@ -14283,6 +14283,8 @@ fn finish_ordered_proof_replay(
                                     certificate_replay.deferred_tactic_capture = None;
                                     certificate_replay.surface_propositions =
                                         outcome_surface_propositions.clone();
+                                    certificate_replay.unfolded_predicates =
+                                        unfolded_predicates.clone();
                                     certify_grouped_outcome_simp_transition(
                                         &certificate_replay,
                                         grouped_transition_goals,
@@ -17415,7 +17417,10 @@ fn certify_outcome_simp_have(
             != normalize_direct_atomic_memory_loads(goal)
     {
         return Err(ClickError::new(format!(
-            "`{claim_label}` path {path_index}, tactic {tactic_index}: smart `simp` surface goal lowered to a different kernel proposition"
+            "`{claim_label}` path {path_index}, tactic {tactic_index}: smart `simp` surface goal lowered to a different kernel proposition\n  planned: {}\n  lowered: {}\n  unfolded lowering: {}",
+            describe_pure_fact(goal, parameters, arguments),
+            describe_pure_fact(&lowered.proposition, parameters, arguments),
+            describe_pure_fact(&lowered_proposition, parameters, arguments),
         )));
     }
 

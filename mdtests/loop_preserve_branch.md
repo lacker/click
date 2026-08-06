@@ -24,7 +24,11 @@ verifying "loop_preserve_branch.c";
 
 int32 loop_preserve_branch(int32 n) {
     requires n >= 0 and n <= 2147483647;
-    for loop(0) {
+    ensures result == n;
+} by {
+    step();
+    step();
+    loop {
         invariant i >= 0;
         invariant i <= n;
         preserve by {
@@ -39,7 +43,8 @@ int32 loop_preserve_branch(int32 n) {
             }
         }
     }
-    ensures result == n by auto;
+    step();
+    simp();
 }
 ```
 

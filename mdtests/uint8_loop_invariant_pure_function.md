@@ -27,11 +27,16 @@ uint8 fill_byte_tail(uint8 p[], int32 n) {
     requires n >= 1 and n <= 2147483647;
     requires loadable(p[0..n]);
     consumes p[0..n];
-    for loop(0) {
+    ensures first_preserved: result == old(first_byte(p));
+} by {
+    step();
+    step();
+    loop {
         invariant i >= 1 and i <= n;
         invariant first_byte(p) == old(first_byte(p));
     }
-    ensures first_preserved: result == old(first_byte(p)) by auto;
+    step();
+    simp();
 }
 ```
 
