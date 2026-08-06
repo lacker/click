@@ -2794,9 +2794,26 @@ fn verify_c0_sources_with_environment(
                 }
             }
         }
+        // A frontier-local proof constructs loop annotations and checked
+        // rules while replaying the actual execution path. Final whole-contract
+        // certification must use one coherent proof's artifacts; otherwise it
+        // forgets the rule and starts concretely unrolling a symbolic loop.
+        // Per-claim proofs may legitimately choose different invariants, so do
+        // not merge their loop sets. Select that bound block before building
+        // the entry context so predicate unfolds in its loop phases are
+        // reflected in the exact certification facts as well.
+        let frontier_loop_artifacts = function_verified
+            .iter()
+            .find(|verified| !verified.frontier_loop_rules.is_empty());
+        let certification_function_block = frontier_loop_artifacts.map_or_else(
+            || function_block.clone(),
+            |verified| {
+                function_block.with_bound_frontier_loop_clauses(&verified.frontier_loop_clauses)
+            },
+        );
         let (certification_state, certification_arguments, mut certification_facts, _) =
             initial_claim_context(
-                &function_block,
+                &certification_function_block,
                 parsed_function,
                 &resource_environment,
                 &predicate_environment,
@@ -2823,21 +2840,6 @@ fn verify_c0_sources_with_environment(
                 bytes: Bitvector32Term::Constant(*bytes),
             });
         }
-        // A frontier-local proof constructs loop annotations and checked
-        // rules while replaying the actual execution path. Final whole-contract
-        // certification must use one coherent proof's artifacts; otherwise it
-        // forgets the rule and starts concretely unrolling a symbolic loop.
-        // Per-claim proofs may legitimately choose different invariants, so do
-        // not merge their loop sets.
-        let frontier_loop_artifacts = function_verified
-            .iter()
-            .find(|verified| !verified.frontier_loop_rules.is_empty());
-        let certification_function_block = frontier_loop_artifacts.map_or_else(
-            || function_block.clone(),
-            |verified| {
-                function_block.with_bound_frontier_loop_clauses(&verified.frontier_loop_clauses)
-            },
-        );
         let has_frontier_loop_rules = frontier_loop_artifacts.is_some();
         let contract_function = annotated_function(
             &certification_function_block,

@@ -8148,6 +8148,75 @@ fn frontier_local_loop_expands_an_explicit_effect_tactic_at_its_own_location() {
 }
 
 #[test]
+fn frontier_effect_expansion_ignores_generated_preservation_suffix() {
+    let c_source = r#"
+            int32 count_to_three() {
+                int32 i;
+                i = 0;
+                while (i < 3) {
+                    i = i + 1;
+                }
+                return i;
+            }
+        "#;
+    let click_source = r#"
+            verifying "count_to_three.c";
+
+            predicate bounded(i: int32) {
+                i >= 0 and i <= 3
+            }
+
+            int32 count_to_three() {
+                ensures result == 3;
+            } by {
+                step();
+                step();
+                loop {
+                    invariant bounded(i);
+                    immutable by frame;
+                    initialize by {
+                        unfold(bounded);
+                        simp();
+                    }
+                    preserve by {
+                        unfold(bounded);
+                    }
+                }
+                step();
+                simp();
+            }
+        "#;
+    let effect_frame = click_source
+        .find("immutable by frame")
+        .expect("proof should contain an explicit effect tactic")
+        + "immutable by ".len();
+    let line = click_source[..effect_frame]
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count()
+        + 1;
+    let column = effect_frame
+        - click_source[..effect_frame]
+            .rfind('\n')
+            .map(|offset| offset + 1)
+            .unwrap_or(0)
+        + 1;
+
+    let expanded = expand_c0_tactic_source_at(
+        click_source,
+        &[("count_to_three.c", c_source)],
+        line,
+        column,
+    )
+    .expect("the effect frame should expand instead of a generated preservation step");
+
+    assert!(!expanded.contains("immutable by frame"), "{expanded}");
+    assert!(expanded.contains("frame() using"), "{expanded}");
+    verify_c0_sources(&expanded, &[("count_to_three.c", c_source)])
+        .expect("expanded effect certificate should freshly replay");
+}
+
+#[test]
 // De-quarantined by the named-memory-states arc, stage 2a: the blocker was not
 // load-equality strength but `old(...)` resolution. Certificate replay used to
 // resolve `old` positionally, to the loop-top havoc snapshot, while the kernel

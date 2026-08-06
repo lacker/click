@@ -2177,6 +2177,42 @@ fn set_generated_proof_source_index(node: &mut InternalProofNode, owning_source_
     }
 }
 
+fn detach_generated_suffix_from_source_indices(
+    node: &mut InternalProofNode,
+    first_generated_tactic_index: usize,
+) {
+    match node {
+        InternalProofNode::Done => {}
+        InternalProofNode::Linear {
+            tactics,
+            continuation,
+        } => {
+            for tactic in tactics {
+                if tactic.index >= first_generated_tactic_index {
+                    tactic.source_index = usize::MAX;
+                }
+            }
+            detach_generated_suffix_from_source_indices(continuation, first_generated_tactic_index);
+        }
+        InternalProofNode::If {
+            then_branch,
+            else_branch,
+            continuation,
+            ..
+        } => {
+            detach_generated_suffix_from_source_indices(then_branch, first_generated_tactic_index);
+            detach_generated_suffix_from_source_indices(else_branch, first_generated_tactic_index);
+            detach_generated_suffix_from_source_indices(continuation, first_generated_tactic_index);
+        }
+        InternalProofNode::Reach {
+            body, continuation, ..
+        } => {
+            detach_generated_suffix_from_source_indices(body, first_generated_tactic_index);
+            detach_generated_suffix_from_source_indices(continuation, first_generated_tactic_index);
+        }
+    }
+}
+
 fn build_internal_proof_at(
     tactics: &[ProofTactic],
     next_join_id: &mut usize,
@@ -7382,31 +7418,36 @@ fn verify_execution_proofs_forward(
                     pure_facts.sort();
                     pure_facts.dedup();
                     if let Some(clause) = loop_clause {
-                        let preservation_tactics = if let Some(tactics) = explicit_tactics {
-                            tactics.to_vec()
-                        } else {
-                            let body_certificate = plan_automatic_loop_preservation_body(
-                                loop_index,
-                                &preservation,
-                                &pure_facts,
-                                body,
-                                environment,
-                            )?;
-                            let mut tactics = clause
-                                .preserve_proof()
-                                .and_then(Proof::tactics)
-                                .unwrap_or_default()
-                                .iter()
-                                .filter(|tactic| matches!(tactic, ProofTactic::UnfoldPredicate(_)))
-                                .cloned()
-                                .collect::<Vec<_>>();
-                            tactics.extend(body_certificate.tactics().iter().cloned());
-                            tactics.push(ProofTactic::Simp);
-                            tactics
-                        };
+                        let (preservation_tactics, first_generated_tactic_index) =
+                            if let Some(tactics) = explicit_tactics {
+                                (tactics.to_vec(), tactics.len())
+                            } else {
+                                let body_certificate = plan_automatic_loop_preservation_body(
+                                    loop_index,
+                                    &preservation,
+                                    &pure_facts,
+                                    body,
+                                    environment,
+                                )?;
+                                let mut tactics = clause
+                                    .preserve_proof()
+                                    .and_then(Proof::tactics)
+                                    .unwrap_or_default()
+                                    .iter()
+                                    .filter(|tactic| {
+                                        matches!(tactic, ProofTactic::UnfoldPredicate(_))
+                                    })
+                                    .cloned()
+                                    .collect::<Vec<_>>();
+                                let first_generated_tactic_index = tactics.len();
+                                tactics.extend(body_certificate.tactics().iter().cloned());
+                                tactics.push(ProofTactic::Simp);
+                                (tactics, first_generated_tactic_index)
+                            };
                         let result = verify_one_loop_preservation_proof(
                             loop_index,
                             &preservation_tactics,
+                            first_generated_tactic_index,
                             &preservation,
                             &pure_facts,
                             invariant_checks,
@@ -7466,12 +7507,16 @@ fn verify_execution_proofs_forward(
                     certificates.borrow_mut().initialize = Some(initialization_certificate.clone());
                 }
                 if environment.frontier_loop_source.is_some() {
-                    if let Some(source_index) = selected_source_index
-                        && selected_tactic_index_for_site(&site) == Some(source_index)
+                    if let Some(phase_start) = selected_source_index
+                        && let Some(selected) = selected_tactic_index_for_site(&site)
+                        && let Some(local_index) = selected.checked_sub(phase_start)
+                        && let Some((_, Proof::Script(source_tactics))) = initialization_proof
+                        && (selected == phase_start
+                            || matches!(source_tactics.get(local_index), Some(ProofTactic::Simp)))
                     {
                         record_proof_site_tactic_expansion(
                             &site,
-                            source_index,
+                            selected,
                             initialization_certificate.tactics(),
                         );
                     }
@@ -8477,24 +8522,42 @@ fn verify_loop_initialization_pure_proof(
                         initialize_statement_index,
                     )
                 });
-                let direct_plan = plan_point_pure_goal_certificate(
-                    &initialize_site,
-                    proposition,
-                    proof,
-                    &invariant_claim_label,
-                    invariant_index,
-                    &planning_available,
-                    environment.parsed_function.parameters(),
-                    environment.arguments,
-                    environment.initial_state,
-                    &context.state,
-                    &program_point_states,
-                    environment.predicate_environment,
-                    environment.click_function_environment,
-                    &context.surface_propositions,
-                    expected_goal.as_ref(),
-                    environment.theorem_environment,
-                )?;
+                let plan = || {
+                    plan_point_pure_goal_certificate(
+                        &initialize_site,
+                        proposition,
+                        proof,
+                        &invariant_claim_label,
+                        invariant_index,
+                        &planning_available,
+                        environment.parsed_function.parameters(),
+                        environment.arguments,
+                        environment.initial_state,
+                        &context.state,
+                        &program_point_states,
+                        environment.predicate_environment,
+                        environment.click_function_environment,
+                        &context.surface_propositions,
+                        expected_goal.as_ref(),
+                        environment.theorem_environment,
+                    )
+                };
+                let direct_plan = if environment.frontier_loop_source.is_some() {
+                    // Nested frontier-loop phase tactics use absolute source
+                    // indices in the enclosing proof. The per-invariant pure
+                    // planner sees only the local phase script, so let the
+                    // phase merger below retain the expansion at the absolute
+                    // source site instead of allowing a local planner to
+                    // misinterpret that index.
+                    SUPPRESS_TACTIC_EXPANSION_CAPTURE.with(|suppressed| {
+                        let previous = suppressed.replace(true);
+                        let result = plan();
+                        suppressed.set(previous);
+                        result
+                    })
+                } else {
+                    plan()
+                }?;
                 let (planned_fact, planned_certificate) = direct_plan;
                 initialization_surface_propositions
                     .borrow_mut()
@@ -8896,7 +8959,17 @@ fn verify_structural_effect_proof(
         })
     {
         return Err(ClickError::new(format!(
-            "`{claim_label}` structural-effect certificate did not close every replay path"
+            "`{claim_label}` structural-effect certificate did not close every replay path:\n{}\n  replay paths: {}\n  closed paths: {}",
+            format_tactic_certificate(&certificate),
+            replayed.len(),
+            replayed
+                .iter()
+                .filter(|context| context
+                    .replay
+                    .loop_effect_goal
+                    .as_ref()
+                    .is_some_and(|goal| goal.closed))
+                .count(),
         )));
     }
     Ok(certificate)
@@ -8911,6 +8984,7 @@ struct LoopPreservationProofResult {
 fn verify_one_loop_preservation_proof(
     loop_index: usize,
     tactics: &[ProofTactic],
+    first_generated_tactic_index: usize,
     preservation: &crate::kernel::CLoopPreservationContext,
     pure_facts: &[Proposition],
     invariant_checks: &[CLoopInvariantCheck],
@@ -8946,7 +9020,7 @@ fn verify_one_loop_preservation_proof(
     // path reproduces the closer inputs without an expensive deep comparison
     // of snapshot-rich states and proposition sets.
     let mut verified_closer_paths: Vec<Vec<ProofCaseChoice>> = Vec::new();
-    let program = if environment
+    let mut program = if environment
         .frontier_loop_source
         .is_some_and(|source| source.preserve_source_index.is_none())
     {
@@ -8954,6 +9028,14 @@ fn verify_one_loop_preservation_proof(
     } else {
         build_internal_proof_from_source_index(tactics, preserve_source_index)?
     };
+    if first_generated_tactic_index < tactics.len() {
+        // Automatic preservation appends planned body steps and a closer
+        // after the source-spelled unfold prefix. They are owned by the loop
+        // tactic, not additional source occurrences after `preserve`.
+        // Detach them so a later nested clause (notably `immutable by frame`)
+        // cannot be mistaken for one of these generated tactics by expand.
+        detach_generated_suffix_from_source_indices(&mut program, first_generated_tactic_index);
+    }
     let sentinel = CStatement::Return(CExpression::Value(int32(0)));
     let remaining = c_seq(body.clone(), sentinel.clone());
     let source_layout = SourceExecutionLayout::new(environment.parsed_function.body());
@@ -12613,6 +12695,24 @@ fn finish_ordered_proof_replay(
                 .filter(|case| case.at_function_entry)
                 .filter_map(|case| case.fact.clone()),
         );
+        // Frontier-local loop clauses are bound after the initial claim
+        // context is built.  Their phase proofs can unfold predicates just
+        // like legacy structural clauses, so fresh whole-function
+        // certification must expose those definitions at function entry as
+        // well.  Otherwise proof replay can initialize an invariant from an
+        // unfolded requirement while kernel certification sees only the
+        // opaque predicate and rejects the verified loop rule.
+        certification_facts = requirements_with_structural_unfolds(
+            predicate_environment,
+            click_function_environment,
+            frontier_function_block.as_ref().unwrap_or(function_block),
+            &certification_facts,
+        )
+        .map_err(|message| {
+            ClickError::new(format!(
+                "kernel certification setup for `{proof_label}` failed: {message}"
+            ))
+        })?;
         let certified_execution = if replay.frontier_loop_rules.is_empty()
             && let Some((_, _, _, execution)) = certification_cache.iter().find(
                 |(facts, cached_state, concrete_loop_execution, _)| {
@@ -13753,7 +13853,18 @@ fn finish_ordered_proof_replay(
                                     }
                                 }
                             };
-                            if path_requirements.contains(&goal) {
+                            if path_requirements.contains(&goal)
+                                || materialization_equivalent_available_fact(
+                                    &goal,
+                                    &path_requirements,
+                                )
+                                .is_some()
+                                || quantified_replay_equivalent_available_fact(
+                                    &goal,
+                                    &path_requirements,
+                                )
+                                .is_some()
+                            {
                                 closures[claim_index] = ClaimClosure::by_exact_check();
                                 closed_any = true;
                                 break;
@@ -20562,6 +20673,9 @@ impl TacticTiming {
         source_index: usize,
         statement_index: usize,
     ) -> Option<Self> {
+        if source_index == usize::MAX {
+            return None;
+        }
         crate::instrumentation::enabled().then(|| {
             let tactic_class = source_tactic_class(tactic).label();
             if crate::instrumentation::starts_enabled() {
@@ -20754,11 +20868,29 @@ fn execute_frontier_local_loop(
     let mut verified_loop_rules = Vec::new();
     let mut next_statement_index = statement_index;
     let mut next_loop_index = loop_index;
+    // `unfold` retains the opaque predicate atom alongside its definition so
+    // later surface tactics can still refer to either spelling.  A verified
+    // loop rule must not turn that proof-context convenience into an ambient
+    // kernel prerequisite: exact contract certification exposes the fully
+    // unfolded definition.  Keep every other fact, including the expanded
+    // proposition, and omit only predicate atoms whose names have explicitly
+    // been unfolded on this path.
+    let loop_pure_facts = available_pure_facts
+        .iter()
+        .filter(|fact| {
+            !matches!(
+                fact,
+                Proposition::Predicate { name, .. }
+                    if replay.unfolded_predicates.contains(name)
+            )
+        })
+        .cloned()
+        .collect();
     let _exit_contexts = verify_execution_proofs_forward(
         &current_loop,
         vec![ExecutionProofContext {
             state: state.clone(),
-            pure_facts: available_pure_facts.clone(),
+            pure_facts: loop_pure_facts,
             surface_propositions: replay.surface_propositions.clone(),
             program_point_states: replay.program_point_states.clone(),
             case_path,

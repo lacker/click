@@ -39,9 +39,17 @@ predicate all_le_range(p: int32[], lo: int32, hi: int32, x: int32) {
 int32 loop_sorted_range_invariant(int32 p[3]) {
     requires loadable(p[0..3]);
     requires sorted(p, 3);
-    for loop(0) as carry_sorted {
+    ensures still_sorted: sorted(p, 3);
+} by {
+    unfold(sorted);
+    unfold(sorted_range);
+    step();
+    step();
+    loop as carry_sorted {
         invariant i >= 0 and i <= 3;
-        invariant sorted(p, 3);
+        invariant sorted(old(p), 3);
+        immutable by frame;
+
         initialize by {
             unfold(sorted);
             unfold(sorted_range);
@@ -51,24 +59,11 @@ int32 loop_sorted_range_invariant(int32 p[3]) {
             unfold(sorted);
             unfold(sorted_range);
         }
-        immutable by frame;
     }
-    ensures still_sorted: sorted(p, 3) by {
-        execute();
-        frame(carry_sorted);
-        unfold(sorted);
-        unfold(sorted_range);
-        have sorted(p, 3) by {
-            unfold(sorted);
-            unfold(sorted_range);
-            derive using {
-                forall (i: int32) { forall (j: int32) { 0 <= i and 0 <= j and 0 <= i and i < j and j < 3 implies p[i] <= p[j] } };
-                at(statement(4).entry, loadable(old(p[0..3])));
-                at(statement(2).entry, loadable(p[0..3]));
-            }
-        }
-        assumption();
-    }
+    step();
+    unfold(sorted);
+    unfold(sorted_range);
+    simp();
 }
 ```
 
