@@ -6106,6 +6106,43 @@ fn ordinary_verification_stops_at_the_tactic_deadline() {
 }
 
 #[test]
+fn smart_frame_reports_its_deterministic_deadline() {
+    let c_source = r#"
+        int32 write_first(int32* data) {
+            data[0] = 1;
+            return 0;
+        }
+    "#;
+    let click_source = r#"
+        verifying "write_first.c";
+
+        int32 write_first(int32* data) {
+            consumes data[0..1];
+            produces data[0..1];
+            mutable data[0..1];
+        } by {
+            step() using { loadable(data[0..1]); }
+            step() using {}
+            frame();
+            simp();
+        }
+    "#;
+    let limits = crate::instrumentation::TacticLimits {
+        simple: std::time::Duration::from_secs(1),
+        smart: std::time::Duration::ZERO,
+        control: std::time::Duration::from_secs(1),
+    };
+
+    let error = crate::instrumentation::with_tactic_limits(limits, || {
+        verify_c0_sources(click_source, &[("write_first.c", c_source)])
+    })
+    .expect_err("smart frame should observe its zero tactic deadline");
+
+    assert!(error.message().contains("time limit exceeded"), "{error:?}");
+    assert!(error.message().contains("frame"), "{error:?}");
+}
+
+#[test]
 fn verifies_omitted_proof_with_default_prover() {
     let c_source = r#"
             int32 zero() {
@@ -6453,7 +6490,7 @@ fn separate_requirement_proves_symbolic_unwritten_read() {
 #[test]
 fn contextual_frame_expands_to_surface_bounds_and_exact_frame() {
     let c_source = r#"
-            int32 write_in_bounds(int32 p[], int32 i, int32 n) {
+            int32 write_in_bounds(int32 p[], int32 i, int32 n, int32* unrelated) {
                 p[i] = 9;
                 return 0;
             }
@@ -6461,12 +6498,13 @@ fn contextual_frame_expands_to_surface_bounds_and_exact_frame() {
     let click_source = r#"
             verifying "write_in_bounds.c";
 
-            int32 write_in_bounds(int32 p[], int32 i, int32 n) {
+            int32 write_in_bounds(int32 p[], int32 i, int32 n, int32* unrelated) {
                 requires n >= 0;
                 requires n <= 2147483647;
                 requires i >= 0;
                 requires i < n;
                 requires loadable(p[0..n]);
+                requires loadable(unrelated[0..1]);
                 consumes p[0..n];
                 mutable p[0..n] by { execute(); frame(); }
             }
@@ -6489,10 +6527,17 @@ fn contextual_frame_expands_to_surface_bounds_and_exact_frame() {
             .iter()
             .any(|tactic| matches!(tactic, ProofTactic::Have(_)))
     );
-    assert!(matches!(
-        expanded.last(),
-        Some(ProofTactic::FrameUsing { region: None, .. })
-    ));
+    let Some(ProofTactic::FrameUsing {
+        region: None,
+        premises,
+    }) = expanded.last()
+    else {
+        panic!("contextual frame should end in exact frame replay: {expanded:?}");
+    };
+    assert!(
+        !format!("{premises:?}").contains("unrelated"),
+        "an irrelevant ambient loadability fact leaked into the exact frame certificate: {premises:?}"
+    );
     TacticCertificate::from_proof_tactics(expanded)
         .expect("contextual frame expansion should be a surface certificate");
 }

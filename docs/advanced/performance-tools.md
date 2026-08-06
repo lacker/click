@@ -76,8 +76,11 @@ An unsuccessful smart tactic has no certificate to expand. Errors created
 inside tactics retain the originating timing identity, so the profiler can
 distinguish a failed smart attempt from a successful expansion candidate.
 Smart execution uses finite execution/search budgets, `click profile` has an
-outer project deadline, and `click expand` has a 60-second default engine
-deadline that can be overridden explicitly.
+outer project deadline, and `click expand` has a 60-second default whole-command
+deadline that can be overridden explicitly. That one deadline covers source
+discovery, certificate generation, replay verification, and the final output
+gate; the phases do not each receive a fresh allowance. An expired expansion
+reports the interrupted tactic or verifier phase and writes no artifact.
 
 ## What is enforced today
 

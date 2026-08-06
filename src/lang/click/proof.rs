@@ -5453,6 +5453,44 @@ fn materialization_equivalent_available_fact(
         .find_map(|fact| matching_conjunct(fact, required, &normalized_required))
 }
 
+/// Cheap membership for explicit replay certificates with many premises.
+///
+/// `frame using` used to rescan and renormalize the full proof context for
+/// every named fact. Large, otherwise-simple certificates therefore became
+/// quadratic. The index covers the overwhelmingly common exact and
+/// materialization-equivalent cases; callers retain their semantic fallbacks
+/// for snapshot bridging and polarity-equivalent spellings.
+struct ExactReplayFactIndex {
+    exact: std::collections::BTreeSet<Proposition>,
+    materialized: std::collections::BTreeSet<Proposition>,
+}
+
+impl ExactReplayFactIndex {
+    fn new(available: &[Proposition]) -> Self {
+        let mut exact = std::collections::BTreeSet::new();
+        let mut materialized = std::collections::BTreeSet::new();
+        for fact in available {
+            let mut conjuncts = Vec::new();
+            atomic_conjuncts(fact, &mut conjuncts);
+            for conjunct in conjuncts {
+                exact.insert(conjunct.clone());
+                materialized.insert(normalize_direct_atomic_memory_loads(conjunct));
+            }
+        }
+        Self {
+            exact,
+            materialized,
+        }
+    }
+
+    fn contains(&self, required: &Proposition) -> bool {
+        self.exact.contains(required)
+            || self
+                .materialized
+                .contains(&normalize_direct_atomic_memory_loads(required))
+    }
+}
+
 fn directly_matching_separation_fact(
     required: &Proposition,
     available: &[Proposition],
@@ -13267,8 +13305,10 @@ fn finish_ordered_proof_replay(
                         premises,
                         facts,
                     } => {
+                        let indexed_requirements = ExactReplayFactIndex::new(&path_requirements);
                         for fact in facts {
-                            if !exact_fact_is_available(fact, &path_requirements)
+                            if !indexed_requirements.contains(fact)
+                                && !exact_fact_is_available(fact, &path_requirements)
                                 && materialization_equivalent_available_fact(
                                     fact,
                                     &path_requirements,
@@ -18905,13 +18945,18 @@ fn record_surface_replay_tactic(
             let lowered = path_derivations
                 .iter()
                 .map(|derivations| {
+                    check_verification_deadline()?;
                     let mut tactics = Vec::new();
                     let mut premises = Vec::new();
-                    for fact in available.iter().cloned().chain(
-                        derivations
-                            .iter()
-                            .flat_map(PropositionDerivation::context_premises),
-                    ) {
+                    // A certified frame's derivation contexts are its exact
+                    // dependency boundary. Surface-lowering every ambient
+                    // snapshot here made expansion grow with unrelated proof
+                    // history even though exact replay never consulted it.
+                    for fact in derivations
+                        .iter()
+                        .flat_map(PropositionDerivation::context_premises)
+                    {
+                        check_verification_deadline()?;
                         if let Ok(surface) = checked_surface_fact_at_point(
                             replay,
                             &fact,
@@ -18927,6 +18972,7 @@ fn record_surface_replay_tactic(
                         }
                     }
                     for derivation in derivations {
+                        check_verification_deadline()?;
                         let (mut conclusion, proof) = lower_surface_atomic_derivation(
                             replay,
                             derivation,

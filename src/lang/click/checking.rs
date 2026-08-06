@@ -3622,7 +3622,7 @@ fn segment_contains_pointer_exact(
     pointer: &Pointer,
     available: &[Proposition],
 ) -> bool {
-    let Some(index) = pointer_element_index_from_base(pointer, &segment.base, &Assumptions::new())
+    let Some(index) = pointer_element_index_from_base_exact(pointer, &segment.base, available)
     else {
         return false;
     };
@@ -3642,15 +3642,17 @@ fn pointer_containment_goals(
     segment: &EvaluatedContractSegment,
     pointer: &Pointer,
     assumptions: &Assumptions,
-) -> Option<[Proposition; 2]> {
-    let index = pointer_element_index_from_base(pointer, &segment.base, assumptions)?;
-    Some([
+) -> Option<Vec<Proposition>> {
+    let (index, mut goals) =
+        pointer_element_index_from_base_with_alignment(pointer, &segment.base, assumptions)?;
+    goals.extend([
         Proposition::ConditionIs(
             signed_less_equal(segment.start.clone(), index.clone()),
             true,
         ),
         Proposition::ConditionIs(signed_less_than(index, segment.end.clone()), true),
-    ])
+    ]);
+    Some(goals)
 }
 
 fn segment_contains_range_exact(
@@ -3659,7 +3661,7 @@ fn segment_contains_range_exact(
     available: &[Proposition],
 ) -> bool {
     let Some(base_index) =
-        pointer_element_index_from_base(range.base(), &segment.base, &Assumptions::new())
+        pointer_element_index_from_base_exact(range.base(), &segment.base, available)
     else {
         return false;
     };
@@ -3678,14 +3680,125 @@ fn range_containment_goals(
     segment: &EvaluatedContractSegment,
     range: &CMemoryRange,
     assumptions: &Assumptions,
-) -> Option<[Proposition; 2]> {
-    let base_index = pointer_element_index_from_base(range.base(), &segment.base, assumptions)?;
+) -> Option<Vec<Proposition>> {
+    let (base_index, mut goals) =
+        pointer_element_index_from_base_with_alignment(range.base(), &segment.base, assumptions)?;
     let range_start = bitvector32_add(base_index.clone(), range.start().clone());
     let range_end = bitvector32_add(base_index, range.end().clone());
-    Some([
+    goals.extend([
         Proposition::ConditionIs(signed_less_equal(segment.start.clone(), range_start), true),
         Proposition::ConditionIs(signed_less_equal(range_end, segment.end.clone()), true),
-    ])
+    ]);
+    Some(goals)
+}
+
+fn pointer_offset_alignment_goal(
+    left: &PointerOffsetTerm,
+    right: &PointerOffsetTerm,
+) -> Proposition {
+    Proposition::ConditionIs(
+        ConditionTerm::PointerOffsetEqual(Box::new(left.clone()), Box::new(right.clone())),
+        true,
+    )
+}
+
+fn pointer_offsets_align_exact(
+    left: &PointerOffsetTerm,
+    right: &PointerOffsetTerm,
+    available: &[Proposition],
+) -> bool {
+    exact_proposition_is_available_or_true(&pointer_offset_alignment_goal(left, right), available)
+}
+
+fn pointer_element_index_from_base_exact(
+    pointer: &Pointer,
+    base: &Pointer,
+    available: &[Proposition],
+) -> Option<Bitvector32Term> {
+    if pointer.block != base.block {
+        return None;
+    }
+    if pointer.offset == base.offset
+        || pointer_offsets_align_exact(&pointer.offset, &base.offset, available)
+    {
+        return Some(Bitvector32Term::Constant(0));
+    }
+    if base.offset == PointerOffsetTerm::Constant(0) {
+        return int32_element_index_from_pointer_offset(&pointer.offset);
+    }
+    match &pointer.offset {
+        PointerOffsetTerm::Add(left, right)
+            if left.as_ref() == &base.offset
+                || pointer_offsets_align_exact(left, &base.offset, available) =>
+        {
+            int32_element_index_from_pointer_offset(right)
+        }
+        PointerOffsetTerm::Add(left, right)
+            if right.as_ref() == &base.offset
+                || pointer_offsets_align_exact(right, &base.offset, available) =>
+        {
+            int32_element_index_from_pointer_offset(left)
+        }
+        _ => {
+            let pointer_index = int32_element_index_from_pointer_offset(&pointer.offset)?;
+            let base_index = int32_element_index_from_pointer_offset(&base.offset)?;
+            Some(bitvector32_subtract(pointer_index, base_index))
+        }
+    }
+}
+
+fn pointer_element_index_from_base_with_alignment(
+    pointer: &Pointer,
+    base: &Pointer,
+    assumptions: &Assumptions,
+) -> Option<(Bitvector32Term, Vec<Proposition>)> {
+    if pointer.block != base.block {
+        return None;
+    }
+    if pointer.offset == base.offset {
+        return Some((Bitvector32Term::Constant(0), Vec::new()));
+    }
+    if pointer_offsets_equal_for_effect(&pointer.offset, &base.offset, assumptions) {
+        return Some((
+            Bitvector32Term::Constant(0),
+            vec![pointer_offset_alignment_goal(&pointer.offset, &base.offset)],
+        ));
+    }
+    if base.offset == PointerOffsetTerm::Constant(0) {
+        return Some((
+            int32_element_index_from_pointer_offset(&pointer.offset)?,
+            Vec::new(),
+        ));
+    }
+    match &pointer.offset {
+        PointerOffsetTerm::Add(left, right) if left.as_ref() == &base.offset => {
+            Some((int32_element_index_from_pointer_offset(right)?, Vec::new()))
+        }
+        PointerOffsetTerm::Add(left, right)
+            if pointer_offsets_equal_for_effect(left, &base.offset, assumptions) =>
+        {
+            Some((
+                int32_element_index_from_pointer_offset(right)?,
+                vec![pointer_offset_alignment_goal(left, &base.offset)],
+            ))
+        }
+        PointerOffsetTerm::Add(left, right) if right.as_ref() == &base.offset => {
+            Some((int32_element_index_from_pointer_offset(left)?, Vec::new()))
+        }
+        PointerOffsetTerm::Add(left, right)
+            if pointer_offsets_equal_for_effect(right, &base.offset, assumptions) =>
+        {
+            Some((
+                int32_element_index_from_pointer_offset(left)?,
+                vec![pointer_offset_alignment_goal(right, &base.offset)],
+            ))
+        }
+        _ => {
+            let pointer_index = int32_element_index_from_pointer_offset(&pointer.offset)?;
+            let base_index = int32_element_index_from_pointer_offset(&base.offset)?;
+            Some((bitvector32_subtract(pointer_index, base_index), Vec::new()))
+        }
+    }
 }
 
 pub(super) fn is_effect_relevant_pointer(pointer: &Pointer) -> bool {

@@ -44,16 +44,19 @@ pub(crate) fn entry_with(arguments: impl IntoIterator<Item = String>) -> Result<
         return Ok(());
     }
     let arguments = parse_arguments(raw)?;
-    let expanded = run(&arguments)?;
-    if arguments.in_place {
-        atomic_replace(&arguments.click_path, expanded.as_bytes())
-    } else if let Some(output) = &arguments.output {
-        fs::write(output, expanded)
-            .map_err(|error| format!("failed to write `{}`: {error}", output.display()))
-    } else {
-        print!("{expanded}");
-        Ok(())
-    }
+    click::instrumentation::with_deadline(arguments.time_limit, || {
+        let expanded = run_bounded(&arguments)?;
+        check_expansion_deadline("writing the verified expansion")?;
+        if arguments.in_place {
+            atomic_replace(&arguments.click_path, expanded.as_bytes())
+        } else if let Some(output) = &arguments.output {
+            fs::write(output, expanded)
+                .map_err(|error| format!("failed to write `{}`: {error}", output.display()))
+        } else {
+            print!("{expanded}");
+            Ok(())
+        }
+    })
 }
 
 fn parse_arguments(arguments: impl IntoIterator<Item = String>) -> Result<Arguments, String> {
@@ -109,7 +112,12 @@ fn parse_arguments(arguments: impl IntoIterator<Item = String>) -> Result<Argume
     })
 }
 
+#[cfg(test)]
 fn run(arguments: &Arguments) -> Result<String, String> {
+    click::instrumentation::with_deadline(arguments.time_limit, || run_bounded(arguments))
+}
+
+fn run_bounded(arguments: &Arguments) -> Result<String, String> {
     if looks_like_mdtest(&arguments.click_path) {
         return run_mdtest(arguments);
     }
@@ -128,7 +136,7 @@ fn run(arguments: &Arguments) -> Result<String, String> {
                 .map_err(|error| error.message().to_string())?;
         Ok((claim, expanded))
     })?;
-    verify_expansion(&expanded, &sources, &claim, arguments.time_limit)?;
+    verify_expansion(&expanded, &sources, &claim)?;
     Ok(expanded)
 }
 
@@ -159,7 +167,7 @@ fn run_mdtest(arguments: &Arguments) -> Result<String, String> {
                 .map_err(|error| error.message().to_string())?;
         Ok((claim, expanded))
     })?;
-    verify_expansion(&expanded, &sources, &claim, arguments.time_limit)?;
+    verify_expansion(&expanded, &sources, &claim)?;
     mdtest.replace_click_source(&markdown, &expanded)
 }
 
@@ -167,27 +175,62 @@ fn generate_expansion<R>(
     time_limit: Duration,
     operation: impl FnOnce() -> Result<R, String>,
 ) -> Result<R, String> {
-    click::instrumentation::with_deadline(time_limit, || {
+    let (result, events) = click::instrumentation::collect(|| {
         click::instrumentation::with_tactic_limits(
             click::instrumentation::TacticLimits {
                 smart: time_limit,
                 ..click::instrumentation::TacticLimits::default()
             },
-            || {
-                let result = operation()?;
-                check_expansion_deadline("generating the selected tactic certificate")?;
-                Ok(result)
-            },
+            operation,
         )
-    })
+    });
+    if click::instrumentation::deadline_exceeded() {
+        return Err(expansion_deadline_error(
+            "generating the selected tactic certificate",
+            &events,
+        ));
+    }
+    result
 }
 
 fn check_expansion_deadline(stage: &str) -> Result<(), String> {
     if click::instrumentation::deadline_exceeded() {
-        Err(format!("expansion time limit exceeded while {stage}"))
+        Err(format!(
+            "expansion time limit exceeded while {stage}: {}",
+            click::instrumentation::deadline_context()
+        ))
     } else {
         Ok(())
     }
+}
+
+fn expansion_deadline_error(
+    stage: &str,
+    events: &[click::instrumentation::VerificationEvent],
+) -> String {
+    let interrupted = events.iter().rev().find_map(|event| match event {
+        click::instrumentation::VerificationEvent::DeadlineExceeded(
+            click::instrumentation::ActiveVerificationWork::Tactic(tactic),
+        ) => Some(format!(
+            "tactic `{}` in `{}` (class {}, statement {}, source tactic {})",
+            tactic.tactic_name,
+            tactic.claim,
+            tactic.class,
+            tactic.statement_index,
+            tactic.source_index
+        )),
+        click::instrumentation::VerificationEvent::DeadlineExceeded(
+            click::instrumentation::ActiveVerificationWork::Phase(phase),
+        ) => Some(format!("{phase} phase")),
+        click::instrumentation::VerificationEvent::DeadlineExceeded(
+            click::instrumentation::ActiveVerificationWork::Driver,
+        ) => Some("verification driver".to_string()),
+        _ => None,
+    });
+    format!(
+        "expansion time limit exceeded while {stage}: {}",
+        interrupted.unwrap_or_else(|| "verification driver".to_string())
+    )
 }
 
 fn selected_claim(
@@ -212,19 +255,21 @@ fn selected_claim(
         .ok_or_else(|| "source location does not select a smart tactic".to_string())
 }
 
-fn verify_expansion(
-    expanded: &str,
-    sources: &[(&str, &str)],
-    claim: &str,
-    time_limit: Duration,
-) -> Result<(), String> {
-    click::instrumentation::with_deadline(time_limit, || {
+fn verify_expansion(expanded: &str, sources: &[(&str, &str)], claim: &str) -> Result<(), String> {
+    let (result, events) = click::instrumentation::collect(|| {
         let position = c0_tactic_source_position(expanded, sources, claim, 0)
             .map_err(|error| error.message().to_string())?;
         verify_c0_sources_at(expanded, sources, position.line, position.column)
             .map(|_| ())
             .map_err(|error| format!("expanded proof did not verify: {}", error.message()))
-    })
+    });
+    if click::instrumentation::deadline_exceeded() {
+        return Err(expansion_deadline_error(
+            "replaying the generated certificate",
+            &events,
+        ));
+    }
+    result
 }
 
 static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
@@ -292,10 +337,65 @@ mod tests {
         })
         .expect_err("an expired expansion deadline should fail directly");
 
-        assert_eq!(
-            error,
-            "expansion time limit exceeded while replaying a generated certificate"
+        assert!(
+            error.starts_with(
+                "expansion time limit exceeded while replaying a generated certificate:"
+            ),
+            "{error}"
         );
+    }
+
+    #[test]
+    fn exhausted_command_deadline_writes_no_artifact() {
+        let sequence = TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let directory = env::temp_dir().join(format!(
+            "click-expand-deadline-{}-{sequence}",
+            std::process::id()
+        ));
+        fs::create_dir(&directory).unwrap();
+        let c_source = "int32 identity(int32 x) { return x; }";
+        let click_source = r#"verifying "identity.c";
+int32 identity(int32 x) {
+    ensures result == x by { execute(); simp(); }
+}
+"#;
+        let click_path = directory.join("project.click");
+        let output_path = directory.join("expanded.click");
+        fs::write(directory.join("identity.c"), c_source).unwrap();
+        fs::write(&click_path, click_source).unwrap();
+        let position = c0_tactic_source_position(
+            click_source,
+            &[("identity.c", c_source)],
+            "identity.ensures_0",
+            0,
+        )
+        .unwrap();
+        let location = format!(
+            "{}:{}:{}",
+            click_path.display(),
+            position.line,
+            position.column
+        );
+
+        let error = entry_with(
+            [
+                "--time-limit".to_string(),
+                "1ms".to_string(),
+                "--output".to_string(),
+                output_path.display().to_string(),
+                location,
+            ]
+            .into_iter(),
+        )
+        .expect_err("an exhausted command deadline must fail before output");
+
+        assert!(error.contains("expansion time limit exceeded"), "{error}");
+        assert!(
+            !output_path.exists(),
+            "a failed expansion wrote an artifact"
+        );
+        assert_eq!(fs::read_to_string(&click_path).unwrap(), click_source);
+        fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]
