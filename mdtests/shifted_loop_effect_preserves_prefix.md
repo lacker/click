@@ -24,13 +24,18 @@ int32 shifted_loop_effect_preserves_prefix(int32 p[], int32 n) {
     requires n <= 2147483647;
     requires loadable(p[0..n]);
     consumes p[0..n];
-    for loop(0) {
+    ensures keeps_first: p[0] == old(p[0]);
+    ensures returns_n: result == n;
+} by {
+    step();
+    step();
+    loop {
         invariant i >= 1;
         invariant i <= n;
         mutable (p + 1)[0..n - 1] by frame;
     }
-    ensures keeps_first: p[0] == old(p[0]);
-    ensures returns_n: result == n;
+    step();
+    simp();
 }
 ```
 

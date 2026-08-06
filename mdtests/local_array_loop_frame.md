@@ -20,14 +20,20 @@ int32 local_array_loop_frame() {
 verifying "local_array_loop_frame.c";
 
 int32 local_array_loop_frame() {
-    for loop(0) {
+    ensures returns_count: result == 3;
+} by {
+    step();
+    step();
+    step();
+    loop {
         invariant i >= 0;
         invariant i <= 3;
         step {
             mutable a[i..i + 1] by frame;
         }
     }
-    ensures returns_count: result == 3 by auto;
+    step();
+    simp();
 }
 ```
 

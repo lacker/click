@@ -23,12 +23,19 @@ int32 fill_n_mutable_segment(int32 p[], int32 n) {
     requires n <= 2147483647;
     requires loadable(p[0..n]);
     consumes p[0..n];
-    for loop(0) {
+    mutable p[0..n];
+    ensures returns_n: result == n;
+} by {
+    step();
+    step();
+    loop {
         invariant i >= 0;
         invariant i <= n;
+        mutable p[0..n] by frame;
     }
-    mutable p[0..n] by auto;
-    ensures returns_n: result == n by auto;
+    step();
+    frame();
+    simp();
 }
 ```
 

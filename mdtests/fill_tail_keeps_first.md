@@ -23,11 +23,16 @@ int32 fill_tail_keeps_first(int32 p[], int32 n) {
     requires n >= 1 and n <= 2147483647;
     requires loadable(p[0..n]);
     consumes p[0..n];
-    for loop(0) {
+    ensures frame_and_result: p[0] == old(p[0]) and result == n;
+} by {
+    step();
+    step();
+    loop {
         invariant i >= 1 and i <= n;
         invariant p[0] == old(p[0]);
     }
-    ensures frame_and_result: p[0] == old(p[0]) and result == n by auto;
+    step();
+    simp();
 }
 ```
 

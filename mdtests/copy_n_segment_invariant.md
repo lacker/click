@@ -29,7 +29,17 @@ int32 copy_n_segment_invariant(int32 dst[], int32 src[], int32 n) {
     consumes dst[0..n];
     views src[0..n];
     requires separate(memory(dst[0..n]), memory(src[0..n]));
-    for loop(0) {
+    ensures returns_n: result == n;
+    ensures source_unchanged: forall (k: int32) {
+        0 <= k and k < n implies src[k] == old(src[k])
+    };
+    ensures copied_segment: forall (k: int32) {
+        0 <= k and k < n implies dst[k] == old(src[k])
+    };
+} by {
+    step();
+    step();
+    loop {
         invariant i >= 0;
         invariant i <= n;
         invariant forall (k: int32) {
@@ -37,13 +47,8 @@ int32 copy_n_segment_invariant(int32 dst[], int32 src[], int32 n) {
         };
         mutable dst[0..n] by frame;
     }
-    ensures returns_n: result == n by auto;
-    ensures source_unchanged: forall (k: int32) {
-        0 <= k and k < n implies src[k] == old(src[k])
-    } by auto;
-    ensures copied_segment: forall (k: int32) {
-        0 <= k and k < n implies dst[k] == old(src[k])
-    } by auto;
+    step();
+    simp();
 }
 ```
 
