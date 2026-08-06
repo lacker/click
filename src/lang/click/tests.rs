@@ -21,6 +21,107 @@ fn click_addition_cancels_a_negated_pointer_base() {
 }
 
 #[test]
+fn resource_neutral_callee_preserves_callers_allocation_resource() {
+    let push_c = r#"
+        struct vector {
+            int32 len;
+            int32 cap;
+            int32* data;
+        };
+
+        int32 push(struct vector* owner, int32 value) {
+            int32 index;
+            int32* data;
+            index = owner->len;
+            data = owner->data;
+            data[index] = value;
+            owner->len = index + 1;
+            return owner->len;
+        }
+    "#;
+    let caller_c = r#"
+        struct vector {
+            int32 len;
+            int32 cap;
+            int32* data;
+        };
+
+        int32 caller(struct vector* owner, int32 value) {
+            int32 pushed;
+            pushed = push(owner, value);
+            return pushed;
+        }
+    "#;
+    let click_source = r#"
+        resource storage(owner: struct vector*) {
+            owns owner->len;
+            owns owner->cap;
+            owns owner->data;
+            owns owner->data[0..owner->cap];
+            fact 0 <= owner->len;
+            fact owner->len <= owner->cap;
+            fact loadable(owner->data[0..owner->len]);
+            fact separate(memory(object(owner)), memory(owner->data[0..owner->cap]));
+        }
+
+        resource allocated(owner: struct vector*) {
+            owns owner->len;
+            owns owner->cap;
+            owns owner->data;
+            contains allocation(owner->data, owner->cap * 4);
+            owns owner->data[0..owner->cap];
+            fact 0 <= owner->len;
+            fact owner->len <= owner->cap;
+            fact 1 <= owner->cap;
+            fact loadable(owner->data[0..owner->len]);
+            fact separate(memory(object(owner)), memory(owner->data[0..owner->cap]));
+        }
+
+        verifying "push.c";
+        verifying "caller.c";
+
+        int32 push(struct vector* owner, int32 value) {
+            requires owner->len < owner->cap;
+            owns storage(owner);
+            mutable owner->len, owner->data[owner->len..owner->len + 1];
+            ensures result == old(owner->len) + 1;
+            ensures owner->len == old(owner->len) + 1;
+            ensures owner->cap == old(owner->cap);
+            ensures owner->data == old(owner->data);
+        } by {
+            unfold(storage(owner));
+            execute();
+            fold(storage(owner));
+            frame();
+            simp();
+        }
+
+        int32 caller(struct vector* owner, int32 value) {
+            requires owner->len < owner->cap;
+            consumes allocated(owner);
+            mutable owner->len, owner->data[owner->len..owner->len + 1];
+            produces allocated(owner);
+            ensures result == old(owner->len) + 1;
+            ensures result == old(owner->len) + 1 or result == 0;
+            ensures owner->len == old(owner->len) + 1;
+        } by {
+            unfold(allocated(owner));
+            fold(storage(owner));
+            execute_until(statement(2));
+            unfold(storage(owner));
+            have 1 <= owner->cap by simp;
+            fold(allocated(owner));
+            execute();
+            frame();
+            simp();
+        }
+    "#;
+
+    verify_c0_sources(click_source, &[("push.c", push_c), ("caller.c", caller_c)])
+        .expect("a storage-only callee should preserve its caller's allocation authority");
+}
+
+#[test]
 fn exact_struct_field_offsets_remain_resolvable_after_deadline() {
     let base = Pointer {
         block: PointerBlock::ExternalArgument,

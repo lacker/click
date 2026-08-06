@@ -36,7 +36,7 @@ large example or quarantine a regression without its issue.
 
 ## Tooling blockers
 
-1. [Certify a resource-neutral callee without global proof search](certify-resource-neutral-callee-without-global-search.md).
+There are no open tooling blockers at present.
 
 ## C-source fidelity
 

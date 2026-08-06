@@ -39,11 +39,11 @@ guarantee.
 
 The resource-neutral core pattern is sufficient for the surface proof, and
 recent frame-planning work keeps its relative backing-range check below the
-smart-tactic threshold. The remaining attempt is blocked in kernel contract
-certification; see
-[Certify a resource-neutral callee without global proof search](certify-resource-neutral-callee-without-global-search.md).
-Do not resume example edits by restoring the stopped attempt until that focused
-certification regression is green.
+smart-tactic threshold. Kernel certification now avoids normalizing unrelated
+ambient memory ranges when an exact token or composite resource is missing;
+the focused resource-neutral-callee regression certifies within the normal
+profile budget. Resume from the source-faithful call shape, not from the old
+specialized clone.
 
 ## Intended regression
 

@@ -3669,7 +3669,14 @@ impl ResourceContext {
             return true;
         }
         // A required fact may span several adjacent held resources; merge
-        // them and retry once.
+        // them and retry once. Only memory resources have a split/merge
+        // algebra: token and composite entailment is decided one fact at a
+        // time above. Normalizing an unrelated ambient memory context while
+        // looking for a missing token or composite makes an exact resource
+        // query depend on every symbolic range the caller happens to hold.
+        if fact.family() != ResourceFamily::Memory {
+            return false;
+        }
         let normalized = self.clone().normalized(assumptions);
         normalized.facts.len() < self.facts.len()
             && normalized

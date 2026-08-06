@@ -531,6 +531,20 @@ fn exact_resource_views_are_preserved_when_satisfied() {
 }
 
 #[test]
+fn missing_composite_query_ignores_ambient_memory_splits() {
+    let base = Pointer {
+        block: "backing".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let context = ResourceContext::new()
+        .unchecked_with_fact(CResourceFact::own_memory(memory_range(base.clone(), 0, 1)))
+        .unchecked_with_fact(CResourceFact::own_memory(memory_range(base, 1, 2)));
+    let required = CResourceFact::own_composite("allocated".to_string(), vec![int32(0)]);
+
+    assert!(!context.satisfies_fact(&required, &Assumptions::new()));
+}
+
+#[test]
 fn batch_resource_consumption_splits_without_repeated_normalization() {
     let base = Pointer {
         block: "p".into(),
