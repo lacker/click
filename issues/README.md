@@ -34,6 +34,10 @@ The issue should contain a small intended regression, the violated invariant,
 and acceptance criteria. Do not leave the only reproduction in an uncommitted
 large example or quarantine a regression without its issue.
 
+## Tooling blockers
+
+1. [Certify a resource-neutral callee without global proof search](certify-resource-neutral-callee-without-global-search.md).
+
 ## C-source fidelity
 
 The repository has several historical cases where example C was simplified or

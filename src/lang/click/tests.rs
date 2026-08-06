@@ -3,6 +3,24 @@ use super::*;
 use crate::kernel::int32;
 
 #[test]
+fn click_addition_cancels_a_negated_pointer_base() {
+    let base = Bitvector32Term::Variable(Variable(90));
+    let index = Bitvector32Term::Variable(Variable(91));
+    let negative_base = Bitvector32Term::Subtract(
+        Box::new(Bitvector32Term::Constant(0)),
+        Box::new(base.clone()),
+    );
+
+    assert_eq!(
+        super::lowering::bitvector32_add(
+            negative_base,
+            Bitvector32Term::Add(Box::new(base), Box::new(index.clone())),
+        ),
+        index
+    );
+}
+
+#[test]
 fn exact_struct_field_offsets_remain_resolvable_after_deadline() {
     let base = Pointer {
         block: PointerBlock::ExternalArgument,

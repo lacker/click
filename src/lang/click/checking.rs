@@ -3174,13 +3174,22 @@ pub(super) fn plan_effect_clause_derivations(
         {
             continue;
         }
+        if let Some(selected) = segments.iter().find_map(|segment| {
+            let goals =
+                pointer_containment_goals_with_exact_base(segment, pointer, available_pure_facts)?;
+            derive_goals_from_individual_facts(goals, available_pure_facts)
+        }) {
+            append_unique_derivations(&mut derivations, selected);
+            continue;
+        }
+        check_effect_planning_deadline()?;
         let assumptions =
             assumptions.get_or_insert_with(|| assumptions_from_propositions(&reasoning_facts));
         let selected = segments.iter().find_map(|segment| {
             if crate::instrumentation::deadline_exceeded() {
                 return None;
             }
-            let goals = pointer_containment_goals(segment, pointer, &assumptions)?;
+            let goals = pointer_containment_goals(segment, pointer, assumptions)?;
             goals
                 .into_iter()
                 .map(|goal| assumptions.derive_proposition(&goal))
@@ -3226,13 +3235,22 @@ pub(super) fn plan_effect_clause_derivations(
         {
             continue;
         }
+        if let Some(selected) = segments.iter().find_map(|segment| {
+            let goals =
+                range_containment_goals_with_exact_base(segment, range, available_pure_facts)?;
+            derive_goals_from_individual_facts(goals, available_pure_facts)
+        }) {
+            append_unique_derivations(&mut derivations, selected);
+            continue;
+        }
+        check_effect_planning_deadline()?;
         let assumptions =
             assumptions.get_or_insert_with(|| assumptions_from_propositions(&reasoning_facts));
         let selected = segments.iter().find_map(|segment| {
             if crate::instrumentation::deadline_exceeded() {
                 return None;
             }
-            let goals = range_containment_goals(segment, range, &assumptions)?;
+            let goals = range_containment_goals(segment, range, assumptions)?;
             goals
                 .into_iter()
                 .map(|goal| assumptions.derive_proposition(&goal))
@@ -3565,9 +3583,17 @@ fn prove_mutation_footprint_with_policy(
             .cloned()
             .map(ExecutionPureFact::new),
     );
-    let mut effect_reasoning_facts = available_pure_facts.to_vec();
-    effect_reasoning_facts.extend(effect_facts.iter().map(|fact| fact.proposition().clone()));
-    let assumptions = assumptions_from_propositions(&effect_reasoning_facts);
+    // Exact certificate replay uses only propositions named by the
+    // certificate. Building a contextual assumptions database here is both
+    // unnecessary and pathological after a long execution has accumulated
+    // many memory snapshots.
+    let contextual_assumptions = if matches!(policy, FootprintProofPolicy::Contextual) {
+        let mut effect_reasoning_facts = available_pure_facts.to_vec();
+        effect_reasoning_facts.extend(effect_facts.iter().map(|fact| fact.proposition().clone()));
+        Some(assumptions_from_propositions(&effect_reasoning_facts))
+    } else {
+        None
+    };
     let mut writes = memory_effect_write_pointers(&effect_facts);
     writes.retain(|pointer| is_preexisting_effect_pointer(pointer, pre_state));
 
@@ -3576,9 +3602,13 @@ fn prove_mutation_footprint_with_policy(
             FootprintProofPolicy::Exact => {
                 segment_contains_pointer_exact(segment, pointer, available_pure_facts)
             }
-            FootprintProofPolicy::Contextual => {
-                segment_contains_pointer(segment, pointer, &assumptions)
-            }
+            FootprintProofPolicy::Contextual => segment_contains_pointer(
+                segment,
+                pointer,
+                contextual_assumptions
+                    .as_ref()
+                    .expect("contextual footprint proof has assumptions"),
+            ),
         }) {
             return Err(ClickError::new(format!(
                 "`{claim_label}` failed on path {path_index}: write to `{}` is outside the mutable footprint\n  mutable segments: {}\n  evaluated segments: {}\n  execution pure facts: {}",
@@ -3606,9 +3636,13 @@ fn prove_mutation_footprint_with_policy(
             FootprintProofPolicy::Exact => {
                 segment_contains_range_exact(segment, range, available_pure_facts)
             }
-            FootprintProofPolicy::Contextual => {
-                segment_contains_range(segment, range, &assumptions)
-            }
+            FootprintProofPolicy::Contextual => segment_contains_range(
+                segment,
+                range,
+                contextual_assumptions
+                    .as_ref()
+                    .expect("contextual footprint proof has assumptions"),
+            ),
         }) {
             return Err(ClickError::new(format!(
                 "`{claim_label}` failed on path {path_index}: effect summary range `{}` is outside the mutable footprint\n  mutable segments: {}\n  evaluated segments: {}\n  execution pure facts: {}",
@@ -3675,6 +3709,21 @@ fn pointer_containment_goals(
     Some(goals)
 }
 
+fn pointer_containment_goals_with_exact_base(
+    segment: &EvaluatedContractSegment,
+    pointer: &Pointer,
+    available: &[Proposition],
+) -> Option<Vec<Proposition>> {
+    let index = pointer_element_index_from_base_exact(pointer, &segment.base, available)?;
+    Some(vec![
+        Proposition::ConditionIs(
+            signed_less_equal(segment.start.clone(), index.clone()),
+            true,
+        ),
+        Proposition::ConditionIs(signed_less_than(index, segment.end.clone()), true),
+    ])
+}
+
 fn segment_contains_range_exact(
     segment: &EvaluatedContractSegment,
     range: &CMemoryRange,
@@ -3710,6 +3759,64 @@ fn range_containment_goals(
         Proposition::ConditionIs(signed_less_equal(range_end, segment.end.clone()), true),
     ]);
     Some(goals)
+}
+
+fn range_containment_goals_with_exact_base(
+    segment: &EvaluatedContractSegment,
+    range: &CMemoryRange,
+    available: &[Proposition],
+) -> Option<Vec<Proposition>> {
+    let base_index = pointer_element_index_from_base_exact(range.base(), &segment.base, available)?;
+    let range_start = bitvector32_add(base_index.clone(), range.start().clone());
+    let range_end = bitvector32_add(base_index, range.end().clone());
+    Some(vec![
+        Proposition::ConditionIs(signed_less_equal(segment.start.clone(), range_start), true),
+        Proposition::ConditionIs(signed_less_equal(range_end, segment.end.clone()), true),
+    ])
+}
+
+fn derive_goals_from_individual_facts(
+    goals: Vec<Proposition>,
+    available: &[Proposition],
+) -> Option<Vec<PropositionDerivation>> {
+    goals
+        .into_iter()
+        .map(|goal| {
+            available.iter().find_map(|fact| {
+                if crate::instrumentation::deadline_exceeded() {
+                    return None;
+                }
+                Assumptions::new()
+                    .assume_proposition(fact.clone())
+                    .derive_proposition(&goal)
+            })
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod effect_planning_tests {
+    use super::*;
+
+    #[test]
+    fn a_single_strict_bound_certifies_the_adjacent_range_end() {
+        let index = Bitvector32Term::Variable(Variable(920));
+        let capacity = Bitvector32Term::Variable(Variable(921));
+        let available =
+            Proposition::ConditionIs(signed_less_than(index.clone(), capacity.clone()), true);
+        let goal = Proposition::ConditionIs(
+            signed_less_equal(
+                bitvector32_add(index, Bitvector32Term::Constant(1)),
+                capacity,
+            ),
+            true,
+        );
+
+        let derivations = derive_goals_from_individual_facts(vec![goal.clone()], &[available])
+            .expect("one strict bound should certify the adjacent range end");
+        assert_eq!(derivations.len(), 1);
+        assert_eq!(derivations[0].conclusion(), &goal);
+    }
 }
 
 fn pointer_offset_alignment_goal(
@@ -3762,9 +3869,27 @@ fn pointer_element_index_from_base_exact(
         _ => {
             let pointer_index = int32_element_index_from_pointer_offset(&pointer.offset)?;
             let base_index = int32_element_index_from_pointer_offset(&base.offset)?;
-            Some(bitvector32_subtract(pointer_index, base_index))
+            Some(bitvector_index_relative_to_base(pointer_index, base_index))
         }
     }
+}
+
+fn bitvector_index_relative_to_base(
+    pointer_index: Bitvector32Term,
+    base_index: Bitvector32Term,
+) -> Bitvector32Term {
+    if pointer_index == base_index {
+        return Bitvector32Term::Constant(0);
+    }
+    if let Bitvector32Term::Add(left, right) = &pointer_index {
+        if left.as_ref() == &base_index {
+            return right.as_ref().clone();
+        }
+        if right.as_ref() == &base_index {
+            return left.as_ref().clone();
+        }
+    }
+    bitvector32_subtract(pointer_index, base_index)
 }
 
 fn pointer_element_index_from_base_with_alignment(
@@ -3816,7 +3941,10 @@ fn pointer_element_index_from_base_with_alignment(
         _ => {
             let pointer_index = int32_element_index_from_pointer_offset(&pointer.offset)?;
             let base_index = int32_element_index_from_pointer_offset(&base.offset)?;
-            Some((bitvector32_subtract(pointer_index, base_index), Vec::new()))
+            Some((
+                bitvector_index_relative_to_base(pointer_index, base_index),
+                Vec::new(),
+            ))
         }
     }
 }
@@ -3857,43 +3985,53 @@ pub(super) fn evaluate_effect_segment(
     }
     let parameter_values =
         parameter_values(parameters, arguments).map_err(|error| error.message)?;
-    let assumptions = assumptions_from_propositions(available_pure_facts);
-    let base = evaluate_c_contract_expression(
-        &parameter_values,
-        entry_state,
-        None,
-        &assumptions,
-        &segment.base,
-    )?;
-    let CValue::Pointer(base) = base else {
-        return Err("segment base did not evaluate to a pointer".to_string());
-    };
-    let start = evaluate_c_contract_expression(
-        &parameter_values,
-        entry_state,
-        None,
-        &assumptions,
-        &segment.start,
-    )?;
-    let CValue::Int32(start) = start else {
-        return Err("segment start did not evaluate to int32".to_string());
-    };
-    let end = evaluate_c_contract_expression(
-        &parameter_values,
-        entry_state,
-        None,
-        &assumptions,
-        &segment.end,
-    )?;
-    let CValue::Int32(end) = end else {
-        return Err("segment end did not evaluate to int32".to_string());
+    let evaluate = |assumptions: &Assumptions| {
+        let base = evaluate_c_contract_expression(
+            &parameter_values,
+            entry_state,
+            None,
+            assumptions,
+            &segment.base,
+        )?;
+        let CValue::Pointer(base) = base else {
+            return Err("segment base did not evaluate to a pointer".to_string());
+        };
+        let start = evaluate_c_contract_expression(
+            &parameter_values,
+            entry_state,
+            None,
+            assumptions,
+            &segment.start,
+        )?;
+        let CValue::Int32(start) = start else {
+            return Err("segment start did not evaluate to int32".to_string());
+        };
+        let end = evaluate_c_contract_expression(
+            &parameter_values,
+            entry_state,
+            None,
+            assumptions,
+            &segment.end,
+        )?;
+        let CValue::Int32(end) = end else {
+            return Err("segment end did not evaluate to int32".to_string());
+        };
+
+        Ok(EvaluatedContractSegment {
+            source: segment.clone(),
+            base,
+            start,
+            end,
+        })
     };
 
-    Ok(EvaluatedContractSegment {
-        source: segment.clone(),
-        base,
-        start,
-        end,
+    // Most effect clauses are direct entry-state places. Evaluate those
+    // without indexing the proof's accumulated snapshot facts; fall back to
+    // contextual equality reasoning only when the expression actually needs
+    // it.
+    evaluate(&Assumptions::new()).or_else(|_| {
+        let assumptions = assumptions_from_propositions(available_pure_facts);
+        evaluate(&assumptions)
     })
 }
 
@@ -4027,7 +4165,7 @@ pub(super) fn pointer_element_index_from_base(
                 int32_element_index_from_pointer_offset(&pointer.offset),
                 int32_element_index_from_pointer_offset(&base.offset),
             ) {
-                Some(bitvector32_subtract(pointer_index, base_index))
+                Some(bitvector_index_relative_to_base(pointer_index, base_index))
             } else {
                 None
             }

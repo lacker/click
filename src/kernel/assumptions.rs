@@ -8377,6 +8377,10 @@ impl SymbolicCExecutionPath {
         &self.facts
     }
 
+    pub fn effect_facts(&self) -> &[ExecutionPureFact] {
+        &self.effect_facts
+    }
+
     pub fn execution_facts(&self) -> Vec<ExecutionPureFact> {
         let mut facts = self.facts.clone();
         for fact in &self.effect_facts {
@@ -8421,6 +8425,10 @@ impl CFunctionExecutionCandidate {
 
     pub fn facts(&self) -> &[ExecutionPureFact] {
         &self.facts
+    }
+
+    pub fn effect_facts(&self) -> &[ExecutionPureFact] {
+        &self.effect_facts
     }
 
     pub fn execution_facts(&self) -> Vec<ExecutionPureFact> {

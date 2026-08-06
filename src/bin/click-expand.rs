@@ -377,16 +377,13 @@ int32 identity(int32 x) {
             position.column
         );
 
-        let error = entry_with(
-            [
-                "--time-limit".to_string(),
-                "1ms".to_string(),
-                "--output".to_string(),
-                output_path.display().to_string(),
-                location,
-            ]
-            .into_iter(),
-        )
+        let error = entry_with([
+            "--time-limit".to_string(),
+            "1ms".to_string(),
+            "--output".to_string(),
+            output_path.display().to_string(),
+            location,
+        ])
         .expect_err("an exhausted command deadline must fail before output");
 
         assert!(error.contains("expansion time limit exceeded"), "{error}");

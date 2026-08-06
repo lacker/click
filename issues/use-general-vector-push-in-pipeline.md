@@ -37,6 +37,14 @@ Do not solve this by keeping two source copies, adding a C wrapper whose only
 purpose is contract selection, or weakening the allocated-vector lifetime
 guarantee.
 
+The resource-neutral core pattern is sufficient for the surface proof, and
+recent frame-planning work keeps its relative backing-range check below the
+smart-tactic threshold. The remaining attempt is blocked in kernel contract
+certification; see
+[Certify a resource-neutral callee without global proof search](certify-resource-neutral-callee-without-global-search.md).
+Do not resume example edits by restoring the stopped attempt until that focused
+certification regression is green.
+
 ## Intended regression
 
 Retain one ordinary in-capacity append body. Verify calls to that same function

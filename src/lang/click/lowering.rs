@@ -5465,6 +5465,26 @@ pub(super) fn bitvector32_add(left: Bitvector32Term, right: Bitvector32Term) -> 
         {
             base.as_ref().clone()
         }
+        (Bitvector32Term::Subtract(zero, subtrahend), Bitvector32Term::Add(base, addend))
+            if zero.as_ref() == &Bitvector32Term::Constant(0) && subtrahend == base =>
+        {
+            addend.as_ref().clone()
+        }
+        (Bitvector32Term::Subtract(zero, subtrahend), Bitvector32Term::Add(addend, base))
+            if zero.as_ref() == &Bitvector32Term::Constant(0) && subtrahend == base =>
+        {
+            addend.as_ref().clone()
+        }
+        (Bitvector32Term::Add(base, addend), Bitvector32Term::Subtract(zero, subtrahend))
+            if zero.as_ref() == &Bitvector32Term::Constant(0) && base == subtrahend =>
+        {
+            addend.as_ref().clone()
+        }
+        (Bitvector32Term::Add(addend, base), Bitvector32Term::Subtract(zero, subtrahend))
+            if zero.as_ref() == &Bitvector32Term::Constant(0) && base == subtrahend =>
+        {
+            addend.as_ref().clone()
+        }
         (_, Bitvector32Term::Constant(0)) => left,
         (Bitvector32Term::Constant(0), _) => right,
         _ => Bitvector32Term::Add(Box::new(left), Box::new(right)),

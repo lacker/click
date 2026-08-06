@@ -1818,6 +1818,26 @@ impl Bitvector32Term {
             (Self::Subtract(base, subtrahend), _) if subtrahend.as_ref() == &right => {
                 base.as_ref().clone()
             }
+            (Self::Subtract(zero, subtrahend), Self::Add(base, addend))
+                if zero.as_ref() == &Self::Constant(0) && subtrahend == base =>
+            {
+                addend.as_ref().clone()
+            }
+            (Self::Subtract(zero, subtrahend), Self::Add(addend, base))
+                if zero.as_ref() == &Self::Constant(0) && subtrahend == base =>
+            {
+                addend.as_ref().clone()
+            }
+            (Self::Add(base, addend), Self::Subtract(zero, subtrahend))
+                if zero.as_ref() == &Self::Constant(0) && base == subtrahend =>
+            {
+                addend.as_ref().clone()
+            }
+            (Self::Add(addend, base), Self::Subtract(zero, subtrahend))
+                if zero.as_ref() == &Self::Constant(0) && base == subtrahend =>
+            {
+                addend.as_ref().clone()
+            }
             (_, Self::Constant(0)) => left,
             (Self::Constant(0), _) => right,
             _ => Self::Add(Box::new(left), Box::new(right)),

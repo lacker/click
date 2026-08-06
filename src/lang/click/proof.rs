@@ -14302,13 +14302,12 @@ fn proposition_snapshot_memories(proposition: &Proposition) -> Vec<CMemory> {
     memories
 }
 
+type ProgramPointStateMatches<'a> = Vec<(&'a ProgramPointRef, &'a CState)>;
+
 fn snapshot_indexed_program_points<'a>(
     kernel: &Proposition,
     program_point_states: &'a ProgramPointStates,
-) -> (
-    Vec<(&'a ProgramPointRef, &'a CState)>,
-    Vec<(&'a ProgramPointRef, &'a CState)>,
-) {
+) -> (ProgramPointStateMatches<'a>, ProgramPointStateMatches<'a>) {
     let memories = proposition_snapshot_memories(kernel);
     let mut exact = Vec::new();
     let mut compatible = Vec::new();
@@ -21378,7 +21377,7 @@ fn replay_linear_tactics(
                     path_derivations.push(plan_effect_clause_derivations(
                         claim_label,
                         path_index,
-                        &path.execution_facts(),
+                        path.effect_facts(),
                         &path_facts,
                         effect_clause.effect(),
                         parsed_function.parameters(),
@@ -27252,7 +27251,7 @@ fn validate_function_frame_tactic(
         check_effect_claim_exact(
             claim_label,
             path_index,
-            &path.execution_facts(),
+            path.effect_facts(),
             &path_requirements,
             claim,
             parameters,

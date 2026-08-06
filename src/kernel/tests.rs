@@ -4321,6 +4321,18 @@ fn relative_dependent_range_is_covered_by_owned_range() {
 }
 
 #[test]
+fn addition_cancels_a_negated_pointer_base() {
+    let base = Bitvector32Term::Variable(Variable(90));
+    let index = Bitvector32Term::Variable(Variable(91));
+    let negative_base = Bitvector32Term::subtract(Bitvector32Term::Constant(0), base.clone());
+
+    assert_eq!(
+        Bitvector32Term::add(negative_base, Bitvector32Term::add(base, index.clone()),),
+        index
+    );
+}
+
+#[test]
 fn negative_equality_fact_decides_equality_false() {
     let x = Bitvector32Term::Variable(Variable(79));
     let assumptions = Assumptions::new().assume_condition(
