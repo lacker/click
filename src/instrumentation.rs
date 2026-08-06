@@ -275,8 +275,16 @@ pub fn deadline_context() -> String {
     }
     if let Some(active) = ACTIVE_TACTICS.with(|active| active.borrow().last().cloned()) {
         let elapsed = active.exclusive + active.running_since.elapsed();
+        let guidance = match active.event.class.as_str() {
+            "smart" => {
+                "; smart search is heuristic, so try a smaller smart tactic or explicit simple tactics"
+            }
+            "simple" => "; a slow simple tactic is a Click engine bug",
+            "control" => "; inspect the nested tactic that consumed the time",
+            _ => "",
+        };
         return format!(
-            "tactic `{}` in `{}` (class {}, statement {}, source tactic {}, {:.3}s elapsed, {} limit)",
+            "tactic `{}` in `{}` (class {}, statement {}, source tactic {}, {:.3}s elapsed, {} limit){guidance}",
             active.event.tactic_name,
             active.event.claim,
             active.event.class,

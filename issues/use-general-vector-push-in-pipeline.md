@@ -54,14 +54,16 @@ the allocation authority. The pipeline similarly converted `empty_vector` to
 storage before calling the same function and folded `nonempty_vector`
 afterwards. This is the intended next proof shape, not a committed workaround.
 
-That prototype is deliberately parked until the tooling blockers in
-[`stable-modular-call-snapshot-provenance.md`](stable-modular-call-snapshot-provenance.md)
-and
-[`relevance-directed-condition-certificates.md`](relevance-directed-condition-certificates.md)
-are fixed. Empty-prefix loadability, bounded successor certification, local
+That prototype is deliberately parked until the expansion/replay blocker in
+[`replayable-smart-tactic-expansion.md`](replayable-smart-tactic-expansion.md)
+is fixed. The broad `execute_until` may then be decomposed into relevant simple
+steps; its inability to find the entire proof is not a blocker. The separate
+[`bounded-condition-certificate-search.md`](bounded-condition-certificate-search.md)
+tracks the quality of that failure mode without requiring automatic success.
+Empty-prefix loadability, bounded successor certification, local
 frame planning, and local exact-resource queries have already landed as
-independent fixes. Do not recreate the specialized C helper or bypass the slow
-call with explicit proof bookkeeping.
+independent fixes. Do not recreate the specialized C helper or add irrelevant
+proof bookkeeping merely to steer the search.
 
 ## Intended regression
 

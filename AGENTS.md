@@ -38,6 +38,14 @@ issue with the reproduction and acceptance criteria, and move to another
 genuinely independent task. Do not leave broken intermediate commits or
 running verifier processes.
 
+A prompt, bounded smart-tactic failure is not tooling instability. Smart
+tactics are incomplete heuristics, and overnight work must not turn each hard
+proof into a search-engine project. Split the proof into smaller operations or
+use explicit simple tactics and continue. Investigate the engine only when
+search misses its bound, produces misleading or enormous diagnostics, reports
+success without replayable expansion, behaves nondeterministically, or the
+needed proof cannot be expressed through the simple tactic surface.
+
 At the end of an overnight run, report completed work, remaining issues,
 important discoveries, and decisions that need discussion.
 
@@ -77,6 +85,12 @@ current feature when any of these occurs:
 - a normal diagnostic expands into a huge internal state dump; or
 - an example needs unnatural C or irrelevant proof bookkeeping to route around
   verifier behavior.
+
+Smart-search failure is expected when it is prompt, bounded, and actionable.
+It is not a reason to stop feature work or modify shared heuristics. Prefer a
+smaller smart tactic or an explicit sequence of relevant simple steps. Search
+completeness is a non-goal; sound replay, enforced bounds, useful diagnostics,
+and sufficient simple tactics are requirements.
 
 Reduce and fix the tooling problem before resuming feature work. If it cannot
 be fixed in the same coherent chunk, create a focused file in `issues/` with a

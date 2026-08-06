@@ -15,6 +15,13 @@ The tools explain expensive verification; they do not promise that every
 expensive project can be made small by expanding tactics. Healthy proof volume
 is a valid diagnosis.
 
+They also do not promise that smart tactics find every proof. Click requires
+sound, replayable smart successes and prompt, bounded smart failures; search
+completeness is a non-goal. When search fails normally, split the work into
+smaller smart tactics or provide an explicit simple proof. Change shared search
+heuristics only for a general measured pattern, not to force one example
+through a single broad tactic.
+
 ## Performance model
 
 Verification time grows with proof work. A large project can legitimately take
@@ -75,6 +82,10 @@ necessarily a flat or nonempty list of simple tactics.
 An unsuccessful smart tactic has no certificate to expand. Errors created
 inside tactics retain the originating timing identity, so the profiler can
 distinguish a failed smart attempt from a successful expansion candidate.
+An ordinary bounded failure is a proof-authoring result, not an engine bug.
+It becomes a tooling problem if it misses its deadline, emits an unusable
+diagnostic, behaves unstably, or reveals that the proof cannot be continued
+with supported simple tactics.
 Smart execution uses finite execution/search budgets, `click profile` has an
 outer project deadline, and `click expand` has a 60-second default whole-command
 deadline that can be overridden explicitly. That one deadline covers source
@@ -174,6 +185,9 @@ rewritten artifact before deciding that expansion improved performance.
 
 - `TacticCertificate` is the smart/simple boundary; a smart success is accepted
   only after deterministic certificate replay.
+- Smart tactics are best-effort conveniences, not proof-language primitives:
+  failure within a stated bound is allowed, while the required proof must
+  remain expressible as smaller or simple steps.
 - Never hide a slow simple tactic by expanding an enclosing smart tactic.
 - `ProofSite` and one-based `PATH:LINE:COLUMN` locations are shared by
   verification, profiling, expansion, auditing, and rewriting.

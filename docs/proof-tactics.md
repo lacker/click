@@ -21,6 +21,14 @@ smart tactic with an exact certificate. The simple forms below are public,
 maintained Surface Click, but long `using` blocks are normally expansion output
 rather than a recommended first draft.
 
+Smart tactics are deliberately incomplete heuristics. A prompt failure means
+that this search did not find a certificate within its budget, not that Click's
+engine is broken. Split a broad tactic into smaller operations or write the
+relevant simple steps explicitly. Improve shared search only for a general,
+measured proof pattern; do not tune it around each difficult proof. In
+contrast, a smart success that cannot expand and replay, a missed deadline, or
+a proposition that cannot be expressed with simple tactics is a tooling gap.
+
 ## Execution
 
 | Surface form | Class | Meaning |
@@ -121,7 +129,9 @@ vocabulary.
 statement transitions are `step`, loop-summary transitions are `summarize`,
 fact transports are `transport`, frame certificates are `frame`, and atomic
 derivations are `derive`. A slow simple leaf is a Click performance bug. A
-slow smart tactic is an expansion candidate.
+successful slow smart tactic is an expansion candidate. An unsuccessful smart
+tactic has nothing to expand; decompose that proof unless its search failed to
+respect its bound or expose an actionable next step.
 
 `click audit` finds smart tactics in a project, expands each one, and verifies
 the rewritten source. Its purpose is to detect missing or invalid Click

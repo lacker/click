@@ -145,7 +145,9 @@ fn duration_from_optional_os(
 }
 
 /// Per-class tactic time budgets (owner ruling 2026-07-31): a slow SIMPLE
-/// tactic is an engine bug, a slow SMART tactic is an expansion obligation.
+/// tactic is an engine bug. A successful slow SMART tactic is an expansion
+/// candidate; a failed SMART search should be decomposed unless it missed its
+/// enforced bound or produced a tooling-quality failure.
 /// These match `click profile`'s default thresholds.
 pub const DEFAULT_SIMPLE_TACTIC_LIMIT: Duration = Duration::from_millis(500);
 pub const DEFAULT_SMART_TACTIC_LIMIT: Duration = Duration::from_secs(2);
@@ -162,7 +164,10 @@ fn tactic_budget(class: &str) -> Option<(Duration, &'static str)> {
             DEFAULT_SIMPLE_TACTIC_LIMIT,
             "a slow simple tactic is a Click engine bug",
         )),
-        "smart" => Some((DEFAULT_SMART_TACTIC_LIMIT, "expand it with `click expand`")),
+        "smart" => Some((
+            DEFAULT_SMART_TACTIC_LIMIT,
+            "smart search is heuristic; expand a success, otherwise use smaller or explicit simple tactics",
+        )),
         "control" => Some((
             DEFAULT_CONTROL_TACTIC_LIMIT,
             "a slow control tactic is a Click engine bug",
@@ -662,6 +667,23 @@ mod tests {
             "{violations:?}"
         );
         assert!(violations[0].contains("simple budget"), "{violations:?}");
+    }
+
+    #[test]
+    fn smart_budget_violation_recommends_proof_decomposition() {
+        let events = vec![
+            VerificationEvent::TacticStarted(tactic(0, "execute_until", "smart")),
+            VerificationEvent::TacticFinished {
+                tactic: tactic(0, "execute_until", "smart"),
+                elapsed: Duration::from_millis(2_100),
+            },
+        ];
+        let violations = structured_tactic_budget_violations(&events);
+        assert_eq!(violations.len(), 1, "{violations:?}");
+        assert!(
+            violations[0].contains("smaller or explicit simple tactics"),
+            "{violations:?}"
+        );
     }
 
     #[test]

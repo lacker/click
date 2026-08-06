@@ -16,7 +16,9 @@ will have exactly the names used here.
 - A **proof** is a `by` clause containing a replayable tactic script or one
   smart tactic that can later be expanded into a simple-tactic certificate.
 - A **smart tactic** may search or orchestrate several rules. Logically it
-  should be replaceable by a sequence of simple tactics.
+  should be replaceable by a sequence of simple tactics when it succeeds.
+  Smart search is best-effort and incomplete; the simple tactic language, not
+  automatic discovery, is the proof-expressivity boundary.
 - A **control-flow tactic** creates proof scopes or subgoals in which other
   tactics run. Structurally, this includes `have`, proof-level `if`, and
   `reach`. Timing and expansion additionally give the selectable `have` source

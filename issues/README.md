@@ -30,6 +30,15 @@ particular, always track:
   artificial helpers to compensate for verifier behavior; and
 - a kernel/resource-model error discovered while building an example.
 
+Smart-search incompleteness is not on that list. A smart tactic is a bounded,
+best-effort proof search, and failing to find a certificate is an expected
+result. Continue by splitting the proof into smaller operations or by naming
+the relevant premises with simple tactics. File an engine issue only when the
+search misses its bound, gives an unusable diagnostic, succeeds without a
+replayable certificate, behaves unstably, or exposes something the simple
+proof language cannot express. Do not retune shared heuristics solely to make
+one large smart tactic pass.
+
 The issue should contain a small intended regression, the violated invariant,
 and acceptance criteria. Do not leave the only reproduction in an uncommitted
 large example or quarantine a regression without its issue.
@@ -38,9 +47,15 @@ large example or quarantine a regression without its issue.
 
 These block the owned-vector source-fidelity work:
 
-1. [Keep modular-call snapshot provenance stable](stable-modular-call-snapshot-provenance.md).
-2. [Make condition-certificate search relevance-directed](relevance-directed-condition-certificates.md).
-3. [Let expansion diagnose an earlier hotspot when a later proof fails](expand-before-downstream-failure.md).
+1. [Make smart-tactic success require replayable expansion](replayable-smart-tactic-expansion.md).
+2. [Let expansion diagnose an earlier hotspot when a later proof fails](expand-before-downstream-failure.md).
+
+## Search quality
+
+These improve bounded automation but do not require smart tactics to find every
+proof and do not block an explicit simple proof:
+
+1. [Keep condition-certificate search bounded and diagnosable](bounded-condition-certificate-search.md).
 
 ## C-source fidelity
 

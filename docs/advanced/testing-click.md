@@ -19,6 +19,13 @@ actions hide a foundation problem and make the next feature harder to debug.
 The repository-level version of this rule is in `AGENTS.md`; issue-writing
 requirements are in `issues/README.md`.
 
+A smart tactic that promptly reports that it did not find a proof is not one of
+these tooling failures. Smart search is heuristic and incomplete. Continue
+with a smaller search or explicit relevant simple tactics. Reduce the engine
+only if search misses its budget, produces an unusable diagnostic, reports
+success without replayable expansion, behaves unstably, or exposes a missing
+simple proof operation.
+
 Ordinary verifier errors are capped at 16 KiB of UTF-8 text. Fact and resource
 lists show at most twelve entries and report how many were omitted. Engine
 debugging that genuinely needs complete internal terms can opt in with
@@ -205,8 +212,9 @@ that class to prescribe the next action:
 
 - Successful `SMART` hotspots are expansion candidates. The report prints
   pasteable commands that write a sibling artifact, verify it, and reprofile
-  that exact artifact with the same limits. Failed or interrupted smart search
-  has no certificate and is reported as a Click bug to reduce.
+  that exact artifact with the same limits. Failed smart search has no
+  certificate; normally decompose the proof. An interrupted search is a tooling
+  bug only when it ignores or badly overshoots its enforced bound.
 - `SIMPLE` steps are deterministic certificate replay. Do not expand them;
   reduce and fix the verifier bottleneck first.
 - `CONTROL` steps are proof containers. Inspect their nested smart and simple

@@ -6260,6 +6260,10 @@ fn smart_frame_reports_its_deterministic_deadline() {
 
     assert!(error.message().contains("time limit exceeded"), "{error:?}");
     assert!(error.message().contains("frame"), "{error:?}");
+    assert!(
+        error.message().contains("explicit simple tactics"),
+        "{error:?}"
+    );
 }
 
 #[test]

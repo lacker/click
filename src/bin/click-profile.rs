@@ -1421,8 +1421,8 @@ fn render_profiles_with_top(
         &mut output,
         &slow_steps,
         TacticCategory::Smart,
-        "SMART — EXPAND SUCCESSES; REDUCE FAILURES",
-        "Expand a successful hotspot and compare its rewritten profile. A failed smart search has no certificate and is a Click bug to reduce.",
+        "SMART — EXPAND SUCCESSES; DECOMPOSE FAILURES",
+        "Expand a successful hotspot and compare its rewritten profile. A failed smart search has no certificate; use smaller or explicit simple tactics unless it missed its bound or failed unclearly.",
         thresholds,
         time_limit,
     );
@@ -1648,7 +1648,7 @@ fn render_profiles_with_top(
     } else if has_smart_failure {
         writeln!(
             output,
-            "\nNEXT: reduce the failed or interrupted SMART search in Click. It produced no certificate, so click-expand is not available for this finding."
+            "\nNEXT: decompose the failed or interrupted SMART search into smaller or explicit simple tactics. It produced no certificate, so click-expand is not available; investigate Click only if ordinary verification missed its bound or the failure is not actionable."
         )
         .expect("writing a String cannot fail");
     } else if has_smart_candidate {
@@ -2093,7 +2093,7 @@ fn render_diagnoses(output: &mut String, profiles: &[ProjectProfile]) {
             findings += 1;
             writeln!(
                 output,
-                "    SMART SEARCH FAILURE — unsuccessful or interrupted smart search crossed its bound; reduce Click because no certificate exists to expand."
+                "    SMART SEARCH LIMIT — no certificate exists to expand; decompose the proof with smaller or explicit simple tactics. Investigate Click only if search missed its bound or failed unclearly."
             )
             .expect("writing a String cannot fail");
         }
@@ -3051,7 +3051,7 @@ click timing: tactic example.contract 2 have class control statement 3 source 30
 
         assert!(report.contains("SIMPLE — FIX THE ENGINE; DO NOT EXPAND"));
         assert!(report.contains("WARNING: expanding an enclosing smart tactic is not a fix"));
-        assert!(report.contains("SMART — EXPAND SUCCESSES; REDUCE FAILURES"));
+        assert!(report.contains("SMART — EXPAND SUCCESSES; DECOMPOSE FAILURES"));
         assert!(report.contains("CONTROL — INSPECT NESTED STEPS"));
         assert!(report.contains("NEXT: fix or reduce the SIMPLE bottleneck first"));
         assert_eq!(report.matches("expand: click expand").count(), 1);
@@ -3131,7 +3131,8 @@ click timing: failed tactic example.contract 0 simp class smart statement 1 sour
         });
 
         let report = render_profiles(&[profile], Thresholds::default(), DEFAULT_TIME_LIMIT);
-        assert!(report.contains("SMART SEARCH FAILURE"), "{report}");
+        assert!(report.contains("SMART SEARCH LIMIT"), "{report}");
+        assert!(report.contains("decompose the proof"), "{report}");
         assert!(
             report.contains("FAILED — no certificate to expand"),
             "{report}"
@@ -3139,6 +3140,7 @@ click timing: failed tactic example.contract 0 simp class smart statement 1 sour
         assert!(report.contains("0 succeeded,      1 failed"), "{report}");
         assert!(!report.contains("expand: click expand"), "{report}");
         assert!(report.contains("click-expand is not available"), "{report}");
+        assert!(report.contains("decompose the failed"), "{report}");
     }
 
     #[test]
