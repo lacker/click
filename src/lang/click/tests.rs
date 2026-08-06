@@ -86,6 +86,7 @@ fn resource_neutral_callee_preserves_callers_allocation_resource() {
             mutable owner->len, owner->data[owner->len..owner->len + 1];
             ensures result == old(owner->len) + 1;
             ensures owner->len == old(owner->len) + 1;
+            ensures 1 <= owner->len;
             ensures owner->cap == old(owner->cap);
             ensures owner->data == old(owner->data);
         } by {

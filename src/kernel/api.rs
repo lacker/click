@@ -5634,6 +5634,13 @@ fn shifted_order_condition_proven(
         _ => return false,
     };
     let overflow_free = |base: &Bitvector32Term, shift: u32| {
+        // Any exact strict signed upper bound on `base` keeps `base + 1`
+        // below overflow: the bound itself is an int32 and therefore at
+        // most INT_MAX. This is the same direct increment certificate the
+        // executor uses for `x < capacity` before evaluating `x + 1`.
+        if shift == 1 && assumptions.has_exact_strict_upper_bound(base) {
+            return true;
+        }
         let exact = assumptions.proves_exact(&Proposition::ConditionIs(
             ConditionTerm::Bitvector32SignedAddOverflows(
                 Box::new(base.clone()),
