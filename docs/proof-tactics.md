@@ -29,6 +29,13 @@ measured proof pattern; do not tune it around each difficult proof. In
 contrast, a smart success that cannot expand and replay, a missed deadline, or
 a proposition that cannot be expressed with simple tactics is a tooling gap.
 
+Condition-certificate search is one such heuristic: it tries individual
+ambient condition facts and pairs until it finds replayable premises or reaches
+the active smart-tactic deadline. It does not discard facts after an arbitrary
+context prefix. A normal miss reports the summarized target and recommends
+smaller execution steps or exact premises; `derive using { ... }` and
+`step() using { ... }` are the deterministic escape paths.
+
 ## Execution
 
 | Surface form | Class | Meaning |

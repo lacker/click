@@ -223,6 +223,122 @@ fn certificate_reconstruction_diagnostics_summarize_internal_snapshots() {
 }
 
 #[test]
+fn condition_certificate_search_reports_its_budget_without_dumping_snapshots() {
+    let memory = CMemory::new().with_block("wide-hidden-snapshot", 256);
+    let memory = crate::kernel::intern_c_memory(memory);
+    let facts = (0u32..64)
+        .map(|index| {
+            Proposition::ConditionIs(
+                ConditionTerm::Bitvector32Equal(
+                    Box::new(Bitvector32Term::MemoryLoad(
+                        memory.clone(),
+                        Box::new(Pointer {
+                            block: "wide-hidden-snapshot".into(),
+                            offset: PointerOffsetTerm::Constant(i64::from(index) * 4),
+                        }),
+                    )),
+                    Box::new(Bitvector32Term::Constant(index)),
+                ),
+                true,
+            )
+        })
+        .collect::<Vec<_>>();
+    let goal = Proposition::ConditionIs(
+        ConditionTerm::Bitvector32Equal(
+            Box::new(Bitvector32Term::Variable(Variable(1))),
+            Box::new(Bitvector32Term::Variable(Variable(2))),
+        ),
+        true,
+    );
+    let limits = crate::instrumentation::TacticLimits {
+        simple: std::time::Duration::from_secs(1),
+        smart: std::time::Duration::ZERO,
+        control: std::time::Duration::from_secs(1),
+    };
+    let tactic = crate::instrumentation::TacticEvent {
+        claim: "wide-condition.contract".to_string(),
+        tactic_index: 0,
+        tactic_name: "execute_until".to_string(),
+        class: "smart".to_string(),
+        statement_index: 0,
+        source_index: 0,
+    };
+
+    let error = crate::instrumentation::with_tactic_limits(limits, || {
+        crate::instrumentation::emit(crate::instrumentation::VerificationEvent::TacticStarted(
+            tactic.clone(),
+        ));
+        let result = super::proof::search_condition_derivation(&goal, &facts)
+            .expect_err("a zero smart budget should stop condition-certificate search");
+        crate::instrumentation::emit(crate::instrumentation::VerificationEvent::TacticFailed(
+            tactic,
+        ));
+        result
+    });
+
+    assert!(
+        error
+            .message()
+            .contains("condition-certificate premise search exceeded"),
+        "{error:?}"
+    );
+    assert!(
+        error.message().contains("int32 equality is true"),
+        "{error:?}"
+    );
+    assert!(
+        error.message().contains("ambient condition facts: 64"),
+        "{error:?}"
+    );
+    assert!(error.message().contains("exact premises"), "{error:?}");
+    assert!(!error.message().contains("CMemory"), "{error:?}");
+    assert!(
+        !error.message().contains("wide-hidden-snapshot"),
+        "{error:?}"
+    );
+}
+
+#[test]
+fn condition_certificate_search_is_not_sensitive_to_a_fact_prefix() {
+    let mut facts = (0u32..64)
+        .map(|index| {
+            Proposition::ConditionIs(
+                ConditionTerm::Bitvector32Equal(
+                    Box::new(Bitvector32Term::Variable(Variable(100 + u64::from(index)))),
+                    Box::new(Bitvector32Term::Constant(index)),
+                ),
+                true,
+            )
+        })
+        .collect::<Vec<_>>();
+    let left = Bitvector32Term::Variable(Variable(1));
+    let middle = Bitvector32Term::Variable(Variable(2));
+    let right = Bitvector32Term::Variable(Variable(3));
+    facts.push(Proposition::ConditionIs(
+        ConditionTerm::Bitvector32Equal(Box::new(left.clone()), Box::new(middle.clone())),
+        true,
+    ));
+    facts.push(Proposition::ConditionIs(
+        ConditionTerm::Bitvector32Equal(Box::new(middle), Box::new(right.clone())),
+        true,
+    ));
+    let goal = Proposition::ConditionIs(
+        ConditionTerm::Bitvector32Equal(Box::new(left), Box::new(right)),
+        true,
+    );
+
+    let derivation = super::proof::search_condition_derivation(&goal, &facts)
+        .expect("condition search should remain within the verification budget")
+        .expect("the two relevant facts should derive the goal even after 64 irrelevant facts");
+
+    assert_eq!(derivation.context_premises().len(), 2);
+    assert!(
+        derivation.replay(&assumptions_from_propositions(&facts)),
+        "the selected certificate premises must replay"
+    );
+}
+
+#[test]
 fn verifier_diagnostics_bound_fact_items_and_show_resource_deltas() {
     let facts = (0..20)
         .map(|index| {

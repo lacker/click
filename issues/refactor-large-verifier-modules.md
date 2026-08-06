@@ -102,7 +102,10 @@ boundary during every move.
 ### Other bounded extractions
 
 - Split `src/bin/click-profile.rs` into argument/runner, profile model and
-  collection, and report rendering.
+  collection, and report rendering. The current all-target strict Clippy gate
+  also flags `render_category` for its eight-argument interface; resolve that
+  by giving the renderer a coherent context during this extraction, rather
+  than adding a local lint exemption.
 - Split `src/lang/click/lowering.rs` around contract substitution, source
   execution layout, resource lowering, and expression/proposition lowering
   where dependencies permit.

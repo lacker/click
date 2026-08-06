@@ -5696,14 +5696,12 @@ fn proposition_has_contextual_derivation_rules(proposition: &Proposition) -> boo
 fn minimal_proposition_derivation(
     proposition: &Proposition,
     available: &[Proposition],
-) -> Option<PropositionDerivation> {
+) -> Result<Option<PropositionDerivation>, ClickError> {
     if !proposition_has_contextual_derivation_rules(proposition) {
-        return None;
+        return Ok(None);
     }
-    if matches!(proposition, Proposition::ConditionIs(_, _))
-        && let Some(derivation) = bounded_condition_derivation(proposition, available)
-    {
-        return Some(derivation);
+    if matches!(proposition, Proposition::ConditionIs(_, _)) {
+        return search_condition_derivation(proposition, available);
     }
     let derive = |facts: &[Proposition]| {
         let assumptions = assumptions_from_propositions(facts);
@@ -5711,10 +5709,15 @@ fn minimal_proposition_derivation(
             .derive_proposition(proposition)
             .or_else(|| assumptions.derive_simp_proposition(proposition))
     };
-    let initial = derive(available)?;
+    check_verification_deadline()?;
+    let Some(initial) = derive(available) else {
+        check_verification_deadline()?;
+        return Ok(None);
+    };
     let mut selected = initial.context_premises().to_vec();
     let mut index = 0;
     while index < selected.len() {
+        check_verification_deadline()?;
         let mut reduced = selected.clone();
         reduced.remove(index);
         if derive(&reduced).is_some() {
@@ -5723,23 +5726,29 @@ fn minimal_proposition_derivation(
             index += 1;
         }
     }
-    derive(&selected)
+    check_verification_deadline()?;
+    Ok(derive(&selected))
 }
 
 fn minimal_simp_proposition_derivation(
     proposition: &Proposition,
     available: &[Proposition],
-) -> Option<PropositionDerivation> {
+) -> Result<Option<PropositionDerivation>, ClickError> {
     if !proposition_has_contextual_derivation_rules(proposition) {
-        return None;
+        return Ok(None);
     }
     let derive = |facts: &[Proposition]| {
         assumptions_from_propositions(facts).derive_simp_proposition(proposition)
     };
-    let initial = derive(available)?;
+    check_verification_deadline()?;
+    let Some(initial) = derive(available) else {
+        check_verification_deadline()?;
+        return Ok(None);
+    };
     let mut selected = initial.context_premises().to_vec();
     let mut index = 0;
     while index < selected.len() {
+        check_verification_deadline()?;
         let mut reduced = selected.clone();
         reduced.remove(index);
         if derive(&reduced).is_some() {
@@ -5748,25 +5757,62 @@ fn minimal_simp_proposition_derivation(
             index += 1;
         }
     }
-    derive(&selected)
+    check_verification_deadline()?;
+    Ok(derive(&selected))
 }
 
-fn bounded_condition_derivation(
+fn condition_search_budget_error(proposition: &Proposition, candidate_count: usize) -> ClickError {
+    ClickError::new(format!(
+        "condition-certificate premise search exceeded the active verification budget\n  target: {}\n  ambient condition facts: {candidate_count}\n  context: {}\nprovide the exact premises with simple tactics to continue",
+        describe_pure_fact(proposition, &[], &[]),
+        crate::instrumentation::deadline_context(),
+    ))
+}
+
+fn describe_condition_search_miss(
     proposition: &Proposition,
     available: &[Proposition],
-) -> Option<PropositionDerivation> {
-    const CANDIDATE_LIMIT: usize = 48;
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+) -> String {
+    let candidate_count = available
+        .iter()
+        .filter(|fact| matches!(fact, Proposition::ConditionIs(_, _)))
+        .count();
+    format!(
+        "condition-certificate premise search did not derive {} from {candidate_count} ambient condition facts; smart search tries individual facts and pairs and is heuristic, so split the execution into smaller steps or provide the exact premises with simple tactics",
+        describe_pure_fact(proposition, parameters, arguments),
+    )
+}
 
-    if condition_derivation_has_deep_terms(proposition) {
-        return None;
+fn describe_derivation_failure(proposition: &Proposition, available: &[Proposition]) -> String {
+    if matches!(proposition, Proposition::ConditionIs(_, _)) {
+        describe_condition_search_miss(proposition, available, &[], &[])
+    } else {
+        bounded_debug(proposition)
     }
+}
 
+fn check_condition_search_budget(
+    proposition: &Proposition,
+    candidate_count: usize,
+) -> Result<(), ClickError> {
+    if crate::instrumentation::deadline_exceeded() {
+        Err(condition_search_budget_error(proposition, candidate_count))
+    } else {
+        Ok(())
+    }
+}
+
+pub(super) fn search_condition_derivation(
+    proposition: &Proposition,
+    available: &[Proposition],
+) -> Result<Option<PropositionDerivation>, ClickError> {
     let candidates = available
         .iter()
         .filter(|fact| matches!(fact, Proposition::ConditionIs(_, _)))
-        .take(CANDIDATE_LIMIT)
-        .cloned()
         .collect::<Vec<_>>();
+    check_condition_search_budget(proposition, candidates.len())?;
     let derive = |facts: &[Proposition]| {
         let assumptions = assumptions_from_propositions(facts);
         assumptions
@@ -5774,54 +5820,33 @@ fn bounded_condition_derivation(
             .or_else(|| assumptions.derive_simp_atomic_proposition(proposition))
     };
     for fact in &candidates {
-        if let Some(derivation) = derive(std::slice::from_ref(fact)) {
-            return Some(derivation);
+        check_condition_search_budget(proposition, candidates.len())?;
+        if let Some(derivation) = derive(std::slice::from_ref(*fact)) {
+            check_condition_search_budget(proposition, candidates.len())?;
+            return Ok(Some(derivation));
         }
+        check_condition_search_budget(proposition, candidates.len())?;
     }
     for (left_index, left) in candidates.iter().enumerate() {
         for right in &candidates[left_index + 1..] {
-            if let Some(derivation) = derive(&[left.clone(), right.clone()]) {
-                return Some(derivation);
+            check_condition_search_budget(proposition, candidates.len())?;
+            if let Some(derivation) = derive(&[(*left).clone(), (*right).clone()]) {
+                check_condition_search_budget(proposition, candidates.len())?;
+                return Ok(Some(derivation));
             }
+            check_condition_search_budget(proposition, candidates.len())?;
         }
     }
-    None
-}
-
-fn condition_derivation_has_deep_terms(proposition: &Proposition) -> bool {
-    const TERM_DEPTH_LIMIT: usize = 16;
-
-    // Certificate-context minimization is optional: returning no candidate
-    // leaves the existing diagnostic path in charge. General derivation over
-    // deeply nested memory snapshots can make each singleton/pair probe
-    // pathological, so do not enter that search for terms beyond this bound.
-    let Proposition::ConditionIs(condition, _) = proposition else {
-        return false;
-    };
-    let (left, right) = match condition {
-        ConditionTerm::Bitvector32SignedLessThan(left, right)
-        | ConditionTerm::Bitvector32SignedLessEqual(left, right)
-        | ConditionTerm::Bitvector32SignedGreaterThan(left, right)
-        | ConditionTerm::Bitvector32SignedGreaterEqual(left, right)
-        | ConditionTerm::Bitvector32Equal(left, right)
-        | ConditionTerm::Bitvector32SignedAddOverflows(left, right)
-        | ConditionTerm::Bitvector32SignedSubtractOverflows(left, right)
-        | ConditionTerm::Bitvector32SignedMultiplyOverflows(left, right)
-        | ConditionTerm::Bitvector32SignedDivideOverflows(left, right)
-        | ConditionTerm::Bitvector32SignedShiftLeftOverflows(left, right) => (left, right),
-        _ => return false,
-    };
-    crate::kernel::bitvector_term_deeper_than(left, TERM_DEPTH_LIMIT)
-        || crate::kernel::bitvector_term_deeper_than(right, TERM_DEPTH_LIMIT)
+    Ok(None)
 }
 
 fn derivation_replays_with_materialized_context(
     derivation: &PropositionDerivation,
     available: &[Proposition],
-) -> bool {
+) -> Result<bool, ClickError> {
     let assumptions = assumptions_from_propositions(available);
     if derivation.replay(&assumptions) {
-        return true;
+        return Ok(true);
     }
     let Some(materialized_context) = derivation
         .context_premises()
@@ -5829,9 +5854,9 @@ fn derivation_replays_with_materialized_context(
         .map(|premise| materialization_equivalent_available_fact(premise, available))
         .collect::<Option<Vec<_>>>()
     else {
-        return false;
+        return Ok(false);
     };
-    minimal_proposition_derivation(derivation.conclusion(), &materialized_context).is_some()
+    Ok(minimal_proposition_derivation(derivation.conclusion(), &materialized_context)?.is_some())
 }
 
 fn exact_facts_directly_conflict(left: &Proposition, right: &Proposition) -> bool {
@@ -6042,7 +6067,7 @@ fn certified_condition_transitions(
     };
     if matches!(prerequisite_policy, StatementPrerequisitePolicy::Certified) {
         for derivation in certified_prerequisites {
-            if derivation_replays_with_materialized_context(derivation, pure_facts) {
+            if derivation_replays_with_materialized_context(derivation, pure_facts)? {
                 assumptions = assumptions.assume_proposition(derivation.conclusion().clone());
                 if !transition_pure_facts.contains(derivation.conclusion()) {
                     transition_pure_facts.push(derivation.conclusion().clone());
@@ -6109,7 +6134,7 @@ fn certified_condition_transitions(
                         continue;
                     }
                     if let Some(derivation) =
-                        minimal_proposition_derivation(proposition, pure_facts)
+                        minimal_proposition_derivation(proposition, pure_facts)?
                     {
                         if !prerequisite_derivations
                             .iter()
@@ -6255,7 +6280,7 @@ pub(super) fn certified_statement_transitions(
     let mut assumptions = assumptions_from_propositions(pure_facts);
     if matches!(prerequisite_policy, StatementPrerequisitePolicy::Certified) {
         for derivation in certified_prerequisites {
-            if derivation_replays_with_materialized_context(derivation, pure_facts) {
+            if derivation_replays_with_materialized_context(derivation, pure_facts)? {
                 assumptions = assumptions.assume_proposition(derivation.conclusion().clone());
                 if !transition_pure_facts.contains(derivation.conclusion()) {
                     transition_pure_facts.push(derivation.conclusion().clone());
@@ -6544,7 +6569,7 @@ fn certified_transitions_from_execution(
                     if matches!(premise, Proposition::ConditionIs(_, _))
                         && !exact_fact_is_available(&premise, &theorem_context)
                         && let Some(derivation) =
-                            bounded_condition_derivation(&premise, pure_facts)
+                            search_condition_derivation(&premise, pure_facts)?
                         && !derivation.context_premises().is_empty()
                     {
                         if !prerequisite_derivations
@@ -6576,9 +6601,7 @@ fn certified_transitions_from_execution(
                                 .any(|obligation| obligation.proposition() == &premise);
                     if !already_certified {
                         let derivation =
-                            minimal_proposition_derivation(&premise, &theorem_context).or_else(
-                                || bounded_condition_derivation(&premise, &theorem_context),
-                            );
+                            minimal_proposition_derivation(&premise, &theorem_context)?;
                         let Some(derivation) = derivation else {
                             if has_failure_path {
                                 if !theorem_context.contains(&premise) {
@@ -6587,7 +6610,8 @@ fn certified_transitions_from_execution(
                                 continue;
                             }
                             return Err(ClickError::new(format!(
-                                "{context_label} used an assumption-derived theorem premise without a replayable derivation: {premise:?}"
+                                "{context_label} used an assumption-derived theorem premise without a replayable derivation: {}",
+                                describe_derivation_failure(&premise, &theorem_context),
                             )));
                         };
                         if !prerequisite_derivations
@@ -6616,7 +6640,7 @@ fn certified_transitions_from_execution(
                         continue;
                     }
                     if let Some(derivation) =
-                        minimal_proposition_derivation(proposition, pure_facts)
+                        minimal_proposition_derivation(proposition, pure_facts)?
                     {
                         if !prerequisite_derivations
                             .iter()
@@ -6630,7 +6654,8 @@ fn certified_transitions_from_execution(
                         && planning_assumptions.proves(proposition)
                     {
                         return Err(ClickError::new(format!(
-                            "{context_label} used an assumption-derived execution fact without a replayable derivation: {proposition:?}"
+                            "{context_label} used an assumption-derived execution fact without a replayable derivation: {}",
+                            describe_derivation_failure(proposition, pure_facts),
                         )));
                     }
                 }
@@ -6672,7 +6697,7 @@ fn certified_transitions_from_execution(
                                 proposition,
                                 Proposition::ConditionIs(_, _)
                             ) {
-                                bounded_condition_derivation(proposition, pure_facts)
+                                search_condition_derivation(proposition, pure_facts)?
                             } else if matches!(
                                 proposition,
                                 Proposition::CResourceContains { .. }
@@ -6691,23 +6716,23 @@ fn certified_transitions_from_execution(
                             };
                             exact_derivation.ok_or_else(|| {
                                     ClickError::new(format!(
-                                        "{context_label} is missing exact prerequisite{}: {:?}",
+                                        "{context_label} is missing exact prerequisite{}: {}",
                                         obligation
                                             .context()
                                             .map(|context| format!(" ({context})"))
                                             .unwrap_or_default(),
-                                        proposition
+                                        describe_derivation_failure(proposition, pure_facts),
                                     ))
                                 })
                                 .map(Some)?
                         } else {
                             return Err(ClickError::new(format!(
-                                "{context_label} is missing certified prerequisite{}: {:?}",
+                                "{context_label} is missing certified prerequisite{}: {}",
                                 obligation
                                     .context()
                                     .map(|context| format!(" ({context})"))
                                     .unwrap_or_default(),
-                                proposition
+                                describe_derivation_failure(proposition, pure_facts),
                             )));
                         }
                     }
@@ -6716,12 +6741,12 @@ fn certified_transitions_from_execution(
                             None
                         } else {
                             return Err(ClickError::new(format!(
-                                "{context_label} is missing prerequisite{}: {:?}",
+                                "{context_label} is missing prerequisite{}: {}",
                                 obligation
                                     .context()
                                     .map(|context| format!(" ({context})"))
                                     .unwrap_or_default(),
-                                proposition
+                                describe_derivation_failure(proposition, pure_facts),
                             )));
                         }
                     }
@@ -6735,15 +6760,18 @@ fn certified_transitions_from_execution(
                                 .cloned()
                                 .collect::<Vec<_>>();
                             Some(
-                                minimal_proposition_derivation(proposition, &derivation_facts)
+                                minimal_proposition_derivation(proposition, &derivation_facts)?
                                     .ok_or_else(|| {
                                     ClickError::new(format!(
-                                        "{context_label} is missing prerequisite{}: {:?}",
+                                        "{context_label} is missing prerequisite{}: {}",
                                         obligation
                                             .context()
                                             .map(|context| format!(" ({context})"))
                                             .unwrap_or_default(),
-                                        proposition
+                                        describe_derivation_failure(
+                                            proposition,
+                                            &derivation_facts,
+                                        ),
                                     ))
                                 })?,
                             )
@@ -10565,7 +10593,7 @@ fn plan_smart_have_at_current_point(
         .iter()
         .find(|available| normalize_direct_atomic_memory_loads(available) == normalized_fact)
         && let Some(derivation) =
-            minimal_proposition_derivation(&goal, std::slice::from_ref(equivalent))
+            minimal_proposition_derivation(&goal, std::slice::from_ref(equivalent))?
     {
         let plan =
             ProofReplayPlan::from_planned_tactics(&[ProofTactic::ExactPropositionDerivation(
@@ -10574,7 +10602,7 @@ fn plan_smart_have_at_current_point(
             .expect("a directly normalized derivation is a simple replay tactic");
         return Ok((fact, plan));
     }
-    if let Some(derivation) = bounded_condition_derivation(&goal, &available) {
+    if let Some(derivation) = search_condition_derivation(&goal, &available)? {
         let plan =
             ProofReplayPlan::from_planned_tactics(&[ProofTactic::ExactPropositionDerivation(
                 derivation,
@@ -10608,7 +10636,7 @@ fn plan_smart_have_at_current_point(
                 );
             }
         }
-        return Err(ClickError::new(format!(
+        let mut message = format!(
             "`{claim_label}` tactic {outer_tactic_index}: `have` failed: {}",
             describe_missing_pure_fact(
                 &goal,
@@ -10618,7 +10646,14 @@ fn plan_smart_have_at_current_point(
                 arguments,
                 &[],
             )
-        )));
+        );
+        if matches!(goal, Proposition::ConditionIs(_, _)) {
+            message.push_str("\n  ");
+            message.push_str(&describe_condition_search_miss(
+                &goal, &available, parameters, arguments,
+            ));
+        }
+        return Err(ClickError::new(message));
     };
     if !replay_simp_certificate(&goal, &assumptions, &plan) {
         return Err(ClickError::new(format!(
@@ -16143,7 +16178,7 @@ fn lower_outcome_simp_tactic(
         }
     }
     if let Some(derivation) =
-        minimal_simp_proposition_derivation(&normalized_goal, &normalized_available)
+        minimal_simp_proposition_derivation(&normalized_goal, &normalized_available)?
     {
         let context = derivation.context_premises();
         let selected = context
@@ -16540,8 +16575,10 @@ fn lower_outcome_simp_tactic(
             }
         }
         check_verification_deadline()?;
-        let minimized = minimal_proposition_derivation(goal, &certified_context)
-            .or_else(|| minimal_simp_proposition_derivation(goal, &certified_context));
+        let minimized = match minimal_proposition_derivation(goal, &certified_context)? {
+            Some(derivation) => Some(derivation),
+            None => minimal_simp_proposition_derivation(goal, &certified_context)?,
+        };
         check_verification_deadline()?;
         if minimized.is_none()
             && let Ok(dir) = std::env::var("CLICK_DERIVE_DUMP_DIR")
@@ -24038,6 +24075,15 @@ fn replay_certified_statement_transition(
     }
     let mut proposition = evidence.transition.theorem.proposition();
     while let Proposition::Implies(premise, body) = proposition {
+        let mut certified_by_derivation = false;
+        for derivation in &evidence.transition.prerequisite_derivations {
+            if derivation.conclusion() == premise.as_ref()
+                && derivation_replays_with_materialized_context(derivation, &replay_facts)?
+            {
+                certified_by_derivation = true;
+                break;
+            }
+        }
         let certified = exact_fact_is_available(premise, available_pure_facts)
             || materialization_equivalent_available_fact(premise, available_pure_facts).is_some()
             || matches!(normalize_proposition(premise), SimpProposition::True)
@@ -24046,14 +24092,7 @@ fn replay_certified_statement_transition(
                 .execution_facts
                 .iter()
                 .any(|fact| fact.is_certified() && fact.proposition() == premise.as_ref())
-            || evidence
-                .transition
-                .prerequisite_derivations
-                .iter()
-                .any(|derivation| {
-                    derivation.conclusion() == premise.as_ref()
-                        && derivation_replays_with_materialized_context(derivation, &replay_facts)
-                });
+            || certified_by_derivation;
         if !certified {
             return Err(ClickError::new(format!(
                 "{context_label} certificate is missing prerequisite {premise:?}"

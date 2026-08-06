@@ -61,9 +61,10 @@ certificate. A direct probe of the parked `statement(4)` assertion advances to
 the next ordinary resource-proof failure rather than failing certificate
 reconstruction. Resume the source-fidelity work from that point. The broad
 `execute_until` may be decomposed into relevant simple steps; its inability to
-find the entire proof is not a blocker. The separate
-[`bounded-condition-certificate-search.md`](bounded-condition-certificate-search.md)
-tracks the quality of that failure mode without requiring automatic success.
+find the entire proof is not a blocker. Condition-certificate search now checks
+the active smart-tactic deadline throughout, summarizes the failed obligation,
+and points to smaller steps or exact premises without requiring automatic
+success.
 Empty-prefix loadability, bounded successor certification, local
 frame planning, and local exact-resource queries have already landed as
 independent fixes. Do not recreate the specialized C helper or add irrelevant

@@ -62,13 +62,6 @@ fixed before performance analysis. Profiling an incomplete target is reserved
 for diagnosing a timeout or unexpected slowness that prevents a green run; its
 partial timings are not expansion candidates.
 
-## Search quality
-
-These improve bounded automation but do not require smart tactics to find every
-proof and do not block an explicit simple proof:
-
-1. [Keep condition-certificate search bounded and diagnosable](bounded-condition-certificate-search.md).
-
 ## Maintainability
 
 These are behavior-preserving cleanup roadmaps rather than feature blockers:
