@@ -1618,7 +1618,12 @@ fn direct_tactic_token_ranges(
                     if braces == 0 && parentheses == 0 && brackets == 0 {
                         let continuation = tokens.get(cursor + 1).map(|token| token.text.as_str());
                         if !matches!(continuation, Some("else" | "by")) {
-                            break cursor;
+                            let terminator = if continuation == Some(";") {
+                                cursor + 1
+                            } else {
+                                cursor
+                            };
+                            break terminator;
                         }
                     }
                 }
@@ -1767,6 +1772,25 @@ fn indent_replacement(source: &str, start: usize, replacement: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn block_tactic_optional_semicolon_belongs_to_the_tactic() {
+        let source = "by { step() using {}; simp(); }";
+        let tokens = scan_source_tokens(source).expect("source should tokenize");
+        let by = tokens
+            .iter()
+            .position(|token| token.text == "by")
+            .expect("proof should contain by");
+        let open = by + 1;
+        let close = matching_delimiter(&tokens, open, "{", "}")
+            .expect("proof block should have a closing brace");
+        let ranges = direct_tactic_token_ranges(&tokens, open, close)
+            .expect("block tactics should be indexable");
+
+        assert_eq!(ranges.len(), 2, "{ranges:?}");
+        assert_eq!(tokens[ranges[0].end - 1].text, ";");
+        assert_eq!(tokens[ranges[1].end - 1].text, ";");
+    }
 
     fn expand_top_level_tactic_for_test(
         click_source: &str,

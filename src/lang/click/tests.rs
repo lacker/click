@@ -9269,6 +9269,275 @@ int32 box_pipeline(struct box* owner, int32 data[], int32 value) {
 }
 
 #[test]
+fn execute_until_expands_mixed_snapshot_call_postconditions() {
+    let zero_c = r#"
+struct counter {
+    int32 value;
+};
+
+int32 zero(struct counter* owner) {
+    owner->value = 0;
+    return owner->value;
+}
+"#;
+    let increment_c = r#"
+struct counter {
+    int32 value;
+};
+
+int32 increment(struct counter* owner) {
+    int32 before;
+    before = owner->value;
+    owner->value = before + 1;
+    return owner->value;
+}
+"#;
+    let pipeline_c = r#"
+struct counter {
+    int32 value;
+};
+
+int32 pipeline(struct counter* owner) {
+    int32 ignored;
+    ignored = zero(owner);
+    ignored = increment(owner);
+    return owner->value;
+}
+"#;
+    let click_source = r#"
+resource counter(owner: struct counter*) {
+    owns owner->value;
+}
+
+verifying "zero.c";
+verifying "increment.c";
+verifying "pipeline.c";
+
+int32 zero(struct counter* owner) {
+    consumes object(owner);
+    mutable object(owner);
+    produces counter(owner);
+    ensures result == 0;
+    ensures owner->value == 0;
+} by {
+    execute();
+    fold(counter(owner));
+    frame();
+    simp();
+}
+
+int32 increment(struct counter* owner) {
+    requires owner->value < 2147483647;
+    owns counter(owner);
+    mutable owner->value;
+    ensures result == old(owner->value) + 1;
+    ensures owner->value == old(owner->value) + 1;
+} by {
+    unfold(counter(owner));
+    execute();
+    fold(counter(owner));
+    frame();
+    simp();
+}
+
+int32 pipeline(struct counter* owner) {
+    consumes object(owner);
+    mutable object(owner);
+    produces counter(owner);
+    ensures result == 1;
+    ensures owner->value == 1;
+} by {
+    execute_until(statement(3));
+    execute();
+    frame();
+    simp();
+}
+"#;
+    let sources = [
+        ("zero.c", zero_c),
+        ("increment.c", increment_c),
+        ("pipeline.c", pipeline_c),
+    ];
+
+    verify_c0_sources(click_source, &sources).expect("the original smart proof should verify");
+
+    let selected = click_source.find("execute_until").unwrap();
+    let position = expansion::position_at_offset(click_source, selected);
+    let expanded =
+        expand_c0_tactic_source_at(click_source, &sources, position.line, position.column)
+            .expect("mixed-snapshot smart execution should expand");
+    assert!(!expanded.contains("execute_until(statement(3));"));
+    verify_c0_sources(&expanded, &sources)
+        .expect("the mixed-snapshot smart execution expansion should replay");
+}
+
+#[test]
+fn execute_until_expands_vector_storage_call_postconditions() {
+    let init_c = r#"
+struct buffer {
+    int32 len;
+    int32 cap;
+    int32* data;
+};
+
+int32 buffer_init(struct buffer* owner, int32 data[], int32 capacity) {
+    owner->len = 0;
+    owner->cap = capacity;
+    owner->data = data;
+    return owner->len;
+}
+"#;
+    let push_c = r#"
+struct buffer {
+    int32 len;
+    int32 cap;
+    int32* data;
+};
+
+int32 buffer_push(struct buffer* owner, int32 value) {
+    int32 index;
+    int32* data;
+    index = owner->len;
+    data = owner->data;
+    data[index] = value;
+    owner->len = index + 1;
+    return owner->len;
+}
+"#;
+    let pipeline_c = r#"
+struct buffer {
+    int32 len;
+    int32 cap;
+    int32* data;
+};
+
+int32 buffer_pipeline(
+    struct buffer* owner,
+    int32 data[],
+    int32 capacity,
+    int32 value
+) {
+    int32 result;
+    result = buffer_init(owner, data, capacity);
+    result = buffer_push(owner, value);
+    return result;
+}
+"#;
+    let click_source = r#"
+resource empty_buffer(owner: struct buffer*) {
+    owns owner->len;
+    owns owner->cap;
+    owns owner->data;
+    owns owner->data[0..owner->cap];
+    fact owner->len == 0;
+    fact 1 <= owner->cap;
+    fact separate(memory(object(owner)), memory(owner->data[0..owner->cap]));
+}
+
+resource buffer_storage(owner: struct buffer*) {
+    owns owner->len;
+    owns owner->cap;
+    owns owner->data;
+    owns owner->data[0..owner->cap];
+    fact 0 <= owner->len;
+    fact owner->len <= owner->cap;
+    fact loadable(owner->data[0..owner->len]);
+    fact separate(memory(object(owner)), memory(owner->data[0..owner->cap]));
+}
+
+resource nonempty_buffer(owner: struct buffer*) {
+    owns owner->len;
+    owns owner->cap;
+    owns owner->data;
+    owns owner->data[0..owner->cap];
+    fact 1 <= owner->len;
+    fact owner->len <= owner->cap;
+    fact separate(memory(object(owner)), memory(owner->data[0..owner->cap]));
+}
+
+verifying "buffer_init.c";
+verifying "buffer_push.c";
+verifying "buffer_pipeline.c";
+
+int32 buffer_init(struct buffer* owner, int32 data[], int32 capacity) {
+    requires 1 <= capacity;
+    consumes object(owner);
+    consumes data[0..capacity];
+    mutable owner->len, owner->cap, owner->data;
+    produces empty_buffer(owner);
+    ensures result == 0;
+    ensures owner->len == 0;
+    ensures owner->cap == capacity;
+    ensures owner->data == data;
+} by {
+    execute();
+    fold(empty_buffer(owner));
+    frame();
+    simp();
+}
+
+int32 buffer_push(struct buffer* owner, int32 value) {
+    requires owner->len < owner->cap;
+    owns buffer_storage(owner);
+    mutable owner->len, owner->data[owner->len..owner->len + 1];
+    ensures result == old(owner->len) + 1;
+    ensures owner->len == old(owner->len) + 1;
+    ensures owner->data[old(owner->len)] == value;
+    ensures owner->cap == old(owner->cap);
+    ensures owner->data == old(owner->data);
+} by {
+    unfold(buffer_storage(owner));
+    execute();
+    fold(buffer_storage(owner));
+    frame();
+    simp();
+}
+
+int32 buffer_pipeline(
+    struct buffer* owner,
+    int32 data[],
+    int32 capacity,
+    int32 value
+) {
+    requires 1 <= capacity;
+    consumes object(owner);
+    consumes data[0..capacity];
+    produces nonempty_buffer(owner) by {
+        execute_until(statement(2));
+        unfold(empty_buffer(owner));
+        have 0 <= owner->len by simp;
+        have owner->len <= owner->cap by simp;
+        have loadable(owner->data[0..owner->len]) by simp;
+        fold(buffer_storage(owner));
+        execute_until(statement(3));
+        unfold(buffer_storage(owner));
+        have owner->len == 1 by simp;
+        have 1 <= owner->len by simp;
+        fold(nonempty_buffer(owner));
+        step() using {};
+    }
+}
+"#;
+    let sources = [
+        ("buffer_init.c", init_c),
+        ("buffer_push.c", push_c),
+        ("buffer_pipeline.c", pipeline_c),
+    ];
+
+    verify_c0_sources(click_source, &sources)
+        .expect("the original vector-shaped proof should verify");
+
+    let selected = click_source.rfind("execute_until").unwrap();
+    let position = expansion::position_at_offset(click_source, selected);
+    let expanded =
+        expand_c0_tactic_source_at(click_source, &sources, position.line, position.column)
+            .expect("vector-shaped mixed-snapshot smart execution should expand");
+    assert!(!expanded.contains("execute_until(statement(3));"));
+    verify_c0_sources(&expanded, &sources)
+        .expect("the vector-shaped mixed-snapshot expansion should replay");
+}
+
+#[test]
 fn tactic_expansion_includes_a_call_at_the_execute_until_endpoint() {
     let callee_c = r#"
 int32 callee(int32 x) {
