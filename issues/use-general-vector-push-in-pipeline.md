@@ -45,6 +45,24 @@ the focused resource-neutral-callee regression certifies within the normal
 profile budget. Resume from the source-faithful call shape, not from the old
 specialized clone.
 
+The latest parked prototype used a `vector_storage(owner)` resource containing
+the three metadata fields, the complete backing range, `0 <= len <= cap`, live
+prefix loadability, and object/backing separation. The unchanged
+`vector_push` owned that storage resource; the allocation-owning wrapper
+unfolded `allocated_vector`, folded `vector_storage` for the call, then restored
+the allocation authority. The pipeline similarly converted `empty_vector` to
+storage before calling the same function and folded `nonempty_vector`
+afterwards. This is the intended next proof shape, not a committed workaround.
+
+That prototype is deliberately parked until the tooling blockers in
+[`stable-modular-call-snapshot-provenance.md`](stable-modular-call-snapshot-provenance.md)
+and
+[`relevance-directed-condition-certificates.md`](relevance-directed-condition-certificates.md)
+are fixed. Empty-prefix loadability, bounded successor certification, local
+frame planning, and local exact-resource queries have already landed as
+independent fixes. Do not recreate the specialized C helper or bypass the slow
+call with explicit proof bookkeeping.
+
 ## Intended regression
 
 Retain one ordinary in-capacity append body. Verify calls to that same function
