@@ -5815,6 +5815,12 @@ impl Assumptions {
         bytes: &Bitvector32Term,
     ) -> bool {
         let _id_scope = AssumptionsIdScope::enter(self);
+        // A loadability claim quantifies over the bytes in the range.  An
+        // empty range has no accesses to justify, irrespective of whether
+        // its base currently names a live block.
+        if bytes.as_const() == Some(0) {
+            return true;
+        }
         if bytes
             .as_const()
             .is_some_and(|bytes| memory.access_in_bounds(base, bytes))

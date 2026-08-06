@@ -1725,6 +1725,20 @@ fn builtin_obligation_solver_proves_trivial_props() {
 }
 
 #[test]
+fn empty_memory_range_is_vacuously_loadable() {
+    let proposition = Proposition::CMemoryLoadable {
+        memory: CMemory::new(),
+        base: Pointer {
+            block: "not-live".into(),
+            offset: PointerOffsetTerm::Variable(Variable(1)),
+        },
+        bytes: Bitvector32Term::Constant(0),
+    };
+
+    assert!(Assumptions::new().proves(&proposition));
+}
+
+#[test]
 fn deferred_obligations_keep_contextual_memory_proofs_explicit() {
     let memory = CMemory::new();
     let base = Pointer {
