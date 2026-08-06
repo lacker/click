@@ -1,9 +1,7 @@
-# `summarize` reports the frontier it was applied at
+# `loop` reports the frontier it was applied at
 
-`summarize(loop(N))` is a simple tactic that only applies at that
-loop's entry. Applied anywhere else it must name the loop it was asked for
-and the statement the replay frontier actually sits on, rather than stepping
-a frontier that has no loop to summarize.
+`loop` only applies when the execution frontier is at a C loop. Applied at a
+declaration, it must report the current statement rather than searching ahead.
 
 ```c filename=sum_to.c
 int32 sum_to(int32 n) {
@@ -21,19 +19,14 @@ verifying "sum_to.c";
 
 int32 sum_to(int32 n) {
     requires n >= 0 and n <= 4;
-
-    for loop(0) {
+    ensures nonneg: result >= 0;
+} by {
+    loop {
         invariant i >= 0;
-    }
-
-    ensures nonneg: result >= 0 by {
-        execute();
-        summarize(loop(0));
-        simp();
     }
 }
 ```
 
 ```expect
-fail: `summarize(loop(0))` is not at that loop's entry
+fail: requires the execution frontier to be at a loop
 ```

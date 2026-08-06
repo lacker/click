@@ -17,11 +17,14 @@ int32 bad_spin() {
 verifying "infinite_loop_rejects_undefined_behavior.c";
 
 int32 bad_spin() {
-    for loop(0) {
+    ensures 0 == 0;
+} by {
+    step();
+    step();
+    loop {
         invariant x == 1;
     }
-
-    ensures 0 == 0 by auto;
+    simp();
 }
 ```
 

@@ -18,14 +18,18 @@ int32 count_to_three_bad_invariant_initialization() {
 verifying "count_to_three_bad_invariant_initialization.c";
 
 int32 count_to_three_bad_invariant_initialization() {
-    for loop(0) {
+    ensures result == 3;
+} by {
+    step();
+    step();
+    loop {
         invariant i == 1;
     }
-
-    ensures result == 3 by auto;
+    step();
+    simp();
 }
 ```
 
 ```expect
-fail: loop 0 invariant 0 entry
+fail: invariant 0 entry
 ```

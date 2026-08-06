@@ -16,11 +16,14 @@ verifying "c_decreases_rejects_bad_loop_path.c";
 
 int32 sometimes_stuck(int32 n, int32 choose) {
     requires n >= 0;
-    for loop(0) {
+    ensures result == 0;
+} by {
+    loop {
         decreases n;
         invariant n >= 0;
     }
-    ensures result == 0 by auto;
+    step();
+    simp();
 }
 ```
 

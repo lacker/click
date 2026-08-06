@@ -22,15 +22,20 @@ int32 fill_tail_rejects_tail_segment_unchanged(int32 p[], int32 n) {
     requires n >= 2 and n <= 2147483647;
     requires loadable(p[0..n]);
     consumes p[0..n];
-    for loop(0) {
-        invariant i >= 1 and i <= n;
-    }
     ensures tail_unchanged: forall (k: int32) {
         1 <= k and k < n implies p[k] == old(p[k])
-    } by auto;
+    };
+} by {
+    step();
+    step();
+    loop {
+        invariant i >= 1 and i <= n;
+    }
+    step();
+    simp();
 }
 ```
 
 ```expect
-fail: unclosed goal: forall (k: int32)
+fail: fill_tail_rejects_tail_segment_unchanged.tail_unchanged
 ```

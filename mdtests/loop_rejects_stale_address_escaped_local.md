@@ -26,10 +26,19 @@ verifying "loop_rejects_stale_address_escaped_local.c";
 
 int32 loop_rejects_stale_address_escaped_local(int32 n) {
     requires n >= 1 and n <= 2147483647;
-    for loop(0) {
+    ensures stale: result == 7;
+} by {
+    step();
+    step();
+    step();
+    step();
+    step();
+    step();
+    loop {
         invariant i >= 0 and i <= n;
     }
-    ensures stale: result == 7 by auto;
+    step();
+    simp();
 }
 ```
 
