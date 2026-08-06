@@ -1444,9 +1444,11 @@ fn render_profiles_with_top(
     render_category(
         &mut output,
         &slow_steps,
-        TacticCategory::Simple,
-        "SIMPLE — FIX THE ENGINE; DO NOT EXPAND",
-        "A slow simple tactic is deterministic certificate replay. Reduce its verifier path and fix that bottleneck before expanding more smart tactics.",
+        CategorySection {
+            category: TacticCategory::Simple,
+            title: "SIMPLE — FIX THE ENGINE; DO NOT EXPAND",
+            advice: "A slow simple tactic is deterministic certificate replay. Reduce its verifier path and fix that bottleneck before expanding more smart tactics.",
+        },
         thresholds,
         time_limit,
         &blocked_expansion_sources,
@@ -1454,9 +1456,11 @@ fn render_profiles_with_top(
     render_category(
         &mut output,
         &slow_steps,
-        TacticCategory::Smart,
-        "SMART — EXPAND ONLY FROM VERIFIED PROOFS",
-        "A successful hotspot in a fully verified proof is an expansion candidate. In an incomplete run it is diagnostic only. A failed smart search has no certificate; use smaller or explicit simple tactics unless it missed its bound or failed unclearly.",
+        CategorySection {
+            category: TacticCategory::Smart,
+            title: "SMART — EXPAND ONLY FROM VERIFIED PROOFS",
+            advice: "A successful hotspot in a fully verified proof is an expansion candidate. In an incomplete run it is diagnostic only. A failed smart search has no certificate; use smaller or explicit simple tactics unless it missed its bound or failed unclearly.",
+        },
         thresholds,
         time_limit,
         &blocked_expansion_sources,
@@ -1464,9 +1468,11 @@ fn render_profiles_with_top(
     render_category(
         &mut output,
         &slow_steps,
-        TacticCategory::Control,
-        "CONTROL — INSPECT NESTED STEPS",
-        "This is a proof container. Use its nested SMART/SIMPLE timings; do not optimize or expand it based on the container row alone.",
+        CategorySection {
+            category: TacticCategory::Control,
+            title: "CONTROL — INSPECT NESTED STEPS",
+            advice: "This is a proof container. Use its nested SMART/SIMPLE timings; do not optimize or expand it based on the container row alone.",
+        },
         thresholds,
         time_limit,
         &blocked_expansion_sources,
@@ -2219,28 +2225,32 @@ fn render_diagnoses(output: &mut String, profiles: &[ProjectProfile]) {
     }
 }
 
+struct CategorySection {
+    category: TacticCategory,
+    title: &'static str,
+    advice: &'static str,
+}
+
 fn render_category(
     output: &mut String,
     slow_steps: &[&SlowStep],
-    category: TacticCategory,
-    title: &str,
-    advice: &str,
+    section: CategorySection,
     thresholds: Thresholds,
     time_limit: Duration,
     blocked_expansion_sources: &BTreeSet<PathBuf>,
 ) {
-    writeln!(output, "\n{title}").expect("writing a String cannot fail");
-    writeln!(output, "  {advice}").expect("writing a String cannot fail");
+    writeln!(output, "\n{}", section.title).expect("writing a String cannot fail");
+    writeln!(output, "  {}", section.advice).expect("writing a String cannot fail");
     let matching = slow_steps
         .iter()
         .copied()
-        .filter(|step| step.key.category == category)
+        .filter(|step| step.key.category == section.category)
         .collect::<Vec<_>>();
     if matching.is_empty() {
         writeln!(output, "  none completed").expect("writing a String cannot fail");
         return;
     }
-    if category == TacticCategory::Simple {
+    if section.category == TacticCategory::Simple {
         writeln!(
             output,
             "  WARNING: expanding an enclosing smart tactic is not a fix for the simple steps below."
@@ -2250,7 +2260,7 @@ fn render_category(
     for step in matching {
         let status = if step.failed {
             "  FAILED — no certificate to expand"
-        } else if category == TacticCategory::Smart
+        } else if section.category == TacticCategory::Smart
             && blocked_expansion_sources.contains(&step.key.source_path)
         {
             "  INCOMPLETE RUN — restore verification before expansion"
@@ -2269,7 +2279,7 @@ fn render_category(
         )
         .expect("writing a String cannot fail");
         if !step.failed
-            && let (TacticCategory::Smart, Some(position)) = (category, step.key.position)
+            && let (TacticCategory::Smart, Some(position)) = (section.category, step.key.position)
             && !blocked_expansion_sources.contains(&step.key.source_path)
         {
             render_expansion_command(output, &step.key, position, thresholds, time_limit);
