@@ -57,6 +57,12 @@ proof and do not block an explicit simple proof:
 
 1. [Keep condition-certificate search bounded and diagnosable](bounded-condition-certificate-search.md).
 
+## Maintainability
+
+These are behavior-preserving cleanup roadmaps rather than feature blockers:
+
+1. [Refactor large verifier modules along proof-model boundaries](refactor-large-verifier-modules.md).
+
 ## C-source fidelity
 
 The repository has several historical cases where example C was simplified or
