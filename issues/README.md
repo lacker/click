@@ -26,10 +26,6 @@ The issue should contain a small intended regression, the violated invariant,
 and acceptance criteria. Do not leave the only reproduction in an uncommitted
 large example or quarantine a regression without its issue.
 
-## Container composition follow-up
-
-1. [Compose in-capacity append with allocated-vector growth](allocated-vector-push.md).
-
 ## Partial correctness and recursion
 
 Click's C contracts now use partial correctness consistently: concrete

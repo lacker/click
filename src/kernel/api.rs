@@ -20,6 +20,9 @@ pub(crate) fn c_resources_directly_match(
     right: &CResource,
     assumptions: &Assumptions,
 ) -> bool {
+    if left == right {
+        return true;
+    }
     let values_match = |left: &CValue, right: &CValue| match (left, right) {
         (CValue::Void, CValue::Void) => true,
         (CValue::Int32(left), CValue::Int32(right))
@@ -80,6 +83,12 @@ fn bitvectors_match_for_resource_replay(
     if assumptions.bitvector_terms_equal_from_facts(left, right) {
         return true;
     }
+    // Resource endpoints are usually the same arithmetic shape with leaf
+    // loads related by explicit field equalities. Check that bounded
+    // structural relation before invoking the broader memory-DAG search.
+    if bitvector_terms_proven_equal_for_memory_resolution(left, right, assumptions) {
+        return true;
+    }
     if explicit_atomic_equality_from_memory_derivations(left, right, assumptions) {
         return true;
     }
@@ -97,9 +106,7 @@ fn bitvectors_match_for_resource_replay(
                 })
         })
     };
-    transported_matches(left, right)
-        || transported_matches(right, left)
-        || bitvector_terms_proven_equal_for_memory_resolution(left, right, assumptions)
+    transported_matches(left, right) || transported_matches(right, left)
 }
 
 fn pointer_offsets_match_from_memory_derivations(
@@ -127,6 +134,7 @@ fn pointer_offsets_match_from_memory_derivations(
         ) => {
             left_width == right_width
                 && (assumptions.bitvector_terms_equal_from_facts(left, right)
+                    || bitvector_terms_proven_equal_for_memory_resolution(left, right, assumptions)
                     || explicit_atomic_equality_from_memory_derivations(left, right, assumptions))
         }
         _ => false,
@@ -141,6 +149,9 @@ fn pointer_offsets_match_for_resource_replay(
     if pointer_offsets_match_from_memory_derivations(left, right, assumptions) {
         return true;
     }
+    if c_pointer_offsets_proven_equal_for_effect(left, right, assumptions) {
+        return true;
+    }
     let transported_matches = |offset: &PointerOffsetTerm, target: &PointerOffsetTerm| {
         let mut memories = Vec::new();
         collect_pointer_offset_memories(target, &mut memories);
@@ -151,9 +162,7 @@ fn pointer_offsets_match_for_resource_replay(
                 })
         })
     };
-    transported_matches(left, right)
-        || transported_matches(right, left)
-        || c_pointer_offsets_proven_equal_for_effect(left, right, assumptions)
+    transported_matches(left, right) || transported_matches(right, left)
 }
 
 fn pointers_match_for_resource_replay(
@@ -225,17 +234,35 @@ pub(crate) fn c_memory_load_is_unchanged(
     {
         return true;
     }
-    // The DAG walk runs before the snapshot comparison: it answers from
-    // recorded edges in a bounded number of hops, where
+    // Small field-update snapshots usually differ at only one or two cells.
+    // Compare those directly before paying for a derivation-DAG walk; large
+    // snapshots retain the DAG-first order so they do not scan a broad cell
+    // set unless the named history cannot answer.
+    let small_snapshot_pair = before.cells.len() <= 8 && after.cells.len() <= 8;
+    if small_snapshot_pair
+        && memories_match_for_pointer_load_under_assumptions(before, after, pointer, assumptions)
+    {
+        return true;
+    }
+    // For larger snapshots the DAG walk runs before the snapshot comparison:
+    // it answers from recorded edges in a bounded number of hops, where
     // `memories_match_for_pointer_load_under_assumptions` first compares
     // whole non-local block sets and then every differing cell.
-    if load_unchanged_along_memory_derivations(before, after, pointer, assumptions) {
+    // This API is a certificate-replay query. No-op block declarations,
+    // forgotten caches, and allocations of a distinct block are sound DAG
+    // bridges here; enabling them keeps replay on the bounded derivation walk
+    // instead of falling into whole-snapshot alias search.
+    if with_extended_dag_bridging(|| {
+        load_unchanged_along_memory_derivations(before, after, pointer, assumptions)
+    }) {
         return true;
     }
     if crate::instrumentation::deadline_exceeded() {
         return false;
     }
-    if memories_match_for_pointer_load_under_assumptions(before, after, pointer, assumptions) {
+    if !small_snapshot_pair
+        && memories_match_for_pointer_load_under_assumptions(before, after, pointer, assumptions)
+    {
         return true;
     }
     // Predicate framing is deliberately bounded: use exact certified writes
@@ -507,7 +534,7 @@ thread_local! {
 /// Budget for one `Store`-hop distinctness check inside the cell-source
 /// walk, isolated from the enclosing query's fuel. Small on purpose: the
 /// certificates these hops need name their ranges close to the surface.
-const MEMORY_DAG_HOP_DISTINCTNESS_FUEL: usize = 8_000;
+const MEMORY_DAG_HOP_DISTINCTNESS_FUEL: usize = 128;
 
 // The extended DAG bridging (crossing block-declaration and cell-forgetting
 // edges, range-certificate store hops, stored-value pinning, and the
@@ -5225,6 +5252,9 @@ fn resource_contexts_definitionally_equal(
     right: &ResourceContext,
     assumptions: &Assumptions,
 ) -> bool {
+    if left == right {
+        return true;
+    }
     let relation_facts = [(left, left_memory), (right, right_memory)]
         .into_iter()
         .flat_map(|(resources, memory)| {
@@ -5280,7 +5310,7 @@ fn resource_contexts_definitionally_equal(
                 .is_some()
             })
         };
-    if left == right || directly_equal(left, right) {
+    if directly_equal(left, right) {
         return true;
     }
     if left_memory == right_memory
@@ -6474,6 +6504,56 @@ pub fn c_function_outcomes_definitionally_equal(
     match (left, right) {
         (
             CFunctionOutcome::Return {
+                value: _,
+                state: left_state,
+            },
+            CFunctionOutcome::Return {
+                value: _,
+                state: right_state,
+            },
+        ) => {
+            if !c_function_outcomes_program_state_definitionally_equal(left, right, assumptions) {
+                return false;
+            }
+            resource_context_definitionally_contains(
+                left_state.resources(),
+                right_state.resources(),
+                function.composite_resource_definitions(),
+                left_state.memory(),
+                assumptions,
+            ) || resource_context_definitionally_contains(
+                right_state.resources(),
+                left_state.resources(),
+                function.composite_resource_definitions(),
+                left_state.memory(),
+                assumptions,
+            ) || resource_contexts_definitionally_equal(
+                function,
+                left_state.memory(),
+                left_state.resources(),
+                right_state.memory(),
+                right_state.resources(),
+                assumptions,
+            )
+        }
+        _ => left == right,
+    }
+}
+
+/// Compares the observable program portion of two outcomes, leaving ghost
+/// resource representation to a separate kernel certificate.
+///
+/// Proof replay uses this only to select the independently reproduced path;
+/// [`certify_c_function_execution_path_resource_representation`] remains the
+/// authority that accepts the selected path's resources.
+pub fn c_function_outcomes_program_state_definitionally_equal(
+    left: &CFunctionOutcome,
+    right: &CFunctionOutcome,
+    assumptions: &Assumptions,
+) -> bool {
+    match (left, right) {
+        (
+            CFunctionOutcome::Return {
                 value: left_value,
                 state: left_state,
             },
@@ -6482,34 +6562,12 @@ pub fn c_function_outcomes_definitionally_equal(
                 state: right_state,
             },
         ) => {
-            let values =
-                c_values_proven_equal_for_memory_resolution(left_value, right_value, assumptions);
-            let memories = c_memories_definitionally_equal(
-                left_state.memory(),
-                right_state.memory(),
-                assumptions,
-            );
-            let resources = resource_contexts_definitionally_equal(
-                function,
-                left_state.memory(),
-                left_state.resources(),
-                right_state.memory(),
-                right_state.resources(),
-                assumptions,
-            ) || resource_context_definitionally_contains(
-                left_state.resources(),
-                right_state.resources(),
-                function.composite_resource_definitions(),
-                left_state.memory(),
-                assumptions,
-            ) || resource_context_definitionally_contains(
-                right_state.resources(),
-                left_state.resources(),
-                function.composite_resource_definitions(),
-                left_state.memory(),
-                assumptions,
-            );
-            values && memories && resources
+            c_values_proven_equal_for_memory_resolution(left_value, right_value, assumptions)
+                && c_memories_definitionally_equal(
+                    left_state.memory(),
+                    right_state.memory(),
+                    assumptions,
+                )
         }
         _ => left == right,
     }
@@ -6528,14 +6586,64 @@ pub fn c_function_outcomes_equal_by_store_provenance(
     right_facts: &[ExecutionPureFact],
     assumptions: &Assumptions,
 ) -> bool {
+    if !c_function_outcomes_program_state_equal_by_store_provenance(
+        left,
+        left_facts,
+        right,
+        right_facts,
+        assumptions,
+    ) {
+        return false;
+    }
     let (
         CFunctionOutcome::Return {
-            value: left_value,
-            state: left_state,
+            state: left_state, ..
         },
         CFunctionOutcome::Return {
-            value: right_value,
-            state: right_state,
+            state: right_state, ..
+        },
+    ) = (left, right)
+    else {
+        return false;
+    };
+    resource_context_definitionally_contains(
+        left_state.resources(),
+        right_state.resources(),
+        function.composite_resource_definitions(),
+        left_state.memory(),
+        assumptions,
+    ) || resource_context_definitionally_contains(
+        right_state.resources(),
+        left_state.resources(),
+        function.composite_resource_definitions(),
+        left_state.memory(),
+        assumptions,
+    ) || resource_contexts_definitionally_equal(
+        function,
+        left_state.memory(),
+        left_state.resources(),
+        right_state.memory(),
+        right_state.resources(),
+        assumptions,
+    )
+}
+
+/// Compares the observable program state of two return paths by their
+/// independently certified store sequences. Resource representation remains
+/// the responsibility of the separate resource certificate.
+pub fn c_function_outcomes_program_state_equal_by_store_provenance(
+    left: &CFunctionOutcome,
+    left_facts: &[ExecutionPureFact],
+    right: &CFunctionOutcome,
+    right_facts: &[ExecutionPureFact],
+    assumptions: &Assumptions,
+) -> bool {
+    let (
+        CFunctionOutcome::Return {
+            value: left_value, ..
+        },
+        CFunctionOutcome::Return {
+            value: right_value, ..
         },
     ) = (left, right)
     else {
@@ -6558,26 +6666,6 @@ pub fn c_function_outcomes_equal_by_store_provenance(
     });
     chains_equal
         && c_values_proven_equal_for_memory_resolution(left_value, right_value, assumptions)
-        && (resource_contexts_definitionally_equal(
-            function,
-            left_state.memory(),
-            left_state.resources(),
-            right_state.memory(),
-            right_state.resources(),
-            assumptions,
-        ) || resource_context_definitionally_contains(
-            left_state.resources(),
-            right_state.resources(),
-            function.composite_resource_definitions(),
-            left_state.memory(),
-            assumptions,
-        ) || resource_context_definitionally_contains(
-            right_state.resources(),
-            left_state.resources(),
-            function.composite_resource_definitions(),
-            left_state.memory(),
-            assumptions,
-        ))
 }
 
 fn c_memories_definitionally_equal(
@@ -6854,8 +6942,17 @@ fn prepare_function_claim_path(
         return Err("the entry resource context is not observable".to_string());
     };
     entry_state.resources = entry_resources.clone();
-    let assumptions = assumptions_with_propositions(&assumptions, &resource_facts);
     let execution_facts = path.execution_facts();
+    let assumptions = assumptions_with_propositions(&assumptions, &resource_facts);
+    // A verification condition may be local to one symbolic path. Branch
+    // guards and independently certified callee postconditions are evidence
+    // on that path, just as assumable definedness obligations are; omitting
+    // them here incorrectly rejects safe guarded calls after certification.
+    // Non-assumable obligations are deliberately excluded by
+    // `assumptions_with_path_context`, so this cannot prove a verification
+    // condition by assuming the condition itself.
+    let assumptions =
+        assumptions_with_path_context(&assumptions, &execution_facts, path.obligations());
     let effect_facts = path.effect_facts.clone();
     if matches!(outcome, CFunctionOutcome::VerificationDiverges) {
         if let Some(obligation) = path.obligations().iter().find(|obligation| {
@@ -7071,9 +7168,21 @@ fn function_claim_holds_on_prepared_path(
             }
             let mut effect_memory = caller_state.memory().clone();
             let mut seen_transitions = Vec::<(CMemory, CMemory)>::new();
-            let is_function_fresh_heap_pointer = |pointer: &Pointer| {
-                matches!(pointer.block, PointerBlock::Heap(_))
-                    && entry_state.memory().live_heap_block_size(pointer).is_none()
+            let is_function_fresh_heap_pointer = |pointer: &Pointer, current: &CMemory| {
+                let matches_allocation = |memory: &CMemory| {
+                    memory.heap.live_allocations.keys().any(|base| {
+                        base == pointer
+                            || super::assumptions::pointers_equal_ignoring_memories(base, pointer)
+                            || pointers_proven_equal_for_memory_resolution(
+                                base,
+                                pointer,
+                                assumptions,
+                            )
+                    })
+                };
+                !matches_allocation(entry_state.memory())
+                    && (matches!(pointer.block, PointerBlock::Heap(_))
+                        || matches_allocation(current))
             };
             let effects_are_bounded = effect_facts.iter().all(|fact| match fact.proposition() {
                 Proposition::CMemoryMutatesOnly {
@@ -7113,7 +7222,7 @@ fn function_claim_holds_on_prepared_path(
                         .iter()
                         .filter(|pointer| !pointer.block.starts_with("local:"))
                         .all(|pointer| {
-                            is_function_fresh_heap_pointer(pointer)
+                            is_function_fresh_heap_pointer(pointer, before)
                                 || mutable_ranges.iter().any(|range| {
                                     assumptions.pointer_access_in_range(
                                         pointer,
@@ -7159,7 +7268,7 @@ fn function_claim_holds_on_prepared_path(
                         seen_transitions.push((before.clone(), after.clone()));
                     }
                     nested_ranges.iter().all(|nested| {
-                        is_function_fresh_heap_pointer(nested.base())
+                        is_function_fresh_heap_pointer(nested.base(), before)
                             || mutable_ranges
                                 .iter()
                                 .any(|allowed| memory_range_covers(allowed, nested, assumptions))
@@ -7211,6 +7320,11 @@ fn function_claim_holds_on_prepared_path(
                     &effect_memory,
                     return_state.memory(),
                     assumptions,
+                ) || c_effect_memory_advances_over_internal_heap_state(
+                    &effect_memory,
+                    return_state.memory(),
+                    entry_state.memory(),
+                    assumptions,
                 )
             });
             effects_are_bounded && endpoint_matches
@@ -7218,19 +7332,31 @@ fn function_claim_holds_on_prepared_path(
     }
 }
 
-fn c_effect_memories_definitionally_equal(
+pub(super) fn c_effect_memories_definitionally_equal(
     left: &CMemory,
     right: &CMemory,
     assumptions: &Assumptions,
 ) -> bool {
-    left.heap == right.heap && c_memories_definitionally_equal(left, right, assumptions)
+    let without_locals = |memory: &CMemory| {
+        let mut external = memory.clone();
+        external
+            .blocks
+            .retain(|block, _| !block.starts_with("local:"));
+        external
+            .cells
+            .retain(|pointer, _| !pointer.block.starts_with("local:"));
+        external
+    };
+    let left = without_locals(left);
+    let right = without_locals(right);
+    left.heap == right.heap && c_memories_definitionally_equal(&left, &right, assumptions)
 }
 
 /// Accepts internal heap bookkeeping between externally visible effects:
 /// newly allocated trusted blocks and the registration of an already-owned
 /// symbolic allocation before direct `free`. Removing only those additions
 /// leaves a memory that must still match the preceding endpoint exactly.
-fn c_effect_memory_advances_over_internal_heap_state(
+pub(super) fn c_effect_memory_advances_over_internal_heap_state(
     before: &CMemory,
     after: &CMemory,
     function_entry: &CMemory,

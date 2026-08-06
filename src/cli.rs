@@ -149,7 +149,7 @@ fn duration_from_optional_os(
 /// These match `click profile`'s default thresholds.
 pub const DEFAULT_SIMPLE_TACTIC_LIMIT: Duration = Duration::from_millis(500);
 pub const DEFAULT_SMART_TACTIC_LIMIT: Duration = Duration::from_secs(2);
-pub const DEFAULT_CONTROL_TACTIC_LIMIT: Duration = Duration::from_secs(2);
+pub const DEFAULT_CONTROL_TACTIC_LIMIT: Duration = Duration::from_secs(6);
 pub const DEFAULT_EXPANSION_TIME_LIMIT: Duration = Duration::from_secs(60);
 
 /// Disables tactic budget enforcement in the fixture harnesses, for A/B runs

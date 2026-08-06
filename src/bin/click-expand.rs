@@ -44,7 +44,7 @@ pub(crate) fn entry_with(arguments: impl IntoIterator<Item = String>) -> Result<
         return Ok(());
     }
     let arguments = parse_arguments(raw)?;
-    let expanded = click::instrumentation::with_deadline(arguments.time_limit, || run(&arguments))?;
+    let expanded = run(&arguments)?;
     if arguments.in_place {
         atomic_replace(&arguments.click_path, expanded.as_bytes())
     } else if let Some(output) = &arguments.output {
@@ -121,11 +121,14 @@ fn run(arguments: &Arguments) -> Result<String, String> {
     })?;
     let owned_sources = read_verifying_sources(&arguments.click_path, &click_source)?;
     let sources = source_refs(&owned_sources);
-    let claim = selected_claim(&click_source, &sources, arguments.line, arguments.column)?;
-    let expanded =
-        expand_c0_tactic_source_at(&click_source, &sources, arguments.line, arguments.column)
-            .map_err(|error| error.message().to_string())?;
-    verify_expansion(&expanded, &sources, &claim)?;
+    let (claim, expanded) = generate_expansion(arguments.time_limit, || {
+        let claim = selected_claim(&click_source, &sources, arguments.line, arguments.column)?;
+        let expanded =
+            expand_c0_tactic_source_at(&click_source, &sources, arguments.line, arguments.column)
+                .map_err(|error| error.message().to_string())?;
+        Ok((claim, expanded))
+    })?;
+    verify_expansion(&expanded, &sources, &claim, arguments.time_limit)?;
     Ok(expanded)
 }
 
@@ -149,11 +152,42 @@ fn run_mdtest(arguments: &Arguments) -> Result<String, String> {
     })?;
     let click_line = mdtest.click_line(arguments.line)?;
     let sources = source_refs(&mdtest.c_sources);
-    let claim = selected_claim(click_source, &sources, click_line, arguments.column)?;
-    let expanded = expand_c0_tactic_source_at(click_source, &sources, click_line, arguments.column)
-        .map_err(|error| error.message().to_string())?;
-    verify_expansion(&expanded, &sources, &claim)?;
+    let (claim, expanded) = generate_expansion(arguments.time_limit, || {
+        let claim = selected_claim(click_source, &sources, click_line, arguments.column)?;
+        let expanded =
+            expand_c0_tactic_source_at(click_source, &sources, click_line, arguments.column)
+                .map_err(|error| error.message().to_string())?;
+        Ok((claim, expanded))
+    })?;
+    verify_expansion(&expanded, &sources, &claim, arguments.time_limit)?;
     mdtest.replace_click_source(&markdown, &expanded)
+}
+
+fn generate_expansion<R>(
+    time_limit: Duration,
+    operation: impl FnOnce() -> Result<R, String>,
+) -> Result<R, String> {
+    click::instrumentation::with_deadline(time_limit, || {
+        click::instrumentation::with_tactic_limits(
+            click::instrumentation::TacticLimits {
+                smart: time_limit,
+                ..click::instrumentation::TacticLimits::default()
+            },
+            || {
+                let result = operation()?;
+                check_expansion_deadline("generating the selected tactic certificate")?;
+                Ok(result)
+            },
+        )
+    })
+}
+
+fn check_expansion_deadline(stage: &str) -> Result<(), String> {
+    if click::instrumentation::deadline_exceeded() {
+        Err(format!("expansion time limit exceeded while {stage}"))
+    } else {
+        Ok(())
+    }
 }
 
 fn selected_claim(
@@ -178,12 +212,19 @@ fn selected_claim(
         .ok_or_else(|| "source location does not select a smart tactic".to_string())
 }
 
-fn verify_expansion(expanded: &str, sources: &[(&str, &str)], claim: &str) -> Result<(), String> {
-    let position = c0_tactic_source_position(expanded, sources, claim, 0)
-        .map_err(|error| error.message().to_string())?;
-    verify_c0_sources_at(expanded, sources, position.line, position.column)
-        .map(|_| ())
-        .map_err(|error| format!("expanded proof did not verify: {}", error.message()))
+fn verify_expansion(
+    expanded: &str,
+    sources: &[(&str, &str)],
+    claim: &str,
+    time_limit: Duration,
+) -> Result<(), String> {
+    click::instrumentation::with_deadline(time_limit, || {
+        let position = c0_tactic_source_position(expanded, sources, claim, 0)
+            .map_err(|error| error.message().to_string())?;
+        verify_c0_sources_at(expanded, sources, position.line, position.column)
+            .map(|_| ())
+            .map_err(|error| format!("expanded proof did not verify: {}", error.message()))
+    })
 }
 
 static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
@@ -242,6 +283,19 @@ mod tests {
         let default = parse_arguments(["example.click:12:5".to_string()])
             .expect("the default expansion should be bounded");
         assert_eq!(default.time_limit, DEFAULT_EXPANSION_TIME_LIMIT);
+    }
+
+    #[test]
+    fn reports_an_expired_expansion_deadline_directly() {
+        let error = click::instrumentation::with_deadline(Duration::ZERO, || {
+            check_expansion_deadline("replaying a generated certificate")
+        })
+        .expect_err("an expired expansion deadline should fail directly");
+
+        assert_eq!(
+            error,
+            "expansion time limit exceeded while replaying a generated certificate"
+        );
     }
 
     #[test]

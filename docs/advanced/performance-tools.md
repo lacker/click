@@ -85,7 +85,9 @@ Ordinary verification stops a tactic when its class deadline expires, measured
 as **exclusive per-thread CPU time** on Unix: scheduler contention is not
 charged, and a container does not inherit its children's cost. Platforms
 without a thread CPU clock fall back to exclusive wall-clock time. The defaults
-are SIMPLE 500 ms and SMART/CONTROL 2 s. Kernel expression,
+are SIMPLE 500 ms, SMART 2 s, and CONTROL 6 s. Profiling still flags CONTROL
+bookkeeping at 2 s so it remains visible without making a non-expandable
+container share the hard cutoff for smart search. Kernel expression,
 statement, call, loop, and path checkpoints observe the active deadline, and
 the failure names the class, claim, statement, source tactic, elapsed time, and
 limit. `CLICK_DISABLE_TACTIC_BUDGETS=1`

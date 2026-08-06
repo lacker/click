@@ -5003,12 +5003,34 @@ pub(super) fn merge_obligations(
     let mut obligations = left.to_vec();
     for obligation in right {
         if obligation.is_assumable() {
-            add_proof_obligation_with_context(
-                &mut obligations,
-                assumptions,
-                obligation.proposition().clone(),
-                obligation.context(),
-            )?;
+            // `right` was produced while executing under the complete left
+            // path context. Preserve its path guard without asking the
+            // general prover to reconsider it against an older memory
+            // snapshot. Exact and intrinsic contradictions still reject the
+            // merge; non-exact cross-snapshot reasoning cannot erase a path
+            // that the executor just certified as possible.
+            if assumptions.proves_exact(obligation.proposition())
+                || obligations
+                    .iter()
+                    .any(|existing| existing.proposition() == obligation.proposition())
+            {
+                continue;
+            }
+            if let Proposition::ConditionIs(condition, value) = obligation.proposition()
+                && (assumptions.proves_exact(&Proposition::ConditionIs(condition.clone(), !*value))
+                    || Assumptions::decide_intrinsically(condition)
+                        .is_some_and(|known| known != *value)
+                    || obligations.iter().any(|existing| {
+                        matches!(
+                            existing.proposition(),
+                            Proposition::ConditionIs(existing_condition, existing_value)
+                                if existing_condition == condition && existing_value != value
+                        )
+                    }))
+            {
+                return None;
+            }
+            obligations.push(obligation.clone());
         } else {
             // A required obligation was already tested against the path
             // context that created it.  Merging path fragments must preserve
@@ -5073,7 +5095,15 @@ pub(super) fn merge_execution_pure_facts_and_obligations(
     assumptions: &Assumptions,
 ) -> Option<(Vec<ExecutionPureFact>, Vec<ProofObligation>)> {
     let facts = merge_facts(left_facts, right_facts, assumptions)?;
-    let obligations = merge_obligations(left_obligations, right_obligations, assumptions)?;
+    // The right fragment was executed under the left fragment's path
+    // context. Recheck its assumable obligations against that same context,
+    // not against the older base assumptions. In particular, a verified call
+    // can change a field that an entry-state branch constrained; replaying a
+    // post-call load guard against only the entry snapshot can incorrectly
+    // discard a valid successor path.
+    let prefix_assumptions =
+        assumptions_with_path_context(assumptions, left_facts, left_obligations);
+    let obligations = merge_obligations(left_obligations, right_obligations, &prefix_assumptions)?;
     Some((facts, obligations))
 }
 

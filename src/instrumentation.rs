@@ -78,7 +78,7 @@ impl Default for TacticLimits {
         Self {
             simple: Duration::from_millis(500),
             smart: Duration::from_secs(2),
-            control: Duration::from_secs(2),
+            control: Duration::from_secs(6),
         }
     }
 }

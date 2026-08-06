@@ -6,10 +6,10 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use click::cli::{
-    DEFAULT_CONTROL_TACTIC_LIMIT, DEFAULT_EXPANSION_TIME_LIMIT, DEFAULT_SIMPLE_TACTIC_LIMIT,
-    DEFAULT_SMART_TACTIC_LIMIT, MdTestExpectation, files_with_extension, find_mdtests,
-    find_projects, format_duration, format_fractional_duration, looks_like_mdtest, parse_duration,
-    read_mdtest, read_verifying_sources, shell_quote, source_refs,
+    DEFAULT_EXPANSION_TIME_LIMIT, DEFAULT_SIMPLE_TACTIC_LIMIT, DEFAULT_SMART_TACTIC_LIMIT,
+    MdTestExpectation, files_with_extension, find_mdtests, find_projects, format_duration,
+    format_fractional_duration, looks_like_mdtest, parse_duration, read_mdtest,
+    read_verifying_sources, shell_quote, source_refs,
 };
 use click::instrumentation::{self, ActiveVerificationWork, TacticEvent, VerificationEvent};
 use click::lang::click::{
@@ -76,7 +76,7 @@ impl Default for Thresholds {
         Self {
             smart: DEFAULT_SMART_TACTIC_LIMIT,
             simple: DEFAULT_SIMPLE_TACTIC_LIMIT,
-            control: DEFAULT_CONTROL_TACTIC_LIMIT,
+            control: Duration::from_secs(2),
         }
     }
 }
@@ -2953,7 +2953,7 @@ click timing: widget 0.5s
                 thresholds: Thresholds {
                     smart: Duration::from_secs(3),
                     simple: Duration::from_millis(250),
-                    control: DEFAULT_CONTROL_TACTIC_LIMIT,
+                    control: Duration::from_secs(2),
                 },
                 time_limit: Duration::from_secs(120),
                 top_attribution_rows: DEFAULT_TOP_ATTRIBUTION_ROWS,

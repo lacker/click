@@ -128,6 +128,30 @@ int32 ring_buffer_pipeline(
     ensures owner->data[0] == replacement;
 } by {
     execute();
-    frame();
+    frame() using {
+        at(statement(4).entry, separate(memory(owner->head), memory(owner->tail)));
+        at(statement(4).entry, separate(memory(owner->head), memory(owner->data)));
+        at(statement(4).entry, separate(memory(owner->tail), memory(owner->data)));
+        at(statement(4).entry, separate(memory(owner->head), owned_ring_storage(owner->data)));
+        at(statement(4).entry, separate(memory(owner->tail), owned_ring_storage(owner->data)));
+        at(statement(4).entry, separate(memory(owner->data), owned_ring_storage(owner->data)));
+        at(statement(4).entry, loadable(old(owner->head)));
+        at(statement(4).entry, loadable(old(owner->tail)));
+        at(statement(4).entry, loadable(old(owner->data)));
+        at(statement(4).entry, 2) <= at(statement(4).entry, owner->head);
+        at(statement(4).entry, owner->head) < at(statement(4).entry, 4);
+        at(statement(2).entry, owner->tail) == at(statement(2).entry, 4);
+        at(statement(4).entry, separate(memory(object(owner)), memory(owner->data[0..4])));
+        at(statement(4).entry, pushed) == at(statement(4).entry, replacement);
+        at(statement(4).entry, owner->data[0]) == at(statement(4).entry, replacement);
+        at(statement(3).entry, owner->tail) == at(statement(3).entry, 1);
+        at(statement(4).entry, ignored) == at(statement(4).entry, owner->data[0]);
+        at(statement(4).entry, owner->head) == at(statement(4).entry, owner->head);
+        contains(linear_ring(owner), memory(owner->head));
+        contains(linear_ring(owner), memory(owner->tail));
+        contains(linear_ring(owner), memory(owner->data));
+        contains(linear_ring(owner), owned_ring_storage(owner->data));
+        owner->data == owner->data;
+    }
     simp();
 }

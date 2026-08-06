@@ -684,9 +684,24 @@ pub(super) fn unfold_available_predicate_facts(
         return Ok(available_pure_facts.to_vec());
     }
 
+    // Proof contexts can contain large execution propositions whose trees do
+    // not mention a Click predicate at all. Rebuilding every one of those
+    // trees for each `unfold` made this otherwise structural tactic scale with
+    // the entire execution history. Predicate applications only occur at the
+    // proposition level, so select the small relevant subset first.
+    let to_unfold = available_pure_facts
+        .iter()
+        .filter(|proposition| {
+            proposition_contains_named_predicate(proposition, unfolded_predicates)
+        })
+        .collect::<Vec<_>>();
+    if to_unfold.is_empty() {
+        return Ok(available_pure_facts.to_vec());
+    }
+
     let assumptions = assumptions_from_propositions(available_pure_facts);
     let mut propositions = available_pure_facts.to_vec();
-    for proposition in available_pure_facts {
+    for proposition in to_unfold {
         let unfolded = unfold_predicates_in_proposition(
             predicate_environment,
             click_function_environment,
@@ -699,6 +714,22 @@ pub(super) fn unfold_available_predicate_facts(
         }
     }
     Ok(propositions)
+}
+
+fn proposition_contains_named_predicate(proposition: &Proposition, names: &[String]) -> bool {
+    match proposition {
+        Proposition::Predicate { name, .. } => names.iter().any(|candidate| candidate == name),
+        Proposition::And(left, right)
+        | Proposition::Or(left, right)
+        | Proposition::Implies(left, right) => {
+            proposition_contains_named_predicate(left, names)
+                || proposition_contains_named_predicate(right, names)
+        }
+        Proposition::Not(body)
+        | Proposition::ForAll { body, .. }
+        | Proposition::Exists { body, .. } => proposition_contains_named_predicate(body, names),
+        _ => false,
+    }
 }
 
 pub(super) fn unfold_predicates_in_proposition(
@@ -2423,6 +2454,28 @@ fn normalize_direct_atomic_pointer_offset_loads(term: &PointerOffsetTerm) -> Poi
 }
 
 fn normalize_direct_atomic_memory_load(term: &Bitvector32Term) -> Bitvector32Term {
+    thread_local! {
+        static CACHE: std::cell::RefCell<
+            std::collections::HashMap<Bitvector32Term, Bitvector32Term>,
+        > = std::cell::RefCell::new(std::collections::HashMap::new());
+    }
+    const CACHE_LIMIT: usize = 200_000;
+
+    if let Some(normalized) = CACHE.with(|cache| cache.borrow().get(term).cloned()) {
+        return normalized;
+    }
+    let normalized = normalize_direct_atomic_memory_load_uncached(term);
+    CACHE.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        if cache.len() >= CACHE_LIMIT {
+            cache.clear();
+        }
+        cache.insert(term.clone(), normalized.clone());
+    });
+    normalized
+}
+
+fn normalize_direct_atomic_memory_load_uncached(term: &Bitvector32Term) -> Bitvector32Term {
     let binary = |left: &Bitvector32Term, right: &Bitvector32Term| {
         (
             Box::new(normalize_direct_atomic_memory_load(left)),
@@ -3813,7 +3866,9 @@ pub(super) fn pointer_element_index_from_base(
         return None;
     }
 
-    if pointer_offsets_equal_for_effect(&pointer.offset, &base.offset, assumptions) {
+    if pointer.offset == base.offset
+        || pointer_offsets_equal_for_effect(&pointer.offset, &base.offset, assumptions)
+    {
         return Some(Bitvector32Term::Constant(0));
     }
 
@@ -3823,12 +3878,14 @@ pub(super) fn pointer_element_index_from_base(
 
     match &pointer.offset {
         PointerOffsetTerm::Add(left, right)
-            if pointer_offsets_equal_for_effect(left, &base.offset, assumptions) =>
+            if left.as_ref() == &base.offset
+                || pointer_offsets_equal_for_effect(left, &base.offset, assumptions) =>
         {
             int32_element_index_from_pointer_offset(right)
         }
         PointerOffsetTerm::Add(left, right)
-            if pointer_offsets_equal_for_effect(right, &base.offset, assumptions) =>
+            if right.as_ref() == &base.offset
+                || pointer_offsets_equal_for_effect(right, &base.offset, assumptions) =>
         {
             int32_element_index_from_pointer_offset(left)
         }

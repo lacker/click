@@ -41,22 +41,27 @@ so folding either resource tests dependent composite-resource definitions.
 - `vector_replace_if` calls verified vector operations on both sides of a
   branch, then exports a common resource-and-fact interface with `reach`.
 - `vector_push_first` transitions an empty vector to a nonempty vector.
-- The focused sibling project `examples/vector-push` verifies a general
-  in-capacity append without adding another proof unit to this larger sidecar.
+- `vector_push` appends at any in-capacity position, increments the live
+  length, and preserves the old live prefix while retaining allocation
+  ownership.
 - `vector_copy` copies an arbitrary live prefix between separate owned and
   viewed capacity ranges and exposes pointwise value preservation.
 - `vector_grow` performs ordinary malloc-copy-install-free growth. Allocation
   failure leaves the vector unchanged; success adds one capacity slot,
   preserves every live element and the length, installs the fresh allocation,
   and retires the old allocation.
+- `allocated_vector_push` composes those two helpers: it appends immediately
+  when capacity remains, or grows first when the vector is full. Allocation
+  failure returns `0` without changing the vector; either successful path
+  returns `1`, adds exactly one element, and preserves the old prefix.
 - `vector_clear` transitions a nonempty vector back to an empty vector.
 - `vector_pipeline` composes the mutating and indexed operations through their
   verified contracts. A named checkpoint exposes the vector view needed by the
   final getter; each call advances as one step without unfolding its body.
 
 The integration test in `tests/examples.rs` verifies the operations in
-`vector.click`, including both allocation outcomes of growth. The general-push
-proof is independently checked in `examples/vector-push`.
+`vector.click`, including spare-capacity append and both allocation outcomes
+of grow-then-append.
 
 ## Proof Style
 
@@ -73,7 +78,8 @@ after profiling.
 `allocated_vector` is the lifetime-owning state used by growth. Growth uses the
 smallest useful policy, `new_cap = old_cap + 1`, to keep this project focused on
 allocation/resource composition rather than capacity-policy arithmetic. It is
-not a geometric-growth performance example.
+not a geometric-growth performance example. `allocated_vector_push` requires
+`cap <= 536870910`, matching the helper's checked one-slot growth boundary.
 
 Functions with several effects, produced resources, and pure postconditions
 use one trailing grouped proof. Click executes each function body once and

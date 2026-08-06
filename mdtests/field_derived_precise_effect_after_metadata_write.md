@@ -122,12 +122,16 @@ int32 buffer_push(struct buffer* owner, int32 value) {
     }
     have owner->data == old(owner->data) by {
         derive using {
-            at(statement(4).entry, (index + 1)) <
-                at(statement(4).entry, owner->cap);
-            separate(
-                memory(owner[0..4]),
-                memory(owner->data[0..owner->cap])
-            );
+            separate(memory(owner->len), memory(owner->cap));
+            separate(memory(owner->len), memory(owner->data));
+            separate(memory(owner->cap), memory(owner->data));
+            contains(owned_buffer(owner), memory(owner->len));
+            contains(owned_buffer(owner), memory(owner->cap));
+            contains(owned_buffer(owner), memory(owner->data));
+            0 <= owner->len;
+            owner->len < owner->cap;
+            separate(memory(owner[0..4]), memory(owner->data[0..owner->cap]));
+            owner->cap == old(owner->cap);
         }
     }
     fold(owned_buffer(owner));
@@ -160,7 +164,18 @@ int32 buffer_push_preserves_first(
     have at(statement(1).entry, data[0]) == old(data[0]) by {
         normalize();
     }
-    have data[0] == at(statement(1).entry, data[0]) by simp;
+    have data[0] == at(statement(1).entry, data[0]) by {
+        derive using {
+            at(statement(1).entry, (owner->len + 1)) < at(statement(1).entry, owner->cap);
+            at(statement(2).entry, loadable(old(owner->len)));
+            at(statement(2).entry, loadable(old(owner->cap)));
+            at(statement(2).entry, loadable(old(owner->data)));
+            at(statement(2).entry, loadable(old(owner->data[0..owner->cap])));
+            at(statement(1).entry, 0) <= at(statement(1).entry, owner->len);
+            at(statement(1).entry, owner->len) < at(statement(1).entry, owner->cap);
+            0 <= owner->len;
+        }
+    }
     have data[0] == old(data[0]) by simp;
     assumption();
     assumption();

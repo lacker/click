@@ -3,6 +3,24 @@ use super::*;
 use crate::kernel::int32;
 
 #[test]
+fn exact_struct_field_offsets_remain_resolvable_after_deadline() {
+    let base = Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::Int32Scaled {
+            value: Box::new(Bitvector32Term::Variable(Variable(100000))),
+            byte_width: 4,
+        },
+    };
+    let field = base.offset_by_bytes(4);
+
+    let index = crate::instrumentation::with_deadline(std::time::Duration::ZERO, || {
+        super::checking::pointer_element_index_from_base(&field, &base, &Assumptions::new())
+    });
+
+    assert_eq!(index, Some(Bitvector32Term::Constant(1)));
+}
+
+#[test]
 fn verifier_diagnostics_are_bounded_deterministically_at_utf8_boundaries() {
     use std::cell::Cell;
 
@@ -783,6 +801,30 @@ fn proof_source_printing_preserves_proposition_precedence() {
             premises: Vec::new(),
         })]);
     assert_eq!(context_free, "normalize();");
+}
+
+#[test]
+fn empty_derive_cannot_hide_an_ambient_premise() {
+    let target = Proposition::ConditionIs(
+        ConditionTerm::Bitvector32Equal(
+            Box::new(Bitvector32Term::Variable(Variable(42))),
+            Box::new(Bitvector32Term::Constant(0)),
+        ),
+        true,
+    );
+    let tactic = ProofTactic::Derive(ProofDerive {
+        premises: Vec::new(),
+    });
+
+    let error = check_atomic_derivation_goal(
+        &tactic,
+        &target,
+        Vec::new(),
+        &target,
+        std::slice::from_ref(&target),
+    )
+    .expect_err("a contextual derivation must retain an explicit premise");
+    assert!(error.contains("at least one explicit premise"), "{error}");
 }
 
 #[test]
@@ -4423,6 +4465,48 @@ fn selected_post_execution_smart_have_uses_its_path_certificate() {
 }
 
 #[test]
+fn selected_post_execution_capture_ignores_nested_certificate_indices() {
+    let c_source = r#"
+            int32 set(int32* data, int32 value) {
+                data[0] = value;
+                return value;
+            }
+        "#;
+    let click_source = r#"
+            verifying "set.c";
+
+            int32 set(int32 data[], int32 value) {
+                owns data[0..1];
+                mutable data[0..1];
+                ensures result == value;
+                ensures data[0] == value;
+            } by {
+                execute();
+                have value == value by { normalize(); }
+                have result == value by { normalize(); }
+                have data[0] == value by simp;
+                frame();
+                simp();
+            }
+        "#;
+    let have_offset = click_source
+        .find("have data[0]")
+        .expect("proof should contain the selected have");
+    let position = expansion::position_at_offset(click_source, have_offset);
+
+    let expanded = expand_c0_tactic_source_at(
+        click_source,
+        &[("set.c", c_source)],
+        position.line,
+        position.column,
+    )
+    .expect("nested certificate replay must not leak later deferred tactics into the capture");
+    assert_eq!(expanded.matches("frame();").count(), 1, "{expanded}");
+    verify_c0_sources(&expanded, &[("set.c", c_source)])
+        .expect("the selected post-execution have expansion should replay");
+}
+
+#[test]
 fn post_execution_transport_observes_a_preceding_have() {
     let c_source = r#"
             int32 identity(int32 x) {
@@ -5774,8 +5858,12 @@ fn source_expander_replaces_and_replays_contextual_frame() {
     )
     .expect("contextual frame should expand");
     assert!(!expanded.contains("execute();"));
-    verify_c0_sources(&expanded, &[("write_in_bounds.c", c_source)])
-        .expect("expanded contextual frame should re-verify");
+    verify_c0_sources(&expanded, &[("write_in_bounds.c", c_source)]).unwrap_or_else(|error| {
+        panic!(
+            "expanded contextual frame should re-verify: {}\n{expanded}",
+            error.message()
+        )
+    });
 }
 
 #[test]

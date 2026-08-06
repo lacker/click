@@ -52,6 +52,8 @@ verifying "vector_clear.c";
 verifying "vector_pipeline.c";
 verifying "vector_copy.c";
 verifying "vector_grow.c";
+verifying "vector_push.c";
+verifying "allocated_vector_push.c";
 
 int32 vector_copy(
     int32 dst[],
@@ -199,6 +201,280 @@ int32 vector_grow(struct vector* owner) {
         have result == 0 implies owner->cap == old(owner->cap) by simp;
         have result == 0 implies owner->data == old(owner->data) by simp;
         have result == 1 implies owner->cap == old(owner->cap) + 1 by simp;
+        assumption();
+        assumption();
+        assumption();
+        assumption();
+        assumption();
+        assumption();
+        assumption();
+    }
+}
+
+int32 vector_push(struct vector* owner, int32 value) {
+    requires owner->len < owner->cap;
+    consumes allocated_vector(owner);
+    mutable owner->len, owner->data[owner->len..owner->len + 1];
+    produces allocated_vector(owner);
+    ensures result == old(owner->len) + 1;
+    ensures owner->len == old(owner->len) + 1;
+    ensures owner->data[old(owner->len)] == value;
+    ensures owner->cap == old(owner->cap);
+    ensures owner->data == old(owner->data);
+    ensures forall (k: int32) {
+        0 <= k and k < old(owner->len) implies
+            owner->data[k] == old(owner->data[k])
+    };
+} by {
+    unfold(allocated_vector(owner));
+    execute();
+    have 0 <= owner->len by simp;
+    have owner->len <= owner->cap by simp;
+    have 1 <= owner->cap by simp;
+    have owner->cap <= 536870911 by simp;
+    have loadable(owner->data[0..owner->len]) by {
+        derive using {
+            loadable(old(owner->data[0..owner->len]));
+        }
+    }
+    have separate(
+        memory(object(owner)),
+        memory(owner->data[0..owner->cap])
+    ) by {
+        assumption();
+    }
+    fold(allocated_vector(owner));
+    frame();
+    simp();
+}
+
+int32 allocated_vector_push(struct vector* owner, int32 value) {
+    requires owner->cap <= 536870910;
+    consumes allocated_vector(owner);
+    mutable owner->len, owner->cap, owner->data,
+        owner->data[0..owner->cap];
+    produces allocated_vector(owner);
+    ensures result == 0 or result == 1;
+    ensures result == 0 implies owner->len == old(owner->len);
+    ensures result == 0 implies owner->cap == old(owner->cap);
+    ensures result == 0 implies owner->data == old(owner->data);
+    ensures result == 1 implies owner->len == old(owner->len) + 1;
+    ensures result == 1 implies owner->data[old(owner->len)] == value;
+    ensures forall (k: int32) {
+        0 <= k and k < old(owner->len) implies
+            owner->data[k] == old(owner->data[k])
+    };
+    ensures old(owner->len) < old(owner->cap) implies result == 1;
+    ensures old(owner->len) < old(owner->cap) implies
+        owner->cap == old(owner->cap);
+    ensures old(owner->len) < old(owner->cap) implies
+        owner->data == old(owner->data);
+} by {
+    observe(allocated_vector(owner));
+    if owner->len == owner->cap {
+        step();
+        step();
+        step();
+        step();
+        if c(grown) == 0 {
+            step();
+            execute();
+            have not (old(owner->len) < old(owner->cap)) by {
+                derive using {
+                    at(function.entry, owner->len == owner->cap);
+                }
+            }
+            frame();
+            have result == 0 by simp;
+            have result == 0 or result == 1 by simp;
+            have result == 0 implies owner->len == old(owner->len) by simp;
+            have result == 0 implies owner->cap == old(owner->cap) by simp;
+            have result == 0 implies owner->data == old(owner->data) by simp;
+            have result == 1 implies owner->len == old(owner->len) + 1 by simp;
+            have result == 1 implies owner->data[old(owner->len)] == value by simp;
+            have forall (k: int32) {
+                0 <= k and k < old(owner->len) implies
+                    owner->data[k] == old(owner->data[k])
+            } by simp;
+            have old(owner->len) < old(owner->cap) implies result == 1 by {
+                derive using {
+                    not (old(owner->len) < old(owner->cap));
+                }
+            }
+            have old(owner->len) < old(owner->cap) implies
+                owner->cap == old(owner->cap) by {
+                derive using {
+                    not (old(owner->len) < old(owner->cap));
+                }
+            }
+            have old(owner->len) < old(owner->cap) implies
+                owner->data == old(owner->data) by {
+                derive using {
+                    not (old(owner->len) < old(owner->cap));
+                }
+            }
+            assumption();
+            assumption();
+            assumption();
+            assumption();
+            assumption();
+            assumption();
+            assumption();
+            assumption();
+            assumption();
+            assumption();
+            assumption();
+        } else {
+            step();
+            step();
+            unfold(allocated_vector(owner));
+            have c(grown) == 1 by simp;
+            have owner->len == old(owner->len) by simp;
+            have owner->cap == old(owner->cap) + 1 by simp;
+            have owner->len < owner->cap by {
+                derive using {
+                    at(function.entry, owner->len == owner->cap);
+                    owner->len == old(owner->len);
+                    owner->cap == old(owner->cap) + 1;
+                }
+            }
+            fold(allocated_vector(owner));
+            step() using {
+                owner->len < owner->cap;
+                loadable(owner->len);
+                loadable(owner->cap);
+                loadable(owner->data);
+            }
+            step() using {
+                owner->len < owner->cap;
+            }
+            simp();
+        }
+    } else {
+        step();
+        observe(allocated_vector(owner));
+        have owner->len <= owner->cap by {
+            assumption();
+        }
+        have not (owner->len == owner->cap) by {
+            assumption();
+        }
+        have owner->len < owner->cap by simp;
+        have old(owner->len) < old(owner->cap) by simp;
+        step() using {
+            owner->len < owner->cap;
+            loadable(owner->len);
+            loadable(owner->cap);
+            loadable(owner->data);
+        }
+        step() using {
+            owner->len < owner->cap;
+        }
+        step() using {
+            owner->len < owner->cap;
+        }
+        step() using {
+            owner->len < owner->cap;
+        }
+        step() using {
+            owner->len < owner->cap;
+        }
+        have 0 == 0 by {
+            normalize();
+        }
+        have at(statement(0).entry, 0) <=
+            at(statement(0).entry, owner->len) by {
+            assumption();
+        }
+        have at(statement(0).entry, (owner->len + 1)) <=
+            at(statement(0).entry, owner->cap) by {
+            derive using {
+                owner->len < owner->cap;
+            }
+        }
+        frame() using {
+            at(statement(8).entry, owner->len) < at(statement(8).entry, owner->cap);
+            not owner->len == owner->cap;
+            at(statement(1).entry, loadable(owner->len));
+            at(statement(1).entry, loadable(owner->cap));
+            at(statement(1).entry, loadable(owner->data));
+            at(statement(0).entry, separate(memory(owner->len), memory(owner->cap)));
+            at(statement(0).entry, separate(memory(owner->len), memory(owner->data)));
+            at(statement(0).entry, separate(memory(object(owner)), memory(owner->data[0..owner->cap])));
+            at(statement(0).entry, separate(memory(owner->cap), memory(owner->data)));
+            at(statement(0).entry, separate(memory(owner->len), allocation(owner->data, (owner->cap * 4))));
+            at(statement(0).entry, separate(memory(owner->cap), allocation(owner->data, (owner->cap * 4))));
+            at(statement(0).entry, separate(memory(owner->data), allocation(owner->data, (owner->cap * 4))));
+            at(statement(0).entry, separate(allocation(owner->data, (owner->cap * 4)), memory(owner->data[0..owner->cap])));
+            at(statement(0).entry, loadable(owner->len));
+            at(statement(0).entry, loadable(owner->cap));
+            at(statement(0).entry, loadable(owner->data));
+            at(statement(0).entry, loadable(owner->data[0..owner->cap]));
+            at(statement(0).entry, loadable(owner->data[0..owner->len]));
+            at(statement(0).entry, owner->cap) <= at(statement(0).entry, 536870910);
+            separate(memory(owner->len), memory(owner->data[0..owner->cap]));
+            separate(memory(owner->cap), memory(owner->data[0..owner->cap]));
+            separate(memory(owner->data), memory(owner->data[0..owner->cap]));
+            contains(allocated_vector(owner), memory(owner->len));
+            contains(allocated_vector(owner), memory(owner->cap));
+            contains(allocated_vector(owner), memory(owner->data));
+            contains(allocated_vector(owner), allocation(owner->data, (owner->cap * 4)));
+            contains(allocated_vector(owner), memory(owner->data[0..owner->cap]));
+            at(statement(0).entry, 0) <= at(statement(0).entry, owner->len);
+            at(statement(0).entry, owner->len) <= at(statement(0).entry, owner->cap);
+            at(statement(0).entry, 1) <= at(statement(0).entry, owner->cap);
+            at(statement(0).entry, owner->cap) <= at(statement(0).entry, 536870911);
+            0 == 0;
+            at(statement(0).entry, 0) <= at(statement(0).entry, owner->len);
+            at(statement(0).entry, (owner->len + 1)) <= at(statement(0).entry, owner->cap);
+        }
+        have result == 1 by simp;
+        have result == 0 or result == 1 by simp;
+        have result == 0 implies owner->len == old(owner->len) by simp;
+        have result == 0 implies owner->cap == old(owner->cap) by simp;
+        have result == 0 implies owner->data == old(owner->data) by simp;
+        have result == 1 implies owner->len == old(owner->len) + 1 by simp;
+        have owner->data[old(owner->len)] == value by {
+            assumption();
+        }
+        have result == 1 implies owner->data[old(owner->len)] == value by {
+            derive using {
+                owner->data[old(owner->len)] == value;
+            }
+        }
+        have forall (k: int32) {
+            0 <= k and k < old(owner->len) implies
+                owner->data[k] == old(owner->data[k])
+        } by {
+            assumption();
+        }
+        have owner->cap == old(owner->cap) by {
+            assumption();
+        }
+        have owner->data == old(owner->data) by {
+            assumption();
+        }
+        have old(owner->len) < old(owner->cap) implies result == 1 by {
+            derive using {
+                result == 1;
+            }
+        }
+        have old(owner->len) < old(owner->cap) implies
+            owner->cap == old(owner->cap) by {
+            derive using {
+                owner->cap == old(owner->cap);
+            }
+        }
+        have old(owner->len) < old(owner->cap) implies
+            owner->data == old(owner->data) by {
+            derive using {
+                owner->data == old(owner->data);
+            }
+        }
+        assumption();
+        assumption();
+        assumption();
+        assumption();
         assumption();
         assumption();
         assumption();

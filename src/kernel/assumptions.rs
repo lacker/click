@@ -337,6 +337,7 @@ thread_local! {
 // table cannot alias an old id to different contents.
 const ASSUMPTIONS_MEMO_ID_LIMIT: usize = 20_000;
 const DECIDE_MEMO_LIMIT: usize = 500_000;
+const CONSTANT_NORMALIZATION_SEARCH_LIMIT: usize = 32;
 
 /// Content-derived memo identity: equal fact sets share an id, and any
 /// in-place mutation changes the contents and therefore the id, so a decision
@@ -1441,7 +1442,12 @@ impl Assumptions {
         &self,
         term: &Bitvector32Term,
     ) -> Option<i64> {
-        match self.signed_constant_after_equality_normalization_inner(term, &mut BTreeSet::new()) {
+        let mut remaining = CONSTANT_NORMALIZATION_SEARCH_LIMIT;
+        match self.signed_constant_after_equality_normalization_inner(
+            term,
+            &mut BTreeSet::new(),
+            &mut remaining,
+        ) {
             SignedConstantResolution::Known(value) => Some(value),
             SignedConstantResolution::Unknown | SignedConstantResolution::Ambiguous => None,
         }
@@ -1451,7 +1457,13 @@ impl Assumptions {
         &self,
         term: &Bitvector32Term,
         resolving: &mut BTreeSet<Bitvector32Term>,
+        remaining: &mut usize,
     ) -> SignedConstantResolution {
+        let Some(next) = remaining.checked_sub(1) else {
+            note_search_truncation();
+            return SignedConstantResolution::Unknown;
+        };
+        *remaining = next;
         if let Some(value) = signed_bitvector_constant(term) {
             return SignedConstantResolution::Known(value);
         }
@@ -1476,36 +1488,42 @@ impl Assumptions {
                 left,
                 right,
                 resolving,
+                remaining,
                 Bitvector32Term::add,
             ),
             Bitvector32Term::Subtract(left, right) => self.signed_binary_constant_known_equal(
                 left,
                 right,
                 resolving,
+                remaining,
                 Bitvector32Term::subtract,
             ),
             Bitvector32Term::Multiply(left, right) => self.signed_binary_constant_known_equal(
                 left,
                 right,
                 resolving,
+                remaining,
                 Bitvector32Term::multiply,
             ),
             Bitvector32Term::Divide(left, right) => self.signed_binary_constant_known_equal(
                 left,
                 right,
                 resolving,
+                remaining,
                 Bitvector32Term::divide,
             ),
             Bitvector32Term::Remainder(left, right) => self.signed_binary_constant_known_equal(
                 left,
                 right,
                 resolving,
+                remaining,
                 Bitvector32Term::remainder,
             ),
             Bitvector32Term::ShiftLeft(left, right) => self.signed_binary_constant_known_equal(
                 left,
                 right,
                 resolving,
+                remaining,
                 Bitvector32Term::shift_left,
             ),
             Bitvector32Term::ArithmeticShiftRight(left, right) => self
@@ -1513,28 +1531,32 @@ impl Assumptions {
                     left,
                     right,
                     resolving,
+                    remaining,
                     Bitvector32Term::arithmetic_shift_right,
                 ),
             Bitvector32Term::BitwiseAnd(left, right) => self.signed_binary_constant_known_equal(
                 left,
                 right,
                 resolving,
+                remaining,
                 Bitvector32Term::bitwise_and,
             ),
             Bitvector32Term::BitwiseOr(left, right) => self.signed_binary_constant_known_equal(
                 left,
                 right,
                 resolving,
+                remaining,
                 Bitvector32Term::bitwise_or,
             ),
             Bitvector32Term::BitwiseXor(left, right) => self.signed_binary_constant_known_equal(
                 left,
                 right,
                 resolving,
+                remaining,
                 Bitvector32Term::bitwise_xor,
             ),
             Bitvector32Term::BitwiseNot(value) => self
-                .signed_constant_after_equality_normalization_inner(value, resolving)
+                .signed_constant_after_equality_normalization_inner(value, resolving, remaining)
                 .map(|value| {
                     Bitvector32Term::bitwise_not(Bitvector32Term::Constant(value as i32 as u32))
                 }),
@@ -1546,6 +1568,7 @@ impl Assumptions {
                 Some(condition) => self.signed_constant_after_equality_normalization_inner(
                     if condition { then_term } else { else_term },
                     resolving,
+                    remaining,
                 ),
                 None => SignedConstantResolution::Unknown,
             },
@@ -1574,14 +1597,14 @@ impl Assumptions {
                 continue;
             };
             if plausibly_equal(left) && self.bitvector_terms_proven_equal(term, left) {
-                result = result.merge(
-                    self.signed_constant_after_equality_normalization_inner(right, resolving),
-                );
+                result = result.merge(self.signed_constant_after_equality_normalization_inner(
+                    right, resolving, remaining,
+                ));
             }
             if plausibly_equal(right) && self.bitvector_terms_proven_equal(term, right) {
-                result = result.merge(
-                    self.signed_constant_after_equality_normalization_inner(left, resolving),
-                );
+                result = result.merge(self.signed_constant_after_equality_normalization_inner(
+                    left, resolving, remaining,
+                ));
             }
         }
 
@@ -1605,10 +1628,13 @@ impl Assumptions {
         left: &Bitvector32Term,
         right: &Bitvector32Term,
         resolving: &mut BTreeSet<Bitvector32Term>,
+        remaining: &mut usize,
         operation: fn(Bitvector32Term, Bitvector32Term) -> Bitvector32Term,
     ) -> SignedConstantResolution {
-        let left = self.signed_constant_after_equality_normalization_inner(left, resolving);
-        let right = self.signed_constant_after_equality_normalization_inner(right, resolving);
+        let left =
+            self.signed_constant_after_equality_normalization_inner(left, resolving, remaining);
+        let right =
+            self.signed_constant_after_equality_normalization_inner(right, resolving, remaining);
         match (left, right) {
             (SignedConstantResolution::Ambiguous, _) | (_, SignedConstantResolution::Ambiguous) => {
                 SignedConstantResolution::Ambiguous
@@ -1794,6 +1820,13 @@ impl Assumptions {
                 }
                 if self.subtract_same_const_order_fact(&left, &right, true)
                     || self.has_order_path(&left, &right, true)
+                    || (self.has_condition_fact(
+                        ConditionTerm::signed_less_equal(left.clone(), right.clone()),
+                        true,
+                    ) && self.has_condition_fact(
+                        ConditionTerm::equal(left.clone(), right.clone()),
+                        false,
+                    ))
                     || self.has_condition_fact(
                         ConditionTerm::signed_greater_than(right.clone(), left.clone()),
                         true,
@@ -4018,18 +4051,52 @@ impl Assumptions {
             .filter(|fact| candidate_family(fact))
             .cloned()
             .collect::<Vec<_>>();
+        if let Proposition::CMemoryLoadable {
+            memory,
+            base,
+            bytes,
+        } = proposition
+            && let Some(premises) = self.adjacent_loadable_region_facts(memory, base, bytes)
+        {
+            let mut candidate = self.clone();
+            candidate.prop_facts.retain(|fact| !candidate_family(fact));
+            candidate.prop_facts.extend(premises);
+            let (proved, premises_id) =
+                candidate.proves_atomic_for_derivation_with_id(proposition, for_simp);
+            if proved {
+                return Some((candidate, premises_id));
+            }
+        }
         if candidates.len() > 1 {
-            for selected in candidates {
+            for selected in &candidates {
                 if !consume_simp_reasoning_fuel() {
                     return None;
                 }
                 let mut candidate = self.clone();
                 candidate.prop_facts.retain(|fact| !candidate_family(fact));
-                candidate.prop_facts.insert(selected);
+                candidate.prop_facts.insert(selected.clone());
                 let (proved, premises_id) =
                     candidate.proves_atomic_for_derivation_with_id(proposition, for_simp);
                 if proved {
                     return Some((candidate, premises_id));
+                }
+            }
+            if matches!(proposition, Proposition::CMemoryLoadable { .. }) {
+                for first in 0..candidates.len() {
+                    for second in first + 1..candidates.len() {
+                        if !consume_simp_reasoning_fuel() {
+                            return None;
+                        }
+                        let mut candidate = self.clone();
+                        candidate.prop_facts.retain(|fact| !candidate_family(fact));
+                        candidate.prop_facts.insert(candidates[first].clone());
+                        candidate.prop_facts.insert(candidates[second].clone());
+                        let (proved, premises_id) =
+                            candidate.proves_atomic_for_derivation_with_id(proposition, for_simp);
+                        if proved {
+                            return Some((candidate, premises_id));
+                        }
+                    }
                 }
             }
         }
@@ -5766,6 +5833,13 @@ impl Assumptions {
             return true;
         }
 
+        if self
+            .adjacent_loadable_region_facts(memory, base, bytes)
+            .is_some()
+        {
+            return true;
+        }
+
         if super::api::quantified_int32_fact_certifies_loadable_range(self, memory, base, bytes) {
             return true;
         }
@@ -5800,6 +5874,144 @@ impl Assumptions {
             self.proves_loadable_region_from_range(range_base, range_bytes, base, bytes)
         }) || bytes.as_const() == Some(4)
             && super::api::quantified_int32_fact_certifies_loadable_cell(self, base)
+    }
+
+    /// A loadable prefix followed immediately by another loadable region
+    /// certifies their concatenation. This is the range form produced when a
+    /// store initializes the next cell of an already-initialized prefix.
+    fn adjacent_loadable_region_facts(
+        &self,
+        memory: &CMemory,
+        base: &Pointer,
+        bytes: &Bitvector32Term,
+    ) -> Option<Vec<Proposition>> {
+        let compatible = |fact_memory: &CMemory, fact_base: &Pointer| {
+            fact_memory == memory
+                // Stores change cell contents, not whether the surrounding
+                // stack blocks or heap allocations are live. Pointer terms
+                // retain their source snapshot, so a stored-to index field
+                // cannot silently retarget the earlier region.
+                || (fact_memory.blocks.get(&fact_base.block)
+                    == memory.blocks.get(&fact_base.block)
+                    && fact_memory.heap == memory.heap)
+                || memory_range_still_available(fact_memory, memory, fact_base)
+                || super::api::c_memories_canonically_equal(fact_memory, memory)
+                || super::api::c_memories_connected_by_effects(fact_memory, memory, self)
+        };
+        let equal = |left: &Bitvector32Term, right: &Bitvector32Term| {
+            let left = self.simplify_bitvector_under_assumptions(left);
+            let right = self.simplify_bitvector_under_assumptions(right);
+            left == right
+                || self.decide(&ConditionTerm::Bitvector32Equal(
+                    Box::new(left.clone()),
+                    Box::new(right.clone()),
+                )) == Some(true)
+                || super::reasoning::bitvector_terms_proven_equal_for_memory_resolution(
+                    &left, &right, self,
+                )
+        };
+        let mut regions = self
+            .prop_facts
+            .iter()
+            .filter_map(|fact| {
+                let Proposition::CMemoryLoadable {
+                    memory: fact_memory,
+                    base: fact_base,
+                    bytes: fact_bytes,
+                } = fact
+                else {
+                    return None;
+                };
+                (fact_base.block == base.block && compatible(fact_memory, fact_base)).then(|| {
+                    (
+                        Some(fact),
+                        super::api::canonicalize_pointer_loads(fact_base, 0),
+                        fact_bytes.clone(),
+                        fact_memory == memory
+                            || super::api::c_memories_canonically_equal(fact_memory, memory),
+                    )
+                })
+            })
+            .collect::<Vec<_>>();
+        // A materialized cell is loadable without a separate proposition.
+        // Including it as a premise-free region lets a store extend an
+        // already-loadable prefix in the same kernel rule.
+        regions.extend(memory.cells.iter().filter_map(|(pointer, value)| {
+            let byte_width = value.byte_width();
+            (byte_width > 0 && memory.is_loadable_concretely(pointer, byte_width)).then(|| {
+                (
+                    None,
+                    super::api::canonicalize_pointer_loads(pointer, 0),
+                    Bitvector32Term::Constant(byte_width),
+                    true,
+                )
+            })
+        }));
+        let base = super::api::canonicalize_pointer_loads(base, 0);
+        for (prefix_index, (prefix_fact, prefix_base, prefix_bytes, prefix_current)) in
+            regions.iter().enumerate()
+        {
+            let prefix_starts_at_goal = prefix_base == &base
+                || super::reasoning::pointers_proven_equal_for_memory_resolution(
+                    prefix_base,
+                    &base,
+                    self,
+                )
+                || pointer_byte_offset_from_base(prefix_base, &base)
+                    .is_some_and(|offset| equal(&offset, &Bitvector32Term::Constant(0)));
+            if !prefix_starts_at_goal {
+                continue;
+            }
+            for (suffix_index, (suffix_fact, suffix_base, suffix_bytes, suffix_current)) in
+                regions.iter().enumerate()
+            {
+                if prefix_index == suffix_index {
+                    continue;
+                }
+                // Historical proposition facts cannot be concatenated with
+                // each other to manufacture a fact at the current snapshot.
+                // The cross-snapshot case is specifically an earlier prefix
+                // extended by a cell materialized by the current store.
+                if prefix_fact.is_some()
+                    && suffix_fact.is_some()
+                    && !(*prefix_current && *suffix_current)
+                {
+                    continue;
+                }
+                let byte_concatenation = pointer_byte_offset_from_base(suffix_base, &base)
+                    .is_some_and(|suffix_start| equal(&suffix_start, prefix_bytes))
+                    && equal(
+                        bytes,
+                        &Bitvector32Term::add((*prefix_bytes).clone(), (*suffix_bytes).clone()),
+                    );
+                let element_concatenation = int32_element_count_from_bytes(prefix_bytes)
+                    .zip(int32_element_count_from_bytes(suffix_bytes))
+                    .zip(int32_element_count_from_bytes(bytes))
+                    .is_some_and(|((prefix_count, suffix_count), goal_count)| {
+                        let expected_suffix = base.offset_by_int32_elements(prefix_count.clone());
+                        (suffix_base == &expected_suffix
+                            || super::reasoning::pointers_proven_equal_for_memory_resolution(
+                                suffix_base,
+                                &expected_suffix,
+                                self,
+                            ))
+                            && equal(
+                                &goal_count,
+                                &Bitvector32Term::add(prefix_count, suffix_count),
+                            )
+                    });
+                if byte_concatenation || element_concatenation {
+                    return Some(
+                        [*prefix_fact, *suffix_fact]
+                            .into_iter()
+                            .flatten()
+                            .cloned()
+                            .collect(),
+                    );
+                }
+            }
+        }
+        None
     }
 
     pub(crate) fn proves_memory_loadable_for_memory_resolution(

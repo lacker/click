@@ -104,6 +104,24 @@ fn strict_reverse_order_derives_a_false_comparison() {
 }
 
 #[test]
+fn signed_less_equal_and_inequality_derive_strict_order() {
+    let left = Bitvector32Term::Variable(Variable(9_004));
+    let right = Bitvector32Term::Variable(Variable(9_005));
+    let less_equal = Proposition::ConditionIs(
+        ConditionTerm::signed_less_equal(left.clone(), right.clone()),
+        true,
+    );
+    let unequal =
+        Proposition::ConditionIs(ConditionTerm::equal(left.clone(), right.clone()), false);
+    let strict = Proposition::ConditionIs(ConditionTerm::signed_less_than(left, right), true);
+    let assumptions = Assumptions::new()
+        .assume_proposition(less_equal)
+        .assume_proposition(unequal);
+
+    assert_replayable_derivation(&assumptions, &strict);
+}
+
+#[test]
 fn condition_search_skips_irrelevant_implication_antecedents() {
     let target_condition = ConditionTerm::signed_less_than(
         Bitvector32Term::Variable(Variable(9_001)),
@@ -1793,6 +1811,72 @@ fn loadable_symbolic_subrange_proves_an_indexed_cell() {
         assumptions.derive_atomic_proposition(&target).is_some(),
         "split <= index < len should select a cell from [split..len]"
     );
+}
+
+#[test]
+fn adjacent_loadable_regions_certify_their_concatenation() {
+    let memory = CMemory::new();
+    let data = Pointer {
+        block: "data".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let prefix = Proposition::CMemoryLoadable {
+        memory: memory.clone(),
+        base: data.clone(),
+        bytes: Bitvector32Term::Constant(8),
+    };
+    let next_cell = Proposition::CMemoryLoadable {
+        memory: memory.clone(),
+        base: data.offset_by_int32_elements(Bitvector32Term::Constant(2)),
+        bytes: Bitvector32Term::Constant(4),
+    };
+    let goal = Proposition::CMemoryLoadable {
+        memory: memory.clone(),
+        base: data.clone(),
+        bytes: Bitvector32Term::Constant(12),
+    };
+    let assumptions = Assumptions::new()
+        .assume_proposition(prefix.clone())
+        .assume_proposition(next_cell.clone());
+    let derivation = assumptions
+        .derive_atomic_proposition(&goal)
+        .expect("an initialized next cell should extend the loadable prefix");
+    assert!(derivation.replay(&assumptions));
+    let premises = derivation.context_premises();
+    assert_eq!(premises.len(), 2);
+    assert!(premises.contains(&prefix));
+    assert!(premises.contains(&next_cell));
+
+    let stored_memory = CMemory::new().store(
+        data.offset_by_int32_elements(Bitvector32Term::Constant(2)),
+        CValue::Int32(Bitvector32Term::Constant(9)),
+    );
+    let stored_goal = Proposition::CMemoryLoadable {
+        memory: stored_memory,
+        base: data.clone(),
+        bytes: Bitvector32Term::Constant(12),
+    };
+    let stored_assumptions = Assumptions::new().assume_proposition(prefix.clone());
+    let stored_derivation = stored_assumptions
+        .derive_atomic_proposition(&stored_goal)
+        .expect("a materialized next cell should extend the loadable prefix");
+    assert!(stored_derivation.replay(&stored_assumptions));
+    assert_eq!(stored_derivation.context_premises(), vec![prefix]);
+
+    let gap = Proposition::CMemoryLoadable {
+        memory,
+        base: data.offset_by_int32_elements(Bitvector32Term::Constant(4)),
+        bytes: Bitvector32Term::Constant(4),
+    };
+    let assumptions = Assumptions::new()
+        .assume_proposition(goal.clone())
+        .assume_proposition(gap);
+    let too_wide = Proposition::CMemoryLoadable {
+        memory: CMemory::new(),
+        base: data,
+        bytes: Bitvector32Term::Constant(16),
+    };
+    assert!(!assumptions.proves(&too_wide));
 }
 
 #[test]
@@ -8233,6 +8317,119 @@ fn body_safety_claim_rejects_an_unproved_execution_condition() {
             &execution,
         )
         .is_none()
+    );
+}
+
+#[test]
+fn body_safety_claim_uses_path_facts_for_verification_conditions() {
+    let function = c_function(
+        CType::Int32,
+        "guarded_body",
+        Vec::new(),
+        c_return(c_int32_literal(0)),
+    )
+    .with_contract(
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        vec![CFunctionContractClaim::body_safety()],
+        true,
+    );
+    let state = CState::new();
+    let guard = Proposition::ConditionIs(
+        ConditionTerm::signed_less_than(
+            Bitvector32Term::Variable(Variable(91_000)),
+            Bitvector32Term::Constant(8),
+        ),
+        true,
+    );
+    let fact = ExecutionPureFact::new(guard.clone());
+    let obligation = ProofObligation::verification_condition(guard);
+    let proposition = Proposition::CFunctionExecutes {
+        state: state.clone(),
+        function: function.clone(),
+        arguments: Vec::new(),
+        outcome: CFunctionOutcome::Return {
+            value: int32(0),
+            state,
+        },
+    };
+    let path = SymbolicCExecutionPath {
+        assumptions: Assumptions::new(),
+        facts: vec![fact.clone()],
+        effect_facts: Vec::new(),
+        obligations: vec![obligation.clone()],
+        theorem: Theorem::new(wrap_proof_facts(
+            proposition,
+            &Assumptions::new(),
+            &[fact],
+            &[obligation],
+        )),
+    };
+    let execution = CFunctionContractExecution {
+        execution: SymbolicCExecution {
+            paths: vec![path],
+            limit: None,
+        },
+    };
+
+    assert!(
+        c_verified_function_contract_claim(
+            &function,
+            CFunctionContractClaimKey::BodySafety,
+            &execution,
+        )
+        .is_some(),
+        "a path guard established by symbolic execution must discharge a guarded safety condition"
+    );
+}
+
+#[test]
+fn effect_endpoint_comparison_ignores_function_local_cells() {
+    let local = Pointer {
+        block: "local:temporary".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let before = CMemory::new().with_block("local:temporary", 4);
+    let after = before.clone().store(local, int32(7));
+
+    assert!(super::api::c_effect_memories_definitionally_equal(
+        &before,
+        &after,
+        &Assumptions::new(),
+    ));
+
+    let external = Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let changed_external = after.store(external, int32(9));
+    assert!(!super::api::c_effect_memories_definitionally_equal(
+        &before,
+        &changed_external,
+        &Assumptions::new(),
+    ));
+}
+
+#[test]
+fn effect_endpoint_allows_resource_allocation_bookkeeping() {
+    let allocation = Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::Constant(64),
+    };
+    let before = CMemory::new();
+    let after = before
+        .clone()
+        .with_heap_allocation_claim(allocation, Bitvector32Term::Constant(16))
+        .expect("a fresh symbolic allocation claim should be registerable");
+
+    assert!(
+        super::api::c_effect_memory_advances_over_internal_heap_state(
+            &before,
+            &after,
+            &before,
+            &Assumptions::new(),
+        )
     );
 }
 
