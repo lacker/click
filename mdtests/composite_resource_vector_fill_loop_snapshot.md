@@ -45,8 +45,11 @@ int32 composite_resource_vector_fill_loop_snapshot(
 ) {
     owns vector(owner);
     mutable owner->data[0..owner->len];
-
-    for loop(0) as fill_cells {
+    ensures result == owner->len;
+} by {
+    step();
+    step();
+    loop as fill_cells {
         invariant i >= 0 and i <= owner->len;
         mutable owner->data[0..owner->len] by frame;
 
@@ -56,7 +59,6 @@ int32 composite_resource_vector_fill_loop_snapshot(
             have i < owner->cap by simp;
             step();
             step();
-            have i == at(loop(0).entry, i) + 1 by simp;
             have i >= 0 by {
                 derive using {
                     at(statement(3).entry, i) >= 0;
@@ -71,11 +73,7 @@ int32 composite_resource_vector_fill_loop_snapshot(
             close_invariants();
         }
     }
-
-    ensures result == owner->len;
-} by {
-    execute();
-    fold(vector(owner));
+    step();
     frame();
     have result == owner->len by {
         normalize();

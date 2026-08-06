@@ -53,7 +53,12 @@ predicate all_le_range(p: int32[], lo: int32, hi: int32, x: int32) {
 int32 bubble_sort3_two_pass(int32 p[3]) {
     requires loadable(p[0..3]);
     consumes p[0..3];
-    for loop(0) {
+    ensures sorted: sorted(p, 3);
+} by {
+    step();
+    step();
+    step();
+    loop {
         invariant j >= 0 and j <= 2;
         invariant all_le_range(p, 0, j, p[j]);
         initialize by {
@@ -64,7 +69,8 @@ int32 bubble_sort3_two_pass(int32 p[3]) {
             unfold(all_le_range);
         }
     }
-    for loop(1) {
+    step();
+    loop {
         invariant j >= 0 and j <= 1;
         invariant all_le_range(p, 0, 2, p[2]);
         invariant all_le_range(p, 0, j, p[j]);
@@ -76,13 +82,11 @@ int32 bubble_sort3_two_pass(int32 p[3]) {
             unfold(all_le_range);
         }
     }
-    ensures sorted: sorted(p, 3) by {
-        execute();
-        unfold(sorted);
-        unfold(sorted_range);
-        unfold(all_le_range);
-        simp();
-    }
+    step();
+    unfold(sorted);
+    unfold(sorted_range);
+    unfold(all_le_range);
+    simp();
 }
 ```
 

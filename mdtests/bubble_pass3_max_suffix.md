@@ -33,7 +33,12 @@ predicate all_le_range(p: int32[], lo: int32, hi: int32, x: int32) {
 int32 bubble_pass3(int32 p[3]) {
     requires loadable(p[0..3]);
     consumes p[0..3];
-    for loop(0) {
+    ensures max_at_end: all_le_range(p, 0, 2, p[2]);
+} by {
+    step();
+    step();
+    step();
+    loop {
         invariant j >= 0 and j <= 2;
         invariant all_le_range(p, 0, j, p[j]);
         initialize by {
@@ -45,11 +50,9 @@ int32 bubble_pass3(int32 p[3]) {
         }
         mutable p[0..3] by frame;
     }
-    ensures max_at_end: all_le_range(p, 0, 2, p[2]) by {
-        execute();
-        unfold(all_le_range);
-        simp();
-    }
+    step();
+    unfold(all_le_range);
+    simp();
 }
 ```
 

@@ -23,17 +23,28 @@ int32 nested_loop_preserve() {
 verifying "nested_loop_preserve.c";
 
 int32 nested_loop_preserve() {
-    for loop(0) {
+    ensures result == 1;
+} by {
+    step();
+    step();
+    step();
+    loop {
         invariant i >= 0 and i <= 1;
-    }
-    for loop(1) {
-        invariant j >= 0 and j <= 1;
         preserve by {
             step();
-            simp();
+            loop {
+                invariant j >= 0 and j <= 1;
+                preserve by {
+                    step();
+                    close_invariants();
+                }
+            }
+            step();
+            close_invariants();
         }
     }
-    ensures result == 1 by auto;
+    step();
+    simp();
 }
 ```
 
