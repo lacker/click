@@ -26419,6 +26419,7 @@ fn fold_composite_resources_on_outcome(
         } else {
             &[]
         };
+        let body_assumptions = assumptions_from_propositions(available_pure_facts);
         for fact in body_facts {
             let fact = substitute_click_proposition(fact, &substitutions).map_err(|message| {
                     ClickError::new(format!(
@@ -26454,11 +26455,11 @@ fn fold_composite_resources_on_outcome(
             if !exact_fact_is_available(&required, available_pure_facts)
                 && !matches!(normalize_proposition(&required), SimpProposition::True)
                 // An available fact may spell the same body fact through
-                // loads at an earlier snapshot; the bounded derivation
-                // prover bridges those spellings deterministically.
-                && assumptions_from_propositions(available_pure_facts)
-                    .derive_atomic_proposition(&required)
-                    .is_none()
+                // loads at an earlier snapshot. Exact fold replay needs only
+                // the kernel decision; asking it to minimize a derivation
+                // that will never be emitted repeats the check once per
+                // ambient loadability candidate.
+                && !body_assumptions.proves(&required)
             {
                 let resources = match &outcome {
                     CFunctionOutcome::Return { state, .. } => state.resources().facts(),
