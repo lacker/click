@@ -123,7 +123,9 @@ does not execute C. A whole-function explicit proof normally writes
 `click expand` replaces a selected smart tactic with its checked simple
 certificate. Printed certificates use only canonical surface names; internal
 Rust variants such as certified statement transitions are not a second user
-vocabulary.
+vocabulary. Expansion starts from a correct selected proof unit and verifies
+that complete proof unit again after rewriting it. It does not emit a partial
+rewrite when a later tactic in the same proof is failing.
 
 `click profile` reports smart and simple work under the same concepts:
 statement transitions are `step`, loop-summary transitions are `summarize`,

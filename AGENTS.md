@@ -114,5 +114,12 @@ fast verification, replayable certificates, working expansion, and actionable
 diagnostics. Building above a broken proof-tool boundary makes later failures
 harder to interpret.
 
+Establish correctness before performance optimization. Run ordinary
+verification first; when it reports a prompt proof failure, repair that proof
+before profiling or expanding it. Profile a non-verifying target only when a
+timeout or unexpected slowness is itself the tooling problem being diagnosed,
+and treat that result as an incomplete diagnostic frontier, not an
+optimization profile. Never expand a tactic from an incomplete run.
+
 See `issues/README.md` for issue policy and
 `docs/advanced/testing-click.md` for the performance and expansion workflow.

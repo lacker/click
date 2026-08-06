@@ -172,15 +172,27 @@ consume the following projects' budgets.
 That makes the expansion loop runnable end to end:
 
 ```sh
+click verify path/to/file.click
 click expand --in-place path/to/file.click:LINE:COLUMN
 click verify path/to/file.click
 ```
 
-`click expand` verifies the selected rewritten proof unit before it writes
+The first verification is a prerequisite, not merely a useful check:
+expansion optimizes an already-correct selected proof unit. A failure later in
+that proof blocks expansion of an earlier tactic. Repair the proof with
+ordinary tactics first rather than moving between partially verified sources.
+`click expand` then verifies the complete rewritten proof unit before it writes
 anything. `--in-place` atomically replaces the source only on success;
 `--output PATH` writes a checked sibling artifact without shell redirection.
+Failures in unrelated proof units do not block this targeted workflow.
 
 ### Profiling slow proof steps
+
+Start with `click verify`. If it reports a prompt correctness failure, repair
+the proof before profiling it. Use `click profile` for optimization only after
+verification succeeds. The exception is a target that times out or is
+unexpectedly slow: profile it diagnostically to locate the incomplete work,
+then restore successful verification before expanding anything.
 
 Use `click profile` to find slow proof steps without letting one project run
 indefinitely:
@@ -210,11 +222,13 @@ after 30 seconds. Override them with `--smart-threshold`,
 The verifier emits each tactic's class as a structured event. The report uses
 that class to prescribe the next action:
 
-- Successful `SMART` hotspots are expansion candidates. The report prints
-  pasteable commands that write a sibling artifact, verify it, and reprofile
-  that exact artifact with the same limits. Failed smart search has no
-  certificate; normally decompose the proof. An interrupted search is a tooling
-  bug only when it ignores or badly overshoots its enforced bound.
+- Successful `SMART` hotspots in fully verified targets are expansion
+  candidates. The report prints pasteable commands that write a sibling
+  artifact, verify it, and reprofile that exact artifact with the same limits.
+  A successful step observed before a later correctness failure or timeout is
+  diagnostic only and produces no expansion command. Failed smart search has
+  no certificate; normally decompose the proof. An interrupted search is a
+  tooling bug only when it ignores or badly overshoots its enforced bound.
 - `SIMPLE` steps are deterministic certificate replay. Do not expand them;
   reduce and fix the verifier bottleneck first.
 - `CONTROL` steps are proof containers. Inspect their nested smart and simple

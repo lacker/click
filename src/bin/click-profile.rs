@@ -34,8 +34,13 @@ An mdtest is profiled from its embedded ```c and ```click blocks, using the
 same extraction the mdtests gate uses. Quarantine does not apply: any mdtest
 can be profiled, which is the point when diagnosing a slow one.
 
+Verify first. Use profile for optimization only after the selected proof
+verifies. A prompt correctness failure should be repaired before profiling;
+profile a non-verifying target only when a timeout or unexpected slowness is
+itself the problem being diagnosed. Incomplete runs never offer expansion.
+
 defaults:
-  --smart-threshold 2s      smart tactics are expansion candidates
+  --smart-threshold 2s      smart tactics in verified proofs are expansion candidates
   --simple-threshold 500ms  slow simple tactics are verifier bugs; do not expand them
   --control-threshold 2s    inspect slow control-flow containers and their nested steps
   --time-limit 30s          wall-clock limit per project
@@ -1386,6 +1391,20 @@ fn render_profiles_with_top(
     time_limit: Duration,
     top_attribution_rows: usize,
 ) -> String {
+    let has_correctness_failure = profiles
+        .iter()
+        .any(|profile| profile.verification_failure.is_some() && !profile.timed_out);
+    let has_timeout = profiles.iter().any(|profile| profile.timed_out);
+    let blocked_expansion_sources = profiles
+        .iter()
+        .filter(|profile| profile.verification_failure.is_some() || profile.timed_out)
+        .flat_map(|profile| {
+            profile
+                .slow_steps
+                .iter()
+                .map(|step| step.key.source_path.clone())
+        })
+        .collect::<BTreeSet<_>>();
     let mut slow_steps = profiles
         .iter()
         .flat_map(|profile| profile.slow_steps.iter())
@@ -1407,6 +1426,20 @@ fn render_profiles_with_top(
         "Classification is emitted by the verifier; do not infer it from a tactic's name."
     )
     .expect("writing a String cannot fail");
+    if has_correctness_failure {
+        writeln!(
+            output,
+            "INCOMPLETE CORRECTNESS RUN — NOT AN OPTIMIZATION PROFILE. Fix verification failures before acting on timings or expanding tactics."
+        )
+        .expect("writing a String cannot fail");
+    }
+    if has_timeout {
+        writeln!(
+            output,
+            "TIMEOUT DIAGNOSTIC — use these partial timings to find why verification did not complete; restore a green proof before expansion."
+        )
+        .expect("writing a String cannot fail");
+    }
 
     render_category(
         &mut output,
@@ -1416,15 +1449,17 @@ fn render_profiles_with_top(
         "A slow simple tactic is deterministic certificate replay. Reduce its verifier path and fix that bottleneck before expanding more smart tactics.",
         thresholds,
         time_limit,
+        &blocked_expansion_sources,
     );
     render_category(
         &mut output,
         &slow_steps,
         TacticCategory::Smart,
-        "SMART — EXPAND SUCCESSES; DECOMPOSE FAILURES",
-        "Expand a successful hotspot and compare its rewritten profile. A failed smart search has no certificate; use smaller or explicit simple tactics unless it missed its bound or failed unclearly.",
+        "SMART — EXPAND ONLY FROM VERIFIED PROOFS",
+        "A successful hotspot in a fully verified proof is an expansion candidate. In an incomplete run it is diagnostic only. A failed smart search has no certificate; use smaller or explicit simple tactics unless it missed its bound or failed unclearly.",
         thresholds,
         time_limit,
+        &blocked_expansion_sources,
     );
     render_category(
         &mut output,
@@ -1434,6 +1469,7 @@ fn render_profiles_with_top(
         "This is a proof container. Use its nested SMART/SIMPLE timings; do not optimize or expand it based on the container row alone.",
         thresholds,
         time_limit,
+        &blocked_expansion_sources,
     );
 
     render_accounting(&mut output, profiles);
@@ -2073,11 +2109,19 @@ fn render_diagnoses(output: &mut String, profiles: &[ProjectProfile]) {
             .any(|step| step.key.category == TacticCategory::Smart && !step.failed)
         {
             findings += 1;
-            writeln!(
-                output,
-                "    SMART HOTSPOT — expand one reported successful smart site, verify the artifact, and compare its profile."
-            )
-            .expect("writing a String cannot fail");
+            if profile.verification_failure.is_some() || profile.timed_out {
+                writeln!(
+                    output,
+                    "    SMART HOTSPOT RECORDED — restore complete verification before expanding this successful site."
+                )
+                .expect("writing a String cannot fail");
+            } else {
+                writeln!(
+                    output,
+                    "    SMART HOTSPOT — expand one reported successful smart site, verify the artifact, and compare its profile."
+                )
+                .expect("writing a String cannot fail");
+            }
         }
         if profile
             .slow_steps
@@ -2183,6 +2227,7 @@ fn render_category(
     advice: &str,
     thresholds: Thresholds,
     time_limit: Duration,
+    blocked_expansion_sources: &BTreeSet<PathBuf>,
 ) {
     writeln!(output, "\n{title}").expect("writing a String cannot fail");
     writeln!(output, "  {advice}").expect("writing a String cannot fail");
@@ -2203,6 +2248,15 @@ fn render_category(
         .expect("writing a String cannot fail");
     }
     for step in matching {
+        let status = if step.failed {
+            "  FAILED — no certificate to expand"
+        } else if category == TacticCategory::Smart
+            && blocked_expansion_sources.contains(&step.key.source_path)
+        {
+            "  INCOMPLETE RUN — restore verification before expansion"
+        } else {
+            ""
+        };
         writeln!(
             output,
             "  {:>10}  {}  {}  {}  statement {}{}",
@@ -2211,15 +2265,12 @@ fn render_category(
             step.key.claim,
             step.key.tactic_name,
             step.key.statement_index,
-            if step.failed {
-                "  FAILED — no certificate to expand"
-            } else {
-                ""
-            },
+            status,
         )
         .expect("writing a String cannot fail");
         if !step.failed
             && let (TacticCategory::Smart, Some(position)) = (category, step.key.position)
+            && !blocked_expansion_sources.contains(&step.key.source_path)
         {
             render_expansion_command(output, &step.key, position, thresholds, time_limit);
         }
@@ -2431,6 +2482,7 @@ click timing: tactic example.contract 2 step class simple statement 4 source 5 1
 
         let report = render_profiles(&[profile], Thresholds::default(), Duration::from_secs(5));
         assert!(report.contains("[PHASE] certification"), "{report}");
+        assert!(report.contains("TIMEOUT DIAGNOSTIC"), "{report}");
         assert!(report.contains("INCOMPLETE TIMEOUT"), "{report}");
         assert!(
             report.contains("deadline interrupted `certification` work"),
@@ -3051,7 +3103,7 @@ click timing: tactic example.contract 2 have class control statement 3 source 30
 
         assert!(report.contains("SIMPLE — FIX THE ENGINE; DO NOT EXPAND"));
         assert!(report.contains("WARNING: expanding an enclosing smart tactic is not a fix"));
-        assert!(report.contains("SMART — EXPAND SUCCESSES; DECOMPOSE FAILURES"));
+        assert!(report.contains("SMART — EXPAND ONLY FROM VERIFIED PROOFS"));
         assert!(report.contains("CONTROL — INSPECT NESTED STEPS"));
         assert!(report.contains("NEXT: fix or reduce the SIMPLE bottleneck first"));
         assert_eq!(report.matches("expand: click expand").count(), 1);
@@ -3195,9 +3247,47 @@ click timing: tactic example.contract 0 execute class smart statement 1 source 1
         );
 
         assert!(report.contains("VERIFICATION FAILURES"));
+        assert!(report.contains("INCOMPLETE CORRECTNESS RUN"), "{report}");
         assert!(report.contains("certificate did not replay"));
         assert!(report.contains("examples/successful.click:12:5"));
         assert!(report.contains("fix the verification failure first"));
+    }
+
+    #[test]
+    fn failed_profile_records_hotspots_without_recommending_expansion() {
+        let mut profile = parse_profile(
+            "broken",
+            r#"
+click timing: source examples/broken.click
+click timing: tactic example.contract 0 execute class smart statement 1 source 10 2.500000s
+"#,
+            Thresholds::default(),
+            false,
+        )
+        .expect("the current timing format should parse");
+        profile.slow_steps[0].key.position = Some(SourcePosition {
+            line: 12,
+            column: 5,
+        });
+        profile.verification_failure = Some("a later tactic failed".to_string());
+
+        let report = render_profiles(&[profile], Thresholds::default(), DEFAULT_TIME_LIMIT);
+
+        assert!(report.contains("INCOMPLETE CORRECTNESS RUN"), "{report}");
+        assert!(report.contains("SMART HOTSPOT RECORDED"), "{report}");
+        assert!(
+            report.contains("INCOMPLETE RUN — restore verification before expansion"),
+            "{report}"
+        );
+        assert!(
+            report.contains("restore complete verification before expanding"),
+            "{report}"
+        );
+        assert!(!report.contains("expand: click expand"), "{report}");
+        assert!(
+            report.contains("fix the verification failure first"),
+            "{report}"
+        );
     }
 
     #[test]

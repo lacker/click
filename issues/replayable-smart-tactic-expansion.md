@@ -111,6 +111,15 @@ Add a focused three-file fixture with a `struct counter`:
 The pipeline must verify, expand, and replay without manually restating the
 callee's mixed-snapshot postcondition.
 
+Also keep a program-point assertion variant. Immediately before the first
+`vector_get`, assert `owner->len == 1 by auto` after `vector_init` established
+zero length and `vector_push` established exit length equal to entry length
+plus one. As of the source-faithful prototype, semantic search proves this
+assertion but certificate lowering reports that neither mixed-snapshot equality
+has a replayable Surface Click spelling. This smaller boundary check must not
+report smart success unless it can retain and freshly replay both call-anchored
+premises.
+
 Keep owned-string, input-cursor, binary-tree, and ring-buffer as compatibility
 regressions. They exercise existing source anchors, local frame transports,
 and repeated modular calls that the narrow counter fixture does not.

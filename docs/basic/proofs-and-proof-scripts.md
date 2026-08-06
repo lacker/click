@@ -89,7 +89,9 @@ listed in its interface.
 `click expand` replaces a selected smart tactic with its checked simple
 certificate. `click profile` identifies slow tactics and distinguishes smart
 automation from simple leaves. `click audit` checks that smart tactics across a
-project expand and replay successfully.
+project expand and replay successfully. Use this workflow only after the
+selected proof is correct: expansion is a checked optimization, not a way to
+extract a partial result from a proof whose later tactics fail.
 
 The [proof tactics reference](../proof-tactics.md) is the exhaustive inventory
 and compatibility guide.

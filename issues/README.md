@@ -48,7 +48,19 @@ large example or quarantine a regression without its issue.
 These block the owned-vector source-fidelity work:
 
 1. [Make smart-tactic success require replayable expansion](replayable-smart-tactic-expansion.md).
-2. [Let expansion diagnose an earlier hotspot when a later proof fails](expand-before-downstream-failure.md).
+
+Expansion is deliberately not a repair operation for a broken proof. The
+selected proof unit and the contracts it depends on must verify before `click
+expand` will emit a rewrite. In particular, a failure later in the same proof
+blocks expansion of an earlier tactic. First restore correctness with ordinary
+proof steps; then profile and expand the green proof. Broken proof units must
+not be moved between partially checked intermediate states under an expansion
+label.
+
+The same ordering applies to profiling. A prompt correctness failure should be
+fixed before performance analysis. Profiling an incomplete target is reserved
+for diagnosing a timeout or unexpected slowness that prevents a green run; its
+partial timings are not expansion candidates.
 
 ## Search quality
 

@@ -15,6 +15,22 @@ The tools explain expensive verification; they do not promise that every
 expensive project can be made small by expanding tactics. Healthy proof volume
 is a valid diagnosis.
 
+Correctness comes first. Run `click verify` before starting optimization work:
+
+```text
+click verify
+    correctness failure -> repair the proof
+    timeout/slowness    -> profile diagnostically
+    success             -> profile for optimization -> expand -> verify
+```
+
+A prompt proof failure is not a performance profile target. Fix it with
+ordinary proof steps before interpreting timing hotspots or expanding earlier
+tactics. Profiling a target that cannot complete is appropriate only when the
+timeout or unexpected slowness is itself the problem: that report is a partial
+diagnostic frontier, not an optimization profile, and it offers no expansion
+commands.
+
 They also do not promise that smart tactics find every proof. Click requires
 sound, replayable smart successes and prompt, bounded smart failures; search
 completeness is a non-goal. When search fails normally, split the work into
@@ -155,15 +171,19 @@ manual release/certificate-boundary gate, not part of ordinary `cargo test`.
 
 - `click profile <sidecar.click|project|mdtest.md|dir>` profiles examples and mdtests,
   ignores quarantine, and prints a `click expand` command for each completed
-  smart tactic above the configured threshold. Its default project limit is
-  30 seconds, and `--top` controls the number of function and claim attribution
-  rows (default 8).
+  smart tactic above the configured threshold in a fully verified target. A
+  correctness failure instead produces explicitly incomplete diagnostic
+  output and no expansion command; a timeout produces a partial timeout
+  diagnosis. Its default project limit is 30 seconds, and `--top` controls the
+  number of function and claim attribution rows (default 8).
 - `click expand [--output PATH | --in-place] <sidecar.click|mdtest.md>:<line>:<column>`
-  parses and typechecks the sidecar, then verifies only the rewritten proof
-  unit and the transitive contracts it calls before writing it. An unrelated
-  broken proof does not block a targeted repair, and unselected source text is
-  preserved byte-for-byte. Its default limit is 60 seconds; `--time-limit`
-  overrides it.
+  requires the selected proof unit to verify, replaces one successful smart
+  tactic, then verifies the complete rewritten proof unit and the transitive
+  contracts it calls before writing it. A failure later in the selected proof
+  blocks expansion of an earlier tactic by design; restore proof correctness
+  before doing performance work. An unrelated broken proof unit does not block
+  expansion, and unselected source text is preserved byte-for-byte. Its default
+  limit is 60 seconds; `--time-limit` overrides it.
 - `click audit <sidecar.click|example|mdtest|directory|repository-root>` expands,
   retained-session verifies, compares original and expanded cold verification,
   and checks the claim's smart-site multiset strictly shrinks without
@@ -194,6 +214,9 @@ rewritten artifact before deciding that expansion improved performance.
 - `click expand` directly verifies every rewrite before output; `click audit`
   additionally checks retained-session equivalence, cold verification, and
   the expansion fixed point.
+- Expansion is an optimization of a green proof, not a repair mechanism:
+  selected-proof correctness precedes profiling and expansion, and the
+  rewritten selected proof must remain correct.
 - Kernel Click has no textual syntax. Tool output is documented Surface Click
   accepted by the ordinary parser. Canonical struct spellings include
   `owner->field`, `owner->pointer_field[start..end]`, and `object(owner)`.
