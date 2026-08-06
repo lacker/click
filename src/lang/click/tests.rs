@@ -8907,6 +8907,153 @@ int32 caller(int32 x) {
 }
 
 #[test]
+fn modular_call_snapshot_anchor_replays_with_owned_resource() {
+    let init_c = r#"
+struct box {
+    int32 value;
+    int32* data;
+};
+
+int32 box_init(struct box* owner, int32 data[], int32 value) {
+    owner->value = 0;
+    owner->data = data;
+    data[0] = 0;
+    return 0;
+}
+"#;
+    let read_c = r#"
+struct box {
+    int32 value;
+    int32* data;
+};
+
+int32 box_read(struct box* owner) {
+    return owner->data[0];
+}
+"#;
+    let set_c = r#"
+struct box {
+    int32 value;
+    int32* data;
+};
+
+int32 box_set(struct box* owner, int32 value) {
+    int32 index;
+    index = owner->value;
+    owner->data[index] = value;
+    owner->value = index + 1;
+    return owner->value;
+}
+"#;
+    let pipeline_c = r#"
+struct box {
+    int32 value;
+    int32* data;
+};
+
+int32 box_pipeline(struct box* owner, int32 data[], int32 value) {
+    int32 ignored;
+    int32 observed;
+    ignored = box_init(owner, data, value);
+    ignored = box_set(owner, value);
+    observed = box_read(owner);
+    return observed;
+}
+"#;
+    let click_source = r#"
+resource owned_box(owner: struct box*) {
+    owns owner->value;
+    owns owner->data;
+    owns owner->data[0..1];
+    fact separate(memory(object(owner)), memory(owner->data[0..1]));
+}
+
+verifying "box_init.c";
+verifying "box_set.c";
+verifying "box_read.c";
+verifying "box_pipeline.c";
+
+int32 box_init(struct box* owner, int32 data[], int32 value) {
+    requires separate(memory(object(owner)), memory(data[0..1]));
+    consumes object(owner);
+    consumes data[0..1];
+    mutable object(owner), data[0..1];
+    produces owned_box(owner);
+    ensures owner->data == data;
+    ensures owner->value == 0;
+} by {
+    execute();
+    have separate(memory(object(owner)), memory(owner->data[0..1])) by simp;
+    fold(owned_box(owner));
+    frame();
+    simp();
+}
+
+int32 box_read(struct box* owner) {
+    views owned_box(owner);
+    immutable;
+    ensures result == owner->data[0] by auto;
+}
+
+int32 box_set(struct box* owner, int32 value) {
+    requires owner->value == 0;
+    owns owned_box(owner);
+    mutable owner->value, (owner->data + owner->value)[0..1];
+    ensures result == old(owner->value) + 1;
+    ensures owner->value == old(owner->value) + 1;
+    ensures owner->data[old(owner->value)] == value;
+} by {
+    unfold(owned_box(owner));
+    have owner->value < 2147483647 by simp;
+    execute();
+    have separate(memory(object(owner)), memory(owner->data[0..1])) by simp;
+    fold(owned_box(owner));
+    frame();
+    simp();
+}
+
+int32 box_pipeline(struct box* owner, int32 data[], int32 value) {
+    requires separate(memory(object(owner)), memory(data[0..1]));
+    consumes object(owner);
+    consumes data[0..1];
+    produces owned_box(owner);
+    ensures result == value;
+} by {
+    execute_until(statement(3));
+    have owner->data == data by simp;
+    have owner->value == 0 by simp;
+    step() using {
+        owner->value == 0;
+        loadable(old(object(owner)));
+        loadable(old(data[0..1]));
+    }
+    have owner->data[at(statement(3).entry, owner->value)] == value by {
+        assumption();
+    }
+    have owner->data[0] == value by simp;
+    step() using {
+        owner->data[0] == value;
+        loadable(old(object(owner)));
+        loadable(old(data[0..1]));
+    }
+    execute();
+    simp();
+}
+"#;
+
+    verify_c0_sources(
+        click_source,
+        &[
+            ("box_init.c", init_c),
+            ("box_set.c", set_c),
+            ("box_read.c", read_c),
+            ("box_pipeline.c", pipeline_c),
+        ],
+    )
+    .expect("an explicit call-entry snapshot should replay with an owned resource");
+}
+
+#[test]
 fn tactic_expansion_includes_a_call_at_the_execute_until_endpoint() {
     let callee_c = r#"
 int32 callee(int32 x) {

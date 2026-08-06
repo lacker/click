@@ -22,7 +22,10 @@ makes observation finite while still letting mutators unfold and re-establish
 the concrete terminator condition.
 
 The verified operations cover initialization, viewed length and element reads,
-indexed replacement, push, general pop, clear, and a pipeline of modular calls.
+indexed replacement, push, general pop, clear, and an init/push/get/pop pipeline
+of modular calls. The pipeline finishes with `empty_owned_string(owner)`, a
+state-specific resource that carries the final `len == 0` fact without changing
+the C implementation.
 Indexed replacement explicitly unfolds and re-establishes the terminator
 predicate after its separate store. Push and pop move the terminator and
 therefore establish the new predicate explicitly.
@@ -37,6 +40,13 @@ parameter. Pop similarly mutates only the metadata length and the old final
 content cell. `owned_string_pop_preserves_first` verifies through that modular
 contract that popping a string of length at least two preserves its first
 element.
+
+The pipeline also demonstrates why call-entry snapshots sometimes need to be
+named explicitly in a proof. Push establishes the new element at the old
+length; the sidecar spells that old length as
+`at(statement(3).entry, owner->len)` before deriving the concrete index. This
+is Click proof bookkeeping around the unchanged C call sequence, not a source
+adaptation.
 
 The sidecar mixes concise smart proofs with expanded exact certificates. Read
 the short accessor proofs first. Long `step() using`, `transport ... using`,

@@ -39,12 +39,11 @@ large example or quarantine a regression without its issue.
 The repository has several historical cases where example C was simplified or
 rerouted while repairing its proof. Track and remove them independently:
 
-1. [Restore the owned-string modular pipeline](restore-owned-string-pipeline.md).
-2. [Remove the runtime-allocation no-op null branch](remove-runtime-allocation-noop-null-branch.md).
-3. [Use general vector push in the owned-vector pipeline](use-general-vector-push-in-pipeline.md).
-4. [Verify independent input-cursor initialization](verify-independent-input-cursor-initialization.md).
-5. [Remove C-local spelling workarounds](remove-c-local-spelling-workarounds.md).
-6. [Audit examples against unchanged existing C](audit-existing-c-source-fidelity.md).
+1. [Remove the runtime-allocation no-op null branch](remove-runtime-allocation-noop-null-branch.md).
+2. [Use general vector push in the owned-vector pipeline](use-general-vector-push-in-pipeline.md).
+3. [Verify independent input-cursor initialization](verify-independent-input-cursor-initialization.md).
+4. [Remove C-local spelling workarounds](remove-c-local-spelling-workarounds.md).
+5. [Audit examples against unchanged existing C](audit-existing-c-source-fidelity.md).
 
 ## Partial correctness and recursion
 

@@ -73,6 +73,20 @@ resource owned_string(owner: struct owned_string*) {
     );
 }
 
+resource empty_owned_string(owner: struct owned_string*) {
+    owns owner->len;
+    owns owner->cap;
+    owns owner->data;
+    owns owner->data[0..owner->cap];
+    fact owner->len == 0;
+    fact owner->len < owner->cap;
+    fact terminated_at(owner->data, owner->len);
+    fact separate(
+        memory(object(owner)),
+        memory(owner->data[0..owner->cap])
+    );
+}
+
 verifying "owned_string_init.c";
 verifying "owned_string_len.c";
 verifying "owned_string_get.c";
@@ -777,10 +791,72 @@ int32 owned_string_pipeline(
     requires 2 <= capacity;
     consumes object(owner);
     consumes data[0..capacity];
-    produces owned_string(owner);
-    ensures owner->len == 0;
+    produces empty_owned_string(owner);
     ensures result == first;
 } by {
-    execute();
-    simp();
+    execute_until(statement(3));
+    have owner->len == 0 by simp;
+    have owner->cap == capacity by simp;
+    have owner->len + 1 < owner->cap by simp;
+    step() using {
+        owner->len + 1 < owner->cap;
+        owner->len == 0;
+        owner->cap == capacity;
+        2 <= capacity;
+        loadable(old(object(owner)));
+        loadable(old(data[0..capacity]));
+    }
+    have owner->len == 1 by simp;
+    have 0 < owner->len by simp;
+    have owner->data[at(statement(3).entry, owner->len)] == first by {
+        assumption();
+    }
+    have owner->data[0] == first by simp;
+    step() using {
+        0 < owner->len;
+        owner->len == 1;
+        owner->data[0] == first;
+        loadable(old(object(owner)));
+        loadable(old(data[0..capacity]));
+    }
+    have 1 <= owner->len by simp;
+    have observed == first by simp;
+    step() using {
+        1 <= owner->len;
+        owner->len == 1;
+        observed == first;
+        loadable(old(object(owner)));
+        loadable(old(data[0..capacity]));
+    }
+    have owner->len == at(statement(5).entry, owner->len) - 1 by {
+        assumption();
+    }
+    have at(statement(5).entry, owner->len) == 1 by {
+        assumption();
+    }
+    apply(decremented_one_is_zero(
+        at(statement(5).entry, owner->len),
+        owner->len
+    ));
+    have owner->len == 0 by {
+        assumption();
+    }
+    unfold(owned_string(owner));
+    fold(empty_owned_string(owner));
+    have observed == first by simp;
+    step() using {
+        observed == first;
+    }
+    have result == at(statement(6).entry, observed) by simp;
+    have at(statement(6).entry, observed) == first by {
+        assumption();
+    }
+    have result == first by {
+        derive using {
+            result == at(statement(6).entry, observed);
+            at(statement(6).entry, observed) == first;
+        }
+    }
+    assumption();
+    assumption();
 }
