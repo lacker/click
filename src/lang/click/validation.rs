@@ -382,6 +382,9 @@ fn expand_declared_resource_tactic(
                 .map(|tactic| expand_declared_resource_tactic(tactic, resource_definitions))
                 .collect::<Result<Vec<_>, _>>()?,
         })),
+        ProofTactic::Loop(clause) => Ok(ProofTactic::Loop(
+            expand_declared_resource_structural_clause(clause, resource_definitions)?,
+        )),
         _ => Ok(tactic),
     }
 }

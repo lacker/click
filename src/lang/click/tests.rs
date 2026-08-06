@@ -7251,6 +7251,76 @@ fn frontier_local_loop_rejects_a_non_loop_frontier() {
 }
 
 #[test]
+fn frontier_local_loop_resolves_composite_resources_in_nested_proofs() {
+    let click_source = r#"
+            resource box_value(owner: struct box*) {
+                owns owner->value;
+            }
+
+            verifying "count_once.c";
+
+            int32 count_once(struct box* owner) {
+                owns box_value(owner);
+                ensures result == 1;
+            } by {
+                step();
+                step();
+                loop {
+                    invariant i >= 0;
+                    invariant i <= 1;
+                    mutable owner->value by {
+                        observe(box_value(owner));
+                        frame() using {};
+                    }
+                    initialize by simp;
+                    preserve by {
+                        observe(box_value(owner));
+                        step();
+                        close_invariants();
+                    }
+                }
+                step();
+                simp();
+            }
+        "#;
+
+    let parsed = parser::parse_file_items(click_source).expect("source should parse");
+    let expanded = validation::expand_declared_resource_clauses(parsed)
+        .expect("nested loop resources should resolve");
+    let loop_clause = expanded.function_blocks()[0]
+        .grouped_proof()
+        .and_then(Proof::tactics)
+        .and_then(|tactics| {
+            tactics.iter().find_map(|tactic| match tactic {
+                ProofTactic::Loop(clause) => Some(clause),
+                _ => None,
+            })
+        })
+        .expect("grouped proof should contain a loop tactic");
+
+    let effect_observe = loop_clause.items()[2]
+        .proof()
+        .tactics()
+        .and_then(|tactics| tactics.first())
+        .expect("effect should contain an observe tactic");
+    let preserve_observe = loop_clause
+        .preserve_proof()
+        .and_then(Proof::tactics)
+        .and_then(|tactics| tactics.first())
+        .expect("preservation should contain an observe tactic");
+    for tactic in [effect_observe, preserve_observe] {
+        assert!(matches!(
+            tactic,
+            ProofTactic::ObserveResource(ResourceClause::Declared {
+                kind: ResourceKind::Composite,
+                parameter_types,
+                ..
+            }) if parameter_types == &[C0Type::Int32Pointer]
+        ));
+    }
+}
+
+#[test]
 fn frontier_local_loop_verifies_a_lowered_c_for_loop() {
     let c_source = r#"
             int32 count_to_three() {
