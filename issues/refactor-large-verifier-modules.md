@@ -28,11 +28,10 @@ should be able to locate smart planning, deterministic replay, surface
 certificate synthesis, execution, and resource behavior without reading one
 monolithic module.
 
-The refactoring should also prepare, but not pre-implement, the shared
-proof-producing architecture tracked in
-[`replayable-smart-tactic-expansion.md`](replayable-smart-tactic-expansion.md).
-In particular, planning and replay should become visibly separate stages with
-an explicit data boundary between them.
+The refactoring should preserve and clarify the shared proof-producing
+architecture. In particular, planning and replay should become visibly
+separate stages with an explicit data boundary between them; statement
+snapshots and their source-layout identities are part of that boundary.
 
 ## Non-goals
 

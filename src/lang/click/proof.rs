@@ -4742,6 +4742,7 @@ pub(super) fn verify_loop_execution_proofs(
         &assumptions_from_propositions(&requirement_facts),
     )
     .map_err(|message| ClickError::new(format!("`{label}` {message}")))?;
+    let source_layout = SourceExecutionLayout::new(parsed_function.body());
     let environment = ExecutionProofEnvironment {
         initial_state: &initial_state,
         function_block,
@@ -4754,8 +4755,10 @@ pub(super) fn verify_loop_execution_proofs(
         function: &function,
         arguments: &arguments,
         surface_propositions: &surface_propositions,
+        source_layout: &source_layout,
     };
     let mut verified_loop_rules = Vec::new();
+    let mut next_statement_index = 0;
     let mut next_loop_index = 0;
     verify_execution_proofs_forward(
         function.body(),
@@ -4768,6 +4771,7 @@ pub(super) fn verify_loop_execution_proofs(
             next_opaque_call: 0,
             next_verification_variable: 0,
         }],
+        &mut next_statement_index,
         &mut next_loop_index,
         &environment,
         &mut verified_loop_rules,
@@ -4797,6 +4801,7 @@ struct ExecutionProofEnvironment<'a> {
     function: &'a CFunction,
     arguments: &'a [CExpression],
     surface_propositions: &'a SurfacePropositionMap,
+    source_layout: &'a SourceExecutionLayout,
 }
 
 #[derive(Clone)]
@@ -6973,6 +6978,7 @@ fn certified_transitions_from_execution(
 fn verify_execution_proofs_forward(
     statement: &CStatement,
     contexts: Vec<ExecutionProofContext>,
+    next_statement_index: &mut usize,
     next_loop_index: &mut usize,
     environment: &ExecutionProofEnvironment<'_>,
     verified_loop_rules: &mut Vec<CVerifiedLoopRule>,
@@ -6982,6 +6988,7 @@ fn verify_execution_proofs_forward(
             let contexts = verify_execution_proofs_forward(
                 first,
                 contexts,
+                next_statement_index,
                 next_loop_index,
                 environment,
                 verified_loop_rules,
@@ -6989,6 +6996,7 @@ fn verify_execution_proofs_forward(
             verify_execution_proofs_forward(
                 second,
                 contexts,
+                next_statement_index,
                 next_loop_index,
                 environment,
                 verified_loop_rules,
@@ -6999,22 +7007,45 @@ fn verify_execution_proofs_forward(
             then_branch,
             else_branch,
         } => {
+            let statement_index = *next_statement_index;
+            let source_region = environment
+                .source_layout
+                .statement(statement_index)
+                .ok_or_else(|| {
+                    ClickError::new(format!(
+                        "execution proof traversal could not resolve source statement({statement_index})"
+                    ))
+                })?;
+            let SourceStatementKind::If {
+                then_statement_index,
+                else_statement_index,
+            } = source_region.kind
+            else {
+                return Err(ClickError::new(format!(
+                    "execution proof traversal expected source statement({statement_index}) to be an `if`"
+                )));
+            };
             let (then_contexts, else_contexts) =
                 split_execution_proof_branch_contexts(condition, contexts)?;
+            *next_statement_index = then_statement_index;
             let mut joined = verify_execution_proofs_forward(
                 then_branch,
                 then_contexts,
+                next_statement_index,
                 next_loop_index,
                 environment,
                 verified_loop_rules,
             )?;
+            *next_statement_index = else_statement_index;
             joined.extend(verify_execution_proofs_forward(
                 else_branch,
                 else_contexts,
+                next_statement_index,
                 next_loop_index,
                 environment,
                 verified_loop_rules,
             )?);
+            *next_statement_index = source_region.continuation_node;
             Ok(joined)
         }
         CStatement::Assert {
@@ -7039,6 +7070,23 @@ fn verify_execution_proofs_forward(
             // through their certified pure facts.
             Ok(contexts)
         }
+        CStatement::Assert {
+            label: Some(label), ..
+        } if label.starts_with("statement ") && label.contains(" assert ") => {
+            // The first synthetic check certified every assertion attached to
+            // this source statement. Remaining lowered checks are not source
+            // statements and must not advance the layout cursor.
+            Ok(contexts)
+        }
+        CStatement::Assert {
+            label: Some(label), ..
+        } if label.starts_with("loop ") && label.contains(" assert ") => {
+            // Loop structural assertions are certified together at the loop
+            // arm below. Their lowered C checks are synthetic prefixes, not
+            // source statements, so they must not advance the shared source
+            // layout cursor.
+            Ok(contexts)
+        }
         CStatement::While {
             condition,
             invariant_checks,
@@ -7046,8 +7094,23 @@ fn verify_execution_proofs_forward(
             body,
             ..
         } => {
+            let statement_index = *next_statement_index;
             let loop_index = *next_loop_index;
             *next_loop_index += 1;
+            let source_region = environment
+                .source_layout
+                .statement(statement_index)
+                .ok_or_else(|| {
+                    ClickError::new(format!(
+                        "execution proof traversal could not resolve source statement({statement_index})"
+                    ))
+                })?;
+            if !matches!(source_region.kind, SourceStatementKind::Loop { loop_index: found } if found == loop_index)
+            {
+                return Err(ClickError::new(format!(
+                    "execution proof traversal source statement({statement_index}) does not match loop({loop_index})"
+                )));
+            }
             let contexts =
                 certify_structural_assertions(CodeRegion::Loop(loop_index), contexts, environment)?;
             let loop_clause = environment
@@ -7242,19 +7305,31 @@ fn verify_execution_proofs_forward(
             if kernel_statement_contains_loop(body) {
                 // Nested loop regions are encountered from the arbitrary iteration
                 // frontier, exactly where the outer induction hypothesis applies.
+                *next_statement_index = environment
+                    .source_layout
+                    .loop_body_entry(loop_index)
+                    .ok_or_else(|| {
+                        ClickError::new(format!(
+                            "execution proof traversal could not resolve loop({loop_index}) body"
+                        ))
+                    })?;
                 let _ = verify_execution_proofs_forward(
                     body,
                     iteration_contexts,
+                    next_statement_index,
                     next_loop_index,
                     environment,
                     verified_loop_rules,
                 )?;
             }
 
+            *next_statement_index = source_region.continuation_node;
+
             advance_execution_proof_statement(
                 statement,
                 contexts,
-                loop_index,
+                statement_index,
+                Some(loop_index),
                 environment,
                 verified_loop_rules,
                 if loop_clause.is_some() {
@@ -7265,16 +7340,41 @@ fn verify_execution_proofs_forward(
                 initialization_proof.is_some(),
             )
         }
-        CStatement::Return(_) => Ok(Vec::new()),
-        _ => advance_execution_proof_statement(
-            statement,
-            contexts,
-            *next_loop_index,
-            environment,
-            verified_loop_rules,
-            LoopPreservationSource::Automatic,
-            false,
-        ),
+        CStatement::Return(_) => {
+            let statement_index = *next_statement_index;
+            *next_statement_index = environment
+                .source_layout
+                .statement(statement_index)
+                .map(|region| region.continuation_node)
+                .ok_or_else(|| {
+                    ClickError::new(format!(
+                        "execution proof traversal could not resolve source statement({statement_index})"
+                    ))
+                })?;
+            Ok(Vec::new())
+        }
+        _ => {
+            let statement_index = *next_statement_index;
+            *next_statement_index = environment
+                .source_layout
+                .statement(statement_index)
+                .map(|region| region.continuation_node)
+                .ok_or_else(|| {
+                    ClickError::new(format!(
+                        "execution proof traversal could not resolve source statement({statement_index})"
+                    ))
+                })?;
+            advance_execution_proof_statement(
+                statement,
+                contexts,
+                statement_index,
+                None,
+                environment,
+                verified_loop_rules,
+                LoopPreservationSource::Automatic,
+                false,
+            )
+        }
     }
 }
 
@@ -7743,7 +7843,8 @@ fn certify_structural_assertions(
 fn advance_execution_proof_statement(
     statement: &CStatement,
     contexts: Vec<ExecutionProofContext>,
-    region_index: usize,
+    statement_index: usize,
+    loop_index: Option<usize>,
     environment: &ExecutionProofEnvironment<'_>,
     verified_loop_rules: &mut Vec<CVerifiedLoopRule>,
     loop_preservation_source: LoopPreservationSource,
@@ -7751,7 +7852,14 @@ fn advance_execution_proof_statement(
 ) -> Result<Vec<ExecutionProofContext>, ClickError> {
     let mut advanced = Vec::new();
     for mut context in contexts {
-        let label = format!("execution proof traversal at region {region_index}");
+        record_code_region_program_point_state(
+            &mut context.program_point_states,
+            environment.function_block,
+            CodeRegion::Statement(statement_index),
+            ProgramPointKind::Entry,
+            context.state.clone(),
+        );
+        let label = format!("execution proof traversal at statement({statement_index})");
         let preservation_proven = matches!(
             loop_preservation_source,
             LoopPreservationSource::ExecutionProof
@@ -7783,6 +7891,11 @@ fn advance_execution_proof_statement(
             )?,
         };
         if matches!(statement, CStatement::While { .. }) {
+            let loop_index = loop_index.ok_or_else(|| {
+                ClickError::new(format!(
+                    "execution proof traversal source statement({statement_index}) is a loop without a loop index"
+                ))
+            })?;
             let loop_rule = loop_rule.ok_or_else(|| {
                 let unresolved = transitions
                     .iter()
@@ -7799,7 +7912,7 @@ fn advance_execution_proof_statement(
                 unresolved.sort();
                 unresolved.dedup();
                 ClickError::new(format!(
-                    "`{}` loop({region_index}) did not produce an obligation-free verified loop rule{}",
+                    "`{}` loop({loop_index}) did not produce an obligation-free verified loop rule{}",
                     environment.function_block.signature().name(),
                     if unresolved.is_empty() {
                         String::new()
@@ -7813,17 +7926,31 @@ fn advance_execution_proof_statement(
         for transition in transitions {
             let mut surface_propositions = context.surface_propositions.clone();
             let mut program_point_states = context.program_point_states.clone();
+            if let CStatementOutcome::Normal(exit_state)
+            | CStatementOutcome::Return {
+                state: exit_state, ..
+            } = &transition.outcome
+            {
+                record_code_region_program_point_state(
+                    &mut program_point_states,
+                    environment.function_block,
+                    CodeRegion::Statement(statement_index),
+                    ProgramPointKind::Exit,
+                    exit_state.clone(),
+                );
+            }
             if matches!(statement, CStatement::While { .. }) {
+                let loop_index = loop_index.expect("a while statement has a checked loop index");
                 let loop_labels = environment
                     .function_block
                     .structural_clauses()
                     .iter()
-                    .filter(|clause| clause.region() == &CodeRegion::Loop(region_index))
+                    .filter(|clause| clause.region() == &CodeRegion::Loop(loop_index))
                     .filter_map(StructuralClause::label)
                     .map(str::to_string)
                     .collect::<Vec<_>>();
                 let entry_point = ProgramPointRef {
-                    region: CodeRegionRef::Loop(region_index),
+                    region: CodeRegionRef::Loop(loop_index),
                     kind: ProgramPointKind::Entry,
                 };
                 program_point_states.insert(entry_point, context.state.clone());
@@ -7838,7 +7965,7 @@ fn advance_execution_proof_statement(
                 }
                 if let CStatementOutcome::Normal(exit_state) = &transition.outcome {
                     let exit_point = ProgramPointRef {
-                        region: CodeRegionRef::Loop(region_index),
+                        region: CodeRegionRef::Loop(loop_index),
                         kind: ProgramPointKind::Exit,
                     };
                     program_point_states.insert(exit_point.clone(), exit_state.clone());
@@ -7855,7 +7982,7 @@ fn advance_execution_proof_statement(
                         .function_block
                         .structural_clauses()
                         .iter()
-                        .find(|clause| clause.region() == &CodeRegion::Loop(region_index))
+                        .find(|clause| clause.region() == &CodeRegion::Loop(loop_index))
                     {
                         let mut invariant_targets = transition.pure_facts.iter().filter(|fact| {
                             !context.pure_facts.contains(fact)
@@ -7874,7 +8001,7 @@ fn advance_execution_proof_statement(
                         {
                             let target = invariant_targets.next().ok_or_else(|| {
                                 ClickError::new(format!(
-                                    "execution proof traversal loop({region_index}) omitted an exported fact for an invariant"
+                                    "execution proof traversal loop({loop_index}) omitted an exported fact for an invariant"
                                 ))
                             })?;
                             let exit_surface = surface_with_source_site(surface, &exit_point)?;
@@ -7898,7 +8025,7 @@ fn advance_execution_proof_statement(
                         )
                         .map_err(|message| {
                             ClickError::new(format!(
-                                "could not lower loop({region_index}) exit condition provenance: {message}"
+                                "could not lower loop({loop_index}) exit condition provenance: {message}"
                             ))
                         })?;
                         if transition.pure_facts.contains(&lowered_exit_condition) {
@@ -7924,13 +8051,13 @@ fn advance_execution_proof_statement(
                 CStatementOutcome::VerificationDiverges => {}
                 CStatementOutcome::UndefinedBehavior(kind) => {
                     return Err(ClickError::new(format!(
-                        "execution proof traversal for {} statement({region_index}) produced undefined behavior: {kind:?}",
+                        "execution proof traversal for {} statement({statement_index}) produced undefined behavior: {kind:?}",
                         environment.function_block.signature().name()
                     )));
                 }
                 CStatementOutcome::RuntimeError(error) => {
                     return Err(ClickError::new(format!(
-                        "execution proof traversal for {} statement({region_index}) produced runtime error: {error:?}\navailable resources: {:?}",
+                        "execution proof traversal for {} statement({statement_index}) produced runtime error: {error:?}\navailable resources: {:?}",
                         environment.function_block.signature().name(),
                         context.state.resources().facts()
                     )));
@@ -15793,13 +15920,9 @@ fn lower_surface_atomic_derivation(
         }
         if replay_kind(&premise_pairs).is_none() {
             return Err(ClickError::new(format!(
-                "surface premises do not replay the atomic derivation of {:?}\nunexpressed derivation premises:\n{}",
-                lowered_conclusion,
-                unexpressed_premises
-                    .iter()
-                    .map(|(premise, error)| format!("  {premise:?}: {}", error.message()))
-                    .collect::<Vec<_>>()
-                    .join("\n"),
+                "surface premises do not replay the atomic derivation of {}\nunexpressed derivation premises: {}",
+                describe_pure_fact(&lowered_conclusion, parameters, arguments),
+                describe_unexpressed_pure_facts(&unexpressed_premises, parameters, arguments,),
             )));
         }
     }
@@ -23835,27 +23958,13 @@ fn record_loop_program_point_state(
     kind: ProgramPointKind,
     state: CState,
 ) {
-    replay.program_point_states.insert(
-        ProgramPointRef {
-            region: CodeRegionRef::Loop(loop_index),
-            kind,
-        },
-        state.clone(),
+    record_code_region_program_point_state(
+        &mut replay.program_point_states,
+        function_block,
+        CodeRegion::Loop(loop_index),
+        kind,
+        state,
     );
-    for label in function_block
-        .structural_clauses()
-        .iter()
-        .filter(|clause| clause.region() == &CodeRegion::Loop(loop_index))
-        .filter_map(StructuralClause::label)
-    {
-        replay.program_point_states.insert(
-            ProgramPointRef {
-                region: CodeRegionRef::Label(label.to_string()),
-                kind,
-            },
-            state.clone(),
-        );
-    }
 }
 
 fn record_statement_program_point_state(
@@ -23865,9 +23974,30 @@ fn record_statement_program_point_state(
     kind: ProgramPointKind,
     state: CState,
 ) {
-    replay.program_point_states.insert(
+    record_code_region_program_point_state(
+        &mut replay.program_point_states,
+        function_block,
+        CodeRegion::Statement(statement_index),
+        kind,
+        state,
+    );
+}
+
+fn record_code_region_program_point_state(
+    program_point_states: &mut ProgramPointStates,
+    function_block: &FunctionBlock,
+    region: CodeRegion,
+    kind: ProgramPointKind,
+    state: CState,
+) {
+    let point_region = match region {
+        CodeRegion::Function => CodeRegionRef::Function,
+        CodeRegion::Loop(index) => CodeRegionRef::Loop(index),
+        CodeRegion::Statement(index) => CodeRegionRef::Statement(index),
+    };
+    program_point_states.insert(
         ProgramPointRef {
-            region: CodeRegionRef::Statement(statement_index),
+            region: point_region,
             kind,
         },
         state.clone(),
@@ -23875,10 +24005,10 @@ fn record_statement_program_point_state(
     for label in function_block
         .structural_clauses()
         .iter()
-        .filter(|clause| clause.region() == &CodeRegion::Statement(statement_index))
+        .filter(|clause| clause.region() == &region)
         .filter_map(StructuralClause::label)
     {
-        replay.program_point_states.insert(
+        program_point_states.insert(
             ProgramPointRef {
                 region: CodeRegionRef::Label(label.to_string()),
                 kind,

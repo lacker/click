@@ -45,9 +45,9 @@ large example or quarantine a regression without its issue.
 
 ## Tooling blockers
 
-These block the owned-vector source-fidelity work:
-
-1. [Make smart-tactic success require replayable expansion](replayable-smart-tactic-expansion.md).
+There are no known tooling blockers preventing the owned-vector
+source-fidelity work from resuming. Smart structural proofs now retain ordinary
+statement snapshots through certificate reconstruction and fresh replay.
 
 Expansion is deliberately not a repair operation for a broken proof. The
 selected proof unit and the contracts it depends on must verify before `click

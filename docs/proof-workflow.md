@@ -249,8 +249,11 @@ step();
 `statement(N).exit` means immediately after it completes. Lowering assigns
 statement IDs globally in source preorder: a compound statement receives its
 ID before the statements nested in its arms or body. A sequence itself does
-not receive an ID. Every nested case must reach exactly the requested point
-and establish every assertion. `reach` is the
+not receive an ID. Structural assertion and loop checks inserted by Click are
+not source statements and do not consume IDs. Structural traversal, tactic
+execution, snapshots, expansion, and replay all use this same layout. Every
+nested case must reach exactly the requested point and establish every
+assertion. `reach` is the
 execution-proof counterpart to `have`: `have` runs a pure proof without moving
 the execution point, while `reach` proves a postcondition for a scoped code
 region and advances to its exit. Facts and resources needed by the

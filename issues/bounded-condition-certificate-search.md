@@ -7,6 +7,11 @@ While restoring the general `vector_push` call in the owned-vector pipeline,
 reconstruct one non-derivable equality from a wide ambient condition context.
 The slow path is certificate-premise search, not C execution.
 
+Certificate-reconstruction failures now summarize proposition kinds and bound
+the number of unspellable premises instead of dumping kernel `CMemory` terms.
+The remaining work in this issue is the bounded non-derivable-search regression
+and its focused decomposition guidance, not general diagnostic serialization.
+
 This is not, by itself, a requirement that `execute_until` find the proof.
 Smart tactics are heuristic and incomplete. A difficult execution proof may
 need to be decomposed into smaller smart operations or written as explicit

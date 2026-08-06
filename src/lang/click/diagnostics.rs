@@ -131,6 +131,20 @@ pub(super) fn describe_pure_facts(pure_facts: &[Proposition]) -> String {
     describe_bounded_list(pure_facts, |fact| describe_pure_fact(fact, &[], &[]))
 }
 
+pub(super) fn describe_unexpressed_pure_facts(
+    facts: &[(Proposition, ClickError)],
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+) -> String {
+    describe_bounded_list(facts, |(fact, error)| {
+        format!(
+            "{}: {}",
+            describe_pure_fact(fact, parameters, arguments),
+            error.message()
+        )
+    })
+}
+
 pub(super) fn describe_pure_fact(
     fact: &Proposition,
     parameters: &[syntax::C0Parameter],

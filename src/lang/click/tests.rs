@@ -184,6 +184,45 @@ fn verifier_diagnostics_are_bounded_deterministically_at_utf8_boundaries() {
 }
 
 #[test]
+fn certificate_reconstruction_diagnostics_summarize_internal_snapshots() {
+    let memory = CMemory::new().with_block("hidden-snapshot", 4);
+    let fact = Proposition::ConditionIs(
+        ConditionTerm::Bitvector32Equal(
+            Box::new(Bitvector32Term::MemoryLoad(
+                crate::kernel::intern_c_memory(memory),
+                Box::new(Pointer {
+                    block: "hidden-snapshot".into(),
+                    offset: PointerOffsetTerm::Constant(0),
+                }),
+            )),
+            Box::new(Bitvector32Term::Constant(1)),
+        ),
+        true,
+    );
+    let failures = (0..20)
+        .map(|_| {
+            (
+                fact.clone(),
+                ClickError::new(
+                    "comparison fact has no replayable Surface Click spelling at this proof point",
+                ),
+            )
+        })
+        .collect::<Vec<_>>();
+
+    let rendered = super::diagnostics::describe_unexpressed_pure_facts(&failures, &[], &[]);
+
+    assert!(rendered.contains("int32 equality is true"), "{rendered}");
+    assert!(
+        rendered.contains("no replayable Surface Click spelling"),
+        "{rendered}"
+    );
+    assert!(rendered.contains("8 more omitted"), "{rendered}");
+    assert!(!rendered.contains("CMemory"), "{rendered}");
+    assert!(!rendered.contains("hidden-snapshot"), "{rendered}");
+}
+
+#[test]
 fn verifier_diagnostics_bound_fact_items_and_show_resource_deltas() {
     let facts = (0..20)
         .map(|index| {
@@ -9344,11 +9383,17 @@ int32 pipeline(struct counter* owner) {
     consumes object(owner);
     mutable object(owner);
     produces counter(owner);
+    for statement(3) {
+        assert owner->value == 1 by auto;
+    }
     ensures result == 1;
     ensures owner->value == 1;
 } by {
     execute_until(statement(3));
-    execute();
+    have owner->value == 1 by simp;
+    step() using {
+        owner->value == 1;
+    }
     frame();
     simp();
 }
@@ -9360,6 +9405,26 @@ int32 pipeline(struct counter* owner) {
     ];
 
     verify_c0_sources(click_source, &sources).expect("the original smart proof should verify");
+
+    let assertion = click_source
+        .find("assert owner->value == 1 by auto")
+        .unwrap()
+        + "assert owner->value == 1 by ".len();
+    let assertion_position = expansion::position_at_offset(click_source, assertion);
+    let assertion_expanded = expand_c0_tactic_source_at(
+        click_source,
+        &sources,
+        assertion_position.line,
+        assertion_position.column,
+    )
+    .expect("the mixed-snapshot program-point assertion should expand");
+    assert!(!assertion_expanded.contains("assert owner->value == 1 by auto"));
+    assert!(
+        assertion_expanded.contains("at(statement("),
+        "the explicit certificate should retain a source statement anchor"
+    );
+    verify_c0_sources(&assertion_expanded, &sources)
+        .expect("the mixed-snapshot program-point assertion expansion should replay");
 
     let selected = click_source.find("execute_until").unwrap();
     let position = expansion::position_at_offset(click_source, selected);
