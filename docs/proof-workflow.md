@@ -2,6 +2,12 @@
 
 Click proofs live in `by` clauses.
 
+When a proof does not close, first determine whether the claim is false, the
+proof needs explicit supported steps, or Click has a language, correctness, or
+tooling defect. The [proof-failure triage guide](advanced/proof-failure-triage.md)
+gives the canonical classification and reduction workflow. In particular, a
+prompt failure from an incomplete smart tactic is not by itself an engine bug.
+
 ## Proof Kinds
 
 A **pure proof** derives a proposition from facts at one execution point. It

@@ -15,6 +15,11 @@ The tools explain expensive verification; they do not promise that every
 expensive project can be made small by expanding tactics. Healthy proof volume
 is a valid diagnosis.
 
+This page assumes the target has already been classified using
+[Triaging Proof Failures](proof-failure-triage.md). Performance tools diagnose
+tooling slowness or optimize a correct proof; they do not decide whether a
+failed claim is false, missing proof steps, or blocked on Click functionality.
+
 Correctness comes first. Run `click verify` before starting optimization work:
 
 ```text

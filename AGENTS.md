@@ -122,4 +122,5 @@ and treat that result as an incomplete diagnostic frontier, not an
 optimization profile. Never expand a tactic from an incomplete run.
 
 See `issues/README.md` for issue policy and
+`docs/advanced/proof-failure-triage.md` for failure classification, and
 `docs/advanced/testing-click.md` for the performance and expansion workflow.

@@ -69,4 +69,7 @@ When a proof fails, it usually means one of three things:
 
 The proof failure is the start of the debugging process. The next beginner
 chapters explain the two languages you need to read that process: contracts and
-propositions.
+propositions. Once ordinary contract debugging is not enough, use the
+[proof-failure triage guide](../advanced/proof-failure-triage.md) to distinguish
+proof-authoring work from unsupported semantics, missing functionality,
+correctness bugs, and tooling failures.

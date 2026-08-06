@@ -39,6 +39,11 @@ replayable certificate, behaves unstably, or exposes something the simple
 proof language cannot express. Do not retune shared heuristics solely to make
 one large smart tactic pass.
 
+Use the [proof-failure triage guide](../docs/advanced/proof-failure-triage.md)
+before filing an issue. It is the canonical distinction among ordinary proof
+development, documented limitations, ergonomic automation problems, missing
+functionality, correctness bugs, and tooling reliability bugs.
+
 The issue should contain a small intended regression, the violated invariant,
 and acceptance criteria. Do not leave the only reproduction in an uncommitted
 large example or quarantine a regression without its issue.

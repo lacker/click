@@ -78,6 +78,8 @@ High-value entry points:
   starting point.
 - [docs/intermediate/spec-state.md](docs/intermediate/spec-state.md): current
   spec-state design position.
+- [docs/advanced/proof-failure-triage.md](docs/advanced/proof-failure-triage.md):
+  distinguish proof-authoring work from Click language and tooling defects.
 - [docs/advanced/testing-click.md](docs/advanced/testing-click.md): test
   commands and mdtest shape.
 - [docs/feature-playbook.md](docs/feature-playbook.md): how to extend Click.

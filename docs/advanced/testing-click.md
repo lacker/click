@@ -2,6 +2,11 @@
 
 Click uses ordinary Rust tests plus markdown integration tests.
 
+Use [Triaging Proof Failures](proof-failure-triage.md) to classify a failed
+proof before deciding whether it belongs in a regression test, an issue, or
+ordinary proof development. This page describes how to test and contain the
+tooling failures identified by that process.
+
 ## Tooling failures block feature work
 
 Treat the verifier and its proof tools as the foundation for every language
