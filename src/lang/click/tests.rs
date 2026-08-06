@@ -9404,6 +9404,73 @@ fn unrelated_non_comparison_conditions_are_not_polarity_equivalent() {
 }
 
 #[test]
+fn unfolding_composite_rejects_concretely_overlapping_owned_children() {
+    let c_source = r#"
+        int32 preserve(int32* data) {
+            return 0;
+        }
+    "#;
+    let click_source = r#"
+        resource overlapping(data: int32*) {
+            owns data[0..2];
+            owns data[1..3];
+            fact separate(memory(data[0..2]), memory(data[1..3]));
+        }
+
+        verifying "preserve.c";
+
+        int32 preserve(int32* data) {
+            owns overlapping(data);
+            ensures result == 0;
+        } by {
+            unfold(overlapping(data));
+            execute();
+            simp();
+        }
+    "#;
+
+    let error = verify_c0_sources(click_source, &[("preserve.c", c_source)])
+        .expect_err("a composite fact must not authorize overlapping owned children");
+    assert!(
+        error
+            .message()
+            .contains("overlapping owned memory resource facts"),
+        "{}",
+        error.message()
+    );
+}
+
+#[test]
+fn unfolding_composite_accepts_propositionally_equal_arguments() {
+    let c_source = r#"
+        int32 preserve(int32* left, int32* right) {
+            return 0;
+        }
+    "#;
+    let click_source = r#"
+        resource cell(data: int32*) {
+            owns data[0..1];
+        }
+
+        verifying "preserve.c";
+
+        int32 preserve(int32* left, int32* right) {
+            requires left == right;
+            owns cell(left);
+            ensures result == 0;
+        } by {
+            unfold(cell(right));
+            execute();
+            fold(cell(left));
+            simp();
+        }
+    "#;
+
+    verify_c0_sources(click_source, &[("preserve.c", c_source)])
+        .expect("unfold should retain its equality-aware resource-consumption fallback");
+}
+
+#[test]
 fn incremental_selection_follows_reverse_call_dependencies_and_ignores_comments() {
     let sources = [
         ("leaf.c", "int32 leaf(int32 x) { return x; }"),

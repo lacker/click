@@ -38,9 +38,8 @@ large example or quarantine a regression without its issue.
 
 The current tooling regressions take priority over the feature issues below:
 
-1. [Keep one composite-resource unfold cheap](bound-composite-resource-unfold.md).
-2. [Bound smart framing and expansion end to end](bound-smart-frame-expansion.md).
-3. [Make surface-certificate search semantic and bounded](make-surface-certificate-search-semantic.md).
+1. [Bound smart framing and expansion end to end](bound-smart-frame-expansion.md).
+2. [Make surface-certificate search semantic and bounded](make-surface-certificate-search-semantic.md).
 
 The reproductions must be reduced away from the paused owned-vector feature.
 Do not resume that feature by carrying over its experimental normalization or

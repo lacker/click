@@ -655,6 +655,20 @@ impl Assumptions {
         Self::default()
     }
 
+    /// Removes separation propositions while preserving arithmetic, equality,
+    /// and other contextual facts. Resource-definition projection uses this
+    /// to detect ownership conflicts that a contradictory fact from the same
+    /// definition must not conceal.
+    pub(crate) fn without_explicit_separation_facts(mut self) -> Self {
+        self.prop_facts.retain(|proposition| {
+            !matches!(
+                proposition,
+                Proposition::CMemoryDisjoint { .. } | Proposition::CResourceSeparate { .. }
+            )
+        });
+        self
+    }
+
     /// Keep contextual loadability consequences as explicit proof obligations
     /// instead of silently discharging them while symbolic execution is being
     /// planned.

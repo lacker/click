@@ -26154,10 +26154,20 @@ fn unfold_composite_resource(
     };
     let abstract_resource = lower_resource_clause(resource, parameters, arguments, state.memory())?;
     let assumptions = assumptions_from_propositions(available_pure_facts);
+    // The ordinary case holds the folded composite exactly. Removing that
+    // representation must not normalize every unrelated resource in the
+    // ambient context. Preserve the equality-aware fallback for callers whose
+    // resource arguments are only propositionally equal.
     let folded_resources = state
         .resources()
         .clone()
-        .without_fact(&abstract_resource, &assumptions);
+        .without_exact_representation(&abstract_resource)
+        .or_else(|| {
+            state
+                .resources()
+                .clone()
+                .without_fact(&abstract_resource, &assumptions)
+        });
     let already_unfolded = folded_resources.is_none();
     let resources = if let Some(resources) = folded_resources {
         resources
@@ -26223,22 +26233,7 @@ fn unfold_composite_resource(
             &lowered,
             parameters,
         );
-        let resources = if already_unfolded {
-            state.resources().clone()
-        } else {
-            state
-                .resources()
-                .clone()
-                .try_compose_with_fact(lowered, &assumptions)
-                .map_err(|error| {
-                    ClickError::new(format!(
-                        "`{claim_label}` tactic {tactic_index}: `unfold({})` produced {}",
-                        describe_resource_clause(resource),
-                        describe_resource_context_validity_error(error, parameters, arguments)
-                    ))
-                })?
-        };
-        state = state.with_memory(memory).with_resource_context(resources);
+        state = state.with_memory(memory);
         append_resource_clause_loadable_fact(
             &contained,
             parameters,
@@ -26255,12 +26250,26 @@ fn unfold_composite_resource(
         })?;
     }
 
-    let unfolded_resources = ResourceContext::new().unchecked_with_facts(unfolded_facts);
-    append_composite_resource_relation_facts(
-        abstract_resource.resource(),
-        &unfolded_resources,
-        available_pure_facts,
-    );
+    // Validate the projected ownership before assuming facts supplied by the
+    // same definition. A body may legitimately state separation that is
+    // needed to normalize symbolic children, but it must not use a
+    // contradictory separation claim to conceal a concretely overlapping
+    // pair. This is one validity pass over the complete projection, not one
+    // normalization per child.
+    if !already_unfolded {
+        let ownership_assumptions = assumptions.clone().without_explicit_separation_facts();
+        let projected = state
+            .resources()
+            .clone()
+            .unchecked_with_facts(unfolded_facts.clone());
+        if let Some(error) = projected.validity_error(&ownership_assumptions) {
+            return Err(ClickError::new(format!(
+                "`{claim_label}` tactic {tactic_index}: `unfold({})` produced {}",
+                describe_resource_clause(resource),
+                describe_resource_context_validity_error(error, parameters, arguments)
+            )));
+        }
+    }
 
     for fact in body_facts {
         let fact = substitute_click_proposition(fact, &substitutions).map_err(|message| {
@@ -26297,6 +26306,35 @@ fn unfold_composite_resource(
         surface_propositions.record_lowering(&fact, &lowered_fact)?;
         available_pure_facts.push(lowered_fact);
     }
+
+    // Project the complete body in one checked composition. Composing each
+    // child separately renormalizes the same ambient resource context once
+    // per child, making one simple `unfold` depend on the accumulated proof
+    // history rather than the size of the resource body. The definition's
+    // pure facts are simultaneous consequences of the same composite law, so
+    // make them available while canonicalizing its children.
+    if !already_unfolded {
+        let composition_assumptions = assumptions_from_propositions(available_pure_facts);
+        let resources = state
+            .resources()
+            .clone()
+            .try_compose_with_facts(unfolded_facts.clone(), &composition_assumptions)
+            .map_err(|error| {
+                ClickError::new(format!(
+                    "`{claim_label}` tactic {tactic_index}: `unfold({})` produced {}",
+                    describe_resource_clause(resource),
+                    describe_resource_context_validity_error(error, parameters, arguments)
+                ))
+            })?;
+        state = state.with_resource_context(resources);
+    }
+
+    let unfolded_resources = ResourceContext::new().unchecked_with_facts(unfolded_facts);
+    append_composite_resource_relation_facts(
+        abstract_resource.resource(),
+        &unfolded_resources,
+        available_pure_facts,
+    );
 
     append_state_resource_context_observable_facts(
         parameters,
