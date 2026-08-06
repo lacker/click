@@ -184,6 +184,10 @@ rewritten artifact before deciding that expansion improved performance.
   accepted by the ordinary parser. Canonical struct spellings include
   `owner->field`, `owner->pointer_field[start..end]`, and `object(owner)`.
 - Everything consumed by certificate replay needs a checked surface spelling.
+- Snapshot-qualified spelling search indexes the memories nested anywhere in
+  the kernel proposition, tries exact recorded states before marker-compatible
+  states, and constructs candidates only from those states. It never truncates
+  a candidate list by count or combines a fact with unrelated program points.
 - Reconstructing a surface spelling is itself bounded by shared structural
   depth and work limits. Exhaustion rejects the candidate and reports the
   reconstruction category without printing the potentially enormous kernel

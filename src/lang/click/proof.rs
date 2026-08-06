@@ -1431,6 +1431,154 @@ mod certificate_tests {
     }
 
     #[test]
+    fn source_site_annotation_rejects_deep_logic_without_using_the_native_stack() {
+        let mut surface = ClickProposition::Comparison {
+            left: ContractExpression::CBinding("value".to_string()),
+            operator: ComparisonOperator::Equal,
+            right: ContractExpression::CFragment(CExpression::Value(CValue::Int32(
+                Bitvector32Term::Constant(0),
+            ))),
+        };
+        for _ in 0..=SOURCE_SITE_ANNOTATION_DEPTH_LIMIT {
+            surface = ClickProposition::Not(Box::new(surface));
+        }
+        let point = ProgramPointRef {
+            region: CodeRegionRef::Statement(0),
+            kind: ProgramPointKind::Entry,
+        };
+
+        let error = surface_with_source_site(&surface, &point)
+            .expect_err("deep source-site reconstruction must stop structurally");
+        assert!(
+            error.message().contains("structural depth bound"),
+            "{error:?}"
+        );
+    }
+
+    #[test]
+    fn snapshot_index_finds_a_late_exact_point_inside_a_quantifier() {
+        let early_memory = CMemory::new().with_block("early", 4);
+        let target_memory = CMemory::new().with_block("target", 4);
+        let pointer = Pointer {
+            block: "target".into(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let kernel = Proposition::ForAll {
+            var: Variable(7),
+            sort: Sort::Bitvector32,
+            body: Box::new(Proposition::ConditionIs(
+                ConditionTerm::Bitvector32Equal(
+                    Box::new(Bitvector32Term::MemoryLoad(
+                        crate::kernel::intern_c_memory(target_memory.clone()),
+                        Box::new(pointer),
+                    )),
+                    Box::new(Bitvector32Term::Variable(Variable(7))),
+                ),
+                true,
+            )),
+        };
+        let early = ProgramPointRef {
+            region: CodeRegionRef::Statement(0),
+            kind: ProgramPointKind::Entry,
+        };
+        let late = ProgramPointRef {
+            region: CodeRegionRef::Statement(99),
+            kind: ProgramPointKind::Entry,
+        };
+        let mut states = ProgramPointStates::new();
+        states.insert(early, CState::new().with_memory(early_memory));
+        states.insert(late.clone(), CState::new().with_memory(target_memory));
+
+        let (exact, compatible) = snapshot_indexed_program_points(&kernel, &states);
+        assert_eq!(
+            exact.iter().map(|(point, _)| *point).collect::<Vec<_>>(),
+            vec![&late]
+        );
+        assert!(compatible.is_empty());
+    }
+
+    #[test]
+    fn missing_snapshot_spelling_reports_a_concise_indexed_failure() {
+        let target_memory = CMemory::new().with_block("target", 4);
+        let pointer = Pointer {
+            block: "target".into(),
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let kernel = Proposition::ConditionIs(
+            ConditionTerm::Bitvector32Equal(
+                Box::new(Bitvector32Term::MemoryLoad(
+                    crate::kernel::intern_c_memory(target_memory),
+                    Box::new(pointer),
+                )),
+                Box::new(Bitvector32Term::Constant(0)),
+            ),
+            true,
+        );
+        let replay = TacticReplayState::default();
+        let state = CState::new().with_memory(CMemory::new().with_block("current", 4));
+
+        let error = checked_surface_comparison_fact_at_point(
+            &replay,
+            &kernel,
+            SurfaceFactMatch::CanonicalExact,
+            &[],
+            &[],
+            &[],
+            &state,
+            &PredicateEnvironment::new(&[]),
+            &ClickFunctionEnvironment::new(&[]),
+        )
+        .expect_err("an unrecorded snapshot should have no surface spelling");
+
+        assert!(
+            error
+                .message()
+                .contains("0 exact and 0 compatible recorded snapshots"),
+            "{error:?}"
+        );
+        assert!(!error.message().contains("CMemory"), "{error:?}");
+    }
+
+    #[test]
+    fn snapshot_variant_search_reaches_a_candidate_after_eight() {
+        let base = ClickProposition::Comparison {
+            left: ContractExpression::CBinding("value".to_string()),
+            operator: ComparisonOperator::Equal,
+            right: ContractExpression::CFragment(CExpression::Value(CValue::Int32(
+                Bitvector32Term::Constant(0),
+            ))),
+        };
+        let points = (0..20)
+            .map(|index| ProgramPointRef {
+                region: CodeRegionRef::Statement(index),
+                kind: ProgramPointKind::Entry,
+            })
+            .collect::<Vec<_>>();
+        let variants = comparison_program_point_variants(&base, &points)
+            .expect("comparison should have snapshot variants");
+        let position = variants
+            .iter()
+            .position(|candidate| {
+                matches!(
+                    candidate,
+                    ClickProposition::Comparison {
+                        left: ContractExpression::At {
+                            selector: VisitSelector::ProgramPoint(ProgramPointRef {
+                                region: CodeRegionRef::Statement(2),
+                                kind: ProgramPointKind::Entry,
+                            }),
+                            ..
+                        },
+                        ..
+                    }
+                )
+            })
+            .expect("the late program point should remain a candidate");
+
+        assert!(position > 8, "late valid candidates must not be truncated");
+    }
+
+    #[test]
     fn fresh_heap_separation_is_not_spelled_as_an_ambient_step_premise() {
         let range = |block| {
             CResource::Memory(CMemoryRange::new(
@@ -9005,13 +9153,15 @@ fn checked_surface_fact_at_outcome(
     if let Ok(surface) = replay.surface_propositions.checked_surface(kernel, check) {
         return Ok(surface);
     }
-    for (point, point_state) in replay.program_point_states.iter().rev() {
+    let (exact_points, compatible_points) =
+        snapshot_indexed_program_points(kernel, &replay.program_point_states);
+    for (point, point_state) in exact_points.iter().chain(&compatible_points) {
         check_verification_deadline()?;
         let Some(base) = synthesize_surface_proposition(kernel, parameters, arguments, point_state)
         else {
             continue;
         };
-        let Some(variants) = comparison_program_point_variants(&base, std::slice::from_ref(point))
+        let Some(variants) = comparison_program_point_variants(&base, std::slice::from_ref(*point))
         else {
             continue;
         };
@@ -9051,30 +9201,36 @@ fn checked_surface_fact_at_outcome(
     {
         bases.push(surface);
     }
-    let points = replay
-        .program_point_states
-        .keys()
-        .cloned()
+    let points = exact_points
+        .iter()
+        .chain(&compatible_points)
+        .map(|(point, _)| (*point).clone())
         .collect::<Vec<_>>();
-    for base in &bases {
-        check_verification_deadline()?;
-        let Some(variants) = comparison_program_point_variants(base, &points) else {
-            continue;
-        };
-        for candidate in variants {
+    for indexed_points in [&exact_points, &compatible_points] {
+        let indexed_points = indexed_points
+            .iter()
+            .map(|(point, _)| (*point).clone())
+            .collect::<Vec<_>>();
+        for base in &bases {
             check_verification_deadline()?;
-            if check(&candidate).is_ok_and(|lowered| matches_kernel(&lowered)) {
-                return Ok(candidate);
+            let Some(variants) = comparison_program_point_variants(base, &indexed_points) else {
+                continue;
+            };
+            for candidate in variants {
+                check_verification_deadline()?;
+                if check(&candidate).is_ok_and(|lowered| matches_kernel(&lowered)) {
+                    return Ok(candidate);
+                }
             }
         }
     }
-    for (point, point_state) in &replay.program_point_states {
+    for (point, point_state) in exact_points.iter().chain(&compatible_points) {
         check_verification_deadline()?;
         let Some(base) = synthesize_surface_proposition(kernel, parameters, arguments, point_state)
         else {
             continue;
         };
-        let Some(variants) = comparison_program_point_variants(&base, std::slice::from_ref(point))
+        let Some(variants) = comparison_program_point_variants(&base, std::slice::from_ref(*point))
         else {
             continue;
         };
@@ -9145,7 +9301,14 @@ fn checked_surface_fact_at_outcome(
                     folded_bases.push(surface.clone());
                 }
             }
-            for state in std::iter::once(post_state).chain(replay.program_point_states.values()) {
+            let (folded_exact_points, folded_compatible_points) =
+                snapshot_indexed_program_points(fact, &replay.program_point_states);
+            for state in std::iter::once(post_state).chain(
+                folded_exact_points
+                    .iter()
+                    .chain(&folded_compatible_points)
+                    .map(|(_, state)| *state),
+            ) {
                 check_verification_deadline()?;
                 if let Some(surface) =
                     synthesize_surface_proposition(fact, parameters, arguments, state)
@@ -14081,6 +14244,87 @@ fn checked_surface_fact_at_point(
     }
 }
 
+fn proposition_snapshot_memories(proposition: &Proposition) -> Vec<CMemory> {
+    if !matches!(
+        proposition,
+        Proposition::And(_, _)
+            | Proposition::Or(_, _)
+            | Proposition::Not(_)
+            | Proposition::Implies(_, _)
+            | Proposition::ForAll { .. }
+            | Proposition::Exists { .. }
+            | Proposition::Predicate { .. }
+            | Proposition::Equal(_, _)
+    ) {
+        return c_condition_fact_memories(proposition);
+    }
+    let mut memories = Vec::new();
+    let mut pending = vec![proposition];
+    while let Some(proposition) = pending.pop() {
+        match proposition {
+            Proposition::ConditionIs(_, _) => {
+                for memory in c_condition_fact_memories(proposition) {
+                    if !memories.contains(&memory) {
+                        memories.push(memory);
+                    }
+                }
+            }
+            Proposition::Equal(left, right) => {
+                for term in [left, right] {
+                    if let Term::CMemory(memory) = term
+                        && !memories.contains(memory)
+                    {
+                        memories.push(memory.clone());
+                    }
+                }
+            }
+            Proposition::Predicate { arguments, .. } => {
+                for argument in arguments {
+                    if let Term::CMemory(memory) = argument
+                        && !memories.contains(memory)
+                    {
+                        memories.push(memory.clone());
+                    }
+                }
+            }
+            Proposition::And(left, right)
+            | Proposition::Or(left, right)
+            | Proposition::Implies(left, right) => {
+                pending.push(right);
+                pending.push(left);
+            }
+            Proposition::Not(body)
+            | Proposition::ForAll { body, .. }
+            | Proposition::Exists { body, .. } => pending.push(body),
+            _ => {}
+        }
+    }
+    memories
+}
+
+fn snapshot_indexed_program_points<'a>(
+    kernel: &Proposition,
+    program_point_states: &'a ProgramPointStates,
+) -> (
+    Vec<(&'a ProgramPointRef, &'a CState)>,
+    Vec<(&'a ProgramPointRef, &'a CState)>,
+) {
+    let memories = proposition_snapshot_memories(kernel);
+    let mut exact = Vec::new();
+    let mut compatible = Vec::new();
+    for (point, state) in program_point_states.iter().rev() {
+        if memories.iter().any(|memory| memory == state.memory()) {
+            exact.push((point, state));
+        } else if memories
+            .iter()
+            .any(|memory| memory.has_same_snapshot_markers(state.memory()))
+        {
+            compatible.push((point, state));
+        }
+    }
+    (exact, compatible)
+}
+
 #[derive(Clone, Copy)]
 enum SurfaceFactMatch {
     CanonicalExact,
@@ -14160,23 +14404,14 @@ fn checked_surface_comparison_fact_at_point(
             bases.push(surface.clone());
         }
     }
-    let kernel_memories = c_condition_fact_memories(kernel);
-    let matching_points = replay
-        .program_point_states
-        .iter()
-        .rev()
-        .filter(|(_, point_state)| {
-            kernel_memories
-                .iter()
-                .any(|memory| memory.has_same_snapshot_markers(point_state.memory()))
-        })
-        .collect::<Vec<_>>();
+    let (exact_points, compatible_points) =
+        snapshot_indexed_program_points(kernel, &replay.program_point_states);
     if let Some(surface) = synthesize_surface_proposition(kernel, parameters, arguments, state)
         && !bases.contains(&surface)
     {
         bases.push(surface);
     }
-    for (_, point_state) in &matching_points {
+    for (_, point_state) in exact_points.iter().chain(&compatible_points) {
         if let Some(surface) =
             synthesize_surface_proposition(kernel, parameters, arguments, point_state)
             && !bases.contains(&surface)
@@ -14206,7 +14441,7 @@ fn checked_surface_comparison_fact_at_point(
             return Ok(base.clone());
         }
     }
-    for (point, _) in matching_points {
+    for (point, _) in exact_points.iter().chain(&compatible_points) {
         for base in &bases {
             let ClickProposition::Comparison {
                 left,
@@ -14217,7 +14452,7 @@ fn checked_surface_comparison_fact_at_point(
                 continue;
             };
             let at_point = |expression: &ContractExpression| ContractExpression::At {
-                selector: VisitSelector::ProgramPoint(point.clone()),
+                selector: VisitSelector::ProgramPoint((*point).clone()),
                 expression: Box::new(expression.clone()),
             };
             let candidates = [
@@ -14256,30 +14491,32 @@ fn checked_surface_comparison_fact_at_point(
             }
         }
     }
-    let points = replay
-        .program_point_states
-        .keys()
-        .cloned()
-        .collect::<Vec<_>>();
-    for base in &bases {
-        let Some(variants) = comparison_program_point_variants(base, &points) else {
-            continue;
-        };
-        for candidate in variants {
-            if lower_surface_candidate_at_point(
-                replay,
-                &candidate,
-                available,
-                parameters,
-                arguments,
-                state,
-                predicate_environment,
-                click_function_environment,
-            )
-            .is_ok_and(|lowered| matches_kernel(&lowered))
-                && strictly_replayable(&candidate)
-            {
-                return Ok(candidate);
+    for indexed_points in [&exact_points, &compatible_points] {
+        let points = indexed_points
+            .iter()
+            .map(|(point, _)| (*point).clone())
+            .collect::<Vec<_>>();
+        for base in &bases {
+            let Some(variants) = comparison_program_point_variants(base, &points) else {
+                continue;
+            };
+            for candidate in variants {
+                check_verification_deadline()?;
+                if lower_surface_candidate_at_point(
+                    replay,
+                    &candidate,
+                    available,
+                    parameters,
+                    arguments,
+                    state,
+                    predicate_environment,
+                    click_function_environment,
+                )
+                .is_ok_and(|lowered| matches_kernel(&lowered))
+                    && strictly_replayable(&candidate)
+                {
+                    return Ok(candidate);
+                }
             }
         }
     }
@@ -14289,12 +14526,10 @@ fn checked_surface_comparison_fact_at_point(
         )));
     }
     Err(ClickError::new(format!(
-        "comparison fact has no checked Click spelling at this proof point: {kernel:?}\n  candidate spellings: {}",
-        bases
-            .iter()
-            .map(describe_click_proposition)
-            .collect::<Vec<_>>()
-            .join(", ")
+        "comparison fact has no replayable Surface Click spelling at this proof point ({} exact and {} compatible recorded snapshots, {} structural bases)",
+        exact_points.len(),
+        compatible_points.len(),
+        bases.len(),
     )))
 }
 
@@ -23704,6 +23939,8 @@ fn replay_certified_statement_transition(
     Ok(transition)
 }
 
+const SOURCE_SITE_ANNOTATION_DEPTH_LIMIT: usize = 32;
+
 fn surface_with_source_site(
     surface: &ClickProposition,
     point: &ProgramPointRef,
@@ -23735,8 +23972,14 @@ fn surface_with_source_site(
     fn annotate(
         proposition: &ClickProposition,
         expression_at_source: &impl Fn(&ContractExpression) -> ContractExpression,
-    ) -> ClickProposition {
-        match proposition {
+        depth: usize,
+    ) -> Result<ClickProposition, ClickError> {
+        if depth >= SOURCE_SITE_ANNOTATION_DEPTH_LIMIT {
+            return Err(ClickError::new(
+                "Surface Click source-site annotation exceeded its structural depth bound",
+            ));
+        }
+        Ok(match proposition {
             ClickProposition::Comparison {
                 left,
                 operator,
@@ -23751,29 +23994,29 @@ fn surface_with_source_site(
             },
             ClickProposition::At { .. } => proposition.clone(),
             ClickProposition::And(left, right) => ClickProposition::And(
-                Box::new(annotate(left, expression_at_source)),
-                Box::new(annotate(right, expression_at_source)),
+                Box::new(annotate(left, expression_at_source, depth + 1)?),
+                Box::new(annotate(right, expression_at_source, depth + 1)?),
             ),
             ClickProposition::Or(left, right) => ClickProposition::Or(
-                Box::new(annotate(left, expression_at_source)),
-                Box::new(annotate(right, expression_at_source)),
+                Box::new(annotate(left, expression_at_source, depth + 1)?),
+                Box::new(annotate(right, expression_at_source, depth + 1)?),
             ),
             ClickProposition::Not(body) => {
-                ClickProposition::Not(Box::new(annotate(body, expression_at_source)))
+                ClickProposition::Not(Box::new(annotate(body, expression_at_source, depth + 1)?))
             }
             ClickProposition::Implies(left, right) => ClickProposition::Implies(
-                Box::new(annotate(left, expression_at_source)),
-                Box::new(annotate(right, expression_at_source)),
+                Box::new(annotate(left, expression_at_source, depth + 1)?),
+                Box::new(annotate(right, expression_at_source, depth + 1)?),
             ),
             ClickProposition::ForAll { c_type, name, body } => ClickProposition::ForAll {
                 c_type: *c_type,
                 name: name.clone(),
-                body: Box::new(annotate(body, expression_at_source)),
+                body: Box::new(annotate(body, expression_at_source, depth + 1)?),
             },
             ClickProposition::Exists { c_type, name, body } => ClickProposition::Exists {
                 c_type: *c_type,
                 name: name.clone(),
-                body: Box::new(annotate(body, expression_at_source)),
+                body: Box::new(annotate(body, expression_at_source, depth + 1)?),
             },
             ClickProposition::RangeAll {
                 start,
@@ -23784,7 +24027,7 @@ fn surface_with_source_site(
                 start: expression_at_source(start),
                 end: expression_at_source(end),
                 item: item.clone(),
-                body: Box::new(annotate(body, expression_at_source)),
+                body: Box::new(annotate(body, expression_at_source, depth + 1)?),
             },
             ClickProposition::RangeAny {
                 start,
@@ -23795,7 +24038,7 @@ fn surface_with_source_site(
                 start: expression_at_source(start),
                 end: expression_at_source(end),
                 item: item.clone(),
-                body: Box::new(annotate(body, expression_at_source)),
+                body: Box::new(annotate(body, expression_at_source, depth + 1)?),
             },
             ClickProposition::PredicateCall { name, arguments } => {
                 ClickProposition::PredicateCall {
@@ -23806,9 +24049,9 @@ fn surface_with_source_site(
             ClickProposition::Separate { .. }
             | ClickProposition::Contains { .. }
             | ClickProposition::Loadable { .. } => proposition.clone(),
-        }
+        })
     }
-    Ok(annotate(surface, &expression_at_source))
+    annotate(surface, &expression_at_source, 0)
 }
 
 fn predicate_call_source_site(surface: &ClickProposition) -> Option<ProgramPointRef> {

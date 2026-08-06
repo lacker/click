@@ -34,17 +34,6 @@ The issue should contain a small intended regression, the violated invariant,
 and acceptance criteria. Do not leave the only reproduction in an uncommitted
 large example or quarantine a regression without its issue.
 
-## Tooling stability
-
-The current tooling regressions take priority over the feature issues below:
-
-1. [Make surface-certificate search semantic and bounded](make-surface-certificate-search-semantic.md).
-
-The reproductions must be reduced away from the paused owned-vector feature.
-Do not resume that feature by carrying over its experimental normalization or
-certificate-search changes. Establish the tooling behavior independently,
-then return to the general-vector-push issue from a green checkpoint.
-
 ## C-source fidelity
 
 The repository has several historical cases where example C was simplified or
