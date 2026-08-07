@@ -21822,25 +21822,35 @@ fn replay_linear_tactics_without_frontier_loops(
                 let pre_state = replay.old_reference_state(&state).clone();
                 let mut explicit_premises = Vec::new();
                 for surface_premise in premises {
-                    let premise = if let Some(recorded) = replay
+                    let lowered_at_current = lower_point_proposition(
+                        surface_premise,
+                        &all_pure_facts,
+                        parsed_function.parameters(),
+                        arguments,
+                        &pre_state,
+                        &state,
+                        None,
+                        &replay.program_point_states,
+                        predicate_environment,
+                        click_function_environment,
+                    );
+                    let current_is_available = lowered_at_current.as_ref().is_ok_and(|premise| {
+                        exact_fact_is_available_across_effects(
+                            premise,
+                            &all_pure_facts,
+                            &replay.effect_facts,
+                        ) || materialization_equivalent_available_fact(premise, &all_pure_facts)
+                            .is_some()
+                    });
+                    let premise = if current_is_available {
+                        lowered_at_current.expect("checked current premise lowering")
+                    } else if let Some(recorded) = replay
                         .surface_propositions
                         .available_kernel(surface_premise, &all_pure_facts)
                     {
                         recorded.clone()
                     } else {
-                        lower_point_proposition(
-                            surface_premise,
-                            &all_pure_facts,
-                            parsed_function.parameters(),
-                            arguments,
-                            &pre_state,
-                            &state,
-                            None,
-                            &replay.program_point_states,
-                            predicate_environment,
-                            click_function_environment,
-                        )
-                        .map_err(|message| {
+                        lowered_at_current.map_err(|message| {
                             ClickError::new(format!(
                                 "`{claim_label}` tactic {tactic_index}: could not lower `{tactic_name}` premise `{}`: {message}",
                                 super::printing::source_click_proposition(surface_premise)

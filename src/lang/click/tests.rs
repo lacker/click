@@ -7652,6 +7652,74 @@ fn frontier_local_loop_verifies_step_relative_mutable_effects() {
 }
 
 #[test]
+fn frontier_loop_step_expansion_uses_the_current_invariant_lowering() {
+    let c_source = r#"
+            int32 fill_n(int32 p[], int32 n) {
+                int32 i;
+                i = 0;
+                while (i < n) {
+                    p[i] = i;
+                    i = i + 1;
+                }
+                return i;
+            }
+        "#;
+    let click_source = r#"
+            verifying "fill_n.c";
+
+            int32 fill_n(int32 p[], int32 n) {
+                requires n >= 0;
+                requires n <= 2147483647;
+                requires loadable(p[0..n]);
+                consumes p[0..n];
+                ensures result == n;
+            } by {
+                step();
+                step();
+                loop {
+                    invariant i >= 0 and i <= n;
+                    mutable p[0..n] by frame;
+                    initialize by simp;
+                    preserve by {
+                        step();
+                        step();
+                        close_invariants();
+                    }
+                }
+                step();
+                simp();
+            }
+        "#;
+    let preserve_step = click_source
+        .find("preserve by {")
+        .and_then(|offset| {
+            click_source[offset..]
+                .find("step();")
+                .map(|step| offset + step)
+        })
+        .expect("proof should contain a preservation step");
+    let line = click_source[..preserve_step]
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count()
+        + 1;
+    let column = preserve_step
+        - click_source[..preserve_step]
+            .rfind('\n')
+            .map(|offset| offset + 1)
+            .unwrap_or(0)
+        + 1;
+
+    let expanded =
+        expand_c0_tactic_source_at(click_source, &[("fill_n.c", c_source)], line, column)
+            .expect("the preservation store should expand");
+
+    assert_ne!(expanded, click_source);
+    verify_c0_sources(&expanded, &[("fill_n.c", c_source)])
+        .expect("the expanded store should use the invariant at the current frontier");
+}
+
+#[test]
 fn frontier_local_loop_preserves_a_perpetual_partial_contract() {
     let c_source = r#"
             int32 spin() {
