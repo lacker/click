@@ -1,4 +1,4 @@
-# reach interfaces compose sequentially
+# sequential branch continuations compose
 
 ```c filename=advance_sequential_joins.c
 int32 advance_sequential_joins(int32 x) {
@@ -25,29 +25,19 @@ int32 advance_sequential_joins(int32 x) {
     ensures result >= 0 by {
         step();
         step();
-        reach(statement(2).exit)
-        ensuring {
-            fact y >= 0;
-        }
-        by {
-            if x >= 0 {
+        branch {
+            then {
                 step();
-                step();
-            } else {
-                step();
+            }
+            else {
                 step();
             }
         }
-        reach(statement(5).exit)
-        ensuring {
-            fact z >= 0;
-        }
-        by {
-            if y > 0 {
+        branch {
+            then {
                 step();
-                step();
-            } else {
-                step();
+            }
+            else {
                 step();
             }
         }

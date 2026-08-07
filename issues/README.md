@@ -73,7 +73,7 @@ diagnostic can guide the Click writer better:
 These block affected feature and migration work because a successful smart
 tactic cannot yet be expanded into a replayable simple certificate:
 
-1. [Merge deferred tactic expansion across preserved branch contexts](branch-continuation-deferred-expansion.md).
+1. [Preserve ghost-resource identity in execution expansion after `branch`](branch-continuation-execute-expansion-identity.md).
 
 ## Language and proof-model gaps
 

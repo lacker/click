@@ -2296,6 +2296,206 @@ int32 increment_selected(int32 x) {
     }
 
     #[test]
+    fn expands_deferred_simp_after_frontier_branch() {
+        let c_source = r#"
+int32 positive_after_branch(int32 x) {
+    int32 y;
+    if (x >= 0) {
+        y = x;
+    } else {
+        y = 0;
+    }
+    y = y + 1;
+    return y;
+}
+"#;
+        let click_source = r#"
+verifying "positive.c";
+
+int32 positive_after_branch(int32 x) {
+    requires x < 2147483647;
+    ensures result > 0 by {
+        step();
+        branch {
+            then {
+                step();
+            }
+            else {
+                step();
+            }
+        }
+        step();
+        step();
+        simp();
+    }
+}
+"#;
+        let selected_offset = click_source
+            .find("        simp();")
+            .expect("simp should exist")
+            + 8;
+        let position = position_at_offset(click_source, selected_offset);
+        let expanded = expand_c0_tactic_source_at(
+            click_source,
+            &[("positive.c", c_source)],
+            position.line,
+            position.column,
+        )
+        .expect("deferred simp should expand");
+
+        verify_c0_sources(&expanded, &[("positive.c", c_source)]).unwrap_or_else(|error| {
+            panic!("expanded deferred simp should replay:\n{error:?}\n{expanded}")
+        });
+    }
+
+    #[test]
+    fn shares_equal_deferred_expansions_after_frontier_branch() {
+        let c_source = r#"
+int32 same_after_branch(int32 x, int32 flag) {
+    int32 y;
+    if (flag != 0) {
+        y = x;
+    } else {
+        y = x;
+    }
+    return y;
+}
+"#;
+        let click_source = r#"
+verifying "same.c";
+
+int32 same_after_branch(int32 x, int32 flag) {
+    ensures result == x by {
+        step();
+        branch {
+            then { step(); }
+            else { step(); }
+        }
+        step();
+        simp();
+    }
+}
+"#;
+        let selected_offset = click_source
+            .find("        simp();")
+            .expect("simp should exist")
+            + 8;
+        let position = position_at_offset(click_source, selected_offset);
+        let expanded = expand_c0_tactic_source_at(
+            click_source,
+            &[("same.c", c_source)],
+            position.line,
+            position.column,
+        )
+        .expect("equal deferred certificates should expand");
+
+        assert!(!expanded.contains("if at(statement(1).entry"), "{expanded}");
+        verify_c0_sources(&expanded, &[("same.c", c_source)]).unwrap_or_else(|error| {
+            panic!("shared deferred expansion should replay:\n{error:?}\n{expanded}")
+        });
+    }
+
+    #[test]
+    fn expands_common_deferred_tactic_with_a_returning_branch_arm() {
+        let c_source = r#"
+int32 clamp_nonnegative(int32 x) {
+    if (x < 0) {
+        return 0;
+    }
+    return x;
+}
+"#;
+        let click_source = r#"
+verifying "returning.c";
+
+int32 clamp_nonnegative(int32 x) {
+    ensures result >= 0 by {
+        branch {
+            then {
+                step();
+                simp();
+            }
+            else {}
+        }
+        step();
+        simp();
+    }
+}
+"#;
+        let selected_offset = click_source
+            .rfind("        simp();")
+            .expect("common simp should exist")
+            + 8;
+        let position = position_at_offset(click_source, selected_offset);
+        let expanded = expand_c0_tactic_source_at(
+            click_source,
+            &[("returning.c", c_source)],
+            position.line,
+            position.column,
+        )
+        .expect("reachable continuation simp should expand");
+
+        verify_c0_sources(&expanded, &[("returning.c", c_source)]).unwrap_or_else(|error| {
+            panic!("returning-arm deferred expansion should replay:\n{error:?}\n{expanded}")
+        });
+    }
+
+    #[test]
+    fn expands_deferred_simp_after_nested_frontier_branches() {
+        let c_source = r#"
+int32 nested_nonnegative(int32 x, int32 flag) {
+    int32 y;
+    if (flag != 0) {
+        if (x >= 0) {
+            y = x;
+        } else {
+            y = 0;
+        }
+    } else {
+        y = 0;
+    }
+    return y;
+}
+"#;
+        let click_source = r#"
+verifying "nested.c";
+
+int32 nested_nonnegative(int32 x, int32 flag) {
+    ensures result >= 0 by {
+        step();
+        branch {
+            then {
+                branch {
+                    then { step(); }
+                    else { step(); }
+                }
+            }
+            else { step(); }
+        }
+        step();
+        simp();
+    }
+}
+"#;
+        let selected_offset = click_source
+            .find("        simp();")
+            .expect("common simp should exist")
+            + 8;
+        let position = position_at_offset(click_source, selected_offset);
+        let expanded = expand_c0_tactic_source_at(
+            click_source,
+            &[("nested.c", c_source)],
+            position.line,
+            position.column,
+        )
+        .expect("nested deferred simp should expand");
+
+        verify_c0_sources(&expanded, &[("nested.c", c_source)]).unwrap_or_else(|error| {
+            panic!("nested deferred expansion should replay:\n{error:?}\n{expanded}")
+        });
+    }
+
+    #[test]
     fn locates_a_block_tactic_as_one_source_statement() {
         let source = "by { have x == x by simp; simp(); }";
         let tokens = scan_source_tokens(source).expect("source should scan");

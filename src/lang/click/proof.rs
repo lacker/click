@@ -4047,6 +4047,10 @@ struct TacticReplayState {
     /// A frontier-local `branch` uses this edge-local record to distinguish
     /// reaching its join from executing past it in a later tactic.
     completed_branch_regions: Vec<usize>,
+    /// This proof path has passed through a frontier-local `branch`. Unlike
+    /// `branch_path`, this excludes pure proof-level `if` diagnostics and can
+    /// therefore distinguish an already selected C path at function exit.
+    has_structured_branch_history: bool,
     frames: BTreeSet<Option<CodeRegionRef>>,
     unfolded_predicates: Vec<String>,
     post_execution_tactics: Vec<DeferredPostExecutionTactic>,
@@ -4102,6 +4106,11 @@ struct TacticReplayState {
     surface_propositions: SurfacePropositionMap,
     surface_replay: SurfaceReplay,
     deferred_tactic_capture: Option<DeferredTacticCapture>,
+    /// C branch choices enclosing a selected tactic in their common
+    /// continuation. Deferred post-execution expansion is finalized after
+    /// `execute_internal_proof` has returned one context per path, so it must
+    /// retain this typed path rather than reconstructing it from diagnostics.
+    deferred_expansion_path_choices: Vec<SurfacePathChoice>,
 }
 
 #[derive(Clone)]
@@ -4131,6 +4140,7 @@ struct SurfaceReplay {
 #[derive(Clone)]
 struct DeferredTacticCapture {
     tactic_index: usize,
+    source_index: usize,
     post_execution_index: usize,
     branch_skeleton: Vec<ProofTactic>,
 }
@@ -4358,7 +4368,11 @@ fn begin_tactic_expansion_capture(
     TACTIC_EXPANSION_PROBE.with(|probe| {
         let mut slot = probe.borrow_mut();
         let probe = slot.as_mut()?;
-        if probe.active
+        let sibling_branch_capture = probe.active
+            && !replay.deferred_expansion_path_choices.is_empty()
+            && probe.source_index == Some(source_index)
+            && replay.proof_site.as_ref() == Some(&probe.site);
+        if probe.active && !sibling_branch_capture
             || probe.source_index != Some(source_index)
             || replay.proof_site.as_ref() != Some(&probe.site)
         {
@@ -4434,6 +4448,29 @@ fn take_path_tactic_expansion_capture() -> Result<Vec<ProofTactic>, ClickError> 
         })?;
         probe.active = false;
         result.map_err(ClickError::new)
+    })
+}
+
+fn resume_deferred_tactic_expansion_capture(replay: &TacticReplayState) -> Result<(), ClickError> {
+    let Some(deferred) = &replay.deferred_tactic_capture else {
+        return Ok(());
+    };
+    TACTIC_EXPANSION_PROBE.with(|probe| {
+        let mut slot = probe.borrow_mut();
+        let Some(probe) = slot.as_mut() else {
+            return Err(ClickError::new(
+                "selected-tactic expansion probe was lost before deferred finalization",
+            ));
+        };
+        if replay.proof_site.as_ref() != Some(&probe.site)
+            || probe.source_index != Some(deferred.source_index)
+        {
+            return Err(ClickError::new(
+                "deferred tactic capture no longer matches the selected proof occurrence",
+            ));
+        }
+        probe.active = true;
+        Ok(())
     })
 }
 
@@ -11777,6 +11814,89 @@ fn add_have_case_assumptions(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
+fn finish_ordered_proof_contexts(
+    contexts: Vec<ProofReplayContext>,
+    source_path: &str,
+    function_block: &FunctionBlock,
+    parsed_function: &syntax::C0Function,
+    claims: &[FunctionClaimRef<'_>],
+    require_explicit_closers: bool,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    resource_environment: &ResourceEnvironment,
+    theorem_environment: &TheoremEnvironment,
+    function_environment: &CExecutionEnvironment,
+    function: &CFunction,
+    arguments: &[CExpression],
+    tactics: &[ProofTactic],
+) -> Result<Vec<VerifiedCTheorem>, ClickError> {
+    let mut verified = Vec::new();
+    let mut certification_cache = Vec::new();
+    let mut captured_paths = Vec::new();
+    for context in contexts {
+        let path_choices = context.replay.deferred_expansion_path_choices.clone();
+        resume_deferred_tactic_expansion_capture(&context.replay)?;
+        match finish_ordered_proof_replay(
+            context,
+            source_path,
+            function_block,
+            parsed_function,
+            claims,
+            require_explicit_closers,
+            predicate_environment,
+            click_function_environment,
+            resource_environment,
+            theorem_environment,
+            function_environment,
+            function,
+            arguments,
+            tactics,
+            &mut certification_cache,
+        ) {
+            Ok(theorems) => {
+                for theorem in theorems {
+                    if !verified.contains(&theorem) {
+                        verified.push(theorem);
+                    }
+                }
+            }
+            Err(error) if error.is_expansion_complete() => {
+                let captured = take_path_tactic_expansion_capture()?;
+                captured_paths.push(SurfaceReplay {
+                    tactics: captured,
+                    path_choices,
+                    ..SurfaceReplay::default()
+                });
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    if !captured_paths.is_empty() {
+        let tactics = if captured_paths
+            .iter()
+            .all(|path| path.tactics == captured_paths[0].tactics)
+        {
+            captured_paths[0].tactics.clone()
+        } else {
+            synthesize_surface_alternatives(captured_paths).map_err(|message| {
+                ClickError::new(format!(
+                    "could not merge selected deferred tactic across branch contexts: {message}"
+                ))
+            })?
+        };
+        let allow_empty = tactics.is_empty();
+        return Err(finish_tactic_expansion_capture(
+            &SurfaceReplay {
+                tactics,
+                ..SurfaceReplay::default()
+            },
+            allow_empty,
+        ));
+    }
+    Ok(verified)
+}
+
 pub(super) fn prove_claim_by_tactics(
     source_path: &str,
     function_block: &FunctionBlock,
@@ -11871,32 +11991,22 @@ pub(super) fn prove_claim_by_tactics(
         &arguments,
     )?;
 
-    let mut verified = Vec::new();
-    let mut certification_cache = Vec::new();
-    for context in contexts {
-        for theorem in finish_ordered_proof_replay(
-            context,
-            source_path,
-            function_block,
-            parsed_function,
-            &proof_claims,
-            false,
-            predicate_environment,
-            click_function_environment,
-            resource_environment,
-            theorem_environment,
-            function_environment,
-            &function,
-            &arguments,
-            tactics,
-            &mut certification_cache,
-        )? {
-            if !verified.contains(&theorem) {
-                verified.push(theorem);
-            }
-        }
-    }
-    Ok(verified)
+    finish_ordered_proof_contexts(
+        contexts,
+        source_path,
+        function_block,
+        parsed_function,
+        &proof_claims,
+        false,
+        predicate_environment,
+        click_function_environment,
+        resource_environment,
+        theorem_environment,
+        function_environment,
+        &function,
+        &arguments,
+        tactics,
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -11999,32 +12109,22 @@ pub(super) fn prove_claims_by_grouped_tactics(
         &arguments,
     )?;
 
-    let mut verified = Vec::new();
-    let mut certification_cache = Vec::new();
-    for context in contexts {
-        for theorem in finish_ordered_proof_replay(
-            context,
-            source_path,
-            function_block,
-            parsed_function,
-            claims,
-            true,
-            predicate_environment,
-            click_function_environment,
-            resource_environment,
-            theorem_environment,
-            function_environment,
-            &function,
-            &arguments,
-            tactics,
-            &mut certification_cache,
-        )? {
-            if !verified.contains(&theorem) {
-                verified.push(theorem);
-            }
-        }
-    }
-    Ok(verified)
+    finish_ordered_proof_contexts(
+        contexts,
+        source_path,
+        function_block,
+        parsed_function,
+        claims,
+        true,
+        predicate_environment,
+        click_function_environment,
+        resource_environment,
+        theorem_environment,
+        function_environment,
+        &function,
+        &arguments,
+        tactics,
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -21094,6 +21194,7 @@ fn replay_linear_tactics_without_frontier_loops(
         {
             replay.deferred_tactic_capture = Some(DeferredTacticCapture {
                 tactic_index,
+                source_index,
                 post_execution_index: replay.post_execution_tactics.len(),
                 branch_skeleton,
             });
@@ -23672,7 +23773,7 @@ fn execute_internal_proof(
                 .and_then(selected_tactic_index_for_site);
             let capture_in_continuation = selected_source_index
                 .is_some_and(|wanted| internal_proof_contains_source_index(continuation, wanted));
-            let capture_condition = if capture_in_continuation {
+            let capture_condition = if selected_source_index.is_some() {
                 let (_, _, statement, _) = next_top_level_statement_from_execution_point(
                     &context.replay,
                     &context.state,
@@ -23726,6 +23827,21 @@ fn execute_internal_proof(
                 .map_err(|error| add_proof_branch_path(error, &branch_context.branch_path))?;
                 if !entered {
                     continue;
+                }
+                branch_context.replay.has_structured_branch_history = true;
+                if let Some(condition) = &capture_condition {
+                    branch_context
+                        .replay
+                        .deferred_expansion_path_choices
+                        .push(SurfacePathChoice {
+                            occurrence: statement_index,
+                            condition: condition.clone(),
+                            value: take_then,
+                            // The path is attached to the selected tactic's
+                            // standalone certificate, whose prefix starts at
+                            // offset zero after capture resets surface replay.
+                            tactic_offset: 0,
+                        });
                 }
                 let branch_contexts = execute_internal_proof(
                     branch,
@@ -23938,6 +24054,66 @@ fn introduce_proof_case_assumption(
     click_function_environment: &ClickFunctionEnvironment,
     claim_label: &str,
 ) -> Result<bool, ClickError> {
+    if context.replay.is_at_function_exit()
+        && context.replay.has_structured_branch_history
+        && proof_case_is_stable_program_point_condition(condition)
+    {
+        // A source-qualified condition can still be lowered without choosing
+        // one return outcome. Use it immediately when possible so a logical
+        // certificate nested under an already selected C path does not
+        // manufacture its contradictory sibling at function exit. Conditions
+        // involving `result` or the post-state retain the deferred per-outcome
+        // handling below.
+        if let Ok(proposition) = lower_point_proposition(
+            condition,
+            &context.pure_facts,
+            parameters,
+            arguments,
+            context.replay.old_reference_state(&context.state),
+            &context.state,
+            None,
+            &context.replay.program_point_states,
+            predicate_environment,
+            click_function_environment,
+        ) {
+            let surface_fact = if value {
+                condition.clone()
+            } else {
+                negate_click_proposition(condition)
+            };
+            let kernel_fact = if value {
+                proposition
+            } else {
+                match proposition {
+                    Proposition::ConditionIs(condition, value) => {
+                        Proposition::ConditionIs(condition, !value)
+                    }
+                    Proposition::Not(body) => *body,
+                    proposition => Proposition::Not(Box::new(proposition)),
+                }
+            };
+            if context
+                .pure_facts
+                .iter()
+                .any(|available| propositions_are_exact_negations(available, &kernel_fact))
+            {
+                return Ok(false);
+            }
+            context
+                .replay
+                .surface_propositions
+                .record_lowering(&surface_fact, &kernel_fact)?;
+            context.pure_facts.push(kernel_fact.clone());
+            context.replay.case_assumptions.push(ReplayCaseAssumption {
+                tactic_index,
+                condition: condition.clone(),
+                value,
+                fact: Some(kernel_fact),
+                at_function_entry: false,
+            });
+            return Ok(true);
+        }
+    }
     if context.replay.is_at_function_exit() {
         context.replay.case_assumptions.push(ReplayCaseAssumption {
             tactic_index,
@@ -24002,6 +24178,48 @@ fn introduce_proof_case_assumption(
         at_function_entry,
     });
     Ok(true)
+}
+
+fn proof_case_is_stable_program_point_condition(proposition: &ClickProposition) -> bool {
+    let expression_is_stable = |expression: &ContractExpression| {
+        matches!(
+            expression,
+            ContractExpression::At {
+                selector: VisitSelector::ProgramPoint(_),
+                ..
+            } | ContractExpression::Old(_)
+        )
+    };
+    fn stable(
+        proposition: &ClickProposition,
+        expression_is_stable: &impl Fn(&ContractExpression) -> bool,
+    ) -> bool {
+        match proposition {
+            ClickProposition::Comparison { left, right, .. } => {
+                expression_is_stable(left) && expression_is_stable(right)
+            }
+            ClickProposition::Defined { expression } => expression_is_stable(expression),
+            ClickProposition::At {
+                selector: VisitSelector::ProgramPoint(_),
+                ..
+            } => true,
+            ClickProposition::And(left, right)
+            | ClickProposition::Or(left, right)
+            | ClickProposition::Implies(left, right) => {
+                stable(left, expression_is_stable) && stable(right, expression_is_stable)
+            }
+            ClickProposition::Not(body) => stable(body, expression_is_stable),
+            ClickProposition::Separate { .. }
+            | ClickProposition::Contains { .. }
+            | ClickProposition::Loadable { .. }
+            | ClickProposition::ForAll { .. }
+            | ClickProposition::Exists { .. }
+            | ClickProposition::RangeAll { .. }
+            | ClickProposition::RangeAny { .. }
+            | ClickProposition::PredicateCall { .. } => false,
+        }
+    }
+    stable(proposition, &expression_is_stable)
 }
 
 fn add_proof_branch_context(error: ClickError, branch: &str) -> ClickError {
