@@ -71,7 +71,17 @@ int32 vector_copy(
     views src[0..src_capacity];
     requires separate(memory(dst[0..dst_capacity]), memory(src[0..src_capacity]));
     mutable dst[0..length];
-    for loop(0) {
+    ensures result == length;
+    ensures forall (k: int32) {
+        0 <= k and k < length implies src[k] == old(src[k])
+    };
+    ensures forall (k: int32) {
+        0 <= k and k < length implies dst[k] == old(src[k])
+    };
+} by {
+    step();
+    step();
+    loop {
         invariant 0 <= i;
         invariant i <= length;
         invariant forall (k: int32) {
@@ -79,13 +89,13 @@ int32 vector_copy(
         };
         mutable dst[0..length] by frame;
     }
-    ensures result == length by auto;
-    ensures forall (k: int32) {
-        0 <= k and k < length implies src[k] == old(src[k])
-    } by auto;
-    ensures forall (k: int32) {
+    have i == length by simp;
+    have forall (k: int32) {
         0 <= k and k < length implies dst[k] == old(src[k])
-    } by auto;
+    } by simp;
+    step();
+    frame();
+    simp();
 }
 
 int32 vector_grow(struct vector* owner) {
@@ -151,7 +161,7 @@ int32 vector_grow(struct vector* owner) {
         execute_until(statement(13));
         step();
         step();
-        step();
+        step() using {}
         step();
         have 0 <= owner->len by {
             assumption();
@@ -564,32 +574,9 @@ int32 vector_set(struct vector* owner, int32 index, int32 value) {
 int32 vector_fill(struct vector* owner, int32 value) {
     owns nonempty_vector(owner);
     mutable owner->data[0..owner->len];
-
-    for loop(0) as fill_cells {
-        invariant i >= 0 and i <= owner->len;
-        mutable owner->data[0..owner->len] by frame;
-        initialize by simp;
-        preserve by {
-            have i < owner->cap by simp;
-            step();
-            step();
-            have i >= 0 by {
-                derive using {
-                    at(statement(3).entry, i) >= 0;
-                    at(statement(3).entry, i) < at(statement(3).entry, owner->len);
-                }
-            }
-            have i <= owner->len by {
-                derive using {
-                    at(statement(3).entry, i) < at(statement(3).entry, owner->len);
-                }
-            }
-            close_invariants();
-        }
-    }
-
     ensures result == owner->len;
 } by {
+    unfold(nonempty_vector(owner));
     step() using {
         separate(memory(owner->len), memory(owner->cap));
         separate(memory(owner->len), memory(owner->data));
@@ -656,30 +643,27 @@ int32 vector_fill(struct vector* owner, int32 value) {
             1 <= owner->len;
         }
     }
-    summarize(loop(0)) using {
-        separate(memory(owner->len), memory(owner->cap));
-        1 <= owner->len;
-        owner->len <= owner->cap;
-        loadable(old(owner->cap));
-        loadable(old(owner->data));
-        loadable(old(owner->len));
-        loadable(old(owner->data[0..owner->cap]));
-        separate(memory(owner->len), memory(owner->data));
-        separate(memory(owner->len), memory(owner->data[0..owner->cap]));
-        separate(memory(object(owner)), memory(owner->data[0..owner->cap]));
-        separate(memory(owner->cap), memory(owner->data));
-        separate(memory(owner->cap), memory(owner->data[0..owner->cap]));
-        separate(memory(owner->data), memory(owner->data[0..owner->cap]));
-        contains(nonempty_vector(owner), memory(owner->len));
-        contains(nonempty_vector(owner), memory(owner->cap));
-        contains(nonempty_vector(owner), memory(owner->data));
-        contains(nonempty_vector(owner), memory(owner->data[0..owner->cap]));
-        loadable(owner->len);
-        loadable(owner->cap);
-        loadable(owner->data);
-        loadable(owner->data[0..owner->cap]);
-        i >= 0;
-        i <= owner->len;
+    loop as fill_cells {
+        invariant i >= 0 and i <= owner->len;
+        mutable owner->data[0..owner->len] by frame;
+        initialize by simp;
+        preserve by {
+            have i < owner->cap by simp;
+            step();
+            step();
+            have i >= 0 by {
+                derive using {
+                    at(statement(3).entry, i) >= 0;
+                    at(statement(3).entry, i) < at(statement(3).entry, owner->len);
+                }
+            }
+            have i <= owner->len by {
+                derive using {
+                    at(statement(3).entry, i) < at(statement(3).entry, owner->len);
+                }
+            }
+            close_invariants();
+        }
     }
     step() using {
         separate(memory(owner->len), memory(owner->cap));
