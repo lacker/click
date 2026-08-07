@@ -68,6 +68,13 @@ diagnostic can guide the Click writer better:
 
 1. [Guide opaque predicate transport through definitions](predicate-transport-across-local-stores.md).
 
+## Tooling reliability
+
+These block affected feature and migration work because a successful smart
+tactic cannot yet be expanded into a replayable simple certificate:
+
+1. [Merge deferred tactic expansion across preserved branch contexts](branch-continuation-deferred-expansion.md).
+
 ## Maintainability
 
 These are behavior-preserving cleanup roadmaps rather than feature blockers:
