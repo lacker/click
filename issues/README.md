@@ -75,6 +75,13 @@ tactic cannot yet be expanded into a replayable simple certificate:
 
 1. [Merge deferred tactic expansion across preserved branch contexts](branch-continuation-deferred-expansion.md).
 
+## Language and proof-model gaps
+
+These need a checked language or model capability rather than stronger smart
+search:
+
+1. [Give `branch` a principled common-frontier abstraction](branch-common-frontier-abstraction.md).
+
 ## Maintainability
 
 These are behavior-preserving cleanup roadmaps rather than feature blockers:
