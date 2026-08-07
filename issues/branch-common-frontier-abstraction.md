@@ -83,7 +83,9 @@ deterministically or require explicit, kernel-checked interface facts.
 
 ## Blocks
 
-This blocks migrating the resource-transform use of `reach`, and likely other
-uses whose interface deliberately hides branch-local resources or symbolic
-identities. Direct branch continuations which need no abstraction can migrate
-independently.
+This blocks migrating the resource-transform use of `reach`. It also owns the
+design decision behind the reach-specific hiding tests
+`proof_reach_hides_branch_facts.md` and
+`proof_reach_hides_unexported_requirement.md`: their behavior needs a
+frontier-local home before `reach` can be removed. Direct branch continuations
+which need no abstraction can migrate independently.

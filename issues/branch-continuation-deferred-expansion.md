@@ -76,5 +76,9 @@ that limitation explicitly and must not silently choose one path.
 ## Blocks
 
 This blocks removing `reach` from examples whose common suffix ends in a
-path-dependent deferred tactic. Those migrations should remain unchanged until
-this issue is fixed; straightforward non-deferred migrations may proceed.
+path-dependent deferred tactic. Confirmed cases are
+`proof_reach_branch_join.md`, `proof_reach_memory_interface.md`, and
+`proof_reach_sequential_joins.md`; the owned-vector `vector_replace_if` proof
+has the same shape. Those migrations should remain unchanged until this issue
+is fixed; path-independent deferred proofs and ordinary continuation tactics
+may migrate independently.
