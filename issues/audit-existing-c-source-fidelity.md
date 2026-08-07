@@ -11,7 +11,7 @@ History contained source changes coupled to proof repairs, including a
 weakened owned-string pipeline, a no-op allocation branch, specialized vector
 push code, helper rerouting in the input-cursor pipeline, and local-variable
 renames. The post-introduction C history has now been classified below. All
-known workarounds except the specialized vector push have been restored.
+known workarounds have been restored.
 
 The remaining larger gap is that every current example is synthetic. Even the
 `jsonc-refcount` pilot is json-c-shaped code authored in this repository, not
@@ -32,7 +32,7 @@ not close the original Click gap.
 | allocator wrapper added a null self-assignment branch | verifier-motivated adaptation | natural wrapper restored in `888b8f2` |
 | input-cursor's second independent initialization was rerouted through clone | verifier-motivated adaptation | independent initialization restored in `a273fd2` |
 | `result` locals were renamed to avoid a lowering collision | verifier-motivated spelling adaptation | original names restored in `c32c8bd` |
-| general `vector_push` was renamed and specialized for the first element | verifier-motivated helper specialization | still open in `use-general-vector-push-in-pipeline.md` |
+| general `vector_push` was renamed and specialized for the first element | verifier-motivated helper specialization | general resource-neutral push restored; the specialized clone was removed |
 | owned-string pop became a real general pop; vector fill became owner-based; list destruction became ordinary `void` recursion | independently desired example/API changes | retained and documented by their feature commits |
 | vector pipeline moved from inline mutations to ordinary API calls; arbitrary-index vector set replaced the fixed-index helper | independently desired strengthening | retained as harder, more representative fixtures |
 | linked-list empty changed from an integer-shaped placeholder to a null pointer constructor | actual C type/behavior correction | retained |
@@ -64,7 +64,8 @@ never silent source edits.
 
 - Every historical modification to an example C file has a recorded
   classification, with verifier workarounds restored or separately tracked.
-- The specialized vector-push source-fidelity issue is resolved.
+- The restored general vector-push behavior remains covered by the owned-vector
+  integration example and its resource-neutral-callee regression.
 - At least one nontrivial multi-function fixture preserves identifiable
   existing C source and verifies without proof-oriented edits.
 - Provenance and source-integrity checks run in the normal test workflow.

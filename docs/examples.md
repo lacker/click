@@ -430,8 +430,9 @@ sequence:
   guarded list resource, with both structural-resource and numeric termination
   proofs kept separate from its ordinary partial contract.
 - `examples/owned-vector/`: composite-resource example over vector metadata and
-  dependent backing storage, including viewed reads and resource-state
-  transitions.
+  dependent backing storage, including viewed reads, runtime-sized allocation,
+  malloc-copy-free growth, and a resource-neutral in-capacity push shared by
+  caller-supplied and allocation-owning vectors.
 - `examples/owned-string/`: composite-resource example over string metadata and
   storage with a trailing terminator, including content-invariant preservation
   and a precise field-derived push footprint used by a modular caller.

@@ -14,7 +14,7 @@ int32 vector_pipeline(
     int32 observed;
     int32 ignored;
     observed = vector_init(owner, data, capacity);
-    observed = vector_push_first(owner, first);
+    observed = vector_push(owner, first);
     observed = vector_get(owner, 0);
     observed = vector_set(owner, 0, replacement);
     observed = vector_get(owner, 0);

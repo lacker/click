@@ -27,6 +27,17 @@ resource nonempty_vector(owner: struct vector*) {
     fact separate(memory(object(owner)), memory(owner->data[0..owner->cap]));
 }
 
+resource vector_storage(owner: struct vector*) {
+    owns owner->len;
+    owns owner->cap;
+    owns owner->data;
+    owns owner->data[0..owner->cap];
+    fact 0 <= owner->len;
+    fact owner->len <= owner->cap;
+    fact loadable(owner->data[0..owner->len]);
+    fact separate(memory(object(owner)), memory(owner->data[0..owner->cap]));
+}
+
 resource allocated_vector(owner: struct vector*) {
     owns owner->len;
     owns owner->cap;
@@ -47,7 +58,6 @@ verifying "vector_get.c";
 verifying "vector_set.c";
 verifying "vector_fill.c";
 verifying "vector_replace_if.c";
-verifying "vector_push_first.c";
 verifying "vector_clear.c";
 verifying "vector_pipeline.c";
 verifying "vector_copy.c";
@@ -223,9 +233,8 @@ int32 vector_grow(struct vector* owner) {
 
 int32 vector_push(struct vector* owner, int32 value) {
     requires owner->len < owner->cap;
-    consumes allocated_vector(owner);
+    owns vector_storage(owner);
     mutable owner->len, owner->data[owner->len..owner->len + 1];
-    produces allocated_vector(owner);
     ensures result == old(owner->len) + 1;
     ensures owner->len == old(owner->len) + 1;
     ensures owner->data[old(owner->len)] == value;
@@ -236,24 +245,9 @@ int32 vector_push(struct vector* owner, int32 value) {
             owner->data[k] == old(owner->data[k])
     };
 } by {
-    unfold(allocated_vector(owner));
+    unfold(vector_storage(owner));
     execute();
-    have 0 <= owner->len by simp;
-    have owner->len <= owner->cap by simp;
-    have 1 <= owner->cap by simp;
-    have owner->cap <= 536870911 by simp;
-    have loadable(owner->data[0..owner->len]) by {
-        derive using {
-            loadable(old(owner->data[0..owner->len]));
-        }
-    }
-    have separate(
-        memory(object(owner)),
-        memory(owner->data[0..owner->cap])
-    ) by {
-        assumption();
-    }
-    fold(allocated_vector(owner));
+    fold(vector_storage(owner));
     frame();
     simp();
 }
@@ -348,20 +342,25 @@ int32 allocated_vector_push(struct vector* owner, int32 value) {
                     owner->cap == old(owner->cap) + 1;
                 }
             }
-            fold(allocated_vector(owner));
+            fold(vector_storage(owner));
             step() using {
                 owner->len < owner->cap;
                 loadable(owner->len);
                 loadable(owner->cap);
                 loadable(owner->data);
             }
+            unfold(vector_storage(owner));
+            have 0 <= owner->len by simp;
+            have owner->len <= owner->cap by simp;
+            have 1 <= owner->cap by simp;
+            have owner->cap <= 536870911 by simp;
+            fold(allocated_vector(owner));
             step() using {
                 owner->len < owner->cap;
             }
             simp();
         }
     } else {
-        step();
         observe(allocated_vector(owner));
         have owner->len <= owner->cap by {
             assumption();
@@ -371,21 +370,21 @@ int32 allocated_vector_push(struct vector* owner, int32 value) {
         }
         have owner->len < owner->cap by simp;
         have old(owner->len) < old(owner->cap) by simp;
+        execute_until(statement(8));
+        unfold(allocated_vector(owner));
+        fold(vector_storage(owner));
         step() using {
             owner->len < owner->cap;
             loadable(owner->len);
             loadable(owner->cap);
             loadable(owner->data);
         }
-        step() using {
-            owner->len < owner->cap;
-        }
-        step() using {
-            owner->len < owner->cap;
-        }
-        step() using {
-            owner->len < owner->cap;
-        }
+        unfold(vector_storage(owner));
+        have 0 <= owner->len by simp;
+        have owner->len <= owner->cap by simp;
+        have 1 <= owner->cap by simp;
+        have owner->cap <= 536870911 by simp;
+        fold(allocated_vector(owner));
         step() using {
             owner->len < owner->cap;
         }
@@ -405,9 +404,6 @@ int32 allocated_vector_push(struct vector* owner, int32 value) {
         frame() using {
             at(statement(8).entry, owner->len) < at(statement(8).entry, owner->cap);
             not owner->len == owner->cap;
-            at(statement(1).entry, loadable(owner->len));
-            at(statement(1).entry, loadable(owner->cap));
-            at(statement(1).entry, loadable(owner->data));
             at(statement(0).entry, separate(memory(owner->len), memory(owner->cap)));
             at(statement(0).entry, separate(memory(owner->len), memory(owner->data)));
             at(statement(0).entry, separate(memory(object(owner)), memory(owner->data[0..owner->cap])));
@@ -762,60 +758,6 @@ int32 vector_replace_if(
     simp();
 }
 
-int32 vector_push_first(struct vector* owner, int32 value) {
-    consumes empty_vector(owner);
-    mutable owner->len, owner->data[0..1];
-    produces nonempty_vector(owner);
-    ensures result == 1;
-    ensures owner->len == 1;
-    ensures owner->data[0] == value;
-} by {
-    unfold(empty_vector(owner));
-    have owner->len < owner->cap by simp;
-    have 0 <= owner->len by simp;
-    have owner->len < 1 by simp;
-    step();
-    step();
-    step();
-    step();
-    step();
-    step();
-    step();
-    step();
-    have owner->len == 1 by simp;
-    have 1 <= owner->len by simp;
-    have owner->len <= owner->cap by simp;
-    have separate(memory(object(owner)), memory(owner->data[0..owner->cap])) by simp;
-    fold(nonempty_vector(owner));
-    step();
-    frame();
-    have result == 1 by {
-        assumption();
-    }
-    have owner->len == 1 by {
-        assumption();
-    }
-    have at(function.entry, loadable((owner->data + 0)[0..1])) by {
-        derive using {
-            owner->len <= owner->cap;
-            owner->len == 1;
-            at(statement(0).entry, loadable(owner->data[0..owner->cap]));
-        }
-    }
-    transport(at(function.entry, loadable((owner->data + 0)[0..1])), loadable((owner->data + 0)[0..1])) using {
-        at(function.entry, loadable((owner->data + 0)[0..1]));
-    }
-    have owner->data[0] == value by {
-        derive using {
-            at(statement(8).exit, index) == 0;
-        }
-    }
-    assumption();
-    assumption();
-    assumption();
-    assumption();
-}
-
 int32 vector_clear(struct vector* owner) {
     consumes nonempty_vector(owner);
     mutable owner->len;
@@ -850,49 +792,31 @@ int32 vector_pipeline(
     execute_until(statement(3));
     have owner->len == 0 by simp;
     have owner->cap == capacity by simp;
-    execute_until(statement(4));
+    unfold(empty_vector(owner));
+    have 0 <= owner->len by simp;
+    have owner->len <= owner->cap by simp;
+    have loadable(owner->data[0..owner->len]) by simp;
+    fold(vector_storage(owner));
+    have owner->len < owner->cap by simp;
+    step() using {
+        owner->len < owner->cap;
+        loadable(owner->len);
+        loadable(owner->cap);
+        loadable(owner->data);
+    }
+    unfold(vector_storage(owner));
     have owner->len == 1 by simp;
+    have 1 <= owner->len by simp;
+    fold(nonempty_vector(owner));
     have 0 < owner->len by simp;
-    execute_until(statement(5));
+    step() using {
+        0 < owner->len;
+    }
     have owner->len == 1 by simp;
     have 0 < owner->len by simp;
     step() using {
-        at(statement(4).entry, 1) <= at(statement(4).entry, capacity);
-        at(statement(2).entry, loadable(old(object(owner))));
-        at(statement(2).entry, loadable(old(data[0..capacity])));
-        at(statement(3).entry, owner->len) == at(statement(3).entry, 0);
-        at(statement(4).entry, observed) == at(statement(4).entry, 1);
-        at(statement(3).entry, owner->data) == at(statement(3).entry, data);
-        at(statement(3).entry, owner->cap) == at(statement(3).entry, capacity);
-        owner->cap == capacity;
-        owner->data == data;
-        observed == owner->data[0];
-        owner->len == 1;
-        owner->data[0] == first;
         0 < owner->len;
-        at(statement(4).entry, owner->len) == at(statement(4).entry, 1);
-        at(statement(4).entry, owner->data[0]) == at(statement(4).entry, first);
-        at(statement(4).entry, owner->cap) == at(statement(4).entry, capacity);
-        at(statement(4).entry, 0) < at(statement(4).entry, owner->len);
     }
-    have owner->len == owner->len by {
-        normalize();
-    }
-    have owner->cap == owner->cap by {
-        normalize();
-    }
-    have owner->data == owner->data by {
-        normalize();
-    }
-    have at(statement(5).entry, owner->len) == 1 by {
-        assumption();
-    }
-    have owner->len == at(statement(5).entry, owner->len) by simp;
-    apply(int32_equality_transitive(
-        owner->len,
-        at(statement(5).entry, owner->len),
-        1
-    ));
     have owner->len == 1 by simp;
     observe(nonempty_vector(owner));
     have owner->data[0] == replacement by simp;
@@ -911,6 +835,8 @@ int32 vector_pipeline(
         owner->len == 1;
         observed == replacement;
     }
-    execute();
+    step() using {
+        observed == replacement;
+    }
     simp();
 }

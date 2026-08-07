@@ -14,12 +14,15 @@ struct vector {
 };
 ```
 
-The Click sidecar defines three vector states:
+The Click sidecar defines four vector states:
 
 - `empty_vector(owner)` owns the metadata and backing array and establishes
   `owner->len == 0` and `1 <= owner->cap`.
 - `nonempty_vector(owner)` owns the same memory and establishes
   `1 <= owner->len <= owner->cap`.
+- `vector_storage(owner)` owns the metadata and complete backing range without
+  owning its allocation lifetime. The general append operation uses this
+  resource in caller-supplied and allocation-owning contexts.
 - `allocated_vector(owner)` additionally owns the backing allocation's
   lifetime. It permits runtime growth and records that the live prefix is
   initialized even though unused capacity may remain unreadable.
@@ -40,10 +43,9 @@ so folding either resource tests dependent composite-resource definitions.
   preservation proof to initialize its field-dependent backing range.
 - `vector_replace_if` calls verified vector operations on both sides of a
   branch, then exports a common resource-and-fact interface with `ensuring`.
-- `vector_push_first` transitions an empty vector to a nonempty vector.
-- `vector_push` appends at any in-capacity position, increments the live
-  length, and preserves the old live prefix while retaining allocation
-  ownership.
+- `vector_push` appends at any in-capacity position and preserves the old live
+  prefix. Its resource-neutral storage contract lets callers retain whatever
+  allocation authority they already hold.
 - `vector_copy` copies an arbitrary live prefix between separate owned and
   viewed capacity ranges and exposes pointwise value preservation.
 - `vector_grow` performs ordinary malloc-copy-install-free growth. Allocation
@@ -66,11 +68,10 @@ of grow-then-append.
 ## Proof Style
 
 The sidecar mixes concise smart proofs with expanded exact certificates. Read
-the `vector_len` and other short accessor proofs first. Long `step() using`,
-`summarize ... using`, and `derive using` blocks are checked replay artifacts
-retained for predictable performance and expansion coverage; ordinary
-authoring should begin with the corresponding smart tactic and expand only
-after profiling.
+the `vector_len` and other short accessor proofs first. Long `step() using` and
+`derive using` blocks are checked replay artifacts retained for predictable
+performance and expansion coverage; ordinary authoring should begin with the
+corresponding smart tactic and expand only after profiling.
 
 ## Current Boundary
 

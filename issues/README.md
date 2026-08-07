@@ -69,11 +69,11 @@ These are behavior-preserving cleanup roadmaps rather than feature blockers:
 
 ## C-source fidelity
 
-The repository has several historical cases where example C was simplified or
-rerouted while repairing its proof. Track and remove them independently:
+The historical cases where example C was simplified or rerouted while
+repairing its proof have been restored. The remaining work is to add stronger
+positive evidence for the unchanged-source adoption boundary:
 
-1. [Use general vector push in the owned-vector pipeline](use-general-vector-push-in-pipeline.md).
-2. [Add the first unchanged existing-C fixture](audit-existing-c-source-fidelity.md).
+1. [Add the first unchanged existing-C fixture](audit-existing-c-source-fidelity.md).
 
 ## Partial correctness and recursion
 
