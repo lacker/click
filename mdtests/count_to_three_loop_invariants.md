@@ -17,14 +17,13 @@ int32 count_to_three() {
 verifying "count_to_three.c";
 
 int32 count_to_three() {
-    for statement(2) {
-        assert i == 0 by auto;
-    }
-
     ensures result == 3;
 } by {
     step();
     step();
+    have i == 0 by {
+        simp();
+    }
     loop {
         invariant i >= 0;
         invariant i <= 3;

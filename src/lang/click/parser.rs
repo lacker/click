@@ -626,8 +626,6 @@ impl Parser {
         let mut contract_let_names = BTreeSet::new();
         let mut requires = Vec::new();
         let mut decreases = None;
-        let mut structural_clauses = Vec::new();
-        let mut structural_labels = BTreeSet::new();
         let mut effects = Vec::new();
         let mut ensures = Vec::new();
         let previous_struct_params =
@@ -761,24 +759,15 @@ impl Parser {
                     );
                 }
                 Some("for") => {
-                    let clause = self.parse_region_proof_clause()?;
-                    if let Some(label) = clause.label() {
-                        if matches!(label, "function" | "loop" | "statement") {
-                            return Err(self.error(format!(
-                                "`{label}` is reserved and cannot be used as a code region label"
-                            )));
-                        }
-                        if !structural_labels.insert(label.to_string()) {
-                            return Err(self.error(format!(
-                                "duplicate code region label `{label}` in `{}`",
-                                signature.name()
-                            )));
-                        }
-                    }
-                    structural_clauses.push(
-                        apply_contract_lets_to_structural_clause(clause, &contract_lets)
-                            .map_err(|message| self.error(message))?,
-                    );
+                    let message = if matches!(
+                        self.peek_next(),
+                        Some(Token::Ident(kind)) if kind == "loop"
+                    ) {
+                        "detached `for loop(N)` proofs were removed; prove the loop at the execution frontier with `loop { ... }` inside the function proof"
+                    } else {
+                        "detached `for statement(N)` proofs were removed; advance the ordinary function proof to that frontier and use `have proposition by { ... }`"
+                    };
+                    return Err(self.error(message));
                 }
                 Some("immutable" | "mutable") => {
                     let effect = self.parse_effect_clause()?;
@@ -796,13 +785,13 @@ impl Parser {
                 }
                 Some(keyword) => {
                     return Err(self.error(format!(
-                        "expected `let`, `requires`, `decreases`, `owns`, `views`, `consumes`, `produces`, `immutable`, `mutable`, `for`, `ensures`, or `}}` in `{}`, got `{keyword}`",
+                        "expected `let`, `requires`, `decreases`, `owns`, `views`, `consumes`, `produces`, `immutable`, `mutable`, `ensures`, or `}}` in `{}`, got `{keyword}`",
                         signature.name()
                     )));
                 }
                 None => {
                     return Err(self.error(format!(
-                        "expected `let`, `requires`, `decreases`, `owns`, `views`, `consumes`, `produces`, `immutable`, `mutable`, `for`, `ensures`, or `}}` in `{}`",
+                        "expected `let`, `requires`, `decreases`, `owns`, `views`, `consumes`, `produces`, `immutable`, `mutable`, `ensures`, or `}}` in `{}`",
                         signature.name()
                     )));
                 }
@@ -832,7 +821,7 @@ impl Parser {
             signature,
             requires,
             decreases,
-            structural_clauses,
+            structural_clauses: Vec::new(),
             effects,
             ensures,
             grouped_proof,
@@ -1138,113 +1127,23 @@ impl Parser {
         })
     }
 
-    fn parse_region_proof_clause(&mut self) -> Result<StructuralClause, ClickError> {
-        self.expect_ident_spelling("for")?;
-        let region = self.parse_region_proof_code_region()?;
-        let label = if self.peek_ident() == Some("as") {
-            self.position += 1;
-            Some(self.expect_ident("code region label")?)
-        } else {
-            None
-        };
-        self.expect(Token::LBrace)?;
-        let mut items = Vec::new();
-        let mut decreases = None;
-        let mut initialize_proof = None;
-        let mut preserve_proof = None;
-        while self.peek() != Some(&Token::RBrace) {
-            if self.peek_ident() == Some("decreases") {
-                self.position += 1;
-                if decreases.is_some() {
-                    return Err(self.error("duplicate loop `decreases` clause"));
-                }
-                decreases = Some(self.parse_contract_expression()?);
-                self.expect(Token::Semicolon)?;
-                continue;
-            }
-            if self.peek_ident() == Some("initialize") {
-                self.position += 1;
-                if initialize_proof.is_some() {
-                    return Err(self.error("duplicate `initialize` proof"));
-                }
-                initialize_proof = Some(self.parse_by_clause()?);
-                continue;
-            }
-            if self.peek_ident() == Some("preserve") {
-                self.position += 1;
-                if preserve_proof.is_some() {
-                    return Err(self.error("duplicate `preserve` proof"));
-                }
-                preserve_proof = Some(self.parse_by_clause()?);
-                continue;
-            }
-            items.extend(self.parse_region_proof_items()?);
-        }
-        self.expect(Token::RBrace)?;
-        if items.is_empty() && decreases.is_none() {
-            return Err(self.error(
-                "region proof block must contain at least one item or a `decreases` clause",
-            ));
-        }
-        Ok(StructuralClause {
-            region,
-            label,
-            decreases,
-            items,
-            initialize_proof,
-            preserve_proof,
-        })
-    }
-
-    fn parse_region_proof_code_region(&mut self) -> Result<CodeRegion, ClickError> {
-        match self.next() {
-            Some(Token::Ident(kind)) if kind == "loop" => {
-                Err(self.error(
-                    "detached `for loop(N)` proofs were removed; prove the loop at the execution frontier with `loop { ... }` inside the function proof",
-                ))
-            }
-            Some(Token::Ident(kind)) if kind == "statement" => {
-                self.expect(Token::LParen)?;
-                let index = self.expect_index("statement index")?;
-                self.expect(Token::RParen)?;
-                Ok(CodeRegion::Statement(index))
-            }
-            Some(Token::Ident(kind)) => {
-                Err(self.error(format!("expected `statement(N)`, got `{kind}`")))
-            }
-            Some(token) => Err(self.error(format!("expected `statement(N)`, got {token:?}"))),
-            None => Err(self.error("expected `statement(N)`, got end of input")),
-        }
-    }
-
     fn parse_region_proof_items(&mut self) -> Result<Vec<StructuralItem>, ClickError> {
         match self.next() {
-            Some(Token::Ident(kind)) if kind == "invariant" || kind == "assert" => {
-                let item_kind = if kind == "invariant" {
-                    StructuralItemKind::Invariant
-                } else {
-                    StructuralItemKind::Assert
-                };
+            Some(Token::Ident(kind)) if kind == "invariant" => {
                 let proposition = self.parse_proposition()?;
-                let proof = if item_kind == StructuralItemKind::Invariant {
-                    if self.peek_ident() == Some("by") {
-                        return Err(self.error(
-                            "invariant proofs belong to the loop; use `initialize by ...` and `preserve by ...`",
-                        ));
-                    }
-                    self.expect(Token::Semicolon)?;
-                    Proof::Tactic(SmartTactic::Auto)
-                } else {
-                    self.parse_proof_clause_or_default()?
-                };
+                if self.peek_ident() == Some("by") {
+                    return Err(self.error(
+                        "invariant proofs belong to the loop; use `initialize by ...` and `preserve by ...`",
+                    ));
+                }
+                self.expect(Token::Semicolon)?;
                 Ok(vec![StructuralItem {
-                    kind: item_kind,
+                    kind: StructuralItemKind::Invariant,
                     claim: StructuralItemClaim::Proposition(proposition),
-                    proof,
+                    proof: Proof::Tactic(SmartTactic::Auto),
                 }])
             }
-            Some(Token::Ident(kind)) if kind == "immutable" || kind == "mutable" =>
-            {
+            Some(Token::Ident(kind)) if kind == "immutable" || kind == "mutable" => {
                 let effect = self.parse_effect_after_keyword(kind)?;
                 let proof = self.parse_proof_clause_or_default()?;
                 Ok(vec![StructuralItem {
@@ -1278,13 +1177,13 @@ impl Parser {
                 Ok(items)
             }
             Some(Token::Ident(kind)) => Err(self.error(format!(
-                "expected `invariant`, `assert`, `immutable`, `mutable`, or `step`, got `{kind}`"
+                "expected `invariant`, `immutable`, `mutable`, or `step`, got `{kind}`"
             ))),
             Some(token) => Err(self.error(format!(
-                "expected `invariant`, `assert`, `immutable`, `mutable`, or `step`, got {token:?}"
+                "expected `invariant`, `immutable`, `mutable`, or `step`, got {token:?}"
             ))),
             None => Err(self.error(
-                "expected `invariant`, `assert`, `immutable`, `mutable`, or `step`, got end of input",
+                "expected `invariant`, `immutable`, `mutable`, or `step`, got end of input",
             )),
         }
     }

@@ -50,15 +50,14 @@ int32 read_first(struct buffer* owner) {
 int32 retain_original(struct buffer* owner, int32 flag) {
     owns buffer(owner);
 
-    for statement(3) as choose_original {
-        assert flag == flag by auto;
-    }
-
     ensures result == old(owner->data[0]);
 } by {
-    execute_until(choose_original);
+    execute_until(statement(3));
+    have flag == flag by {
+        normalize();
+    }
     observe(buffer(owner));
-    reach(choose_original.exit)
+    reach(statement(3).exit)
     ensuring {
         fact selected == original;
         fact original == old(owner->data[0]);

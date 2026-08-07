@@ -26,7 +26,7 @@ use crate::kernel::{
     c_function_outcome_from_statement_outcome,
     c_function_outcomes_program_state_definitionally_equal,
     c_function_outcomes_program_state_equal_by_store_provenance, c_function_specification,
-    c_function_termination_plan, c_if, c_labeled_assert, c_loop_effects_hold_at_back_edge,
+    c_function_termination_plan, c_if, c_loop_effects_hold_at_back_edge,
     c_loop_invariant_obligations_at_entry, c_loop_invariants_hold_at_back_edge_using,
     c_loop_invariants_hold_at_entry, c_loop_preservation_contexts,
     c_pointer_offsets_proven_equal_for_effect, c_pointer_value, c_resources_directly_match, c_seq,
@@ -275,7 +275,6 @@ pub enum StructuralItemClaim {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum StructuralItemKind {
     Invariant,
-    Assert,
     Effect,
     StepEffect,
 }
@@ -3146,12 +3145,6 @@ fn tactic_expansion_required_functions(
             .get(index)
             .expect("effect tactics came from an effect clause")
             .proof(),
-    }) || function_block.structural_clauses().iter().any(|clause| {
-        matches!(clause.region(), CodeRegion::Loop(_))
-            || clause
-                .items()
-                .iter()
-                .any(|item| item.kind() == StructuralItemKind::Assert)
     });
     let touched_end = if has_earlier_claim || structural_traversal {
         statement_calls.len()
@@ -3878,7 +3871,6 @@ fn validate_region_proof_clauses(
     parsed_function: &syntax::C0Function,
 ) -> Result<(), ClickError> {
     let loop_count = count_loops(parsed_function.body());
-    let statement_count = count_statements(parsed_function.body());
     for region_proof_clause in function_block.structural_clauses() {
         match region_proof_clause.region() {
             CodeRegion::Function => {
@@ -3892,32 +3884,10 @@ fn validate_region_proof_clauses(
                     function_block.signature().name()
                 )));
             }
-            CodeRegion::Statement(index) if *index >= statement_count => {
-                return Err(ClickError::new(format!(
-                    "`{}` has no `statement({index})` code region; it contains {statement_count} statement(s)",
-                    function_block.signature().name()
-                )));
-            }
             CodeRegion::Statement(_) => {
-                if region_proof_clause.initialize_proof().is_some()
-                    || region_proof_clause.preserve_proof().is_some()
-                {
-                    return Err(ClickError::new(
-                        "`initialize` and `preserve` are only supported at loop code regions",
-                    ));
-                }
-                for item in region_proof_clause.items() {
-                    if item.kind() == StructuralItemKind::Invariant {
-                        return Err(ClickError::new(
-                            "`invariant` is only supported at loop code regions",
-                        ));
-                    }
-                    if item.is_effect_kind() {
-                        return Err(ClickError::new(
-                            "`immutable` and `mutable` are only supported at loop code regions inside region proof blocks",
-                        ));
-                    }
-                }
+                return Err(ClickError::new(
+                    "internal frontier-loop proof was bound to a statement region",
+                ));
             }
             CodeRegion::Loop(_) => {}
         }
@@ -3952,23 +3922,8 @@ fn validate_region_proof_clauses(
                         "`immutable` and `mutable` region proof clauses must use the default prover, `by auto;`, `by frame;`, or a surface certificate",
                     ));
                 }
-            } else if item.kind() == StructuralItemKind::Invariant {
+            } else {
                 debug_assert!(item.proof().is_auto_tactic());
-            } else if !item.proof().is_auto_tactic() && !matches!(item.proof(), Proof::Script(_)) {
-                return Err(ClickError::new(
-                    "`assert` structural clauses must use the default prover, `by auto;`, or a supported pure proof script",
-                ));
-            }
-            if item.kind() == StructuralItemKind::Assert
-                && click_proposition_to_c_expression(
-                    item.proposition()
-                        .expect("assert structural item should contain a proposition"),
-                )
-                .is_none()
-            {
-                return Err(ClickError::new(
-                    "`assert` clauses currently support executable propositions only",
-                ));
             }
         }
     }

@@ -210,14 +210,9 @@ fn write_tactic(output: &mut String, tactic: &ProofTactic, indent: usize) {
             }
             for item in loop_clause.items() {
                 match item.kind() {
-                    StructuralItemKind::Invariant | StructuralItemKind::Assert => {
-                        let keyword = if item.kind() == StructuralItemKind::Invariant {
-                            "invariant"
-                        } else {
-                            "assert"
-                        };
+                    StructuralItemKind::Invariant => {
                         output.push_str(&body_prefix);
-                        output.push_str(keyword);
+                        output.push_str("invariant");
                         output.push(' ');
                         output.push_str(&source_click_proposition(
                             item.proposition().expect("proposition structural item"),

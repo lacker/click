@@ -133,7 +133,6 @@ pub fn c0_smart_tactic_source_sites(
                 }
                 let kind = match item.kind() {
                     StructuralItemKind::Invariant => unreachable!(),
-                    StructuralItemKind::Assert => "assert",
                     StructuralItemKind::Effect => "effect",
                     StructuralItemKind::StepEffect => "step_effect",
                 };
@@ -890,7 +889,6 @@ impl ProofSite {
                 };
                 let kind = match kind {
                     StructuralItemKind::Invariant => "invariant",
-                    StructuralItemKind::Assert => "assert",
                     StructuralItemKind::Effect => "effect",
                     StructuralItemKind::StepEffect => "step_effect",
                 };
@@ -1190,7 +1188,6 @@ pub fn c0_tactic_source_position(
             for (item_index, (item, edit)) in clause.items().iter().zip(edits.iter()).enumerate() {
                 let kind = match item.kind() {
                     StructuralItemKind::Invariant => "invariant",
-                    StructuralItemKind::Assert => "assert",
                     StructuralItemKind::Effect => "effect",
                     StructuralItemKind::StepEffect => "step_effect",
                 };
@@ -2709,9 +2706,6 @@ int32 vector_replace_if(
     requires index < owner->len;
     owns nonempty_vector(owner);
     mutable owner->data[index..index + 1];
-    for statement(3) as choose_replacement {
-        assert replace == replace by auto;
-    }
     ensures replace != 0 implies result == replacement;
 } by {
     step();
@@ -2725,7 +2719,10 @@ int32 vector_replace_if(
         loadable(old(owner->data));
         loadable(old(owner->len));
     }
-    reach(choose_replacement.exit)
+    have replace == replace by {
+        normalize();
+    }
+    reach(statement(3).exit)
     ensuring {
         fact replace != 0 implies selected == replacement;
         fact not (replace != 0) implies selected == original;
@@ -2781,7 +2778,7 @@ int32 vector_replace_if(
             &sources,
             "vector_replace_if",
             CProofClaim::Grouped,
-            6,
+            7,
         )
         .expect("smart frame should expand with snapshot-correct loadability premises");
 

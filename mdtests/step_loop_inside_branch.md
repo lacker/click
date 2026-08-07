@@ -25,19 +25,17 @@ int32 branch_count_to_one(int32 flag, int32 i) {
     requires i == 1;
     requires flag != 0;
 
-    for statement(0) {
-        assert flag != 0 by auto;
-    }
-
-    for statement(1) {
-        assert i == 1 by auto;
-    }
-
     ensures result == 1
         and at(statement(1).exit, i) == 1
         and at(statement(4).entry, i) == 1;
 } by {
+    have flag != 0 by {
+        assumption();
+    }
     step();
+    have i == 1 by {
+        assumption();
+    }
     loop as count {
         invariant i == 1;
     }

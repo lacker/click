@@ -2112,6 +2112,26 @@ fn rejects_detached_loop_proofs_with_frontier_migration() {
 }
 
 #[test]
+fn rejects_detached_statement_proofs_with_frontier_migration() {
+    let source = r#"
+        int32 identity(int32 x) {
+            for statement(0) {
+                assert x == x by auto;
+            }
+            ensures result == x by auto;
+        }
+    "#;
+
+    let error = parse(source).expect_err("detached statement proof should be rejected");
+    assert!(
+        error.message().contains("ordinary function proof")
+            && error.message().contains("have proposition"),
+        "{}",
+        error.message()
+    );
+}
+
+#[test]
 fn rejects_redundant_exact_premise_spellings_with_migrations() {
     let old_derive = r#"
         theorem legacy(x: int32) {
@@ -5010,7 +5030,7 @@ fn statement_snapshots_preserve_declared_resource_argument_types() {
 }
 
 #[test]
-fn source_expander_locates_statement_assertion_proofs() {
+fn source_expander_locates_frontier_local_have_proofs() {
     let c_source = r#"
             int32 preserve_value(int32 x) {
                 x = x;
@@ -5021,26 +5041,23 @@ fn source_expander_locates_statement_assertion_proofs() {
             verifying "statement_assert.c";
 
             int32 preserve_value(int32 x) {
-                for statement(0) {
-                    assert x == x by auto;
-                }
                 ensures result == x;
             } by {
+                have x == x by auto;
                 execute();
                 simp();
             }
         "#;
-    let auto_offset = click_source
-        .find("assert x == x by auto")
-        .expect("assertion proof should exist")
-        + "assert x == x by ".len();
-    let line = click_source[..auto_offset]
+    let have_offset = click_source
+        .find("have x == x by auto")
+        .expect("frontier-local proof should exist");
+    let line = click_source[..have_offset]
         .bytes()
         .filter(|byte| *byte == b'\n')
         .count()
         + 1;
-    let column = auto_offset
-        - click_source[..auto_offset]
+    let column = have_offset
+        - click_source[..have_offset]
             .rfind('\n')
             .map(|offset| offset + 1)
             .unwrap_or(0)
@@ -5052,10 +5069,10 @@ fn source_expander_locates_statement_assertion_proofs() {
         line,
         column,
     )
-    .expect("the statement assertion proof should expand");
+    .expect("the frontier-local `have` proof should expand");
     assert_ne!(expanded, click_source);
     verify_c0_sources(&expanded, &[("statement_assert.c", c_source)])
-        .expect("the expanded statement assertion should replay");
+        .expect("the expanded frontier-local proof should replay");
 }
 
 #[test]
@@ -9163,9 +9180,6 @@ int32 pipeline(struct counter* owner) {
     consumes object(owner);
     mutable object(owner);
     produces counter(owner);
-    for statement(3) {
-        assert owner->value == 1 by auto;
-    }
     ensures result == 1;
     ensures owner->value == 1;
 } by {
@@ -9186,25 +9200,22 @@ int32 pipeline(struct counter* owner) {
 
     verify_c0_sources(click_source, &sources).expect("the original smart proof should verify");
 
-    let assertion = click_source
-        .find("assert owner->value == 1 by auto")
-        .unwrap()
-        + "assert owner->value == 1 by ".len();
-    let assertion_position = expansion::position_at_offset(click_source, assertion);
-    let assertion_expanded = expand_c0_tactic_source_at(
+    let frontier_have = click_source.find("have owner->value == 1 by simp").unwrap();
+    let have_position = expansion::position_at_offset(click_source, frontier_have);
+    let have_expanded = expand_c0_tactic_source_at(
         click_source,
         &sources,
-        assertion_position.line,
-        assertion_position.column,
+        have_position.line,
+        have_position.column,
     )
-    .expect("the mixed-snapshot program-point assertion should expand");
-    assert!(!assertion_expanded.contains("assert owner->value == 1 by auto"));
+    .expect("the mixed-snapshot frontier-local fact should expand");
+    assert!(!have_expanded.contains("have owner->value == 1 by simp"));
     assert!(
-        assertion_expanded.contains("at(statement("),
+        have_expanded.contains("at(statement("),
         "the explicit certificate should retain a source statement anchor"
     );
-    verify_c0_sources(&assertion_expanded, &sources)
-        .expect("the mixed-snapshot program-point assertion expansion should replay");
+    verify_c0_sources(&have_expanded, &sources)
+        .expect("the mixed-snapshot frontier-local expansion should replay");
 
     let selected = click_source.find("execute_until").unwrap();
     let position = expansion::position_at_offset(click_source, selected);
@@ -9423,52 +9434,6 @@ int32 caller(int32 x) {
         expand_c0_tactic_source_at(click_source, &sources, position.line, position.column)
             .expect("the endpoint call dependency should be verified before expansion");
     assert!(!expanded.contains("execute_until(statement(1));"));
-}
-
-#[test]
-fn tactic_expansion_includes_dependencies_of_structural_traversal() {
-    let callee_c = r#"
-int32 callee(int32 x) {
-    return x;
-}
-"#;
-    let caller_c = r#"
-int32 caller(int32 x) {
-    int32 result;
-    result = callee(x);
-    return result;
-}
-"#;
-    let click_source = r#"
-verifying "callee.c";
-verifying "caller.c";
-
-int32 callee(int32 x) {
-    ensures result == x;
-} by {
-    execute();
-    simp();
-}
-
-int32 caller(int32 x) {
-    for statement(2) {
-        assert x == x by auto;
-    }
-    ensures result == x;
-} by {
-    step();
-    execute();
-    simp();
-}
-"#;
-    let sources = [("callee.c", callee_c), ("caller.c", caller_c)];
-    let selected = click_source.rfind("step()").unwrap();
-    let position = expansion::position_at_offset(click_source, selected);
-
-    let expanded =
-        expand_c0_tactic_source_at(click_source, &sources, position.line, position.column)
-            .expect("structural traversal dependencies should be verified before expansion");
-    assert!(!expanded.contains("    step();"));
 }
 
 #[test]

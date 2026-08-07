@@ -707,10 +707,6 @@ int32 vector_replace_if(
     owns nonempty_vector(owner);
     mutable owner->data[index..index + 1];
 
-    for statement(3) as choose_replacement {
-        assert replace == replace by auto;
-    }
-
     ensures replace != 0 implies result == replacement;
 } by {
     step();
@@ -724,7 +720,10 @@ int32 vector_replace_if(
         loadable(old(owner->data));
         loadable(old(owner->len));
     }
-    reach(choose_replacement.exit)
+    have replace == replace by {
+        normalize();
+    }
+    reach(statement(3).exit)
     ensuring {
         fact replace != 0 implies selected == replacement;
         fact not (replace != 0) implies selected == original;
@@ -851,10 +850,6 @@ int32 vector_pipeline(
     requires 1 <= capacity;
     consumes object(owner);
     consumes data[0..capacity];
-
-    for statement(6) as read_replacement {
-        assert owner->len == 1 by auto;
-    }
 
     produces empty_vector(owner);
     ensures result == replacement;

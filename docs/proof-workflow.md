@@ -369,19 +369,18 @@ ensures again: bytes_contains(p, 0, n, 'x') by {
 }
 ```
 
-## Statement Regions And Loop Proofs
+## Frontier Facts And Loop Proofs
 
-Statement-region proof blocks attach one-shot assertions to statically selected
-source statements. Loop proofs instead operate where the execution frontier
-actually encounters a loop:
+Use `have` to prove an intermediate proposition at the current execution
+frontier. Loop proofs likewise operate where the frontier encounters a loop:
 
 ```click
-for statement(2) {
-    assert i == 0 by auto;
-}
-
 by {
     step();
+    step();
+    have i == 0 by {
+        simp();
+    }
     loop as fill {
         invariant i >= 0;
         invariant i <= n;
@@ -394,24 +393,28 @@ by {
 }
 ```
 
+Unlike the removed detached `for statement(N) { assert ... }` form, `have`
+does not replay the function prefix. It sees the exact facts and resources
+established by preceding `step() using`, `unfold`, `fold`, and other ordinary
+proof tactics. It proves its proposition on every active proof path and adds
+the resulting fact to the following context.
+
 `statement(N)` selects the Nth source statement code region in structural
-order. A statement region may be labeled with `as name`. Labels are the
-preferred proof-facing spelling for execution targets and snapshots because
-they remain meaningful when nearby source statements change:
+order for execution targets and snapshots:
 
 ```click
-for statement(4) as update {
-    assert y >= 0 by auto;
+execute_until(statement(4));
+have y >= 0 by {
+    simp();
 }
-
-execute_until(update);
-have at(update.entry, y) >= 0 by simp;
+step();
+have at(statement(4).entry, y) >= 0 by {
+    assumption();
+}
 ```
 
-The same statement label can be used by `reach(update.exit)`,
-`at(update.entry, ...)`, and `at(update.exit, ...)`. `loop as name { ... }`
-creates entry and exit snapshot names for the loop at the current frontier;
-the name is not a selector and never moves the frontier.
+`loop as name { ... }` creates entry and exit snapshot names for the loop at
+the current frontier; the name is not a selector and never moves the frontier.
 
 A code region is a static source construct with extent, such as a function,
 loop, statement, or block. A program point is a proof-relevant boundary or
@@ -446,10 +449,6 @@ snapshot. An explicit loop `preserve` proof binds
 `at(loop_name.entry, ...)` to its fresh arbitrary iteration state. Executing a
 verified loop records its unique abstract exit as `at(loop_name.exit, ...)`.
 Historical iteration visits still require a future selection model.
-
-`assert` is a one-shot spec check at the selected statement code region. It
-currently accepts the executable proposition fragment over current-state C
-fragments.
 
 `invariant` declarations generate obligations at loop program points. The
 loop-level `initialize` proof establishes the complete invariant set before the

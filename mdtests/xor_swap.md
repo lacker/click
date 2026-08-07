@@ -18,14 +18,14 @@ int32 xor_swap(int32 x, int32 y) {
 verifying "xor_swap.c";
 
 int32 xor_swap(int32 x, int32 y) {
-    for statement(3) as swapped {
-        assert x == x by auto;
-    }
-
     ensures result == old(y)
-        and at(swapped.entry, x) == old(y)
-        and at(swapped.entry, y) == old(x) by {
-        execute();
+        and at(statement(3).entry, x) == old(y)
+        and at(statement(3).entry, y) == old(x) by {
+        execute_until(statement(3));
+        have x == x by {
+            normalize();
+        }
+        step();
         simp();
     }
 }

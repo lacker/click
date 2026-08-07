@@ -3,13 +3,7 @@ use super::validation::tactic_name;
 use super::*;
 use crate::kernel::fresh_int32_variable_for_propositions;
 
-type NextTopLevelStatement = (
-    CState,
-    CState,
-    Option<CStatement>,
-    CStatement,
-    Option<CStatement>,
-);
+type NextTopLevelStatement = (CState, CState, CStatement, Option<CStatement>);
 
 fn check_verification_deadline() -> Result<(), ClickError> {
     if crate::instrumentation::deadline_exceeded() {
@@ -4819,13 +4813,10 @@ pub(super) fn verify_loop_execution_proofs(
     resource_environment: &ResourceEnvironment,
     theorem_environment: &TheoremEnvironment,
 ) -> Result<Vec<CVerifiedLoopRule>, ClickError> {
-    let has_structural_proofs = function_block.structural_clauses().iter().any(|clause| {
-        matches!(clause.region(), CodeRegion::Loop(_))
-            || clause
-                .items()
-                .iter()
-                .any(|item| item.kind() == StructuralItemKind::Assert)
-    });
+    let has_structural_proofs = function_block
+        .structural_clauses()
+        .iter()
+        .any(|clause| matches!(clause.region(), CodeRegion::Loop(_)));
     if !has_structural_proofs {
         return Ok(Vec::new());
     }
@@ -7292,45 +7283,6 @@ fn verify_execution_proofs_forward(
             *next_statement_index = source_region.continuation_node;
             Ok(joined)
         }
-        CStatement::Assert {
-            label: Some(label), ..
-        } if label.starts_with("statement ") && label.ends_with(" assert 0") => {
-            let statement_index = label
-                .strip_prefix("statement ")
-                .and_then(|label| label.strip_suffix(" assert 0"))
-                .and_then(|index| index.parse::<usize>().ok())
-                .ok_or_else(|| {
-                    ClickError::new(format!("malformed structural assertion label `{label}`"))
-                })?;
-            let contexts = certify_structural_assertions(
-                CodeRegion::Statement(statement_index),
-                contexts,
-                environment,
-            )?;
-            // The structural proof has certified the assertion and added its
-            // proposition to every path context. A C assertion has no state
-            // effect, so do not evaluate its expression again: doing so would
-            // require reopening resources that the proof was allowed to use
-            // through their certified pure facts.
-            Ok(contexts)
-        }
-        CStatement::Assert {
-            label: Some(label), ..
-        } if label.starts_with("statement ") && label.contains(" assert ") => {
-            // The first synthetic check certified every assertion attached to
-            // this source statement. Remaining lowered checks are not source
-            // statements and must not advance the layout cursor.
-            Ok(contexts)
-        }
-        CStatement::Assert {
-            label: Some(label), ..
-        } if label.starts_with("loop ") && label.contains(" assert ") => {
-            // Loop structural assertions are certified together at the loop
-            // arm below. Their lowered C checks are synthetic prefixes, not
-            // source statements, so they must not advance the shared source
-            // layout cursor.
-            Ok(contexts)
-        }
         CStatement::While {
             condition,
             invariant_checks,
@@ -7355,8 +7307,6 @@ fn verify_execution_proofs_forward(
                     "execution proof traversal source statement({statement_index}) does not match loop({loop_index})"
                 )));
             }
-            let contexts =
-                certify_structural_assertions(CodeRegion::Loop(loop_index), contexts, environment)?;
             let loop_clause = environment
                 .function_block
                 .structural_clauses()
@@ -7610,31 +7560,6 @@ fn verify_execution_proofs_forward(
                 finish_proof_site_expansion_capture(&site, &certificate)?;
             }
 
-            if kernel_statement_contains_loop(body) && environment.frontier_loop_source.is_none() {
-                // Static `for statement(N)` assertions still use a separate
-                // structural traversal. Descend here only so that traversal can
-                // reach assertions inside a nested loop. A frontier-local
-                // preservation proof encounters nested loops through its own
-                // `loop` tactics; walking the body again would duplicate that
-                // proof and recursively grow the verifier stack.
-                *next_statement_index = environment
-                    .source_layout
-                    .loop_body_entry(loop_index)
-                    .ok_or_else(|| {
-                        ClickError::new(format!(
-                            "execution proof traversal could not resolve loop({loop_index}) body"
-                        ))
-                    })?;
-                let _ = verify_execution_proofs_forward(
-                    body,
-                    iteration_contexts,
-                    next_statement_index,
-                    next_loop_index,
-                    environment,
-                    verified_loop_rules,
-                )?;
-            }
-
             *next_statement_index = source_region.continuation_node;
 
             advance_execution_proof_statement(
@@ -7687,34 +7612,6 @@ fn verify_execution_proofs_forward(
                 false,
             )
         }
-    }
-}
-
-fn kernel_statement_contains_loop(statement: &CStatement) -> bool {
-    match statement {
-        CStatement::While { .. } => true,
-        CStatement::Seq(first, second) => {
-            kernel_statement_contains_loop(first) || kernel_statement_contains_loop(second)
-        }
-        CStatement::If {
-            then_branch,
-            else_branch,
-            ..
-        } => {
-            kernel_statement_contains_loop(then_branch)
-                || kernel_statement_contains_loop(else_branch)
-        }
-        CStatement::Skip
-        | CStatement::Declare { .. }
-        | CStatement::Assign { .. }
-        | CStatement::CallAssign { .. }
-        | CStatement::Call { .. }
-        | CStatement::HeapAllocate { .. }
-        | CStatement::HeapFree { .. }
-        | CStatement::Return(_)
-        | CStatement::Store { .. }
-        | CStatement::TypedStore { .. }
-        | CStatement::Assert { .. } => false,
     }
 }
 
@@ -8016,140 +7913,6 @@ fn plan_point_pure_goal_certificate(
         }
     }
     Ok((fact, certificate))
-}
-
-#[allow(clippy::too_many_arguments)]
-fn certify_structural_assertions(
-    region: CodeRegion,
-    mut contexts: Vec<ExecutionProofContext>,
-    environment: &ExecutionProofEnvironment<'_>,
-) -> Result<Vec<ExecutionProofContext>, ClickError> {
-    let Some(clause) = environment
-        .function_block
-        .structural_clauses()
-        .iter()
-        .find(|clause| clause.region() == &region)
-    else {
-        return Ok(contexts);
-    };
-    let assertions = clause
-        .items()
-        .iter()
-        .enumerate()
-        .filter(|(_, item)| item.kind() == StructuralItemKind::Assert)
-        .collect::<Vec<_>>();
-    if assertions.is_empty() {
-        return Ok(contexts);
-    }
-
-    let region_label = match region {
-        CodeRegion::Function => "function".to_string(),
-        CodeRegion::Loop(index) => format!("loop({index})"),
-        CodeRegion::Statement(index) => format!("statement({index})"),
-    };
-    let mut site_certificates = vec![Vec::new(); assertions.len()];
-    for context in &mut contexts {
-        let mut program_point_states = context.program_point_states.clone();
-        let point_region = match region {
-            CodeRegion::Function => CodeRegionRef::Function,
-            CodeRegion::Loop(index) => CodeRegionRef::Loop(index),
-            CodeRegion::Statement(index) => CodeRegionRef::Statement(index),
-        };
-        program_point_states.insert(
-            ProgramPointRef {
-                region: point_region,
-                kind: ProgramPointKind::Entry,
-            },
-            context.state.clone(),
-        );
-        for (assertion_index, (item_index, item)) in assertions.iter().enumerate() {
-            let proposition = item
-                .proposition()
-                .expect("assert structural item should contain a proposition");
-            let claim_label = format!(
-                "{}.{region_label}.assert_{}",
-                environment.function_block.signature().name(),
-                item_index
-            );
-            let (planned_fact, planned_certificate) = plan_point_pure_goal_certificate(
-                &ProofSite::StructuralItem {
-                    function_name: environment.function_block.signature().name().to_string(),
-                    region,
-                    item_index: *item_index,
-                    kind: item.kind(),
-                },
-                proposition,
-                item.proof(),
-                &claim_label,
-                assertion_index,
-                &context.pure_facts,
-                environment.parsed_function.parameters(),
-                environment.arguments,
-                environment.initial_state,
-                &context.state,
-                &program_point_states,
-                environment.predicate_environment,
-                environment.click_function_environment,
-                &context.surface_propositions,
-                None,
-                environment.theorem_environment,
-            )?;
-            let (certificate, replayed_fact) = pure_goal_certificate_gateway(
-                &claim_label,
-                || Ok(planned_certificate),
-                |certificate| {
-                    prove_pure_proposition_at_point(
-                        proposition,
-                        None,
-                        &Proof::Script(certificate.tactics().to_vec()),
-                        "assert",
-                        environment.theorem_environment,
-                        &claim_label,
-                        assertion_index,
-                        &context.pure_facts,
-                        environment.parsed_function.parameters(),
-                        environment.arguments,
-                        environment.initial_state,
-                        &context.state,
-                        None,
-                        &program_point_states,
-                        None,
-                        environment.predicate_environment,
-                        environment.click_function_environment,
-                        environment.function_block.requires(),
-                        None,
-                    )
-                },
-            )?;
-            debug_assert!(TacticCertificate::from_proof_tactics(certificate.tactics()).is_ok());
-            site_certificates[assertion_index].push(PathCertificate {
-                case_path: context.case_path.clone(),
-                certificate,
-            });
-            if replayed_fact != planned_fact {
-                return Err(ClickError::new(format!(
-                    "`{claim_label}` certificate replay changed the proved proposition"
-                )));
-            }
-            if !context.pure_facts.contains(&replayed_fact) {
-                context.pure_facts.push(replayed_fact);
-            }
-            context
-                .surface_propositions
-                .record_lowering(proposition, &planned_fact)?;
-        }
-    }
-    for ((item_index, _), certificates) in assertions.iter().zip(site_certificates) {
-        let site = ProofSite::StructuralItem {
-            function_name: environment.function_block.signature().name().to_string(),
-            region,
-            item_index: *item_index,
-            kind: StructuralItemKind::Assert,
-        };
-        let certificate = merge_path_aligned_certificates(&site.description(), certificates)?;
-        finish_proof_site_expansion_capture(&site, &certificate)?;
-    }
-    Ok(contexts)
 }
 
 fn advance_execution_proof_statement(
@@ -8774,14 +8537,8 @@ fn plan_automatic_loop_preservation_body(
                     "`{claim_label}` automatic preservation branch is not at a statement entry"
                 )));
             };
-            let assertion_prefix_count = source_assertion_prefix_count(
-                environment.function_block,
-                context.replay.frontier.next_statement_index,
-                None,
-            );
-            let (_, source_statement, _) =
-                split_next_source_operation(remaining, assertion_prefix_count)
-                    .map_err(ClickError::new)?;
+            let (source_statement, _) =
+                split_next_source_operation(remaining).map_err(ClickError::new)?;
             let CStatement::If { condition, .. } = source_statement else {
                 return Err(ClickError::new(format!(
                     "`{claim_label}` source branch does not match the lowered statement"
@@ -20802,16 +20559,6 @@ fn execute_frontier_local_loop(
             "`{claim_label}` tactic {tactic_index}: loop({loop_index}) already has a frontier-local proof on this execution path"
         )));
     }
-    if loop_template
-        .items()
-        .iter()
-        .any(|item| item.kind() == StructuralItemKind::Assert)
-    {
-        return Err(ClickError::new(format!(
-            "`{claim_label}` tactic {tactic_index}: assertions inside a frontier-local `loop` are not supported; use `have` at the appropriate execution frontier"
-        )));
-    }
-
     let function_with_prior_loops =
         function_block.with_bound_frontier_loop_clauses(&replay.frontier_loop_clauses);
     let bound_function_block =
@@ -20969,18 +20716,12 @@ fn execute_frontier_local_loop(
     );
 
     if let ProofExecutionPoint::StatementEntry { remaining } = &replay.frontier.point {
-        let old_assertion_count =
-            source_assertion_prefix_count(function_block, statement_index, Some(loop_index));
-        let (assertion_prefix, _, tail) =
-            split_next_source_operation(remaining, old_assertion_count).map_err(|message| {
+        let (_, tail) = split_next_source_operation(remaining).map_err(|message| {
                 ClickError::new(format!(
                     "`{claim_label}` tactic {tactic_index}: `loop` could not isolate the current source loop: {message}"
                 ))
             })?;
         let mut statements = Vec::new();
-        if let Some(prefix) = assertion_prefix {
-            flatten_top_level_sequence(&prefix, &mut statements).map_err(ClickError::new)?;
-        }
         statements.push(current_loop);
         if let Some(tail) = tail {
             flatten_top_level_sequence(&tail, &mut statements).map_err(ClickError::new)?;
@@ -24383,13 +24124,11 @@ fn execute_branch_step_from_execution_point(
     function: &CFunction,
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
-    function_environment: &CExecutionEnvironment,
     claim_label: &str,
     tactic_index: usize,
     requested_branch: Option<bool>,
     certified_prerequisites: &[PropositionDerivation],
     prerequisite_policy: StatementPrerequisitePolicy,
-    fact_transport_policy: StatementFactTransportPolicy,
     branch_step_policy: BranchStepPolicy,
 ) -> Result<bool, ClickError> {
     let tactic_name = "step";
@@ -24399,15 +24138,12 @@ fn execute_branch_step_from_execution_point(
             "`{claim_label}` tactic {tactic_index}: `{tactic_name}` could not resolve source statement({statement_index})"
         ))
     })?;
-    let assertion_prefix_count =
-        source_assertion_prefix_count(function_block, statement_index, None);
-    let (execution_start_state, mut current_state, assertion_prefix, statement, remaining) =
+    let (execution_start_state, mut current_state, statement, remaining) =
         next_top_level_statement_from_execution_point(
             replay,
             state,
             function,
             arguments,
-            assertion_prefix_count,
             claim_label,
             tactic_index,
             tactic_name,
@@ -24439,35 +24175,6 @@ fn execute_branch_step_from_execution_point(
         ProgramPointKind::Entry,
         current_state.clone(),
     );
-    if let Some(assertion_prefix) = assertion_prefix {
-        let transition_label = format!("`{claim_label}` tactic {tactic_index}: `{tactic_name}`");
-        let (transitions, _) = certified_statement_transitions(
-            &current_state,
-            available_pure_facts,
-            &assertion_prefix,
-            function_environment,
-            CExecutionSemantics::APPLY_VERIFIED_RULES,
-            &transition_label,
-            &mut replay.next_opaque_call,
-            &mut replay.next_verification_variable,
-            prerequisite_policy,
-            fact_transport_policy,
-            certified_prerequisites,
-        )?;
-        let [transition] = transitions.as_slice() else {
-            return Err(ClickError::new(format!(
-                "`{claim_label}` tactic {tactic_index}: `{tactic_name}` assertion prefix requires exactly one successor, got {}",
-                transitions.len()
-            )));
-        };
-        let CStatementOutcome::Normal(next_state) = &transition.outcome else {
-            return Err(ClickError::new(format!(
-                "`{claim_label}` tactic {tactic_index}: `{tactic_name}` assertion prefix did not complete normally"
-            )));
-        };
-        current_state = next_state.clone();
-        *available_pure_facts = transition.pure_facts.clone();
-    }
     let current_resources = current_state.resources().facts().to_vec();
     let transition_label = format!("`{claim_label}` tactic {tactic_index}: `{tactic_name}`");
     let condition_transitions = certified_condition_transitions(
@@ -24644,19 +24351,16 @@ fn execute_concrete_loop_head_step(
     function_block: &FunctionBlock,
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
-    function_environment: &CExecutionEnvironment,
     claim_label: &str,
     tactic_index: usize,
     tactic_name: &str,
     certified_prerequisites: &[PropositionDerivation],
     prerequisite_policy: StatementPrerequisitePolicy,
-    fact_transport_policy: StatementFactTransportPolicy,
     statement_index: usize,
     loop_index: usize,
     continuation_node: usize,
     execution_start_state: CState,
-    mut current_state: CState,
-    assertion_prefix: Option<CStatement>,
+    current_state: CState,
     loop_statement: CStatement,
     remaining: Option<CStatement>,
 ) -> Result<(), ClickError> {
@@ -24682,37 +24386,6 @@ fn execute_concrete_loop_head_step(
         ProgramPointKind::Entry,
         current_state.clone(),
     );
-
-    if let Some(assertion_prefix) = assertion_prefix {
-        let transition_label = format!("`{claim_label}` tactic {tactic_index}: `{tactic_name}`");
-        let (transitions, _) = certified_statement_transitions(
-            &current_state,
-            available_pure_facts,
-            &assertion_prefix,
-            function_environment,
-            CExecutionSemantics::APPLY_VERIFIED_RULES,
-            &transition_label,
-            &mut replay.next_opaque_call,
-            &mut replay.next_verification_variable,
-            prerequisite_policy,
-            fact_transport_policy,
-            certified_prerequisites,
-        )?;
-        let [transition] = transitions.as_slice() else {
-            return Err(ClickError::new(format!(
-                "`{claim_label}` tactic {tactic_index}: `{tactic_name}` loop assertion prefix requires exactly one successor, got {}",
-                transitions.len()
-            )));
-        };
-        let CStatementOutcome::Normal(next_state) = &transition.outcome else {
-            return Err(ClickError::new(format!(
-                "`{claim_label}` tactic {tactic_index}: `{tactic_name}` loop assertion prefix did not complete normally"
-            )));
-        };
-        append_execution_effect_facts(&mut replay.effect_facts, &transition.execution_facts);
-        current_state = next_state.clone();
-        *available_pure_facts = transition.pure_facts.clone();
-    }
 
     let current_resources = current_state.resources().facts().to_vec();
     let transition_label = format!("`{claim_label}` tactic {tactic_index}: `{tactic_name}`");
@@ -24824,7 +24497,6 @@ fn next_top_level_statement_from_execution_point(
     state: &CState,
     function: &CFunction,
     arguments: &[CExpression],
-    assertion_prefix_count: usize,
     claim_label: &str,
     tactic_index: usize,
     tactic_name: &str,
@@ -24838,22 +24510,13 @@ fn next_top_level_statement_from_execution_point(
                         "`{claim_label}` tactic {tactic_index}: `{tactic_name}` could not bind function arguments"
                     ))
                 })?;
-            let (assertion_prefix, statement, remaining) = split_next_source_operation(
-                function.body(),
-                assertion_prefix_count,
-            )
-            .map_err(|message| {
-                ClickError::new(format!(
-                    "`{claim_label}` tactic {tactic_index}: `{tactic_name}` failed: {message}"
-                ))
-            })?;
-            Ok((
-                execution_start_state,
-                current_state,
-                assertion_prefix,
-                statement,
-                remaining,
-            ))
+            let (statement, remaining) =
+                split_next_source_operation(function.body()).map_err(|message| {
+                    ClickError::new(format!(
+                        "`{claim_label}` tactic {tactic_index}: `{tactic_name}` failed: {message}"
+                    ))
+                })?;
+            Ok((execution_start_state, current_state, statement, remaining))
         }
         ProofExecutionPoint::StatementEntry { remaining } => {
             let execution_start_state = replay
@@ -24865,22 +24528,13 @@ fn next_top_level_statement_from_execution_point(
                     "`{claim_label}` tactic {tactic_index}: `{tactic_name}` has no execution start state"
                 ))
             })?;
-            let (assertion_prefix, statement, remaining) = split_next_source_operation(
-                remaining,
-                assertion_prefix_count,
-            )
-            .map_err(|message| {
-                ClickError::new(format!(
-                    "`{claim_label}` tactic {tactic_index}: `{tactic_name}` failed: {message}"
-                ))
-            })?;
-            Ok((
-                execution_start_state,
-                state.clone(),
-                assertion_prefix,
-                statement,
-                remaining,
-            ))
+            let (statement, remaining) =
+                split_next_source_operation(remaining).map_err(|message| {
+                    ClickError::new(format!(
+                        "`{claim_label}` tactic {tactic_index}: `{tactic_name}` failed: {message}"
+                    ))
+                })?;
+            Ok((execution_start_state, state.clone(), statement, remaining))
         }
         ProofExecutionPoint::FunctionExit { .. } => Err(ClickError::new(format!(
             "`{claim_label}` tactic {tactic_index}: `{tactic_name}` cannot run after execution already reached function exit"
@@ -25236,13 +24890,11 @@ fn execute_step_from_execution_point(
             function,
             parameters,
             arguments,
-            function_environment,
             claim_label,
             tactic_index,
             None,
             certified_prerequisites,
             prerequisite_policy,
-            fact_transport_policy,
             BranchStepPolicy::RequireProven,
         )?;
         debug_assert!(entered);
@@ -25252,15 +24904,12 @@ fn execute_step_from_execution_point(
         SourceStatementKind::Loop { loop_index } => Some(loop_index),
         SourceStatementKind::Plain | SourceStatementKind::If { .. } => None,
     };
-    let assertion_prefix_count =
-        source_assertion_prefix_count(function_block, statement_index, loop_index);
-    let (execution_start_state, current_state, assertion_prefix, source_statement, remaining) =
+    let (execution_start_state, current_state, source_statement, remaining) =
         next_top_level_statement_from_execution_point(
             replay,
             state,
             function,
             arguments,
-            assertion_prefix_count,
             claim_label,
             tactic_index,
             tactic_name,
@@ -25280,26 +24929,21 @@ fn execute_step_from_execution_point(
             function_block,
             parameters,
             arguments,
-            function_environment,
             claim_label,
             tactic_index,
             tactic_name,
             certified_prerequisites,
             prerequisite_policy,
-            fact_transport_policy,
             statement_index,
             loop_index,
             source_region.continuation_node,
             execution_start_state,
             current_state,
-            assertion_prefix,
             source_statement,
             remaining,
         );
     }
-    let step_statement = assertion_prefix
-        .map(|prefix| c_seq(prefix, source_statement.clone()))
-        .unwrap_or(source_statement);
+    let step_statement = source_statement;
 
     record_statement_program_point_state(
         replay,
@@ -25917,13 +25561,11 @@ fn bounded_execute_from_execution_point(
                     function,
                     parameters,
                     arguments,
-                    function_environment,
                     claim_label,
                     tactic_index,
                     Some(take_then),
                     &[],
                     prerequisite_policy,
-                    StatementFactTransportPolicy::Automatic,
                     BranchStepPolicy::Explore,
                 )?;
                 if entered {
@@ -26087,27 +25729,12 @@ fn execute_rest_from_execution_point(
     tactic_index: usize,
 ) -> Result<(), ClickError> {
     loop {
-        let assertion_prefix_count = replay
-            .source_layout
-            .statement(replay.frontier.next_statement_index)
-            .map(|region| {
-                let loop_index = match region.kind {
-                    SourceStatementKind::Loop { loop_index } => Some(loop_index),
-                    SourceStatementKind::Plain | SourceStatementKind::If { .. } => None,
-                };
-                source_assertion_prefix_count(
-                    function_block,
-                    replay.frontier.next_statement_index,
-                    loop_index,
-                )
-            })
-            .unwrap_or(0);
         let can_execute_one_step = match &replay.frontier.point {
             ProofExecutionPoint::FunctionEntry => {
-                split_next_execution_step(function.body(), assertion_prefix_count).is_ok()
+                split_next_execution_step(function.body()).is_ok()
             }
             ProofExecutionPoint::StatementEntry { remaining } => {
-                split_next_execution_step(remaining, assertion_prefix_count).is_ok()
+                split_next_execution_step(remaining).is_ok()
             }
             ProofExecutionPoint::FunctionExit { .. } => return Ok(()),
         };
@@ -26226,60 +25853,28 @@ fn execute_until_statement(
     Ok(())
 }
 
-fn source_assertion_prefix_count(
-    function_block: &FunctionBlock,
-    source_node: usize,
-    loop_index: Option<usize>,
-) -> usize {
-    let statement_assertions = function_block
-        .structural_clauses()
-        .iter()
-        .filter(|clause| clause.region() == &CodeRegion::Statement(source_node))
-        .flat_map(StructuralClause::items)
-        .filter(|item| item.kind() == StructuralItemKind::Assert)
-        .count();
-    let loop_assertions = loop_index.map_or(0, |loop_index| {
-        function_block
-            .structural_clauses()
-            .iter()
-            .filter(|clause| clause.region() == &CodeRegion::Loop(loop_index))
-            .flat_map(StructuralClause::items)
-            .filter(|item| item.kind() == StructuralItemKind::Assert)
-            .count()
-    });
-    statement_assertions + loop_assertions
-}
-
 fn split_next_execution_step(
     statement: &CStatement,
-    assertion_prefix_count: usize,
 ) -> Result<(CStatement, Option<CStatement>), String> {
-    let (assertion_prefix, source_statement, remaining) =
-        split_next_source_operation(statement, assertion_prefix_count)?;
+    let (source_statement, remaining) = split_next_source_operation(statement)?;
     if matches!(source_statement, CStatement::If { .. }) {
         return Err("next statement is an `if`; use `step()` or `step()`".to_string());
     }
-    let step_statement = assertion_prefix
-        .map(|prefix| c_seq(prefix, source_statement.clone()))
-        .unwrap_or(source_statement);
-    Ok((step_statement, remaining))
+    Ok((source_statement, remaining))
 }
 
 fn split_next_source_operation(
     statement: &CStatement,
-    assertion_prefix_count: usize,
-) -> Result<(Option<CStatement>, CStatement, Option<CStatement>), String> {
+) -> Result<(CStatement, Option<CStatement>), String> {
     let mut statements = Vec::new();
     flatten_top_level_sequence(statement, &mut statements).map_err(|message| {
         format!("could not flatten the lowered statement sequence: {message}")
     })?;
-    let source_statement_offset = assertion_prefix_count;
-    let Some(source_statement) = statements.get(source_statement_offset) else {
+    let Some(source_statement) = statements.first() else {
         return Err("lowered statement is missing its source operation".to_string());
     };
-    let assertion_prefix = sequence_from_statements(&statements[..source_statement_offset]);
-    let remaining = sequence_from_statements(&statements[source_statement_offset + 1..]);
-    Ok((assertion_prefix, source_statement.clone(), remaining))
+    let remaining = sequence_from_statements(&statements[1..]);
+    Ok((source_statement.clone(), remaining))
 }
 
 fn flatten_top_level_sequence(

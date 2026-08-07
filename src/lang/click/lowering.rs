@@ -495,12 +495,6 @@ struct AnnotationLowerer<'a> {
     next_quantifier_variable: u64,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct LabeledCheck {
-    condition: CExpression,
-    label: String,
-}
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ResolvedProgramPoint {
     FunctionEntry,
@@ -517,39 +511,34 @@ impl AnnotationLowerer<'_> {
                 c_seq(self.lower_statement(first)?, self.lower_statement(second)?)
             }
             syntax::C0Statement::While { condition, body } => {
-                let statement_index = self.next_statement_index();
+                self.next_statement_index();
                 let loop_index = self.next_loop_index();
                 let lowered_body = self.lower_statement(body)?;
-                let loop_asserts = self.loop_assert_checks(loop_index);
                 let invariant_checks = self.loop_invariant_checks(loop_index)?;
                 let effect_checks = self.loop_effect_checks(loop_index, body)?;
-                let lowered_loop = c_while_with_invariant_and_effect_checks(
+                c_while_with_invariant_and_effect_checks(
                     condition.to_kernel_expression(),
                     Vec::new(),
                     invariant_checks,
                     effect_checks,
                     lowered_body,
-                );
-                let lowered_loop = prepend_labeled_asserts(lowered_loop, &loop_asserts);
-                self.prepend_statement_asserts(statement_index, lowered_loop)
+                )
             }
             syntax::C0Statement::If {
                 condition,
                 then_branch,
                 else_branch,
             } => {
-                let statement_index = self.next_statement_index();
-                let lowered = c_if(
+                self.next_statement_index();
+                c_if(
                     condition.to_kernel_expression(),
                     self.lower_statement(then_branch)?,
                     self.lower_statement(else_branch)?,
-                );
-                self.prepend_statement_asserts(statement_index, lowered)
+                )
             }
             statement => {
-                let statement_index = self.next_statement_index();
-                let lowered = statement.to_kernel_statement();
-                self.prepend_statement_asserts(statement_index, lowered)
+                self.next_statement_index();
+                statement.to_kernel_statement()
             }
         })
     }
@@ -564,33 +553,6 @@ impl AnnotationLowerer<'_> {
         let index = self.loop_index;
         self.loop_index += 1;
         index
-    }
-
-    fn prepend_statement_asserts(
-        &self,
-        statement_index: usize,
-        statement: CStatement,
-    ) -> CStatement {
-        let checks = self
-            .structural_clauses
-            .iter()
-            .filter(|clause| clause.region() == &CodeRegion::Statement(statement_index))
-            .flat_map(StructuralClause::items)
-            .filter(|item| item.kind() == StructuralItemKind::Assert)
-            .enumerate()
-            .map(|(item_index, item)| LabeledCheck {
-                condition: click_proposition_to_c_expression(
-                    item.proposition()
-                        .expect("assert structural item should contain a proposition"),
-                )
-                .expect("structural propositions should be validated before lowering"),
-                label: format!(
-                    "statement {statement_index} {} {item_index}",
-                    structural_item_kind_label(item.kind())
-                ),
-            })
-            .collect::<Vec<_>>();
-        prepend_labeled_asserts(statement, &checks)
     }
 
     fn loop_invariant_checks(
@@ -1642,24 +1604,6 @@ impl AnnotationLowerer<'_> {
         }
     }
 
-    fn loop_assert_checks(&self, loop_index: usize) -> Vec<LabeledCheck> {
-        self.structural_clauses
-            .iter()
-            .filter(|clause| clause.region() == &CodeRegion::Loop(loop_index))
-            .flat_map(StructuralClause::items)
-            .filter(|item| item.kind() == StructuralItemKind::Assert)
-            .enumerate()
-            .map(|(item_index, item)| LabeledCheck {
-                condition: click_proposition_to_c_expression(
-                    item.proposition()
-                        .expect("assert structural item should contain a proposition"),
-                )
-                .expect("structural propositions should be validated before lowering"),
-                label: format!("loop {loop_index} assert {item_index}"),
-            })
-            .collect()
-    }
-
     fn loop_effect_checks(
         &self,
         loop_index: usize,
@@ -2271,51 +2215,6 @@ pub(super) fn apply_contract_lets_to_effect_clause(
         effect: apply_contract_lets_to_effect(effect, bindings)?,
         proof,
     })
-}
-
-pub(super) fn apply_contract_lets_to_structural_clause(
-    clause: StructuralClause,
-    bindings: &[ContractLetBinding],
-) -> Result<StructuralClause, String> {
-    let StructuralClause {
-        region,
-        label,
-        decreases,
-        items,
-        initialize_proof,
-        preserve_proof,
-    } = clause;
-    let decreases = decreases
-        .map(|measure| apply_contract_lets_to_expression(measure, bindings))
-        .transpose()?;
-    let items = items
-        .into_iter()
-        .map(|item| apply_contract_lets_to_structural_item(item, bindings))
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(StructuralClause {
-        region,
-        label,
-        decreases,
-        items,
-        initialize_proof,
-        preserve_proof,
-    })
-}
-
-pub(super) fn apply_contract_lets_to_structural_item(
-    item: StructuralItem,
-    bindings: &[ContractLetBinding],
-) -> Result<StructuralItem, String> {
-    let StructuralItem { kind, claim, proof } = item;
-    let claim = match claim {
-        StructuralItemClaim::Proposition(proposition) => StructuralItemClaim::Proposition(
-            apply_contract_lets_to_proposition(proposition, bindings)?,
-        ),
-        StructuralItemClaim::Effect(effect) => {
-            StructuralItemClaim::Effect(apply_contract_lets_to_effect(effect, bindings)?)
-        }
-    };
-    Ok(StructuralItem { kind, claim, proof })
 }
 
 pub(super) fn apply_contract_lets_to_effect(
@@ -3131,84 +3030,6 @@ pub(super) fn contract_expression_as_c_fragment(
         | ContractExpression::RangeFold { .. }
         | ContractExpression::Let { .. } => None,
         ContractExpression::Call { .. } => None,
-    }
-}
-
-pub(super) fn structural_item_kind_label(kind: StructuralItemKind) -> &'static str {
-    match kind {
-        StructuralItemKind::Assert => "assert",
-        StructuralItemKind::Invariant => "invariant",
-        StructuralItemKind::Effect => "effect",
-        StructuralItemKind::StepEffect => "step effect",
-    }
-}
-
-fn prepend_labeled_asserts(statement: CStatement, checks: &[LabeledCheck]) -> CStatement {
-    checks.iter().rev().fold(statement, |statement, check| {
-        c_seq(
-            c_labeled_assert(check.condition.clone(), check.label.clone()),
-            statement,
-        )
-    })
-}
-
-pub(super) fn click_proposition_to_c_expression(
-    proposition: &ClickProposition,
-) -> Option<CExpression> {
-    match proposition {
-        ClickProposition::Comparison {
-            left,
-            operator,
-            right,
-        } => {
-            let left = contract_expression_to_c_fragment(left)?;
-            let right = contract_expression_to_c_fragment(right)?;
-            Some(match operator {
-                ComparisonOperator::Equal => CExpression::Equal(Box::new(left), Box::new(right)),
-                ComparisonOperator::NotEqual => {
-                    CExpression::NotEqual(Box::new(left), Box::new(right))
-                }
-                ComparisonOperator::LessThan => {
-                    CExpression::LessThan(Box::new(left), Box::new(right))
-                }
-                ComparisonOperator::LessEqual => {
-                    CExpression::LessEqual(Box::new(left), Box::new(right))
-                }
-                ComparisonOperator::GreaterThan => {
-                    CExpression::GreaterThan(Box::new(left), Box::new(right))
-                }
-                ComparisonOperator::GreaterEqual => {
-                    CExpression::GreaterEqual(Box::new(left), Box::new(right))
-                }
-            })
-        }
-        ClickProposition::And(left, right) => Some(CExpression::And(
-            Box::new(click_proposition_to_c_expression(left)?),
-            Box::new(click_proposition_to_c_expression(right)?),
-        )),
-        ClickProposition::Or(left, right) => Some(CExpression::Or(
-            Box::new(click_proposition_to_c_expression(left)?),
-            Box::new(click_proposition_to_c_expression(right)?),
-        )),
-        ClickProposition::Not(body) => Some(CExpression::Not(Box::new(
-            click_proposition_to_c_expression(body)?,
-        ))),
-        ClickProposition::Implies(left, right) => Some(CExpression::Or(
-            Box::new(CExpression::Not(Box::new(
-                click_proposition_to_c_expression(left)?,
-            ))),
-            Box::new(click_proposition_to_c_expression(right)?),
-        )),
-        ClickProposition::ForAll { .. }
-        | ClickProposition::Exists { .. }
-        | ClickProposition::RangeAll { .. }
-        | ClickProposition::RangeAny { .. }
-        | ClickProposition::Separate { .. }
-        | ClickProposition::Contains { .. }
-        | ClickProposition::Loadable { .. }
-        | ClickProposition::Defined { .. }
-        | ClickProposition::At { .. }
-        | ClickProposition::PredicateCall { .. } => None,
     }
 }
 

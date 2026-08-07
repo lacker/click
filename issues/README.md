@@ -48,19 +48,6 @@ The issue should contain a small intended regression, the violated invariant,
 and acceptance criteria. Do not leave the only reproduction in an uncommitted
 large example or quarantine a regression without its issue.
 
-## Tooling blockers
-
-The owned-vector source-fidelity work is paused on one tooling boundary:
-
-1. [Let statement assertions prove how they reach their program point](statement-assertion-explicit-reach-proof.md).
-
-Smart structural proofs retain ordinary statement snapshots through
-certificate reconstruction and fresh replay. The blocker is that a
-statement assertion's separate implicit traversal cannot reuse explicit call
-prerequisites and resource repackaging from the ordinary proof.  Do not add a
-second reach script to that traversal: statement obligations and loop proofs
-should move to the ordinary execution frontier.
-
 Expansion is deliberately not a repair operation for a broken proof. The
 selected proof unit and the contracts it depends on must verify before `click
 expand` will emit a rewrite. In particular, a failure later in the same proof

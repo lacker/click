@@ -337,8 +337,10 @@ with `loop as label { ... }`.  The label names that encountered loop's entry
 and exit snapshots; it never searches for or jumps to a source region.  Use
 `at(label.entry, expression_or_proposition)` and
 `at(label.exit, expression_or_proposition)` after the tactic has established
-those points.  The older `for statement(N) as label` structural syntax still
-names statement regions during its separate migration.
+those points. Intermediate propositions are proved with `have` in the ordinary
+forward proof, so they use the resources, premises, and execution frontier
+established by the preceding tactics rather than starting a separate traversal
+from function entry.
 
 `apply(...)` instantiates a verified theorem, requires each proposition
 `requires` clause as an exact current pure fact or a context-free tautology,

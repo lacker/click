@@ -1,6 +1,7 @@
-# count_to_three rejects a false statement assertion
+# count_to_three rejects a false frontier-local fact
 
-This checks `for statement(N)` for a one-shot proof obligation.
+This checks that `have` proves its proposition at the current execution
+frontier rather than merely adding it to the context.
 
 ```c filename=count_to_three_bad_assert.c
 int32 count_to_three_bad_assert() {
@@ -14,14 +15,17 @@ int32 count_to_three_bad_assert() {
 verifying "count_to_three_bad_assert.c";
 
 int32 count_to_three_bad_assert() {
-    for statement(2) {
-        assert i == 1 by auto;
+    ensures result == 0;
+} by {
+    execute_until(statement(2));
+    have i == 1 by {
+        simp();
     }
-
-    ensures result == 0 by auto;
+    execute();
+    simp();
 }
 ```
 
 ```expect
-fail: statement(2).assert_0
+fail: tactic 1
 ```
