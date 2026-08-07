@@ -758,17 +758,6 @@ impl Parser {
                         .map_err(|message| self.error(message))?,
                     );
                 }
-                Some("for") => {
-                    let message = if matches!(
-                        self.peek_next(),
-                        Some(Token::Ident(kind)) if kind == "loop"
-                    ) {
-                        "detached `for loop(N)` proofs were removed; prove the loop at the execution frontier with `loop { ... }` inside the function proof"
-                    } else {
-                        "detached `for statement(N)` proofs were removed; advance the ordinary function proof to that frontier and use `have proposition by { ... }`"
-                    };
-                    return Err(self.error(message));
-                }
                 Some("immutable" | "mutable") => {
                     let effect = self.parse_effect_clause()?;
                     effects.push(

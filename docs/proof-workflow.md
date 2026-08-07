@@ -393,11 +393,10 @@ by {
 }
 ```
 
-Unlike the removed detached `for statement(N) { assert ... }` form, `have`
-does not replay the function prefix. It sees the exact facts and resources
-established by preceding `step() using`, `unfold`, `fold`, and other ordinary
-proof tactics. It proves its proposition on every active proof path and adds
-the resulting fact to the following context.
+`have` does not replay the function prefix. It sees the exact facts and
+resources established by preceding `step() using`, `unfold`, `fold`, and other
+ordinary proof tactics. It proves its proposition on every active proof path
+and adds the resulting fact to the following context.
 
 `statement(N)` selects the Nth source statement code region in structural
 order for execution targets and snapshots:

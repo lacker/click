@@ -2093,45 +2093,6 @@ fn rejects_retired_tactic_spellings_with_migrations() {
 }
 
 #[test]
-fn rejects_detached_loop_proofs_with_frontier_migration() {
-    let source = r#"
-        int32 count() {
-            for loop(0) {
-                invariant i >= 0;
-            }
-            ensures result == 0 by auto;
-        }
-    "#;
-
-    let error = parse(source).expect_err("detached loop proof should be rejected");
-    assert!(
-        error.message().contains("execution frontier") && error.message().contains("loop { ... }"),
-        "{}",
-        error.message()
-    );
-}
-
-#[test]
-fn rejects_detached_statement_proofs_with_frontier_migration() {
-    let source = r#"
-        int32 identity(int32 x) {
-            for statement(0) {
-                assert x == x by auto;
-            }
-            ensures result == x by auto;
-        }
-    "#;
-
-    let error = parse(source).expect_err("detached statement proof should be rejected");
-    assert!(
-        error.message().contains("ordinary function proof")
-            && error.message().contains("have proposition"),
-        "{}",
-        error.message()
-    );
-}
-
-#[test]
 fn rejects_redundant_exact_premise_spellings_with_migrations() {
     let old_derive = r#"
         theorem legacy(x: int32) {
@@ -8504,7 +8465,6 @@ fn bounded_auto_loop_expands_without_a_detached_summary() {
             .expect("bounded loop execution should have a surface certificate");
 
     assert!(!expanded.contains("summarize("), "{expanded}");
-    assert!(!expanded.contains("for loop("), "{expanded}");
     verify_c0_sources(&expanded, &sources)
         .expect("the bounded loop certificate should freshly replay");
 }
