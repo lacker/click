@@ -17,10 +17,7 @@ const DEFAULT_EXAMPLE_TIME_LIMIT: Duration = Duration::from_secs(10 * 60);
 /// suite is a meaningful green gate. Run one with `CLICK_EXAMPLE=<name>`, or
 /// all of them with `CLICK_RUN_QUARANTINED=1`. Each entry names the reason;
 /// remove entries as they are fixed (see docs/advanced/testing-click.md).
-const QUARANTINED: &[(&str, &str)] = &[(
-    "input-cursor",
-    "a successful smart step in input_cursor_shared_pipeline deterministically exceeds the 2s smart-tactic budget; see issues/expand-slow-input-cursor-step.md",
-)];
+const QUARANTINED: &[(&str, &str)] = &[];
 
 #[test]
 fn example_projects() {

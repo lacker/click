@@ -136,7 +136,7 @@ fn run_bounded(arguments: &Arguments) -> Result<String, String> {
                 .map_err(|error| error.message().to_string())?;
         Ok((claim, expanded))
     })?;
-    verify_expansion(&expanded, &sources, &claim)?;
+    verify_expansion(&expanded, &sources, &claim, arguments.time_limit)?;
     Ok(expanded)
 }
 
@@ -167,7 +167,7 @@ fn run_mdtest(arguments: &Arguments) -> Result<String, String> {
                 .map_err(|error| error.message().to_string())?;
         Ok((claim, expanded))
     })?;
-    verify_expansion(&expanded, &sources, &claim)?;
+    verify_expansion(&expanded, &sources, &claim, arguments.time_limit)?;
     mdtest.replace_click_source(&markdown, &expanded)
 }
 
@@ -255,13 +255,26 @@ fn selected_claim(
         .ok_or_else(|| "source location does not select a smart tactic".to_string())
 }
 
-fn verify_expansion(expanded: &str, sources: &[(&str, &str)], claim: &str) -> Result<(), String> {
+fn verify_expansion(
+    expanded: &str,
+    sources: &[(&str, &str)],
+    claim: &str,
+    smart_limit: Duration,
+) -> Result<(), String> {
     let (result, events) = click::instrumentation::collect(|| {
-        let position = c0_tactic_source_position(expanded, sources, claim, 0)
-            .map_err(|error| error.message().to_string())?;
-        verify_c0_sources_at(expanded, sources, position.line, position.column)
-            .map(|_| ())
-            .map_err(|error| format!("expanded proof did not verify: {}", error.message()))
+        click::instrumentation::with_tactic_limits(
+            click::instrumentation::TacticLimits {
+                smart: smart_limit,
+                ..click::instrumentation::TacticLimits::default()
+            },
+            || {
+                let position = c0_tactic_source_position(expanded, sources, claim, 0)
+                    .map_err(|error| error.message().to_string())?;
+                verify_c0_sources_at(expanded, sources, position.line, position.column)
+                    .map(|_| ())
+                    .map_err(|error| format!("expanded proof did not verify: {}", error.message()))
+            },
+        )
     });
     if click::instrumentation::deadline_exceeded() {
         return Err(expansion_deadline_error(
@@ -485,5 +498,32 @@ int32 bad(int32 x) {
             expanded.ends_with("int32 bad(int32 x) {\n    ensures result == x + 1 by simp;\n}\n")
         );
         fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn generated_proof_check_uses_the_command_limit_for_remaining_smart_tactics() {
+        let c_source = "int32 identity(int32 x) { return x; }";
+        let click_source = r#"verifying "identity.c";
+int32 identity(int32 x) {
+    ensures result == x by auto;
+}
+"#;
+
+        let result = click::instrumentation::with_tactic_limits(
+            click::instrumentation::TacticLimits {
+                smart: Duration::ZERO,
+                ..click::instrumentation::TacticLimits::default()
+            },
+            || {
+                verify_expansion(
+                    click_source,
+                    &[("identity.c", c_source)],
+                    "identity.ensures_0",
+                    Duration::from_secs(1),
+                )
+            },
+        );
+
+        result.expect("generated-proof verification should install its own smart limit");
     }
 }
