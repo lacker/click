@@ -1635,7 +1635,6 @@ impl Parser {
             "bounded_execute" => Some(
                 "`bounded_execute()` was removed; use `execute()` or `by auto;` and configure the tool budget",
             ),
-            "advance" => Some("`advance(...)` was renamed to `reach(...)`"),
             "calculate" => Some("`calculate(...)` was merged into `derive using { ... }`"),
             "double_negation" => {
                 Some("`double_negation()` was removed; use `intro(); contradiction(P);`")
@@ -1673,6 +1672,37 @@ impl Parser {
         }
         if name == "branch" {
             self.expect(Token::LBrace)?;
+            let ensuring = if self.peek_ident() == Some("ensuring") {
+                self.position += 1;
+                self.expect(Token::LBrace)?;
+                let mut assertions = Vec::new();
+                while self.peek() != Some(&Token::RBrace) {
+                    let kind = self.expect_ident("branch assertion kind")?;
+                    let assertion = match kind.as_str() {
+                        "fact" => ProofAssertion::Fact(self.parse_proposition()?),
+                        "owns" => ProofAssertion::Resource(
+                            self.parse_resource_target(ResourceAccessMode::Own)?,
+                        ),
+                        "views" => ProofAssertion::Resource(
+                            self.parse_resource_target(ResourceAccessMode::View)?,
+                        ),
+                        _ => {
+                            return Err(self.error(format!(
+                                "expected branch assertion `fact`, `owns`, or `views`, got `{kind}`"
+                            )));
+                        }
+                    };
+                    self.expect(Token::Semicolon)?;
+                    assertions.push(assertion);
+                }
+                if assertions.is_empty() {
+                    return Err(self.error("`ensuring` block must contain at least one assertion"));
+                }
+                self.expect(Token::RBrace)?;
+                Some(assertions)
+            } else {
+                None
+            };
             self.expect_ident_spelling("then")?;
             let then_tactics = self.parse_possibly_empty_tactic_block()?;
             self.expect_ident_spelling("else")?;
@@ -1682,6 +1712,7 @@ impl Parser {
                 self.position += 1;
             }
             return Ok(ProofTactic::Branch(ProofBranch {
+                ensuring,
                 then_tactics,
                 else_tactics,
             }));
@@ -1743,47 +1774,6 @@ impl Parser {
                 items,
                 initialize_proof,
                 preserve_proof,
-            }));
-        }
-        if name == "reach" {
-            self.expect(Token::LParen)?;
-            let target = self.parse_program_point_ref()?;
-            self.expect(Token::RParen)?;
-            self.expect_ident_spelling("ensuring")?;
-            self.expect(Token::LBrace)?;
-            let mut assertions = Vec::new();
-            while self.peek() != Some(&Token::RBrace) {
-                let kind = self.expect_ident("reach assertion kind")?;
-                let assertion = match kind.as_str() {
-                    "fact" => ProofAssertion::Fact(self.parse_proposition()?),
-                    "owns" => ProofAssertion::Resource(
-                        self.parse_resource_target(ResourceAccessMode::Own)?,
-                    ),
-                    "views" => ProofAssertion::Resource(
-                        self.parse_resource_target(ResourceAccessMode::View)?,
-                    ),
-                    _ => {
-                        return Err(self.error(format!(
-                            "expected reach assertion `fact`, `owns`, or `views`, got `{kind}`"
-                        )));
-                    }
-                };
-                self.expect(Token::Semicolon)?;
-                assertions.push(assertion);
-            }
-            if assertions.is_empty() {
-                return Err(self.error("`ensuring` block must contain at least one assertion"));
-            }
-            self.expect(Token::RBrace)?;
-            self.expect_ident_spelling("by")?;
-            let tactics = self.parse_tactic_block("`reach` proof")?;
-            if self.peek() == Some(&Token::Semicolon) {
-                self.position += 1;
-            }
-            return Ok(ProofTactic::Reach(ProofReach {
-                target,
-                assertions,
-                tactics,
             }));
         }
         if name == "derive" {
@@ -1993,19 +1983,6 @@ impl Parser {
         };
         self.expect(Token::Semicolon)?;
         Ok(tactic)
-    }
-
-    fn parse_tactic_block(&mut self, context: &str) -> Result<Vec<ProofTactic>, ClickError> {
-        self.expect(Token::LBrace)?;
-        if self.peek() == Some(&Token::RBrace) {
-            return Err(self.error(format!("{context} must contain at least one tactic")));
-        }
-        let mut tactics = Vec::new();
-        while self.peek() != Some(&Token::RBrace) {
-            tactics.push(self.parse_proof_tactic()?);
-        }
-        self.expect(Token::RBrace)?;
-        Ok(tactics)
     }
 
     fn parse_possibly_empty_tactic_block(&mut self) -> Result<Vec<ProofTactic>, ClickError> {

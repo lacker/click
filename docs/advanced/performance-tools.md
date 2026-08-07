@@ -89,7 +89,7 @@ The verifier, rather than the profiler, classifies tactics:
 - **CONTROL** tactics contain nested scripts and bookkeeping.
 
 This is the class of the selectable source occurrence, not just its Rust AST
-shape. Proof-level `if`, frontier-local `branch`, and `reach` are CONTROL. A `have` is structurally a
+shape. Proof-level `if`, frontier-local `branch`, and `loop` are CONTROL. A `have` is structurally a
 control node, but its source site is SMART when its supported body is smart,
 SIMPLE when its nonempty body is entirely simple, and otherwise CONTROL. That
 inherited source-site class is shared by timing, smart-site inventory, and

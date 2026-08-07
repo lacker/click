@@ -1,9 +1,9 @@
-# reach joins different resource transformations
+# branch ensuring joins different resource transformations
 
 Each branch consumes a different path token through a helper call. Both calls
-return the same permit, which is folded into `ready_bundle`. After `reach`
-forgets the original precondition and branch resources, `observe` recovers the
-nonnegative-key fact from the exported composite resource.
+return the same permit, which is folded into `ready_bundle`. The branch exports
+the common bundle at its ordinary continuation, and `observe` recovers the
+nonnegative-key fact from that composite resource.
 
 ```c filename=select_left.c
 int32 select_left(int32 key) {
@@ -67,18 +67,16 @@ int32 select_ready(int32 key, int32 choose_left) {
 
     ensures result >= 0 by {
         step();
-        reach(statement(1).exit)
-        ensuring {
-            fact selected == key;
-            owns ready_bundle(key);
-        }
-        by {
-            if choose_left != 0 {
-                step();
+        branch {
+            ensuring {
+                fact selected == key;
+                owns ready_bundle(key);
+            }
+            then {
                 step();
                 fold(ready_bundle(key));
-            } else {
-                step();
+            }
+            else {
                 step();
                 fold(ready_bundle(key));
             }

@@ -356,6 +356,22 @@ fn expand_declared_resource_tactic(
                 .collect::<Result<Vec<_>, _>>()?,
         })),
         ProofTactic::Branch(proof_branch) => Ok(ProofTactic::Branch(ProofBranch {
+            ensuring: proof_branch
+                .ensuring
+                .map(|assertions| {
+                    assertions
+                        .into_iter()
+                        .map(|assertion| match assertion {
+                            ProofAssertion::Fact(fact) => Ok(ProofAssertion::Fact(
+                                expand_declared_resource_proposition(fact, resource_definitions)?,
+                            )),
+                            ProofAssertion::Resource(resource) => Ok(ProofAssertion::Resource(
+                                expand_declared_resource_clause(resource, resource_definitions)?,
+                            )),
+                        })
+                        .collect::<Result<Vec<_>, ClickError>>()
+                })
+                .transpose()?,
             then_tactics: proof_branch
                 .then_tactics
                 .into_iter()
@@ -363,26 +379,6 @@ fn expand_declared_resource_tactic(
                 .collect::<Result<Vec<_>, _>>()?,
             else_tactics: proof_branch
                 .else_tactics
-                .into_iter()
-                .map(|tactic| expand_declared_resource_tactic(tactic, resource_definitions))
-                .collect::<Result<Vec<_>, _>>()?,
-        })),
-        ProofTactic::Reach(advance) => Ok(ProofTactic::Reach(ProofReach {
-            target: advance.target,
-            assertions: advance
-                .assertions
-                .into_iter()
-                .map(|assertion| match assertion {
-                    ProofAssertion::Fact(fact) => Ok(ProofAssertion::Fact(
-                        expand_declared_resource_proposition(fact, resource_definitions)?,
-                    )),
-                    ProofAssertion::Resource(resource) => Ok(ProofAssertion::Resource(
-                        expand_declared_resource_clause(resource, resource_definitions)?,
-                    )),
-                })
-                .collect::<Result<Vec<_>, ClickError>>()?,
-            tactics: advance
-                .tactics
                 .into_iter()
                 .map(|tactic| expand_declared_resource_tactic(tactic, resource_definitions))
                 .collect::<Result<Vec<_>, _>>()?,
@@ -2404,7 +2400,7 @@ fn validate_pure_theorem_tactics(
                 validate_pure_theorem_tactics(theorem_name, &proof_if.then_tactics)?;
                 validate_pure_theorem_tactics(theorem_name, &proof_if.else_tactics)?;
             }
-            ProofTactic::Branch(_) | ProofTactic::Loop(_) | ProofTactic::Reach(_) => {
+            ProofTactic::Branch(_) | ProofTactic::Loop(_) => {
                 return Err(ClickError::new(format!(
                     "execution tactic `{}` is not available in the pure proof for theorem `{theorem_name}`",
                     tactic_name(tactic)
@@ -2469,7 +2465,6 @@ pub(super) fn tactic_name(tactic: &ProofTactic) -> &'static str {
         ProofTactic::If(_) => "if",
         ProofTactic::Branch(_) => "branch",
         ProofTactic::Loop(_) => "loop",
-        ProofTactic::Reach(_) => "reach",
         ProofTactic::ObserveResource(_) => "observe",
         ProofTactic::Witness(_) => "witness",
         ProofTactic::Choose(_) => "choose",

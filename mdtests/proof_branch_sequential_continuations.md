@@ -26,6 +26,9 @@ int32 advance_sequential_joins(int32 x) {
         step();
         step();
         branch {
+            ensuring {
+                fact y >= 0;
+            }
             then {
                 step();
             }
@@ -34,6 +37,9 @@ int32 advance_sequential_joins(int32 x) {
             }
         }
         branch {
+            ensuring {
+                fact z >= 0;
+            }
             then {
                 step();
             }

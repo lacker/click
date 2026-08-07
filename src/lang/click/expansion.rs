@@ -240,9 +240,6 @@ fn collect_smart_script_sites(
                     sites,
                 );
             }
-            ProofTactic::Reach(advance) => {
-                collect_smart_script_sites(claim_label, &advance.tactics, source_index + 1, sites)
-            }
             ProofTactic::Loop(clause) => {
                 let mut nested_source_index = source_index + 1;
                 if let Some(proof) = clause.initialize_proof() {
@@ -1681,7 +1678,6 @@ fn source_tactic_is_nested_proof_clause(tactics: &[ProofTactic], wanted: usize) 
                         )
                     })
                 }
-                ProofTactic::Reach(advance) => find(&advance.tactics, wanted, source_index + 1),
                 ProofTactic::Loop(clause) => {
                     let mut nested_source_index = source_index + 1;
                     let mut found = None;
@@ -1774,10 +1770,6 @@ fn collect_tactic_block_spans(
                     &proof_branch.else_tactics,
                     spans,
                 )?;
-            }
-            ProofTactic::Reach(advance) => {
-                let (body_open, body_close) = find_advance_body(tokens, &token_range)?;
-                collect_tactic_block_spans(tokens, body_open, body_close, &advance.tactics, spans)?;
             }
             ProofTactic::Loop(clause) => {
                 let block_open = (token_range.start..token_range.end)
@@ -2018,31 +2010,6 @@ fn find_branch_blocks(
     Ok((then_open, then_close, else_open, else_close))
 }
 
-fn find_advance_body(
-    tokens: &[SourceToken],
-    tactic: &Range<usize>,
-) -> Result<(usize, usize), ClickError> {
-    let mut depth = 0_usize;
-    for cursor in tactic.start + 1..tactic.end {
-        match tokens[cursor].text.as_str() {
-            "{" => depth += 1,
-            "}" => {
-                depth = depth
-                    .checked_sub(1)
-                    .ok_or_else(|| ClickError::new("unbalanced `reach` tactic source block"))?
-            }
-            "by" if depth == 0
-                && tokens.get(cursor + 1).map(|token| token.text.as_str()) == Some("{") =>
-            {
-                let open = cursor + 1;
-                return Ok((open, matching_delimiter(tokens, open, "{", "}")?));
-            }
-            _ => {}
-        }
-    }
-    Err(ClickError::new("could not locate `reach` proof body"))
-}
-
 #[cfg(test)]
 fn find_tactic_span(
     tokens: &[SourceToken],
@@ -2264,6 +2231,10 @@ int32 increment_selected(int32 x) {
     ensures result > 0 by {
         step();
         branch {
+            ensuring {
+                fact y >= 0;
+                fact y < 2147483647;
+            }
             then {
                 step();
             }
@@ -2317,6 +2288,10 @@ int32 positive_after_branch(int32 x) {
     ensures result > 0 by {
         step();
         branch {
+            ensuring {
+                fact y >= 0;
+                fact y < 2147483647;
+            }
             then {
                 step();
             }
@@ -2464,8 +2439,14 @@ int32 nested_nonnegative(int32 x, int32 flag) {
     ensures result >= 0 by {
         step();
         branch {
+            ensuring {
+                fact y >= 0;
+            }
             then {
                 branch {
+                    ensuring {
+                        fact y >= 0;
+                    }
                     then { step(); }
                     else { step(); }
                 }

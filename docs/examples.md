@@ -238,9 +238,9 @@ sequence:
   bundle another token resource with memory permission and a fact.
 - `mdtests/proof_reach_composite_resource_transform.md`: different branch
   token transformations fold and export one composite resource through an
-  `reach` interface, then `observe` recovers its fact after the join.
+  `ensuring` interface, then `observe` recovers its fact after the join.
 - `mdtests/proof_reach_pointer_local.md`: selects a pointer in separate
-  branches, exports its viewed range through an `reach` interface, and
+  branches, exports its viewed range through a branch interface, and
   transports the selected value to the result after the join.
 - `mdtests/proof_reach_owned_pointer_local.md`: exports ownership of a
   branch-selected pointer, mutates it after the join, and reads back the write.

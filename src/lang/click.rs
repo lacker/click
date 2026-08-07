@@ -840,7 +840,6 @@ pub enum ProofTactic {
     If(ProofIf),
     Branch(ProofBranch),
     Loop(StructuralClause),
-    Reach(ProofReach),
     ObserveResource(ResourceClause),
     Witness(ProofWitness),
     Choose(ProofChoice),
@@ -934,7 +933,6 @@ pub enum ControlFlowTactic {
     If,
     Branch,
     Loop,
-    Reach,
     CertifiedAlternatives,
 }
 
@@ -971,7 +969,6 @@ pub enum CertificatePathSegment {
     LoopInitialize,
     LoopPreserve,
     LoopItem(usize),
-    ReachBody,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1130,15 +1127,6 @@ fn validate_certificate_tactics(
                 }
                 result
             }
-            TacticClass::ControlFlow(ControlFlowTactic::Reach) => {
-                let ProofTactic::Reach(proof_advance) = tactic else {
-                    unreachable!("tactic class and variant must agree")
-                };
-                path.push(CertificatePathSegment::ReachBody);
-                let result = validate_certificate_tactics(&proof_advance.tactics, path);
-                path.pop();
-                result
-            }
         };
         path.pop();
         result?;
@@ -1235,15 +1223,6 @@ fn validate_replay_plan_tactics(
                     path.pop();
                 }
                 Ok(())
-            }
-            TacticClass::ControlFlow(ControlFlowTactic::Reach) => {
-                let ProofTactic::Reach(proof_advance) = tactic else {
-                    unreachable!("tactic class and variant must agree")
-                };
-                path.push(CertificatePathSegment::ReachBody);
-                let result = validate_replay_plan_tactics(&proof_advance.tactics, path);
-                path.pop();
-                result
             }
             TacticClass::ControlFlow(ControlFlowTactic::CertifiedAlternatives) => {
                 let ProofTactic::CertifiedAlternatives(alternatives) = tactic else {
@@ -1375,7 +1354,6 @@ impl ProofTactic {
             Self::If(_) => TacticClass::ControlFlow(ControlFlowTactic::If),
             Self::Branch(_) => TacticClass::ControlFlow(ControlFlowTactic::Branch),
             Self::Loop(_) => TacticClass::ControlFlow(ControlFlowTactic::Loop),
-            Self::Reach(_) => TacticClass::ControlFlow(ControlFlowTactic::Reach),
             Self::CertifiedAlternatives(_) => {
                 TacticClass::ControlFlow(ControlFlowTactic::CertifiedAlternatives)
             }
@@ -1408,15 +1386,9 @@ pub struct ProofIf {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ProofBranch {
+    ensuring: Option<Vec<ProofAssertion>>,
     then_tactics: Vec<ProofTactic>,
     else_tactics: Vec<ProofTactic>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ProofReach {
-    target: ProgramPointRef,
-    assertions: Vec<ProofAssertion>,
-    tactics: Vec<ProofTactic>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -3287,7 +3259,6 @@ fn proof_statement_prefix_end(
             }
             ProofTactic::If(_)
             | ProofTactic::Branch(_)
-            | ProofTactic::Reach(_)
             | ProofTactic::ExecuteUntil(CodeRegionRef::Function | CodeRegionRef::Loop(_))
             | ProofTactic::ExecuteUntil(CodeRegionRef::Label(_)) => return statement_count,
             _ => {}

@@ -18,6 +18,9 @@ verifying "returning_branch.c";
 int32 returning_branch(int32 x) {
     ensures result >= 0 by {
         branch {
+            ensuring {
+                fact x >= 0;
+            }
             then {
                 step();
                 simp();

@@ -1,8 +1,7 @@
-# reach hides branch-specific facts
+# branch ensuring hides branch-specific facts
 
-The continuation may use only the declared `ensuring` interface. Although the
-two concrete branches assign `0` and `1`, the exported lower bound alone does
-not prove the omitted upper bound.
+Although the two concrete branches assign `0` and `1`, the exported lower
+bound alone does not preserve either arm-specific upper-bound fact.
 
 ```c filename=advance_hidden_branch_fact.c
 int32 advance_hidden_branch_fact(int32 x) {
@@ -22,16 +21,14 @@ verifying "advance_hidden_branch_fact.c";
 int32 advance_hidden_branch_fact(int32 x) {
     ensures result <= 1 by {
         step();
-        reach(statement(1).exit)
-        ensuring {
-            fact y >= 0;
-        }
-        by {
-            if x >= 0 {
+        branch {
+            ensuring {
+                fact y >= 0;
+            }
+            then {
                 step();
-                step();
-            } else {
-                step();
+            }
+            else {
                 step();
             }
         }

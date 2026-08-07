@@ -2076,7 +2076,6 @@ fn rejects_retired_tactic_spellings_with_migrations() {
         ("execute_then_step", "step"),
         ("execute_else_step", "step"),
         ("bounded_execute", "execute"),
-        ("advance", "reach"),
         ("calculate", "derive"),
         ("double_negation", "intro"),
         ("vacuous", "intro"),
@@ -3011,11 +3010,49 @@ fn parses_frontier_branch_tactic() {
     assert!(matches!(
         &tactics[0],
         ProofTactic::Branch(ProofBranch {
+            ensuring: None,
             then_tactics,
             else_tactics,
         }) if then_tactics == &[ProofTactic::SmartStep]
             && else_tactics == &[ProofTactic::SmartExecute]
     ));
+}
+
+#[test]
+fn parses_frontier_branch_ensuring_interface() {
+    let source = FILL3_CLICK.replace(
+        "by auto;",
+        "by { branch { ensuring { fact i >= 0; owns p[0..3]; } then { step(); } else { execute(); } } }",
+    );
+    let file = parse(&source).expect("frontier branch ensuring interface should parse");
+    let tactics = file.function_blocks()[0].ensures()[0]
+        .proof()
+        .tactics()
+        .expect("expected tactics");
+
+    assert!(matches!(
+        &tactics[0],
+        ProofTactic::Branch(ProofBranch {
+            ensuring: Some(assertions),
+            then_tactics,
+            else_tactics,
+        }) if matches!(assertions.as_slice(), [
+            ProofAssertion::Fact(_),
+            ProofAssertion::Resource(ResourceClause::Write(_)),
+        ]) && then_tactics == &[ProofTactic::SmartStep]
+            && else_tactics == &[ProofTactic::SmartExecute]
+    ));
+}
+
+#[test]
+fn rejects_removed_reach_tactic() {
+    let source = FILL3_CLICK.replace(
+        "by auto;",
+        "by { reach(statement(1).exit) ensuring { fact i >= 0; } by { step(); } }",
+    );
+    let error = parse(&source).expect_err("removed reach tactic should not parse");
+
+    assert!(error.message().contains("unknown tactic `reach`"));
 }
 
 #[test]
@@ -3050,48 +3087,6 @@ fn empty_proof_if_branches_contribute_only_their_case_split() {
             error.message()
         )
     });
-}
-
-#[test]
-fn parses_advance_with_fact_and_resource_assertions() {
-    let source = FILL3_CLICK.replace(
-        "by auto;",
-        r#"by {
-            reach(statement(1).exit)
-            ensuring {
-                fact i >= 0;
-                owns p[0..3];
-                views p[0..3];
-            }
-            by {
-                step();
-            }
-            execute();
-            simp();
-        }"#,
-    );
-    let file = parse(&source).expect("advance tactic should parse");
-    let tactics = file.function_blocks()[0].ensures()[0]
-        .proof()
-        .tactics()
-        .expect("expected tactics");
-
-    assert!(matches!(
-        &tactics[0],
-        ProofTactic::Reach(ProofReach {
-            target: ProgramPointRef {
-                region: CodeRegionRef::Statement(1),
-                kind: ProgramPointKind::Exit,
-            },
-            assertions,
-            tactics,
-        }) if matches!(assertions.as_slice(), [
-            ProofAssertion::Fact(_),
-            ProofAssertion::Resource(ResourceClause::Write(_)),
-            ProofAssertion::Resource(ResourceClause::Read(_)),
-        ]) && tactics == &[ProofTactic::SmartStep]
-    ));
-    assert_eq!(tactics[1..], [ProofTactic::SmartExecute, ProofTactic::Simp]);
 }
 
 #[test]
@@ -3455,13 +3450,9 @@ fn tactic_certificate_rejects_smart_tactics_in_nested_control_flow() {
         operator: ComparisonOperator::Equal,
         right: current_var("x"),
     };
-    let tactics = [ProofTactic::Reach(ProofReach {
-        target: ProgramPointRef {
-            region: CodeRegionRef::Function,
-            kind: ProgramPointKind::Exit,
-        },
-        assertions: Vec::new(),
-        tactics: vec![ProofTactic::If(ProofIf {
+    let tactics = [ProofTactic::Branch(ProofBranch {
+        ensuring: None,
+        then_tactics: vec![ProofTactic::If(ProofIf {
             condition,
             then_tactics: vec![ProofTactic::Have(ProofHave {
                 proposition: ClickProposition::Comparison {
@@ -3473,6 +3464,7 @@ fn tactic_certificate_rejects_smart_tactics_in_nested_control_flow() {
             })],
             else_tactics: vec![ProofTactic::Normalize],
         })],
+        else_tactics: vec![ProofTactic::Normalize],
     })];
 
     let error = TacticCertificate::from_proof_tactics(&tactics)
@@ -3486,7 +3478,7 @@ fn tactic_certificate_rejects_smart_tactics_in_nested_control_flow() {
         error.path(),
         &[
             CertificatePathSegment::Tactic(0),
-            CertificatePathSegment::ReachBody,
+            CertificatePathSegment::ThenBranch,
             CertificatePathSegment::Tactic(0),
             CertificatePathSegment::ThenBranch,
             CertificatePathSegment::Tactic(0),

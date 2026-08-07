@@ -1,7 +1,7 @@
-# nested reach interfaces compose
+# branch interfaces compose with forward execution
 
-An outer scoped execution can use an inner abstract frontier and export a
-second, stronger interface.
+The common interface exported by a branch is the input to the ordinary
+forward proof that follows it.
 
 ```c filename=advance_nested_join.c
 int32 advance_nested_join(int32 x) {
@@ -23,27 +23,21 @@ int32 advance_nested_join(int32 x) {
     requires x < 2147483647;
 
     ensures result > 0 by {
-        reach(statement(4).exit)
-        ensuring {
-            fact y > 0;
-        }
-        by {
-            step();
-            reach(statement(1).exit)
+        step();
+        branch {
             ensuring {
                 fact y >= 0;
                 fact y < 2147483647;
             }
-            by {
-                if x >= 0 {
-                    step();
-                    step();
-                } else {
-                    step();
-                    step();
-                }
+            then {
+                step();
             }
-            step();
+            else {
+                step();
+            }
+        }
+        step() using {
+            y < 2147483647;
         }
         step();
         simp();

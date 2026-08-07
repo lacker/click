@@ -1627,13 +1627,6 @@ mod certificate_tests {
                 coordinates.extend(linear_tactic_coordinates(continuation));
                 coordinates
             }
-            InternalProofNode::Reach {
-                body, continuation, ..
-            } => {
-                let mut coordinates = linear_tactic_coordinates(body);
-                coordinates.extend(linear_tactic_coordinates(continuation));
-                coordinates
-            }
         }
     }
 
@@ -1904,7 +1897,6 @@ mod certificate_tests {
 struct ExpandedProofCase {
     tactics: Vec<ProofTactic>,
     assumptions: Vec<ProofCaseAssumption>,
-    advance_checks: Vec<ProofReachCheck>,
 }
 
 struct ProofCaseAssumption {
@@ -1913,46 +1905,35 @@ struct ProofCaseAssumption {
     value: bool,
 }
 
-struct ProofReachCheck {
-    join_id: usize,
-    tactic_index: usize,
-    target: ProgramPointRef,
-    assertions: Vec<ProofAssertion>,
-}
-
 // Pure proofs and point-local `have` proofs use flat logical cases. Execution
-// proofs use `InternalProofNode`, where `reach` has region-join semantics.
+// proofs use `InternalProofNode` for frontier-local control flow.
 fn expand_proof_if_cases(tactics: &[ProofTactic]) -> Result<Vec<ExpandedProofCase>, ClickError> {
-    let mut next_join_id = 0;
-    expand_structured_proof_cases(tactics, &mut next_join_id)
+    expand_structured_proof_cases(tactics)
 }
 
 fn expand_structured_proof_cases(
     tactics: &[ProofTactic],
-    next_join_id: &mut usize,
 ) -> Result<Vec<ExpandedProofCase>, ClickError> {
     let Some((control_index, control_tactic)) = tactics
         .iter()
         .enumerate()
-        .find(|(_, tactic)| matches!(tactic, ProofTactic::If(_) | ProofTactic::Reach(_)))
+        .find(|(_, tactic)| matches!(tactic, ProofTactic::If(_)))
     else {
         return Ok(vec![ExpandedProofCase {
             tactics: tactics.to_vec(),
             assumptions: Vec::new(),
-            advance_checks: Vec::new(),
         }]);
     };
     let prefix = &tactics[..control_index];
     match control_tactic {
         ProofTactic::If(proof_if) => {
-            let suffix_cases =
-                expand_structured_proof_cases(&tactics[control_index + 1..], next_join_id)?;
+            let suffix_cases = expand_structured_proof_cases(&tactics[control_index + 1..])?;
             let mut cases = Vec::new();
             for (value, branch_tactics) in [
                 (true, proof_if.then_tactics.as_slice()),
                 (false, proof_if.else_tactics.as_slice()),
             ] {
-                for branch in expand_structured_proof_cases(branch_tactics, next_join_id)? {
+                for branch in expand_structured_proof_cases(branch_tactics)? {
                     for suffix in &suffix_cases {
                         let boundary = prefix.len() + branch.tactics.len();
                         let mut linear = prefix.to_vec();
@@ -1977,97 +1958,16 @@ fn expand_structured_proof_cases(
                                 value: assumption.value,
                             }
                         }));
-                        let mut advance_checks = branch
-                            .advance_checks
-                            .iter()
-                            .map(|check| ProofReachCheck {
-                                join_id: check.join_id,
-                                tactic_index: prefix.len() + check.tactic_index,
-                                target: check.target.clone(),
-                                assertions: check.assertions.clone(),
-                            })
-                            .collect::<Vec<_>>();
-                        advance_checks.extend(suffix.advance_checks.iter().map(|check| {
-                            ProofReachCheck {
-                                join_id: check.join_id,
-                                tactic_index: boundary + check.tactic_index,
-                                target: check.target.clone(),
-                                assertions: check.assertions.clone(),
-                            }
-                        }));
                         cases.push(ExpandedProofCase {
                             tactics: linear,
                             assumptions,
-                            advance_checks,
                         });
                     }
                 }
             }
             Ok(cases)
         }
-        ProofTactic::Reach(advance) => {
-            let join_id = *next_join_id;
-            *next_join_id += 1;
-            let body_cases = expand_structured_proof_cases(&advance.tactics, next_join_id)?;
-            let suffix_cases =
-                expand_structured_proof_cases(&tactics[control_index + 1..], next_join_id)?;
-            let mut cases = Vec::new();
-            for body in &body_cases {
-                for suffix in &suffix_cases {
-                    let boundary = prefix.len() + body.tactics.len();
-                    let mut linear = prefix.to_vec();
-                    linear.extend(body.tactics.iter().cloned());
-                    linear.extend(suffix.tactics.iter().cloned());
-                    let mut assumptions = body
-                        .assumptions
-                        .iter()
-                        .map(|assumption| ProofCaseAssumption {
-                            tactic_index: prefix.len() + assumption.tactic_index,
-                            proposition: assumption.proposition.clone(),
-                            value: assumption.value,
-                        })
-                        .collect::<Vec<_>>();
-                    assumptions.extend(suffix.assumptions.iter().map(|assumption| {
-                        ProofCaseAssumption {
-                            tactic_index: boundary + assumption.tactic_index,
-                            proposition: assumption.proposition.clone(),
-                            value: assumption.value,
-                        }
-                    }));
-                    let mut advance_checks = body
-                        .advance_checks
-                        .iter()
-                        .map(|check| ProofReachCheck {
-                            join_id: check.join_id,
-                            tactic_index: prefix.len() + check.tactic_index,
-                            target: check.target.clone(),
-                            assertions: check.assertions.clone(),
-                        })
-                        .collect::<Vec<_>>();
-                    advance_checks.push(ProofReachCheck {
-                        join_id,
-                        tactic_index: boundary,
-                        target: advance.target.clone(),
-                        assertions: advance.assertions.clone(),
-                    });
-                    advance_checks.extend(suffix.advance_checks.iter().map(|check| {
-                        ProofReachCheck {
-                            join_id: check.join_id,
-                            tactic_index: boundary + check.tactic_index,
-                            target: check.target.clone(),
-                            assertions: check.assertions.clone(),
-                        }
-                    }));
-                    cases.push(ExpandedProofCase {
-                        tactics: linear,
-                        assumptions,
-                        advance_checks,
-                    });
-                }
-            }
-            Ok(cases)
-        }
-        _ => unreachable!("control-tactic search only returns if or advance"),
+        _ => unreachable!("control-tactic search only returns proof if"),
     }
 }
 
@@ -2093,16 +1993,9 @@ enum InternalProofNode {
     },
     Branch {
         index: usize,
+        ensuring: Option<Vec<ProofAssertion>>,
         then_branch: Box<InternalProofNode>,
         else_branch: Box<InternalProofNode>,
-        continuation: Box<InternalProofNode>,
-    },
-    Reach {
-        index: usize,
-        _join_id: usize,
-        target: ProgramPointRef,
-        assertions: Vec<ProofAssertion>,
-        body: Box<InternalProofNode>,
         continuation: Box<InternalProofNode>,
     },
 }
@@ -2130,16 +2023,14 @@ fn build_internal_proof(
     tactics: &[ProofTactic],
     _claim_label: &str,
 ) -> Result<InternalProofNode, ClickError> {
-    let mut next_join_id = 0;
-    build_internal_proof_at(tactics, &mut next_join_id, 0, 0)
+    build_internal_proof_at(tactics, 0, 0)
 }
 
 fn build_internal_proof_from_source_index(
     tactics: &[ProofTactic],
     source_index: usize,
 ) -> Result<InternalProofNode, ClickError> {
-    let mut next_join_id = 0;
-    build_internal_proof_at(tactics, &mut next_join_id, 0, source_index)
+    build_internal_proof_at(tactics, 0, source_index)
 }
 
 fn build_generated_certificate_proof(
@@ -2180,12 +2071,6 @@ fn set_generated_proof_source_index(node: &mut InternalProofNode, owning_source_
             set_generated_proof_source_index(else_branch, owning_source_index);
             set_generated_proof_source_index(continuation, owning_source_index);
         }
-        InternalProofNode::Reach {
-            body, continuation, ..
-        } => {
-            set_generated_proof_source_index(body, owning_source_index);
-            set_generated_proof_source_index(continuation, owning_source_index);
-        }
     }
 }
 
@@ -2222,27 +2107,19 @@ fn detach_generated_suffix_from_source_indices(
             detach_generated_suffix_from_source_indices(else_branch, first_generated_tactic_index);
             detach_generated_suffix_from_source_indices(continuation, first_generated_tactic_index);
         }
-        InternalProofNode::Reach {
-            body, continuation, ..
-        } => {
-            detach_generated_suffix_from_source_indices(body, first_generated_tactic_index);
-            detach_generated_suffix_from_source_indices(continuation, first_generated_tactic_index);
-        }
     }
 }
 
 fn build_internal_proof_at(
     tactics: &[ProofTactic],
-    next_join_id: &mut usize,
     index_offset: usize,
     source_index_offset: usize,
 ) -> Result<InternalProofNode, ClickError> {
-    let Some((control_index, control_tactic)) = tactics.iter().enumerate().find(|(_, tactic)| {
-        matches!(
-            tactic,
-            ProofTactic::If(_) | ProofTactic::Branch(_) | ProofTactic::Reach(_)
-        )
-    }) else {
+    let Some((control_index, control_tactic)) = tactics
+        .iter()
+        .enumerate()
+        .find(|(_, tactic)| matches!(tactic, ProofTactic::If(_) | ProofTactic::Branch(_)))
+    else {
         if tactics.is_empty() {
             return Ok(InternalProofNode::Done);
         }
@@ -2266,19 +2143,16 @@ fn build_internal_proof_at(
                 condition: proof_if.condition.clone(),
                 then_branch: Box::new(build_internal_proof_at(
                     &proof_if.then_tactics,
-                    next_join_id,
                     index + 1,
                     source_index + 1,
                 )?),
                 else_branch: Box::new(build_internal_proof_at(
                     &proof_if.else_tactics,
-                    next_join_id,
                     index + 1,
                     source_index + 1 + then_width,
                 )?),
                 continuation: Box::new(build_internal_proof_at(
                     &tactics[control_index + 1..],
-                    next_join_id,
                     index + 1,
                     source_index + source_tactic_width(control_tactic),
                 )?),
@@ -2288,49 +2162,25 @@ fn build_internal_proof_at(
             let then_width = source_tactic_count(&proof_branch.then_tactics);
             InternalProofNode::Branch {
                 index,
+                ensuring: proof_branch.ensuring.clone(),
                 then_branch: Box::new(build_internal_proof_at(
                     &proof_branch.then_tactics,
-                    next_join_id,
                     index + 1,
                     source_index + 1,
                 )?),
                 else_branch: Box::new(build_internal_proof_at(
                     &proof_branch.else_tactics,
-                    next_join_id,
                     index + 1,
                     source_index + 1 + then_width,
                 )?),
                 continuation: Box::new(build_internal_proof_at(
                     &tactics[control_index + 1..],
-                    next_join_id,
                     index + 1,
                     source_index + source_tactic_width(control_tactic),
                 )?),
             }
         }
-        ProofTactic::Reach(advance) => {
-            let join_id = *next_join_id;
-            *next_join_id += 1;
-            InternalProofNode::Reach {
-                index,
-                _join_id: join_id,
-                target: advance.target.clone(),
-                assertions: advance.assertions.clone(),
-                body: Box::new(build_internal_proof_at(
-                    &advance.tactics,
-                    next_join_id,
-                    index + 1,
-                    source_index + 1,
-                )?),
-                continuation: Box::new(build_internal_proof_at(
-                    &tactics[control_index + 1..],
-                    next_join_id,
-                    index + 1,
-                    source_index + source_tactic_width(control_tactic),
-                )?),
-            }
-        }
-        _ => unreachable!("control-tactic search only returns if or advance"),
+        _ => unreachable!("control-tactic search only returns structured tactics"),
     };
 
     if control_index == 0 {
@@ -2383,7 +2233,6 @@ fn source_tactic_width(tactic: &ProofTactic) -> usize {
             1 + source_tactic_count(&proof_branch.then_tactics)
                 + source_tactic_count(&proof_branch.else_tactics)
         }
-        ProofTactic::Reach(advance) => 1 + source_tactic_count(&advance.tactics),
         ProofTactic::Loop(clause) => {
             1 + clause
                 .initialize_proof()
@@ -2424,12 +2273,6 @@ fn internal_proof_contains_source_index(node: &InternalProofNode, wanted: usize)
         } => {
             internal_proof_contains_source_index(then_branch, wanted)
                 || internal_proof_contains_source_index(else_branch, wanted)
-                || internal_proof_contains_source_index(continuation, wanted)
-        }
-        InternalProofNode::Reach {
-            body, continuation, ..
-        } => {
-            internal_proof_contains_source_index(body, wanted)
                 || internal_proof_contains_source_index(continuation, wanted)
         }
     }
@@ -3730,7 +3573,6 @@ fn tactic_contains_frontier_loop(tactic: &ProofTactic) -> bool {
             .iter()
             .chain(&proof_branch.else_tactics)
             .any(tactic_contains_frontier_loop),
-        ProofTactic::Reach(reach) => reach.tactics.iter().any(tactic_contains_frontier_loop),
         _ => false,
     }
 }
@@ -4097,7 +3939,7 @@ struct TacticReplayState {
     /// does not record a function-entry snapshot behaves exactly as before.
     function_entry_state: Option<CState>,
     concrete_loop_execution: bool,
-    /// The execution frontier was intentionally replaced by an `reach`
+    /// The execution frontier was intentionally replaced by a branch
     /// interface. Its state is a specification abstraction, not an exact
     /// symbolic body outcome; whole-function kernel certification checks every
     /// concrete path before any contract claim is exported.
@@ -4943,17 +4785,6 @@ impl TacticReplayState {
             Some(entry_state) => entry_state,
             None => self.execution_start_state(current_state),
         }
-    }
-}
-
-impl ExecutionFrontier {
-    fn inside_branch(&self) -> bool {
-        self.continuations.iter().any(|continuation| {
-            matches!(
-                continuation.kind,
-                ProofExecutionContinuationKind::Branch { .. }
-            )
-        })
     }
 }
 
@@ -11070,7 +10901,6 @@ fn prove_pure_proposition_at_point(
             vec![ExpandedProofCase {
                 tactics: Vec::new(),
                 assumptions: Vec::new(),
-                advance_checks: Vec::new(),
             }],
             true,
         ),
@@ -11080,15 +10910,6 @@ fn prove_pure_proposition_at_point(
             )));
         }
     };
-    if proof_cases
-        .iter()
-        .any(|proof_case| !proof_case.advance_checks.is_empty())
-    {
-        return Err(ClickError::new(format!(
-            "`{claim_label}` {proof_name} proof {outer_tactic_index}: `reach` is not available in a pure proof"
-        )));
-    }
-
     let mut proven_fact = None;
     for proof_case in proof_cases {
         let fact = prove_pure_proposition_case_at_point(
@@ -13581,15 +13402,14 @@ fn finish_ordered_proof_replay(
                             // is exactly what the gate requires.
                             // `validate_certificate_tactics` is the settled
                             // judgment for "surface-expressible" and already
-                            // descends through nested `have`/`if`/`reach`
+                            // descends through nested `have`/`if`
                             // bodies, so use it rather than a flat scan that
                             // mistakes any structured script for a smart one.
                             //
                             // Replay runs first so a script rejected on its
-                            // own terms (`reach` in a pure proof, say) still
-                            // reports that, and the expressibility gate only
-                            // decides whether a *successful* smart closure may
-                            // stand.
+                            // own terms still reports that, and the
+                            // expressibility gate only decides whether a
+                            // *successful* smart closure may stand.
                             let replay_have = |available: &[Proposition]| {
                                 let prelowered_goal = current_outcome_surface_propositions
                                     .available_kernel(&have.proposition, available);
@@ -23076,7 +22896,7 @@ fn replay_linear_tactics_without_frontier_loops(
                     assumptions = assumptions.assume_proposition(fact);
                 }
             }
-            ProofTactic::If(_) | ProofTactic::Branch(_) | ProofTactic::Reach(_) => {
+            ProofTactic::If(_) | ProofTactic::Branch(_) => {
                 unreachable!("structured tactics are represented by internal proof nodes")
             }
             ProofTactic::Loop(_) => {
@@ -23745,6 +23565,7 @@ fn execute_internal_proof(
         }
         InternalProofNode::Branch {
             index,
+            ensuring,
             then_branch,
             else_branch,
             continuation,
@@ -23773,7 +23594,7 @@ fn execute_internal_proof(
                 .and_then(selected_tactic_index_for_site);
             let capture_in_continuation = selected_source_index
                 .is_some_and(|wanted| internal_proof_contains_source_index(continuation, wanted));
-            let capture_condition = if selected_source_index.is_some() {
+            let capture_condition = if selected_source_index.is_some() && !capture_in_continuation {
                 let (_, _, statement, _) = next_top_level_statement_from_execution_point(
                     &context.replay,
                     &context.state,
@@ -23796,9 +23617,8 @@ fn execute_internal_proof(
             } else {
                 None
             };
-            let mut contexts = Vec::new();
-            let mut captured_then = Vec::new();
-            let mut captured_else = Vec::new();
+            let mut completed_contexts = Vec::new();
+            let mut continuing_contexts = Vec::new();
             for (branch_name, take_then, branch) in [
                 ("then", true, then_branch.as_ref()),
                 ("else", false, else_branch.as_ref()),
@@ -23876,154 +23696,150 @@ fn execute_internal_proof(
                         ));
                     }
                     if returned {
-                        contexts.push(branch_context);
+                        completed_contexts.push(branch_context);
                         continue;
                     }
-                    let continued = execute_internal_proof(
-                        continuation,
-                        branch_context,
-                        function_block,
-                        parsed_function,
-                        claims,
-                        claim_label,
-                        function_environment,
-                        predicate_environment,
-                        click_function_environment,
-                        resource_environment,
-                        theorem_environment,
-                        function,
-                        arguments,
-                    );
-                    match continued {
-                        Ok(mut continued) => contexts.append(&mut continued),
-                        Err(error) if capture_in_continuation && error.is_expansion_complete() => {
-                            let captured = take_path_tactic_expansion_capture()?;
-                            if take_then {
-                                captured_then.push(captured);
-                            } else {
-                                captured_else.push(captured);
-                            }
-                        }
-                        Err(error) => return Err(error),
-                    }
+                    continuing_contexts.push(branch_context);
                 }
             }
-            if capture_in_continuation {
-                let one_arm_certificate = |arm: &[Vec<ProofTactic>], name: &str| {
-                    let Some(first) = arm.first() else {
-                        return Ok(None);
-                    };
-                    if arm.iter().any(|certificate| certificate != first) {
-                        return Err(ClickError::new(format!(
-                            "selected tactic expands differently across paths within the `{name}` arm of `branch`"
-                        )));
-                    }
-                    Ok(Some(first.clone()))
-                };
-                let then_certificate = one_arm_certificate(&captured_then, "then")?;
-                let else_certificate = one_arm_certificate(&captured_else, "else")?;
-                let tactics = match (then_certificate, else_certificate) {
-                    (Some(then_tactics), Some(else_tactics)) if then_tactics != else_tactics => {
-                        Some(vec![ProofTactic::If(ProofIf {
-                            condition: capture_condition
-                                .expect("a captured branch continuation has its C condition"),
-                            then_tactics,
-                            else_tactics,
-                        })])
-                    }
-                    (Some(tactics), Some(_)) | (Some(tactics), None) | (None, Some(tactics)) => {
-                        Some(tactics)
-                    }
-                    // A deferred post-execution tactic is captured later,
-                    // while the completed execution is certified. Let the
-                    // ordinary replay finish so that capture can occur.
-                    (None, None) => None,
-                };
-                if let Some(tactics) = tactics {
-                    return Err(finish_tactic_expansion_capture(
-                        &SurfaceReplay {
-                            tactics,
-                            ..SurfaceReplay::default()
-                        },
-                        false,
-                    ));
-                }
-            }
-            if contexts.is_empty() {
+            if completed_contexts.is_empty() && continuing_contexts.is_empty() {
                 return Err(ClickError::new(format!(
                     "`{claim_label}` tactic {index}: `branch` found no feasible C `if` arm"
                 )));
             }
-            Ok(contexts)
-        }
-        InternalProofNode::Reach {
-            index,
-            _join_id: _,
-            target,
-            assertions,
-            body,
-            continuation,
-        } => {
-            let body_contexts = execute_internal_proof(
-                body,
-                context,
-                function_block,
-                parsed_function,
-                claims,
-                claim_label,
-                function_environment,
-                predicate_environment,
-                click_function_environment,
-                resource_environment,
-                theorem_environment,
-                function,
-                arguments,
-            )?;
-            let mut stable_join_locals = parameter_values(parsed_function.parameters(), arguments)?;
-            stable_join_locals.retain(|name, value| {
-                body_contexts
+            if continuing_contexts.is_empty() {
+                return Ok(completed_contexts);
+            }
+
+            let mut joined_context = if let Some(assertions) = ensuring {
+                let mut common_pure_facts = continuing_contexts[0].pure_facts.clone();
+                common_pure_facts.retain(|fact| {
+                    continuing_contexts
+                        .iter()
+                        .skip(1)
+                        .all(|context| context.pure_facts.contains(fact))
+                });
+                let mut common_resource_facts =
+                    continuing_contexts[0].state.resources().facts().to_vec();
+                common_resource_facts.retain(|fact| {
+                    continuing_contexts
+                        .iter()
+                        .skip(1)
+                        .all(|context| context.state.resources().facts().contains(fact))
+                });
+                let mut stable_join_locals = continuing_contexts[0]
+                    .state
+                    .locals()
+                    .object_values()
+                    .map(|(name, value)| (name.to_string(), value.clone()))
+                    .collect::<BTreeMap<_, _>>();
+                stable_join_locals.retain(|name, value| {
+                    continuing_contexts
+                        .iter()
+                        .skip(1)
+                        .all(|context| context.state.locals().get(name) == Some(value))
+                });
+                let joined_frontier = continuing_contexts[0].replay.frontier.next_statement_index;
+                if continuing_contexts
                     .iter()
-                    .all(|context| context.state.locals().get(name) == Some(value))
-            });
-            let mut joined_context: Option<ProofReplayContext> = None;
-            for mut branch_context in body_contexts {
-                let result = apply_advance_interface(
-                    target,
-                    assertions,
-                    *index,
-                    &mut branch_context.replay,
-                    &mut branch_context.state,
-                    &mut branch_context.pure_facts,
-                    function_block,
-                    parsed_function.parameters(),
-                    arguments,
-                    predicate_environment,
-                    click_function_environment,
-                    resource_environment,
-                    claim_label,
-                    &stable_join_locals,
-                );
-                if let Err(error) = result {
-                    return Err(add_proof_branch_path(error, &branch_context.branch_path));
+                    .skip(1)
+                    .any(|context| context.replay.frontier.next_statement_index != joined_frontier)
+                {
+                    return Err(ClickError::new(format!(
+                        "`{claim_label}` tactic {index}: `branch` arms did not reach one common execution frontier"
+                    )));
                 }
-                // Every branch has established the same declared interface against
-                // the shared abstraction. Its remaining branch-local state is hidden.
-                if let Some(joined) = &mut joined_context {
+                let target = ProgramPointRef {
+                    region: CodeRegionRef::Statement(joined_frontier),
+                    kind: ProgramPointKind::Entry,
+                };
+                let needs_abstraction = continuing_contexts.len() > 1;
+                let mut joined: Option<ProofReplayContext> = None;
+                for mut branch_context in continuing_contexts {
+                    apply_branch_interface(
+                        &target,
+                        assertions,
+                        *index,
+                        &mut branch_context.replay,
+                        &mut branch_context.state,
+                        &mut branch_context.pure_facts,
+                        parsed_function.parameters(),
+                        arguments,
+                        predicate_environment,
+                        click_function_environment,
+                        resource_environment,
+                        claim_label,
+                        &stable_join_locals,
+                        needs_abstraction,
+                    )
+                    .map_err(|error| add_proof_branch_path(error, &branch_context.branch_path))?;
+                    for fact in &common_pure_facts {
+                        if !branch_context.pure_facts.contains(fact) {
+                            branch_context.pure_facts.push(fact.clone());
+                        }
+                    }
+                    let assumptions = assumptions_from_propositions(&branch_context.pure_facts);
+                    let additional_common_resources = common_resource_facts
+                        .iter()
+                        .filter(|fact| !branch_context.state.resources().facts().contains(fact))
+                        .cloned()
+                        .collect::<Vec<_>>();
+                    let resources = branch_context
+                        .state
+                        .resources()
+                        .clone()
+                        .try_compose_with_facts(additional_common_resources, &assumptions)
+                        .map_err(|error| {
+                            ClickError::new(format!(
+                                "`{claim_label}` tactic {index}: invalid automatic common `branch` resource interface: {error:?}"
+                            ))
+                        })?;
+                    branch_context.state = branch_context.state.with_resource_context(resources);
+                    if let Some(joined_context) = &mut joined {
+                        append_execution_effect_facts(
+                            &mut joined_context.replay.effect_facts,
+                            &branch_context.replay.effect_facts,
+                        );
+                    } else {
+                        joined = Some(branch_context);
+                    }
+                }
+                joined.expect("at least one continuing branch context")
+            } else if continuing_contexts.len() == 1 {
+                continuing_contexts.remove(0)
+            } else {
+                let common_state = continuing_contexts[0].state.clone();
+                if continuing_contexts
+                    .iter()
+                    .skip(1)
+                    .any(|context| context.state != common_state)
+                {
+                    return Err(ClickError::new(format!(
+                        "`{claim_label}` tactic {index}: `branch` arms reach the common frontier with different states; add an `ensuring` block describing the facts and resources needed afterward"
+                    )));
+                }
+                let mut joined = continuing_contexts.remove(0);
+                joined.pure_facts.retain(|fact| {
+                    continuing_contexts
+                        .iter()
+                        .all(|context| context.pure_facts.contains(fact))
+                });
+                joined.replay.program_point_states.retain(|point, state| {
+                    continuing_contexts.iter().all(|context| {
+                        context.replay.program_point_states.get(point) == Some(state)
+                    })
+                });
+                for context in &continuing_contexts {
                     append_execution_effect_facts(
                         &mut joined.replay.effect_facts,
-                        &branch_context.replay.effect_facts,
+                        &context.replay.effect_facts,
                     );
-                } else {
-                    branch_context.branch_path.clear();
-                    joined_context = Some(branch_context);
                 }
-            }
-            let joined_context = joined_context.ok_or_else(|| {
-                ClickError::new(format!(
-                    "`{claim_label}` tactic {index}: `reach` body produced no proof frontier"
-                ))
-            })?;
-            execute_internal_proof(
+                joined
+            };
+            joined_context.branch_path.clear();
+            joined_context.replay.case_assumptions.clear();
+            let mut continued = execute_internal_proof(
                 continuation,
                 joined_context,
                 function_block,
@@ -24037,7 +23853,9 @@ fn execute_internal_proof(
                 theorem_environment,
                 function,
                 arguments,
-            )
+            )?;
+            completed_contexts.append(&mut continued);
+            Ok(completed_contexts)
         }
     }
 }
@@ -24236,14 +24054,13 @@ fn add_proof_branch_path(mut error: ClickError, branch_path: &[String]) -> Click
     error
 }
 
-fn apply_advance_interface(
+fn apply_branch_interface(
     target: &ProgramPointRef,
     assertions: &[ProofAssertion],
     tactic_index: usize,
     replay: &mut TacticReplayState,
     state: &mut CState,
     available_pure_facts: &mut Vec<Proposition>,
-    function_block: &FunctionBlock,
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
     predicate_environment: &PredicateEnvironment,
@@ -24251,68 +24068,8 @@ fn apply_advance_interface(
     resource_environment: &ResourceEnvironment,
     claim_label: &str,
     stable_join_locals: &BTreeMap<String, CValue>,
+    needs_abstraction: bool,
 ) -> Result<(), ClickError> {
-    let region =
-        resolve_code_region_ref(function_block, &target.region, claim_label, tactic_index)?;
-    let at_target = !replay.frontier.inside_branch()
-        && match (region, &replay.frontier.point, target.kind) {
-            (
-                CodeRegion::Statement(statement_index),
-                ProofExecutionPoint::StatementEntry { .. },
-                ProgramPointKind::Entry,
-            ) => replay.frontier.next_statement_index == statement_index,
-            (
-                CodeRegion::Statement(statement_index),
-                ProofExecutionPoint::StatementEntry { .. },
-                ProgramPointKind::Exit,
-            ) => {
-                replay.frontier.next_statement_index
-                    == replay
-                        .source_layout
-                        .statement(statement_index)
-                        .map(|region| region.continuation_node)
-                        .unwrap_or(usize::MAX)
-                    && replay.program_point_states.contains_key(target)
-            }
-            (CodeRegion::Loop(loop_index), ProofExecutionPoint::StatementEntry { .. }, kind) => {
-                let loop_node = replay
-                    .source_layout
-                    .loop_statement(loop_index)
-                    .ok_or_else(|| {
-                        ClickError::new(format!(
-                            "`{claim_label}` tactic {tactic_index}: `reach` could not resolve source loop({loop_index})"
-                        ))
-                    })?;
-                let continuation_node = replay
-                    .source_layout
-                    .statement(loop_node)
-                    .expect("source loop node should have a region")
-                    .continuation_node;
-                let expected_node = match kind {
-                    ProgramPointKind::Entry => loop_node,
-                    ProgramPointKind::Exit => continuation_node,
-                };
-                replay.frontier.next_statement_index == expected_node
-                    && replay.program_point_states.contains_key(target)
-            }
-            (CodeRegion::Function, _, _) => {
-                return Err(ClickError::new(format!(
-                    "`{claim_label}` tactic {tactic_index}: `reach` requires a statement or loop entry or exit target"
-                )));
-            }
-            _ => false,
-        };
-    if !at_target {
-        return Err(ClickError::new(format!(
-            "`{claim_label}` tactic {tactic_index}: `reach` branch did not reach `{}.{}`",
-            describe_code_region_ref(&target.region),
-            match target.kind {
-                ProgramPointKind::Entry => "entry",
-                ProgramPointKind::Exit => "exit",
-            }
-        )));
-    }
-
     let mut concrete_facts = available_pure_facts.clone();
     let mut established_interface_resources = Vec::new();
     for assertion in assertions {
@@ -24332,7 +24089,7 @@ fn apply_advance_interface(
                     )
                     .map_err(|message| {
                         ClickError::new(format!(
-                            "`{claim_label}` tactic {tactic_index}: could not lower `reach` fact: {message}"
+                            "`{claim_label}` tactic {tactic_index}: could not lower `branch ensuring` fact: {message}"
                         ))
                 })?;
                 replay
@@ -24341,7 +24098,7 @@ fn apply_advance_interface(
                 let assumptions = assumptions_from_propositions(&concrete_facts);
                 if !concrete_facts.contains(&fact) && !assumptions.proves(&fact) {
                     return Err(ClickError::new(format!(
-                        "`{claim_label}` tactic {tactic_index}: `reach` did not establish fact: {}",
+                        "`{claim_label}` tactic {tactic_index}: `branch ensuring` did not establish fact: {}",
                         describe_missing_pure_fact(
                             &fact,
                             &concrete_facts,
@@ -24369,7 +24126,7 @@ fn apply_advance_interface(
                 )?;
                 if !is_observed_core && !state.resources().satisfies_fact(&expected, &assumptions) {
                     return Err(ClickError::new(format!(
-                        "`{claim_label}` tactic {tactic_index}: `reach` did not establish resource fact: {}",
+                        "`{claim_label}` tactic {tactic_index}: `branch ensuring` did not establish resource fact: {}",
                         describe_missing_resource_fact(
                             &expected,
                             &concrete_facts,
@@ -24384,11 +24141,15 @@ fn apply_advance_interface(
             }
         }
     }
+    if !needs_abstraction {
+        *available_pure_facts = concrete_facts;
+        return Ok(());
+    }
     let entry_state = replay.execution_start_state(state).clone();
     let mut abstract_state =
         abstract_c_state_for_join(state, stable_join_locals).map_err(|message| {
             ClickError::new(format!(
-                "`{claim_label}` tactic {tactic_index}: could not abstract `reach` target state: {message}"
+                "`{claim_label}` tactic {tactic_index}: could not abstract `branch` target state: {message}"
             ))
         })?;
 
@@ -24484,7 +24245,7 @@ fn apply_advance_interface(
                 )
                 .map_err(|message| {
                     ClickError::new(format!(
-                        "`{claim_label}` tactic {tactic_index}: could not project `reach` resource `{name}`: {message}"
+                        "`{claim_label}` tactic {tactic_index}: could not project `branch ensuring` resource `{name}`: {message}"
                     ))
                 })?;
                 abstract_state = abstract_state.with_memory(memory);
@@ -24512,9 +24273,12 @@ fn apply_advance_interface(
                 )
                 .map_err(|message| {
                     ClickError::new(format!(
-                        "`{claim_label}` tactic {tactic_index}: could not abstract `reach` fact: {message}"
+                        "`{claim_label}` tactic {tactic_index}: could not abstract `branch ensuring` fact: {message}"
                     ))
                 })?;
+            replay
+                .surface_propositions
+                .record_lowering(surface_fact, &fact)?;
             if !exported_pure_facts.contains(&fact) {
                 exported_pure_facts.push(fact);
             }
@@ -24526,7 +24290,7 @@ fn apply_advance_interface(
             .try_compose_with_facts(exported_resources.facts().iter().cloned(), &exported_assumptions)
             .map_err(|error| {
                 ClickError::new(format!(
-                    "`{claim_label}` tactic {tactic_index}: invalid `reach` resource interface: {error:?}"
+                    "`{claim_label}` tactic {tactic_index}: invalid `branch ensuring` resource interface: {error:?}"
                 ))
             })?;
     abstract_state = abstract_state.with_resource_context(exported_resources);
@@ -24622,8 +24386,8 @@ fn resource_is_direct_observed_core(
             continue;
         };
         // A guarded composite only exposes its children after the guard has
-        // been selected. `reach` does not carry enough state into this
-        // syntactic shortcut, so keep guarded children explicit.
+        // been selected. A joined interface does not carry enough state into
+        // this syntactic shortcut, so keep guarded children explicit.
         if body.condition().is_some() {
             continue;
         }

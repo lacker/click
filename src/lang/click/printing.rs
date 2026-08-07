@@ -1,6 +1,5 @@
 use super::diagnostics::{
     describe_code_region_ref, describe_contract_expression, describe_contract_segment,
-    describe_program_point_ref,
 };
 use super::*;
 
@@ -190,6 +189,26 @@ fn write_tactic(output: &mut String, tactic: &ProofTactic, indent: usize) {
         }
         ProofTactic::Branch(proof_branch) => {
             line(output, &prefix, "branch {");
+            if let Some(assertions) = &proof_branch.ensuring {
+                line(output, &"    ".repeat(indent + 1), "ensuring {");
+                for assertion in assertions {
+                    let text = match assertion {
+                        ProofAssertion::Fact(fact) => {
+                            format!("fact {};", source_click_proposition(fact))
+                        }
+                        ProofAssertion::Resource(resource) => format!(
+                            "{} {};",
+                            match resource_access(resource) {
+                                ResourceAccessMode::Own => "owns",
+                                ResourceAccessMode::View => "views",
+                            },
+                            format_resource_target(resource)
+                        ),
+                    };
+                    line(output, &"    ".repeat(indent + 2), &text);
+                }
+                line(output, &"    ".repeat(indent + 1), "}");
+            }
             line(output, &"    ".repeat(indent + 1), "then {");
             write_tactics(output, &proof_branch.then_tactics, indent + 2);
             line(output, &"    ".repeat(indent + 1), "}");
@@ -257,35 +276,6 @@ fn write_tactic(output: &mut String, tactic: &ProofTactic, indent: usize) {
                 write_proof(output, proof, indent + 1);
                 output.push('\n');
             }
-            line(output, &prefix, "}");
-        }
-        ProofTactic::Reach(advance) => {
-            line(
-                output,
-                &prefix,
-                &format!(
-                    "reach({}) ensuring {{",
-                    describe_program_point_ref(&advance.target)
-                ),
-            );
-            for assertion in &advance.assertions {
-                let text = match assertion {
-                    ProofAssertion::Fact(fact) => {
-                        format!("fact {};", source_click_proposition(fact))
-                    }
-                    ProofAssertion::Resource(resource) => format!(
-                        "{} {};",
-                        match resource_access(resource) {
-                            ResourceAccessMode::Own => "owns",
-                            ResourceAccessMode::View => "views",
-                        },
-                        format_resource_target(resource)
-                    ),
-                };
-                line(output, &"    ".repeat(indent + 1), &text);
-            }
-            line(output, &prefix, "} by {");
-            write_tactics(output, &advance.tactics, indent + 1);
             line(output, &prefix, "}");
         }
         ProofTactic::ObserveResource(resource) => line(

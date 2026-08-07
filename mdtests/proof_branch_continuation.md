@@ -26,6 +26,10 @@ int32 joined_increment(int32* p, int32 x) {
     ensures result > 0 by {
         step();
         branch {
+            ensuring {
+                fact y >= 0;
+                fact y < 2147483647;
+            }
             then {
                 step();
             }
@@ -33,7 +37,9 @@ int32 joined_increment(int32* p, int32 x) {
                 step();
             }
         }
-        step();
+        step() using {
+            y < 2147483647;
+        }
         step();
         simp();
     }

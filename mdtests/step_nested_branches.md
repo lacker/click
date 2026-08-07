@@ -29,9 +29,15 @@ int32 nested_branch_steps(int32 x) {
     ensures result >= 0 by {
         step();
         branch {
+            ensuring {
+                fact y >= 0;
+            }
             then {
                 step();
                 branch {
+                    ensuring {
+                        fact y >= 0;
+                    }
                     then {
                         step();
                     }

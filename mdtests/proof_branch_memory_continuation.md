@@ -24,6 +24,11 @@ int32 advance_memory_interface(int32* p, int32 x) {
 
     ensures result > 0 by {
         branch {
+            ensuring {
+                fact p[0] >= 0;
+                fact p[0] < 2147483647;
+                owns p[0..1];
+            }
             then {
                 step();
             }
@@ -31,7 +36,9 @@ int32 advance_memory_interface(int32* p, int32 x) {
                 step();
             }
         }
-        step();
+        step() using {
+            p[0] < 2147483647;
+        }
         step();
         simp();
     }

@@ -132,7 +132,7 @@ control flow.
 - `execute_until(statement(N));`: execute the current deterministic prefix up
   to the entry of statement region `N`. It can cross verified loops, but an
   unresolved `if` still requires explicit branch entry. It composes with prior
-  execution steps, selected branches, and `reach` joins. The target must be
+  execution steps and joined branches. The target must be
   forward and reachable on the current execution path, and each source step
   must produce exactly one normal successor.
 - `loop { ... }`: verify the loop exactly at the current frontier and advance
@@ -174,12 +174,6 @@ control flow.
   with the proposition added to the pure facts and once with its negation
   added. Each branch has its own proof script; the common continuation then
   runs in every feasible case. It does not execute a C `if` statement.
-- `reach(program_point) ensuring { ... } by { ... }`: execute the nested
-  proof cases to the exact statement entry or exit, checking the listed `fact`,
-  `owns`, and `views` assertions in every case. Click then forgets
-  branch-specific facts, scalar values, mutable memory, and resources, and
-  continues from a fresh symbolic frontier constrained by the declared
-  interface. Unchanged function parameters retain their entry identity.
 - `observe(resource);`: project one view step from a held composite resource
   fact. This exposes immediate pure facts and viewed immediate contained
   resource facts without exposing owned contained permissions.
@@ -227,28 +221,30 @@ branch {
 ```
 
 `branch` reads and consumes the C guard at the frontier. Ordinary `step()`
-calls handle statements inside each arm, and the following proof continues at
-the shared C continuation on every nonreturning path. A nested C `if` uses
-another `branch` when it reaches the frontier.
+calls handle statements inside each arm. The arm states join at the shared C
+continuation, and the following proof runs once. A nested C `if` uses another
+`branch` when it reaches the frontier.
 
-Use `reach` when branch-local execution should establish a common interface
+At every linear execution frontier there is exactly one current proof state.
+The arm states created by `branch` are temporary subproofs, not persistent
+path-sensitive continuations. Completed arms that return are retained only as
+function outcomes; later tactics do not execute in them.
+
+Add `ensuring` when branch-local execution should establish a common interface
 before the rest of the function proof:
 
 ```click
-reach(statement(1).exit)
-ensuring {
-    fact y >= 0;
-    owns buffer(data, len);
-    views metadata(data, len);
-}
-by {
-    branch {
-        then {
-            step();
-        }
-        else {
-            step();
-        }
+branch {
+    ensuring {
+        fact y >= 0;
+        owns buffer(data, len);
+        views metadata(data, len);
+    }
+    then {
+        step();
+    }
+    else {
+        step();
     }
 }
 step();
@@ -261,21 +257,18 @@ ID before the statements nested in its arms or body. A sequence itself does
 not receive an ID. Structural assertion and loop checks inserted by Click are
 not source statements and do not consume IDs. Structural traversal, tactic
 execution, snapshots, expansion, and replay all use this same layout. Every
-nested case must reach exactly the requested point and establish every
-assertion. `reach` is the
-execution-proof counterpart to `have`: `have` runs a pure proof without moving
-the execution point, while `reach` proves a postcondition for a scoped code
-region and advances to its exit. Facts and resources needed by the
-continuation must be listed explicitly. Deterministic consequences of listed
-resources, such as memory loadability and the view of an owned resource,
-remain available.
+continuing arm must establish every `ensuring` assertion. Exact common facts
+and resources remain available automatically; facts about changed state that
+the continuation needs must be listed explicitly. Deterministic consequences
+of listed resources, such as memory loadability and the view of an owned
+resource, remain available.
 
-Snapshots created inside the scoped execution are not exported. The function
-entry state used by `old(...)` and the abstract target snapshot remain
-available. Changed pointer-valued locals become fresh symbolic pointers at the
-join. The interface must export the facts and resources needed to use them,
-such as `views selected[0..len]`; symbolic pointers do not imply non-aliasing
-with concrete allocations.
+Arm-only snapshots are not exported. The function-entry state used by
+`old(...)` and the common-frontier snapshot remain available. Changed
+pointer-valued locals become fresh symbolic pointers at the join. The
+interface must export the facts and resources needed to use them, such as
+`views selected[0..len]`; symbolic pointers do not imply non-aliasing with
+concrete allocations.
 
 For example, pure case analysis needs no C execution:
 
@@ -304,7 +297,7 @@ An execution proof tracks an execution frontier: the current execution point
 together with its enclosing continuation stack. Proof scripts can start at
 function entry, advance by one statement with `step();`, unpack a C `if` at the
 current frontier with `branch`, replace scoped paths with an explicit abstract
-interface using `reach`, pause at a statement entry with
+interface using `branch ensuring`, pause at a statement entry with
 `execute_until(statement(N));`, and execute to function exit with `execute();`.
 Resource steps such as `observe`, `unfold`, and `fold` can happen between those
 execution steps.
@@ -314,16 +307,10 @@ lowering. The source layout uses that ID to identify branch children,
 continuations, and nested loops. Checks inserted by annotation lowering remain
 attached to their source statement and do not become extra tactics.
 
-Ordinary statement steps, frontier-local `branch`, and scoped execution-proof
-traversal use the same certified condition and statement transitions. `reach`
-composes those transitions inside its body and then replaces the reached
-branch-local frontiers with the declared abstract interface. `execute()` is
-the batch form that continues from the same frontier to function exit.
-
-`reach` accepts statement entry/exit targets and loop entry/exit targets. In
-particular, `reach(loop_name.exit) ensuring { ... } by { ... }` executes to a
-verified loop's abstract exit and makes the declared facts and resources the
-only proof-visible interface afterward.
+Ordinary statement steps and frontier-local `branch` use the same certified
+condition and statement transitions. `branch` joins its arm-local frontiers
+behind a checked common interface. `execute()` is the batch form that
+continues from the same frontier to function exit.
 
 At function entry, `views composite(...)` resource requirements are projected
 one step automatically, matching `observe(composite(...))` for immediate

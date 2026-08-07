@@ -3139,7 +3139,6 @@ pub(super) fn count_statements(statement: &syntax::C0Statement) -> usize {
 pub(super) struct SourceExecutionLayout {
     statements: BTreeMap<usize, SourceStatementRegion>,
     loop_bodies: BTreeMap<usize, usize>,
-    loop_statements: BTreeMap<usize, usize>,
 }
 
 #[derive(Clone, Copy)]
@@ -3201,7 +3200,6 @@ impl SourceExecutionLayout {
                     *next_statement_index += 1;
                     *next_loop_index += 1;
                     layout.loop_bodies.insert(loop_index, *next_statement_index);
-                    layout.loop_statements.insert(loop_index, statement_index);
                     visit(body, next_statement_index, next_loop_index, layout);
                     layout.statements.insert(
                         statement_index,
@@ -3240,10 +3238,6 @@ impl SourceExecutionLayout {
 
     pub(super) fn loop_body_entry(&self, loop_index: usize) -> Option<usize> {
         self.loop_bodies.get(&loop_index).copied()
-    }
-
-    pub(super) fn loop_statement(&self, loop_index: usize) -> Option<usize> {
-        self.loop_statements.get(&loop_index).copied()
     }
 }
 

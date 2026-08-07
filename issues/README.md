@@ -68,13 +68,6 @@ diagnostic can guide the Click writer better:
 
 1. [Guide opaque predicate transport through definitions](predicate-transport-across-local-stores.md).
 
-## Language and proof-model gaps
-
-These need a checked language or model capability rather than stronger smart
-search:
-
-1. [Give `branch` a principled common-frontier abstraction](branch-common-frontier-abstraction.md).
-
 ## Maintainability
 
 These are behavior-preserving cleanup roadmaps rather than feature blockers:

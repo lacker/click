@@ -254,13 +254,13 @@ each completed execution path.
 supported transition using exactly the listed premises. Bare `step()` is its
 smart, contextual counterpart.
 
-`reach(point) ensuring { Q } by { steps }` is the sequencing rule for scoped
-execution. Every proof case in `steps` must reach `point` and prove `Q`. Click
-then replaces branch-local scalar values, mutable memory, pure facts, resource
-facts, and snapshots with one fresh symbolic frontier satisfying exactly `Q`
-and its deterministic resource consequences. The continuation therefore cannot
-depend on an unstated branch fact. Stable function parameters and the function
-entry state used by `old(...)` retain their identity across the boundary.
+`branch { ensuring { Q } then { ... } else { ... } }` is the sequencing rule
+for a C conditional whose arms need an explicit common resource interface.
+Every continuing arm must prove `Q`. Click then constructs one symbolic
+frontier satisfying `Q`, while retaining exact common facts and resources.
+The continuation therefore cannot depend on an arm-only fact. Stable function
+parameters and the function-entry state used by `old(...)` retain their
+identity across the boundary.
 
 Function entry projects `views composite(...)` resources one step
 automatically: the view remains available, and immediate contained resource

@@ -36,6 +36,9 @@ int32 advance_owned_selected_pointer(
     ensures result == value by {
         step();
         branch {
+            ensuring {
+                owns selected[0..1];
+            }
             then {
                 step();
             }

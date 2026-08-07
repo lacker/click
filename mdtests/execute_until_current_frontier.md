@@ -77,6 +77,9 @@ int32 execute_until_after_advance(int32 flag) {
     ensures result == 3 by {
         step();
         branch {
+            ensuring {
+                fact y >= 0;
+            }
             then {
                 step();
             }

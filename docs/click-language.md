@@ -300,9 +300,9 @@ step();
 
 `branch` reads the guard from the C source and enters every feasible arm. Each
 nonreturning arm must stop at the C `if`'s shared continuation, after which the
-following proof continues on each path. An arm that returns closes its own
-proof path inside the arm; it does not run the continuation after `branch`.
-The tactic fails if the current frontier is not a C `if`.
+following proof continues once from one joined state. An arm that returns
+closes its own outcome inside the arm; it does not run the continuation after
+`branch`. The tactic fails if the current frontier is not a C `if`.
 
 When one transition needs contextual pure facts, list them explicitly:
 
@@ -321,34 +321,30 @@ abstract exit. It fails if the current frontier is not a loop. Ordinary
 `step()` instead evaluates the loop condition and enters at most one concrete
 iteration; it does not invent a loop summary.
 
-When paths need to be collapsed behind a deliberately smaller abstract
-interface, `reach` gives branch-local execution a shared, explicit
-postcondition:
+When the two arms need to expose facts or resources about changed state, add an
+optional common-frontier interface to `branch`:
 
 ```click
-reach(statement(1).exit)
-ensuring {
-    fact y >= 0;
-}
-by {
-    branch {
-        then {
-            step();
-        }
-        else {
-            step();
-        }
+branch {
+    ensuring {
+        fact y >= 0;
+    }
+    then {
+        step();
+    }
+    else {
+        step();
     }
 }
 step();
 ```
 
-Each case must reach exactly the requested statement entry or exit and prove
-every listed pure or resource fact. Click forgets facts, resources, scalar
-values, mutable memory, and snapshots not named by that interface, then checks
-the remaining proof from the resulting abstract frontier. Unchanged function
-parameters and the function-entry state used by `old(...)` retain their stable
-identity.
+Every continuing arm must prove every listed pure or resource fact. The
+interface augments the deterministic common state; it is not an exhaustive
+whitelist, so exact common facts and resources remain available without being
+restated. Arm-only information is forgotten. If plain `branch` cannot form a
+useful deterministic join, Click asks for an `ensuring` block rather than
+retaining hidden path states or searching for an interface.
 
 Statement IDs are global within a function and follow source preorder. An
 `if` or loop receives its ID before statements nested in its arms or body; a
@@ -732,12 +728,11 @@ claims after deterministic execution records that statement point.
 deterministic statement boundary they cross. Executing an annotated loop uses
 its verified abstract rule and records both `at(loop_label.entry, expression)`
 and the unique post-loop state `at(loop_label.exit, expression)`. Branches still
-require explicit arm selection and joining before a unique exit snapshot exists.
-`reach(loop_label.exit)` can use that exit as a checked abstract interface for
-the proof that follows.
+require explicit arm proofs and a checked join before a unique exit snapshot
+exists.
 
 `execute_until(statement(N))` starts at the current execution point, so it can
-follow earlier `step`, explicit branch-entry, or `reach` steps. The
+follow earlier `step` or joined `branch` steps. The
 target must be forward and reachable on that selected path; it cannot be used
 to rewind execution or enter an unselected branch.
 

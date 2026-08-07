@@ -26,6 +26,10 @@ int32 increment_nonnegative(int32 x) {
     ensures result > 0 by {
         step();
         branch {
+            ensuring {
+                fact y >= 0;
+                fact y < 2147483647;
+            }
             then {
                 step();
             }
