@@ -84,6 +84,13 @@ platforms without a thread CPU clock, tactic enforcement falls back to
 exclusive wall-clock time; parallel proof execution should remain disabled on
 those platforms.
 
+Rust library unit tests are a semantic correctness gate and do not inherit the
+production tactic-duration defaults. Tests specifically about interruption
+install explicit limits. The mdtest and example integration gates compile the
+ordinary library and retain production limits, so repository fixtures still
+detect tactics that cross them without making every concurrently scheduled
+unit test a machine-speed benchmark.
+
 The direct CLI is itself the bounding mechanism: `click verify --time-limit`
 cooperatively interrupts execution, proposition derivation, memory resolution,
 and resource search. Do not wrap Click in an external timeout command; a proof

@@ -207,7 +207,20 @@ pub fn with_default_tactic_limits<R>(operation: impl FnOnce() -> R) -> R {
     {
         operation()
     } else {
-        with_tactic_limits(TacticLimits::default(), operation)
+        // Library unit tests run concurrently in one process. They are the
+        // semantic correctness gate, not a stable performance environment:
+        // host throughput must not decide whether an otherwise-valid proof
+        // reaches a two-second production cutoff. Tests of tactic deadlines
+        // install explicit limits, while integration fixtures compile the
+        // library normally and therefore retain the production defaults.
+        #[cfg(test)]
+        {
+            operation()
+        }
+        #[cfg(not(test))]
+        {
+            with_tactic_limits(TacticLimits::default(), operation)
+        }
     }
 }
 
@@ -518,6 +531,16 @@ mod tests {
                 });
             });
         }
+    }
+
+    #[test]
+    fn parallel_unit_tests_do_not_inherit_production_tactic_limits() {
+        with_default_tactic_limits(|| {
+            assert!(
+                TACTIC_LIMITS.with(|limits| limits.borrow().is_empty()),
+                "semantic unit tests should install a limit only when testing one"
+            );
+        });
     }
 
     #[test]
