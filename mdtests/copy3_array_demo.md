@@ -26,16 +26,33 @@ int32 copy3(int32 dst[3], int32 src[3]) {
     consumes dst[0..3];
     views src[0..3];
     requires separate(memory(dst[0..3]), memory(src[0..3]));
+    ensures copies_first: dst[0] == old(src[0]);
+    ensures copies_second: dst[1] == old(src[1]);
+    ensures copies_third: dst[2] == old(src[2]);
+    ensures returns_third: result == old(src[2]);
+} by {
+    step();
+    step();
+    loop {
+        invariant i >= 0 and i <= 3;
+        invariant forall (k: int32) {
+            0 <= k and k < i implies dst[k] == old(src[k])
+        };
+        mutable dst[0..3] by frame;
 
-    for loop(0) {
-        invariant i >= 0;
-        invariant i <= 3;
+        initialize by simp;
+        preserve by {
+            step();
+            step();
+            have i == at(statement(3).entry, i) + 1 by simp;
+            simp();
+        }
     }
-
-    ensures copies_first: dst[0] == old(src[0]) by auto;
-    ensures copies_second: dst[1] == old(src[1]) by auto;
-    ensures copies_third: dst[2] == old(src[2]) by auto;
-    ensures returns_third: result == old(src[2]) by auto;
+    have dst[0] == old(src[0]) by simp;
+    have dst[1] == old(src[1]) by simp;
+    have dst[2] == old(src[2]) by simp;
+    step();
+    simp();
 }
 ```
 

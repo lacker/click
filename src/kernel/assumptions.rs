@@ -5174,6 +5174,14 @@ impl Assumptions {
             bound: Variable,
             candidates: &mut BTreeSet<Bitvector32Term>,
         ) {
+            if super::reasoning::substitute_bitvector_variable_in_pointer_offset(
+                pattern,
+                bound,
+                &Bitvector32Term::Constant(0),
+            ) == *target
+            {
+                candidates.insert(Bitvector32Term::Constant(0));
+            }
             match (pattern, target) {
                 (
                     PointerOffsetTerm::Add(left_a, left_b),
@@ -5193,6 +5201,21 @@ impl Assumptions {
                     },
                 ) if left_width == right_width => {
                     collect_term_candidates(left, right, bound, candidates);
+                }
+                (
+                    PointerOffsetTerm::Int32Scaled {
+                        value: left,
+                        byte_width,
+                    },
+                    PointerOffsetTerm::Constant(bytes),
+                ) if *byte_width != 0 && bytes % byte_width == 0 => {
+                    let elements = bytes / byte_width;
+                    collect_term_candidates(
+                        left,
+                        &Bitvector32Term::Constant((elements as i32) as u32),
+                        bound,
+                        candidates,
+                    );
                 }
                 _ => {}
             }
