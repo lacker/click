@@ -801,11 +801,6 @@ pub struct CertifiedStatementReplay {
 pub enum ProofTactic {
     Step,
     StepUsing(Vec<ClickProposition>),
-    SummarizeUsing {
-        region: CodeRegionRef,
-        premises: Vec<ClickProposition>,
-    },
-    SmartSummarize(CodeRegionRef),
     CertifiedStatementStep {
         prerequisite_derivations: Vec<PropositionDerivation>,
         exact_premises: Vec<Proposition>,
@@ -890,7 +885,6 @@ pub enum ProofTactic {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SimpleTactic {
     StatementTransition,
-    LoopSummaryTransition,
     CertifiedStatementTransition,
     CertifiedLoopSummaryTransition,
     UnfoldPredicate,
@@ -926,7 +920,6 @@ pub enum SimpleTactic {
 pub enum SmartTacticKind {
     Auto,
     ApplyTheorem,
-    LoopSummary,
     FactTransport,
     SmartStep,
     SmartExecute,
@@ -1287,8 +1280,6 @@ impl ProofTactic {
         match self {
             Self::Step => TacticClass::Simple(SimpleTactic::StatementTransition),
             Self::StepUsing(_) => TacticClass::Simple(SimpleTactic::StatementTransition),
-            Self::SummarizeUsing { .. } => TacticClass::Simple(SimpleTactic::LoopSummaryTransition),
-            Self::SmartSummarize(_) => TacticClass::Smart(SmartTacticKind::LoopSummary),
             Self::CertifiedStatementStep { .. } => {
                 TacticClass::Simple(SimpleTactic::CertifiedStatementTransition)
             }

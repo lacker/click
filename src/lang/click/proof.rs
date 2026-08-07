@@ -7611,13 +7611,12 @@ fn verify_execution_proofs_forward(
             }
 
             if kernel_statement_contains_loop(body) && environment.frontier_loop_source.is_none() {
-                // Nested loop regions are encountered from the arbitrary iteration
-                // frontier, exactly where the outer induction hypothesis applies.
-                // This detached traversal exists only for legacy `for loop(N)`
-                // clauses. A frontier-local preservation proof encounters and
-                // verifies nested loops through its own `loop` tactics; walking
-                // the body again would duplicate that proof and recursively
-                // grow the verifier stack once per nesting level.
+                // Static `for statement(N)` assertions still use a separate
+                // structural traversal. Descend here only so that traversal can
+                // reach assertions inside a nested loop. A frontier-local
+                // preservation proof encounters nested loops through its own
+                // `loop` tactics; walking the body again would duplicate that
+                // proof and recursively grow the verifier stack.
                 *next_statement_index = environment
                     .source_layout
                     .loop_body_entry(loop_index)
@@ -19508,22 +19507,13 @@ fn record_surface_replay_tactic(
                 }
                 premises
             });
-            match premises {
-                Ok(premises) if premises.is_empty() => {
-                    replay.surface_replay.push(ProofTactic::SummarizeUsing {
-                        region: CodeRegionRef::Loop(loop_index),
-                        premises: Vec::new(),
-                    })
-                }
-                Ok(premises) => replay.surface_replay.push(ProofTactic::SummarizeUsing {
-                    region: CodeRegionRef::Loop(loop_index),
-                    premises,
-                }),
-                Err(error) => replay.surface_replay.block(format!(
+            replay.surface_replay.block(match premises {
+                Ok(_) => "a detached loop-summary certificate has no surface spelling; use a frontier-local `loop { ... }` tactic".to_string(),
+                Err(error) => format!(
                     "could not express a loop-summary premise at the current proof point: {}",
                     error.message()
-                )),
-            }
+                ),
+            });
         }
         ProofTactic::CertifiedFactTransport { source, target, .. } => {
             let Some(step_entry) = replay.surface_replay.last_step_entry.clone() else {
@@ -19652,8 +19642,7 @@ fn record_surface_replay_tactic(
                 .iter()
                 .rev()
                 .find_map(|tactic| match tactic {
-                    ProofTactic::StepUsing(premises)
-                    | ProofTactic::SummarizeUsing { premises, .. } => Some(Some(premises)),
+                    ProofTactic::StepUsing(premises) => Some(Some(premises)),
                     ProofTactic::Step => Some(None),
                     _ => None,
                 })
@@ -19750,8 +19739,7 @@ fn record_surface_replay_tactic(
                                 .iter_mut()
                                 .rev()
                                 .find_map(|tactic| match tactic {
-                                    ProofTactic::StepUsing(premises)
-                                    | ProofTactic::SummarizeUsing { premises, .. } => {
+                                    ProofTactic::StepUsing(premises) => {
                                         if !premises.contains(&surface_source) {
                                             premises.push(surface_source.clone());
                                         }
@@ -20805,15 +20793,6 @@ fn execute_frontier_local_loop(
             "`{claim_label}` tactic {tactic_index}: `loop` requires the execution frontier to be at a loop; current frontier is statement({statement_index})"
         )));
     };
-    if function_block
-        .structural_clauses()
-        .iter()
-        .any(|clause| clause.region() == &CodeRegion::Loop(loop_index))
-    {
-        return Err(ClickError::new(format!(
-            "`{claim_label}` tactic {tactic_index}: loop({loop_index}) already has a legacy `for loop({loop_index})` proof; migrate it into this `loop` block instead of combining both forms"
-        )));
-    }
     if replay
         .frontier_loop_clauses
         .iter()
@@ -21778,79 +21757,69 @@ fn replay_linear_tactics_without_frontier_loops(
                     assumptions = assumptions.assume_proposition(target);
                 }
             }
-            ProofTactic::StepUsing(premises) | ProofTactic::SummarizeUsing { premises, .. } => {
+            ProofTactic::StepUsing(premises) => {
                 let all_pure_facts = requirement_pure_facts.clone();
-                let (tactic_name, prerequisite_policy, loop_step_policy) = match tactic {
-                    ProofTactic::StepUsing(_) => (
-                        "step() using",
-                        StatementPrerequisitePolicy::Explicit,
-                        LoopStepPolicy::EnterBody,
-                    ),
-                    ProofTactic::SummarizeUsing { region, .. } => {
-                        let CodeRegion::Loop(expected_loop) = resolve_code_region_ref(
-                            function_block,
-                            region,
-                            claim_label,
-                            tactic_index,
-                        )?
-                        else {
-                            return Err(ClickError::new(format!(
-                                "`{claim_label}` tactic {tactic_index}: `summarize` expects a loop region"
-                            )));
-                        };
-                        let current_loop = replay
-                            .source_layout
-                            .statement(replay.frontier.next_statement_index)
-                            .and_then(|region| match region.kind {
-                                SourceStatementKind::Loop { loop_index } => Some(loop_index),
-                                SourceStatementKind::Plain | SourceStatementKind::If { .. } => None,
-                            });
-                        if current_loop != Some(expected_loop) {
-                            return Err(ClickError::new(format!(
-                                "`{claim_label}` tactic {tactic_index}: `summarize(loop({expected_loop}))` is not at that loop's entry; current statement is statement({})",
-                                replay.frontier.next_statement_index
-                            )));
-                        }
-                        (
-                            "summarize using",
-                            StatementPrerequisitePolicy::Explicit,
-                            LoopStepPolicy::ApplyVerifiedRule,
-                        )
-                    }
-                    _ => unreachable!(),
-                };
+                let tactic_name = "step() using";
+                let prerequisite_policy = StatementPrerequisitePolicy::Explicit;
+                let loop_step_policy = LoopStepPolicy::EnterBody;
                 let pre_state = replay.old_reference_state(&state).clone();
                 let mut explicit_premises = Vec::new();
                 for surface_premise in premises {
-                    let lowered_at_current = lower_point_proposition(
-                        surface_premise,
-                        &all_pure_facts,
-                        parsed_function.parameters(),
-                        arguments,
-                        &pre_state,
-                        &state,
-                        None,
-                        &replay.program_point_states,
-                        predicate_environment,
-                        click_function_environment,
-                    );
-                    let current_is_available = lowered_at_current.as_ref().is_ok_and(|premise| {
-                        exact_fact_is_available_across_effects(
-                            premise,
-                            &all_pure_facts,
-                            &replay.effect_facts,
-                        ) || materialization_equivalent_available_fact(premise, &all_pure_facts)
-                            .is_some()
-                    });
-                    let premise = if current_is_available {
-                        lowered_at_current.expect("checked current premise lowering")
-                    } else if let Some(recorded) = replay
+                    let recorded = replay
                         .surface_propositions
-                        .available_kernel(surface_premise, &all_pure_facts)
-                    {
+                        .available_kernel(surface_premise, &all_pure_facts);
+                    let recorded_is_constant_truth =
+                        recorded.is_some_and(|premise| match premise {
+                            Proposition::ConditionIs(ConditionTerm::Constant(true), true) => true,
+                            Proposition::ConditionIs(
+                                ConditionTerm::Bitvector32SignedLessThan(left, right)
+                                | ConditionTerm::Bitvector32SignedLessEqual(left, right)
+                                | ConditionTerm::Bitvector32SignedGreaterThan(left, right)
+                                | ConditionTerm::Bitvector32SignedGreaterEqual(left, right)
+                                | ConditionTerm::Bitvector32Equal(left, right),
+                                true,
+                            ) => matches!(
+                                (left.as_ref(), right.as_ref()),
+                                (Bitvector32Term::Constant(_), Bitvector32Term::Constant(_))
+                            ),
+                            _ => false,
+                        });
+                    let lower_at_current = || {
+                        lower_point_proposition(
+                            surface_premise,
+                            &all_pure_facts,
+                            parsed_function.parameters(),
+                            arguments,
+                            &pre_state,
+                            &state,
+                            None,
+                            &replay.program_point_states,
+                            predicate_environment,
+                            click_function_environment,
+                        )
+                    };
+                    let premise = if recorded_is_constant_truth {
+                        match lower_at_current() {
+                            Ok(current)
+                                if !Assumptions::new().proves(&current)
+                                    && (exact_fact_is_available_across_effects(
+                                        &current,
+                                        &all_pure_facts,
+                                        &replay.effect_facts,
+                                    ) || materialization_equivalent_available_fact(
+                                        &current,
+                                        &all_pure_facts,
+                                    )
+                                    .is_some()) =>
+                            {
+                                current
+                            }
+                            _ => recorded.expect("checked recorded truth").clone(),
+                        }
+                    } else if let Some(recorded) = recorded {
                         recorded.clone()
                     } else {
-                        lowered_at_current.map_err(|message| {
+                        lower_at_current().map_err(|message| {
                             ClickError::new(format!(
                                 "`{claim_label}` tactic {tactic_index}: could not lower `{tactic_name}` premise `{}`: {message}",
                                 super::printing::source_click_proposition(surface_premise)
@@ -21946,15 +21915,6 @@ fn replay_linear_tactics_without_frontier_loops(
                         && !explicit_premises.contains(&branch_fact)
                     {
                         explicit_premises.push(branch_fact);
-                    }
-                }
-                if matches!(tactic, ProofTactic::SummarizeUsing { .. })
-                    && !replay.unfolded_predicates.is_empty()
-                {
-                    for fact in &all_pure_facts {
-                        if !explicit_premises.contains(fact) {
-                            explicit_premises.push(fact.clone());
-                        }
                     }
                 }
                 let explicit_assumptions = assumptions_from_propositions(&explicit_premises);
@@ -22143,86 +22103,6 @@ fn replay_linear_tactics_without_frontier_loops(
                         "could not lower certified branch alternatives: {message}"
                     )),
                 }
-                assumptions = assumptions_from_propositions(&requirement_pure_facts);
-            }
-            ProofTactic::SmartSummarize(region_ref) => {
-                let CodeRegion::Loop(expected_loop) =
-                    resolve_code_region_ref(function_block, region_ref, claim_label, tactic_index)?
-                else {
-                    return Err(ClickError::new(format!(
-                        "`{claim_label}` tactic {tactic_index}: `summarize` expects a loop region"
-                    )));
-                };
-                let current_loop = replay
-                    .source_layout
-                    .statement(replay.frontier.next_statement_index)
-                    .and_then(|region| match region.kind {
-                        SourceStatementKind::Loop { loop_index } => Some(loop_index),
-                        SourceStatementKind::Plain | SourceStatementKind::If { .. } => None,
-                    });
-                if current_loop != Some(expected_loop) {
-                    return Err(ClickError::new(format!(
-                        "`{claim_label}` tactic {tactic_index}: `summarize(loop({expected_loop}))` is not at that loop's entry; current statement is statement({})",
-                        replay.frontier.next_statement_index
-                    )));
-                }
-                let mut planning_replay = replay.clone();
-                planning_replay.planned_tactics.clear();
-                let mut planning_state = state.clone();
-                let mut planning_facts = requirement_pure_facts.clone();
-                execute_step_from_execution_point(
-                    &mut planning_replay,
-                    &mut planning_state,
-                    &mut planning_facts,
-                    function_block,
-                    function,
-                    parsed_function.parameters(),
-                    arguments,
-                    &assumptions,
-                    function_environment,
-                    claim_label,
-                    tactic_index,
-                    "summarize",
-                    &[],
-                    None,
-                    StatementPrerequisitePolicy::Planning,
-                    StatementFactTransportPolicy::Automatic,
-                    LoopStepPolicy::ApplyVerifiedRule,
-                )?;
-                let certificate =
-                    ProofReplayPlan::from_planned_tactics(&planning_replay.planned_tactics)
-                        .map_err(|error| {
-                            ClickError::new(format!(
-                                "`{claim_label}` tactic {tactic_index}: `summarize` planned a non-certificate tactic {:?}",
-                                error.smart_tactic()
-                            ))
-                        })?;
-                let result = replay_smart_plan(
-                    ProofReplayContext {
-                        state,
-                        pure_facts: requirement_pure_facts,
-                        replay,
-                        branch_path,
-                    },
-                    function_block,
-                    parsed_function,
-                    claims,
-                    claim_label,
-                    function_environment,
-                    predicate_environment,
-                    click_function_environment,
-                    resource_environment,
-                    theorem_environment,
-                    function,
-                    arguments,
-                    tactic_index,
-                    source_index,
-                    &certificate,
-                )?;
-                state = result.state;
-                requirement_pure_facts = result.pure_facts;
-                replay = result.replay;
-                branch_path = result.branch_path;
                 assumptions = assumptions_from_propositions(&requirement_pure_facts);
             }
             ProofTactic::SmartStep => {
@@ -28539,6 +28419,13 @@ fn auto_loop_verification_tactic_candidates(
     function_block: &FunctionBlock,
     claim: &FunctionClaimRef<'_>,
 ) -> Vec<Vec<ProofTactic>> {
+    if !function_block
+        .structural_clauses()
+        .iter()
+        .any(|clause| matches!(clause.region(), CodeRegion::Loop(_)))
+    {
+        return Vec::new();
+    }
     let mut base = vec![ProofTactic::SmartExecute];
     base.extend(
         loop_effect_summary_regions(function_block)

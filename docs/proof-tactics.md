@@ -136,7 +136,7 @@ that complete proof unit again after rewriting it. It does not emit a partial
 rewrite when a later tactic in the same proof is failing.
 
 `click profile` reports smart and simple work under the same concepts:
-statement transitions are `step`, loop-summary transitions are `summarize`,
+statement transitions are `step`, checked loop transitions are `loop`,
 fact transports are `transport`, frame certificates are `frame`, and atomic
 derivations are `derive`. A slow simple leaf is a Click performance bug. A
 successful slow smart tactic is an expansion candidate. An unsuccessful smart
@@ -156,7 +156,7 @@ focused migration message:
 | Retired | Use |
 | --- | --- |
 | `conjunction()` | `split()` |
-| `apply_loop_summary(...)` | `summarize(...)` |
+| `apply_loop_summary(...)` / `summarize(...)` | frontier-local `loop { ... }` |
 | `execute_rest()` / `symbolic_execute()` | `execute()` |
 | `execute_step()` | `step()` |
 | `execute_then_step()` / `execute_else_step()` | smart `step()` or proof-level `if` |

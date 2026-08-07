@@ -1199,10 +1199,9 @@ impl Parser {
     fn parse_region_proof_code_region(&mut self) -> Result<CodeRegion, ClickError> {
         match self.next() {
             Some(Token::Ident(kind)) if kind == "loop" => {
-                self.expect(Token::LParen)?;
-                let index = self.expect_index("loop index")?;
-                self.expect(Token::RParen)?;
-                Ok(CodeRegion::Loop(index))
+                Err(self.error(
+                    "detached `for loop(N)` proofs were removed; prove the loop at the execution frontier with `loop { ... }` inside the function proof",
+                ))
             }
             Some(Token::Ident(kind)) if kind == "statement" => {
                 self.expect(Token::LParen)?;
@@ -1210,13 +1209,11 @@ impl Parser {
                 self.expect(Token::RParen)?;
                 Ok(CodeRegion::Statement(index))
             }
-            Some(Token::Ident(kind)) => Err(self.error(format!(
-                "expected `loop(N)` or `statement(N)`, got `{kind}`"
-            ))),
-            Some(token) => Err(self.error(format!(
-                "expected `loop(N)` or `statement(N)`, got {token:?}"
-            ))),
-            None => Err(self.error("expected `loop(N)` or `statement(N)`, got end of input")),
+            Some(Token::Ident(kind)) => {
+                Err(self.error(format!("expected `statement(N)`, got `{kind}`")))
+            }
+            Some(token) => Err(self.error(format!("expected `statement(N)`, got {token:?}"))),
+            None => Err(self.error("expected `statement(N)`, got end of input")),
         }
     }
 
@@ -1739,9 +1736,9 @@ impl Parser {
         let name = self.expect_ident("tactic")?;
         if let Some(replacement) = match name.as_str() {
             "conjunction" => Some("`conjunction()` was renamed to `split()`"),
-            "apply_loop_summary" => {
-                Some("`apply_loop_summary(...)` was renamed to `summarize(...)`")
-            }
+            "apply_loop_summary" | "summarize" => Some(
+                "detached loop summaries were removed; use a frontier-local `loop { ... }` tactic",
+            ),
             "execute_rest" | "symbolic_execute" => Some("this tactic was renamed to `execute()`"),
             "execute_step" => Some("`execute_step()` was replaced by smart `step()`"),
             "execute_then_step" | "execute_else_step" => Some(
@@ -1922,23 +1919,6 @@ impl Parser {
             "close_invariants" => {
                 self.expect_empty_tactic_args(&name)?;
                 ProofTactic::CloseInvariants
-            }
-            "summarize" => {
-                self.expect(Token::LParen)?;
-                let region_ref = self.parse_code_region_ref()?;
-                self.expect(Token::RParen)?;
-                if self.peek_ident() != Some("using") {
-                    ProofTactic::SmartSummarize(region_ref)
-                } else {
-                    let premises = self.parse_exact_premises()?;
-                    if self.peek() == Some(&Token::Semicolon) {
-                        self.position += 1;
-                    }
-                    return Ok(ProofTactic::SummarizeUsing {
-                        region: region_ref,
-                        premises,
-                    });
-                }
             }
             "execute" => {
                 self.expect_empty_tactic_args(&name)?;

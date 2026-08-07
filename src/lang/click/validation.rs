@@ -296,13 +296,6 @@ fn expand_declared_resource_tactic(
                 .map(|premise| expand_declared_resource_proposition(premise, resource_definitions))
                 .collect::<Result<Vec<_>, _>>()?,
         )),
-        ProofTactic::SummarizeUsing { region, premises } => Ok(ProofTactic::SummarizeUsing {
-            region,
-            premises: premises
-                .into_iter()
-                .map(|premise| expand_declared_resource_proposition(premise, resource_definitions))
-                .collect::<Result<Vec<_>, _>>()?,
-        }),
         ProofTactic::FrameUsing { region, premises } => Ok(ProofTactic::FrameUsing {
             region,
             premises: premises
@@ -2408,8 +2401,6 @@ fn validate_pure_theorem_tactics(
             ProofTactic::CloseInvariants
             | ProofTactic::Step
             | ProofTactic::StepUsing(_)
-            | ProofTactic::SummarizeUsing { .. }
-            | ProofTactic::SmartSummarize(_)
             | ProofTactic::CertifiedStatementStep { .. }
             | ProofTactic::CertifiedLoopSummaryStep { .. }
             | ProofTactic::CertifiedStatementReplay(_)
@@ -2446,11 +2437,10 @@ fn validate_pure_theorem_tactics(
 pub(super) fn tactic_name(tactic: &ProofTactic) -> &'static str {
     match tactic {
         ProofTactic::Step | ProofTactic::StepUsing(_) => "step",
-        ProofTactic::SummarizeUsing { .. } | ProofTactic::SmartSummarize(_) => "summarize",
         ProofTactic::CertifiedStatementStep { .. } => "step",
-        ProofTactic::CertifiedLoopSummaryStep { .. } => "summarize",
+        ProofTactic::CertifiedLoopSummaryStep { .. } => "loop",
         ProofTactic::CertifiedStatementReplay(_) => "step",
-        ProofTactic::CertifiedLoopSummaryReplay(_) => "summarize",
+        ProofTactic::CertifiedLoopSummaryReplay(_) => "loop",
         ProofTactic::SmartStep => "step",
         ProofTactic::SmartExecute => "execute",
         ProofTactic::SmartExecuteAllPaths => "execute",

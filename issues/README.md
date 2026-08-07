@@ -50,14 +50,12 @@ large example or quarantine a regression without its issue.
 
 ## Tooling blockers
 
-The owned-vector source-fidelity work is paused on one tooling boundary, and
-the structural proof model has one related language cleanup:
+The owned-vector source-fidelity work is paused on one tooling boundary:
 
 1. [Let statement assertions prove how they reach their program point](statement-assertion-explicit-reach-proof.md).
-2. [Make loop proofs local to the execution frontier](frontier-local-loop-proofs.md).
 
 Smart structural proofs retain ordinary statement snapshots through
-certificate reconstruction and fresh replay. The remaining blocker is that a
+certificate reconstruction and fresh replay. The blocker is that a
 statement assertion's separate implicit traversal cannot reuse explicit call
 prerequisites and resource repackaging from the ordinary proof.  Do not add a
 second reach script to that traversal: statement obligations and loop proofs

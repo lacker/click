@@ -1818,13 +1818,21 @@ int32 count_to_one() {
 verifying "loop.c";
 
 int32 count_to_one() {
-    for loop(0) {
+    ensures result == 1;
+} by {
+    step();
+    step();
+    loop {
         invariant i >= 0 and i <= 1;
         initialize by simp;
-        preserve by simp;
+        preserve by {
+            step();
+            close_invariants();
+        }
     }
-    ensures result == 1;
-} by auto;
+    step();
+    simp();
+}
 "#;
         let sources = [("loop.c", c_source)];
         let inventory = c0_smart_tactic_source_sites(click_source, &sources).unwrap();
@@ -1836,10 +1844,7 @@ int32 count_to_one() {
             "{inventory:?}"
         );
         assert!(inventory.iter().any(|site| {
-            site.claim_label == "count_to_one.loop(0).initialize" && site.tactic_name == "simp"
-        }));
-        assert!(inventory.iter().any(|site| {
-            site.claim_label == "count_to_one.loop(0).preserve" && site.tactic_name == "simp"
+            site.claim_label == "count_to_one.contract" && site.tactic_name == "simp"
         }));
     }
 

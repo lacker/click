@@ -276,7 +276,7 @@ impl WorkMetrics {
 }
 
 fn is_c_transition(tactic_name: &str) -> bool {
-    matches!(tactic_name, "step" | "summarize")
+    matches!(tactic_name, "step" | "loop")
 }
 
 fn is_retired_internal_tactic_name(name: &str) -> bool {

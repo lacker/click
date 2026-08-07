@@ -117,15 +117,6 @@ fn write_tactic(output: &mut String, tactic: &ProofTactic, indent: usize) {
             write_premise_list(output, premises, indent + 1);
             line(output, &prefix, "}");
         }
-        ProofTactic::SummarizeUsing { region, premises } => {
-            line(
-                output,
-                &prefix,
-                &format!("summarize({}) using {{", describe_code_region_ref(region)),
-            );
-            write_premise_list(output, premises, indent + 1);
-            line(output, &prefix, "}");
-        }
         ProofTactic::UnfoldPredicate(name) => {
             line(output, &prefix, &format!("unfold({name});"));
         }
@@ -382,7 +373,6 @@ fn write_tactic(output: &mut String, tactic: &ProofTactic, indent: usize) {
         | ProofTactic::CertifiedLoopSummaryStep { .. }
         | ProofTactic::CertifiedStatementReplay(_)
         | ProofTactic::CertifiedLoopSummaryReplay(_)
-        | ProofTactic::SmartSummarize(_)
         | ProofTactic::SmartExecute
         | ProofTactic::SmartExecuteAllPaths
         | ProofTactic::ExecuteUntil(_)

@@ -491,49 +491,6 @@ fn old_index(base: &str, index: u32) -> ContractExpression {
     ContractExpression::Old(Box::new(current_index(base, index)))
 }
 
-#[test]
-fn executes_verified_loop_inside_selected_branch() {
-    let c_source = r#"
-        int32 branch_count_to_one(int32 flag, int32 i) {
-            if (flag) {
-                while (i < 1) {
-                    i = i + 1;
-                }
-            } else {
-                i = 1;
-            }
-            return i;
-        }
-    "#;
-    let click_source = r#"
-        verifying "branch_count_to_one.c";
-
-        int32 branch_count_to_one(int32 flag, int32 i) {
-            requires i == 1;
-            requires flag != 0;
-
-            for statement(0) {
-                assert flag != 0 by auto;
-            }
-
-            for loop(0) as count {
-                invariant i == 1;
-            }
-
-            ensures result == 1 by {
-                step();
-                step();
-                have at(count.exit, i) == 1 by simp;
-                step();
-                simp();
-            }
-        }
-    "#;
-
-    verify_c0_sources(click_source, &[("branch_count_to_one.c", c_source)])
-        .expect("branch-local loop execution should verify");
-}
-
 fn ensure_comparison(
     left: ContractExpression,
     operator: ComparisonOperator,
@@ -1880,33 +1837,6 @@ fn grouped_auto_uses_one_deterministic_execution_proof() {
 }
 
 #[test]
-fn omitted_region_proofs_use_default_prover() {
-    let source = r#"
-            verifying "count.c";
-
-            int32 count() {
-                for loop(0) {
-                    invariant i >= 0;
-                    mutable p[0..n];
-                    step {
-                        immutable;
-                    }
-                }
-
-                ensures result == 3;
-            }
-        "#;
-    let file = parse(source).expect("region proof clauses may be omitted");
-    let function = &file.function_blocks()[0];
-    let items = function.structural_clauses()[0].items();
-
-    assert!(items[0].proof().is_auto_tactic());
-    assert!(items[1].proof().is_auto_tactic());
-    assert!(items[2].proof().is_auto_tactic());
-    assert!(function.ensures()[0].proof().is_auto_tactic());
-}
-
-#[test]
 fn parses_proof_tactic_script() {
     let source = FILL3_CLICK.replace("by auto;", "by { execute(); frame(loop(0)); simp(); }");
     let file = parse(&source).expect("explicit proof script should parse");
@@ -2138,7 +2068,8 @@ fn parses_execute_and_simp_proof_tactics() {
 fn rejects_retired_tactic_spellings_with_migrations() {
     for (spelling, replacement) in [
         ("conjunction", "split"),
-        ("apply_loop_summary", "summarize"),
+        ("apply_loop_summary", "frontier-local"),
+        ("summarize", "frontier-local"),
         ("execute_rest", "execute"),
         ("symbolic_execute", "execute"),
         ("execute_step", "step"),
@@ -2159,6 +2090,25 @@ fn rejects_retired_tactic_spellings_with_migrations() {
             error.message()
         );
     }
+}
+
+#[test]
+fn rejects_detached_loop_proofs_with_frontier_migration() {
+    let source = r#"
+        int32 count() {
+            for loop(0) {
+                invariant i >= 0;
+            }
+            ensures result == 0 by auto;
+        }
+    "#;
+
+    let error = parse(source).expect_err("detached loop proof should be rejected");
+    assert!(
+        error.message().contains("execution frontier") && error.message().contains("loop { ... }"),
+        "{}",
+        error.message()
+    );
 }
 
 #[test]
@@ -3336,18 +3286,6 @@ fn parses_and_classifies_simple_and_smart_tactics() {
         TacticClass::Simple(SimpleTactic::StatementTransition)
     ));
     assert!(matches!(
-        ProofTactic::SummarizeUsing {
-            region: CodeRegionRef::Loop(0),
-            premises: Vec::new(),
-        }
-        .class(),
-        TacticClass::Simple(SimpleTactic::LoopSummaryTransition)
-    ));
-    assert!(matches!(
-        ProofTactic::SmartSummarize(CodeRegionRef::Loop(0)).class(),
-        TacticClass::Smart(SmartTacticKind::LoopSummary)
-    ));
-    assert!(matches!(
         ProofTactic::CertifiedStatementStep {
             prerequisite_derivations: Vec::new(),
             exact_premises: Vec::new(),
@@ -3928,86 +3866,6 @@ fn parses_old_memory_postcondition() {
             old_index("p", 0),
         )
     );
-}
-
-#[test]
-fn parses_loop_invariants_and_statement_asserts() {
-    let source = r#"
-            verifying "count.c";
-
-            int32 count() {
-                for statement(2) as initialized {
-                    assert i == 0 by auto;
-                }
-
-                for loop(0) as count_loop {
-                    invariant i >= 0;
-                    invariant i <= 3;
-                    mutable p[0..n] by auto;
-                    step {
-                        immutable by auto;
-                    }
-                    initialize by simp;
-                    preserve by {
-                        step();
-                        step();
-                        simp();
-                    }
-                }
-
-                ensures result == 3 by auto;
-            }
-        "#;
-    let file = parse(source).expect("sidecar should parse");
-    let function = &file.function_blocks()[0];
-
-    assert_eq!(function.structural_clauses().len(), 2);
-    assert_eq!(
-        function.structural_clauses()[0].region(),
-        &CodeRegion::Statement(2)
-    );
-    assert_eq!(
-        function.structural_clauses()[0].label(),
-        Some("initialized")
-    );
-    assert_eq!(
-        function.structural_clauses()[0].items()[0].kind(),
-        StructuralItemKind::Assert
-    );
-    assert_eq!(
-        function.structural_clauses()[1].region(),
-        &CodeRegion::Loop(0)
-    );
-    assert_eq!(function.structural_clauses()[1].label(), Some("count_loop"));
-    assert_eq!(function.structural_clauses()[1].items().len(), 4);
-    assert_eq!(
-        function.structural_clauses()[1].items()[0].kind(),
-        StructuralItemKind::Invariant
-    );
-    assert_eq!(
-        function.structural_clauses()[1].items()[2].kind(),
-        StructuralItemKind::Effect
-    );
-    assert!(matches!(
-        function.structural_clauses()[1].items()[2].effect(),
-        Some(Effect::Mutable(_))
-    ));
-    assert!(matches!(
-        function.structural_clauses()[1].items()[3].effect(),
-        Some(Effect::Immutable)
-    ));
-    assert_eq!(
-        function.structural_clauses()[1].items()[3].kind(),
-        StructuralItemKind::StepEffect
-    );
-    assert!(matches!(
-        function.structural_clauses()[1].initialize_proof(),
-        Some(Proof::Tactic(SmartTactic::Simp))
-    ));
-    assert!(matches!(
-        function.structural_clauses()[1].preserve_proof(),
-        Some(Proof::Script(tactics)) if tactics.len() == 3
-    ));
 }
 
 #[test]
@@ -6485,8 +6343,8 @@ fn verifies_omitted_proof_with_default_prover() {
         .expect("omitted proof clauses should use the default prover");
 
     assert_eq!(verified.len(), 2);
-    assert_eq!(verified[0].proof_kind(), ProofKind::LoopVerification);
-    assert_eq!(verified[1].proof_kind(), ProofKind::LoopVerification);
+    assert_eq!(verified[0].proof_kind(), ProofKind::TacticScript);
+    assert_eq!(verified[1].proof_kind(), ProofKind::TacticScript);
 }
 
 #[test]
@@ -6550,63 +6408,6 @@ fn bare_frame_tactic_rejects_ensure_claim() {
         "{}",
         error.message()
     );
-}
-
-#[test]
-fn auto_certificate_replays_for_bounded_execution() {
-    let c_source = r#"
-            int32 fill3_array_loop(int32 p[3]) {
-                int32 i;
-                i = 0;
-                while (i < 3) {
-                    p[i] = i;
-                    i = i + 1;
-                }
-                return p[2];
-            }
-        "#;
-    let auto_click_source = r#"
-            verifying "fill3_array_loop.c";
-
-            int32 fill3_array_loop(int32 p[3]) {
-                requires loadable(p[0..3]);
-                consumes p[0..3];
-                for loop(0) {
-                    invariant i >= 0;
-                    invariant i <= 3;
-                }
-                ensures writes_third: p[2] == 2 by auto;
-            }
-        "#;
-
-    let auto_verified = verify_c0_sources(auto_click_source, &[("fill3_array_loop.c", c_source)])
-        .expect("bounded auto proof should verify");
-    let expected_tactics = [ProofTactic::SmartExecuteAllPaths, ProofTactic::Simp];
-
-    assert_eq!(auto_verified.len(), 1);
-    assert_eq!(auto_verified[0].proof_kind(), ProofKind::TacticScript);
-    assert_eq!(
-        auto_verified[0].proof_tactics(),
-        Some(expected_tactics.as_slice())
-    );
-
-    let certificate = auto_verified[0]
-        .expanded_proof_source()
-        .expect("bounded auto proof should have a surface certificate");
-    let explicit_click_source = auto_click_source.replacen("by auto;", &certificate, 1);
-
-    let explicit_verified =
-        verify_c0_sources(&explicit_click_source, &[("fill3_array_loop.c", c_source)])
-            .expect("bounded auto certificate should replay as explicit tactics");
-
-    assert_eq!(explicit_verified.len(), 1);
-    assert_eq!(explicit_verified[0].proof_kind(), ProofKind::TacticScript);
-    TacticCertificate::from_proof_tactics(
-        explicit_verified[0]
-            .proof_tactics()
-            .expect("expanded proof should retain simple tactics"),
-    )
-    .expect("expanded auto proof should contain only certificate tactics");
 }
 
 #[test]
@@ -7011,7 +6812,7 @@ fn verifies_shifted_loadable_and_mutable_segment() {
 
     assert_eq!(verified.len(), 2);
     assert_eq!(verified[0].proof_kind(), ProofKind::TacticScript);
-    assert_eq!(verified[1].proof_kind(), ProofKind::LoopVerification);
+    assert_eq!(verified[1].proof_kind(), ProofKind::TacticScript);
 }
 
 #[test]
@@ -7176,42 +6977,6 @@ fn old_memory_postcondition_fails_for_overwritten_cell() {
 }
 
 #[test]
-fn verifies_loop_invariants_and_statement_assert() {
-    let c_source = r#"
-            int32 count_to_three() {
-                int32 i;
-                i = 0;
-                while (i < 3) {
-                    i = i + 1;
-                }
-                return i;
-            }
-        "#;
-    let click_source = r#"
-            verifying "count_to_three.c";
-
-            int32 count_to_three() {
-                for statement(2) {
-                    assert i == 0 by auto;
-                }
-
-                for loop(0) {
-                    invariant i >= 0;
-                    invariant i <= 3;
-                }
-
-                ensures result == 3 by auto;
-            }
-        "#;
-
-    let verified = verify_c0_sources(click_source, &[("count_to_three.c", c_source)])
-        .expect("loop invariants and statement assert should verify");
-
-    assert_eq!(verified.len(), 1);
-    assert_eq!(verified[0].proof_kind(), ProofKind::LoopVerification);
-}
-
-#[test]
 fn frontier_local_loop_verifies_and_advances_to_exit() {
     let c_source = r#"
             int32 count_to_three() {
@@ -7289,6 +7054,87 @@ fn frontier_local_loop_rejects_a_non_loop_frontier() {
     );
     assert!(
         error.message().contains("statement(0)"),
+        "{}",
+        error.message()
+    );
+}
+
+#[test]
+fn frontier_loop_initialization_rejects_execution_tactics() {
+    let c_source = r#"
+            int32 count_once() {
+                int32 i;
+                i = 0;
+                while (i < 1) {
+                    i = i + 1;
+                }
+                return i;
+            }
+        "#;
+    let click_source = r#"
+            verifying "count_once.c";
+
+            int32 count_once() {
+                ensures result == 1;
+            } by {
+                step();
+                step();
+                loop {
+                    invariant i >= 0;
+                    initialize by {
+                        step();
+                    }
+                }
+            }
+        "#;
+
+    let error = verify_c0_sources(click_source, &[("count_once.c", c_source)])
+        .expect_err("initialization should not execute C statements");
+    assert!(
+        error.message().contains("`initialize`")
+            && error.message().contains("pure proof")
+            && error.message().contains("step"),
+        "{}",
+        error.message()
+    );
+}
+
+#[test]
+fn frontier_loop_preservation_requires_one_complete_iteration() {
+    let c_source = r#"
+            int32 count_once() {
+                int32 i;
+                i = 0;
+                while (i < 1) {
+                    i = i + 1;
+                    i = i;
+                }
+                return i;
+            }
+        "#;
+    let click_source = r#"
+            verifying "count_once.c";
+
+            int32 count_once() {
+                ensures result == 1;
+            } by {
+                step();
+                step();
+                loop {
+                    invariant i >= 0;
+                    preserve by {
+                        step();
+                    }
+                }
+            }
+        "#;
+
+    let error = verify_c0_sources(click_source, &[("count_once.c", c_source)])
+        .expect_err("preservation should traverse the complete loop body");
+    assert!(
+        error
+            .message()
+            .contains("must execute exactly one complete loop-body iteration"),
         "{}",
         error.message()
     );
@@ -8285,121 +8131,6 @@ fn frontier_effect_expansion_ignores_generated_preservation_suffix() {
 }
 
 #[test]
-// De-quarantined by the named-memory-states arc, stage 2a: the blocker was not
-// load-equality strength but `old(...)` resolution. Certificate replay used to
-// resolve `old` positionally, to the loop-top havoc snapshot, while the kernel
-// certified the invariant with `old` at the function-entry snapshot, so no
-// placement of the operands could reproduce the certified fact. `old` now names
-// the function-entry state. See docs/advanced/memory-dag.md.
-fn verifies_old_memory_loop_invariant() {
-    let c_source = r#"
-            int32 fill_tail(int32 p[], int32 n) {
-                int32 i;
-                i = 1;
-                while (i < n) {
-                    p[i] = i;
-                    i = i + 1;
-                }
-                return i;
-            }
-        "#;
-    let click_source = r#"
-            verifying "fill_tail.c";
-
-            int32 fill_tail(int32 p[], int32 n) {
-                requires n >= 1 and n <= 2147483647;
-                requires loadable(p[0..n]);
-                consumes p[0..n];
-                for loop(0) {
-                    invariant i >= 1 and i <= n;
-                    invariant p[0] == old(p[0]);
-                }
-                ensures frame_and_result: p[0] == old(p[0]) and result == n by auto;
-            }
-        "#;
-
-    let verified = verify_c0_sources(click_source, &[("fill_tail.c", c_source)])
-        .expect("old memory loop invariant should verify");
-
-    assert_eq!(verified.len(), 1);
-}
-
-#[test]
-fn verifies_old_memory_loop_invariant_with_segment_bounds() {
-    let c_source = r#"
-            int32 fill_tail(int32 p[], int32 n) {
-                int32 i;
-                i = 1;
-                while (i < n) {
-                    p[i] = i;
-                    i = i + 1;
-                }
-                return i;
-            }
-        "#;
-    let click_source = r#"
-            verifying "fill_tail.c";
-
-            int32 fill_tail(int32 p[], int32 n) {
-                requires n >= 1 and n <= 2147483647;
-                requires loadable(p[0..n]);
-                consumes p[0..n];
-                for loop(0) {
-                    invariant i >= 1 and i <= n;
-                    invariant forall (k: int32) {
-                        0 <= k and k < 1 implies p[k] == old(p[k])
-                    };
-                }
-                ensures frame_and_result: forall (k: int32) {
-                    0 <= k and k < 1 implies p[k] == old(p[k])
-                } and result == n by auto;
-            }
-        "#;
-
-    let verified = verify_c0_sources(click_source, &[("fill_tail.c", c_source)])
-        .expect("old memory segment loop invariant should verify");
-
-    assert_eq!(verified.len(), 1);
-    assert_eq!(verified[0].proof_kind(), ProofKind::LoopVerification);
-}
-
-#[test]
-fn verifies_symbolic_segment_loadable() {
-    let c_source = r#"
-            int32 fill_n(int32 p[], int32 n) {
-                int32 i;
-                i = 0;
-                while (i < n) {
-                    p[i] = i;
-                    i = i + 1;
-                }
-                return i;
-            }
-        "#;
-    let click_source = r#"
-            verifying "fill_n.c";
-
-            int32 fill_n(int32 p[], int32 n) {
-                requires n >= 0;
-                requires n <= 2147483647;
-                requires loadable(p[0..n]);
-                consumes p[0..n];
-                for loop(0) {
-                    invariant i >= 0;
-                    invariant i <= n;
-                }
-                ensures returns_n: result == n by auto;
-            }
-        "#;
-
-    let verified = verify_c0_sources(click_source, &[("fill_n.c", c_source)])
-        .expect("segment loadable should verify symbolic pointer loop");
-
-    assert_eq!(verified.len(), 1);
-    assert_eq!(verified[0].proof_kind(), ProofKind::LoopVerification);
-}
-
-#[test]
 fn verifies_loadable_segment_proposition_for_indexed_read() {
     let c_source = r#"
             int32 read_index(int32 p[], int32 index, int32 n) {
@@ -8423,1061 +8154,6 @@ fn verifies_loadable_segment_proposition_for_indexed_read() {
         .expect("loadable segment should prove indexed read loadability");
 
     assert_eq!(verified.len(), 1);
-}
-
-#[test]
-fn verifies_symbolic_loop_mutable_segment() {
-    let c_source = r#"
-            int32 fill_n(int32 p[], int32 n) {
-                int32 i;
-                i = 0;
-                while (i < n) {
-                    p[i] = i;
-                    i = i + 1;
-                }
-                return i;
-            }
-        "#;
-    let click_source = r#"
-            verifying "fill_n.c";
-
-            int32 fill_n(int32 p[], int32 n) {
-                requires n >= 0;
-                requires n <= 2147483647;
-                requires loadable(p[0..n]);
-                consumes p[0..n];
-                for loop(0) {
-                    invariant i >= 0;
-                    invariant i <= n;
-                }
-                mutable p[0..n] by auto;
-                ensures returns_n: result == n by auto;
-            }
-        "#;
-
-    let verified = verify_c0_sources(click_source, &[("fill_n.c", c_source)])
-        .expect("symbolic pointer loop writes should stay inside segment");
-
-    assert_eq!(verified.len(), 2);
-    assert_eq!(verified[0].proof_kind(), ProofKind::LoopVerification);
-}
-
-#[test]
-fn verifies_loop_level_mutable_segment() {
-    let c_source = r#"
-            int32 fill_n(int32 p[], int32 n) {
-                int32 i;
-                i = 0;
-                while (i < n) {
-                    p[i] = i;
-                    i = i + 1;
-                }
-                return i;
-            }
-        "#;
-    let click_source = r#"
-            verifying "fill_n.c";
-
-            int32 fill_n(int32 p[], int32 n) {
-                requires n >= 0;
-                requires n <= 2147483647;
-                requires loadable(p[0..n]);
-                consumes p[0..n];
-                for loop(0) {
-                    invariant i >= 0;
-                    invariant i <= n;
-                    mutable p[0..n] by auto;
-                }
-                ensures returns_n: result == n by auto;
-            }
-        "#;
-
-    let verified = verify_c0_sources(click_source, &[("fill_n.c", c_source)])
-        .expect("loop-level mutable segment should verify each iteration");
-
-    assert_eq!(verified.len(), 1);
-    assert_eq!(verified[0].proof_kind(), ProofKind::LoopVerification);
-}
-
-#[test]
-fn verifies_loop_level_iteration_relative_mutable_segment() {
-    let c_source = r#"
-            int32 fill_n(int32 p[], int32 n) {
-                int32 i;
-                i = 0;
-                while (i < n) {
-                    p[i] = i;
-                    i = i + 1;
-                }
-                return i;
-            }
-        "#;
-    let click_source = r#"
-            verifying "fill_n.c";
-
-            int32 fill_n(int32 p[], int32 n) {
-                requires n >= 0;
-                requires n <= 2147483647;
-                requires loadable(p[0..n]);
-                consumes p[0..n];
-                for loop(0) {
-                    invariant i >= 0;
-                    invariant i <= n;
-                    step {
-                        mutable p[i..i + 1] by frame;
-                    }
-                }
-                ensures returns_n: result == n by auto;
-            }
-        "#;
-
-    let verified = verify_c0_sources(click_source, &[("fill_n.c", c_source)])
-        .expect("loop-level mutable segment should support one-cell iteration ranges");
-
-    assert_eq!(verified.len(), 1);
-    assert_eq!(verified[0].proof_kind(), ProofKind::LoopVerification);
-}
-
-#[test]
-fn loop_whole_mutable_rejects_loop_modified_local_in_segment() {
-    let c_source = r#"
-            int32 fill_n(int32 p[], int32 n) {
-                int32 i;
-                i = 0;
-                while (i < n) {
-                    p[i] = i;
-                    i = i + 1;
-                }
-                return i;
-            }
-        "#;
-    let click_source = r#"
-            verifying "fill_n.c";
-
-            int32 fill_n(int32 p[], int32 n) {
-                requires n >= 0;
-                requires n <= 2147483647;
-                requires loadable(p[0..n]);
-                consumes p[0..n];
-                for loop(0) {
-                    invariant i >= 0;
-                    invariant i <= n;
-                    mutable p[i..i + 1] by frame;
-                }
-                ensures returns_n: result == n by auto;
-            }
-        "#;
-
-    let error = verify_c0_sources(click_source, &[("fill_n.c", c_source)])
-        .expect_err("whole-loop mutable footprint should reject loop-modified locals");
-
-    assert!(
-        error.message().contains("whole-loop `mutable` segment"),
-        "{}",
-        error.message()
-    );
-    assert!(error.message().contains("`i`"), "{}", error.message());
-    assert!(error.message().contains("step"), "{}", error.message());
-}
-
-#[test]
-fn verifies_loop_level_growing_prefix_mutable_segment() {
-    let c_source = r#"
-            int32 fill_n(int32 p[], int32 n) {
-                int32 i;
-                i = 0;
-                while (i < n) {
-                    p[i] = i;
-                    i = i + 1;
-                }
-                return i;
-            }
-        "#;
-    let click_source = r#"
-            verifying "fill_n.c";
-
-            int32 fill_n(int32 p[], int32 n) {
-                requires n >= 0;
-                requires n <= 2147483647;
-                requires loadable(p[0..n]);
-                consumes p[0..n];
-                for loop(0) {
-                    invariant i >= 0;
-                    invariant i <= n;
-                    step {
-                        mutable p[0..i + 1] by frame;
-                    }
-                }
-                ensures returns_n: result == n by auto;
-            }
-        "#;
-
-    let verified = verify_c0_sources(click_source, &[("fill_n.c", c_source)])
-        .expect("loop-level frame should support growing prefix segments");
-
-    assert_eq!(verified.len(), 1);
-    assert_eq!(verified[0].proof_kind(), ProofKind::LoopVerification);
-}
-
-#[test]
-fn verifies_loop_level_shifted_suffix_mutable_segment() {
-    let c_source = r#"
-            int32 fill_tail(int32 p[], int32 n) {
-                int32 i;
-                i = 1;
-                while (i < n) {
-                    p[i] = i;
-                    i = i + 1;
-                }
-                return i;
-            }
-        "#;
-    let click_source = r#"
-            verifying "fill_tail.c";
-
-            int32 fill_tail(int32 p[], int32 n) {
-                requires n >= 1;
-                requires n <= 2147483647;
-                requires loadable(p[0..n]);
-                consumes p[0..n];
-                for loop(0) {
-                    invariant i >= 1;
-                    invariant i <= n;
-                    mutable p[1..n] by frame;
-                }
-                ensures returns_n: result == n by auto;
-            }
-        "#;
-
-    let verified = verify_c0_sources(click_source, &[("fill_tail.c", c_source)])
-        .expect("loop-level frame should support shifted suffix segments");
-
-    assert_eq!(verified.len(), 1);
-    assert_eq!(verified[0].proof_kind(), ProofKind::LoopVerification);
-}
-
-#[test]
-fn verifies_loop_level_multi_segment_mutable_footprint() {
-    let c_source = r#"
-            int32 fill_two(int32 p[], int32 q[], int32 n) {
-                int32 i;
-                i = 0;
-                while (i < n) {
-                    p[i] = i;
-                    q[i] = i;
-                    i = i + 1;
-                }
-                return i;
-            }
-        "#;
-    let click_source = r#"
-            verifying "fill_two.c";
-
-            int32 fill_two(int32 p[], int32 q[], int32 n) {
-                requires n >= 0;
-                requires n <= 2147483647;
-                requires loadable(p[0..n]);
-                requires loadable(q[0..n]);
-                consumes p[0..n];
-                consumes q[0..n];
-                for loop(0) {
-                    invariant i >= 0;
-                    invariant i <= n;
-                    step {
-                        mutable p[i..i + 1], q[i..i + 1] by frame;
-                    }
-                }
-                ensures returns_n: result == n by auto;
-            }
-        "#;
-
-    let verified = verify_c0_sources(click_source, &[("fill_two.c", c_source)])
-        .expect("loop-level frame should support multiple mutable segments");
-
-    assert_eq!(verified.len(), 1);
-    assert_eq!(verified[0].proof_kind(), ProofKind::LoopVerification);
-}
-
-#[test]
-fn loop_level_mutable_segment_rejects_write_outside_segment() {
-    let c_source = r#"
-            int32 fill_n(int32 p[], int32 n) {
-                int32 i;
-                i = 0;
-                while (i < n) {
-                    p[i] = i;
-                    i = i + 1;
-                }
-                return i;
-            }
-        "#;
-    let click_source = r#"
-            verifying "fill_n.c";
-
-            int32 fill_n(int32 p[], int32 n) {
-                requires n >= 0;
-                requires n <= 2147483647;
-                requires loadable(p[0..n]);
-                consumes p[0..n];
-                for loop(0) {
-                    invariant i >= 0;
-                    invariant i <= n;
-                    mutable p[0..0] by auto;
-                }
-                ensures returns_n: result == n by auto;
-            }
-        "#;
-
-    let error = verify_c0_sources(click_source, &[("fill_n.c", c_source)])
-        .expect_err("write outside loop mutable segment should fail");
-
-    assert!(
-        error.message().contains("loop 0 mutable 0"),
-        "{}",
-        error.message()
-    );
-    assert!(
-        error.message().contains("outside the mutable footprint"),
-        "{}",
-        error.message()
-    );
-    assert!(
-        error.message().contains("evaluated segments"),
-        "{}",
-        error.message()
-    );
-    assert!(
-        error.message().contains("external writes"),
-        "{}",
-        error.message()
-    );
-    assert!(
-        error.message().contains("declared effect"),
-        "{}",
-        error.message()
-    );
-}
-
-#[test]
-fn loop_level_immutable_rejects_external_memory_write() {
-    let c_source = r#"
-            int32 fill_n(int32 p[], int32 n) {
-                int32 i;
-                i = 0;
-                while (i < n) {
-                    p[i] = i;
-                    i = i + 1;
-                }
-                return i;
-            }
-        "#;
-    let click_source = r#"
-            verifying "fill_n.c";
-
-            int32 fill_n(int32 p[], int32 n) {
-                requires n >= 0;
-                requires n <= 2147483647;
-                requires loadable(p[0..n]);
-                consumes p[0..n];
-                for loop(0) {
-                    invariant i >= 0;
-                    invariant i <= n;
-                    immutable by auto;
-                }
-                ensures returns_n: result == n by auto;
-            }
-        "#;
-
-    let error = verify_c0_sources(click_source, &[("fill_n.c", c_source)])
-        .expect_err("loop-level immutable should reject external writes");
-
-    assert!(
-        error.message().contains("loop 0 immutable 0"),
-        "{}",
-        error.message()
-    );
-    assert!(
-        error.message().contains("outside the mutable footprint"),
-        "{}",
-        error.message()
-    );
-}
-
-#[test]
-fn loop_level_immutable_allows_stack_local_update() {
-    let c_source = r#"
-            int32 count_to_three() {
-                int32 i;
-                i = 0;
-                while (i < 3) {
-                    i = i + 1;
-                }
-                return i;
-            }
-        "#;
-    let click_source = r#"
-            verifying "count_to_three.c";
-
-            int32 count_to_three() {
-                for loop(0) {
-                    invariant i >= 0;
-                    invariant i <= 3;
-                    immutable by frame;
-                }
-                ensures returns_three: result == 3 by auto;
-            }
-        "#;
-
-    let verified = verify_c0_sources(click_source, &[("count_to_three.c", c_source)])
-        .expect("loop-level immutable should allow stack-local updates");
-
-    assert_eq!(verified.len(), 1);
-    assert_eq!(verified[0].proof_kind(), ProofKind::LoopVerification);
-}
-
-#[test]
-fn function_immutable_allows_nonwriting_loop_with_mutable_bound() {
-    let c_source = r#"
-            int32 count_pointer_bound(int32 p[], int32 n) {
-                int32 i;
-                i = 0;
-                while (i < n) {
-                    i = i + 1;
-                }
-                return i;
-            }
-        "#;
-    let click_source = r#"
-            verifying "count_pointer_bound.c";
-
-            int32 count_pointer_bound(int32 p[], int32 n) {
-                requires n >= 0;
-                requires n <= 2147483647;
-                requires loadable(p[0..n]);
-                for loop(0) {
-                    invariant i >= 0;
-                    invariant i <= n;
-                    mutable p[0..n] by frame;
-                }
-                immutable by { execute(); frame(); }
-                ensures returns_n: result == n by auto;
-            }
-        "#;
-
-    let verified = verify_c0_sources(click_source, &[("count_pointer_bound.c", c_source)])
-        .expect("a mutable upper bound does not imply the loop actually writes memory");
-
-    assert_eq!(verified.len(), 2);
-    assert_eq!(verified[0].proof_kind(), ProofKind::TacticScript);
-    assert_eq!(verified[1].proof_kind(), ProofKind::LoopVerification);
-}
-
-#[test]
-fn function_mutable_uses_loop_effect_summary() {
-    let c_source = r#"
-            int32 fill_n(int32 p[], int32 n) {
-                int32 i;
-                i = 0;
-                while (i < n) {
-                    p[i] = i;
-                    i = i + 1;
-                }
-                return i;
-            }
-        "#;
-    let click_source = r#"
-            verifying "fill_n.c";
-
-            int32 fill_n(int32 p[], int32 n) {
-                requires n >= 0;
-                requires n <= 2147483647;
-                requires loadable(p[0..n]);
-                consumes p[0..n];
-                for loop(0) {
-                    invariant i >= 0;
-                    invariant i <= n;
-                    mutable p[0..n] by frame;
-                }
-                mutable p[0..n] by { execute(); frame(); }
-                ensures returns_n: result == n by auto;
-            }
-        "#;
-
-    let verified = verify_c0_sources(click_source, &[("fill_n.c", c_source)])
-        .expect("function-level mutable should consume loop effect summary");
-
-    assert_eq!(verified.len(), 2);
-    assert_eq!(verified[0].proof_kind(), ProofKind::TacticScript);
-    assert_eq!(verified[1].proof_kind(), ProofKind::LoopVerification);
-}
-
-#[test]
-fn function_mutable_rejects_loop_effect_outside_function_bound() {
-    let c_source = r#"
-            int32 fill_n(int32 p[], int32 n) {
-                int32 i;
-                i = 0;
-                while (i < n) {
-                    p[i] = i;
-                    i = i + 1;
-                }
-                return i;
-            }
-        "#;
-    let click_source = r#"
-            verifying "fill_n.c";
-
-            int32 fill_n(int32 p[], int32 n) {
-                requires n >= 0;
-                requires n <= 2147483647;
-                requires loadable(p[0..n]);
-                consumes p[0..n];
-                for loop(0) {
-                    invariant i >= 0;
-                    invariant i <= n;
-                    mutable p[0..n] by frame;
-                }
-                mutable p[0..0] by { execute(); frame(); }
-                ensures returns_n: result == n by auto;
-            }
-        "#;
-
-    let error = verify_c0_sources(click_source, &[("fill_n.c", c_source)])
-        .expect_err("function-level mutable should reject a wider loop effect summary");
-
-    assert!(
-        error.message().contains("effect summary range"),
-        "{}",
-        error.message()
-    );
-    assert!(
-        error.message().contains("outside the mutable footprint"),
-        "{}",
-        error.message()
-    );
-}
-
-#[test]
-fn function_mutable_accepts_shifted_loop_effect_subset() {
-    let c_source = r#"
-            int32 fill_tail(int32 p[], int32 n) {
-                int32 i;
-                i = 1;
-                while (i < n) {
-                    p[i] = i;
-                    i = i + 1;
-                }
-                return i;
-            }
-        "#;
-    let click_source = r#"
-            verifying "fill_tail.c";
-
-            int32 fill_tail(int32 p[], int32 n) {
-                requires n >= 1;
-                requires n <= 2147483647;
-                requires loadable(p[0..n]);
-                consumes p[0..n];
-                for loop(0) {
-                    invariant i >= 1;
-                    invariant i <= n;
-                    mutable (p + 1)[0..n - 1] by frame;
-                }
-                mutable p[0..n] by { execute(); frame(); }
-                ensures returns_n: result == n by auto;
-            }
-        "#;
-
-    let verified = verify_c0_sources(click_source, &[("fill_tail.c", c_source)])
-        .expect("function-level mutable should accept a shifted loop effect subset");
-
-    assert_eq!(verified.len(), 2);
-    assert_eq!(verified[0].proof_kind(), ProofKind::TacticScript);
-    assert_eq!(verified[1].proof_kind(), ProofKind::LoopVerification);
-}
-
-#[test]
-fn function_immutable_rejects_writing_loop_effect_summary() {
-    let c_source = r#"
-            int32 fill_n(int32 p[], int32 n) {
-                int32 i;
-                i = 0;
-                while (i < n) {
-                    p[i] = i;
-                    i = i + 1;
-                }
-                return i;
-            }
-        "#;
-    let click_source = r#"
-            verifying "fill_n.c";
-
-            int32 fill_n(int32 p[], int32 n) {
-                requires n >= 0;
-                requires n <= 2147483647;
-                requires loadable(p[0..n]);
-                consumes p[0..n];
-                for loop(0) {
-                    invariant i >= 0;
-                    invariant i <= n;
-                    mutable p[0..n] by frame;
-                }
-                immutable by { execute(); frame(); }
-                ensures returns_n: result == n by auto;
-            }
-        "#;
-
-    let error = verify_c0_sources(click_source, &[("fill_n.c", c_source)])
-        .expect_err("function-level immutable should reject a writing loop effect summary");
-
-    assert!(
-        error.message().contains("effect summary range"),
-        "{}",
-        error.message()
-    );
-}
-
-#[test]
-fn structural_invariant_rejects_frame_tactic() {
-    let c_source = r#"
-            int32 count_to_three() {
-                int32 i;
-                i = 0;
-                while (i < 3) {
-                    i = i + 1;
-                }
-                return i;
-            }
-        "#;
-    let click_source = r#"
-            verifying "count_to_three.c";
-
-            int32 count_to_three() {
-                for loop(0) {
-                    invariant i >= 0;
-                    preserve by frame;
-                }
-                ensures returns_three: result == 3 by auto;
-            }
-        "#;
-
-    let error = verify_c0_sources(click_source, &[("count_to_three.c", c_source)])
-        .expect_err("frame should not prove invariants");
-
-    assert!(
-        error.message().contains("`preserve` must use"),
-        "{}",
-        error.message()
-    );
-}
-
-#[test]
-fn loop_initialize_rejects_execution_tactics() {
-    let c_source = r#"
-            int32 count_once() {
-                int32 i;
-                i = 0;
-                while (i < 1) {
-                    i = i + 1;
-                }
-                return i;
-            }
-        "#;
-    let click_source = r#"
-            verifying "count_once.c";
-
-            int32 count_once() {
-                for loop(0) {
-                    invariant i >= 0;
-                    initialize by {
-                        step();
-                        simp();
-                    }
-                }
-                ensures result == 1 by auto;
-            }
-        "#;
-
-    let error = verify_c0_sources(click_source, &[("count_once.c", c_source)])
-        .expect_err("initialization should not execute loop body statements");
-
-    assert!(
-        error.message().contains("`initialize`")
-            && error.message().contains("is a pure proof")
-            && error.message().contains("step"),
-        "{}",
-        error.message()
-    );
-}
-
-#[test]
-fn loop_preserve_requires_one_complete_iteration() {
-    let c_source = r#"
-            int32 count_once() {
-                int32 i;
-                i = 0;
-                while (i < 1) {
-                    i = i + 1;
-                    i = i;
-                }
-                return i;
-            }
-        "#;
-    let click_source = r#"
-            verifying "count_once.c";
-
-            int32 count_once() {
-                for loop(0) {
-                    invariant i >= 0;
-                    preserve by {
-                        step();
-                        simp();
-                    }
-                }
-                ensures result == 1 by auto;
-            }
-        "#;
-
-    let error = verify_c0_sources(click_source, &[("count_once.c", c_source)])
-        .expect_err("preservation should traverse the complete loop body");
-
-    assert!(
-        error
-            .message()
-            .contains("must execute exactly one complete loop-body iteration"),
-        "{}",
-        error.message()
-    );
-}
-
-#[test]
-fn loop_preserve_non_execution_tactics_do_not_fall_back_to_auto() {
-    let c_source = r#"
-            int32 count_once() {
-                int32 i;
-                i = 0;
-                while (i < 1) {
-                    i = i + 1;
-                }
-                return i;
-            }
-        "#;
-    let click_source = r#"
-            verifying "count_once.c";
-
-            int32 count_once() {
-                for loop(0) {
-                    invariant i >= 0;
-                    preserve by {
-                        simp();
-                    }
-                }
-                ensures result == 1 by auto;
-            }
-        "#;
-
-    let error = verify_c0_sources(click_source, &[("count_once.c", c_source)])
-        .expect_err("an explicit preservation script should not fall back to auto");
-
-    assert!(
-        error
-            .message()
-            .contains("must execute exactly one complete loop-body iteration"),
-        "{}",
-        error.message()
-    );
-}
-
-#[test]
-fn loop_phase_proofs_can_unfold_invariant_predicates() {
-    let c_source = r#"
-            int32 loop_sorted_range_invariant(int32 p[3]) {
-                int32 i;
-                i = 0;
-                while (i < 3) {
-                    i = i + 1;
-                }
-                return i;
-            }
-        "#;
-    let click_source = r#"
-            verifying "loop_sorted_range_invariant.c";
-
-            predicate sorted(p: int32[], n: int32) {
-                sorted_range(p, 0, n)
-            }
-
-            predicate sorted_range(p: int32[], lo: int32, hi: int32) {
-                forall (i: int32) {
-                    forall (j: int32) {
-                        0 <= i and 0 <= j and lo <= i and i < j and j < hi implies p[i] <= p[j]
-                    }
-                }
-            }
-
-            int32 loop_sorted_range_invariant(int32 p[3]) {
-                requires loadable(p[0..3]);
-                requires sorted(p, 3);
-                for loop(0) {
-                    invariant i >= 0 and i <= 3;
-                    invariant sorted(p, 3);
-                    initialize by {
-                        unfold(sorted);
-                        unfold(sorted_range);
-                        simp();
-                    }
-                    preserve by {
-                        unfold(sorted);
-                        unfold(sorted_range);
-                        step();
-                        close_invariants();
-                    }
-                    immutable by frame;
-                }
-                ensures still_sorted: sorted(p, 3) by {
-                    execute();
-                    frame(loop(0));
-                    assumption();
-                }
-            }
-        "#;
-
-    let verified = verify_c0_sources(click_source, &[("loop_sorted_range_invariant.c", c_source)])
-        .expect("loop phase unfolding should verify");
-
-    assert_eq!(verified.len(), 1);
-}
-
-#[test]
-fn verifies_symbolic_copy_segment_invariant() {
-    let c_source = r#"
-            int32 copy_n(int32 dst[], int32 src[], int32 n) {
-                int32 i;
-                i = 0;
-                while (i < n) {
-                    dst[i] = src[i];
-                    i = i + 1;
-                }
-                return i;
-            }
-        "#;
-    let click_source = r#"
-            verifying "copy_n.c";
-
-            int32 copy_n(int32 dst[], int32 src[], int32 n) {
-                requires n >= 0;
-                requires n <= 2147483647;
-                requires loadable(dst[0..n]);
-                requires loadable(src[0..n]);
-                consumes dst[0..n];
-                views src[0..n];
-                requires separate(memory(dst[0..n]), memory(src[0..n]));
-                for loop(0) {
-                    invariant i >= 0;
-                    invariant i <= n;
-                    invariant forall (k: int32) {
-                        0 <= k and k < i implies dst[k] == old(src[k])
-                    };
-                    mutable dst[0..n] by auto;
-                }
-                ensures returns_n: result == n by auto;
-                ensures source_unchanged: forall (k: int32) {
-                    0 <= k and k < n implies src[k] == old(src[k])
-                } by {
-                    execute();
-                    frame(loop(0));
-                    simp();
-                }
-                ensures copied_segment: forall (k: int32) {
-                    0 <= k and k < n implies dst[k] == old(src[k])
-                } by auto;
-            }
-        "#;
-
-    let verified = verify_c0_sources(click_source, &[("copy_n.c", c_source)])
-        .expect("symbolic copy loop should prove copied segment invariant");
-
-    assert_eq!(verified.len(), 3);
-    assert_eq!(verified[0].proof_kind(), ProofKind::LoopVerification);
-}
-
-#[test]
-fn auto_certificate_replays_for_loop_frame_claim() {
-    let c_source = r#"
-            int32 copy_n(int32 dst[], int32 src[], int32 n) {
-                int32 i;
-                i = 0;
-                while (i < n) {
-                    dst[i] = src[i];
-                    i = i + 1;
-                }
-                return i;
-            }
-        "#;
-    let auto_click_source = r#"
-            verifying "copy_n.c";
-
-            int32 copy_n(int32 dst[], int32 src[], int32 n) {
-                requires n >= 0;
-                requires n <= 2147483647;
-                requires loadable(dst[0..n]);
-                requires loadable(src[0..n]);
-                consumes dst[0..n];
-                views src[0..n];
-                requires separate(memory(dst[0..n]), memory(src[0..n]));
-                for loop(0) {
-                    invariant i >= 0;
-                    invariant i <= n;
-                    invariant forall (k: int32) {
-                        0 <= k and k < i implies dst[k] == old(src[k])
-                    };
-                    mutable dst[0..n] by auto;
-                }
-                ensures source_unchanged: forall (k: int32) {
-                    0 <= k and k < n implies src[k] == old(src[k])
-                } by auto;
-            }
-        "#;
-
-    let auto_verified = verify_c0_sources(auto_click_source, &[("copy_n.c", c_source)])
-        .expect("auto should prove the source-memory postcondition");
-    let source_unchanged = auto_verified
-        .iter()
-        .find(|theorem| {
-            theorem
-                .ensure_clause()
-                .and_then(EnsureClause::name)
-                .is_some_and(|name| name == "source_unchanged")
-        })
-        .expect("source_unchanged theorem should be present");
-    let expected_tactics = [
-        ProofTactic::SmartExecute,
-        ProofTactic::FrameUsing {
-            region: Some(CodeRegionRef::Loop(0)),
-            premises: Vec::new(),
-        },
-        ProofTactic::Simp,
-    ];
-
-    assert_eq!(source_unchanged.proof_kind(), ProofKind::LoopVerification);
-    assert_eq!(
-        source_unchanged.proof_tactics(),
-        Some(expected_tactics.as_slice())
-    );
-
-    let explicit_click_source = r#"
-            verifying "copy_n.c";
-
-            int32 copy_n(int32 dst[], int32 src[], int32 n) {
-                requires n >= 0;
-                requires n <= 2147483647;
-                requires loadable(dst[0..n]);
-                requires loadable(src[0..n]);
-                consumes dst[0..n];
-                views src[0..n];
-                requires separate(memory(dst[0..n]), memory(src[0..n]));
-                for loop(0) {
-                    invariant i >= 0;
-                    invariant i <= n;
-                    invariant forall (k: int32) {
-                        0 <= k and k < i implies dst[k] == old(src[k])
-                    };
-                    mutable dst[0..n] by auto;
-                }
-                ensures source_unchanged: forall (k: int32) {
-                    0 <= k and k < n implies src[k] == old(src[k])
-                } by {
-                    execute();
-                    frame(loop(0));
-                    simp();
-                }
-            }
-        "#;
-
-    let explicit_verified = verify_c0_sources(explicit_click_source, &[("copy_n.c", c_source)])
-        .expect("auto certificate should replay as explicit tactics");
-
-    assert_eq!(explicit_verified.len(), 1);
-    assert_eq!(explicit_verified[0].proof_kind(), ProofKind::TacticScript);
-    let explicit_expected = [
-        ProofTactic::SmartExecute,
-        ProofTactic::SmartFrame(Some(CodeRegionRef::Loop(0))),
-        ProofTactic::Simp,
-    ];
-    assert_eq!(
-        explicit_verified[0].proof_tactics(),
-        Some(explicit_expected.as_slice())
-    );
-}
-
-#[test]
-fn false_loop_invariant_fails() {
-    let c_source = r#"
-            int32 count_to_three() {
-                int32 i;
-                i = 0;
-                while (i < 3) {
-                    i = i + 1;
-                }
-                return i;
-            }
-        "#;
-    let click_source = r#"
-            verifying "count_to_three.c";
-
-            int32 count_to_three() {
-                for loop(0) {
-                    invariant i < 3;
-                }
-
-                ensures result == 3 by auto;
-            }
-        "#;
-
-    let error = verify_c0_sources(click_source, &[("count_to_three.c", c_source)])
-        .expect_err("false loop invariant should fail");
-
-    assert!(
-        error
-            .message()
-            .contains("loop 0 invariant bundle preservation"),
-        "{}",
-        error.message()
-    );
-}
-
-#[test]
-fn false_loop_invariant_initialization_fails() {
-    let c_source = r#"
-            int32 count_to_three() {
-                int32 i;
-                i = 0;
-                while (i < 3) {
-                    i = i + 1;
-                }
-                return i;
-            }
-        "#;
-    let click_source = r#"
-            verifying "count_to_three.c";
-
-            int32 count_to_three() {
-                for loop(0) {
-                    invariant i == 1;
-                }
-
-                ensures result == 3 by auto;
-            }
-        "#;
-
-    let error = verify_c0_sources(click_source, &[("count_to_three.c", c_source)])
-        .expect_err("false loop invariant initialization should fail");
-
-    assert!(
-        error.message().contains("loop 0 invariant 0 entry"),
-        "{}",
-        error.message()
-    );
 }
 
 #[test]
@@ -9637,117 +8313,6 @@ fn step_and_execute_step_advance_one_concrete_loop_transition() {
 
     assert_eq!(verified.len(), 1);
     assert_eq!(verified[0].proof_kind(), ProofKind::TacticScript);
-}
-
-#[test]
-fn apply_loop_summary_advances_one_verified_loop_transition() {
-    let c_source = r#"
-            int32 count_to_two() {
-                int32 i;
-                i = 0;
-                while (i < 2) {
-                    i = i + 1;
-                }
-                return i;
-            }
-        "#;
-    let click_source = r#"
-            verifying "count_to_two.c";
-
-            int32 count_to_two() {
-                for loop(0) {
-                    invariant i >= 0 and i <= 2;
-                    initialize by auto;
-                    preserve by auto;
-                }
-                ensures returns_two: result == 2 by {
-                    step();
-                    step();
-                    summarize(loop(0));
-                    step();
-                    simp();
-                }
-            }
-        "#;
-
-    let verified = verify_c0_sources(click_source, &[("count_to_two.c", c_source)])
-        .expect("the explicit loop-summary tactic should apply the verified loop rule");
-
-    assert_eq!(verified.len(), 1);
-    assert_eq!(verified[0].proof_kind(), ProofKind::TacticScript);
-}
-
-#[test]
-fn automatic_loop_preservation_replays_branched_body_certificate() {
-    let c_source = r#"
-            int32 branch_count(int32 flag) {
-                int32 i;
-                i = 0;
-                while (i < 1) {
-                    if (flag) {
-                        i = i + 1;
-                    } else {
-                        i = i + 1;
-                    }
-                }
-                return i;
-            }
-        "#;
-    let click_source = r#"
-            verifying "branch_count.c";
-
-            int32 branch_count(int32 flag) {
-                for loop(0) {
-                    invariant i >= 0 and i <= 1;
-                    initialize by auto;
-                    preserve by auto;
-                }
-                ensures result == 1 by auto;
-            }
-        "#;
-
-    verify_c0_sources(click_source, &[("branch_count.c", c_source)])
-        .expect("automatic preservation should replay both proof branches");
-}
-
-#[test]
-fn apply_loop_summary_using_limits_context_to_explicit_premises() {
-    let c_source = r#"
-            int32 count_to_n(int32 n) {
-                int32 i;
-                i = 0;
-                while (i < n) {
-                    i = i + 1;
-                }
-                return i;
-            }
-        "#;
-    let click_source = r#"
-            verifying "count_to_n.c";
-
-            int32 count_to_n(int32 n) {
-                requires n >= 0;
-                requires n <= 2147483647;
-                for loop(0) {
-                    invariant i >= 0 and i <= n;
-                    initialize by auto;
-                    preserve by auto;
-                }
-                ensures returns_n: result == n by {
-                    step();
-                    step();
-                    summarize(loop(0)) using {
-                        n >= 0;
-                        n <= 2147483647;
-                    }
-                    step();
-                    simp();
-                }
-            }
-        "#;
-
-    verify_c0_sources(click_source, &[("count_to_n.c", c_source)])
-        .expect("explicit premises should justify one loop-summary transition");
 }
 
 #[test]
@@ -9913,6 +8478,21 @@ fn verifies_fill3_c0_source_with_sidecar_specification() {
 }
 
 #[test]
+fn bounded_auto_loop_expands_without_a_detached_summary() {
+    let sources = [("fill3.c", FILL3_C)];
+    let position = c0_tactic_source_position(FILL3_CLICK, &sources, "fill3.returns_second", 0)
+        .expect("the default auto proof should have a source position");
+    let expanded =
+        expand_c0_tactic_source_at(FILL3_CLICK, &sources, position.line, position.column)
+            .expect("bounded loop execution should have a surface certificate");
+
+    assert!(!expanded.contains("summarize("), "{expanded}");
+    assert!(!expanded.contains("for loop("), "{expanded}");
+    verify_c0_sources(&expanded, &sources)
+        .expect("the bounded loop certificate should freshly replay");
+}
+
+#[test]
 fn signature_mismatch_reports_direct_error() {
     let source = FILL3_CLICK.replace("int32* p", "int32 q");
     let error = verify_c0_sources(&source, &[("fill3.c", FILL3_C)])
@@ -9956,39 +8536,6 @@ fn struct_name_signature_mismatch_reports_direct_error() {
         error.message().contains(
             "signature mismatch for `get_value` parameter 1 in `get_value.c`: .click has struct expected* p, C has struct actual* p"
         ),
-        "{}",
-        error.message()
-    );
-}
-
-#[test]
-fn failed_ensure_reports_actual_return() {
-    let source = FILL3_CLICK.replace("result == 2", "result == 3");
-    let error =
-        verify_c0_sources(&source, &[("fill3.c", FILL3_C)]).expect_err("wrong result should fail");
-
-    assert!(
-        error
-            .message()
-            .contains("left side evaluated to 2, right side evaluated to 3"),
-        "{}",
-        error.message()
-    );
-}
-
-#[test]
-fn failed_memory_postcondition_reports_loaded_value() {
-    let source = FILL3_CLICK.replace(
-        "ensures returns_second: result == 2",
-        "ensures third: p[2] == 3",
-    );
-    let error = verify_c0_sources(&source, &[("fill3.c", FILL3_C)])
-        .expect_err("wrong memory postcondition should fail");
-
-    assert!(
-        error
-            .message()
-            .contains("left side evaluated to 2, right side evaluated to 3"),
         "{}",
         error.message()
     );
@@ -11010,39 +9557,6 @@ int32 caller(int32 x) {
     session
         .verify_at(&shifted, shifted_position.line, shifted_position.column)
         .expect("session selection should follow the rewritten claim, not baseline coordinates");
-}
-
-#[test]
-fn verification_session_accepts_expansion_of_an_omitted_loop_phase() {
-    let c_source = r#"int32 count(int32 n) {
-    int32 i;
-    i = 0;
-    while (i < n) {
-        i = i + 1;
-    }
-    return i;
-}"#;
-    let click_source = r#"verifying "count.c";
-int32 count(int32 n) {
-    requires n >= 0 and n <= 2147483647;
-    for loop(0) {
-        invariant i >= 0 and i <= n;
-    }
-    ensures result == n by auto;
-}"#;
-    let sources = [("count.c", c_source)];
-    let (session, _) =
-        C0VerificationSession::new(click_source, &sources).expect("baseline should verify");
-    let omitted = c0_tactic_source_position(click_source, &sources, "count.loop(0).initialize", 0)
-        .expect("omitted initialization should have a selector");
-    let expanded = expand_c0_tactic_source_at(click_source, &sources, omitted.line, omitted.column)
-        .expect("omitted initialization should expand");
-    let relocated = c0_tactic_source_position(&expanded, &sources, "count.loop(0).initialize", 0)
-        .expect("expanded initialization should have a selector");
-
-    session
-        .verify_at(&expanded, relocated.line, relocated.column)
-        .expect("inserted loop-phase proof is inside the selected proof unit");
 }
 
 #[test]
