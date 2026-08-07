@@ -25,7 +25,7 @@ use crate::kernel::{
     c_function_entry_state, c_function_execution_candidates_from_outcomes,
     c_function_outcome_from_statement_outcome,
     c_function_outcomes_program_state_definitionally_equal,
-    c_function_outcomes_program_state_equal_by_store_provenance, c_function_specification,
+    c_function_outcomes_program_state_equal_by_execution_provenance, c_function_specification,
     c_function_termination_plan, c_if, c_loop_effects_hold_at_back_edge,
     c_loop_invariant_obligations_at_entry, c_loop_invariants_hold_at_back_edge_using,
     c_loop_invariants_hold_at_entry, c_loop_preservation_contexts,

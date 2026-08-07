@@ -723,16 +723,8 @@ int32 vector_replace_if(
     have replace == replace by {
         normalize();
     }
-    reach(statement(3).exit)
-    ensuring {
-        fact replace != 0 implies selected == replacement;
-        fact not (replace != 0) implies selected == original;
-        fact index < index + 1;
-        owns nonempty_vector(owner);
-    }
-    by {
-        if replace != 0 {
-            step();
+    branch {
+        then {
             step() using {
                 index < owner->len;
                 0 <= index;
@@ -746,8 +738,8 @@ int32 vector_replace_if(
             have replace != 0 implies selected == replacement by simp;
             have not (replace != 0) implies selected == original by simp;
             have index < index + 1 by simp;
-        } else {
-            step();
+        }
+        else {
             step() using {
                 index < owner->len;
                 0 <= index;
@@ -765,7 +757,8 @@ int32 vector_replace_if(
     }
     execute();
     have index < index + 1 by simp;
-    frame();
+    frame() using {
+    }
     simp();
 }
 

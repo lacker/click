@@ -322,6 +322,16 @@ havoc block names in a surface certificate. A dependent address is transported
 only when its pointer and index expressions are themselves stable. An
 overlapping or undecidable footprint stops the transport.
 
+Whole-path replay can independently regenerate fresh return variables and
+`call-havoc` marker identities for the same execution path. Certification
+couples those encodings only through matching memory-derivation structure:
+local bookkeeping edges are transparent, stores must have equal pointers and
+values, and call-havoc edges must have definitionally equal mutable ranges and
+matching base histories. An empty store list is not evidence of equal memory.
+Fresh return values may be related using kernel-certified replay facts, but
+never by ordinary untrusted facts; exact memory and ghost-resource changes are
+still rejected.
+
 ## Assumption Reasoning
 
 `Assumptions::proves` is the main deterministic proposition checker. It handles

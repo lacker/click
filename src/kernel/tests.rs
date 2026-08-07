@@ -928,6 +928,137 @@ fn symbolic_max_function_call_reports_branch_facts() {
 }
 
 #[test]
+fn resource_representation_requires_certified_replay_facts_and_exact_state() {
+    let certified_result = Bitvector32Term::Variable(Variable(31));
+    let other_argument = Bitvector32Term::Variable(Variable(32));
+    let desired_result = Bitvector32Term::Variable(Variable(33));
+    let state = CState::new();
+    let execution = prove_symbolic_c_function_execution_paths(
+        state.clone(),
+        c_max_function(),
+        vec![
+            CExpression::Value(int32(other_argument)),
+            CExpression::Value(int32(certified_result.clone())),
+        ],
+        Assumptions::new(),
+    );
+    let certified_path = &execution.paths()[0];
+    let desired_outcome = CFunctionOutcome::Return {
+        value: int32(desired_result.clone()),
+        state,
+    };
+    let replay_equality = Proposition::ConditionIs(
+        ConditionTerm::Bitvector32Equal(
+            Box::new(desired_result),
+            Box::new(certified_result.clone()),
+        ),
+        true,
+    );
+
+    assert!(
+        certify_c_function_execution_path_resource_representation(
+            certified_path,
+            desired_outcome.clone(),
+            &[ExecutionPureFact::certified(replay_equality.clone())],
+        )
+        .is_some(),
+        "a kernel-certified replay equality should align fresh return values"
+    );
+    assert!(
+        certify_c_function_execution_path_resource_representation(
+            certified_path,
+            desired_outcome,
+            &[ExecutionPureFact::new(replay_equality)],
+        )
+        .is_none(),
+        "an untrusted replay fact must not certify a representation change"
+    );
+
+    let changed_pointer = Pointer {
+        block: "changed".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    assert!(
+        certify_c_function_execution_path_resource_representation(
+            certified_path,
+            CFunctionOutcome::Return {
+                value: int32(certified_result.clone()),
+                state: CState::new()
+                    .with_memory(CMemory::new().store(changed_pointer.clone(), int32(7))),
+            },
+            &[],
+        )
+        .is_none(),
+        "a genuinely changed external memory must still be rejected"
+    );
+    assert!(
+        certify_c_function_execution_path_resource_representation(
+            certified_path,
+            CFunctionOutcome::Return {
+                value: int32(certified_result),
+                state: CState::new().with_resource_context(write_context(changed_pointer, 0, 1)),
+            },
+            &[],
+        )
+        .is_none(),
+        "a genuinely changed ghost resource must still be rejected"
+    );
+}
+
+#[test]
+fn execution_provenance_matches_only_equivalent_call_havoc() {
+    let assumptions = Assumptions::new();
+    let base = CMemory::new().with_block("arc", 16);
+    let first_range = memory_range(arc_pointer(0), 0, 1);
+    let other_range = memory_range(arc_pointer(4), 0, 1);
+    let left = CFunctionOutcome::Return {
+        value: int32(0),
+        state: CState::new().with_memory(base.clone().with_call_memory_havoc(
+            Variable(41),
+            std::slice::from_ref(&first_range),
+            &assumptions,
+        )),
+    };
+    let equivalent = CFunctionOutcome::Return {
+        value: int32(0),
+        state: CState::new().with_memory(base.clone().with_call_memory_havoc(
+            Variable(42),
+            std::slice::from_ref(&first_range),
+            &assumptions,
+        )),
+    };
+    let different = CFunctionOutcome::Return {
+        value: int32(0),
+        state: CState::new().with_memory(base.with_call_memory_havoc(
+            Variable(43),
+            &[other_range],
+            &assumptions,
+        )),
+    };
+
+    assert!(
+        c_function_outcomes_program_state_equal_by_execution_provenance(
+            &left,
+            &[],
+            &equivalent,
+            &[],
+            &assumptions,
+        ),
+        "fresh marker names should not distinguish the same call havoc"
+    );
+    assert!(
+        !c_function_outcomes_program_state_equal_by_execution_provenance(
+            &left,
+            &[],
+            &different,
+            &[],
+            &assumptions,
+        ),
+        "different mutable ranges must not be coupled as one call effect"
+    );
+}
+
+#[test]
 fn function_call_threads_memory_but_discards_callee_locals() {
     let pointer = Pointer {
         block: "block".into(),

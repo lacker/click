@@ -2920,7 +2920,7 @@ int32 inspect(struct box* owner) {
     }
 
     #[test]
-    fn expanded_frame_uses_snapshot_checked_field_loadability() {
+    fn expanded_execute_and_frame_replay_after_resource_branch() {
         let get_source = r#"
 struct vector { int32 len; int32 cap; int32* data; };
 int32 vector_get(struct vector* owner, int32 index) {
@@ -3049,16 +3049,8 @@ int32 vector_replace_if(
     have replace == replace by {
         normalize();
     }
-    reach(statement(3).exit)
-    ensuring {
-        fact replace != 0 implies selected == replacement;
-        fact not (replace != 0) implies selected == original;
-        fact index < index + 1;
-        owns nonempty_vector(owner);
-    }
-    by {
-        if replace != 0 {
-            step();
+    branch {
+        then {
             step() using {
                 index < owner->len;
                 0 <= index;
@@ -3072,8 +3064,8 @@ int32 vector_replace_if(
             have replace != 0 implies selected == replacement by simp;
             have not (replace != 0) implies selected == original by simp;
             have index < index + 1 by simp;
-        } else {
-            step();
+        }
+        else {
             step() using {
                 index < owner->len;
                 0 <= index;
@@ -3100,7 +3092,7 @@ int32 vector_replace_if(
             ("vector_set.c", set_source),
             ("vector_replace_if.c", replace_source),
         ];
-        let expanded = expand_top_level_tactic_for_test(
+        let expanded_frame = expand_top_level_tactic_for_test(
             click_source,
             &sources,
             "vector_replace_if",
@@ -3109,9 +3101,27 @@ int32 vector_replace_if(
         )
         .expect("smart frame should expand with snapshot-correct loadability premises");
 
-        assert!(expanded.contains("frame() using {"), "{expanded}");
-        verify_c0_sources(&expanded, &sources)
+        assert!(
+            expanded_frame.contains("frame() using {"),
+            "{expanded_frame}"
+        );
+        verify_c0_sources(&expanded_frame, &sources)
             .expect("expanded frame certificate should independently replay");
+
+        let execute_offset = expanded_frame
+            .rfind("    execute();")
+            .expect("common execute should exist")
+            + 4;
+        let execute_position = position_at_offset(&expanded_frame, execute_offset);
+        let expanded_execute = expand_c0_tactic_source_at(
+            &expanded_frame,
+            &sources,
+            execute_position.line,
+            execute_position.column,
+        )
+        .expect("common execute should expand after a resource branch");
+        verify_c0_sources(&expanded_execute, &sources)
+            .expect("expanded execute certificate should independently replay");
     }
 
     #[test]

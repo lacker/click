@@ -6636,12 +6636,11 @@ pub fn c_function_outcomes_program_state_definitionally_equal(
     }
 }
 
-/// Proves two return outcomes equal by store provenance: when both
-/// executions performed the same ordered sequence of certified stores
-/// (pointers and values definitionally equal), their final external
-/// memories are equal by construction, so the deep memory comparison is
-/// unnecessary and only return values and resources need checking.
-pub fn c_function_outcomes_equal_by_store_provenance(
+/// Proves two return outcomes equal from matching certified execution
+/// histories. This recognizes equal store chains and alpha-equivalent call
+/// havoc snapshots without treating unrelated fresh havoc identities as
+/// interchangeable.
+pub fn c_function_outcomes_equal_by_execution_provenance(
     function: &CFunction,
     left: &CFunctionOutcome,
     left_facts: &[ExecutionPureFact],
@@ -6649,7 +6648,7 @@ pub fn c_function_outcomes_equal_by_store_provenance(
     right_facts: &[ExecutionPureFact],
     assumptions: &Assumptions,
 ) -> bool {
-    if !c_function_outcomes_program_state_equal_by_store_provenance(
+    if !c_function_outcomes_program_state_equal_by_execution_provenance(
         left,
         left_facts,
         right,
@@ -6691,10 +6690,10 @@ pub fn c_function_outcomes_equal_by_store_provenance(
     )
 }
 
-/// Compares the observable program state of two return paths by their
-/// independently certified store sequences. Resource representation remains
-/// the responsibility of the separate resource certificate.
-pub fn c_function_outcomes_program_state_equal_by_store_provenance(
+/// Compares the observable program state of two return paths by matching their
+/// certified execution histories. Resource representation remains the
+/// responsibility of the separate resource certificate.
+pub fn c_function_outcomes_program_state_equal_by_execution_provenance(
     left: &CFunctionOutcome,
     left_facts: &[ExecutionPureFact],
     right: &CFunctionOutcome,
@@ -6703,32 +6702,180 @@ pub fn c_function_outcomes_program_state_equal_by_store_provenance(
 ) -> bool {
     let (
         CFunctionOutcome::Return {
-            value: left_value, ..
+            value: left_value,
+            state: left_state,
         },
         CFunctionOutcome::Return {
-            value: right_value, ..
+            value: right_value,
+            state: right_state,
         },
     ) = (left, right)
     else {
         return false;
     };
+    memories_equal_by_execution_provenance(
+        left_state.memory(),
+        left_facts,
+        right_state.memory(),
+        right_facts,
+        assumptions,
+    ) && c_values_proven_equal_for_memory_resolution(left_value, right_value, assumptions)
+}
+
+fn memories_equal_by_execution_provenance(
+    left_final: &CMemory,
+    left_facts: &[ExecutionPureFact],
+    right_final: &CMemory,
+    right_facts: &[ExecutionPureFact],
+    assumptions: &Assumptions,
+) -> bool {
+    if memories_equal_by_matching_derivations(left_final, right_final, assumptions, 0) {
+        return true;
+    }
     let left_stores = left_facts
         .iter()
-        .filter_map(|fact| fact.certified_store_data())
+        .filter_map(ExecutionPureFact::certified_store_data)
         .collect::<Vec<_>>();
     let right_stores = right_facts
         .iter()
-        .filter_map(|fact| fact.certified_store_data())
+        .filter_map(ExecutionPureFact::certified_store_data)
         .collect::<Vec<_>>();
-    if left_stores.len() != right_stores.len() {
+    if left_stores.is_empty() || left_stores.len() != right_stores.len() {
         return false;
     }
-    let chains_equal = left_stores.iter().zip(&right_stores).all(|(left, right)| {
-        pointers_proven_equal_for_memory_resolution(&left.pointer, &right.pointer, assumptions)
-            && c_values_proven_equal_for_memory_resolution(&left.value, &right.value, assumptions)
-    });
-    chains_equal
-        && c_values_proven_equal_for_memory_resolution(left_value, right_value, assumptions)
+    let chain_reaches_final = |stores: &[&CertifiedMemoryStore], final_memory: &CMemory| {
+        stores.windows(2).all(|pair| {
+            c_memories_definitionally_equal(&pair[0].after, &pair[1].before, assumptions)
+        }) && c_memories_definitionally_equal(
+            &stores.last().expect("store chain is nonempty").after,
+            final_memory,
+            assumptions,
+        )
+    };
+    c_memories_definitionally_equal(&left_stores[0].before, &right_stores[0].before, assumptions)
+        && chain_reaches_final(&left_stores, left_final)
+        && chain_reaches_final(&right_stores, right_final)
+        && left_stores.iter().zip(&right_stores).all(|(left, right)| {
+            (pointers_proven_equal_for_memory_resolution(
+                &left.pointer,
+                &right.pointer,
+                assumptions,
+            ) || (left.pointer.block == right.pointer.block
+                && c_pointer_offsets_proven_equal_for_effect(
+                    &left.pointer.offset,
+                    &right.pointer.offset,
+                    assumptions,
+                )))
+                && c_values_proven_equal_for_memory_resolution(
+                    &left.value,
+                    &right.value,
+                    assumptions,
+                )
+        })
+}
+
+fn memories_equal_by_matching_derivations(
+    left: &CMemory,
+    right: &CMemory,
+    assumptions: &Assumptions,
+    depth: usize,
+) -> bool {
+    fn transparent_base(derivation: &CMemoryDerivation) -> Option<&SharedCMemory> {
+        match derivation {
+            CMemoryDerivation::Store { base, pointer, .. }
+                if pointer.block.starts_with("local:") =>
+            {
+                Some(base)
+            }
+            CMemoryDerivation::BlockDeclared { base, block } if block.starts_with("local:") => {
+                Some(base)
+            }
+            CMemoryDerivation::CellsForgotten { base } => Some(base),
+            _ => None,
+        }
+    }
+    const DERIVATION_MATCH_LIMIT: usize = 64;
+    if depth >= DERIVATION_MATCH_LIMIT {
+        return false;
+    }
+    if c_memories_definitionally_equal(left, right, assumptions) {
+        return true;
+    }
+    let left = intern_c_memory_ref(left);
+    let right = intern_c_memory_ref(right);
+    let left_derivation = left.derivation();
+    let right_derivation = right.derivation();
+    if let Some(base) = left_derivation.as_deref().and_then(transparent_base) {
+        return memories_equal_by_matching_derivations(base, &right, assumptions, depth + 1);
+    }
+    if let Some(base) = right_derivation.as_deref().and_then(transparent_base) {
+        return memories_equal_by_matching_derivations(&left, base, assumptions, depth + 1);
+    }
+    match (left_derivation.as_deref(), right_derivation.as_deref()) {
+        (
+            Some(CMemoryDerivation::CallHavoc {
+                base: left_base,
+                mutable_ranges: left_ranges,
+                ..
+            }),
+            Some(CMemoryDerivation::CallHavoc {
+                base: right_base,
+                mutable_ranges: right_ranges,
+                ..
+            }),
+        ) => {
+            memory_range_lists_definitionally_equal(left_ranges, right_ranges, assumptions)
+                && memories_equal_by_matching_derivations(
+                    left_base,
+                    right_base,
+                    assumptions,
+                    depth + 1,
+                )
+        }
+        (
+            Some(CMemoryDerivation::Store {
+                base: left_base,
+                pointer: left_pointer,
+                value: left_value,
+            }),
+            Some(CMemoryDerivation::Store {
+                base: right_base,
+                pointer: right_pointer,
+                value: right_value,
+            }),
+        ) => {
+            pointers_proven_equal_for_memory_resolution(left_pointer, right_pointer, assumptions)
+                && c_values_proven_equal_for_memory_resolution(left_value, right_value, assumptions)
+                && memories_equal_by_matching_derivations(
+                    left_base,
+                    right_base,
+                    assumptions,
+                    depth + 1,
+                )
+        }
+        _ => false,
+    }
+}
+
+fn memory_range_lists_definitionally_equal(
+    left: &[CMemoryRange],
+    right: &[CMemoryRange],
+    assumptions: &Assumptions,
+) -> bool {
+    left.len() == right.len()
+        && left.iter().zip(right).all(|(left, right)| {
+            pointers_proven_equal_for_memory_resolution(left.base(), right.base(), assumptions)
+                && bitvector_terms_proven_equal_for_memory_resolution(
+                    left.start(),
+                    right.start(),
+                    assumptions,
+                )
+                && bitvector_terms_proven_equal_for_memory_resolution(
+                    left.end(),
+                    right.end(),
+                    assumptions,
+                )
+        })
 }
 
 fn c_memories_definitionally_equal(
@@ -6799,9 +6946,9 @@ fn materialized_load_is_unchanged(
 /// Changes only the bounded symbolic representation of a certified return path.
 ///
 /// Program values and memory must be definitionally equal using the path's
-/// certified pure, memory-effect, and resource-separation facts. The old and
-/// new resource contexts must mutually satisfy every fact under those same
-/// assumptions.
+/// facts plus kernel-certified facts from the desired replay. Uncertified
+/// replay facts are deliberately excluded. The old and new resource contexts
+/// must mutually satisfy every fact under those same assumptions.
 pub fn certify_c_function_execution_path_resource_representation(
     path: &SymbolicCExecutionPath,
     desired_outcome: CFunctionOutcome,
@@ -6846,6 +6993,12 @@ pub fn certify_c_function_execution_path_resource_representation(
             .iter()
             .map(|fact| fact.proposition().clone()),
     );
+    premises.extend(
+        desired_facts
+            .iter()
+            .filter(|fact| fact.is_certified())
+            .map(|fact| fact.proposition().clone()),
+    );
     let preliminary_assumptions = assumptions_with_propositions(&path.assumptions, &premises);
     let observable_resource_facts = return_state
         .resources()
@@ -6860,43 +7013,15 @@ pub fn certify_c_function_execution_path_resource_representation(
         desired_state.memory(),
         &assumptions,
     ) || {
-        // Store provenance: the same ordered certified stores from the same
-        // entry produce the same external memory by construction.
-        let certified_stores = path
-            .execution_facts()
-            .iter()
-            .filter_map(|fact| fact.certified_store_data().cloned())
-            .collect::<Vec<_>>();
-        let desired_stores = desired_facts
-            .iter()
-            .filter_map(|fact| fact.certified_store_data())
-            .collect::<Vec<_>>();
-        certified_stores.len() == desired_stores.len()
-            && certified_stores
-                .iter()
-                .zip(&desired_stores)
-                .all(|(left, right)| {
-                    pointers_proven_equal_for_memory_resolution(
-                        &left.pointer,
-                        &right.pointer,
-                        &assumptions,
-                    ) || (left.pointer.block == right.pointer.block
-                        && c_pointer_offsets_proven_equal_for_effect(
-                            &left.pointer.offset,
-                            &right.pointer.offset,
-                            &assumptions,
-                        ))
-                })
-            && certified_stores
-                .iter()
-                .zip(&desired_stores)
-                .all(|(left, right)| {
-                    c_values_proven_equal_for_memory_resolution(
-                        &left.value,
-                        &right.value,
-                        &assumptions,
-                    )
-                })
+        // Execution provenance couples deterministic store chains and two
+        // alpha-renamed encodings of the same bounded call havoc.
+        memories_equal_by_execution_provenance(
+            return_state.memory(),
+            &path.execution_facts(),
+            desired_state.memory(),
+            desired_facts,
+            &assumptions,
+        )
     };
     if !values_equal || !memories_equal {
         return None;

@@ -68,13 +68,6 @@ diagnostic can guide the Click writer better:
 
 1. [Guide opaque predicate transport through definitions](predicate-transport-across-local-stores.md).
 
-## Tooling reliability
-
-These block affected feature and migration work because a successful smart
-tactic cannot yet be expanded into a replayable simple certificate:
-
-1. [Preserve ghost-resource identity in execution expansion after `branch`](branch-continuation-execute-expansion-identity.md).
-
 ## Language and proof-model gaps
 
 These need a checked language or model capability rather than stronger smart

@@ -12918,7 +12918,7 @@ fn finish_ordered_proof_replay(
                 replayed.outcome(),
                 certified,
                 &path_assumptions,
-            ) || c_function_outcomes_program_state_equal_by_store_provenance(
+            ) || c_function_outcomes_program_state_equal_by_execution_provenance(
                 replayed.outcome(),
                 &replayed.execution_facts(),
                 certified,
