@@ -4481,13 +4481,33 @@ fn split_memory_range(
     required: &CMemoryRange,
     assumptions: &Assumptions,
 ) -> Option<Vec<CMemoryRange>> {
-    let base_delta = required
+    // Prefer the held range's own start spelling when the required base is
+    // provably that address. A merely structural delta can contain an
+    // equivalent load from a later memory snapshot; retaining it would create
+    // a symbolic zero-length residue when the required range exhausts the
+    // beginning of `available`.
+    let available_start_pointer = available
         .base()
-        .element_index_from_base(available.base())
-        .or_else(|| {
-            pointer_bases_equal_with_load_bridging(required.base(), available.base(), assumptions)
+        .offset_by_int32_elements(available.start().clone());
+    let base_delta = if pointers_proven_equal_for_memory_resolution(
+        required.base(),
+        &available_start_pointer,
+        assumptions,
+    ) {
+        Some(available.start().clone())
+    } else {
+        required
+            .base()
+            .element_index_from_base(available.base())
+            .or_else(|| {
+                pointer_bases_equal_with_load_bridging(
+                    required.base(),
+                    available.base(),
+                    assumptions,
+                )
                 .then_some(Bitvector32Term::Constant(0))
-        })?;
+            })
+    }?;
     let required_start = Bitvector32Term::add(base_delta.clone(), required.start().clone());
     let required_end = Bitvector32Term::add(base_delta, required.end().clone());
     let mut residues = Vec::new();

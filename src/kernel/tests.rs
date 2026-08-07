@@ -9458,6 +9458,34 @@ fn heap_free_retires_the_complete_block_and_rejects_double_free() {
 }
 
 #[test]
+fn consuming_a_whole_range_drops_snapshot_equivalent_prefix_residues() {
+    let owner = Pointer {
+        block: "owner".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let held_start = Bitvector32Term::Variable(Variable(90_001));
+    let required_start = Bitvector32Term::Variable(Variable(90_002));
+    let length = Bitvector32Term::Variable(Variable(90_003));
+    let held = CResourceFact::own_memory(CMemoryRange::new(
+        owner.clone(),
+        held_start.clone(),
+        Bitvector32Term::add(held_start.clone(), length.clone()),
+    ));
+    let required = CResourceFact::own_memory(CMemoryRange::new(
+        owner.offset_by_int32_elements(required_start.clone()),
+        Bitvector32Term::Constant(0),
+        length,
+    ));
+    let assumptions =
+        Assumptions::new().assume_condition(ConditionTerm::equal(held_start, required_start), true);
+    let remaining = ResourceContext::new()
+        .unchecked_with_fact(held)
+        .without_fact(&required, &assumptions)
+        .expect("an equivalent whole range should be consumable");
+    assert!(remaining.is_empty(), "unexpected residue: {remaining:?}");
+}
+
+#[test]
 fn scoped_call_borrows_end_before_free() {
     let state = successful_heap_allocation_state();
     let helper = c_function(
