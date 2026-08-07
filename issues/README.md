@@ -67,14 +67,6 @@ These are behavior-preserving cleanup roadmaps rather than feature blockers:
 
 1. [Refactor large verifier modules along proof-model boundaries](refactor-large-verifier-modules.md).
 
-## C-source fidelity
-
-The historical cases where example C was simplified or rerouted while
-repairing its proof have been restored. The remaining work is to add stronger
-positive evidence for the unchanged-source adoption boundary:
-
-1. [Add the first unchanged existing-C fixture](audit-existing-c-source-fidelity.md).
-
 ## Partial correctness and recursion
 
 Click's C contracts now use partial correctness consistently: concrete
