@@ -27,20 +27,11 @@ int32 frontier_local_statement_facts(int32 flag) {
         and at(statement(4).exit, y) == 2
         and at(statement(5).entry, y) == 2 by {
         step();
-        have flag == flag by {
-            normalize();
-        }
-        reach(statement(1).exit)
-        ensuring {
-            fact y >= 0;
-            fact y <= 1;
-        }
-        by {
-            if flag != 0 {
+        branch {
+            then {
                 step();
-                step();
-            } else {
-                step();
+            }
+            else {
                 step();
             }
         }

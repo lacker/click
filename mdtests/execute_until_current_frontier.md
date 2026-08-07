@@ -1,7 +1,7 @@
 # execute until from the current frontier
 
-`execute_until` composes with earlier execution steps, selected branches, and
-abstract joins. It records the same statement snapshots as repeated
+`execute_until` composes with earlier execution steps and selected branches.
+It records the same statement snapshots as repeated
 `step` calls.
 
 ```c filename=execute_until_after_step.c
@@ -76,17 +76,11 @@ int32 execute_until_selected_branch(int32 flag) {
 int32 execute_until_after_advance(int32 flag) {
     ensures result == 3 by {
         step();
-        reach(statement(1).exit)
-        ensuring {
-            fact y >= 0;
-            fact y <= 1;
-        }
-        by {
-            if flag != 0 {
+        branch {
+            then {
                 step();
-                step();
-            } else {
-                step();
+            }
+            else {
                 step();
             }
         }

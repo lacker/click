@@ -1,4 +1,4 @@
-# reach can export a relation to function entry
+# branch preserves a relation to function entry
 
 ```c filename=advance_old_state_interface.c
 int32 advance_old_state_interface(int32 x, int32 choose_first) {
@@ -18,16 +18,11 @@ verifying "advance_old_state_interface.c";
 int32 advance_old_state_interface(int32 x, int32 choose_first) {
     ensures result == old(x) by {
         step();
-        reach(statement(1).exit)
-        ensuring {
-            fact y == old(x);
-        }
-        by {
-            if choose_first != 0 {
+        branch {
+            then {
                 step();
-                step();
-            } else {
-                step();
+            }
+            else {
                 step();
             }
         }

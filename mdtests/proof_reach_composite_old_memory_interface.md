@@ -1,7 +1,7 @@
-# reach exports entry-state memory through a composite view
+# branch preserves entry-state memory through a composite view
 
-An abstract branch join can retain a scalar relation to entry-state memory when
-the interface exports the exact view that makes the old load meaningful.
+A structured branch can retain a scalar relation to entry-state memory through
+the composite view that makes the old load meaningful.
 
 ```c filename=read_first.c
 struct buffer {
@@ -53,23 +53,12 @@ int32 retain_original(struct buffer* owner, int32 flag) {
     ensures result == old(owner->data[0]);
 } by {
     execute_until(statement(3));
-    have flag == flag by {
-        normalize();
-    }
     observe(buffer(owner));
-    reach(statement(3).exit)
-    ensuring {
-        fact selected == original;
-        fact original == old(owner->data[0]);
-        owns buffer(owner);
-        views owner->data[0..1];
-    }
-    by {
-        if flag != 0 {
+    branch {
+        then {
             step();
-            step();
-        } else {
-            step();
+        }
+        else {
             step();
         }
     }
