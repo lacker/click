@@ -128,6 +128,10 @@ certificate immediately, and expansion/audit replay the same surface proof.
 | `observe(resource)` | simple | Project the declared non-consuming view of a held composite resource. |
 | `close_invariants()` | simple | Discharge the explicit invariant bundle at a loop back edge. This is mainly certificate-facing. |
 
+Predicate calls are opaque to framing until their definitions are unfolded.
+To carry such a fact across C execution, run `unfold(name)` before the relevant
+steps and transport the unfolded definition.
+
 `by frame;` is sugar for the same bare smart `frame()` at the same frontier. It
 does not execute C. A whole-function explicit proof normally writes
 `execute(); frame();`; `by auto;` may orchestrate both operations.

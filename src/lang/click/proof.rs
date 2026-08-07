@@ -10021,6 +10021,57 @@ fn plan_explicit_fact_transport(
     Ok(selected.into_iter().map(|(_, surface)| surface).collect())
 }
 
+fn surface_predicate_call_name(proposition: &ClickProposition) -> Option<&str> {
+    match proposition {
+        ClickProposition::PredicateCall { name, .. } => Some(name),
+        ClickProposition::At { proposition, .. }
+        | ClickProposition::Not(proposition)
+        | ClickProposition::ForAll {
+            body: proposition, ..
+        }
+        | ClickProposition::Exists {
+            body: proposition, ..
+        }
+        | ClickProposition::RangeAll {
+            body: proposition, ..
+        }
+        | ClickProposition::RangeAny {
+            body: proposition, ..
+        } => surface_predicate_call_name(proposition),
+        ClickProposition::And(left, right)
+        | ClickProposition::Or(left, right)
+        | ClickProposition::Implies(left, right) => {
+            surface_predicate_call_name(left).or_else(|| surface_predicate_call_name(right))
+        }
+        ClickProposition::Comparison { .. }
+        | ClickProposition::Separate { .. }
+        | ClickProposition::Contains { .. }
+        | ClickProposition::Loadable { .. }
+        | ClickProposition::Defined { .. } => None,
+    }
+}
+
+fn fact_transport_planning_failure(
+    source: &ClickProposition,
+    target: &ClickProposition,
+    unfolded_predicates: &[String],
+    error: &ClickError,
+) -> String {
+    let opaque_name = [source, target]
+        .into_iter()
+        .filter_map(surface_predicate_call_name)
+        .find(|name| !unfolded_predicates.iter().any(|unfolded| unfolded == name));
+    if let Some(name) = opaque_name {
+        return format!(
+            "`transport` cannot frame opaque predicate `{name}` across C execution because its memory footprint is hidden; run `unfold({name});` before the execution steps and transport its unfolded definition"
+        );
+    }
+    format!(
+        "could not make fact transport premises explicit: {}",
+        error.message()
+    )
+}
+
 #[allow(clippy::too_many_arguments)]
 fn replay_fact_transport_at_outcome(
     surface_source: &ClickProposition,
@@ -19560,9 +19611,11 @@ fn record_surface_replay_tactic(
                                     ));
                                 }
                             } else {
-                                replay.surface_replay.block(format!(
-                                    "could not make fact transport premises explicit: {}",
-                                    error.message()
+                                replay.surface_replay.block(fact_transport_planning_failure(
+                                    &surface_source,
+                                    &surface_target,
+                                    &replay.unfolded_predicates,
+                                    &error,
                                 ));
                             }
                         }
@@ -21121,8 +21174,13 @@ fn replay_linear_tactics_without_frontier_loops(
             )
             .map_err(|error| {
                 ClickError::new(format!(
-                    "`{claim_label}` tactic {tactic_index}: could not make fact transport premises explicit: {}",
-                    error.message()
+                    "`{claim_label}` tactic {tactic_index}: {}",
+                    fact_transport_planning_failure(
+                        surface_source,
+                        surface_target,
+                        &replay.unfolded_predicates,
+                        &error,
+                    )
                 ))
             })?;
             let plan = ProofReplayPlan::from_planned_tactics(&[ProofTactic::TransportUsing {
@@ -21518,9 +21576,11 @@ fn replay_linear_tactics_without_frontier_loops(
                                 premises,
                             });
                         }
-                        Err(error) => replay.surface_replay.block(format!(
-                            "could not make fact transport premises explicit: {}",
-                            error.message()
+                        Err(error) => replay.surface_replay.block(fact_transport_planning_failure(
+                            surface_source,
+                            surface_target,
+                            &replay.unfolded_predicates,
+                            &error,
                         )),
                     }
                 }

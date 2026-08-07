@@ -61,13 +61,6 @@ fixed before performance analysis. Profiling an incomplete target is reserved
 for diagnosing a timeout or unexpected slowness that prevents a green run; its
 partial timings are not expansion candidates.
 
-## Proof ergonomics
-
-These have a complete explicit proof path, but the smart tactic or its
-diagnostic can guide the Click writer better:
-
-1. [Guide opaque predicate transport through definitions](predicate-transport-across-local-stores.md).
-
 ## Maintainability
 
 These are behavior-preserving cleanup roadmaps rather than feature blockers:

@@ -196,12 +196,18 @@ control flow.
   spelling of the same rule.
 - `derive using { Q; ... }`: close the current atomic goal using Click's
   deterministic atomic theories and exactly the listed premises.
+
 - `intro();`, `split();`, `left();`, `right();`, `contradiction(P);`: one
   structural logical rule each. They are
   accepted only while a pure goal is active, typically inside `have ... by` or
   a theorem proof.
 - `simp();`: request smart contextual simplification when the proof block is
   checked.
+
+An opaque predicate does not expose the memory footprint needed for framing.
+When a predicate fact must cross execution, unfold it before those execution
+steps and transport the unfolded definition; smart `transport` diagnoses this
+case directly.
 
 The end of a per-claim `by { ... }` block checks that claim. The end of a
 trailing grouped function block checks every effect and postcondition in the
