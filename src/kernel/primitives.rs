@@ -2869,7 +2869,7 @@ impl CExecutionEnvironment {
                 });
             let state_matches = rule.symbolic_entry_state.locals == state.locals
                 && rule.symbolic_entry_state.memory == state.memory
-                && super::api::resource_contexts_definitionally_equal_with_definitions(
+                && super::api::contract_certification::resource_contexts_definitionally_equal_with_definitions(
                     &rule.composite_resource_definitions,
                     rule.symbolic_entry_state.memory(),
                     rule.symbolic_entry_state.resources(),

@@ -78,7 +78,7 @@ impl Assumptions {
             return true;
         }
 
-        if crate::kernel::api::quantified_int32_fact_certifies_loadable_range(
+        if crate::kernel::api::contract_certification::quantified_int32_fact_certifies_loadable_range(
             self, memory, base, bytes,
         ) {
             return true;
@@ -113,7 +113,7 @@ impl Assumptions {
         ranges.into_iter().any(|(_, range_base, range_bytes)| {
             self.proves_loadable_region_from_range(range_base, range_bytes, base, bytes)
         }) || bytes.as_const() == Some(4)
-            && crate::kernel::api::quantified_int32_fact_certifies_loadable_cell(self, base)
+            && crate::kernel::api::contract_certification::quantified_int32_fact_certifies_loadable_cell(self, base)
     }
 
     /// A loadable prefix followed immediately by another loadable region
