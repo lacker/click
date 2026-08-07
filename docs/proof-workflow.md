@@ -172,9 +172,8 @@ control flow.
   resulting fact to that path's pure facts.
 - `if proposition { ... } else { ... }`: prove the current claim twice, once
   with the proposition added to the pure facts and once with its negation
-  added. Each branch has its own proof script and must finish the current
-  claim. A proof-level `if` is therefore the final step in its surrounding
-  script unless it is inside `reach`; it does not execute a C `if` statement.
+  added. Each branch has its own proof script; the common continuation then
+  runs in every feasible case. It does not execute a C `if` statement.
 - `reach(program_point) ensuring { ... } by { ... }`: execute the nested
   proof cases to the exact statement entry or exit, checking the listed `fact`,
   `owns`, and `views` assertions in every case. Click then forgets
@@ -214,21 +213,23 @@ The end of a per-claim `by { ... }` block checks that claim. The end of a
 trailing grouped function block checks every effect and postcondition in the
 contract.
 
-Explicit C branch execution composes with proof-level case analysis:
+When the execution frontier is a C `if`, use `branch`:
 
 ```click
-if x >= 0 {
-    step();
-    step(); // Execute the first statement in the C then arm.
-} else {
-    step();
-    step(); // Execute the first statement in the C else arm.
+branch {
+    then {
+        step(); // Execute the first statement in the C then arm.
+    }
+    else {
+        step(); // Execute the first statement in the C else arm.
+    }
 }
 ```
 
-The branch steps execute only the selected control-flow edge. Ordinary
-`step()` calls handle statements inside the arm, so nested C `if`
-statements can be entered with another explicit branch step.
+`branch` reads and consumes the C guard at the frontier. Ordinary `step()`
+calls handle statements inside each arm, and the following proof continues at
+the shared C continuation on every nonreturning path. A nested C `if` uses
+another `branch` when it reaches the frontier.
 
 Use `reach` when branch-local execution should establish a common interface
 before the rest of the function proof:
@@ -241,12 +242,13 @@ ensuring {
     views metadata(data, len);
 }
 by {
-    if x >= 0 {
-        step();
-        step();
-    } else {
-        step();
-        step();
+    branch {
+        then {
+            step();
+        }
+        else {
+            step();
+        }
     }
 }
 step();
@@ -298,25 +300,25 @@ expressions are interpreted separately for each completed path.
 Some successful `auto` proofs record replayable tactic certificates when the
 current tactic language can express the argument.
 
-An execution proof tracks an execution frontier: the current
-execution point together with its enclosing continuation stack. Proof scripts can
-start at function entry, advance by one statement with `step();`, enter
-a selected C branch, join branch-local proofs at an explicit statement point
-with `reach`, pause at a statement
-entry with `execute_until(statement(N));`, and execute to function exit with
-`execute();`. Resource steps such as `observe`, `unfold`, and `fold` can
-happen between those execution steps.
+An execution proof tracks an execution frontier: the current execution point
+together with its enclosing continuation stack. Proof scripts can start at
+function entry, advance by one statement with `step();`, unpack a C `if` at the
+current frontier with `branch`, replace scoped paths with an explicit abstract
+interface using `reach`, pause at a statement entry with
+`execute_until(statement(N));`, and execute to function exit with `execute();`.
+Resource steps such as `observe`, `unfold`, and `fold` can happen between those
+execution steps.
 
 The execution frontier carries the same global statement ID assigned by
 lowering. The source layout uses that ID to identify branch children,
 continuations, and nested loops. Checks inserted by annotation lowering remain
 attached to their source statement and do not become extra tactics.
 
-Ordinary statement steps, explicit branch entry, and region execution-proof
-traversal use the same certified condition and statement transitions. `reach` composes
-those transitions inside its body and then replaces the reached branch-local
-frontiers with the declared abstract interface. `execute()` is the batch
-form that continues from the same frontier to function exit.
+Ordinary statement steps, frontier-local `branch`, and scoped execution-proof
+traversal use the same certified condition and statement transitions. `reach`
+composes those transitions inside its body and then replaces the reached
+branch-local frontiers with the declared abstract interface. `execute()` is
+the batch form that continues from the same frontier to function exit.
 
 `reach` accepts statement entry/exit targets and loop entry/exit targets. In
 particular, `reach(loop_name.exit) ensuring { ... } by { ... }` executes to a

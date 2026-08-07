@@ -76,6 +76,7 @@ An execution proof carries a C frontier. The execution vocabulary is:
 - `step()` for one smart transition;
 - `execute_until(point)` for a forward prefix;
 - `execute()` for the remainder of the function;
+- `branch { then { ... } else { ... } }` for the C `if` at the frontier;
 - `loop { ... }` for the C loop exactly at the current frontier; and
 - `reach(point) ensuring { ... } by { ... }` for a scoped execution proof that
   exports an explicit interface.
