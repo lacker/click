@@ -2243,6 +2243,59 @@ int32 identity(int32 x) {
     }
 
     #[test]
+    fn expands_common_step_after_frontier_branch() {
+        let c_source = r#"
+int32 increment_selected(int32 x) {
+    int32 y;
+    if (x >= 0) {
+        y = x;
+    } else {
+        y = 0;
+    }
+    y = y + 1;
+    return y;
+}
+"#;
+        let click_source = r#"
+verifying "increment.c";
+
+int32 increment_selected(int32 x) {
+    requires x < 2147483647;
+    ensures result > 0 by {
+        step();
+        branch {
+            then {
+                step();
+            }
+            else {
+                step();
+            }
+        }
+        step();
+        step();
+        simp();
+    }
+}
+"#;
+        let selected_offset = click_source
+            .find("        step();\n        step();\n        simp();")
+            .expect("common step should exist")
+            + 8;
+        let position = position_at_offset(click_source, selected_offset);
+        let expanded = expand_c0_tactic_source_at(
+            click_source,
+            &[("increment.c", c_source)],
+            position.line,
+            position.column,
+        )
+        .expect("common step should expand");
+
+        verify_c0_sources(&expanded, &[("increment.c", c_source)]).unwrap_or_else(|error| {
+            panic!("expanded common step should replay:\n{error:?}\n{expanded}")
+        });
+    }
+
+    #[test]
     fn locates_a_block_tactic_as_one_source_statement() {
         let source = "by { have x == x by simp; simp(); }";
         let tokens = scan_source_tokens(source).expect("source should scan");

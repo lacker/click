@@ -2400,6 +2400,41 @@ fn source_tactic_width(tactic: &ProofTactic) -> usize {
     }
 }
 
+fn internal_proof_contains_source_index(node: &InternalProofNode, wanted: usize) -> bool {
+    match node {
+        InternalProofNode::Done => false,
+        InternalProofNode::Linear {
+            tactics,
+            continuation,
+        } => {
+            tactics.iter().any(|tactic| tactic.source_index == wanted)
+                || internal_proof_contains_source_index(continuation, wanted)
+        }
+        InternalProofNode::If {
+            then_branch,
+            else_branch,
+            continuation,
+            ..
+        }
+        | InternalProofNode::Branch {
+            then_branch,
+            else_branch,
+            continuation,
+            ..
+        } => {
+            internal_proof_contains_source_index(then_branch, wanted)
+                || internal_proof_contains_source_index(else_branch, wanted)
+                || internal_proof_contains_source_index(continuation, wanted)
+        }
+        InternalProofNode::Reach {
+            body, continuation, ..
+        } => {
+            internal_proof_contains_source_index(body, wanted)
+                || internal_proof_contains_source_index(continuation, wanted)
+        }
+    }
+}
+
 pub(super) fn proof_source_tactic_count(proof: &Proof) -> usize {
     match proof {
         Proof::Default => 0,
@@ -4379,6 +4414,26 @@ fn tactic_expansion_capture_matches(site: Option<&ProofSite>, source_index: usiz
         probe.borrow().as_ref().is_some_and(|probe| {
             probe.active && site == Some(&probe.site) && probe.source_index == Some(source_index)
         })
+    })
+}
+
+/// Takes one path-local selected-tactic expansion while leaving the probe
+/// installed for a sibling execution path. Frontier-local `branch` uses this
+/// to collect the certificate produced at one shared source occurrence under
+/// each C arm before it emits their logical case split.
+fn take_path_tactic_expansion_capture() -> Result<Vec<ProofTactic>, ClickError> {
+    TACTIC_EXPANSION_PROBE.with(|probe| {
+        let mut slot = probe.borrow_mut();
+        let Some(probe) = slot.as_mut() else {
+            return Err(ClickError::new(
+                "selected-tactic expansion probe was lost between branch paths",
+            ));
+        };
+        let result = probe.result.take().ok_or_else(|| {
+            ClickError::new("selected tactic completed without recording its branch expansion")
+        })?;
+        probe.active = false;
+        result.map_err(ClickError::new)
     })
 }
 
@@ -23536,7 +23591,7 @@ fn execute_internal_proof(
                 let branch_description =
                     format!("{branch_name} branch of proof `if {condition_text}`");
                 branch_context.branch_path.push(branch_description);
-                introduce_proof_case_assumption(
+                let feasible = introduce_proof_case_assumption(
                     &mut branch_context,
                     condition,
                     value,
@@ -23548,6 +23603,9 @@ fn execute_internal_proof(
                     claim_label,
                 )
                 .map_err(|error| add_proof_branch_path(error, &branch_context.branch_path))?;
+                if !feasible {
+                    continue;
+                }
                 let branch_contexts = execute_internal_proof(
                     branch,
                     branch_context,
@@ -23607,7 +23665,39 @@ fn execute_internal_proof(
             }
             let continuation_index = source_region.continuation_node;
             let initial_continuation_depth = context.replay.frontier.continuations.len();
+            let selected_source_index = context
+                .replay
+                .proof_site
+                .as_ref()
+                .and_then(selected_tactic_index_for_site);
+            let capture_in_continuation = selected_source_index
+                .is_some_and(|wanted| internal_proof_contains_source_index(continuation, wanted));
+            let capture_condition = if capture_in_continuation {
+                let (_, _, statement, _) = next_top_level_statement_from_execution_point(
+                    &context.replay,
+                    &context.state,
+                    function,
+                    arguments,
+                    claim_label,
+                    *index,
+                    "branch",
+                )?;
+                let CStatement::If { condition, .. } = statement else {
+                    unreachable!("source branch was checked as an if above")
+                };
+                Some(surface_with_source_site(
+                    &surface_c_condition(&condition),
+                    &ProgramPointRef {
+                        region: CodeRegionRef::Statement(statement_index),
+                        kind: ProgramPointKind::Entry,
+                    },
+                )?)
+            } else {
+                None
+            };
             let mut contexts = Vec::new();
+            let mut captured_then = Vec::new();
+            let mut captured_else = Vec::new();
             for (branch_name, take_then, branch) in [
                 ("then", true, then_branch.as_ref()),
                 ("else", false, else_branch.as_ref()),
@@ -23673,7 +23763,7 @@ fn execute_internal_proof(
                         contexts.push(branch_context);
                         continue;
                     }
-                    let mut continued = execute_internal_proof(
+                    let continued = execute_internal_proof(
                         continuation,
                         branch_context,
                         function_block,
@@ -23687,8 +23777,60 @@ fn execute_internal_proof(
                         theorem_environment,
                         function,
                         arguments,
-                    )?;
-                    contexts.append(&mut continued);
+                    );
+                    match continued {
+                        Ok(mut continued) => contexts.append(&mut continued),
+                        Err(error) if capture_in_continuation && error.is_expansion_complete() => {
+                            let captured = take_path_tactic_expansion_capture()?;
+                            if take_then {
+                                captured_then.push(captured);
+                            } else {
+                                captured_else.push(captured);
+                            }
+                        }
+                        Err(error) => return Err(error),
+                    }
+                }
+            }
+            if capture_in_continuation {
+                let one_arm_certificate = |arm: &[Vec<ProofTactic>], name: &str| {
+                    let Some(first) = arm.first() else {
+                        return Ok(None);
+                    };
+                    if arm.iter().any(|certificate| certificate != first) {
+                        return Err(ClickError::new(format!(
+                            "selected tactic expands differently across paths within the `{name}` arm of `branch`"
+                        )));
+                    }
+                    Ok(Some(first.clone()))
+                };
+                let then_certificate = one_arm_certificate(&captured_then, "then")?;
+                let else_certificate = one_arm_certificate(&captured_else, "else")?;
+                let tactics = match (then_certificate, else_certificate) {
+                    (Some(then_tactics), Some(else_tactics)) if then_tactics != else_tactics => {
+                        Some(vec![ProofTactic::If(ProofIf {
+                            condition: capture_condition
+                                .expect("a captured branch continuation has its C condition"),
+                            then_tactics,
+                            else_tactics,
+                        })])
+                    }
+                    (Some(tactics), Some(_)) | (Some(tactics), None) | (None, Some(tactics)) => {
+                        Some(tactics)
+                    }
+                    // A deferred post-execution tactic is captured later,
+                    // while the completed execution is certified. Let the
+                    // ordinary replay finish so that capture can occur.
+                    (None, None) => None,
+                };
+                if let Some(tactics) = tactics {
+                    return Err(finish_tactic_expansion_capture(
+                        &SurfaceReplay {
+                            tactics,
+                            ..SurfaceReplay::default()
+                        },
+                        false,
+                    ));
                 }
             }
             if contexts.is_empty() {
@@ -23795,7 +23937,7 @@ fn introduce_proof_case_assumption(
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
     claim_label: &str,
-) -> Result<(), ClickError> {
+) -> Result<bool, ClickError> {
     if context.replay.is_at_function_exit() {
         context.replay.case_assumptions.push(ReplayCaseAssumption {
             tactic_index,
@@ -23804,7 +23946,7 @@ fn introduce_proof_case_assumption(
             fact: None,
             at_function_entry: false,
         });
-        return Ok(());
+        return Ok(true);
     }
     let at_function_entry = context.replay.is_at_function_entry();
     let proposition = lower_point_proposition(
@@ -23840,6 +23982,13 @@ fn introduce_proof_case_assumption(
             proposition => Proposition::Not(Box::new(proposition)),
         }
     };
+    if context
+        .pure_facts
+        .iter()
+        .any(|available| propositions_are_exact_negations(available, &kernel_fact))
+    {
+        return Ok(false);
+    }
     context
         .replay
         .surface_propositions
@@ -23852,10 +24001,13 @@ fn introduce_proof_case_assumption(
         fact: Some(kernel_fact),
         at_function_entry,
     });
-    Ok(())
+    Ok(true)
 }
 
 fn add_proof_branch_context(error: ClickError, branch: &str) -> ClickError {
+    if error.is_expansion_complete() {
+        return error;
+    }
     ClickError::new(format!("in {branch}:\n{}", error.message()))
 }
 
