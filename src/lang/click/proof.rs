@@ -1615,6 +1615,12 @@ mod certificate_tests {
                 else_branch,
                 continuation,
                 ..
+            }
+            | InternalProofNode::Branch {
+                then_branch,
+                else_branch,
+                continuation,
+                ..
             } => {
                 let mut coordinates = linear_tactic_coordinates(then_branch);
                 coordinates.extend(linear_tactic_coordinates(else_branch));
@@ -2085,6 +2091,12 @@ enum InternalProofNode {
         else_branch: Box<InternalProofNode>,
         continuation: Box<InternalProofNode>,
     },
+    Branch {
+        index: usize,
+        then_branch: Box<InternalProofNode>,
+        else_branch: Box<InternalProofNode>,
+        continuation: Box<InternalProofNode>,
+    },
     Reach {
         index: usize,
         _join_id: usize,
@@ -2157,6 +2169,12 @@ fn set_generated_proof_source_index(node: &mut InternalProofNode, owning_source_
             else_branch,
             continuation,
             ..
+        }
+        | InternalProofNode::Branch {
+            then_branch,
+            else_branch,
+            continuation,
+            ..
         } => {
             set_generated_proof_source_index(then_branch, owning_source_index);
             set_generated_proof_source_index(else_branch, owning_source_index);
@@ -2193,6 +2211,12 @@ fn detach_generated_suffix_from_source_indices(
             else_branch,
             continuation,
             ..
+        }
+        | InternalProofNode::Branch {
+            then_branch,
+            else_branch,
+            continuation,
+            ..
         } => {
             detach_generated_suffix_from_source_indices(then_branch, first_generated_tactic_index);
             detach_generated_suffix_from_source_indices(else_branch, first_generated_tactic_index);
@@ -2213,11 +2237,12 @@ fn build_internal_proof_at(
     index_offset: usize,
     source_index_offset: usize,
 ) -> Result<InternalProofNode, ClickError> {
-    let Some((control_index, control_tactic)) = tactics
-        .iter()
-        .enumerate()
-        .find(|(_, tactic)| matches!(tactic, ProofTactic::If(_) | ProofTactic::Reach(_)))
-    else {
+    let Some((control_index, control_tactic)) = tactics.iter().enumerate().find(|(_, tactic)| {
+        matches!(
+            tactic,
+            ProofTactic::If(_) | ProofTactic::Branch(_) | ProofTactic::Reach(_)
+        )
+    }) else {
         if tactics.is_empty() {
             return Ok(InternalProofNode::Done);
         }
@@ -2247,6 +2272,30 @@ fn build_internal_proof_at(
                 )?),
                 else_branch: Box::new(build_internal_proof_at(
                     &proof_if.else_tactics,
+                    next_join_id,
+                    index + 1,
+                    source_index + 1 + then_width,
+                )?),
+                continuation: Box::new(build_internal_proof_at(
+                    &tactics[control_index + 1..],
+                    next_join_id,
+                    index + 1,
+                    source_index + source_tactic_width(control_tactic),
+                )?),
+            }
+        }
+        ProofTactic::Branch(proof_branch) => {
+            let then_width = source_tactic_count(&proof_branch.then_tactics);
+            InternalProofNode::Branch {
+                index,
+                then_branch: Box::new(build_internal_proof_at(
+                    &proof_branch.then_tactics,
+                    next_join_id,
+                    index + 1,
+                    source_index + 1,
+                )?),
+                else_branch: Box::new(build_internal_proof_at(
+                    &proof_branch.else_tactics,
                     next_join_id,
                     index + 1,
                     source_index + 1 + then_width,
@@ -2329,6 +2378,10 @@ fn source_tactic_width(tactic: &ProofTactic) -> usize {
         ProofTactic::If(proof_if) => {
             1 + source_tactic_count(&proof_if.then_tactics)
                 + source_tactic_count(&proof_if.else_tactics)
+        }
+        ProofTactic::Branch(proof_branch) => {
+            1 + source_tactic_count(&proof_branch.then_tactics)
+                + source_tactic_count(&proof_branch.else_tactics)
         }
         ProofTactic::Reach(advance) => 1 + source_tactic_count(&advance.tactics),
         ProofTactic::Loop(clause) => {
@@ -3637,6 +3690,11 @@ fn tactic_contains_frontier_loop(tactic: &ProofTactic) -> bool {
             .iter()
             .chain(&proof_if.else_tactics)
             .any(tactic_contains_frontier_loop),
+        ProofTactic::Branch(proof_branch) => proof_branch
+            .then_tactics
+            .iter()
+            .chain(&proof_branch.else_tactics)
+            .any(tactic_contains_frontier_loop),
         ProofTactic::Reach(reach) => reach.tactics.iter().any(tactic_contains_frontier_loop),
         _ => false,
     }
@@ -3950,6 +4008,10 @@ struct TacticReplayState {
     frontier: ExecutionFrontier,
     source_layout: SourceExecutionLayout,
     program_point_states: ProgramPointStates,
+    /// C `if` regions completed by the most recent execution transition.
+    /// A frontier-local `branch` uses this edge-local record to distinguish
+    /// reaching its join from executing past it in a later tactic.
+    completed_branch_regions: Vec<usize>,
     frames: BTreeSet<Option<CodeRegionRef>>,
     unfolded_predicates: Vec<String>,
     post_execution_tactics: Vec<DeferredPostExecutionTactic>,
@@ -22858,7 +22920,7 @@ fn replay_linear_tactics_without_frontier_loops(
                     assumptions = assumptions.assume_proposition(fact);
                 }
             }
-            ProofTactic::If(_) | ProofTactic::Reach(_) => {
+            ProofTactic::If(_) | ProofTactic::Branch(_) | ProofTactic::Reach(_) => {
                 unreachable!("structured tactics are represented by internal proof nodes")
             }
             ProofTactic::Loop(_) => {
@@ -23522,6 +23584,120 @@ fn execute_internal_proof(
             }
             Ok(contexts)
         }
+        InternalProofNode::Branch {
+            index,
+            then_branch,
+            else_branch,
+            continuation,
+        } => {
+            let statement_index = context.replay.frontier.next_statement_index;
+            let source_region = context
+                .replay
+                .source_layout
+                .statement(statement_index)
+                .ok_or_else(|| {
+                    ClickError::new(format!(
+                        "`{claim_label}` tactic {index}: `branch` could not resolve source statement({statement_index})"
+                    ))
+                })?;
+            if !matches!(source_region.kind, SourceStatementKind::If { .. }) {
+                return Err(ClickError::new(format!(
+                    "`{claim_label}` tactic {index}: `branch` requires a C `if` at the execution frontier, but statement({statement_index}) is not an `if`"
+                )));
+            }
+            let continuation_index = source_region.continuation_node;
+            let initial_continuation_depth = context.replay.frontier.continuations.len();
+            let mut contexts = Vec::new();
+            for (branch_name, take_then, branch) in [
+                ("then", true, then_branch.as_ref()),
+                ("else", false, else_branch.as_ref()),
+            ] {
+                let mut branch_context = context.clone();
+                branch_context.branch_path.push(format!(
+                    "{branch_name} arm of C `if` at statement({statement_index})"
+                ));
+                let entered = execute_branch_step_from_execution_point(
+                    &mut branch_context.replay,
+                    &mut branch_context.state,
+                    &mut branch_context.pure_facts,
+                    function_block,
+                    function,
+                    parsed_function.parameters(),
+                    arguments,
+                    claim_label,
+                    *index,
+                    "branch",
+                    Some(take_then),
+                    &[],
+                    StatementPrerequisitePolicy::Contextual,
+                    BranchStepPolicy::Explore,
+                    true,
+                )
+                .map_err(|error| add_proof_branch_path(error, &branch_context.branch_path))?;
+                if !entered {
+                    continue;
+                }
+                let branch_contexts = execute_internal_proof(
+                    branch,
+                    branch_context,
+                    function_block,
+                    parsed_function,
+                    claims,
+                    claim_label,
+                    function_environment,
+                    predicate_environment,
+                    click_function_environment,
+                    resource_environment,
+                    theorem_environment,
+                    function,
+                    arguments,
+                )?;
+                for branch_context in branch_contexts {
+                    let returned = branch_context.replay.is_at_function_exit();
+                    let reached_continuation = branch_context
+                        .replay
+                        .completed_branch_regions
+                        .contains(&statement_index)
+                        && branch_context.replay.frontier.continuations.len()
+                            <= initial_continuation_depth;
+                    if !reached_continuation {
+                        return Err(add_proof_branch_path(
+                            ClickError::new(format!(
+                                "`{claim_label}` tactic {index}: `{branch_name}` arm of `branch` must stop at the shared continuation statement({continuation_index}); its frontier is statement({})",
+                                branch_context.replay.frontier.next_statement_index
+                            )),
+                            &branch_context.branch_path,
+                        ));
+                    }
+                    if returned {
+                        contexts.push(branch_context);
+                        continue;
+                    }
+                    let mut continued = execute_internal_proof(
+                        continuation,
+                        branch_context,
+                        function_block,
+                        parsed_function,
+                        claims,
+                        claim_label,
+                        function_environment,
+                        predicate_environment,
+                        click_function_environment,
+                        resource_environment,
+                        theorem_environment,
+                        function,
+                        arguments,
+                    )?;
+                    contexts.append(&mut continued);
+                }
+            }
+            if contexts.is_empty() {
+                return Err(ClickError::new(format!(
+                    "`{claim_label}` tactic {index}: `branch` found no feasible C `if` arm"
+                )));
+            }
+            Ok(contexts)
+        }
         InternalProofNode::Reach {
             index,
             _join_id: _,
@@ -24126,12 +24302,14 @@ fn execute_branch_step_from_execution_point(
     arguments: &[CExpression],
     claim_label: &str,
     tactic_index: usize,
+    tactic_name: &str,
     requested_branch: Option<bool>,
     certified_prerequisites: &[PropositionDerivation],
     prerequisite_policy: StatementPrerequisitePolicy,
     branch_step_policy: BranchStepPolicy,
+    complete_empty_branch: bool,
 ) -> Result<bool, ClickError> {
-    let tactic_name = "step";
+    replay.completed_branch_regions.clear();
     let statement_index = replay.frontier.next_statement_index;
     let source_region = replay.source_layout.statement(statement_index).ok_or_else(|| {
         ClickError::new(format!(
@@ -24326,10 +24504,19 @@ fn execute_branch_step_from_execution_point(
         else_statement_index
     };
     replay.frontier.execution_start_state = Some(execution_start_state);
-    replay.frontier.point = ProofExecutionPoint::StatementEntry {
-        remaining: selected_branch,
-    };
     *state = current_state;
+    if complete_empty_branch && matches!(selected_branch, CStatement::Skip) {
+        let Some(remaining) = resume_after_completed_region(replay, function_block, state) else {
+            return Err(ClickError::new(format!(
+                "`{claim_label}` tactic {tactic_index}: `{tactic_name}` reached the end of the function without a return"
+            )));
+        };
+        replay.frontier.point = ProofExecutionPoint::StatementEntry { remaining };
+    } else {
+        replay.frontier.point = ProofExecutionPoint::StatementEntry {
+            remaining: selected_branch,
+        };
+    }
     record_current_statement_entry(
         replay,
         state,
@@ -24875,6 +25062,7 @@ fn execute_step_from_execution_point(
     fact_transport_policy: StatementFactTransportPolicy,
     loop_step_policy: LoopStepPolicy,
 ) -> Result<(), ClickError> {
+    replay.completed_branch_regions.clear();
     let statement_index = replay.frontier.next_statement_index;
     let source_region = replay.source_layout.statement(statement_index).ok_or_else(|| {
         ClickError::new(format!(
@@ -24892,10 +25080,12 @@ fn execute_step_from_execution_point(
             arguments,
             claim_label,
             tactic_index,
+            "step",
             None,
             certified_prerequisites,
             prerequisite_policy,
             BranchStepPolicy::RequireProven,
+            false,
         )?;
         debug_assert!(entered);
         return Ok(());
@@ -25431,6 +25621,7 @@ fn resume_after_completed_region(
 ) -> Option<CStatement> {
     while let Some(continuation) = replay.frontier.continuations.pop() {
         if let ProofExecutionContinuationKind::Branch { statement_index } = continuation.kind {
+            replay.completed_branch_regions.push(statement_index);
             record_statement_program_point_state(
                 replay,
                 function_block,
@@ -25454,6 +25645,7 @@ fn record_completed_continuation_exits(
 ) {
     while let Some(continuation) = replay.frontier.continuations.pop() {
         if let ProofExecutionContinuationKind::Branch { statement_index } = continuation.kind {
+            replay.completed_branch_regions.push(statement_index);
             record_statement_program_point_state(
                 replay,
                 function_block,
@@ -25563,10 +25755,12 @@ fn bounded_execute_from_execution_point(
                     arguments,
                     claim_label,
                     tactic_index,
+                    "execute",
                     Some(take_then),
                     &[],
                     prerequisite_policy,
                     BranchStepPolicy::Explore,
+                    false,
                 )?;
                 if entered {
                     pending.push(branch);

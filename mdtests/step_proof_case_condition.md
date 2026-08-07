@@ -1,7 +1,7 @@
-# Smart step uses the proof case condition
+# Frontier branch uses the C condition
 
-This checks that smart `step()` uses the exact condition introduced by a
-proof-level `if` to enter the matching C arm.
+This checks that `branch` derives its cases from the C condition at the
+execution frontier, without restating that condition as a logical proof split.
 
 ```c filename=wrong_selected_branch.c
 int32 wrong_selected_branch(int32 x) {
@@ -18,14 +18,15 @@ verifying "wrong_selected_branch.c";
 
 int32 wrong_selected_branch(int32 x) {
     ensures result >= 0 by {
-        if x >= 0 {
-            step();
-            step();
-            simp();
-        } else {
-            step();
-            step();
-            simp();
+        branch {
+            then {
+                step();
+                simp();
+            }
+            else {
+                step();
+                simp();
+            }
         }
     }
 }

@@ -1,7 +1,7 @@
 # nested branch steps
 
-Branch execution enters one selected arm without executing its body. This lets
-a proof execute statements inside that arm and then select a nested C branch.
+Frontier-local `branch` mirrors nested C control flow. Once both arms reach the
+same continuation, the following proof is written once.
 
 ```c filename=nested_branch_steps.c
 int32 nested_branch_steps(int32 x) {
@@ -28,26 +28,24 @@ int32 nested_branch_steps(int32 x) {
 
     ensures result >= 0 by {
         step();
-        if x >= 0 {
-            step();
-            step();
-            if y > 0 {
+        branch {
+            then {
                 step();
-                step();
-                step();
-                simp();
-            } else {
-                step();
-                step();
-                step();
-                simp();
+                branch {
+                    then {
+                        step();
+                    }
+                    else {
+                        step();
+                    }
+                }
             }
-        } else {
-            step();
-            step();
-            step();
-            simp();
+            else {
+                step();
+            }
         }
+        step();
+        simp();
     }
 }
 ```

@@ -44,11 +44,13 @@ smaller execution steps or exact premises; `derive using { ... }` and
 | `step() using { P; ... }` | simple | Perform one transition using exactly the listed pure premises. An empty block is valid. |
 | `execute()` | smart | Execute from the current frontier to function exit. It follows verified loop summaries and can plan explicit branch alternatives. |
 | `execute_until(statement(N))` | smart | Execute forward to the selected statement entry without creating a new proof interface. |
+| `branch { then { ... } else { ... } }` | control | Consume the C `if` at the current frontier and prove its feasible arms. Nonreturning arms must reach the shared continuation; a returning arm closes its own proof path. |
 | `loop [as name] { ... }` | control | Verify the C loop exactly at the current frontier, apply its checked rule, and advance to its abstract exit. |
 | `reach(point) ensuring { ... } by { ... }` | control | Prove a scoped execution region and expose only its declared fact/resource interface at the target point. |
 
-The boundaries are intentional: `step` is one concrete transition, `loop`
-constructs and applies one verified abstract loop transition,
+The boundaries are intentional: `step` is one concrete transition, `branch`
+and `loop` unpack the corresponding C control flow at the current frontier,
+`loop` constructs and applies one verified abstract loop transition,
 `execute_until` repeats transitions to a point, and `execute` runs to function
 exit. `reach` is a scoped proof and interface join, not another spelling of
 repeated execution.
@@ -159,7 +161,7 @@ focused migration message:
 | `apply_loop_summary(...)` / `summarize(...)` | frontier-local `loop { ... }` |
 | `execute_rest()` / `symbolic_execute()` | `execute()` |
 | `execute_step()` | `step()` |
-| `execute_then_step()` / `execute_else_step()` | smart `step()` or proof-level `if` |
+| `execute_then_step()` / `execute_else_step()` | frontier-local `branch` |
 | `bounded_execute()` | `execute()` or `by auto;` |
 | `advance(...)` | `reach(...)` |
 | `calculate(...)` | `derive using { ... }` |

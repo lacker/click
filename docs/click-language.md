@@ -283,6 +283,27 @@ It splits proof reasoning only; it does not itself execute a C `if` statement.
 Inside a case, smart `step()` uses the exact case fact to enter the selected C
 arm. Expansion prints the corresponding `step() using { ... }` certificate.
 
+When a C `if` is at the execution frontier, use `branch` instead of repeating
+its condition as a logical case split:
+
+```click
+branch {
+    then {
+        step();
+    }
+    else {
+        step();
+    }
+}
+step();
+```
+
+`branch` reads the guard from the C source and enters every feasible arm. Each
+nonreturning arm must stop at the C `if`'s shared continuation, after which the
+following proof continues on each path. An arm that returns closes its own
+proof path inside the arm; it does not run the continuation after `branch`.
+The tactic fails if the current frontier is not a C `if`.
+
 When one transition needs contextual pure facts, list them explicitly:
 
 ```click
@@ -300,8 +321,9 @@ abstract exit. It fails if the current frontier is not a loop. Ordinary
 `step()` instead evaluates the loop condition and enters at most one concrete
 iteration; it does not invent a loop summary.
 
-When both proof cases should continue through common code, `reach` gives the
-branch-local execution a shared, explicit postcondition:
+When paths need to be collapsed behind a deliberately smaller abstract
+interface, `reach` gives branch-local execution a shared, explicit
+postcondition:
 
 ```click
 reach(statement(1).exit)
@@ -309,12 +331,13 @@ ensuring {
     fact y >= 0;
 }
 by {
-    if x >= 0 {
-        step();
-        step();
-    } else {
-        step();
-        step();
+    branch {
+        then {
+            step();
+        }
+        else {
+            step();
+        }
     }
 }
 step();

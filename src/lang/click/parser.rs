@@ -1671,6 +1671,21 @@ impl Parser {
                 else_tactics,
             }));
         }
+        if name == "branch" {
+            self.expect(Token::LBrace)?;
+            self.expect_ident_spelling("then")?;
+            let then_tactics = self.parse_possibly_empty_tactic_block()?;
+            self.expect_ident_spelling("else")?;
+            let else_tactics = self.parse_possibly_empty_tactic_block()?;
+            self.expect(Token::RBrace)?;
+            if self.peek() == Some(&Token::Semicolon) {
+                self.position += 1;
+            }
+            return Ok(ProofTactic::Branch(ProofBranch {
+                then_tactics,
+                else_tactics,
+            }));
+        }
         if name == "loop" {
             let label = if self.peek_ident() == Some("as") {
                 self.position += 1;

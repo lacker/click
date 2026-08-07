@@ -226,6 +226,20 @@ fn collect_smart_script_sites(
                     sites,
                 );
             }
+            ProofTactic::Branch(proof_branch) => {
+                collect_smart_script_sites(
+                    claim_label,
+                    &proof_branch.then_tactics,
+                    source_index + 1,
+                    sites,
+                );
+                collect_smart_script_sites(
+                    claim_label,
+                    &proof_branch.else_tactics,
+                    source_index + 1 + source_tactic_count(&proof_branch.then_tactics),
+                    sites,
+                );
+            }
             ProofTactic::Reach(advance) => {
                 collect_smart_script_sites(claim_label, &advance.tactics, source_index + 1, sites)
             }
@@ -1658,6 +1672,15 @@ fn source_tactic_is_nested_proof_clause(tactics: &[ProofTactic], wanted: usize) 
                             source_index + 1 + source_tactic_count(&proof_if.then_tactics),
                         )
                     }),
+                ProofTactic::Branch(proof_branch) => {
+                    find(&proof_branch.then_tactics, wanted, source_index + 1).or_else(|| {
+                        find(
+                            &proof_branch.else_tactics,
+                            wanted,
+                            source_index + 1 + source_tactic_count(&proof_branch.then_tactics),
+                        )
+                    })
+                }
                 ProofTactic::Reach(advance) => find(&advance.tactics, wanted, source_index + 1),
                 ProofTactic::Loop(clause) => {
                     let mut nested_source_index = source_index + 1;
@@ -1731,6 +1754,24 @@ fn collect_tactic_block_spans(
                     else_open,
                     else_close,
                     &proof_if.else_tactics,
+                    spans,
+                )?;
+            }
+            ProofTactic::Branch(proof_branch) => {
+                let (then_open, then_close, else_open, else_close) =
+                    find_branch_blocks(tokens, &token_range)?;
+                collect_tactic_block_spans(
+                    tokens,
+                    then_open,
+                    then_close,
+                    &proof_branch.then_tactics,
+                    spans,
+                )?;
+                collect_tactic_block_spans(
+                    tokens,
+                    else_open,
+                    else_close,
+                    &proof_branch.else_tactics,
                     spans,
                 )?;
             }
@@ -1941,6 +1982,39 @@ fn find_if_branch_blocks(
         return Err(ClickError::new("could not locate proof `if` else branch"));
     }
     let else_close = matching_delimiter(tokens, else_open, "{", "}")?;
+    Ok((then_open, then_close, else_open, else_close))
+}
+
+fn find_branch_blocks(
+    tokens: &[SourceToken],
+    tactic: &Range<usize>,
+) -> Result<(usize, usize, usize, usize), ClickError> {
+    let outer_open = (tactic.start + 1..tactic.end)
+        .find(|index| tokens[*index].text == "{")
+        .ok_or_else(|| ClickError::new("source `branch` tactic has no body"))?;
+    let outer_close = matching_delimiter(tokens, outer_open, "{", "}")?;
+    let find_named_block = |name: &str| -> Result<(usize, usize), ClickError> {
+        let mut depth = 0_usize;
+        for keyword in outer_open + 1..outer_close {
+            match tokens[keyword].text.as_str() {
+                "{" => depth += 1,
+                "}" => depth = depth.saturating_sub(1),
+                text if depth == 0
+                    && text == name
+                    && tokens.get(keyword + 1).map(|token| token.text.as_str()) == Some("{") =>
+                {
+                    let open = keyword + 1;
+                    return Ok((open, matching_delimiter(tokens, open, "{", "}")?));
+                }
+                _ => {}
+            }
+        }
+        Err(ClickError::new(format!(
+            "could not locate `branch` {name} arm"
+        )))
+    };
+    let (then_open, then_close) = find_named_block("then")?;
+    let (else_open, else_close) = find_named_block("else")?;
     Ok((then_open, then_close, else_open, else_close))
 }
 

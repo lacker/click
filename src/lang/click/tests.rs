@@ -2974,7 +2974,7 @@ fn synthesizes_dynamically_indexed_pointer_offset_equality() {
 }
 
 #[test]
-fn parses_explicit_branch_execution_tactics() {
+fn parses_logical_if_with_execution_tactics() {
     let source = FILL3_CLICK.replace(
         "by auto;",
         "by { if n <= 0 { step(); execute(); simp(); } else { step(); execute(); simp(); } }",
@@ -2993,6 +2993,28 @@ fn parses_explicit_branch_execution_tactics() {
             ..
         }) if then_tactics.first() == Some(&ProofTactic::SmartStep)
             && else_tactics.first() == Some(&ProofTactic::SmartStep)
+    ));
+}
+
+#[test]
+fn parses_frontier_branch_tactic() {
+    let source = FILL3_CLICK.replace(
+        "by auto;",
+        "by { branch { then { step(); } else { execute(); } } }",
+    );
+    let file = parse(&source).expect("frontier branch tactic should parse");
+    let tactics = file.function_blocks()[0].ensures()[0]
+        .proof()
+        .tactics()
+        .expect("expected tactics");
+
+    assert!(matches!(
+        &tactics[0],
+        ProofTactic::Branch(ProofBranch {
+            then_tactics,
+            else_tactics,
+        }) if then_tactics == &[ProofTactic::SmartStep]
+            && else_tactics == &[ProofTactic::SmartExecute]
     ));
 }
 

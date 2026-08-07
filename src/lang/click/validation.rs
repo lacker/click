@@ -355,6 +355,18 @@ fn expand_declared_resource_tactic(
                 .map(|tactic| expand_declared_resource_tactic(tactic, resource_definitions))
                 .collect::<Result<Vec<_>, _>>()?,
         })),
+        ProofTactic::Branch(proof_branch) => Ok(ProofTactic::Branch(ProofBranch {
+            then_tactics: proof_branch
+                .then_tactics
+                .into_iter()
+                .map(|tactic| expand_declared_resource_tactic(tactic, resource_definitions))
+                .collect::<Result<Vec<_>, _>>()?,
+            else_tactics: proof_branch
+                .else_tactics
+                .into_iter()
+                .map(|tactic| expand_declared_resource_tactic(tactic, resource_definitions))
+                .collect::<Result<Vec<_>, _>>()?,
+        })),
         ProofTactic::Reach(advance) => Ok(ProofTactic::Reach(ProofReach {
             target: advance.target,
             assertions: advance
@@ -2392,7 +2404,7 @@ fn validate_pure_theorem_tactics(
                 validate_pure_theorem_tactics(theorem_name, &proof_if.then_tactics)?;
                 validate_pure_theorem_tactics(theorem_name, &proof_if.else_tactics)?;
             }
-            ProofTactic::Loop(_) | ProofTactic::Reach(_) => {
+            ProofTactic::Branch(_) | ProofTactic::Loop(_) | ProofTactic::Reach(_) => {
                 return Err(ClickError::new(format!(
                     "execution tactic `{}` is not available in the pure proof for theorem `{theorem_name}`",
                     tactic_name(tactic)
@@ -2455,6 +2467,7 @@ pub(super) fn tactic_name(tactic: &ProofTactic) -> &'static str {
         ProofTactic::ApplyTheorem(_) | ProofTactic::ApplyTheoremUsing { .. } => "apply",
         ProofTactic::Have(_) => "have",
         ProofTactic::If(_) => "if",
+        ProofTactic::Branch(_) => "branch",
         ProofTactic::Loop(_) => "loop",
         ProofTactic::Reach(_) => "reach",
         ProofTactic::ObserveResource(_) => "observe",

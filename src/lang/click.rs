@@ -838,6 +838,7 @@ pub enum ProofTactic {
     },
     Have(ProofHave),
     If(ProofIf),
+    Branch(ProofBranch),
     Loop(StructuralClause),
     Reach(ProofReach),
     ObserveResource(ResourceClause),
@@ -931,6 +932,7 @@ pub enum SmartTacticKind {
 pub enum ControlFlowTactic {
     Have,
     If,
+    Branch,
     Loop,
     Reach,
     CertifiedAlternatives,
@@ -1071,6 +1073,23 @@ fn validate_certificate_tactics(
                     else_result
                 }
             }
+            TacticClass::ControlFlow(ControlFlowTactic::Branch) => {
+                let ProofTactic::Branch(proof_branch) = tactic else {
+                    unreachable!("tactic class and variant must agree")
+                };
+                path.push(CertificatePathSegment::ThenBranch);
+                let then_result = validate_certificate_tactics(&proof_branch.then_tactics, path);
+                path.pop();
+                if then_result.is_err() {
+                    then_result
+                } else {
+                    path.push(CertificatePathSegment::ElseBranch);
+                    let else_result =
+                        validate_certificate_tactics(&proof_branch.else_tactics, path);
+                    path.pop();
+                    else_result
+                }
+            }
             TacticClass::ControlFlow(ControlFlowTactic::Loop) => {
                 let ProofTactic::Loop(loop_clause) = tactic else {
                     unreachable!("tactic class and variant must agree")
@@ -1160,6 +1179,23 @@ fn validate_replay_plan_tactics(
                 } else {
                     path.push(CertificatePathSegment::ElseBranch);
                     let else_result = validate_replay_plan_tactics(&proof_if.else_tactics, path);
+                    path.pop();
+                    else_result
+                }
+            }
+            TacticClass::ControlFlow(ControlFlowTactic::Branch) => {
+                let ProofTactic::Branch(proof_branch) = tactic else {
+                    unreachable!("tactic class and variant must agree")
+                };
+                path.push(CertificatePathSegment::ThenBranch);
+                let then_result = validate_replay_plan_tactics(&proof_branch.then_tactics, path);
+                path.pop();
+                if then_result.is_err() {
+                    then_result
+                } else {
+                    path.push(CertificatePathSegment::ElseBranch);
+                    let else_result =
+                        validate_replay_plan_tactics(&proof_branch.else_tactics, path);
                     path.pop();
                     else_result
                 }
@@ -1337,6 +1373,7 @@ impl ProofTactic {
             Self::Simp => TacticClass::Smart(SmartTacticKind::Simp),
             Self::Have(_) => TacticClass::ControlFlow(ControlFlowTactic::Have),
             Self::If(_) => TacticClass::ControlFlow(ControlFlowTactic::If),
+            Self::Branch(_) => TacticClass::ControlFlow(ControlFlowTactic::Branch),
             Self::Loop(_) => TacticClass::ControlFlow(ControlFlowTactic::Loop),
             Self::Reach(_) => TacticClass::ControlFlow(ControlFlowTactic::Reach),
             Self::CertifiedAlternatives(_) => {
@@ -1365,6 +1402,12 @@ pub struct ProofHave {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ProofIf {
     condition: ClickProposition,
+    then_tactics: Vec<ProofTactic>,
+    else_tactics: Vec<ProofTactic>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProofBranch {
     then_tactics: Vec<ProofTactic>,
     else_tactics: Vec<ProofTactic>,
 }
@@ -3243,6 +3286,7 @@ fn proof_statement_prefix_end(
                 cursor = statement_count
             }
             ProofTactic::If(_)
+            | ProofTactic::Branch(_)
             | ProofTactic::Reach(_)
             | ProofTactic::ExecuteUntil(CodeRegionRef::Function | CodeRegionRef::Loop(_))
             | ProofTactic::ExecuteUntil(CodeRegionRef::Label(_)) => return statement_count,

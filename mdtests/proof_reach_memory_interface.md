@@ -30,12 +30,13 @@ int32 advance_memory_interface(int32* p, int32 x) {
             owns p[0..1];
         }
         by {
-            if x >= 0 {
-                step();
-                step();
-            } else {
-                step();
-                step();
+            branch {
+                then {
+                    step();
+                }
+                else {
+                    step();
+                }
             }
         }
         step();

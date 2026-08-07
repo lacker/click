@@ -34,12 +34,13 @@ int32 joined_increment(int32* p, int32 x) {
             views p[0..1];
         }
         by {
-            if x >= 0 {
-                step();
-                step();
-            } else {
-                step();
-                step();
+            branch {
+                then {
+                    step();
+                }
+                else {
+                    step();
+                }
             }
         }
         step();

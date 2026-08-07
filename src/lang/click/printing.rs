@@ -188,6 +188,16 @@ fn write_tactic(output: &mut String, tactic: &ProofTactic, indent: usize) {
             write_tactics(output, &proof_if.else_tactics, indent + 1);
             line(output, &prefix, "}");
         }
+        ProofTactic::Branch(proof_branch) => {
+            line(output, &prefix, "branch {");
+            line(output, &"    ".repeat(indent + 1), "then {");
+            write_tactics(output, &proof_branch.then_tactics, indent + 2);
+            line(output, &"    ".repeat(indent + 1), "}");
+            line(output, &"    ".repeat(indent + 1), "else {");
+            write_tactics(output, &proof_branch.else_tactics, indent + 2);
+            line(output, &"    ".repeat(indent + 1), "}");
+            line(output, &prefix, "}");
+        }
         ProofTactic::Loop(loop_clause) => {
             line(
                 output,
