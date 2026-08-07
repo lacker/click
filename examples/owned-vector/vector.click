@@ -105,7 +105,34 @@ int32 vector_copy(
     } by simp;
     step();
     frame();
-    simp();
+    have result == length by {
+        assumption();
+    }
+    have forall (k: int32) { 0 <= k and k < length implies src[k] == old(src[k]) } by {
+        derive using {
+            0 <= length;
+            length <= dst_capacity;
+            length <= src_capacity;
+            1 <= dst_capacity;
+            1 <= src_capacity;
+            at(statement(0).entry, loadable(dst[0..dst_capacity]));
+            at(statement(0).entry, loadable(src[0..src_capacity]));
+            separate(memory(dst[0..dst_capacity]), memory(src[0..src_capacity]));
+            at(loop(0).exit, 0) <= at(loop(0).exit, i);
+            at(loop(0).exit, i) <= at(loop(0).exit, length);
+            not at(loop(0).exit, i) < at(loop(0).exit, length);
+            at(statement(5).entry, i) == at(statement(5).entry, length);
+            forall (k: int32) { at(loop(0).exit, 0) <= at(loop(0).exit, k) and at(loop(0).exit, k) < at(loop(0).exit, i) implies at(loop(0).exit, dst[k]) == old(src[k]) };
+            forall (k: int32) { 0 <= k and k < length implies dst[k] == old(src[k]) };
+        }
+    }
+    have forall (k: int32) { 0 <= k and k < length implies dst[k] == old(src[k]) } by {
+        assumption();
+    }
+    assumption();
+    assumption();
+    assumption();
+    assumption();
 }
 
 int32 vector_grow(struct vector* owner) {
@@ -168,7 +195,12 @@ int32 vector_grow(struct vector* owner) {
         assumption();
         assumption();
     } else {
-        execute_until(statement(13));
+        step();
+        step();
+        step();
+        have copied == owner->len by {
+            assumption();
+        }
         step();
         step();
         step() using {}
