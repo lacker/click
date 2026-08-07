@@ -1,8 +1,7 @@
-# reach abstracts an owned selected pointer
+# branch preserves an owned selected pointer
 
-Both branches select an owned input pointer. The `reach` interface exports
-ownership of the selected cell, allowing the shared suffix to mutate it without
-retaining either branch's concrete symbolic state.
+Both branches select an owned input pointer, allowing the shared suffix to
+mutate it at the common frontier.
 
 ```c filename=advance_owned_selected_pointer.c
 int32 advance_owned_selected_pointer(
@@ -36,17 +35,11 @@ int32 advance_owned_selected_pointer(
 
     ensures result == value by {
         step();
-        reach(statement(1).exit)
-        ensuring {
-            fact selected == left or selected == right;
-            owns selected[0..1];
-        }
-        by {
-            if choose_left != 0 {
+        branch {
+            then {
                 step();
-                step();
-            } else {
-                step();
+            }
+            else {
                 step();
             }
         }
