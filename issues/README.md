@@ -61,12 +61,6 @@ fixed before performance analysis. Profiling an incomplete target is reserved
 for diagnosing a timeout or unexpected slowness that prevents a green run; its
 partial timings are not expansion candidates.
 
-## Maintainability
-
-These are behavior-preserving cleanup roadmaps rather than feature blockers:
-
-1. [Refactor large verifier modules along proof-model boundaries](refactor-large-verifier-modules.md).
-
 ## Partial correctness and recursion
 
 Click's C contracts now use partial correctness consistently: concrete
