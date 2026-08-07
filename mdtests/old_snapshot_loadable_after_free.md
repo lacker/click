@@ -67,7 +67,126 @@ int32 old_snapshot_loadable_after_free(
     ensures result == old(owner->data[index]);
 } by {
     unfold(allocated_buffer(owner));
-    execute();
+    step() using {
+        0 <= index;
+        index < owner->len;
+        separate(memory(owner->len), memory(owner->cap));
+        separate(memory(owner->len), memory(owner->data));
+        separate(memory(object(owner)), memory(owner->data[0..owner->cap]));
+        separate(memory(owner->cap), memory(owner->data));
+        separate(memory(owner->len), allocation(owner->data, (owner->cap * 4)));
+        separate(memory(owner->cap), allocation(owner->data, (owner->cap * 4)));
+        separate(memory(owner->data), allocation(owner->data, (owner->cap * 4)));
+        loadable(owner->len);
+        loadable(owner->cap);
+        loadable(owner->data);
+        loadable(owner->data[0..owner->cap]);
+        0 <= owner->len;
+        owner->len <= owner->cap;
+        1 <= owner->cap;
+        owner->cap <= 536870911;
+    }
+    step() using {
+        0 <= index;
+        index < owner->len;
+        separate(memory(owner->len), memory(owner->cap));
+        separate(memory(owner->len), memory(owner->data));
+        separate(memory(object(owner)), memory(owner->data[0..owner->cap]));
+        separate(memory(owner->cap), memory(owner->data));
+        separate(memory(owner->len), allocation(owner->data, (owner->cap * 4)));
+        separate(memory(owner->cap), allocation(owner->data, (owner->cap * 4)));
+        separate(memory(owner->data), allocation(owner->data, (owner->cap * 4)));
+        loadable(old(owner->len));
+        loadable(old(owner->cap));
+        loadable(old(owner->data));
+        loadable(old(owner->data[0..owner->cap]));
+        0 <= owner->len;
+        owner->len <= owner->cap;
+        1 <= owner->cap;
+        owner->cap <= 536870911;
+    }
+    step() using {
+        0 <= index;
+        index < owner->len;
+        separate(memory(owner->len), memory(owner->cap));
+        separate(memory(owner->len), memory(owner->data));
+        separate(memory(object(owner)), memory(owner->data[0..owner->cap]));
+        separate(memory(owner->cap), memory(owner->data));
+        separate(memory(owner->len), allocation(owner->data, (owner->cap * 4)));
+        separate(memory(owner->cap), allocation(owner->data, (owner->cap * 4)));
+        separate(memory(owner->data), allocation(owner->data, (owner->cap * 4)));
+        loadable(old(owner->len));
+        loadable(old(owner->cap));
+        loadable(old(owner->data));
+        loadable(old(owner->data[0..owner->cap]));
+        0 <= owner->len;
+        owner->len <= owner->cap;
+        1 <= owner->cap;
+        owner->cap <= 536870911;
+    }
+    step() using {
+        0 <= index;
+        index < owner->len;
+        separate(memory(owner->len), memory(owner->cap));
+        separate(memory(owner->len), memory(owner->data));
+        separate(memory(object(owner)), memory(owner->data[0..owner->cap]));
+        separate(memory(owner->cap), memory(owner->data));
+        separate(memory(owner->len), allocation(owner->data, (owner->cap * 4)));
+        separate(memory(owner->cap), allocation(owner->data, (owner->cap * 4)));
+        separate(memory(owner->data), allocation(owner->data, (owner->cap * 4)));
+        loadable(old(owner->len));
+        loadable(old(owner->cap));
+        loadable(old(owner->data));
+        loadable(old(owner->data[0..owner->cap]));
+        0 <= owner->len;
+        owner->len <= owner->cap;
+        1 <= owner->cap;
+        owner->cap <= 536870911;
+    }
+    have value == owner->data[index] by {
+        assumption();
+    }
+    step() using {
+        0 <= index;
+        index < owner->len;
+        separate(memory(owner->len), memory(owner->cap));
+        separate(memory(owner->len), memory(owner->data));
+        separate(memory(object(owner)), memory(owner->data[0..owner->cap]));
+        separate(memory(owner->cap), memory(owner->data));
+        separate(memory(owner->len), allocation(owner->data, (owner->cap * 4)));
+        separate(memory(owner->cap), allocation(owner->data, (owner->cap * 4)));
+        separate(memory(owner->data), allocation(owner->data, (owner->cap * 4)));
+        loadable(old(owner->len));
+        loadable(old(owner->cap));
+        loadable(old(owner->data));
+        loadable(old(owner->data[0..owner->cap]));
+        0 <= owner->len;
+        owner->len <= owner->cap;
+        1 <= owner->cap;
+        owner->cap <= 536870911;
+        value == owner->data[index];
+    }
+    step() using {
+        0 <= index;
+        index < owner->len;
+        separate(memory(owner->len), memory(owner->cap));
+        separate(memory(owner->len), memory(owner->data));
+        separate(memory(object(owner)), memory(owner->data[0..owner->cap]));
+        separate(memory(owner->cap), memory(owner->data));
+        separate(memory(owner->len), allocation(owner->data, (owner->cap * 4)));
+        separate(memory(owner->cap), allocation(owner->data, (owner->cap * 4)));
+        separate(memory(owner->data), allocation(owner->data, (owner->cap * 4)));
+        separate(allocation(owner->data, (owner->cap * 4)), memory(owner->data[0..owner->cap]));
+        loadable(old(owner->len));
+        loadable(old(owner->cap));
+        loadable(old(owner->data));
+        loadable(old(owner->data[0..owner->cap]));
+        0 <= owner->len;
+        owner->len <= owner->cap;
+        1 <= owner->cap;
+        owner->cap <= 536870911;
+        value == owner->data[index];
+    }
     simp();
 }
 ```
