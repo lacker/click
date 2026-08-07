@@ -1,4 +1,4 @@
-# branch ensuring joins different resource transformations
+# Branch ensuring joins different resource transformations
 
 Each branch consumes a different path token through a helper call. Both calls
 return the same permit, which is folded into `ready_bundle`. The branch exports

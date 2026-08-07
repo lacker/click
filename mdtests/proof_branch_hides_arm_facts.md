@@ -1,4 +1,4 @@
-# branch ensuring hides branch-specific facts
+# Branch ensuring hides arm-specific facts
 
 Although the two concrete branches assign `0` and `1`, the exported lower
 bound alone does not preserve either arm-specific upper-bound fact.

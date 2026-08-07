@@ -1,4 +1,4 @@
-# branch preserves a relation to function entry
+# Branch preserves a relation to function entry
 
 ```c filename=advance_old_state_interface.c
 int32 advance_old_state_interface(int32 x, int32 choose_first) {

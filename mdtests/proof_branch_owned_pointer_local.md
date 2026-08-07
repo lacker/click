@@ -1,4 +1,4 @@
-# branch preserves an owned selected pointer
+# Branch preserves an owned selected pointer
 
 Both branches select an owned input pointer, allowing the shared suffix to
 mutate it at the common frontier.

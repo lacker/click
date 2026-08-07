@@ -1,4 +1,4 @@
-# branch interfaces compose with forward execution
+# Branch interfaces compose with forward execution
 
 The common interface exported by a branch is the input to the ordinary
 forward proof that follows it.

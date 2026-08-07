@@ -1,4 +1,4 @@
-# branch requires every arm to establish its ensuring assertions
+# Branch requires every arm to establish its ensuring assertions
 
 ```c filename=advance_missing_fact.c
 int32 advance_missing_fact(int32 x) {

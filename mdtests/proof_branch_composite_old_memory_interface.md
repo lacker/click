@@ -1,4 +1,4 @@
-# branch preserves entry-state memory through a composite view
+# Branch preserves entry-state memory through a composite view
 
 A structured branch can retain a scalar relation to entry-state memory through
 the composite view that makes the old load meaningful.
