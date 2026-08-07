@@ -32,6 +32,19 @@ The affected unit tests were:
 This is broader than any one proof fixture. Continually expanding whichever
 proof happens to lose the timing race would hide the unstable test boundary.
 
+## Current mitigation
+
+Library unit tests no longer inherit production duration limits unless they
+explicitly install limits to test interruption. Integration fixtures measure
+tactic CPU time with the ordinary production thresholds, but use their outer
+fixture deadline as the hard in-process bound and require a second violating
+measurement before failing the performance gate. The production CLI remains
+strictly bounded on its first run.
+
+This removes one-sample correctness flakiness while retaining regression
+signal. It does not replace the deterministic-work budget described below, so
+this issue remains open.
+
 ## Intended design
 
 Production verification must still stop a slow tactic promptly. Correctness

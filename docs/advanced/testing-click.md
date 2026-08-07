@@ -86,10 +86,14 @@ those platforms.
 
 Rust library unit tests are a semantic correctness gate and do not inherit the
 production tactic-duration defaults. Tests specifically about interruption
-install explicit limits. The mdtest and example integration gates compile the
-ordinary library and retain production limits, so repository fixtures still
-detect tactics that cross them without making every concurrently scheduled
-unit test a machine-speed benchmark.
+install explicit limits. The mdtest and example integration gates still
+measure every tactic against the production thresholds, but their hard
+in-process cutoff is the fixture's outer deadline. If one successful run
+crosses a tactic threshold, the harness measures that fixture once more and
+fails only when the confirmation also crosses a threshold. This preserves a
+prompt outer bound and performance regression signal without making one noisy
+host-speed sample a correctness failure. The production CLI continues to
+enforce its tactic limits during the proof itself.
 
 The direct CLI is itself the bounding mechanism: `click verify --time-limit`
 cooperatively interrupts execution, proposition derivation, memory resolution,

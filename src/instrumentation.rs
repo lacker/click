@@ -98,8 +98,9 @@ impl TacticLimits {
 struct ActiveTactic {
     event: TacticEvent,
     exclusive: Duration,
+    started_at: TacticInstant,
     running_since: TacticInstant,
-    limit: Duration,
+    limit: Option<Duration>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -233,10 +234,11 @@ pub fn deadline_exceeded() -> bool {
             .is_some_and(|deadline| Instant::now() >= *deadline)
     });
     let tactic = ACTIVE_TACTICS.with(|active| {
-        active
-            .borrow()
-            .last()
-            .is_some_and(|active| active.exclusive + active.running_since.elapsed() >= active.limit)
+        active.borrow().last().is_some_and(|active| {
+            active
+                .limit
+                .is_some_and(|limit| active.exclusive + active.running_since.elapsed() >= limit)
+        })
     });
     let pending = PENDING_LIMIT.with(|pending| pending.borrow().is_some());
     let exceeded = run || tactic || pending;
@@ -296,16 +298,26 @@ pub fn deadline_context() -> String {
             "control" => "; inspect the nested tactic that consumed the time",
             _ => "",
         };
-        return format!(
-            "tactic `{}` in `{}` (class {}, statement {}, source tactic {}, {:.3}s elapsed, {} limit){guidance}",
-            active.event.tactic_name,
-            active.event.claim,
-            active.event.class,
-            active.event.statement_index,
-            active.event.source_index,
-            elapsed.as_secs_f64(),
-            crate::cli::format_duration(active.limit),
-        );
+        return match active.limit {
+            Some(limit) => format!(
+                "tactic `{}` in `{}` (class {}, statement {}, source tactic {}, {:.3}s elapsed, {} limit){guidance}",
+                active.event.tactic_name,
+                active.event.claim,
+                active.event.class,
+                active.event.statement_index,
+                active.event.source_index,
+                elapsed.as_secs_f64(),
+                crate::cli::format_duration(limit),
+            ),
+            None => format!(
+                "tactic `{}` in `{}` (class {}, statement {}, source tactic {})",
+                active.event.tactic_name,
+                active.event.claim,
+                active.event.class,
+                active.event.statement_index,
+                active.event.source_index,
+            ),
+        };
     }
     if let Some(phase) = ACTIVE_PHASES.with(|active| active.borrow().last().copied()) {
         return format!("{phase} phase");
@@ -338,8 +350,8 @@ pub fn starts_enabled() -> bool {
         || TACTIC_LIMITS.with(|limits| !limits.borrow().is_empty())
 }
 
-pub fn emit(event: VerificationEvent) {
-    match &event {
+pub fn emit(mut event: VerificationEvent) {
+    match &mut event {
         VerificationEvent::PhaseStarted(name) => {
             ACTIVE_PHASES.with(|active| active.borrow_mut().push(name));
         }
@@ -358,24 +370,22 @@ pub fn emit(event: VerificationEvent) {
                     .last()
                     .and_then(|limits| limits.for_class(&tactic.class))
             });
-            if let Some(limit) = limit {
-                ACTIVE_TACTICS.with(|active| {
-                    let now = TacticInstant::now();
-                    let mut active = active.borrow_mut();
-                    if let Some(parent) = active.last_mut() {
-                        parent.exclusive += now.duration_since(parent.running_since);
-                    }
-                    active.push(ActiveTactic {
-                        event: tactic.clone(),
-                        exclusive: Duration::ZERO,
-                        running_since: now,
-                        limit,
-                    });
+            ACTIVE_TACTICS.with(|active| {
+                let now = TacticInstant::now();
+                let mut active = active.borrow_mut();
+                if let Some(parent) = active.last_mut() {
+                    parent.exclusive += now.duration_since(parent.running_since);
+                }
+                active.push(ActiveTactic {
+                    event: tactic.clone(),
+                    exclusive: Duration::ZERO,
+                    started_at: now,
+                    running_since: now,
+                    limit,
                 });
-            }
+            });
         }
-        VerificationEvent::TacticFinished { tactic, .. }
-        | VerificationEvent::TacticFailed(tactic) => {
+        VerificationEvent::TacticFinished { tactic, elapsed } => {
             ACTIVE_TACTICS.with(|active| {
                 let now = TacticInstant::now();
                 let mut active = active.borrow_mut();
@@ -384,21 +394,39 @@ pub fn emit(event: VerificationEvent) {
                     .rposition(|candidate| &candidate.event == tactic)
                 {
                     let finished = active.remove(index);
-                    let elapsed = finished.exclusive + now.duration_since(finished.running_since);
-                    if elapsed >= finished.limit {
+                    *elapsed = now.duration_since(finished.started_at);
+                    let exclusive =
+                        finished.exclusive + now.duration_since(finished.running_since);
+                    if finished.limit.is_some_and(|limit| exclusive >= limit) {
+                        let limit = finished.limit.expect("checked as present");
                         PENDING_LIMIT.with(|pending| {
                             *pending.borrow_mut() = Some(format!(
                                 "tactic `{}` in `{}` exceeded its {} {} limit after {:.3}s (statement {}, source tactic {})",
                                 finished.event.tactic_name,
                                 finished.event.claim,
-                                crate::cli::format_duration(finished.limit),
+                                crate::cli::format_duration(limit),
                                 finished.event.class,
-                                elapsed.as_secs_f64(),
+                                exclusive.as_secs_f64(),
                                 finished.event.statement_index,
                                 finished.event.source_index,
                             ));
                         });
                     }
+                    if let Some(parent) = active.last_mut() {
+                        parent.running_since = now;
+                    }
+                }
+            });
+        }
+        VerificationEvent::TacticFailed(tactic) => {
+            ACTIVE_TACTICS.with(|active| {
+                let now = TacticInstant::now();
+                let mut active = active.borrow_mut();
+                if let Some(index) = active
+                    .iter()
+                    .rposition(|candidate| &candidate.event == tactic)
+                {
+                    active.remove(index);
                     if let Some(parent) = active.last_mut() {
                         parent.running_since = now;
                     }
@@ -580,6 +608,34 @@ mod tests {
         assert!(
             start.elapsed() < Duration::from_millis(25),
             "a sleeping verifier thread should consume negligible tactic budget"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn collected_tactic_duration_uses_the_tactic_cpu_clock() {
+        let tactic = tactic("smart", 0);
+        let (_, events) = collect(|| {
+            emit(VerificationEvent::TacticStarted(tactic.clone()));
+            std::thread::sleep(Duration::from_millis(50));
+            emit(VerificationEvent::TacticFinished {
+                tactic: tactic.clone(),
+                elapsed: Duration::from_secs(1),
+            });
+        });
+        let elapsed = events
+            .iter()
+            .find_map(|event| match event {
+                VerificationEvent::TacticFinished {
+                    tactic: finished,
+                    elapsed,
+                } if finished == &tactic => Some(*elapsed),
+                _ => None,
+            })
+            .expect("the finished tactic should be collected");
+        assert!(
+            elapsed < Duration::from_millis(25),
+            "structured tactic timing should exclude descheduled wall time: {elapsed:?}"
         );
     }
 

@@ -106,32 +106,56 @@ fn run_example_with_timeout(project: &Path, time_limit: Duration) -> Result<(), 
         .name("click-example".to_string())
         .stack_size(64 * 1024 * 1024)
         .spawn(move || {
-            let started = std::time::Instant::now();
-            let (result, events) = instrumentation::with_deadline(time_limit, || {
-                instrumentation::collect(|| run_example_project(&project))
-            });
-            result?;
-            let elapsed = started.elapsed();
-            if elapsed > time_limit {
-                return Err(format!(
-                    "exceeded the per-project example time limit of {}; set {EXAMPLE_TIME_LIMIT} to override it",
-                    format_duration(time_limit)
-                ));
+            let first = run_example_attempt(&project, time_limit)?;
+            if std::env::var_os(DISABLE_TACTIC_BUDGETS).is_some() {
+                return Ok(());
             }
-            if std::env::var_os(DISABLE_TACTIC_BUDGETS).is_none() {
-                let violations = structured_tactic_budget_violations(&events);
-                if !violations.is_empty() {
-                    return Err(format!(
-                        "passed, but broke tactic time budgets (set {DISABLE_TACTIC_BUDGETS}=1 to bypass):\n  {}",
-                        violations.join("\n  ")
-                    ));
-                }
+            let first_violations = structured_tactic_budget_violations(&first);
+            if first_violations.is_empty() {
+                return Ok(());
             }
-            Ok(())
+            let confirmation = run_example_attempt(&project, time_limit)?;
+            let confirmation_violations = structured_tactic_budget_violations(&confirmation);
+            if confirmation_violations.is_empty() {
+                return Ok(());
+            }
+            Err(format!(
+                "passed twice, but broke tactic time budgets in both measurements (set {DISABLE_TACTIC_BUDGETS}=1 to bypass):\n  first:\n    {}\n  confirmation:\n    {}",
+                first_violations.join("\n    "),
+                confirmation_violations.join("\n    "),
+            ))
         })
         .map_err(|error| format!("failed to start example verifier: {error}"))?
         .join()
         .map_err(|_| "example verifier panicked".to_string())?
+}
+
+fn run_example_attempt(
+    project: &Path,
+    time_limit: Duration,
+) -> Result<Vec<instrumentation::VerificationEvent>, String> {
+    let started = std::time::Instant::now();
+    let operation = || instrumentation::collect(|| run_example_project(project));
+    let (result, events) = if std::env::var_os(DISABLE_TACTIC_BUDGETS).is_some() {
+        instrumentation::with_deadline(time_limit, operation)
+    } else {
+        let fixture_limits = instrumentation::TacticLimits {
+            simple: time_limit,
+            smart: time_limit,
+            control: time_limit,
+        };
+        instrumentation::with_deadline(time_limit, || {
+            instrumentation::with_tactic_limits(fixture_limits, operation)
+        })
+    };
+    result?;
+    if started.elapsed() > time_limit {
+        return Err(format!(
+            "exceeded the per-project example time limit of {}; set {EXAMPLE_TIME_LIMIT} to override it",
+            format_duration(time_limit)
+        ));
+    }
+    Ok(events)
 }
 
 fn run_example_project(project: &Path) -> Result<(), String> {
