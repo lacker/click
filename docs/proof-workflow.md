@@ -421,6 +421,18 @@ at(statement(0).entry, p[0] == 7)
 at(statement(0).entry, loadable(p[0..n]))
 ```
 
+When a proof needs to remember the state it has already reached, prefer a
+semantic proof-local name over repeating a numeric statement coordinate:
+
+```click
+mark before_write;
+step();
+have p[0] == at(before_write, p[0]) + 1 by simp;
+```
+
+The mark names the current state only. It does not advance or rewind the
+frontier and cannot be passed to `execute_until`.
+
 `loop_name.entry` is available in invariants on that loop and in its explicit
 `preserve` proof. Once the loop tactic succeeds, `loop_name.exit` is available
 to the enclosing proof.

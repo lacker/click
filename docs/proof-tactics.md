@@ -40,6 +40,7 @@ smaller execution steps or exact premises; `derive using { ... }` and
 
 | Surface form | Class | Meaning |
 | --- | --- | --- |
+| `mark name;` | simple | Name the current frontier state for later `at(name, ...)` expressions. It does not move execution. |
 | `step()` | smart | Advance one small C transition, selecting prerequisites and supported fact transports from context. |
 | `step() using { P; ... }` | simple | Perform one transition using exactly the listed pure premises. An empty block is valid. |
 | `execute()` | smart | Execute from the current frontier to function exit. It follows verified loop summaries and can plan explicit branch alternatives. |
@@ -52,6 +53,11 @@ and `loop` unpack the corresponding C control flow at the current frontier,
 `loop` constructs and applies one verified abstract loop transition,
 `execute_until` repeats transitions to a point, and `execute` runs to function
 exit. A branch continuation executes once after its arm states have joined.
+
+Marks are local to one proof and their names cannot be rebound. They remember
+an already-reached state; they are not source labels, execution targets, or
+saved states that can be restored. In particular, `execute_until(name)` does
+not target a proof mark.
 
 Expansion of execution automation uses `step() using`, including empty
 `using {}` blocks. Expansion recurses through `loop` and materializes omitted

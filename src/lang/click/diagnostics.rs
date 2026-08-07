@@ -1138,6 +1138,9 @@ pub(super) fn describe_visit_selector(selector: &VisitSelector) -> String {
 }
 
 pub(super) fn describe_program_point_ref(point: &ProgramPointRef) -> String {
+    if let CodeRegionRef::Mark(name) = &point.region {
+        return name.clone();
+    }
     let kind = match point.kind {
         ProgramPointKind::Entry => "entry",
         ProgramPointKind::Exit => "exit",
@@ -1151,6 +1154,7 @@ pub(super) fn describe_code_region_ref(region: &CodeRegionRef) -> String {
         CodeRegionRef::Loop(index) => format!("loop({index})"),
         CodeRegionRef::Statement(index) => format!("statement({index})"),
         CodeRegionRef::Label(name) => name.clone(),
+        CodeRegionRef::Mark(name) => name.clone(),
     }
 }
 

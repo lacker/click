@@ -798,6 +798,7 @@ pub struct CertifiedStatementReplay {
 /// tactic.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ProofTactic {
+    Mark(String),
     Step,
     StepUsing(Vec<ClickProposition>),
     CertifiedStatementStep {
@@ -883,6 +884,7 @@ pub enum ProofTactic {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SimpleTactic {
+    Mark,
     StatementTransition,
     CertifiedStatementTransition,
     CertifiedLoopSummaryTransition,
@@ -1292,6 +1294,7 @@ impl SimpleTactic {
 impl ProofTactic {
     pub fn class(&self) -> TacticClass {
         match self {
+            Self::Mark(_) => TacticClass::Simple(SimpleTactic::Mark),
             Self::Step => TacticClass::Simple(SimpleTactic::StatementTransition),
             Self::StepUsing(_) => TacticClass::Simple(SimpleTactic::StatementTransition),
             Self::CertifiedStatementStep { .. } => {
@@ -1414,6 +1417,8 @@ pub enum CodeRegionRef {
     Loop(usize),
     Statement(usize),
     Label(String),
+    #[doc(hidden)]
+    Mark(String),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]

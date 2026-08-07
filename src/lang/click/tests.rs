@@ -3335,6 +3335,10 @@ fn parses_and_classifies_simple_and_smart_tactics() {
         TacticClass::Simple(SimpleTactic::CloseInvariants)
     ));
     assert!(matches!(
+        ProofTactic::Mark("before_write".to_string()).class(),
+        TacticClass::Simple(SimpleTactic::Mark)
+    ));
+    assert!(matches!(
         ProofTactic::SmartFrame(None).class(),
         TacticClass::Smart(SmartTacticKind::Frame)
     ));
@@ -3368,6 +3372,7 @@ fn canonical_tactic_printer_round_trips_nested_surface_certificate() {
         right: ContractExpression::CFragment(CExpression::Value(int32(0))),
     };
     let tactics = vec![
+        ProofTactic::Mark("before_step".to_string()),
         ProofTactic::StepUsing(vec![nonnegative.clone()]),
         ProofTactic::If(ProofIf {
             condition: nonnegative.clone(),
@@ -4929,6 +4934,44 @@ fn smart_apply_preserves_statement_snapshots_in_explicit_premises() {
     );
     verify_c0_sources(&expanded, &[("decrement.c", c_source)])
         .expect("the explicit snapshot premises should replay");
+}
+
+#[test]
+fn source_expansion_preserves_proof_marks() {
+    let c_source = r#"
+        int32 increment(int32 x) {
+            x = x + 1;
+            return x;
+        }
+    "#;
+    let click_source = r#"
+        verifying "increment.c";
+
+        int32 increment(int32 x) {
+            requires x < 2147483647;
+            ensures result == at(before_increment, x) + 1 by {
+                mark before_increment;
+                execute();
+                simp();
+            }
+        }
+    "#;
+    verify_c0_sources(click_source, &[("increment.c", c_source)])
+        .expect("the marked proof should verify before expansion");
+
+    let selected = click_source.rfind("simp();").unwrap();
+    let position = expansion::position_at_offset(click_source, selected);
+    let expanded = expand_c0_tactic_source_at(
+        click_source,
+        &[("increment.c", c_source)],
+        position.line,
+        position.column,
+    )
+    .expect("the smart tactic after a mark should expand");
+    assert!(expanded.contains("mark before_increment;"));
+    assert!(!expanded.contains("simp();"));
+    verify_c0_sources(&expanded, &[("increment.c", c_source)])
+        .expect("the expansion should replay through the named snapshot");
 }
 
 #[test]

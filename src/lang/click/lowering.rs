@@ -1147,6 +1147,9 @@ impl AnnotationLowerer<'_> {
                 .find(|clause| clause.label() == Some(label.as_str()))
                 .map(|clause| *clause.region())
                 .ok_or_else(|| format!("unknown code region label `{label}`")),
+            CodeRegionRef::Mark(name) => Err(format!(
+                "proof-local mark `{name}` is available only in an execution proof"
+            )),
         }
     }
 

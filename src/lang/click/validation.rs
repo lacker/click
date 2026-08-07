@@ -2400,7 +2400,7 @@ fn validate_pure_theorem_tactics(
                 validate_pure_theorem_tactics(theorem_name, &proof_if.then_tactics)?;
                 validate_pure_theorem_tactics(theorem_name, &proof_if.else_tactics)?;
             }
-            ProofTactic::Branch(_) | ProofTactic::Loop(_) => {
+            ProofTactic::Branch(_) | ProofTactic::Loop(_) | ProofTactic::Mark(_) => {
                 return Err(ClickError::new(format!(
                     "execution tactic `{}` is not available in the pure proof for theorem `{theorem_name}`",
                     tactic_name(tactic)
@@ -2444,6 +2444,7 @@ fn validate_pure_theorem_tactics(
 
 pub(super) fn tactic_name(tactic: &ProofTactic) -> &'static str {
     match tactic {
+        ProofTactic::Mark(_) => "mark",
         ProofTactic::Step | ProofTactic::StepUsing(_) => "step",
         ProofTactic::CertifiedStatementStep { .. } => "step",
         ProofTactic::CertifiedLoopSummaryStep { .. } => "loop",

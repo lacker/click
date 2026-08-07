@@ -21229,6 +21229,18 @@ fn replay_linear_tactics_without_frontier_loops(
             continue;
         }
         match tactic {
+            ProofTactic::Mark(name) => {
+                let point = ProgramPointRef {
+                    region: CodeRegionRef::Mark(name.clone()),
+                    kind: ProgramPointKind::Entry,
+                };
+                if replay.program_point_states.contains_key(&point) {
+                    return Err(ClickError::new(format!(
+                        "`{claim_label}` tactic {tactic_index}: duplicate proof mark `{name}`"
+                    )));
+                }
+                replay.program_point_states.insert(point, state.clone());
+            }
             ProofTactic::UnfoldResource(resource) => {
                 if replay.is_at_function_exit() {
                     return Err(ClickError::new(format!(
@@ -24153,7 +24165,12 @@ fn apply_branch_interface(
             ))
         })?;
 
-    replay.program_point_states.clear();
+    // Branch abstraction discards incidental source-boundary snapshots, but
+    // an explicit proof mark is a deliberate historical dependency. Preserve
+    // marks that were common to every continuing arm.
+    replay
+        .program_point_states
+        .retain(|point, _| matches!(point.region, CodeRegionRef::Mark(_)));
     replay
         .program_point_states
         .insert(target.clone(), abstract_state.clone());
@@ -28147,6 +28164,11 @@ fn resolve_code_region_ref(
                     "`{claim_label}` tactic {tactic_index}: unknown code region label `{label}`"
                 ))
             })?,
+        CodeRegionRef::Mark(name) => {
+            return Err(ClickError::new(format!(
+                "`{claim_label}` tactic {tactic_index}: proof mark `{name}` is not a code region"
+            )));
+        }
     })
 }
 

@@ -1652,6 +1652,11 @@ impl Parser {
             }
             return Ok(ProofTactic::Have(ProofHave { proposition, proof }));
         }
+        if name == "mark" {
+            let mark = self.expect_ident("mark name")?;
+            self.expect(Token::Semicolon)?;
+            return Ok(ProofTactic::Mark(mark));
+        }
         if name == "if" {
             let condition = self.parse_proposition()?;
             // A proof `if` branch may be empty: it contributes only its case
@@ -2740,6 +2745,14 @@ impl Parser {
     }
 
     fn parse_visit_selector(&mut self) -> Result<VisitSelector, ClickError> {
+        if let (Some(Token::Ident(name)), Some(Token::Comma)) = (self.peek(), self.peek_next()) {
+            let name = name.clone();
+            self.position += 1;
+            return Ok(VisitSelector::ProgramPoint(ProgramPointRef {
+                region: CodeRegionRef::Mark(name),
+                kind: ProgramPointKind::Entry,
+            }));
+        }
         Ok(VisitSelector::ProgramPoint(self.parse_program_point_ref()?))
     }
 

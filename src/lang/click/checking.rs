@@ -5965,8 +5965,18 @@ fn concrete_program_point_state<'a>(
             kind: ProgramPointKind::Entry,
         }) => Ok(function_entry_state),
         VisitSelector::ProgramPoint(point @ ProgramPointRef {
+            region: CodeRegionRef::Mark(name),
+            ..
+        }) => program_point_states.get(point).ok_or_else(|| {
+            format!(
+                "unknown proof mark `{name}`; add `mark {name};` after the proof reaches that frontier"
+            )
+        }),
+        VisitSelector::ProgramPoint(point @ ProgramPointRef {
             region:
-                CodeRegionRef::Statement(_) | CodeRegionRef::Loop(_) | CodeRegionRef::Label(_),
+                CodeRegionRef::Statement(_)
+                | CodeRegionRef::Loop(_)
+                | CodeRegionRef::Label(_),
             ..
         }) => program_point_states.get(point).ok_or_else(|| {
             format!(

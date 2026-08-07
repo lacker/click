@@ -703,6 +703,21 @@ at(statement(0).entry, p[0] == 7)
 at(statement(0).entry, loadable(p[0..n]))
 ```
 
+An execution proof can give its current frontier state a local name and use
+that bare name as a selector later:
+
+```click
+mark before_write;
+step();
+have p[0] == at(before_write, p[0]) + 1 by simp;
+```
+
+`mark` is a simple tactic and does not move execution. Its name is scoped to
+the proof, cannot be rebound, and is not an `execute_until` target. Bare
+`at(before_write, ...)` therefore means a proof-local mark, while
+`at(loop_label.entry, ...)` continues to mean the entry of a named source
+region.
+
 `at(function.entry, expression)` is equivalent to `old(expression)`. The
 proposition form snapshots every state-relative part of the proposition
 together. This matters for propositions such as `loadable(...)`: both the

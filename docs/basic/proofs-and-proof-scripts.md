@@ -47,10 +47,6 @@ step() using {
     x < 2147483647;
 }
 
-execute_until(done) using {
-    n >= 0;
-}
-
 frame() using {
     i >= 0;
     i < n;
@@ -59,6 +55,8 @@ frame() using {
 
 An empty `using {}` block is valid. It means the simple rule needs no pure
 premises; it is not the same spelling as the contextual bare tactic.
+`execute_until(statement(N))` is smart; expansion replaces it with the
+corresponding sequence of simple `step() using { ... }` tactics.
 
 Other common simple proposition tactics are `assumption()`, `normalize()`,
 `rewrite(...)`, `intro()`, `split()`, `left()`, `right()`,
@@ -73,8 +71,9 @@ and proof-level `if`.
 
 An execution proof carries a C frontier. The execution vocabulary is:
 
+- `mark name;` to name the current state for later `at(name, ...)` expressions;
 - `step()` for one smart transition;
-- `execute_until(point)` for a forward prefix;
+- `execute_until(statement(N))` for a forward prefix;
 - `execute()` for the remainder of the function;
 - `branch { [ensuring { ... }] then { ... } else { ... } }` for the C `if` at
   the frontier and its single joined continuation; and
@@ -82,6 +81,8 @@ An execution proof carries a C frontier. The execution vocabulary is:
 
 Proof-level `if` splits reasoning; it does not execute a C `if`. Frontier-local
 `branch` temporarily proves both C arms and then restores one current state.
+A mark remembers a state the proof has already reached; it does not move the
+frontier and is not an `execute_until` target.
 
 ## Expansion and diagnosis
 
