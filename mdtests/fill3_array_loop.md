@@ -21,16 +21,29 @@ verifying "fill3_array_loop.c";
 int32 fill3_array_loop(int32 p[3]) {
     requires loadable(p[0..3]);
     consumes p[0..3];
+    ensures writes_first: p[0] == 0;
+    ensures writes_second: p[1] == 1;
+    ensures writes_third: p[2] == 2;
+    ensures returns_third: result == 2;
+} by {
+    step();
+    step();
+    loop {
+        invariant i >= 0 and i <= 3;
+        invariant forall (k: int32) {
+            0 <= k and k < i implies p[k] == k
+        };
 
-    for loop(0) {
-        invariant i >= 0;
-        invariant i <= 3;
+        initialize by simp;
+        preserve by {
+            step();
+            step();
+            have i == at(statement(3).entry, i) + 1 by simp;
+            simp();
+        }
     }
-
-    ensures writes_first: p[0] == 0 by auto;
-    ensures writes_second: p[1] == 1 by auto;
-    ensures writes_third: p[2] == 2 by auto;
-    ensures returns_third: result == 2 by auto;
+    step();
+    simp();
 }
 ```
 

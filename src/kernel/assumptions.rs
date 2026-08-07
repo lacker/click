@@ -5168,17 +5168,117 @@ impl Assumptions {
         let Proposition::ForAll { var, body, .. } = proposition else {
             return Vec::new();
         };
+        fn collect_offset_candidates(
+            pattern: &PointerOffsetTerm,
+            target: &PointerOffsetTerm,
+            bound: Variable,
+            candidates: &mut BTreeSet<Bitvector32Term>,
+        ) {
+            match (pattern, target) {
+                (
+                    PointerOffsetTerm::Add(left_a, left_b),
+                    PointerOffsetTerm::Add(right_a, right_b),
+                ) => {
+                    collect_offset_candidates(left_a, right_a, bound, candidates);
+                    collect_offset_candidates(left_b, right_b, bound, candidates);
+                }
+                (
+                    PointerOffsetTerm::Int32Scaled {
+                        value: left,
+                        byte_width: left_width,
+                    },
+                    PointerOffsetTerm::Int32Scaled {
+                        value: right,
+                        byte_width: right_width,
+                    },
+                ) if left_width == right_width => {
+                    collect_term_candidates(left, right, bound, candidates);
+                }
+                _ => {}
+            }
+        }
+        fn collect_pointer_candidates(
+            pattern: &Pointer,
+            target: &Pointer,
+            bound: Variable,
+            candidates: &mut BTreeSet<Bitvector32Term>,
+        ) {
+            if pattern.block == target.block {
+                collect_offset_candidates(&pattern.offset, &target.offset, bound, candidates);
+            }
+        }
+        fn collect_term_candidates(
+            pattern: &Bitvector32Term,
+            target: &Bitvector32Term,
+            bound: Variable,
+            candidates: &mut BTreeSet<Bitvector32Term>,
+        ) {
+            if matches!(pattern, Bitvector32Term::Variable(variable) if *variable == bound) {
+                candidates.insert(target.clone());
+                return;
+            }
+            if std::mem::discriminant(pattern) != std::mem::discriminant(target) {
+                return;
+            }
+            fn binary(term: &Bitvector32Term) -> Option<(&Bitvector32Term, &Bitvector32Term)> {
+                match term {
+                    Bitvector32Term::Add(left, right)
+                    | Bitvector32Term::Subtract(left, right)
+                    | Bitvector32Term::Multiply(left, right)
+                    | Bitvector32Term::Divide(left, right)
+                    | Bitvector32Term::Remainder(left, right)
+                    | Bitvector32Term::ShiftLeft(left, right)
+                    | Bitvector32Term::ArithmeticShiftRight(left, right)
+                    | Bitvector32Term::BitwiseAnd(left, right)
+                    | Bitvector32Term::BitwiseOr(left, right)
+                    | Bitvector32Term::BitwiseXor(left, right) => {
+                        Some((left.as_ref(), right.as_ref()))
+                    }
+                    _ => None,
+                }
+            }
+            match (pattern, target) {
+                (Bitvector32Term::BitwiseNot(left), Bitvector32Term::BitwiseNot(right)) => {
+                    collect_term_candidates(left, right, bound, candidates);
+                }
+                (
+                    Bitvector32Term::MemoryLoad(_, left_pointer),
+                    Bitvector32Term::MemoryLoad(_, right_pointer),
+                ) => collect_pointer_candidates(left_pointer, right_pointer, bound, candidates),
+                (left, right) => {
+                    if let (Some((left_a, left_b)), Some((right_a, right_b))) =
+                        (binary(left), binary(right))
+                    {
+                        collect_term_candidates(left_a, right_a, bound, candidates);
+                        collect_term_candidates(left_b, right_b, bound, candidates);
+                    }
+                }
+            }
+        }
+        let mut candidates = BTreeSet::new();
         let mut variables = BTreeSet::new();
         collect_condition_bitvector_variables(condition, &mut variables);
-        variables
+        candidates.extend(variables.into_iter().map(Bitvector32Term::Variable));
+        let conclusion = match body.as_ref() {
+            Proposition::Implies(_, conclusion) => conclusion.as_ref(),
+            conclusion => conclusion,
+        };
+        if let (
+            Proposition::ConditionIs(
+                ConditionTerm::Bitvector32Equal(pattern_left, pattern_right),
+                _,
+            ),
+            ConditionTerm::Bitvector32Equal(target_left, target_right),
+        ) = (conclusion, condition)
+        {
+            collect_term_candidates(pattern_left, target_left, *var, &mut candidates);
+            collect_term_candidates(pattern_right, target_right, *var, &mut candidates);
+            collect_term_candidates(pattern_left, target_right, *var, &mut candidates);
+            collect_term_candidates(pattern_right, target_left, *var, &mut candidates);
+        }
+        candidates
             .into_iter()
-            .map(|candidate| {
-                substitute_bitvector_variable_in_proposition(
-                    body,
-                    *var,
-                    &Bitvector32Term::Variable(candidate),
-                )
-            })
+            .map(|candidate| substitute_bitvector_variable_in_proposition(body, *var, &candidate))
             .collect()
     }
 

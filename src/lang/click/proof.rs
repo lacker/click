@@ -7510,9 +7510,19 @@ fn verify_execution_proofs_forward(
                     if let Some(phase_start) = selected_source_index
                         && let Some(selected) = selected_tactic_index_for_site(&site)
                         && let Some(local_index) = selected.checked_sub(phase_start)
-                        && let Some((_, Proof::Script(source_tactics))) = initialization_proof
-                        && (selected == phase_start
-                            || matches!(source_tactics.get(local_index), Some(ProofTactic::Simp)))
+                        // The parser keeps a single smart tactic as `Tactic`
+                        // rather than wrapping it in a one-item `Script`.
+                        && initialization_proof.is_some_and(|(_, proof)| match proof {
+                            Proof::Tactic(SmartTactic::Simp) => local_index == 0,
+                            Proof::Script(source_tactics) => {
+                                selected == phase_start
+                                    || matches!(
+                                        source_tactics.get(local_index),
+                                        Some(ProofTactic::Simp)
+                                    )
+                            }
+                            _ => false,
+                        })
                     {
                         record_proof_site_tactic_expansion(
                             &site,
@@ -9158,11 +9168,22 @@ fn verify_one_loop_preservation_proof(
         {
             Vec::new()
         } else {
+            let mut closer_facts = context.pure_facts.clone();
+            closer_facts.extend(
+                context
+                    .replay
+                    .effect_facts
+                    .iter()
+                    .map(|fact| fact.proposition().clone()),
+            );
+            closer_facts.extend(crate::kernel::certified_store_equations(
+                &context.replay.effect_facts,
+            ));
             if let Err(message) = c_loop_invariants_hold_at_back_edge_using(
                 &context.state,
                 preservation.loop_entry_state(),
                 invariant_checks,
-                &assumptions_from_propositions(&context.pure_facts),
+                &assumptions_from_propositions(&closer_facts),
             ) {
                 return Err(ClickError::new(format!(
                     "`{claim_label}` (loop {loop_index} invariant bundle preservation) could not certify every guarded invariant-lowering path: {message}"
@@ -9301,11 +9322,22 @@ fn verify_one_loop_preservation_proof(
             let planner_already_verified = std::env::var_os("CLICK_DISABLE_CLOSER_REUSE").is_none()
                 && verified_closer_paths.contains(&case_path);
             if !planner_already_verified {
+                let mut closer_facts = context.pure_facts.clone();
+                closer_facts.extend(
+                    context
+                        .replay
+                        .effect_facts
+                        .iter()
+                        .map(|fact| fact.proposition().clone()),
+                );
+                closer_facts.extend(crate::kernel::certified_store_equations(
+                    &context.replay.effect_facts,
+                ));
                 c_loop_invariants_hold_at_back_edge_using(
                     &context.state,
                     preservation.loop_entry_state(),
                     invariant_checks,
-                    &assumptions_from_propositions(&context.pure_facts),
+                    &assumptions_from_propositions(&closer_facts),
                 )
                 .map_err(|message| {
                     ClickError::new(format!("`{claim_label}` invariant bundle: {message}"))
@@ -16786,7 +16818,12 @@ fn lower_outcome_simp_tactic(
         let surface = replay
             .surface_propositions
             .surfaces(fact)
-            .next()
+            .find(|surface| {
+                check(surface).is_ok_and(|lowered| {
+                    condition_polarity_equivalent(&lowered, fact)
+                        || nested_quantified_binder_equivalent(&lowered, fact, 8)
+                })
+            })
             .cloned()
             .or_else(|| {
                 checked_surface_fact_at_outcome(
@@ -16807,10 +16844,12 @@ fn lower_outcome_simp_tactic(
         let Some(surface) = surface else {
             continue;
         };
-        if check(&surface).is_ok_and(|lowered| condition_polarity_equivalent(&lowered, fact))
-            && !premise_pairs
-                .iter()
-                .any(|(kernel, recorded_surface)| kernel == fact || recorded_surface == &surface)
+        if check(&surface).is_ok_and(|lowered| {
+            condition_polarity_equivalent(&lowered, fact)
+                || nested_quantified_binder_equivalent(&lowered, fact, 8)
+        }) && !premise_pairs
+            .iter()
+            .any(|(kernel, recorded_surface)| kernel == fact || recorded_surface == &surface)
         {
             premise_pairs.push((fact.clone(), surface));
         }

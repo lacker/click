@@ -55,7 +55,8 @@ the structural proof model has one related language cleanup:
 
 1. [Let statement assertions prove how they reach their program point](statement-assertion-explicit-reach-proof.md).
 2. [Make loop proofs local to the execution frontier](frontier-local-loop-proofs.md).
-3. [Replay fixed-array loop invariant certificates](frontier-loop-fixed-array-invariant-certificates.md).
+3. [Replay fixed-array copy-loop certificates](frontier-loop-fixed-array-invariant-certificates.md).
+4. [Expand the slow input-cursor pipeline step](expand-slow-input-cursor-step.md).
 
 Smart structural proofs retain ordinary statement snapshots through
 certificate reconstruction and fresh replay. The remaining blocker is that a

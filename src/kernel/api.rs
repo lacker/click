@@ -6062,6 +6062,35 @@ fn certification_proves_proposition(assumptions: &Assumptions, proposition: &Pro
     {
         return true;
     }
+    if let Proposition::ConditionIs(condition, value) = proposition
+        && assumptions.prop_facts.iter().any(|fact| {
+            assumptions
+                .forall_instantiations_for_condition(fact, condition)
+                .into_iter()
+                .any(|instance| {
+                    let mut body = &instance;
+                    let mut premises = Vec::new();
+                    while let Proposition::Implies(premise, rest) = body {
+                        premises.push(premise.as_ref());
+                        body = rest;
+                    }
+                    let Proposition::ConditionIs(_, instance_value) = body else {
+                        return false;
+                    };
+                    instance_value == value
+                        && c_condition_facts_equivalent_for_memory_resolution(
+                            body,
+                            &Proposition::ConditionIs(condition.clone(), *value),
+                            assumptions,
+                        )
+                        && premises
+                            .into_iter()
+                            .all(|premise| certification_proves_proposition(assumptions, premise))
+                })
+        })
+    {
+        return true;
+    }
     match proposition {
         // Order conditions use the deterministic bounded order prover; the
         // fuel-dependent simp decision procedure stays out of certification.

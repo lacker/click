@@ -2065,6 +2065,63 @@ fn quantified_int32_fact_certifies_an_instantiated_load() {
 }
 
 #[test]
+fn quantified_int32_fact_certifies_a_concrete_indexed_load() {
+    let memory = CMemory::new();
+    let data = Pointer {
+        block: "data".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let index = Variable(2_100_003);
+    let index_term = Bitvector32Term::Variable(index);
+    let indexed_load = Bitvector32Term::MemoryLoad(
+        crate::kernel::intern_c_memory_ref(&memory),
+        Box::new(data.offset_by_int32_elements(index_term.clone())),
+    );
+    let guarded_fact = forall_int32(
+        index,
+        Proposition::Implies(
+            Box::new(Proposition::And(
+                Box::new(Proposition::ConditionIs(
+                    ConditionTerm::signed_less_equal(
+                        Bitvector32Term::Constant(0),
+                        index_term.clone(),
+                    ),
+                    true,
+                )),
+                Box::new(Proposition::ConditionIs(
+                    ConditionTerm::signed_less_than(
+                        index_term.clone(),
+                        Bitvector32Term::Constant(3),
+                    ),
+                    true,
+                )),
+            )),
+            Box::new(Proposition::ConditionIs(
+                ConditionTerm::equal(indexed_load, index_term),
+                true,
+            )),
+        ),
+    );
+    let concrete_index = Bitvector32Term::Constant(1);
+    let target = Proposition::ConditionIs(
+        ConditionTerm::equal(
+            Bitvector32Term::MemoryLoad(
+                crate::kernel::intern_c_memory_ref(&memory),
+                Box::new(data.offset_by_int32_elements(concrete_index.clone())),
+            ),
+            concrete_index,
+        ),
+        true,
+    );
+
+    assert!(
+        Assumptions::new()
+            .assume_proposition(guarded_fact)
+            .proves(&target)
+    );
+}
+
+#[test]
 fn quantified_int32_fact_certifies_its_complete_guarded_range() {
     let memory = CMemory::new();
     let data = Pointer {
