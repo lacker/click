@@ -1,0 +1,768 @@
+use super::*;
+
+#[test]
+fn verifies_simple_postcondition_with_proof_tactics() {
+    let c_source = r#"
+            int32 identity(int32 x) {
+                return x;
+            }
+        "#;
+    let click_source = r#"
+            verifying "identity.c";
+
+            int32 identity(int32 x) {
+                ensures returns_x: result == x by {
+                    execute();
+                    simp();
+                }
+            }
+        "#;
+
+    let verified = verify_c0_sources(click_source, &[("identity.c", c_source)])
+        .expect("explicit proof script should prove simple postcondition");
+
+    assert_eq!(verified.len(), 1);
+    assert_eq!(verified[0].proof_kind(), ProofKind::TacticScript);
+}
+
+#[test]
+fn ordinary_verification_stops_at_the_tactic_deadline() {
+    let c_source = r#"
+            int32 identity(int32 x) {
+                return x;
+            }
+        "#;
+    let click_source = r#"
+            verifying "identity.c";
+
+            int32 identity(int32 x) {
+                ensures returns_x: result == x by {
+                    execute();
+                    simp();
+                }
+            }
+        "#;
+    let limits = crate::instrumentation::TacticLimits {
+        simple: std::time::Duration::ZERO,
+        smart: std::time::Duration::ZERO,
+        control: std::time::Duration::ZERO,
+    };
+    let (result, events) = crate::instrumentation::collect(|| {
+        crate::instrumentation::with_tactic_limits(limits, || {
+            verify_c0_sources(click_source, &[("identity.c", c_source)])
+        })
+    });
+    let error = result.expect_err("the first tactic should hit its zero deadline");
+    assert!(error.message().contains("time limit exceeded"), "{error:?}");
+    let started = events
+        .iter()
+        .filter_map(|event| match event {
+            crate::instrumentation::VerificationEvent::TacticStarted(tactic) => {
+                Some(tactic.tactic_name.as_str())
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        !started.is_empty(),
+        "the interrupted tactic should be named"
+    );
+    assert!(
+        !started.contains(&"simp"),
+        "later tactics must not start after a deadline: {started:?}"
+    );
+}
+
+#[test]
+fn smart_frame_reports_its_deterministic_deadline() {
+    let c_source = r#"
+        int32 write_first(int32* data) {
+            data[0] = 1;
+            return 0;
+        }
+    "#;
+    let click_source = r#"
+        verifying "write_first.c";
+
+        int32 write_first(int32* data) {
+            consumes data[0..1];
+            produces data[0..1];
+            mutable data[0..1];
+        } by {
+            step() using { loadable(data[0..1]); }
+            step() using {}
+            frame();
+            simp();
+        }
+    "#;
+    let limits = crate::instrumentation::TacticLimits {
+        simple: std::time::Duration::from_secs(1),
+        smart: std::time::Duration::ZERO,
+        control: std::time::Duration::from_secs(1),
+    };
+
+    let error = crate::instrumentation::with_tactic_limits(limits, || {
+        verify_c0_sources(click_source, &[("write_first.c", c_source)])
+    })
+    .expect_err("smart frame should observe its zero tactic deadline");
+
+    assert!(error.message().contains("time limit exceeded"), "{error:?}");
+    assert!(error.message().contains("frame"), "{error:?}");
+    assert!(
+        error.message().contains("explicit simple tactics"),
+        "{error:?}"
+    );
+}
+
+#[test]
+fn verifies_omitted_proof_with_default_prover() {
+    let c_source = r#"
+            int32 zero() {
+                return 0;
+            }
+        "#;
+    let click_source = r#"
+            verifying "zero.c";
+
+            int32 zero() {
+                immutable;
+                ensures returns_zero: result == 0;
+            }
+        "#;
+
+    let verified = verify_c0_sources(click_source, &[("zero.c", c_source)])
+        .expect("omitted proof clauses should use the default prover");
+
+    assert_eq!(verified.len(), 2);
+    assert_eq!(verified[0].proof_kind(), ProofKind::TacticScript);
+    assert_eq!(verified[1].proof_kind(), ProofKind::TacticScript);
+}
+
+#[test]
+fn verifies_mutable_effect_with_bounded_frame_tactics() {
+    let c_source = r#"
+            int32 write_second(int32* p) {
+                p[1] = 9;
+                return p[1];
+            }
+        "#;
+    let click_source = r#"
+            verifying "write_second.c";
+
+            int32 write_second(int32* p) {
+                requires loadable(p[0..2]);
+                consumes p[1..2];
+                mutable p[1..2] by {
+                    execute();
+                    frame();
+                }
+            }
+        "#;
+
+    let verified = verify_c0_sources(click_source, &[("write_second.c", c_source)])
+        .expect("bounded frame tactics should prove mutable effect");
+    let expected_tactics = [ProofTactic::SmartExecute, ProofTactic::SmartFrame(None)];
+
+    assert_eq!(verified.len(), 1);
+    assert_eq!(verified[0].proof_kind(), ProofKind::TacticScript);
+    assert_eq!(
+        verified[0].proof_tactics(),
+        Some(expected_tactics.as_slice())
+    );
+}
+
+#[test]
+fn bare_frame_tactic_rejects_ensure_claim() {
+    let c_source = r#"
+            int32 identity(int32 x) {
+                return x;
+            }
+        "#;
+    let click_source = r#"
+            verifying "identity.c";
+
+            int32 identity(int32 x) {
+                ensures returns_x: result == x by {
+                    execute();
+                    frame();
+                }
+            }
+        "#;
+
+    let error = verify_c0_sources(click_source, &[("identity.c", c_source)])
+        .expect_err("bare frame tactic should not prove postconditions");
+
+    assert!(
+        error
+            .message()
+            .contains("`frame` has no effect claim to prove"),
+        "{}",
+        error.message()
+    );
+}
+
+#[test]
+fn simp_rejects_effect_clauses() {
+    let c_source = r#"
+            int32 zero() {
+                return 0;
+            }
+        "#;
+    let click_source = r#"
+            verifying "zero.c";
+
+            int32 zero() {
+                immutable by simp;
+                ensures returns_zero: result == 0 by auto;
+            }
+        "#;
+
+    let error = verify_c0_sources(click_source, &[("zero.c", c_source)])
+        .expect_err("simp should not prove effect clauses");
+
+    assert!(
+        error
+            .message()
+            .contains("`simp` does not prove effect clauses"),
+        "{}",
+        error.message()
+    );
+}
+
+#[test]
+fn simp_rejects_loop_backed_claims() {
+    let c_source = r#"
+            int32 count_to_three() {
+                int32 i;
+                i = 0;
+                while (i < 3) {
+                    i = i + 1;
+                }
+                return i;
+            }
+        "#;
+    let click_source = r#"
+            verifying "count_to_three.c";
+
+            int32 count_to_three() {
+                ensures returns_three: result == 3 by simp;
+            }
+        "#;
+
+    let error = verify_c0_sources(click_source, &[("count_to_three.c", c_source)])
+        .expect_err("simp should not run loop verification");
+
+    assert!(
+        error
+            .message()
+            .contains("`simp` does not prove loop-backed claims"),
+        "{}",
+        error.message()
+    );
+}
+
+#[test]
+fn verifies_symbolic_result_expression() {
+    let c_source = r#"
+            int32 identity(int32 x) {
+                return x;
+            }
+        "#;
+    let click_source = r#"
+            verifying "identity.c";
+
+            int32 identity(int32 x) {
+                ensures returns_argument: result == x by auto;
+            }
+        "#;
+
+    let verified = verify_c0_sources(click_source, &[("identity.c", c_source)])
+        .expect("identity sidecar should verify");
+
+    assert_eq!(verified.len(), 1);
+    assert_eq!(
+        verified[0].ensure_clause().unwrap().ensure(),
+        &ensure_comparison(
+            current_var("result"),
+            ComparisonOperator::Equal,
+            current_var("x"),
+        )
+    );
+}
+
+#[test]
+fn verifies_memory_postcondition() {
+    let source = FILL3_CLICK.replace(
+        "ensures returns_second: result == 2",
+        "ensures third: p[2] == 2",
+    );
+    let verified = verify_c0_sources(&source, &[("fill3.c", FILL3_C)])
+        .expect("fill3 memory postcondition should verify");
+
+    assert_eq!(verified.len(), 1);
+    assert_eq!(
+        verified[0].ensure_clause().unwrap().ensure(),
+        &ensure_comparison(
+            current_index("p", 2),
+            ComparisonOperator::Equal,
+            current_int(2),
+        )
+    );
+}
+
+#[test]
+fn verifies_old_memory_postcondition_for_unmodified_cell() {
+    let c_source = r#"
+            int32 write_second(int32* p) {
+                p[1] = 9;
+                return p[1];
+            }
+        "#;
+    let click_source = r#"
+            verifying "write_second.c";
+
+            int32 write_second(int32* p) {
+                requires loadable(p[0..2]);
+                consumes p[1..2];
+                ensures writes_second: p[1] == 9 by auto;
+                ensures keeps_first: p[0] == old(p[0]) by auto;
+            }
+        "#;
+
+    let verified = verify_c0_sources(click_source, &[("write_second.c", c_source)])
+        .expect("old memory postcondition should verify");
+
+    assert_eq!(verified.len(), 2);
+    assert_eq!(
+        verified[1].ensure_clause().unwrap().ensure(),
+        &ensure_comparison(
+            current_index("p", 0),
+            ComparisonOperator::Equal,
+            old_index("p", 0),
+        )
+    );
+}
+
+#[test]
+fn verifies_quantified_old_memory_postcondition() {
+    let c_source = r#"
+            int32 write_second(int32* p) {
+                p[1] = 9;
+                return p[1];
+            }
+        "#;
+    let click_source = r#"
+            verifying "write_second.c";
+
+            int32 write_second(int32* p) {
+                requires loadable(p[0..2]);
+                consumes p[1..2];
+                ensures keeps_first_cell: forall (k: int32) {
+                    0 <= k and k < 1 implies p[k] == old(p[k])
+                } by auto;
+            }
+        "#;
+
+    let verified = verify_c0_sources(click_source, &[("write_second.c", c_source)])
+        .expect("unwritten segment should match old memory");
+
+    assert_eq!(verified.len(), 1);
+}
+
+#[test]
+fn separate_requirement_proves_symbolic_unwritten_read() {
+    let c_source = r#"
+            int32 write_i_read_j(int32 p[], int32 i, int32 j, int32 n) {
+                p[i] = 9;
+                return p[j];
+            }
+        "#;
+    let click_source = r#"
+            verifying "write_i_read_j.c";
+
+            int32 write_i_read_j(int32 p[], int32 i, int32 j, int32 n) {
+                requires n >= 0;
+                requires n <= 2147483647;
+                requires i >= 0;
+                requires i < n;
+                requires j >= 0;
+                requires j < n;
+                requires loadable(p[0..n]);
+                consumes p[i..i + 1];
+                views p[j..j + 1];
+                requires separate(memory(p[i..i + 1]), memory(p[j..j + 1]));
+                mutable p[i..i + 1] by { execute(); frame(); }
+                ensures keeps_j: result == old(p[j]) by auto;
+            }
+        "#;
+
+    let verified = verify_c0_sources(click_source, &[("write_i_read_j.c", c_source)])
+        .expect("separate singleton ranges should prove symbolic unwritten read");
+
+    assert_eq!(verified.len(), 2);
+}
+
+#[test]
+fn contextual_frame_expands_to_surface_bounds_and_exact_frame() {
+    let c_source = r#"
+            int32 write_in_bounds(int32 p[], int32 i, int32 n, int32* unrelated) {
+                p[i] = 9;
+                return 0;
+            }
+        "#;
+    let click_source = r#"
+            verifying "write_in_bounds.c";
+
+            int32 write_in_bounds(int32 p[], int32 i, int32 n, int32* unrelated) {
+                requires n >= 0;
+                requires n <= 2147483647;
+                requires i >= 0;
+                requires i < n;
+                requires loadable(p[0..n]);
+                requires loadable(unrelated[0..1]);
+                consumes p[0..n];
+                mutable p[0..n] by { execute(); frame(); }
+            }
+        "#;
+
+    let verified = verify_c0_sources(click_source, &[("write_in_bounds.c", c_source)])
+        .expect("contextual frame should verify");
+    let theorem = verified
+        .iter()
+        .find(|theorem| theorem.effect_clause().is_some())
+        .expect("effect claim should use the frame proof");
+    let expanded = theorem.expanded_proof_tactics().unwrap_or_else(|| {
+        panic!(
+            "contextual frame should have a surface expansion: {:?}",
+            theorem.expansion_blocker()
+        )
+    });
+    assert!(
+        expanded
+            .iter()
+            .any(|tactic| matches!(tactic, ProofTactic::Have(_)))
+    );
+    let Some(ProofTactic::FrameUsing {
+        region: None,
+        premises,
+    }) = expanded.last()
+    else {
+        panic!("contextual frame should end in exact frame replay: {expanded:?}");
+    };
+    assert!(
+        !format!("{premises:?}").contains("unrelated"),
+        "an irrelevant ambient loadability fact leaked into the exact frame certificate: {premises:?}"
+    );
+    TacticCertificate::from_proof_tactics(expanded)
+        .expect("contextual frame expansion should be a surface certificate");
+}
+
+#[test]
+fn contextual_frame_expands_independently_in_branch_leaves() {
+    let c_source = r#"
+            int32 write_selected(int32 p[2], int32 flag) {
+                if (flag) {
+                    p[0] = 1;
+                } else {
+                    p[1] = 1;
+                }
+                return 0;
+            }
+        "#;
+    let click_source = r#"
+            verifying "write_selected.c";
+
+            int32 write_selected(int32 p[2], int32 flag) {
+                consumes p[0..2];
+                mutable p[0..2] by { execute(); frame(); }
+            }
+        "#;
+
+    let verified = verify_c0_sources(click_source, &[("write_selected.c", c_source)])
+        .expect("branched contextual frame should verify");
+    let theorem = verified
+        .iter()
+        .find(|theorem| theorem.effect_clause().is_some())
+        .expect("effect claim should use the frame proof");
+    let expanded = theorem.expanded_proof_tactics().unwrap_or_else(|| {
+        panic!(
+            "branched contextual frame should expand: {:?}",
+            theorem.expansion_blocker()
+        )
+    });
+    let proof_if = expanded
+        .iter()
+        .find_map(|tactic| match tactic {
+            ProofTactic::If(proof_if) => Some(proof_if),
+            _ => None,
+        })
+        .expect("branched frame expansion should retain the branch");
+    assert!(matches!(
+        proof_if.then_tactics.last(),
+        Some(ProofTactic::FrameUsing { region: None, .. })
+    ));
+    assert!(matches!(
+        proof_if.else_tactics.last(),
+        Some(ProofTactic::FrameUsing { region: None, .. })
+    ));
+    TacticCertificate::from_proof_tactics(expanded)
+        .expect("branched frame expansion should be a surface certificate");
+}
+
+#[test]
+fn quantified_old_memory_rejects_overwritten_cell() {
+    let c_source = r#"
+            int32 write_second(int32* p) {
+                p[1] = 9;
+                return p[1];
+            }
+        "#;
+    let click_source = r#"
+            verifying "write_second.c";
+
+            int32 write_second(int32* p) {
+                requires loadable(p[0..2]);
+                consumes p[1..2];
+                ensures keeps_second_cell: forall (k: int32) {
+                    1 <= k and k < 2 implies p[k] == old(p[k])
+                } by auto;
+            }
+        "#;
+
+    let error = verify_c0_sources(click_source, &[("write_second.c", c_source)])
+        .expect_err("overwritten segment should not match old memory");
+
+    assert!(
+        error.message().contains("available pure facts")
+            && error.message().contains("available resource facts"),
+        "{}",
+        error.message()
+    );
+    assert!(
+        error.message().contains("unclosed goal:")
+            && error.message().contains("p[k] == old(p[k])")
+            && !error.message().contains("simplified:"),
+        "{}",
+        error.message()
+    );
+}
+
+#[test]
+fn verifies_mutable_segment_effect() {
+    let c_source = r#"
+            int32 write_second(int32* p) {
+                p[1] = 9;
+                return p[1];
+            }
+        "#;
+    let click_source = r#"
+            verifying "write_second.c";
+
+            int32 write_second(int32* p) {
+                requires loadable(p[0..2]);
+                consumes p[1..2];
+                mutable p[1..2] by { execute(); frame(); }
+                mutable p[0..2] by { execute(); frame(); }
+                ensures returns_written: result == 9 by auto;
+            }
+        "#;
+
+    let verified = verify_c0_sources(click_source, &[("write_second.c", c_source)])
+        .expect("write should stay inside declared segments");
+
+    assert_eq!(verified.len(), 3);
+    assert!(matches!(
+        verified[0].effect_clause().unwrap().effect(),
+        Effect::Mutable(_)
+    ));
+    assert_eq!(verified[0].proof_kind(), ProofKind::TacticScript);
+    assert_eq!(verified[1].proof_kind(), ProofKind::TacticScript);
+}
+
+#[test]
+fn verifies_shifted_loadable_and_mutable_segment() {
+    let c_source = r#"
+            int32 write_second(int32* p) {
+                p[1] = 9;
+                return p[1];
+            }
+        "#;
+    let click_source = r#"
+            verifying "write_second.c";
+
+            int32 write_second(int32* p) {
+                requires loadable((p + 1)[0..1]);
+                consumes (p + 1)[0..1];
+                mutable (p + 1)[0..1] by { execute(); frame(); }
+                ensures returns_written: result == 9 by auto;
+            }
+        "#;
+
+    let verified = verify_c0_sources(click_source, &[("write_second.c", c_source)])
+        .expect("shifted loadable should prove access and frame");
+
+    assert_eq!(verified.len(), 2);
+    assert_eq!(verified[0].proof_kind(), ProofKind::TacticScript);
+    assert_eq!(verified[1].proof_kind(), ProofKind::TacticScript);
+}
+
+#[test]
+fn frame_rejects_ensure_clause() {
+    let c_source = r#"
+            int32 identity(int32 x) {
+                return x;
+            }
+        "#;
+    let click_source = r#"
+            verifying "identity.c";
+
+            int32 identity(int32 x) {
+                ensures returns_argument: result == x by { execute(); frame(); }
+            }
+        "#;
+
+    let error = verify_c0_sources(click_source, &[("identity.c", c_source)])
+        .expect_err("frame should not prove postconditions");
+
+    assert!(
+        error
+            .message()
+            .contains("`frame` has no effect claim to prove"),
+        "{}",
+        error.message()
+    );
+}
+
+#[test]
+fn mutable_segment_rejects_write_outside_segment() {
+    let c_source = r#"
+            int32 write_second(int32* p) {
+                p[1] = 9;
+                return p[1];
+            }
+        "#;
+    let click_source = r#"
+            verifying "write_second.c";
+
+            int32 write_second(int32* p) {
+                requires loadable(p[0..2]);
+                consumes p[1..2];
+                mutable p[0..1] by auto;
+                ensures returns_written: result == 9 by auto;
+            }
+        "#;
+
+    let error = verify_c0_sources(click_source, &[("write_second.c", c_source)])
+        .expect_err("write outside segment should fail");
+
+    assert!(
+        error.message().contains("outside the mutable footprint"),
+        "{}",
+        error.message()
+    );
+    assert!(
+        error.message().contains("write to `p[1]`"),
+        "{}",
+        error.message()
+    );
+    assert!(
+        error.message().contains("mutable segments: [p[0..1]]"),
+        "{}",
+        error.message()
+    );
+    assert!(
+        error.message().contains("evaluated segments"),
+        "{}",
+        error.message()
+    );
+}
+
+#[test]
+fn immutable_rejects_external_memory_write() {
+    let c_source = r#"
+            int32 write_second(int32* p) {
+                p[1] = 9;
+                return p[1];
+            }
+        "#;
+    let click_source = r#"
+            verifying "write_second.c";
+
+            int32 write_second(int32* p) {
+                requires loadable(p[0..2]);
+                consumes p[1..2];
+                immutable by auto;
+                ensures returns_written: result == 9 by auto;
+            }
+        "#;
+
+    let error = verify_c0_sources(click_source, &[("write_second.c", c_source)])
+        .expect_err("immutable should reject external memory writes");
+
+    assert!(
+        error.message().contains("outside the mutable footprint"),
+        "{}",
+        error.message()
+    );
+    assert!(
+        error.message().contains("evaluated segments"),
+        "{}",
+        error.message()
+    );
+}
+
+#[test]
+fn immutable_allows_stack_local_writes() {
+    let c_source = r#"
+            int32 count_to_one() {
+                int32 i;
+                i = 0;
+                i = i + 1;
+                return i;
+            }
+        "#;
+    let click_source = r#"
+            verifying "count_to_one.c";
+
+            int32 count_to_one() {
+                immutable by { execute(); frame(); }
+                ensures returns_one: result == 1 by auto;
+            }
+        "#;
+
+    let verified = verify_c0_sources(click_source, &[("count_to_one.c", c_source)])
+        .expect("stack-local writes should not count as external mutation");
+
+    assert_eq!(verified.len(), 2);
+    assert_eq!(verified[0].proof_kind(), ProofKind::TacticScript);
+}
+
+#[test]
+fn old_memory_postcondition_fails_for_overwritten_cell() {
+    let c_source = r#"
+            int32 write_second(int32* p) {
+                p[1] = 9;
+                return p[1];
+            }
+        "#;
+    let click_source = r#"
+            verifying "write_second.c";
+
+            int32 write_second(int32* p) {
+                requires loadable(p[0..2]);
+                consumes p[1..2];
+                ensures keeps_second: p[1] == old(p[1]) by auto;
+            }
+        "#;
+
+    let error = verify_c0_sources(click_source, &[("write_second.c", c_source)])
+        .expect_err("old memory postcondition for overwritten cell should fail");
+
+    assert!(
+        error
+            .message()
+            .contains("left side evaluated to 9, right side evaluated to load(p[1])"),
+        "{}",
+        error.message()
+    );
+}
